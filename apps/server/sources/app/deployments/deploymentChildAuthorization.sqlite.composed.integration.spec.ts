@@ -6731,7 +6731,13 @@ describe('deployment children retain their controller Action authority', () => {
         const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: f.environment.id,
             machineId: f.controller.id, installationId: f.controller.installationId, resourceId, resourceRevision: 1 },
             installationPublicKey: f.controller.keys.publicKey, content: { kind: 'secret', value: secret.value } });
-        const content = { ...createDeploymentEnvironmentDetailV1().content, bindings: [selectedBinding] };
+        // The provider runtime owns its Variables; read setup adds only the limited login beside them.
+        const providerVariable = { purpose: 'variable', phase: 'build', name: 'PROVIDER_PROFILE',
+            source: { kind: 'value', value: 'provider-owned' } } as const;
+        const base = createDeploymentEnvironmentDetailV1().content;
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id },
+            data: await f.content('deployment-environment.v1', { ...base, bindings: [providerVariable] }) });
+        const content = { ...base, bindings: [providerVariable, selectedBinding] };
         // The runtime provider Link retains its identity while the Environment owns database custody.
         const body = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
             ...await f.content('deployment-environment.v1', content, artifactId),

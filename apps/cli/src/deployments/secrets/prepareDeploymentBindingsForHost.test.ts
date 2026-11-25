@@ -77,6 +77,8 @@ it.each([
         name: 'seals a managed read role only to its admitted controller' },
     { placementChange: false, mode: 'plain' as const, external: false, managedDataRole: true, providerRuntime: true,
         name: 'saves an authored managed writer role next to a Railway runtime without publishing provider Variables' },
+    { placementChange: false, mode: 'plain' as const, external: false, managedDataRole: true, providerRuntime: true, readAccessChild: true,
+        name: 'binds the generated read login inside its reviewed read setup next to a Railway runtime and its writer' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, managedDataRole: true,
         name: 'seals a managed read role to its admitted controller without a runtime target' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, managedDataRole: true, replaceManagedDataRole: true,
@@ -87,7 +89,7 @@ it.each([
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, replaceManagedDataRole, ownDataRole, removeOwnDataRole, uncodedReadFailure, providerRuntime }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, replaceManagedDataRole, readAccessChild, ownDataRole, removeOwnDataRole, uncodedReadFailure, providerRuntime }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     if (ownDataRole) delete detail.targetLinks[0]!.targetLink.activeDeploymentId;
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
@@ -166,7 +168,7 @@ it.each([
             source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('write-credential'), resourceRevision: 1 } },
     ];
     const bindings: EnvironmentSecretBindingV1[] = ownDataRole ? [{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
-            source: { kind: 'secret', ref, resourceRevision: 1 } }] : managedDataLink ? [{ purpose: 'dataRole', targetLinkId: managedDataLink.id, role: providerRuntime ? 'write' : 'readOnlyPassword',
+            source: { kind: 'secret', ref, resourceRevision: 1 } }] : managedDataLink ? [{ purpose: 'dataRole', targetLinkId: managedDataLink.id, role: providerRuntime && !readAccessChild ? 'write' : 'readOnlyPassword',
             source: { kind: 'secret', ref, resourceRevision: 1 } }]
         : preTarget ? [{ purpose: 'backupDestination', configKey: 'destination',
             role: 'repositoryPassword', source: { kind: 'secret', ref, resourceRevision: 1 } }]
@@ -175,6 +177,10 @@ it.each([
     const providerVariable = { purpose: 'variable', phase: 'build', name: 'RAILWAY_PROFILE',
         source: { kind: 'value', value: 'fixture-provider-value' } } as const;
     if (providerRuntime) detail.content.bindings = [providerVariable];
+    // The Environment already holds its reviewed writer login; read setup adds only the limited login.
+    const incumbentWriter: EnvironmentSecretBindingV1 | undefined = readAccessChild && managedDataLink ? { purpose: 'dataRole',
+        targetLinkId: managedDataLink.id, role: 'write', source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 1 } } : undefined;
+    if (incumbentWriter) detail.content.bindings = [providerVariable, incumbentWriter];
     // The incumbent login is another Saved Secret for the same Link and role; the person replaces it.
     if (replaceManagedDataRole && managedDataLink) detail.content.bindings = [{ purpose: 'dataRole', targetLinkId: managedDataLink.id,
         role: 'readOnlyPassword', source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('previous-credential'), resourceRevision: 1 } }];
@@ -556,6 +562,30 @@ it.each([
             referencedSavedSecretRevisions: [{ resourceId: 'credential', revision: 1 }] };
         const authored = { serverId: input.serverId, environmentId: input.environmentId,
             expectedRevision: input.expectedRevision, set: bindings, remove: [] };
+        if (readAccessChild && managedDataLink) {
+            // The reviewed read setup (one Apply) is the parent; its binding child consumes that admission.
+            const databaseTarget = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: detail.environment.id,
+                projectSourceId: detail.environment.projectSourceId }, targetLinkId: managedDataLink.id,
+                contribution: { pluginId: 'fixture.data', contributionId: 'database' }, platformProjectId: 'project', branchId: 'branch',
+                database: 'app' };
+            const parent = { actionId: 'action.invoke' as const, input: { action: { pluginId: 'happier.database', localId: 'read-access/create' },
+                input: { target: databaseTarget, mode: 'apply', role: 'happier_ro_fixture', statements: ['CREATE ROLE happier_ro_fixture'] } } };
+            const child = { action: 'deployments.bindings.set' as const, role: 'database.readAccess.bindings', input: authored };
+            const settled = await invokeHostReviewedChildV1({ parent, child, context: replayContext,
+                admittedReview: { action: child.action, role: child.role, surface: 'api' },
+                execute: async (_input, childContext) => daemon.deploymentAction!('deployments.bindings.set', authored, childContext) });
+            expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true });
+            const written = writes.at(-1)!;
+            const opened = readDeploymentEnvironmentArtifactV1(written, await createCredentialedAccountArtifactStore(credentials)
+                .read(written.contentArtifactId, { prepareRecipients: false, includeSharedAudience: false }));
+            // Provider Variables and the writer stay byte for byte; only the limited login is added.
+            if (!opened.ok) throw new Error(opened.error);
+            expect(opened.content.bindings).toEqual([providerVariable, incumbentWriter, ...bindings]);
+            expect(written.targetLinkContent).toBeUndefined();
+            // Only the controller receives the new login; provider Variables gain no Machine grant.
+            expect(written.grants.map(grant => grant.kind)).toEqual(['secret']);
+            return;
+        }
         if (providerRuntime) {
             expect(await daemon.prepareHostReviewedChildren!({ actionId: 'deployments.bindings.set', input: authored, context: {} }))
                 .toBeNull();

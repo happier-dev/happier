@@ -141,11 +141,22 @@ export function createManagedReadAccessForHost(ports: Ports) {
             } finally {
                 await writer.close().catch(() => {});
             }
+            let saved: Secret | undefined;
             try {
-                await ports.setBinding(await ports.saveSecret(withDatabaseConnectionLogin(selected.connectionString, role, password)));
-            } catch {
-                throw new PluginError({ code: 'database_read_role_binding_failed', details: { role },
-                    message: 'The database login was created, but its Saved Secret binding did not complete.', effectAttempted: true });
+                saved = await ports.saveSecret(withDatabaseConnectionLogin(selected.connectionString, role, password));
+                await ports.setBinding(saved);
+            } catch (error) {
+                ports.signal.throwIfAborted();
+                // The role (and, once saved, its Saved Secret) exist. Name that secret so the person binds it
+                // with "Use existing read-only login"; the binding owner's typed cause passes through.
+                const inner = isPluginError(error) ? error.data : undefined;
+                throw new PluginError({ code: 'database_read_role_binding_failed',
+                    details: { role, ...(saved ? { savedSecretRef: saved.ref, resourceRevision: saved.resourceRevision } : {}) },
+                    ...(inner?.failureCause ? { failureCause: inner.failureCause }
+                        : inner ? { failureCause: { phase: 'database.read_access.binding', errorClass: 'PluginError',
+                            errorCode: inner.code, httpStatus: null } } : {}),
+                    message: saved ? 'The database login and its Saved Secret were created, but binding it did not complete. Use the existing read-only login to finish.'
+                        : 'The database login was created, but its Saved Secret was not saved.', effectAttempted: true });
             }
             return { ok: true, status: 'configured', ...selected.reported };
         },

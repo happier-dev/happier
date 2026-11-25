@@ -137,7 +137,9 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const targetLinkId = loaded.environment.runtimeTargetLinkId;
             const runtimeLink = loaded.targetLinks.find(link => link.id === targetLinkId);
             const platformLink = runtimeLink?.source.kind === 'plugin' ? runtimeLink : undefined;
-            const platformBindingWrite = platformLink && !request.buildMachineId && !request.environmentUpdate && !databaseReadAccessChild;
+            // A reviewed read-setup child writes one managed database login: the same managed-data-role writer
+            // as any other managed login, never the provider Variables writer.
+            const platformBindingWrite = platformLink && !request.buildMachineId && !request.environmentUpdate;
             const managedPlatformBindings = platformBindingWrite && isManagedDeploymentDataRoleBindingPatchV1(input);
             const open = (id: string) => artifacts.read(id, { signal: context.signal, prepareRecipients: false,
                 includeSharedAudience: false, authorizationHeaders: headers });

@@ -79,6 +79,19 @@ describe('managed read-access setup', () => {
         expect(ports.open.mock.calls.map(call => call[2])).toEqual([unverified, unverified, unverified]);
     });
 
+    it('names the saved login and the binding refusal when the created role cannot be bound', async () => {
+        const { access, ports } = fixture();
+        ports.setBinding.mockRejectedValueOnce(new PluginError({ code: 'deployment_conflict',
+            failureCause: { phase: 'deployment.bindings.prepare.destination', errorClass: 'Error', errorCode: 'deployment_conflict', httpStatus: null } }));
+        const failure = await access.create({ mode: 'apply', role: plan.role, statements: plan.statements }).catch((error: unknown) => error);
+        // The role and its Saved Secret exist; the person binds that same secret through Use existing read-only login.
+        expect(failure).toMatchObject({ code: 'database_read_role_binding_failed', data: { effectAttempted: true,
+            details: { role: plan.role, savedSecretRef: secretRef.ref, resourceRevision: secretRef.resourceRevision },
+            failureCause: { phase: 'deployment.bindings.prepare.destination', errorCode: 'deployment_conflict' } } });
+        expect(JSON.stringify(failure)).not.toContain('fixture-generated');
+        expect(ports.saveSecret).toHaveBeenCalledTimes(1);
+    });
+
     it('relays the provider’s typed endpoint reason instead of a generic unavailable', async () => {
         const { access, ports } = fixture();
         ports.readEndpoint.mockRejectedValueOnce(new PluginError({ code: 'database_public_networking_required', message: 'Turn on Public Networking' }));

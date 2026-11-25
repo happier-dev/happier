@@ -673,7 +673,8 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         where: { id: loaded.row.runtimeTargetLinkId, environmentId: loaded.row.id, deletedAt: null },
         include: { machines: { orderBy: { position: 'asc' } } },
     }) : null;
-    const platformRuntime = link?.sourceKind === 'plugin' && !placement && !databaseReadBinding;
+    // A reviewed read setup writes one managed login, so it is a managed-data-role write like any other.
+    const platformRuntime = link?.sourceKind === 'plugin' && !placement;
     const firstTelemetryStamp = syncAcknowledgement && (telemetryChanged || loaded.row.telemetryTokenHash === null)
         ? { machineId: syncAcknowledgement.telemetryMachineId, tokenHash: syncAcknowledgement.telemetryTokenHash } : null;
     const telemetryPublicationMachineIds = telemetryChanged || telemetryCapabilitiesChanged || firstTelemetryStamp
@@ -804,9 +805,12 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         if (preparedContent.content && previous.content) {
             if (![...previous.content.bindings, ...preparedContent.content.bindings].some(isManagedDeploymentDataRoleBindingV1))
                 return deploymentFailure('deployment_conflict');
-        } else if (!executionBinding || executionBinding.actionId !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-            || executionBinding.environmentId !== input.environmentId || input.contentHeaderVersion !== 1 || input.contentBodyVersion !== 1
-            || createDeploymentEnvironmentContentArtifactIdV1({ ...executionBinding, environmentId: input.environmentId }) !== input.contentArtifactId
+        } else if (!executionBinding || !databaseReadBinding && (executionBinding.actionId !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+                || executionBinding.environmentId !== input.environmentId)
+            || input.contentHeaderVersion !== 1 || input.contentBodyVersion !== 1
+            // The read-setup child publishes under its root's bindings writer identity (prepareDeploymentBindingsForHost).
+            || createDeploymentEnvironmentContentArtifactIdV1({ ...executionBinding, actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+                environmentId: input.environmentId }) !== input.contentArtifactId
             || !controllerInstallation || input.referencedSavedSecretRevisions.some(capture => !capture.requiredBindings)
             || managedPlatformCaptures.size === 0 && !previousBindingCaptures.some(capture =>
                 capture.requiredBindings?.some(binding => binding.purpose === 'dataRole'))) {
