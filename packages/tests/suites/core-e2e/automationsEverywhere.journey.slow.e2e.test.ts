@@ -10,12 +10,13 @@ import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { TeamInvitationAcceptResultV1Schema, TeamInvitationCreateResultV1Schema } from '@happier-dev/protocol/teams/invitation';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
+import { SessionTranscriptGetSemanticSuccessSchema } from '@happier-dev/protocol/actions/specs/session/transcript';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowRunGetResultV1Schema,
   WorkflowRunListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ApprovalQueueListResultV1Schema, ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
 import { AutomationEligibleEventCatalogEntryV1Schema } from '@happier-dev/protocol/daemon/automationEligibleEvents';
@@ -32,8 +33,7 @@ import { prepareAutomationsEverywhereDeployment } from '../../src/testkit/automa
 import { hasAutomaticCheckPhase } from '../../src/testkit/automationPending';
 import { waitFor } from '../../src/testkit/timing';
 import { fetchJson } from '../../src/testkit/http';
-import { connectStdioMcp, parseToolJson, type ExternalMcpClient, type ExternalMcpTransport } from '../../src/testkit/externalMcp';
-import { repoRootDir } from '../../src/testkit/paths';
+import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { buildAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/buildAuthBootstrapStorageSnapshot';
@@ -48,11 +48,7 @@ describe('Automations everywhere: composed ship journey', () => {
   let healthEndpoint: ReturnType<typeof createServer> | undefined;
   let ui: StartedUiWeb | undefined;
   let browser: Browser | undefined;
-  let mcp: Readonly<{ client: ExternalMcpClient; transport: ExternalMcpTransport }> | undefined;
   afterEach(async () => {
-    await mcp?.client.close();
-    await mcp?.transport.close();
-    mcp = undefined;
     await browser?.close();
     browser = undefined;
     await ui?.stop();
@@ -74,8 +70,11 @@ describe('Automations everywhere: composed ship journey', () => {
     const a = await fixture.createAccount('A');
     const b = await fixture.createAccount('B');
     await fixture.claimHomeOwner(a);
+    const agent = await createIsolatedFakeClaudeControlShim({
+      testDir, invocationId: 'release-journey', captureEnvironmentKeys: [], logFullStdin: false,
+    });
     const bMachine = await fixture.enrollDaemon(b, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-      PATH: `${toolsDir}${delimiter}${process.env.PATH ?? ''}` } });
+      HAPPIER_CLAUDE_PATH: agent.executablePath, PATH: `${toolsDir}${delimiter}${process.env.PATH ?? ''}` } });
     await fixture.assertKnownGoodSessionControl(b, bMachine);
 
     const createdTeam = await a.executeAsPerson('teams.create', { v: 1, initialOwnerAccountId: readAccountIdFromToken(a.credentials.token), name: 'Release team', requestKey: randomUUID() });
@@ -158,15 +157,19 @@ describe('Automations everywhere: composed ship journey', () => {
       machineId: bMachine.target.machineId,
     });
 
-    expect(await b.execute('machines.access.grant.set', { ...bMachine.target,
-      principal: { kind: 'account', accountId: readAccountIdFromToken(a.credentials.token) }, level: 'manage' }))
-      .toMatchObject({ ok: true });
+    const grantedMachine = await b.executeAsPerson('machines.access.grant.set', { ...bMachine.target,
+      principal: { kind: 'account', accountId: readAccountIdFromToken(a.credentials.token) }, level: 'admin' });
+    expect(grantedMachine, JSON.stringify(grantedMachine)).toMatchObject({ ok: true, result: { kind: 'saved' } });
+    const sourceOwnerMachineGrant = await b.executeAsPerson('machines.access.grant.set', { ...bMachine.target,
+      principal: { kind: 'team', teamId: team.id }, level: 'view' });
+    expect(sourceOwnerMachineGrant, JSON.stringify(sourceOwnerMachineGrant)).toMatchObject({ ok: true, result: { kind: 'saved' } });
     const deployInput = await prepareAutomationsEverywhereDeployment({ serverId: fixture.serverId,
       projectSourceId: shared.source.id, name: 'Production', protection: 'production', machine: bMachine, docker,
       invoke: async (actionId, input) => {
-        const result = await a.execute(actionId, input, { presentUserConfirmation: { actionId } });
-        expect(result.ok, actionId).toBe(true);
-        if (!result.ok) throw new Error(`${actionId}: ${result.errorCode}`);
+        const result = await a.executeReviewed(actionId, input, {
+          externalActionTarget: { kind: 'machine', machineId: bMachine.target.machineId },
+        });
+        if (!result.ok) throw new Error(`${actionId}: ${JSON.stringify(result)}`);
         return result.result;
       } });
     const createdChecks = await a.executeReviewed('workflow.definition.create', { definitionId: randomUUID(),
@@ -183,6 +186,8 @@ describe('Automations everywhere: composed ship journey', () => {
     expect(await a.executeReviewed('artifact.access.grants.set', { artifactId: checks.definitionId,
       principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' })).toMatchObject({ ok: true });
     const linked = await a.executeReviewed('workflow.trigger.add', { workflow: checks.definitionId, visibleTeamId: team.id,
+      // The author reviews the command check when linking it. The actor still chooses whether it may run.
+      actionApproval: 'automatic',
       project: { machineId: bMachine.target.machineId, directory: bMachine.workspaceDir },
       trigger: { kind: 'action', phase: 'before', mode: 'wait', onFailure: 'ask', enabled: true,
         actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], subject: { kind: 'environment',
@@ -190,37 +195,13 @@ describe('Automations everywhere: composed ship journey', () => {
     expect(linked.ok).toBe(true);
     if (!linked.ok) throw new Error(linked.errorCode);
     const trigger = WorkflowTriggerWriteResultV1Schema.parse(linked.result);
-    mcp = await connectStdioMcp({ command: process.execPath,
-      args: [join(repoRootDir(), 'apps/cli/src/index.ts'), 'mcp', 'serve', '--session', session.sessionId],
-      env: { ...process.env, CI: '1', NODE_OPTIONS: fixture.sourceOptions,
-        HAPPIER_HOME_DIR: bMachine.homeDir, HAPPIER_SERVER_URL: fixture.actionServerApiUrl },
-    });
-    const invokeDeploy = () => mcp!.client.callTool({ name: 'action_execute', arguments: {
-      actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, input: deployInput,
-    } });
+    const agentAction = (actionId: typeof DEPLOYMENT_DEPLOY_ACTION_ID_V1 | 'approval.request.get', input: unknown) =>
+      fixture!.executeSessionMcpAction(b, { sessionId: session.sessionId, logPath: agent.logPath }, actionId, input);
     const beginDeploy = async () => {
-      // Observe the real pending card while a live executor may still own the
-      // call. Waiting for the call before the human decision can deadlock Ask.
-      const invocation = invokeDeploy();
-      let reply: Awaited<typeof invocation> | undefined;
-      let failure: unknown;
-      void invocation.then(value => { reply = value; }, error => { failure = error; });
-      let artifactId: string | undefined;
-      await waitFor(async () => {
-        if (failure) throw failure;
-        if (reply) {
-          expect(reply.isError).not.toBe(true);
-          artifactId = ActionApprovalRequestCreatedResultSchema.parse(parseToolJson(reply)).artifactId;
-          return true;
-        }
-        const listed = await b.execute('approval.request.list', { status: 'open', actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1 });
-        expect(listed.ok).toBe(true);
-        if (!listed.ok) throw new Error(listed.errorCode);
-        artifactId = ApprovalQueueListResultV1Schema.parse(listed.result).items[0]?.artifactId;
-        return artifactId !== undefined;
-      }, { failFast: true, context: 'B agent deployment exposes its pending approval' });
-      if (!artifactId) throw new Error('Deployment approval is unavailable');
-      return { artifactId, invocation };
+      const invoked = await agentAction(DEPLOYMENT_DEPLOY_ACTION_ID_V1, deployInput);
+      expect(invoked.ok, JSON.stringify(invoked)).toBe(true);
+      if (!invoked.ok) throw new Error(invoked.errorCode);
+      return ActionApprovalRequestCreatedResultSchema.parse(invoked.result);
     };
     const approval = async (artifactId: string) => {
       const read = await b.execute('approval.request.get', { artifactId });
@@ -229,13 +210,29 @@ describe('Automations everywhere: composed ship journey', () => {
       return ApprovalRequestGetResultV1Schema.parse(read.result).request;
     };
     const pending = await beginDeploy();
-    expect(hasAutomaticCheckPhase(await approval(pending.artifactId), 'consent')).toBe(true);
-    expect(await b.execute('approval.request.decide', { artifactId: pending.artifactId, decision: 'approve',
-      triggerConsent: { automationId: trigger.set.automationId, triggerId: trigger.triggerId, decision: 'allow' } }))
-      .toMatchObject({ ok: true });
-    await waitFor(async () => hasAutomaticCheckPhase(await approval(pending.artifactId), 'override'),
-      { failFast: true, context: 'Release checks fail on the acting Machine and request a human override' });
-    const failedCheck = await approval(pending.artifactId);
+    expect(await approval(pending.artifactId)).toMatchObject({ status: 'open', automaticChecks: {
+      phase: 'consent', humanApprovalRequired: true,
+      consents: [expect.objectContaining({ automationId: trigger.set.automationId, triggerId: trigger.triggerId, decision: 'pending' })],
+    } });
+    await b.withPersonActionClient(async execute => {
+      const allowed = await execute('approval.request.decide', { artifactId: pending.artifactId, decision: 'approve',
+        triggerConsent: { automationId: trigger.set.automationId, triggerId: trigger.triggerId, decision: 'allow' } });
+      expect(allowed, JSON.stringify(allowed)).toMatchObject({ ok: true });
+      expect(await approval(pending.artifactId)).toMatchObject({ status: 'open', automaticChecks: {
+        phase: 'consent', humanApprovalRequired: true,
+        consents: [expect.objectContaining({ automationId: trigger.set.automationId, triggerId: trigger.triggerId, decision: 'allow' })],
+      } });
+      const approved = await execute('approval.request.decide', { artifactId: pending.artifactId, decision: 'approve' });
+      expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true });
+    });
+    let failedCheck = await approval(pending.artifactId);
+    await waitFor(async () => {
+      failedCheck = await approval(pending.artifactId);
+      return hasAutomaticCheckPhase(failedCheck, 'override');
+    }, { failFast: true, context: 'Release checks fail on the acting Machine and request a human override' }).catch(cause => {
+      const phase = 'automaticChecks' in failedCheck ? failedCheck.automaticChecks?.phase : undefined;
+      throw new Error(JSON.stringify({ status: failedCheck.status, phase, execution: failedCheck.execution?.ok }), { cause });
+    });
     expect(failedCheck).toMatchObject({ automaticChecks: { results: [
       expect.objectContaining({ outcome: 'failed', reason: expect.any(String) }),
     ] } });
@@ -254,20 +251,13 @@ describe('Automations everywhere: composed ship journey', () => {
     if (!checkRun.ok) throw new Error(checkRun.errorCode);
     expect(WorkflowRunGetResultV1Schema.parse(checkRun.result).acceptedContext.machineId).toBe(bMachine.target.machineId);
     expect(await a.execute('workflow.run.get', { runId: checkRunId })).toMatchObject({ ok: false, errorCode: 'run_not_found' });
-    expect(await b.execute('approval.request.decide', { artifactId: pending.artifactId, decision: 'reject' }))
+    expect(await b.executeAsPerson('approval.request.decide', { artifactId: pending.artifactId, decision: 'reject' }))
       .toMatchObject({ ok: true });
     expect(await approval(pending.artifactId)).toMatchObject({ status: 'rejected' });
-    const deniedReply = await pending.invocation;
-    const deferred = ActionApprovalRequestCreatedResultSchema.safeParse(parseToolJson(deniedReply));
-    if (!deferred.success) {
-      expect(deniedReply.isError).toBe(true);
-      expect(parseToolJson(deniedReply)).toMatchObject({ errorCode: 'approval_rejected' });
-    }
-    const agentRead = await mcp.client.callTool({ name: 'action_execute', arguments: {
-      actionId: 'approval.request.get', input: { artifactId: pending.artifactId },
-    } });
-    expect(agentRead.isError).not.toBe(true);
-    expect(ApprovalRequestGetResultV1Schema.parse(parseToolJson(agentRead)).request)
+    const agentRead = await agentAction('approval.request.get', { artifactId: pending.artifactId });
+    expect(agentRead.ok, JSON.stringify(agentRead)).toBe(true);
+    if (!agentRead.ok) throw new Error(agentRead.errorCode);
+    expect(ApprovalRequestGetResultV1Schema.parse(agentRead.result).request)
       .toMatchObject({ status: 'rejected', automaticChecks: { results: [
         expect.objectContaining({ outcome: 'failed', reason: failedReason }),
       ] } });
@@ -275,12 +265,11 @@ describe('Automations everywhere: composed ship journey', () => {
 
     await writeFile(join(bMachine.workspaceDir, '.release-check-passed'), 'fixed');
     const retried = await beginDeploy();
-    expect(await b.execute('approval.request.decide', { artifactId: retried.artifactId, decision: 'approve' }))
+    expect(await b.executeAsPerson('approval.request.decide', { artifactId: retried.artifactId, decision: 'approve' }))
       .toMatchObject({ ok: true });
     await waitFor(async () => (await approval(retried.artifactId)).status === 'executed',
       { failFast: true, context: 'Passing Release checks settle B agent deployment' });
     expect(await approval(retried.artifactId)).toMatchObject({ execution: { ok: true } });
-    await retried.invocation;
     await waitFor(async () => (await docker.readInvocations())
       .filter(call => call.args[0] === 'compose' && call.args.includes('up')).length === 1,
     { failFast: true, context: 'Deliberate retry passes Release checks and deploys exactly once' });
@@ -306,8 +295,8 @@ describe('Automations everywhere: composed ship journey', () => {
     expect(setup.ok).toBe(true);
     if (!setup.ok) throw new Error(setup.errorCode);
     const configured = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
-    const diagnosis = await b.execute('workflow.trigger.add', {
-      name: 'Diagnose failed Production deployment',
+    const diagnosis = await b.executeReviewed('workflow.trigger.add', {
+      display: { name: 'Diagnose failed Production deployment', description: null },
       target: { kind: 'inline', definition: { version: 1,
         defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
         blocks: [{ kind: 'step', id: 'diagnose', document: {
@@ -321,7 +310,7 @@ describe('Automations everywhere: composed ship journey', () => {
         observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: selected.observationBinding.materializationRef },
         filter: null, maximumObservationAgeMs: null },
     });
-    expect(diagnosis.ok).toBe(true);
+    expect(diagnosis.ok, JSON.stringify(diagnosis)).toBe(true);
     if (!diagnosis.ok) throw new Error(diagnosis.errorCode);
     const diagnoseTrigger = WorkflowTriggerWriteResultV1Schema.parse(diagnosis.result);
     const automationRuns = async (automationId: string, owner = b) => {
@@ -336,9 +325,8 @@ describe('Automations everywhere: composed ship journey', () => {
     expect(await diagnoseRuns()).toEqual([]);
     await docker.setActivationCommandFailure(true);
     const forced = await beginDeploy();
-    expect(await b.execute('approval.request.decide', { artifactId: forced.artifactId, decision: 'approve' }))
+    expect(await b.executeAsPerson('approval.request.decide', { artifactId: forced.artifactId, decision: 'approve' }))
       .toMatchObject({ ok: true });
-    await forced.invocation;
     await waitFor(async () => {
       const runs = await diagnoseRuns();
       expect(runs.length).toBeLessThanOrEqual(1);
@@ -372,9 +360,10 @@ describe('Automations everywhere: composed ship journey', () => {
     const aEnvironment = await prepareAutomationsEverywhereDeployment({ serverId: fixture.serverId,
       projectSourceId: aSource.source.id, name: 'A health environment', machine: aMachine, docker,
       invoke: async (actionId, input) => {
-        const result = await a.execute(actionId, input, { presentUserConfirmation: { actionId } });
-        expect(result.ok, actionId).toBe(true);
-        if (!result.ok) throw new Error(result.errorCode);
+        const result = await a.executeReviewed(actionId, input, {
+          externalActionTarget: { kind: 'machine', machineId: aMachine.target.machineId },
+        });
+        if (!result.ok) throw new Error(`${actionId}: ${JSON.stringify(result)}`);
         return result.result;
       } });
     const aCatalog = await a.execute('workflow.events.list', aMachine.target);
@@ -413,7 +402,7 @@ describe('Automations everywhere: composed ship journey', () => {
       { v: 1, serverId: fixture.serverId }));
     const notification = 'A saved health check failed; investigate in #ops.';
     const notify = await a.executeReviewed('workflow.trigger.add', {
-      name: 'Any health check fails → message #ops',
+      display: { name: 'Any health check fails → message #ops', description: null },
       target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify-ops',
         actionId: 'session.message.send', input: { sessionId: { kind: 'literal', value: ops.sessionId },
           message: { kind: 'literal', value: notification } } }] } },
@@ -446,9 +435,11 @@ describe('Automations everywhere: composed ship journey', () => {
       expect(runs.length).toBeLessThanOrEqual(1);
       return runs.length === 1 && runs[0]!.state === 'succeeded';
     }, { failFast: true, context: 'An omitted health subject sends one message to #ops' });
-    const delivered = await a.execute('session.events.get', { sessionId: ops.sessionId });
-    expect(delivered).toMatchObject({ ok: true, result: { ok: true,
-      items: expect.arrayContaining([expect.objectContaining({ text: notification })]) } });
+    const delivered = await a.execute('session.transcript.get', { sessionId: ops.sessionId, roles: ['user'] });
+    expect(delivered.ok, JSON.stringify(delivered)).toBe(true);
+    if (!delivered.ok) throw new Error(delivered.errorCode);
+    const transcript = SessionTranscriptGetSemanticSuccessSchema.parse(delivered.result);
+    expect(transcript.items.filter(message => message.text === notification)).toHaveLength(1);
     const deliveredAt = Date.now();
     await waitFor(() => retainedHealth('down', deliveredAt), { context: 'Repeated down observation does not repeat the transition' });
     expect(await notifyRuns()).toHaveLength(1);
