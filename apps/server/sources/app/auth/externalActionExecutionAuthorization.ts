@@ -1374,7 +1374,7 @@ function hasMatchingExecutionEffectFamily(rootActionId: string, effectActionId: 
 /** Private Usage evidence reads retain their original signed Action root. */
 function isPersonalUsageReadEffect(rootActionId: string, effectActionId: string): boolean {
     if (effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || effectActionId === USAGE_PRICE_ACTION_IDS.get) {
-        return rootActionId === 'usage.query';
+        return rootActionId === USAGE_QUERY_ACTION_ID_V1;
     }
     if (rootActionId === 'usage.calendar.export') return effectActionId === 'connectedServices.quota.get';
     return (rootActionId === 'usage.query' || rootActionId === 'usage.export'
