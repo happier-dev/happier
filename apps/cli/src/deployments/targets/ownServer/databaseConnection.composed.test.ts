@@ -482,6 +482,30 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                     expect((await executeAdmin(active)).stdout).toMatch(/^\s*0\s*$/mu);
                 } finally { await opened.connection.close(); }
                 expect(await machineNativeEffectAdmission.run({ operation: { operationId: 'after-query', kind: 'deploy' }, keys }, async () => true)).toBe(true);
+                if (engine === 'mysql') {
+                    detail.environment.dataEditorMode = 'managers';
+                    detail.environment.capabilities.editData = true;
+                    detail.content.bindings = [...detail.content.bindings, { ...use, role: 'write' }];
+                    await executeAdmin("CREATE USER 'happier_rw'@'127.0.0.1' IDENTIFIED BY 'private-native-password';"
+                        + " GRANT SELECT, INSERT, UPDATE, DELETE, SHOW VIEW ON native_fixture.* TO 'happier_rw'@'127.0.0.1'");
+                    const mysqlWrite: DatabaseWriteStatementInputV1 = { operation: 'statement.run', target, mode: 'write',
+                        executionMode: 'transaction', statements: [
+                            { sql: "UPDATE native_items SET note = 'written' WHERE id = 1", parameters: [] },
+                            { sql: 'SELECT CURRENT_USER() AS writer', parameters: [] },
+                        ] };
+                    const writer = await createWriter('native-mysql-writer', new AbortController().signal, mysqlWrite);
+                    activeRoot = writer.writeRoot;
+                    const readsBeforeWrite = secretReads;
+                    const writable = await writer.service.resolve(mysqlWrite, 'write');
+                    try {
+                        expect(await writable.connection.execute(mysqlWrite)).toMatchObject({ ok: true, results: [
+                            { affectedRows: '1' },
+                            { rows: [{ cells: [{ type: 'text', value: 'happier_rw@127.0.0.1' }] }] },
+                        ] });
+                    } finally { await writable.connection.close(); }
+                    expect((await executeAdmin('SELECT note FROM native_fixture.native_items WHERE id = 1')).stdout.trim()).toBe('written');
+                    expect(secretReads - readsBeforeWrite).toBe(1);
+                }
             } finally {
                 await owners.dispose(); await fixture.dispose();
             }
