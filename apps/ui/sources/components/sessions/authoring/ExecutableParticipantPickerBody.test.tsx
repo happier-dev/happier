@@ -18,7 +18,7 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 // Match app startup: install transport boundaries, initialize Sync, then load runtime consumers.
 await loadSyncSingletonForTests();
 const { ExecutableParticipantSelectionV1Schema } = await import('@happier-dev/protocol/discussions/executableParticipants');
-const { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+const { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture, createSessionOwnerViewerFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
 const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { DiscussionParticipantsListResponseV1Schema } = await import('@happier-dev/protocol/discussions/participants');
@@ -264,20 +264,24 @@ describe('inline executable participant selection', () => {
     const accountLifetime = await captureHome();
     const home = accountLifetime.scope.serverId;
     boundary.setRows(home, ['discussion-bot', 'unopened-bot']);
-    for (const id of ['discussion-bot', 'unopened-bot']) {
+    const sessions = ['discussion-bot', 'unopened-bot'].map(id => {
       const session = createSessionFixture({ id, serverId: home, encryptionMode: 'plain',
         metadata: { machineId: 'sleeping', path: '/work', host: 'laptop', flavor: 'codex',
           summary: { text: `Display ${id}`, updatedAt: 1 } }, access: createSessionAccessFixture('owner') });
       const response = createPlainSessionByIdResponseFixture(session);
-      // Readiness is measured independently of the separate display-backfill lifecycle.
-      const { displayProjectionV1 } = createPlainSessionWithDisplayRecordFixture({
+      const record = createPlainSessionWithDisplayRecordFixture({
         id, metadata: session.metadata, metadataVersion: session.metadataVersion,
       });
       boundary.http.answer(home, `/v2/sessions/${id}`, { body: {
-        session: { ...response.session, displayProjectionV1 },
+        session: { ...response.session, displayProjectionV1: record.displayProjectionV1 },
       } });
-    }
-    storage.setState({ machineListByServerId: { [home]: [createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })] } });
+      return { ...record, viewer: createSessionOwnerViewerFixture(session) };
+    });
+    // Names come from the list's admitted projection; readiness still reads only the highlighted Session.
+    boundary.http.answer(home, '/v2/sessions/query', { body: {
+      sessions, nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+    } });
+    await publishMachineInventoryForTest(accountLifetime.scope, [createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })]);
     const roster = DiscussionParticipantsListResponseV1Schema.parse({ discussionId: 'discussion',
       ownerAccountId: accountLifetime.scope.accountId, access: 'owner', grants: [], participants: [] });
     const noEffect = async () => undefined;
@@ -296,7 +300,6 @@ describe('inline executable participant selection', () => {
       expect(screen.getTextContent()).toContain('Display discussion-bot');
       expect(screen.getTextContent()).toContain('Display unopened-bot');
     });
-    // Compact list rows demand visible display documents before readiness is opened.
     // Measure the additional authoritative read caused by highlighting one row.
     const reads = () => boundary.http.requests.filter(request => /^\/v2\/sessions\/(discussion-bot|unopened-bot)$/.test(request.path.split('?')[0]!));
     const displayReads = reads().length;
@@ -313,19 +316,23 @@ describe('inline executable participant selection', () => {
     const accountLifetime = await captureHome();
     const home = accountLifetime.scope.serverId;
     boundary.setRows(home, ['first-bot', 'second-bot']);
-    storage.setState({ machineListByServerId: { [home]: [createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })] } });
-    for (const id of ['first-bot', 'second-bot']) {
+    await publishMachineInventoryForTest(accountLifetime.scope, [createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })]);
+    const sessions = ['first-bot', 'second-bot'].map(id => {
       const session = createSessionFixture({ id, serverId: home, encryptionMode: 'plain',
         metadata: { machineId: 'sleeping', path: '/work', host: 'laptop', flavor: 'codex',
           summary: { text: `Display ${id}`, updatedAt: 1 } }, access: createSessionAccessFixture('owner') });
       const response = createPlainSessionByIdResponseFixture(session);
-      const { displayProjectionV1 } = createPlainSessionWithDisplayRecordFixture({
+      const record = createPlainSessionWithDisplayRecordFixture({
         id, metadata: session.metadata, metadataVersion: session.metadataVersion,
       });
       boundary.http.answer(home, `/v2/sessions/${id}`, { body: {
-        session: { ...response.session, displayProjectionV1 },
+        session: { ...response.session, displayProjectionV1: record.displayProjectionV1 },
       } });
-    }
+      return { ...record, viewer: createSessionOwnerViewerFixture(session) };
+    });
+    boundary.http.answer(home, '/v2/sessions/query', { body: {
+      sessions, nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+    } });
     const reads = () => boundary.http.requests.filter(request => /^\/v2\/sessions\/(first-bot|second-bot)$/.test(request.path.split('?')[0]!));
     const screen = await renderScreen(<InlinePickerHost />);
     const signal = new AbortController();
@@ -337,7 +344,7 @@ describe('inline executable participant selection', () => {
       expect(screen.getTextContent()).toContain('Display first-bot');
       expect(screen.getTextContent()).toContain('Display second-bot');
     });
-    // The list has opened its compact-row display documents; readiness is a fresh read.
+    // The list carries its display projection; readiness is a fresh read.
     const displayReads = reads().length;
     const row = screen.findAllByTestId('second-opinion.reviewer:first-bot').find(node => typeof node.props.onHoverIn === 'function');
     if (!row) throw new Error('Expected the real participant option hover boundary');

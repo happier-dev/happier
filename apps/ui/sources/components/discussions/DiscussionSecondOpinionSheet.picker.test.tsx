@@ -210,6 +210,7 @@ it('quotes the answer as the person read it, without its Markdown syntax', async
 });
 
 it('replaces its start destination immediately with the accepted Discussion and publishes one source message', async () => {
+  await (await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
   const directory = `/work/${'nested-review-source/'.repeat(96)}`;
   const sourceText = Array.from({ length: 128 }, (_, index) => `Source line ${index}: ${directory}/answer.ts`).join('\n');
   const { screen, serverId, markerNavigation } = await mount({ pane: true, intent: 'discuss', sharingEnabled: true,

@@ -22,7 +22,7 @@ const { OverlayPortalProvider, OverlayPortalHost } = await import('@/components/
 const { ContextualStartComposerBody, useContextualStartComposer } = await import('./ContextualStartComposer');
 
 describe('Contextual start role choices', () => {
-    it('opens roles outside the form in a named phone sheet and closes after choosing', async () => {
+    it('opens the labelled role menu outside the phone form and closes after choosing', async () => {
         function Composer() {
             const model = useContextualStartComposer({ enabled: true, selectedIds: new Set(['reviewer']), where: null,
                 sections: [{ category: 'newAgent', section: { kind: 'static', id: 'agents',
@@ -39,9 +39,13 @@ describe('Contextual start role choices', () => {
         await screen.pressByTestIdAsync('contextual-start-who-accessory');
         expect(screen.findByTestId('start-form')!.findAllByProps({ testID: 'choose-role' })).toHaveLength(0);
         expect(screen.findByTestId('start-overlay')!.findAllByProps({ testID: 'choose-role' }).length).toBeGreaterThan(0);
-        expect(screen.findAll(node => node.props.role === 'dialog' && node.props.accessibilityLabel === 'Reviewer role').length).toBeGreaterThan(0);
+        const trigger = () => screen.findByTestId('contextual-start-who-accessory')!;
+        expect(trigger().props.accessibilityLabel).toBe('Reviewer role');
+        expect(trigger().props.accessibilityState?.expanded ?? trigger().props.expanded).toBe(true);
+        expect(screen.findByTestId('contextual-start-who-accessory.popover')?.findAllByProps({ testID: 'choose-role' }).length).toBeGreaterThan(0);
         await screen.pressByTestIdAsync('choose-role');
         expect(screen.findByTestId('choose-role')).toBeNull();
+        expect(trigger().props.accessibilityState?.expanded ?? trigger().props.expanded).toBe(false);
         await screen.unmount();
     });
 
