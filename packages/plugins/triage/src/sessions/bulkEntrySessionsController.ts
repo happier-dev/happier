@@ -755,7 +755,7 @@ export function createTriageBulkEntrySessionsController(
                     return;
                 }
                 if (references.status !== 'resolved') {
-                    setPhase(unavailable(referenceRefusal(references)));
+                    setPhase(unavailable(referenceRefusal(references), references.status === 'referenceUnavailable' ? references.failure : undefined));
                     return;
                 }
                 const preferences = references.profile?.preferences;

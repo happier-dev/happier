@@ -6,6 +6,7 @@ import {
     type TriageActionResolutionHostV1,
     type TriageLaunchProfileOptionV1,
 } from '../../sessions/actionResolution.js';
+import type { TriageNewSessionFailureV1 } from '../header/newSessionSeedCommand.js';
 
 /**
  * The Launch Profiles this mount may offer, read once, WITH what the catalog
@@ -27,6 +28,7 @@ export type TriageLaunchProfilesStateV1 = Readonly<{
     coverage: 'complete' | 'truncated' | 'unreadable' | null;
     /** The read has not come back yet; nothing may be concluded from it. */
     pending: boolean;
+    failure?: TriageNewSessionFailureV1;
 }>;
 
 export function useTriageLaunchProfiles(): TriageLaunchProfilesStateV1 {
@@ -44,7 +46,7 @@ export function useTriageLaunchProfiles(): TriageLaunchProfilesStateV1 {
             const read = await readTriageLaunchProfilesV1(host, { signal: controller.signal });
             if (controller.signal.aborted) return;
             if (read.status !== 'read') {
-                setState({ profiles: [], coverage: null, pending: false });
+                setState({ profiles: [], coverage: null, pending: false, failure: read.failure });
                 return;
             }
             setState({

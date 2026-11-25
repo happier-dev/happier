@@ -9,6 +9,7 @@ import type { TriageActionProfilePreferencesV1 } from './actionLaunch.js';
 import { resolveTriageActionPlacementV1 } from './actionLaunch.js';
 import { readTriageProjectRegistryV1 } from './projectCandidates.js';
 import type { TriageForgeIdentityV1 } from './launchPlacement.js';
+import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 
 /** All configured starts consult the same current project/placement owner. */
 export async function readTriageActionPlacementV1(
@@ -119,7 +120,7 @@ export type TriageActionProfileReadV1 =
         reason: 'truncated' | 'unreadable';
     }>
     /** Nothing answered. Deliberately distinct from "the profile is gone". */
-    | Readonly<{ status: 'unavailable'; profileId: string }>;
+    | Readonly<{ status: 'unavailable'; profileId: string; failure?: TriageNewSessionFailureV1 }>;
 
 /**
  * One Launch Profile as the editor offers it.
@@ -144,7 +145,7 @@ export type TriageLaunchProfilesReadV1 =
          */
         coverage: 'complete' | 'truncated' | 'unreadable';
     }>
-    | Readonly<{ status: 'unavailable' }>;
+    | Readonly<{ status: 'unavailable'; failure?: TriageNewSessionFailureV1 }>;
 
 /**
  * The one call to the profiles catalog.
@@ -161,25 +162,25 @@ export type TriageLaunchProfilesReadV1 =
 async function readTriageLaunchProfileItemsV1(
     host: TriageActionResolutionHostV1,
     options?: PluginCancellationOptions,
-): Promise<Readonly<{
-    items: readonly unknown[];
-    coverage: 'complete' | 'truncated' | 'unreadable';
-}> | null> {
+): Promise<
+    | Readonly<{ status: 'read'; items: readonly unknown[]; coverage: 'complete' | 'truncated' | 'unreadable' }>
+    | Extract<TriageLaunchProfilesReadV1, { status: 'unavailable' }>
+> {
     let result: unknown;
     try {
         result = await host.executeAction(TRIAGE_SPAWN_PROFILES_LIST_ACTION_ID_V1, {}, options);
-    } catch {
-        return null;
+    } catch (error) {
+        return { status: 'unavailable', failure: projectTriageNewSessionFailureV1(error) };
     }
     if (!isRecord(result) || !Array.isArray(result.items) || result.coverage === 'unavailable') {
-        return null;
+        return { status: 'unavailable' };
     }
     const coverage = result.coverage === 'truncated' || result.coverage === 'unreadable'
         ? result.coverage
         : result.truncated === true
             ? 'truncated'
             : 'complete';
-    return { items: result.items, coverage };
+    return { status: 'read', items: result.items, coverage };
 }
 
 export async function readTriageLaunchProfilesV1(
@@ -187,7 +188,7 @@ export async function readTriageLaunchProfilesV1(
     options?: PluginCancellationOptions,
 ): Promise<TriageLaunchProfilesReadV1> {
     const answer = await readTriageLaunchProfileItemsV1(host, options);
-    if (answer === null) return { status: 'unavailable' };
+    if (answer.status === 'unavailable') return answer;
     const profiles: TriageLaunchProfileOptionV1[] = [];
     for (const item of answer.items) {
         if (!isRecord(item)) continue;
@@ -206,7 +207,7 @@ export async function readTriageActionProfileV1(
     options?: PluginCancellationOptions,
 ): Promise<TriageActionProfileReadV1> {
     const answer = await readTriageLaunchProfileItemsV1(host, options);
-    if (answer === null) return { status: 'unavailable', profileId };
+    if (answer.status === 'unavailable') return { ...answer, profileId };
 
     const match = answer.items.find(
         (item) => isRecord(item) && readNonEmptyString(item.id) === profileId,
@@ -244,7 +245,7 @@ export type TriageActionPromptReadV1 =
     | Readonly<{ status: 'unknownInvocation'; invocationId: string }>
     /** The invocation resolved, but not to a prompt that can be delivered. */
     | Readonly<{ status: 'invalidInvocation'; invocationId: string }>
-    | Readonly<{ status: 'unavailable'; invocationId: string }>;
+    | Readonly<{ status: 'unavailable'; invocationId: string; failure?: TriageNewSessionFailureV1 }>;
 
 export async function readTriageActionPromptV1(
     host: TriageActionResolutionHostV1,
@@ -259,8 +260,8 @@ export async function readTriageActionPromptV1(
             { invocationId, ...(argsText === undefined ? {} : { argsText }) },
             options,
         );
-    } catch {
-        return { status: 'unavailable', invocationId };
+    } catch (error) {
+        return { status: 'unavailable', invocationId, failure: projectTriageNewSessionFailureV1(error) };
     }
     if (!isRecord(result)) return { status: 'unavailable', invocationId };
     if (result.status === 'unknownInvocation') return { status: 'unknownInvocation', invocationId };
@@ -333,7 +334,7 @@ export type TriagePromptInvocationsReadV1 =
         invocations: readonly TriagePromptInvocationOptionV1[];
         coverage: 'complete' | 'truncated';
     }>
-    | Readonly<{ status: 'unavailable' }>;
+    | Readonly<{ status: 'unavailable'; failure?: TriageNewSessionFailureV1 }>;
 
 export async function readTriagePromptInvocationsV1(
     host: TriageActionResolutionHostV1,
@@ -342,8 +343,8 @@ export async function readTriagePromptInvocationsV1(
     let result: unknown;
     try {
         result = await host.executeAction(TRIAGE_PROMPT_INVOCATIONS_LIST_ACTION_ID_V1, {}, options);
-    } catch {
-        return { status: 'unavailable' };
+    } catch (error) {
+        return { status: 'unavailable', failure: projectTriageNewSessionFailureV1(error) };
     }
     if (!isRecord(result) || !Array.isArray(result.items) || result.coverage === 'unavailable') {
         return { status: 'unavailable' };
@@ -424,6 +425,7 @@ export type TriageActionReferencesV1 =
         status: 'referenceUnavailable';
         reference: TriageActionReferenceKindV1;
         id: string;
+        failure?: TriageNewSessionFailureV1;
     }>;
 
 export async function resolveTriageActionReferencesV1(
@@ -453,6 +455,7 @@ export async function resolveTriageActionReferencesV1(
             status: profile.status === 'unknownProfile' ? 'referenceMissing' : 'referenceUnavailable',
             reference: 'profile',
             id: profile.profileId,
+            ...(profile.status === 'unavailable' && profile.failure !== undefined ? { failure: profile.failure } : {}),
         };
     }
 
@@ -475,6 +478,7 @@ export async function resolveTriageActionReferencesV1(
                 : 'referenceUnavailable',
             reference: 'prompt',
             id: prompt.invocationId,
+            ...(prompt.status === 'unavailable' && prompt.failure !== undefined ? { failure: prompt.failure } : {}),
         };
     }
 

@@ -184,7 +184,10 @@ export async function runTriageConfiguredHandoffV1(
     if (primary !== undefined && (primary.workflowSubject === null
         || planTriageOfferedActionsV1([action], primary.workflowSubject).length === 0)) return unavailable('configuredActionUnavailable');
     const references = await resolveTriageActionReferencesV1(host, action, cancellation);
-    if (references.status !== 'resolved') return targetUnavailable('action_references_unresolved', references.status);
+    if (references.status !== 'resolved') {
+        const failure = references.status === 'referenceUnavailable' ? references.failure : undefined;
+        return targetUnavailable('action_references_unresolved', failure?.codes[0] ?? references.status, options.resumeStart, failure);
+    }
     const promptText = resolveTriageActionInstructionV1(action, references.prompt?.text ?? null,
         { task: input.task, context: input.context.kind });
     const forgeEvidence = handoffForgeEvidence(input, healthRead);

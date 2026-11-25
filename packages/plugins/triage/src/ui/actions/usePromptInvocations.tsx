@@ -6,6 +6,7 @@ import {
     type TriageActionResolutionHostV1,
     type TriagePromptInvocationOptionV1,
 } from '../../sessions/actionResolution.js';
+import type { TriageNewSessionFailureV1 } from '../header/newSessionSeedCommand.js';
 
 /**
  * The Prompt Library invocations this mount may offer, read once.
@@ -22,6 +23,7 @@ import {
 export type TriagePromptInvocationsStateV1 = Readonly<{
     invocations: readonly TriagePromptInvocationOptionV1[];
     coverage: 'complete' | 'truncated' | null;
+    failure?: TriageNewSessionFailureV1;
 }>;
 
 export function useTriagePromptInvocations(): TriagePromptInvocationsStateV1 {
@@ -36,7 +38,11 @@ export function useTriagePromptInvocations(): TriagePromptInvocationsStateV1 {
         const controller = new AbortController();
         void (async () => {
             const read = await readTriagePromptInvocationsV1(host, { signal: controller.signal });
-            if (controller.signal.aborted || read.status !== 'read') return;
+            if (controller.signal.aborted) return;
+            if (read.status === 'unavailable') {
+                setState(previous => ({ ...previous, failure: read.failure }));
+                return;
+            }
             setState({ invocations: read.invocations, coverage: read.coverage });
         })();
         return () => { controller.abort(); };

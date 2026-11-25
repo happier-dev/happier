@@ -46,6 +46,7 @@ import {
   withTriagePromptTokenV1,
 } from './editorModel.js';
 import type { TriageMountedActionsV1 } from './useTriageActions.js';
+import { ActionFailureDetails } from '../ActionFailureDetails.js';
 import { useTriageLaunchProfiles } from './useLaunchProfiles.js';
 import { useTriagePromptInvocations } from './usePromptInvocations.js';
 
@@ -547,6 +548,11 @@ export function TriageActionsEditor(props: TriageActionsEditorPropsV1): React.Re
                 }}
               />
             </FieldRow>
+            {profiles.failure === undefined ? null : (
+              <ActionFailureDetails code={profiles.failure.codes[0]} requestId={profiles.failure.requestId}
+                inline={{ fallback: translate('plugins.triage.surface.actions.profileReadFailed', 'Could not read Launch Profiles.'),
+                  diagnostics: profiles.failure.codes.slice(1) }} />
+            )}
             {profiles.coverage === 'complete' || profiles.pending ? null : (
               <FieldRow title={translate(
                 'plugins.triage.surface.actions.field.profileIdRaw',
@@ -581,6 +587,11 @@ export function TriageActionsEditor(props: TriageActionsEditorPropsV1): React.Re
                 }}
               />
             </FieldRow>
+            {invocations.failure === undefined ? null : (
+              <ActionFailureDetails code={invocations.failure.codes[0]} requestId={invocations.failure.requestId}
+                inline={{ fallback: translate('plugins.triage.surface.actions.promptReadFailed', 'Could not read Prompt Library entries.'),
+                  diagnostics: invocations.failure.codes.slice(1) }} />
+            )}
             {!promptAllowsArgs || draft.target.promptInvocationId === null ? null : (
               <FieldRow title={translate('plugins.triage.surface.actions.field.promptArgs', 'Prompt arguments')}>
                 <TextField

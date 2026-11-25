@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { getActionSpec, type ActionId } from '@happier-dev/protocol';
 
 import {
@@ -88,6 +89,33 @@ describe('entry placement project reads', () => {
 });
 
 describe('resolveTriageActionReferencesV1', () => {
+    it.each([
+        ['profile', TRIAGE_SPAWN_PROFILES_LIST_ACTION_ID_V1],
+        ['prompt', TRIAGE_PROMPT_INVOCATION_RESOLVE_ACTION_ID_V1],
+    ] as const)('retains the %s owner refusal before an action can start', async (reference, actionId) => {
+        const failure = { codes: ['plugin_action_generation_retired'], requestId: 'reference-request' };
+        const { host, asked } = createHost({
+            [actionId]: () => { throw new PluginError({ code: failure.codes[0], details: { requestId: failure.requestId } }); },
+        });
+        const result = await resolveTriageActionReferencesV1(host, {
+            profileId: reference === 'profile' ? 'reference-id' : null,
+            target: { promptInvocationId: reference === 'prompt' ? 'reference-id' : null },
+        });
+        expect(result).toEqual({ status: 'referenceUnavailable', reference, id: 'reference-id', failure });
+        expect(asked).toEqual([actionId]);
+    });
+
+    it.each([
+        [TRIAGE_SPAWN_PROFILES_LIST_ACTION_ID_V1, readTriageLaunchProfilesV1],
+        [TRIAGE_PROMPT_INVOCATIONS_LIST_ACTION_ID_V1, readTriagePromptInvocationsV1],
+    ] as const)('retains the %s refusal for the editor', async (actionId, read) => {
+        const failure = { codes: ['plugin_action_handler_missing'], requestId: 'catalog-request' };
+        const { host } = createHost({
+            [actionId]: () => { throw new PluginError({ code: failure.codes[0], details: { requestId: failure.requestId } }); },
+        });
+        await expect(read(host)).resolves.toEqual({ status: 'unavailable', failure });
+    });
+
     it('retains managed directory intent from the Profile catalog boundary', async () => {
         const placement = { fixed: { serverId: 'server-1', machineId: 'machine-1' }, directoryIntent: { kind: 'managed' } };
         const { host } = createHost({ [TRIAGE_SPAWN_PROFILES_LIST_ACTION_ID_V1]: {

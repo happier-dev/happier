@@ -899,7 +899,7 @@ export function createTriageEntrySessionStartController(
                 const references = request.resolvedReferences ?? await resolveTriageActionReferencesV1(host, action);
                 if (retired.current) return;
                 if (references.status !== 'resolved') {
-                    setPhase(unavailable(referenceRefusal(references)));
+                    setPhase(unavailable(referenceRefusal(references), references.status === 'referenceUnavailable' ? references.failure : undefined));
                     return;
                 }
                 if (action.workspaceMode === 'pull_request' && request.reviewWorkspace === undefined

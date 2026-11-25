@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
@@ -117,13 +118,16 @@ afterEach(async () => {
 });
 
 describe('action editor draft settlement', () => {
-  it('exposes an empty, uncovered Prompt Library catalog when the host read fails', async () => {
+  it('keeps the Prompt Library catalog uncovered and retains the host read refusal', async () => {
+    const code = 'plugin_action_generation_retired';
+    const requestId = 'prompt-catalog-request';
     const unavailable = {
       invocations: [],
       coverage: null,
+      failure: { codes: [code], requestId },
     } satisfies ReturnType<typeof useTriagePromptInvocations>;
     const executeAction = vi.fn(async () => {
-      throw new Error('Prompt Library unavailable');
+      throw new PluginError({ code, details: { requestId } });
     });
     const surface = defineUiSurface(() => <Text value={JSON.stringify(useTriagePromptInvocations())} />);
     const fixture = await createPluginUiTestkit({
