@@ -111,13 +111,11 @@ export function resolveSessionSpawnNewResultFailureMessageKey(
     if (incompatible === 'requester_credentials_unavailable') return 'newSession.requesterCredentialsUnavailableBody';
     if (incompatible === 'daemon_rpc_unavailable') return 'newSession.daemonRpcUnavailableBody';
     if (incompatible && INCOMPATIBLE_TARGET_NEEDS_UPDATE.has(incompatible)) return 'newSession.actionMethodUnavailable';
-    if (
-        result.code === 'recipient_key_unavailable'
-        || result.code === 'session_access_invalid_recipient_envelope'
-    ) {
-        return 'session.access.repairBody';
+    if (result.code === 'recipient_key_unavailable') {
+        return 'session.access.setup';
     }
-    if (result.code === 'session_data_key_unavailable') {
+    if (result.code === 'session_access_invalid_recipient_envelope' || result.code === 'recipient_envelope_required'
+        || result.code === 'session_data_key_unavailable') {
         return 'session.access.preparationKeyUnavailable';
     }
     if (result.code === 'session_access_external_sharing_disabled') {
@@ -195,7 +193,15 @@ function presentSessionCreationAccessRefusal(code: string): string | null {
         case 'session_access_authentication_unavailable':
         case 'session_access_subject_not_found':
         case 'session_access_subject_ineligible':
+        case 'session_access_external_sharing_disabled':
+        case 'session_access_external_sharing_requires_team_admin':
+        case 'session_access_sharing_unavailable':
+        case 'data_key_not_required':
+        case 'recipient_key_unavailable':
             return presentSessionAccessReason(code).message;
+        case 'recipient_envelope_required':
+        case 'session_access_invalid_recipient_envelope':
+            return t('session.access.preparationKeyUnavailable');
         default:
             return null;
     }

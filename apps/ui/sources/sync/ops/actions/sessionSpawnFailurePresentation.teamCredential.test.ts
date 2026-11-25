@@ -59,7 +59,12 @@ describe('a refused Team credential binding, said once for New Session and Fork'
   it.each([
     ['session_access_subject_not_found', 'session.access.subjectNotFound'],
     ['session_access_subject_ineligible', 'session.access.subjectIneligible'],
-  ] as const)('names the refused audience for %s after a direct start, retained operation, or Fork', async (code, message) => {
+    ['recipient_key_unavailable', 'session.access.setup'],
+    ['recipient_envelope_required', 'session.access.preparationKeyUnavailable'],
+    ['session_access_invalid_recipient_envelope', 'session.access.preparationKeyUnavailable'],
+    ['data_key_not_required', 'session.access.notRequired'],
+    ['session_access_sharing_unavailable', 'session.collaboration.accessUnavailableReason'],
+  ] as const)('keeps the cause for %s after a direct start, retained operation, or Fork', async (code, message) => {
     await preloadTranslations('en');
     setPreferredLanguageFromSettings('en');
     const result = SessionSpawnNewResultV1Schema.parse({ type: 'error', code, retryable: false });
@@ -70,6 +75,23 @@ describe('a refused Team credential binding, said once for New Session and Fork'
       resolveSessionSpawnNewOperationFailureMessage({ errorCode: code, error: code }),
       resolveSessionSpawnErrorDetailFailureMessage(detail),
     ]).toEqual([t(message), t(message), t(message)]);
+  });
+
+  it.each([
+    ['session_access_external_sharing_disabled', 'teams.policy.externalSharingDisabled'],
+    ['session_access_external_sharing_requires_team_admin', 'teams.policy.externalSharingAdmins'],
+  ] as const)('names the affected policy for %s after a direct start, retained operation, or Fork', async (code, policy) => {
+    await preloadTranslations('en');
+    setPreferredLanguageFromSettings('en');
+    const result = SessionSpawnNewResultV1Schema.parse({ type: 'error', code, retryable: false });
+    if (result.type !== 'error') throw new Error('Expected a creation refusal');
+    const detail = normalizeSpawnSessionErrorDetail({ kind: 'session_creation_access_refused', code });
+    const message = `${t('teams.settings.externalSharingSection')}: ${t(policy)}`;
+    expect([
+      resolveSessionSpawnNewResultFailureMessage(result),
+      resolveSessionSpawnNewOperationFailureMessage({ errorCode: code, error: code }),
+      resolveSessionSpawnErrorDetailFailureMessage(detail),
+    ]).toEqual([message, message, message]);
   });
 
   it('gives every closed reason its own sentence in every locale, never a code or a key', async () => {
