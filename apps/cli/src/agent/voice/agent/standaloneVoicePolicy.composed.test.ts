@@ -11,6 +11,9 @@ import { startExecutionRun } from '@/agent/runtime/bridges/executionRun/startExe
 import { ensureExecutionRun } from '@/agent/runtime/bridges/executionRun/ensureExecutionRun';
 import { projectExecutionRunPublicState } from '@/agent/runtime/bridges/executionRun/publicState';
 import { resolveExecutionRunRuntimeBackendTarget } from '@/agent/runtime/bridges/executionRun/backendTargets';
+import { applyExecutionRunAction } from '@/agent/runtime/bridges/executionRun/executionRunApplyAction';
+import { ExecutionRunActionRequestSchema, ExecutionRunActionResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import { VoiceAgentManager } from './VoiceAgentManager';
@@ -42,6 +45,7 @@ type UiHarnessModule = Readonly<{ prepareStandaloneVoicePolicyHarness(): Promise
 const uiHarnessPath = new URL('../../../../../ui/sources/dev/testkit/harness/standaloneVoicePolicyHarness.ts', import.meta.url).href;
 const uiModule: UiHarnessModule = await import(uiHarnessPath);
 await uiModule.prepareStandaloneVoicePolicyHarness();
+const { presentVoiceAgentFailure } = await import('../../../../../ui/sources/voice/agent/presentVoiceAgentFailure.testSupport');
 
 describe('standalone Local Voice policy from UI admission to provider input', () => {
   let directory: string;
@@ -70,6 +74,7 @@ describe('standalone Local Voice policy from UI admission to provider input', ()
     let retainedReadsUnavailable = false;
     let ensuredWithoutPolicyRead: string | undefined;
     let runtimeIndex = 0;
+    let refuseWelcome = mode === 'immediate';
     const createRuntime = () => {
       runtimeIndex += 1;
       const providerSessionId = `voice-provider-${runtimeIndex}`;
@@ -95,6 +100,14 @@ describe('standalone Local Voice policy from UI admission to provider input', ()
             const turnId = input.delivery.turnId;
             publish({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
             publish({ kind: 'turn-start', turnId, startedBy: 'host' });
+            if (refuseWelcome && prompt.includes('exactly this message:')) {
+              refuseWelcome = false;
+              publish({ kind: 'turn-failed', turnId, diagnostic: {
+                code: 'claude.usage_limit', severity: 'error', message: 'The subscription is exhausted.',
+                details: { v: 1, source: 'usage_limit' },
+              } });
+              return { status: 'admitted' };
+            }
             if (!prompt.includes('Annule cette demande.')) {
               publish({ kind: 'message-delta', turnId, channel: 'assistant', text: prompt.includes('reply with exactly READY') ? 'READY' : 'Bonjour.' });
               publish({ kind: 'turn-complete', turnId });
@@ -144,8 +157,12 @@ describe('standalone Local Voice policy from UI admission to provider input', ()
       }
       if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ACTION) {
         welcomeRequests.push(input);
-        const action = input as { runId: string; input?: { welcomeText?: string } };
-        return { ok: true, result: await activeManager.welcome({ voiceAgentId: action.runId, welcomeText: action.input?.welcomeText }) };
+        const { runId, ...params } = ExecutionRunActionRequestSchema.parse(input);
+        const result = await applyExecutionRunAction({
+          runId, params, runs, controllers, voiceAgentManager: activeManager, parentProvider: 'claude',
+          startRun: async () => { throw new Error('Welcome must stay on the admitted Run'); },
+        });
+        return ExecutionRunActionResponseSchema.parse(result);
       }
       if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) {
         if (retainedReadsUnavailable) throw new Error('Home run-list transport unavailable');
@@ -174,12 +191,19 @@ describe('standalone Local Voice policy from UI admission to provider input', ()
     expect(hydrated.voicePolicy).toEqual(handle.voicePolicy);
     // A changed Account preference cannot suppress the adopted run's immediate
     // welcome or replace its admitted reply language before its first turn.
-    await ui.welcome();
-    if (mode === 'immediate') expect(welcomeRequests).toEqual([{
-      runId: handle.voiceAgentId, actionId: 'voice_agent.welcome',
-      input: { welcomeText },
-    }]);
-    else expect(welcomeRequests).toEqual([]);
+    if (mode === 'immediate') {
+      const refusal = await ui.welcome().then(() => null, (error: unknown) => error);
+      expect(readRpcErrorCode(refusal)).toBe('usage_limit');
+      expect(presentVoiceAgentFailure(refusal)).toMatchObject({
+        failureKind: 'provider_error', failureMessage: expect.any(String), failureTitle: expect.any(String),
+      });
+      await ui.welcome();
+      const request = { runId: handle.voiceAgentId, actionId: 'voice_agent.welcome', input: { welcomeText } };
+      expect(welcomeRequests).toEqual([request, request]);
+    } else {
+      await ui.welcome();
+      expect(welcomeRequests).toEqual([]);
+    }
     if (mode !== 'immediate') expect(prompts.filter((prompt) => !prompt.includes('reply with exactly READY'))).toEqual([]);
     await activeManager.sendTurn({ voiceAgentId: handle.voiceAgentId, userText: 'Explique le projet.' });
     const policyPrompt = prompts[0];

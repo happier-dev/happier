@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
-import { waitForTestEvent } from '@/dev/testkit';
+import { createDeferred, waitForTestEvent } from '@/dev/testkit';
+import { installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } from '@/dev/testkit/harness/voiceWebRtcHarness';
+import { presentVoiceAgentFailure } from '@/voice/agent/presentVoiceAgentFailure.testSupport';
+import { readLocalConversationVoiceSettings, voiceSettingsParse, writeLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import tweetnacl from 'tweetnacl';
 import { createPeerTcpTunnelApplicationSubstreamSession } from '@happier-dev/peer-transport';
 import { decodePeerTcpTunnelBinaryFrameV2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
@@ -25,6 +28,8 @@ import { dispatchDaemonVoiceInferenceSttBinaryAppend } from '../../../../../cli/
 import { createDaemonSpeechStreamSender } from './DaemonSpeechStreamSender';
 import { createDaemonSpeechStreamCarrierAdapter } from './DaemonSpeechStreamCarrier';
 import { createDaemonSpeechStreamTunnelTransport } from './DaemonSpeechStreamTunnelTransport';
+import { createDaemonStreamingSttController } from './DaemonStreamingSttController';
+import { createWebDaemonSpeechPcmCapture } from './WebDaemonSpeechPcmCapture.web';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 // Cross-app source composition stays in the documented .composed. test category.
@@ -182,22 +187,49 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
       carrierAdapter: createDaemonSpeechStreamCarrierAdapter({ routeKind: 'server_relay', binaryCapable: true }),
     });
     try {
-      await sender.start();
       if (slowPhase === 'response_timeout') {
-        await expect(sender.pushChunk(new Uint8Array(640))).resolves.toMatchObject([{ type: 'partial', seq: 0 }]);
-        holdReplies = true;
-        const inFlight = sender.pushChunk(new Uint8Array(640)).catch((error: unknown) => error);
-        await waitForTestEvent(subscribe, () => expect(replies).toHaveLength(1));
-        expect(received).toHaveLength(2);
-        await expect(inFlight).resolves.toMatchObject({ code: 'request_timeout', cause: {
-          ok: false, errorCode: 'request_timeout',
-          error: 'daemon_voice_inference_substream_response_timeout', retryable: true,
-        } });
+        const audio = new TestVoiceAudioContext();
+        const browser = installVoiceWebRtcBrowserBoundary({ createAudioContext: () => audio as unknown as AudioContext });
+        const voice = voiceSettingsParse({ providerId: 'local_conversation' });
+        const settings = writeLocalConversationVoiceSettings(voice, {
+          ...readLocalConversationVoiceSettings(voice),
+          stt: { provider: 'local_neural', localNeural: { assetId: 'pack', language: 'en', execution: 'daemon' } },
+        });
+        const capture = createDaemonStreamingSttController({
+          getSettings: () => ({ voice: settings }),
+          createClient: () => ({ createStreamingSttSender: async () => sender }),
+          createPcmCapture: createWebDaemonSpeechPcmCapture,
+        });
+        const partial = createDeferred<string>();
+        const failure = createDeferred<unknown>();
+        try {
+          await capture.start({ sessionId: 'voice-call', capturePurpose: 'conversation', micSession: browser.micSession,
+            sink: {
+              onAudioStarted() {}, onFinal() {}, onEndpoint() {},
+              onPartial: text => partial.resolve(text), onError: error => failure.resolve(error),
+            } });
+          audio.emitInput(new Float32Array(480).fill(0.25));
+          await expect(Promise.race([partial.promise, failure.promise])).resolves.toBe('0');
+          holdReplies = true;
+          audio.emitInput(new Float32Array(480).fill(0.25));
+          await waitForTestEvent(subscribe, () => expect(replies).toHaveLength(1));
+          expect(received).toHaveLength(2);
+          const error = await failure.promise;
+          expect(error).toMatchObject({ failureCause: { errorCode: 'request_timeout' } });
+          expect(presentVoiceAgentFailure(error)).toMatchObject({
+            failureKind: 'provider_error', recovery: { action: 'retry' },
+          });
+        } finally {
+          await capture.stop();
+          await browser.micSession.teardown();
+          browser.restore();
+        }
         expect({ sentDataFrames, acknowledgementWaits, releasedWaits }).toEqual({
           sentDataFrames: 2, acknowledgementWaits: 2, releasedWaits: 2,
         });
         return;
       }
+      await sender.start();
       if (slowPhase === 'disconnect') {
         await expect(sender.pushChunk(new Uint8Array(640))).resolves.toMatchObject([{ type: 'partial', seq: 0 }]);
         holdReplies = true;
