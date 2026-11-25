@@ -614,14 +614,16 @@ describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
 });
 
 describe('materializePrepublicationWorkspacePackageRoots', () => {
-  it('keeps a shared private runtime dependency resolvable from each public author root', () => {
+  it('preserves compact Protocol exports in the private dependency of each public author root', () => {
     const root = createTempRoot('workspace-public-author-shared-private-');
     const bundle = createPrepublicationBundleWriter({ sourceRoot: join(root, 'source'), destinationRoot: join(root, 'author') });
+    const protocolManifest = readPackageJson(fileURLToPath(new URL('../../../protocol/', import.meta.url)));
     const protocol = bundle('@happier-dev/protocol', 'protocol', {
       happier: undefined,
-      exports: { './plugins/contributions/ui/v2': './dist/index.js' },
+      exports: protocolManifest.exports,
     });
-    writeFileSync(join(protocol.srcDir, 'dist/index.js'), 'export const admitted = "canonical-node";\n');
+    mkdirSync(join(protocol.srcDir, 'dist/plugins'));
+    writeFileSync(join(protocol.srcDir, 'dist/plugins/contributionIdentity.js'), 'export const admitted = "canonical-node";\n');
     const sdk = bundle('@happier-dev/plugin-sdk', 'sdk', {
       dependencies: { '@happier-dev/protocol': '0.0.0' },
       bundledDependencies: ['@happier-dev/protocol'],
@@ -633,14 +635,23 @@ describe('materializePrepublicationWorkspacePackageRoots', () => {
     // Physical distributed package bytes are the boundary. Both root modules
     // exercise Node's real sibling/private dependency resolution after publication.
     for (const entry of [sdk, ui]) {
-      writeFileSync(join(entry.srcDir, 'dist/index.js'), 'export { admitted } from "@happier-dev/protocol/plugins/contributions/ui/v2";\n');
+      writeFileSync(join(entry.srcDir, 'dist/index.js'), [
+        'export { admitted } from "@happier-dev/protocol/plugins/contributionIdentity";',
+        'export { admitted as alias } from "@happier-dev/protocol/plugins/contribution-identity";',
+      ].join('\n'));
     }
     materializePrepublicationWorkspacePackageRoots({ bundles: [sdk, ui, protocol],
       rootPackageNames: ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui'] });
     for (const entry of [sdk, ui]) {
+      const installed = readPackageJson(join(entry.destDir, 'node_modules/@happier-dev/protocol'));
+      // Node 24 reparses the export map while linking each relative .js import.
+      // Keep direct module paths covered by one pattern through author preparation.
+      expect(installed.exports).toHaveProperty(['./*'], { types: './dist/*.d.ts', default: './dist/*.js' });
+      expect(installed.exports).not.toHaveProperty(['./plugins/contributionIdentity']);
+      expect(Object.keys(installed.exports as object).sort()).toEqual(Object.keys(protocolManifest.exports as object).sort());
       expect(execFileSync(process.execPath, ['--input-type=module', '--eval',
-        `const value = await import(${JSON.stringify(pathToFileURL(join(entry.destDir, 'dist/index.js')).href)}); process.stdout.write(value.admitted);`],
-      { encoding: 'utf8' })).toBe('canonical-node');
+        `const value = await import(${JSON.stringify(pathToFileURL(join(entry.destDir, 'dist/index.js')).href)}); process.stdout.write(JSON.stringify([value.admitted, value.alias]));`],
+      { encoding: 'utf8' })).toBe('["canonical-node","canonical-node"]');
     }
     expect(existsSync(protocol.destDir)).toBe(false);
     expect(readPackageJson(ui.destDir).bundledDependencies).toEqual(['@happier-dev/protocol']);
