@@ -5,19 +5,24 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { HappierInputField, type HappierInputPickerPort } from '@happier-dev/plugin-ui/presentation';
 import type { WorkflowActionLeafV1, WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import {
+    bindExternalActionExecutionAuthorizationHttpPathV1,
+    ExternalActionExecutionAuthorizationRequestV1Schema,
+    ExternalActionRequestEnvelopeSchema,
+} from '@happier-dev/protocol/actions/externalActionApi';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { renderScreen, findAllHostTestInstances, pressTestInstanceAsync } from '@/dev/testkit/render/renderScreen';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture, createPlainSessionByIdResponseFixture, createPlainSessionCurrentProjectionRecordFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
-import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createPluginArtifactTransferBoundary, pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { readWorkflowActionFieldRequests } from '../presentation/workflowActionFieldRequests';
 import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
@@ -127,7 +132,10 @@ describe('Workflow inputs through real Action option resolution', () => {
     });
     afterEach(async () => { await standardCleanup(); });
 
-    async function connectHome(machine?: ReturnType<typeof createMachineFixture>) {
+    async function connectHome(
+        machine?: ReturnType<typeof createMachineFixture>,
+        homeResponse?: (target: URL, init: RequestInit | undefined, machine: ExternalActionAccountHttpBoundary['machine']) => Promise<Response | null>,
+    ) {
         const homeFixtureId = await harness.addHome({ name: 'Input Home', serverUrl: 'https://inputs.example', serverIdentityId: 'srv_inputs', accountId: 'account-a', currentAccount: true });
         const actions = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://inputs.example', serverIdentityId: 'srv_inputs',
             accountId: 'account-a', machineId: 'input-relay', actionId: 'action.options.resolve', tokenEpoch: 0,
@@ -140,6 +148,8 @@ describe('Workflow inputs through real Action option resolution', () => {
             credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
             request: async (url, init) => {
                 const target = new URL(String(url));
+                const response = await homeResponse?.(target, init, actions.machine);
+                if (response) return response;
                 if (target.pathname === '/v1/actions/action.options.resolve') rpc.actionSignals.push(init?.signal);
                 return await actions.handle(target, init) ?? harness.request(url, init);
             } });
@@ -302,6 +312,78 @@ describe('Workflow inputs through real Action option resolution', () => {
         await act(async () => { error.props.action.onPress(); });
         await pressTestInstanceAsync(choiceTriggers(panel)[0]);
         await waitForHomeGovernance(() => expect(choiceRowLabels(panel)).toEqual(reply.options.map(option => option.label)));
+    });
+
+    it('reads Notify choices on the selected draft Machine after an offline default refused', async () => {
+        const { WorkflowActionBlockEditor } = await import('../editor/WorkflowActionBlockEditor');
+        const { WorkflowProjectTargetControl } = await import('../editor/WorkflowProjectTargetControl');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces');
+        const { useWorkflowAuthoringHost } = await import('../screens/useWorkflowAuthoringHost');
+        const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        const { buildWorkflowEditorDraftFromDefinition } = await import('@/sync/domains/workflows/workflowAuthoring');
+        const { PluginProjectionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const offline = createMachineFixture({ id: 'offline-default', active: false, storageMode: 'plain' });
+        const online = createMachineFixture({ id: 'input-relay', storageMode: 'plain', activeAt: Date.now() });
+        const requestedMachines: string[] = [];
+        rpc.machine.mockResolvedValue({ protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1 }) });
+        const block: WorkflowActionLeafV1 = { id: 'notify', kind: 'action', actionId: 'notifications.notify_me',
+            input: { message: { kind: 'literal', value: 'Ready' }, channels: { kind: 'literal', value: [] } } };
+        const choices = { ...reply, actionId: block.actionId, fieldPath: 'channels' };
+        rpc.action.mockResolvedValue(choices);
+        const offlineAction = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://inputs.example', serverIdentityId: 'srv_inputs',
+            accountId: 'account-a', machineId: offline.id, actionId: 'action.options.resolve', tokenEpoch: 0,
+            execute: () => { throw new Error('The Home cannot relay to the offline Machine'); } });
+        const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1('action.options.resolve');
+        const offlineRow = { ...offlineAction.machine, active: false, activeAt: offline.activeAt };
+        const { serverId } = await connectHome(online, async (url, init, onlineRow) => {
+            if (url.pathname === '/v1/machines') return Response.json([offlineRow, onlineRow]);
+            if (url.pathname === '/v1/machines/read-batch' && init?.method === 'POST') {
+                return createMachineReadBatchResponseFixture(init.body, id =>
+                    id === offlineRow.id ? offlineRow : id === onlineRow.id ? onlineRow : null);
+            }
+            if (url.pathname === `/v1/machines/${offline.id}`) return Response.json({ machine: offlineRow });
+            if (url.pathname === mintPath) {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                return request.machineId === offline.id ? offlineAction.handle(url, init) : null;
+            }
+            if (url.pathname !== '/v1/actions/action.options.resolve') return null;
+            const raw = JSON.parse(String(init?.body));
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(raw);
+            const envelope = request.success ? request.data.envelope : ExternalActionRequestEnvelopeSchema.parse(raw);
+            if (envelope.target?.kind !== 'machine') throw new Error('Expected a Machine-addressed Notify choice request');
+            const { machineId } = envelope.target;
+            requestedMachines.push(machineId);
+            return machineId === offline.id ? Response.json({ error: 'invalid_request', code: 'target_unavailable',
+                requestId: envelope.requestId,
+                diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } }, { status: 409 }) : null;
+        });
+        storage.getState().applyMachines([offline, online], true, { sourceServerId: serverId });
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'notify', name: 'Notify',
+            definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
+        function Editor({ selected }: { selected: typeof online }) {
+            const projectTarget = { machineId: selected.id, directory: '/work' };
+            const { composerScope } = useWorkflowAuthoringHost({ serverId, projectTarget });
+            return <>
+                <WorkflowProjectTargetControl target={projectTarget} machineName={selected.id} testIDPrefix="where" />
+                <WorkflowActionBlockEditor block={block} draft={draft} composerScope={composerScope} selected
+                    ordinal={1} total={1} actions={[]} onSelect={() => {}} onChangeBlock={() => {}} testIDPrefix="editor" />
+            </>;
+        }
+        const screen = await renderScreen(<Editor selected={offline} />);
+        await waitForHomeGovernance(() => {
+            expect(screen.getTextContent()).toContain(offline.id);
+            expect(screen.findAllByType(SurfaceStateCard).map(card => card.props.diagnosticCode)).toContain('target_unavailable');
+        });
+        await screen.update(<Editor selected={online} />);
+        const sendToChoice = () => choiceTriggers(screen).find(node => String(node.props.accessibilityLabel).startsWith('Send to:'));
+        await waitForHomeGovernance(() => {
+            expect(screen.getTextContent()).toContain(online.id);
+            expect(sendToChoice()).toBeDefined();
+            expect(sendToChoice()?.props.disabled).not.toBe(true);
+        });
+        await pressTestInstanceAsync(sendToChoice());
+        await waitForHomeGovernance(() => expect(choiceRowLabels(screen)).toContain('Phone'));
+        expect(requestedMachines).toEqual([offline.id, online.id]);
     });
 
     it.each([
