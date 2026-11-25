@@ -424,10 +424,10 @@ async function readUiUsagePools(context: UsageQueryAccountContext, opened: reado
     onProgress: (pools: UsagePoolSourceSnapshot[]) => void): Promise<readonly UsagePoolSourceSnapshot[]> {
     if (!opened.some(snapshot => snapshot.value.some(pool => pool.selection.status === 'pending'))) return opened;
     const reads = new Map<string, Promise<UsageQueryPoolSnapshot['selection']>>();
-    const values = opened.map(snapshot => ({ query: snapshot.query, value: [...snapshot.value] }));
+    let values = [...opened];
     try {
         await withUiConnectedServiceReader(context, signal, async (_quota, readSelection) => {
-            await Promise.all(values.flatMap(snapshot => snapshot.value.map(async (pool, index) => {
+            await Promise.all(opened.flatMap((snapshot, queryIndex) => snapshot.value.map(async (pool, poolIndex) => {
                 const machineId = pool.selection.machineId;
                 if (!machineId || pool.selection.status !== 'pending') return;
                 const key = JSON.stringify([machineId, pool.group]);
@@ -447,8 +447,14 @@ async function readUiUsagePools(context: UsageQueryAccountContext, opened: reado
                     })();
                     reads.set(key, read);
                 }
-                snapshot.value[index] = { ...pool, selection: await read };
+                const selection = await read;
                 requireCurrent(context, signal);
+                // The projection retains each query's published pool list as an input.
+                const next = [...values];
+                const value = [...next[queryIndex]!.value];
+                value[poolIndex] = { ...pool, selection };
+                next[queryIndex] = { query: snapshot.query, value };
+                values = next;
                 onProgress(values);
             })));
         });
@@ -456,10 +462,9 @@ async function readUiUsagePools(context: UsageQueryAccountContext, opened: reado
         requireCurrent(context, signal);
         const errorCode = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error
             && typeof error.code === 'string' ? error.code : 'connected_service_request_failed');
-        for (const snapshot of values) {
-            snapshot.value = snapshot.value.map(pool => pool.selection.machineId
-                ? { ...pool, selection: { status: 'error', machineId: pool.selection.machineId, errorCode } } : pool);
-        }
+        values = values.map(snapshot => ({ ...snapshot, value: snapshot.value.map(pool =>
+            pool.selection.status === 'pending' && pool.selection.machineId
+                ? { ...pool, selection: { status: 'error', machineId: pool.selection.machineId, errorCode } } : pool) }));
         onProgress(values);
     }
     return values;

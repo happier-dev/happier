@@ -211,8 +211,10 @@ export type UsagePoolSelectionState =
   | (ResolvedPoolSelection & Readonly<{ memberStatus: UsagePoolMemberStatus; refreshError?: 'failed' | 'no_machine' }>)
   | Exclude<ConnectedServicePoolSelectionGetResponseV1, ResolvedPoolSelection>
   | 'loading'
+  | 'not_loaded'
   | 'failed'
   | 'no_machine'
+  | 'unsupported'
   /** Several Machines are in scope and each keeps its own order: the person chooses whose order to see. */
   | 'choose_machine';
 
@@ -232,9 +234,11 @@ export function useUsagePoolSelections(
       ? { ...selection.value, ...(selection.errorCode ? {
         refreshError: selection.errorCode === 'no_machine' ? 'no_machine' as const : 'failed' as const,
       } : {}) } : selection.value) ??
-      (selection.status === 'pending' || selection.status === 'not_loaded' ? 'loading' :
-        selection.errorCode === 'no_machine' ? 'no_machine'
-          : selection.status === 'unknown' && !selection.machineId ? 'choose_machine' : 'failed');
+      (selection.status === 'pending' && selection.machineId ? 'loading'
+        : selection.status === 'not_loaded' || selection.status === 'pending' ? 'not_loaded'
+        : selection.errorCode === 'no_machine' ? 'no_machine'
+        : selection.status === 'unknown' && !selection.machineId ? 'choose_machine'
+        : selection.status === 'unsupported' ? 'unsupported' : 'failed');
     if (typeof state === 'string' || 'status' in state) return [key, state] as const;
     const { selected, excluded, decisionTrace } = state.selection;
     // A machine's empty trace is not evidence that the pool's accounts are unusable.

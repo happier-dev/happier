@@ -365,15 +365,16 @@ it('renders every overlapping pool membership without duplicating standalone Acc
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
-  const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
-    <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId="home" testID="capacity" />
-  </InjectedAuthProvider>);
+  const renderSlice = (next: typeof slice) => <InjectedAuthProvider credentials={null}>
+    <WidgetPresentationProvider value={{ size: 'large', footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'regular' },
+      geometry: { width: 1180, height: 640 } }}>
+      <UsageCapacityWidget id="usage_capacity" model={model} slice={next} query={query} serverId="home" testID="capacity" />
+    </WidgetPresentationProvider>
+  </InjectedAuthProvider>;
+  const screen = await renderScreen(renderSlice(slice));
   expect(screen.findAllHostsByTestId('capacity.cell.work')).toHaveLength(2);
   expect(screen.findAllHostsByTestId('capacity.cell.personal')).toHaveLength(2);
   expect(screen.findAllHostsByTestId('capacity.cell.standalone')).toHaveLength(1);
-  const renderSlice = (next: typeof slice) => <InjectedAuthProvider credentials={null}>
-    <UsageCapacityWidget id="usage_capacity" model={model} slice={next} query={query} serverId="home" testID="capacity" />
-  </InjectedAuthProvider>;
   await screen.update(renderSlice({ ...slice, pools: slice.pools!.map(pool => ({ ...pool,
     selection: { status: 'error', machineId: 'machine', errorCode: 'MACHINE_RPC_TIMEOUT' },
   })) }));
@@ -389,10 +390,25 @@ it('renders every overlapping pool membership without duplicating standalone Acc
         } } }),
     } };
   }) };
+  const [firstPool, secondPool] = recovered.pools;
+  expect(firstPool).toBeDefined();
+  expect(secondPool).toBeDefined();
+  const secondSelection = (selection: NonNullable<typeof slice.pools>[number]['selection']) =>
+      renderSlice({ ...slice, pools: [firstPool!, { ...secondPool!, selection }] });
+  await screen.update(secondSelection({ status: 'pending', machineId: 'machine' }));
+  expect(screen.findHostByTestId('capacity.usedFirst.first.work')).not.toBeNull();
+  expect(screen.getTextContent()).toContain(t('usage.board.plans.hintLoading'));
+  await screen.update(secondSelection({ status: 'not_loaded' }));
+  expect(screen.getTextContent()).not.toContain(t('usage.board.plans.hintLoading'));
+  expect(screen.getTextContent()).toContain(t('usage.board.page.notReadTitle'));
+  await screen.update(secondSelection({ status: 'unsupported', machineId: 'machine', errorCode: 'unsupported' }));
+  expect(screen.getTextContent()).toContain(t('usage.board.plans.usedFirstUnsupported'));
+  expect(screen.getTextContent()).not.toContain(t('usage.board.plans.hintLoading'));
   await screen.update(renderSlice(recovered));
   expect(screen.findHostByTestId('capacity.usedFirst.cause')).toBeNull();
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.usedFirstReadFailed'));
   expect(screen.findAllHostsByTestId('capacity.cell.work')).toHaveLength(2);
+  expect(screen.findHostByTestId('capacity.usedFirst.second.work')).not.toBeNull();
 });
 
 it('keeps each pool in tiles at a desktop width with eleven accounts, frames a pool of one beside another pool, and says a percent-only reading as "left" (r226 #63)', async () => {
@@ -907,7 +923,7 @@ it('says Limits beside other widgets as the account the next session uses: its f
     });
   });
   const base = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota },
-    pools: [{ query, value: [{ group: { service, groupId: 'team' }, memberAccountIds: ['work', 'credit-backed'], activeAccountId: 'work', selection: { status: 'pending' } }] }],
+    pools: [{ query, value: [{ group: { service, groupId: 'team' }, memberAccountIds: ['work', 'credit-backed'], activeAccountId: 'work', selection: { status: 'pending', machineId: 'machine' } }] }],
   }, bundledUsageModelPriceCatalog).results[0]!;
   // The selector's current pick is 'work' (60% left), not the tightest account ('spare', used up).
   const slice = { ...base, pools: base.pools!.map(pool => {

@@ -183,9 +183,10 @@ function unreadText(
   state: Exclude<UsagePoolSelectionState, Readonly<{ selection: Selection }>>,
 ): string {
   if (state === 'loading') return t('usage.board.plans.hintLoading');
+  if (state === 'not_loaded') return t('usage.board.page.notReadTitle');
   if (state === 'no_machine') return t('usage.board.plans.usedFirstNoMachine');
   if (state === 'choose_machine') return t('usage.board.plans.usedFirstPerMachine');
-  if (state !== 'failed' && state.code === 'unsupported')
+  if (state === 'unsupported' || (typeof state === 'object' && state.code === 'unsupported'))
     return t('usage.board.plans.usedFirstUnsupported');
   return t('usage.board.plans.usedFirstReadFailed');
 }
@@ -199,7 +200,7 @@ function readSharedUnreadCause(
   selections: ReadonlyMap<string, UsagePoolSelectionState>,
 ): string | null {
   const causes = pools.flatMap((pool) => {
-    const state = selections.get(pool.key) ?? 'loading';
+    const state = selections.get(pool.key) ?? 'not_loaded';
     return typeof state === 'string' || 'status' in state ? [unreadText(state)]
       : state.refreshError ? [unreadText(state.refreshError)] : [];
   });
@@ -229,7 +230,7 @@ export function UsagePoolQueue(props: PoolOrderProps) {
   const named = props.pools.filter((pool) => pool.name);
   // A pool with no order to show (unread, or the selector lists no member) is a name and at most a cause; those share
   // one quiet "Used first" label instead of each repeating it as a heading with nothing under it.
-  const stateOf = (pool: UsagePlanPool) => props.selections.get(pool.key) ?? 'loading';
+  const stateOf = (pool: UsagePlanPool) => props.selections.get(pool.key) ?? 'not_loaded';
   const bare = named.filter((pool) => readOrderedQueue(stateOf(pool)) === null);
   // Beside pools that show an order (each titled "Used first · name"), the others are simply "Other pools".
   const bareTitle = t(bare.length < named.length ? 'usage.board.plans.queueOtherTitle' : 'usage.board.plans.queueTitle');
@@ -347,7 +348,7 @@ function PoolQueue(
 ) {
   const text = usePlanText();
   const label = props.pool.name ?? null;
-  const state = readOrderedQueue(props.selections.get(props.pool.key) ?? 'loading');
+  const state = readOrderedQueue(props.selections.get(props.pool.key) ?? 'not_loaded');
   if (!label || !state) return null;
   const title = `${t('usage.board.plans.queueTitle')} · ${label}`;
   const selection = state.selection;
@@ -499,7 +500,7 @@ export function UsagePoolSteps(props: PoolOrderProps) {
     <View testID={props.testID} style={styles.pools}>
       {props.pools.map((pool) => {
         const label = pool.name ?? null;
-        const state = props.selections.get(pool.key) ?? 'loading';
+        const state = props.selections.get(pool.key) ?? 'not_loaded';
         if (!label) return null;
         if (typeof state === 'string' || 'status' in state) {
           return (

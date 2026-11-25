@@ -6293,11 +6293,15 @@ describe('usage query captured Resource adapter', () => {
     let unavailable = false;
     let timedOut = true;
     let deniedRpcReads = 0;
+    let heldSecondSelection: ReturnType<typeof createDeferred<void>> | undefined;
+    const selectionReads: string[] = [];
     scmTransport.mockImplementation(async (input: { machineId: string; payload: { group: { service: typeof service; groupId: string } } }) => {
+      selectionReads.push(input.payload.group.groupId);
       if (timedOut) throw Object.assign(new Error('Selector timed out'), { code: 'MACHINE_RPC_TIMEOUT' });
       if (denied) { deniedRpcReads++; throw new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN); }
       if (unavailable) return { status: 'unavailable', code: 'connected_account_daemon_runtime_unavailable' };
       expect(input.machineId).toBe('selected');
+      if (input.payload.group.groupId === 'second') await heldSecondSelection?.promise;
       const profileId = input.payload.group.groupId === 'first' ? selectedId : 'work';
       const excluded = input.payload.group.groupId === 'first'
         ? [{ profileId: profileId === 'work' ? 'personal' : 'work', reason: 'auth_invalid' as const }] : [];
@@ -6329,8 +6333,21 @@ describe('usage query captured Resource adapter', () => {
       // capture helper: distinct pool targets share this finite read's bearer.
       const { TokenStorage } = await import('@/auth/storage/tokenStorage');
       const credentialReads = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
-      await entry.refresh();
+      const beforeSelectionRead = selectionReads.length;
+      heldSecondSelection = createDeferred<void>();
+      const refreshing = entry.refresh();
+      const readPoolStates = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.pools
+        ?.map(pool => [pool.group.groupId, pool.selection.status]);
+      try {
+        await expect.poll(readPoolStates).toEqual([['first', 'available'], ['second', 'pending']]);
+        expect(selectionReads.slice(beforeSelectionRead).sort()).toEqual(['first', 'second']);
+      } finally {
+        heldSecondSelection.resolve();
+        await refreshing;
+      }
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(readPoolStates()).toEqual([['first', 'available'], ['second', 'available']]);
+      expect(selectionReads.slice(beforeSelectionRead).sort()).toEqual(['first', 'second']);
       expect(credentialReads.mock.calls).toHaveLength(1);
       credentialReads.mockRestore();
       const pools = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.pools;
