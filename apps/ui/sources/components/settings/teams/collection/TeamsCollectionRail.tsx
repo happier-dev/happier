@@ -81,7 +81,7 @@ const TeamDraftRow = React.memo(function TeamDraftRow() {
  * set up, the Homes that could not answer, and the archived Teams on request. Selection comes from
  * the route; switching Teams replaces the shown detail rather than stacking history.
  */
-export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
+export const TeamsCollectionRail = React.memo(function TeamsCollectionRail(props: Readonly<{ isDirectoryIndex?: boolean }>) {
     const router = useRouter();
     const pathname = usePathname().replace(/\/+$/, '');
     const params = useGlobalSearchParams();
@@ -148,7 +148,10 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
             density="compact" showChevron={false} pressableStyle={collectionListStyles.row} onPress={active.loadMore} />);
     }
     const unavailableHomes = active.unavailableHomes.filter((home) => home.reason !== 'loading');
-    if (unavailableHomes.length > 0) {
+    // The directory page beside this rail explains settled failures. The credential picker
+    // and open Team pages depend on the rail to report failures of the active list.
+    const directoryPageReportsFailure = props.isDirectoryIndex && sourceHint === null;
+    if (!directoryPageReportsFailure && unavailableHomes.length > 0) {
         add('unavailable-homes', () => <UnavailableHomesRail homes={unavailableHomes} onRetry={active.refresh} />);
     }
     if (sourceHint === null && collection.offerArchived && !activeUnknown) {

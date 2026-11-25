@@ -45,7 +45,7 @@ export const TeamsSettingsLayout = React.memo(function TeamsSettingsLayout() {
             resolveChildRoute={resolveTeamsChildRoute}
             rail={member
                 ? <TeamMembersCollectionRail address={member.address} selectedMembershipId={member.membershipId} />
-                : <TeamsCollectionRail />}
+                : <TeamsCollectionRail isDirectoryIndex={resolveTeamsChildRoute(pathname) === 'index'} />}
             railWidth="standard"
             detailMinWidthPx={TEAMS_DETAIL_MIN_WIDTH_PX}
             testID="settings-teams"
