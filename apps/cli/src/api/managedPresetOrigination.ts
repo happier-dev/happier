@@ -14,6 +14,8 @@ export async function prepareOriginalAccountManagedPresetAcquire(params: Readonl
     input: ManagedAcquireInputV1 | Readonly<{ selection: Omit<Extract<ManagedAcquireInputV1['selection'], { kind: 'preset' }>, 'revision'> }>;
     requestId: string; credentials: StoredCredentials;
     serverHttpBaseUrl: string; signal?: AbortSignal;
+    /** Bind only a preset whose owner delegated Team acquisition; others are not this caller's route. */
+    delegatedOnly?: true;
 }>) {
     if (params.input.selection.kind !== 'preset') return null;
     const homeUrl = normalizeServerHttpBaseUrl(params.serverHttpBaseUrl);
@@ -25,6 +27,7 @@ export async function prepareOriginalAccountManagedPresetAcquire(params: Readonl
     if (!projected.success) return { kind: 'refused' as const, code: 'managed_response_invalid' };
     if (projected.data.kind === 'refused') return projected.data;
     if (response.status < 200 || response.status >= 300) return { kind: 'refused' as const, code: 'admission_unavailable' };
+    if (params.delegatedOnly && projected.data.preset.teamAcquireDelegated !== true) return null;
     const input = ManagedAcquireInputV1Schema.parse({
         ...params.input, selection: { ...params.input.selection,
             revision: 'revision' in params.input.selection ? params.input.selection.revision : projected.data.preset.revision },

@@ -281,7 +281,11 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
             return projectSessionActionIssuerRefusal({ ok: false, phase: 'preparation',
               requiredFact: 'managed_controller_target' }, params.machineId, authority.signal);
           }
-          operation = { ...operation, input: StrictJsonValueSchema.parse({ ...readRecord(operation.input), controller: preset.controller }) };
+          // O-MACH 2026-11-25 01:03Z: a delegated Team preset whose controller runs on another
+          // Machine stays this member's own local Action; its effect uses Home's acquire routing.
+          if (preset.teamAcquireDelegated !== true || preset.controller.machineId === params.machineId) {
+            operation = { ...operation, input: StrictJsonValueSchema.parse({ ...readRecord(operation.input), controller: preset.controller }) };
+          }
         }
       }
     }

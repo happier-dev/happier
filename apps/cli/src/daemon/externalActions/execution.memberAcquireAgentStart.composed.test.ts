@@ -4,7 +4,14 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 import {
   ExternalActionExecutionAuthorizationRequestV1Schema,
   ExternalActionExecutionAuthorizationV1Schema,
+  ExternalActionDaemonDispatchRequestSchema,
+  ExternalActionRequestEnvelopeSchema,
+  EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+  parseExternalActionDaemonDispatchResultV1,
+  projectExternalActionApprovalDecisionAdmissionV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
+import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
@@ -25,6 +32,16 @@ import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bund
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
+import { executeExternalAction } from './executeExternalAction';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
+import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { fixture as nativeFixture, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
+import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 
 const boundary = vi.hoisted(() => ({
   control: null as Parameters<typeof startDaemonControlServer>[0] | null,
@@ -125,6 +142,10 @@ type AcquireCase = Readonly<{
   memberPolicy: 'ask' | 'allow';
   /** The member no longer holds a grant on the owner's controller Machine. */
   controllerGrant?: 'revoked';
+  /** A Team preset whose owner delegated acquisition: the member holds no grant on its controller Machine. */
+  delegated?: true;
+  /** Home's acquire routing refuses this member (for example, the delegation was withdrawn). */
+  routingRefused?: true;
 }>;
 
 // A Session agent's managed acquire with agentStart on the member's installed
@@ -154,7 +175,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
     () => boundary.control,
     undefined,
     true,
-    undefined,
+    acquire.delegated ? delegatedComputePlugin().plugin : undefined,
     undefined,
     {
       ordinaryAccountSession: true,
@@ -212,12 +233,22 @@ async function runMemberAcquire(acquire: AcquireCase) {
       return Response.json(
         FeaturesResponseSchema.parse({
           features: {},
-          capabilities: { serverIdentity: { serverIdentityId: homeId } },
+          capabilities: { serverIdentity: { serverIdentityId: homeId },
+            // Home's guest CLI source, which the owner's controller reads before acquiring.
+            ...(acquire.delegated ? { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } : {}) },
         }),
       );
     return await homeFetch(...args);
   });
   const paths: string[] = [];
+  /** Roots the member's daemon handed to Home's admitted-root relay. */
+  const homeRelayed: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>[] = [];
+  const homeRelayResults: unknown[] = [];
+  /** The owner's controller steps on Home's managed row, and its native reports. */
+  const controllerSteps: string[] = [];
+  const controllerReports: unknown[] = [];
+  let managed: ReturnType<typeof ManagedMachineV1Schema.parse> | undefined;
+  let receiverManager: Awaited<ReturnType<typeof createReceivingControllerDaemon>>['manager'] | undefined;
   /** Each Home request with the Account it authenticated as. */
   const homeRequests: string[] = [];
   const mints: ReturnType<
@@ -253,7 +284,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
         applyPermissionModeIntentSessionMetadata(JSON.parse(session.metadata), { permissionMode: 'default', updatedAt: 1 })) } } };
     }
     // Without a grant, Home's exact Machine read answers as for any Machine the actor cannot see.
-    if (path === `/v1/machines/${OWNER_MACHINE_ID}` && acquire.controllerGrant === 'revoked')
+    if (path === `/v1/machines/${OWNER_MACHINE_ID}` && (acquire.controllerGrant === 'revoked' || acquire.delegated))
       throw Object.assign(new axios.AxiosError('Request failed with status code 404', 'ERR_BAD_REQUEST'),
         { response: { status: 404, data: { error: 'Machine not found' } } });
     // The owner's controller Machine, which the member reaches through its Team grant.
@@ -314,10 +345,64 @@ async function runMemberAcquire(acquire: AcquireCase) {
     // The Team preset names its controller Machine.
     if (path === '/v1/machines/presets/get')
       return { status: 200, data: { kind: 'found', preset: { id: 'team-preset', homeId, revision: 1,
-        owner: { kind: 'account', accountId: 'requester' }, contentEncryptionMode: 'plain', recipients: [],
-        content: { t: 'plain', v: { v: 1, name: 'Guest', launch: { provider: { pluginId: 'acme.compute', localId: 'vm' },
+        owner: acquire.delegated ? { kind: 'team', teamId: 'team' } : { kind: 'account', accountId: 'requester' },
+        ...(acquire.delegated ? { teamAcquireDelegated: true } : {}), contentEncryptionMode: 'plain', recipients: [],
+        content: { t: 'plain', v: { v: 1, name: 'Guest', launch: { provider: acquire.delegated
+          ? { pluginId: 'acme.project-launch', localId: delegatedComputePlugin().provisionerId } : { pluginId: 'acme.compute', localId: 'vm' },
           schemaVersion: 1, name: 'guest', choices: {} } } },
         controller } } };
+    // Home's acquire routing admits the member for the preset's exact controller,
+    // with the controller's public installation key and custodian (no Machine grant).
+    if (path === MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1)
+      return { status: 200, data: acquire.routingRefused ? { kind: 'refused', code: 'permission_denied' }
+        : { kind: 'resolved', controller, controllerAccess: { custodian: { accountId: 'owner' },
+          installationPublicKey: h.f.installation.publicKey.replace(/=+$/u, '') } } };
+    // Home's managed-row routes the owner's controller reaches after it opens the relayed root.
+    if (acquire.delegated && path.startsWith('/v1/machines/managed/controller/')) {
+      const step = path.slice('/v1/machines/managed/controller/'.length);
+      controllerSteps.push(`${account} ${step}`);
+      managed ??= ManagedMachineV1Schema.parse({ id: 'delegated-guest', homeId, custodianAccountId: 'owner',
+        preset: { id: 'team-preset', revision: 1, contentEncryptionMode: 'plain' }, controller, allocation: 'unsubmitted',
+        creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+      const presetContent = sealManagedMachinePresetContentV1({ presetId: 'team-preset', mode: 'plain', content: { v: 1, name: 'Guest',
+        launch: { provider: { pluginId: 'acme.project-launch', localId: delegatedComputePlugin().provisionerId },
+          schemaVersion: 1, name: 'guest', choices: {} } } });
+      if (step === 'admit') return { status: 200, data: { machine: managed, presetContent, replayed: false } };
+      if (step === 'current') return { status: 200, data: { machine: managed } };
+      if (step === 'context') return { status: 200, data: { machine: managed, requestId: mints.at(-1)?.envelope.requestId, presetContent } };
+      if (step === 'submit') {
+        ManagedControllerSubmitInputV1Schema.parse(args[1]);
+        managed = ManagedMachineV1Schema.parse({ ...managed, allocation: 'may-exist' });
+        return { status: 200, data: { machine: managed, submitted: true } };
+      }
+      if (step === 'report') {
+        controllerReports.push(ManagedControllerReportV1Schema.parse(args[1]));
+        return { status: 200, data: { machine: managed } };
+      }
+    }
+    // Home's admitted-root relay: the member's HTTP body arrives as JSON, and Home
+    // forwards its closed dispatch frame to the owner's Machine socket with the
+    // Action API server origin (externalActionDispatcher.ts), as Home delivers it.
+    if (path === '/v1/actions/machines.managed.acquire') {
+      const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(JSON.stringify(args[1])));
+      homeRelayed.push(body);
+      const authorization = body.executionAuthorization;
+      if (!receiverManager || !authorization) return { status: 503, data: { error: 'unavailable' } };
+      const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(JSON.parse(JSON.stringify({
+        actionId: 'machines.managed.acquire', envelope: body.envelope, executionAuthorization: authorization,
+        principal: { accountId: 'requester', authority: 'account_automation', authentication: { kind: 'terminal', tokenEpoch: 0 } },
+        placement: { machineId: OWNER_MACHINE_ID, target: body.envelope.target } })));
+      const result = await receiverManager.handleRequest({ method: `${OWNER_MACHINE_ID}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+        params: dispatch, authorization: ACTION_API_SERVER_ORIGIN,
+        // Home's public managed admission for the admitted member (its delegation fact stays server-side).
+        machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner', machineId: OWNER_MACHINE_ID,
+          installationId: controller.installationId, role: 'manage', encryptionMode: 'plain' } }, undefined, 'authenticated_home_socket');
+      homeRelayResults.push(result);
+      const parsed = parseExternalActionDaemonDispatchResultV1(result);
+      return parsed?.kind === 'response' ? { status: 200, data: JSON.parse(parsed.prepared.body) }
+        : { status: 503, data: { error: 'unavailable' } };
+    }
     if (path.endsWith('/execution-authorization/verify'))
       return { status: 200, data: { ok: true } };
     if (path !== '/v1/actions/machines.managed.acquire/execution-authorization')
@@ -334,11 +419,12 @@ async function runMemberAcquire(acquire: AcquireCase) {
         token: 'member-acquire-root',
         binding: {
           accountId: 'requester',
-          custodianAccountId: controller.machineId === 'machine' ? 'requester' : 'owner',
+          // Home binds the receiver the request names.
+          custodianAccountId: request.machineId === 'machine' ? 'requester' : 'owner',
           serverIdentityId: homeId,
           authentication: { kind: 'terminal', tokenEpoch: 0 },
           accountEncryptionMode: 'plain',
-          machineId: controller.machineId,
+          machineId: request.machineId,
           installationId: controller.installationId,
           admittedMachineRole: 'manage',
           actionId: 'machines.managed.acquire',
@@ -349,6 +435,8 @@ async function runMemberAcquire(acquire: AcquireCase) {
           ),
           sessionActionOrigin: request.sessionActionOrigin,
           sessionActionSource: request.sessionActionSource,
+          // Home signs the preset owner's reviewed delegation; callers cannot supply it.
+          ...(acquire.delegated ? { managedAcquireDelegation: true } : {}),
         },
       }),
     };
@@ -367,12 +455,15 @@ async function runMemberAcquire(acquire: AcquireCase) {
   /** What Home had seen when each CALL reached the controller. */
   const atDelivery: { homeRequests: number; artifacts: number }[] = [];
   if (acquire.controller === 'owner machine') {
-    const receiver = await createReceivingControllerDaemon({ machineId: OWNER_MACHINE_ID, custodianAccountId: 'owner',
+    const receiver: Awaited<ReturnType<typeof createReceivingControllerDaemon>> = await createReceivingControllerDaemon({ machineId: OWNER_MACHINE_ID, custodianAccountId: 'owner',
       credentials: ownerCredentials, serverId: 'session-home', serverBaseUrl: 'https://session-home.test',
       homeServerIdentityId: homeId, installationId: controller.installationId, happyHomeDir: h.f.directory,
       pluginRuntimeController: h.plugin.controller,
       resolveServerFeaturesSnapshot: () => ({ status: 'ready',
-        features: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) }) });
+        features: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) }),
+      // The owner's installed daemon holds its provider authority, as daemon startup supplies it.
+      ...(acquire.delegated ? { managedProviderOperationAuthority: createControllerProviderAuthority() } : {}) });
+    receiverManager = receiver.manager;
     boundary.relay = async packet => {
       const call = packet as SocketRpcRequestPayload;
       relayed.push(call);
@@ -420,7 +511,26 @@ async function runMemberAcquire(acquire: AcquireCase) {
     credentials, serverHttpBaseUrl: homeUrl }).approvalsGet({ artifactId: String(artifactId) }));
   /** Home requests the controller's handling of the first delivered CALL caused. */
   const controllerRequests = () => homeRequests.slice(atDelivery[0]?.homeRequests ?? homeRequests.length);
-  return { h, credentials, controller, outcome, paths, homeRequests, mints, relayed, delivered, atDelivery,
+  /** The member approves an Ask through its own daemon's ingress, as Home delivers the decision. */
+  const approve = async (artifactId: unknown) => {
+    const owner = h.daemon.externalActionIngressOwner;
+    if (!owner) throw new Error('Missing member external Action ingress');
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const decideInput = { artifactId: String(artifactId), decision: 'approve', serverIdentityId: homeId };
+    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'decide-acquire', target, input: decideInput });
+    return await executeExternalAction({ ...owner, actionId: 'approval.request.decide', envelope,
+      executionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'decide-root', binding: {
+        accountId: 'requester', custodianAccountId: 'requester', serverIdentityId: homeId,
+        authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+        machineId: 'machine', installationId: h.f.installation.installationId, admittedMachineRole: 'manage',
+        actionId: 'approval.request.decide', requestId: envelope.requestId, target,
+        approvalDecisionAdmission: projectExternalActionApprovalDecisionAdmissionV1(decideInput),
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } }),
+      principal: { accountId: 'requester', authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 0 } },
+      currentMachineId: 'machine', currentAccountId: 'requester', currentInstallationId: h.f.installation.installationId,
+      verifyExecutionAuthorization: async () => true, signal: h.signal });
+  };
+  return { h, credentials, controller, outcome, paths, homeRequests, mints, relayed, delivered, atDelivery, homeRelayed, homeRelayResults, controllerSteps, controllerReports, approve, receiverManager,
     approvals, readApproval, controllerRequests };
 }
 
@@ -474,6 +584,50 @@ it.each([true, false])("today: a Session agent's acquire whose preset controller
   expect(paths.filter(path => path === 'POST /v1/machines/presets/get')).toHaveLength(1);
   expect(run.relayed).toEqual([]);
 }, 120_000);
+
+/**
+ * The Agent plugin plus a local provisioner, installed once in the shared plugin
+ * runtime, so the owner's controller can run the delegated preset's provider.
+ */
+let delegatedCompute: Readonly<{ plugin: NonNullable<Parameters<typeof createInstalledProjectAgentDaemonFixture>[3]>;
+  provisionerId: string }> | undefined;
+function delegatedComputePlugin() {
+  if (delegatedCompute) return delegatedCompute;
+  const native = nativeFixture({ credentialPurposes: [] });
+  const nativeManifest = native.manifest;
+  native.retire();
+  const provisioner = nativeManifest.contributes.machineProvisioners[0]!;
+  delegatedCompute = { provisionerId: provisioner.id, plugin: {
+    manifest: createPluginManifestV2Fixture({ id: 'acme.project-launch', contributes: {
+      agents: [{ id: 'agent', title: 'Project launch Agent', runtime: { kind: 'custom' }, primary: 'sessions',
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }],
+      machineProvisioners: [{ ...provisioner, billing: { location: 'local', stoppedBilling: 'not-billed' } }],
+      actions: nativeManifest.contributes.actions,
+    } }), files: {
+      'agent.mjs': `export function factory() { return { sessions: { open() { throw new Error('No Agent open at authorization'); } } }; }`,
+      // The provider answers the native child acquisition with a typed refusal, so the
+      // controller's one allocation settles without a guest to enroll.
+      'daemon.mjs': `import { factory } from './agent.mjs';
+        export function activate(api) {
+          api.agents.register('agent', factory, { sessionRunnerFactory: { module: './agent.mjs', export: 'factory', runtimeApiVersion: 1 } });
+          ${nativeManifest.contributes.actions.map(({ id }) => `api.actions.register(${JSON.stringify(id)}, async () => ${id === 'acquire'
+            ? `({ kind: 'rejected', code: 'provider_unavailable' })` : `(${JSON.stringify(roleResult(id))})`});`).join('\n')}
+        }`,
+    } } };
+  return delegatedCompute;
+}
+
+/** The owner's provider authority; the local provisioner needs no connected Account material. */
+function createControllerProviderAuthority() {
+  const unavailable = async (): Promise<never> => { throw new Error('The local provisioner does not need connected Account material'); };
+  return createManagedProviderOperationAuthority({ materializationBaseDir: '/unused-member-delegated-acquire',
+    purposeBindingOwner: createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+      selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
+      projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
+    }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
+    createRedactionLease: () => ({ add() {}, close() {} }) });
+}
 
 /** The delivered CALL carries the source's one signed root unchanged. */
 function expectDeliveredRoot(run: Awaited<ReturnType<typeof runMemberAcquire>>) {
@@ -557,3 +711,68 @@ it("a member's acquire on the owner's controller after the member's grant was re
   expect(run.approvals('requester')).toEqual([]);
   expect(run.approvals('owner')).toEqual([]);
 }, 120_000);
+
+// Ruling O-MACH 2026-11-25 01:03Z: a delegated Team preset's acquire is the member's
+// own local Action. The member's approval owner asks first; after approval the
+// effect hands off to the resolve-acquire / Home relay route as the member's own invocation.
+it("a member's Agent acquire through the owner's delegated Team preset asks the member once, then reaches the owner's controller through Home's relay as the member's own invocation", async () => {
+  const run = await runMemberAcquire({ controller: 'owner machine', namesController: false, memberPolicy: 'ask', delegated: true });
+  const [ask] = run.approvals('requester');
+  expect(run.outcome, JSON.stringify({ outcome: run.outcome, homeRequests: run.homeRequests })).toMatchObject({ ok: true,
+    result: { kind: 'action.execution', outcome: { ok: true, result: { kind: 'approval_request_created', artifactId: ask?.id } } } });
+  expect(run.approvals('requester')).toHaveLength(1);
+  expect(run.approvals('owner')).toEqual([]);
+  // Nothing reached the controller before approval.
+  expect(run.relayed).toEqual([]);
+  expect(run.homeRelayed).toEqual([]);
+  // The only Home admission so far is for the member's own Machine; none names the controller.
+  expect(run.mints.map(mint => mint.machineId)).not.toContain(OWNER_MACHINE_ID);
+  expect(run.paths.some(path => path.startsWith('POST /v1/machines/managed/controller/'))).toBe(false);
+  expect(run.paths).not.toContain(`GET /v1/machines/${OWNER_MACHINE_ID}`);
+  const decided = await run.approve(ask?.id);
+  expect(run.homeRelayed, JSON.stringify({ decided, homeRequests: run.homeRequests })).toHaveLength(1);
+  const root = run.homeRelayed[0]?.executionAuthorization?.binding;
+  // The member's own invocation: no Session origin, Home's delegation signed in.
+  expect(root).toMatchObject({ accountId: 'requester', custodianAccountId: 'owner', machineId: OWNER_MACHINE_ID,
+    actionId: 'machines.managed.acquire', managedAcquireDelegation: true });
+  expect(root?.sessionActionOrigin).toBeUndefined();
+  expect(root?.sessionActionSource).toBeUndefined();
+  // What Home received at mint for the controller: the member's own request, no Session origin.
+  const controllerMints = run.mints.filter(mint => mint.machineId === OWNER_MACHINE_ID);
+  expect(controllerMints).toHaveLength(1);
+  expect(controllerMints[0]?.sessionActionOrigin).toBeUndefined();
+  expect(controllerMints[0]?.sessionActionSource).toBeUndefined();
+  // The owner's controller opens the relayed root and admits exactly one allocation on Home's row.
+  expect(decided, JSON.stringify({ steps: run.controllerSteps, relay: run.homeRelayResults })).toMatchObject({ kind: 'response',
+    response: { execution: { ok: true, result: { status: 'executed', execution: { ok: true,
+      result: { managedId: 'delegated-guest', operation: { operationId: expect.any(String) } } } } } } });
+  const operationId = (decided as { response: { execution: { result: { execution: { result: { operation: { operationId: string } } } } } } })
+    .response.execution.result.execution.result.operation.operationId;
+  // Observe the accepted acquisition through the controller's real operation read, in the member's admitted scope.
+  const terminal = await run.receiverManager!.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId, waitForTerminal: true },
+    { signal: run.h.signal, rpcContext: { machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner',
+      machineId: OWNER_MACHINE_ID, installationId: run.controller.installationId, role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true } });
+  // One allocation: one admitted row, one submission; then the provider's one native child acquisition.
+  expect(run.controllerSteps.filter(step => step.endsWith(' admit')), JSON.stringify({ steps: run.controllerSteps, terminal })).toHaveLength(1);
+  expect(run.controllerSteps.filter(step => step.endsWith(' submit')), JSON.stringify({ steps: run.controllerSteps, terminal })).toHaveLength(1);
+  // The fixture provider answers its one native child acquisition with a typed refusal; the controller reports it.
+  expect(run.controllerReports, JSON.stringify({ steps: run.controllerSteps, terminal })).toEqual([expect.objectContaining({
+    managedId: 'delegated-guest', requestId: controllerMints[0]?.envelope.requestId,
+    presetContent: { t: 'plain', v: expect.objectContaining({ nativeResult: { kind: 'rejected', code: 'provider_unavailable' } }) } })]);
+  // The acquisition is the member's operation on the owner's Machine, settled with the provider's typed cause.
+  expect(terminal).toMatchObject({ kind: 'found', operation: { actionId: 'machines.managed.acquire', state: 'failed',
+    scope: { accountId: 'requester', machineId: OWNER_MACHINE_ID }, error: { errorCode: 'provider_unavailable' } } });
+  expect(run.approvals('owner')).toEqual([]);
+  expect(run.relayed).toEqual([]);
+}, 180_000);
+
+it("a member's approved Agent acquire on a delegated Team preset that Home no longer routes for the member keeps Home's typed refusal and reaches nothing", async () => {
+  const run = await runMemberAcquire({ controller: 'owner machine', namesController: false, memberPolicy: 'ask', delegated: true, routingRefused: true });
+  const [ask] = run.approvals('requester');
+  const decided = await run.approve(ask?.id);
+  expect(JSON.stringify(decided)).toContain('permission_denied');
+  expect(run.homeRelayed).toEqual([]);
+  expect(run.mints.map(mint => mint.machineId)).not.toContain(OWNER_MACHINE_ID);
+  expect(run.approvals('owner')).toEqual([]);
+}, 180_000);

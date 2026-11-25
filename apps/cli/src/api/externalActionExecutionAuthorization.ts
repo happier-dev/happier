@@ -910,19 +910,25 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
 
 /** Unbound presets select their saved controller before CLI/MCP placement, without a local daemon or Machine grant. */
 export async function prepareOriginalAccountPresetAcquire(
-  params: Omit<OriginalAccountActionInput, 'target' | 'managedPresetOrigin' | 'executeOnRequester'>,
+  params: Omit<OriginalAccountActionInput, 'target' | 'managedPresetOrigin' | 'executeOnRequester'> & Readonly<{
+    /** This Session host's Machine: only a delegated preset whose controller runs elsewhere takes this route. */
+    delegatedFromMachineId?: string;
+  }>,
 ): Promise<(() => Promise<ActionExecuteResult>) | null> {
   const parsed = params.actionId === 'machines.managed.acquire' ? ManagedAcquireInputV1Schema.safeParse(params.input) : null;
   if (!parsed?.success || parsed.data.selection.kind !== 'preset'
     || resolveManagedAcquireReviewV1(parsed.data).controller) return null;
   if (parsed.data.selection.homeId !== params.serverIdentityId)
     return async () => ({ ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' });
-  const bound = await prepareOriginalAccountManagedPresetAcquire({ ...params, input: parsed.data });
+  const { delegatedFromMachineId, ...original } = params;
+  const bound = await prepareOriginalAccountManagedPresetAcquire({ ...original, input: parsed.data,
+    ...(delegatedFromMachineId !== undefined ? { delegatedOnly: true as const } : {}) });
   if (!bound) return null;
   if (bound.kind === 'refused') return async () => ({ ok: false, errorCode: bound.code, error: bound.code });
   const controller = resolveManagedAcquireReviewV1(bound.input).controller;
+  if (delegatedFromMachineId !== undefined && (!controller || controller.machineId === delegatedFromMachineId)) return null;
   if (!controller) return async () => ({ ok: false, errorCode: 'controller_unavailable', error: 'controller_unavailable' });
-  return () => dispatchOriginalAccountAction({ ...params, input: bound.input, managedPresetOrigin: bound,
+  return () => dispatchOriginalAccountAction({ ...original, input: bound.input, managedPresetOrigin: bound,
     target: { kind: 'machine', machineId: controller.machineId } });
 }
 

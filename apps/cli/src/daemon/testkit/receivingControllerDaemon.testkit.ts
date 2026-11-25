@@ -48,6 +48,8 @@ export async function createReceivingControllerDaemon(
     happyHomeDir: string;
     pluginRuntimeController: PluginReloadController;
     resolveServerFeaturesSnapshot?: DaemonParams['resolveServerFeaturesSnapshot'];
+    /** The controller's provider authority, as installed daemon startup supplies it. */
+    managedProviderOperationAuthority?: DaemonParams['managedProviderOperationAuthority'];
   }>,
 ) {
   const machine = new ApiMachineClient(
@@ -86,6 +88,9 @@ export async function createReceivingControllerDaemon(
     }),
     ...(input.resolveServerFeaturesSnapshot
       ? { resolveServerFeaturesSnapshot: input.resolveServerFeaturesSnapshot }
+      : {}),
+    ...(input.managedProviderOperationAuthority
+      ? { managedProviderOperationAuthority: input.managedProviderOperationAuthority }
       : {}),
     externalActionAccountId: input.custodianAccountId,
     credentials: input.credentials,

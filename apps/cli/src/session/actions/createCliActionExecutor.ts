@@ -40,10 +40,10 @@ import { isFilesystemActionId } from '@happier-dev/protocol/actions/filesystemAc
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readExternalActionBindingAuthority, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { prepareOriginalAccountPresetAcquire, projectExternalActionRequesterHttpAuthorization, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
 import { ManagedMachineActionIdV1Schema, isManagedRetainedControlInvocation } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveManagedControlControllerTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
-import { MANAGED_LIST_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_LIST_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { actionStartTargetUnavailableV1, isAgentStartActionInvocationV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -137,7 +137,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
   const { projectWorkerAction: projectWorkerAccountAction, ...accountServerActionPorts } = params.accountServerActionDeps ?? {};
   const nativeManagedMachineAction = params.managedMachineAction;
   const accountManagedMachineAction = accountServerActionPorts.managedMachineAction;
-  const managedMachineAction: ActionExecutorDeps['managedMachineAction'] = nativeManagedMachineAction && accountManagedMachineAction
+  const hostManagedMachineAction: ActionExecutorDeps['managedMachineAction'] = nativeManagedMachineAction && accountManagedMachineAction
     ? async request => {
       // A receiving daemon supplies transport, not a controller identity for an
       // Account-owned resource. Consume the retained controller selector here.
@@ -159,6 +159,35 @@ export function createCliActionHost(params: CliActionExecutorParams):
       return await nativeManagedMachineAction(request);
     }
     : nativeManagedMachineAction;
+  // O-MACH 2026-11-25 01:03Z: a Session Agent's admitted acquire on a delegated Team
+  // preset is this Account's own local Action. Its controller holds no custody for this
+  // requester, so the effect reaches it through Home's acquire routing and relay as this
+  // Account's own invocation; Home admits the delegation at that routing.
+  const managedMachineAction: ActionExecutorDeps['managedMachineAction'] = hostManagedMachineAction && params.credentials
+    ? async request => {
+      const context = request.context;
+      const sessionMachineId = context.defaultSessionMachineId;
+      const root = context.externalActionExecutionAuthorization?.binding;
+      // Not a received foreign root: this Session host's own local Action.
+      if (request.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 && context.actionCaller?.kind === 'session'
+        && sessionMachineId && (!root || root.machineId === sessionMachineId) && context.actionRequestId) {
+        const deliver = await prepareOriginalAccountPresetAcquire({ actionId: request.actionId, input: request.input,
+          requestId: context.actionRequestId, credentials: params.credentials!,
+          serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+          ...((params.serverIdentityId ?? context.serverIdentityId) ? { serverIdentityId: params.serverIdentityId ?? context.serverIdentityId } : {}),
+          ...(context.authority ? { authority: context.authority } : {}),
+          invocation: readExternalActionRequesterInvocation(context),
+          delegatedFromMachineId: sessionMachineId,
+          ...(request.signal ? { signal: request.signal } : {}) });
+        if (deliver) {
+          // The managed effect owner carries a typed failure envelope unchanged.
+          const result = await deliver();
+          return result.ok ? result.result : result;
+        }
+      }
+      return await hostManagedMachineAction(request);
+    }
+    : hostManagedMachineAction;
   const personalSavedSecretActionExecute = params.personalSavedSecretActionExecute ?? (params.credentials && accountServerActionPorts.homeDomainAction
     ? createCliPersonalSavedSecretActionExecute({ credentials: params.credentials, home: accountServerActionPorts.homeDomainAction,
       operationContext: params.savedSecretOperationContext, serverHttpBaseUrl: params.serverHttpBaseUrl, isCredentialCurrent: params.isCredentialCurrent }) : undefined);
