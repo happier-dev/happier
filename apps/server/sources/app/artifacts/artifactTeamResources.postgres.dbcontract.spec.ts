@@ -11,6 +11,9 @@ import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
+import { getArtifactTeamResourceStoredKindsV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { recordDriverStatements } from '@/testkit/driverStatements';
+import { createDbMaintenanceClient } from '@/storage/db';
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Team Artifact PostgreSQL inventory', () => {
@@ -80,9 +83,6 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
         const template = { accountId: owner.id, header: bytes({ title: 'Retained ordinary document' }),
             body: bytes('Private body'), dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),
             headerVersion: 1, bodyVersion: 1 };
-        // Unrelated rows are deliberately newer than the demanded legacy page.
-        await db.artifact.createMany({ data: Array.from({ length: 1200 }, () => ({ ...template,
-            id: randomUUID(), kind: 'v1:other:unrelated.v1' })) });
         const legacy = await db.artifact.create({ data: { ...template, id: randomUUID(), kind: null, updatedAt: new Date(0) } });
         const coarse = await db.artifact.create({ data: { ...template, id: randomUUID(), kind: 'prompt', updatedAt: new Date(1) } });
         const groupOnly = await db.artifact.create({ data: { ...template, id: randomUUID(), kind: 'v1:other:contributed.v1' } });
@@ -102,6 +102,45 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             { principalKind: 'team', artifactId: otherTeamOnly.id, teamId: otherTeam.id,
                 accessLevel: 'view', createdByAccountId: owner.id },
         ] });
+        const kinds = getArtifactTeamResourceStoredKindsV1();
+        const storedKinds = [null, 'prompt', 'v1:other:unrelated.v1', kinds.prompts[0]!, kinds.workflows[0]!, kinds.reviews[0]!];
+        const selected = [kinds.prompts[0]!, kinds.workflows[0]!, kinds.reviews[0]!].map(kind => ({
+            ...template, id: randomUUID(), kind,
+        }));
+        await db.artifact.createMany({ data: selected });
+        await db.artifactGrant.createMany({ data: selected.map(artifact => ({
+            artifactId: artifact.id, principalKind: 'team', teamId: team.id,
+            accessLevel: 'view', createdByAccountId: owner.id,
+        })) });
+        const { countTeamSharedArtifactsInTx } = await import('./artifactAccessService');
+        const statements: string[] = [];
+        const observed = await createDbMaintenanceClient('postgres', process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL, {
+            onDriverStatement: recordDriverStatements(({ query }) => { if (/^SELECT\b/i.test(query)) statements.push(query); }),
+        });
+        const measure = async () => {
+            statements.length = 0;
+            expect(await observed.$transaction(tx => countTeamSharedArtifactsInTx(tx, {
+                actorAccountId: member.id, sharedWithTeamId: team.id,
+            }))).toEqual({ ok: true, counts: { projectDocuments: 0, prompts: 1, workflows: 1, reviews: 1, otherArtifacts: 4 } });
+            const artifactReads = statements.filter(query => /FROM "(?:public"\.")?(?:Artifact|ArtifactGrant)"/u.test(query));
+            expect(artifactReads.filter(query => query.includes('COUNT('))).toHaveLength(5);
+            expect(artifactReads.filter(query => /\."(?:header|body|provenance|dataEncryptionKey|provenanceDataEncryptionKey)"/u.test(query))).toEqual([]);
+            return [...statements].sort();
+        };
+        try {
+            const small = await measure();
+            const unrelated = Array.from({ length: 3000 }, (_, index) => ({ ...template,
+                id: randomUUID(), kind: storedKinds[index % storedKinds.length]! }));
+            await db.artifact.createMany({ data: unrelated });
+            await db.artifactGrant.createMany({ data: unrelated.map(artifact => ({
+                artifactId: artifact.id, principalKind: 'team', teamId: otherTeam.id,
+                accessLevel: 'view', createdByAccountId: owner.id,
+            })) });
+            const large = await measure();
+            expect(large).toEqual(small);
+            console.info('TEAM_MIXED_ARTIFACT_SQL', JSON.stringify({ unrelatedArtifacts: unrelated.length,
+                storedKinds: storedKinds.length, selectStatements: large.length, artifactCounts: 5, bodyReads: 0 }));
+        } finally { await observed.$disconnect(); }
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             const selectedIds = new Set<string>();
             let selectedBodies = false;
@@ -132,11 +171,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
                 expect(new Set(await read(member.id))).toEqual(new Set([legacy.id, coarse.id, groupOnly.id, groupWithDirectReader.id]));
                 expect(new Set(await read(admin.id))).toEqual(new Set([legacy.id, coarse.id, groupWithDirectReader.id]));
                 expect(new Set(await read(owner.id))).toEqual(new Set([legacy.id, coarse.id, groupOnly.id, groupWithDirectReader.id]));
-                const { countTeamSharedArtifactsInTx } = await import('./artifactAccessService');
                 for (const [actorAccountId, count] of [[member.id, 4], [admin.id, 3], [owner.id, 4]] as const) {
                     expect(await captureReadSnapshot(tx => countTeamSharedArtifactsInTx(tx, {
                         actorAccountId, sharedWithTeamId: team.id,
-                    }))).toEqual({ ok: true, counts: { projectDocuments: 0, prompts: 0, workflows: 0, otherArtifacts: count } });
+                    }))).toEqual({ ok: true, counts: { projectDocuments: 0, prompts: 1, workflows: 1, reviews: 1, otherArtifacts: count } });
                 }
                 await db.teamGroupMembership.deleteMany({ where: { teamGroupId: group.id, teamMembershipId: membership.id } });
                 expect(new Set(await read(member.id, 50, false))).toEqual(new Set([legacy.id, coarse.id]));

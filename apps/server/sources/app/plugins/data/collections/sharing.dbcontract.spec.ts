@@ -93,6 +93,48 @@ describe('Collection sharing database contract', () => {
                 rowDbId: row.id, principalKind: 'team', teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id,
             })) });
 
+            if (provider === 'postgres') {
+                const statements: DriverStatementEvent[] = [];
+                const observed = await createDbMaintenanceClient('postgres', process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL, {
+                    onDriverStatement: recordDriverStatements(event => statements.push(event)),
+                });
+                const transaction = db.$transaction;
+                db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args) {
+                    return Reflect.apply(observed.$transaction, observed, args);
+                } });
+                try {
+                    const request = { ...identity, readerContext: ref, sharedWithTeamId: team.id,
+                        projection: 'identity' as const, limit: 1 };
+                    const measurePage = async (cursor?: string) => {
+                        statements.length = 0;
+                        const result = await listSharedCollectionResources(member.id, { ...request, cursor });
+                        expect(result.resources).toEqual([]);
+                        expect(result.identities).toEqual([{
+                            ownerAccountId: owner.id, rowId: expect.any(String), sharedWithTeamScope: 'team',
+                        }]);
+                        expect(result.nextCursor).toEqual(expect.any(String));
+                        const reads = statements.filter(event => /^SELECT\b/i.test(event.query));
+                        const rowReads = reads.filter(event => /FROM "(?:public"\.")?PluginCollectionRow"/u.test(event.query));
+                        const bodyReads = reads.filter(event => /"(?:contentEnvelope|encryptedDataKey)"/u.test(event.query));
+                        expect(bodyReads).toHaveLength(0);
+                        return { cursor: result.nextCursor!, rowId: result.identities![0]!.rowId,
+                            reads: reads.length, rowReads: rowReads.length, bodyReads: bodyReads.length };
+                    };
+                    const first = await measurePage();
+                    const second = await measurePage(first.cursor);
+                    expect(second.rowId).not.toBe(first.rowId);
+                    expect(second.cursor).not.toBe(first.cursor);
+                    for (const page of [first, second]) {
+                        expect(page).toMatchObject({ reads: 5, rowReads: 1, bodyReads: 0 });
+                    }
+                    console.info('TEAM_COLLECTION_IDENTITY_SQL', JSON.stringify({
+                        pages: [first, second].map(({ reads, rowReads, bodyReads }) => ({ reads, rowReads, bodyReads })),
+                    }));
+                } finally {
+                    db.$transaction = transaction;
+                    await observed.$disconnect();
+                }
+            }
             const indexStatements: Prisma.Sql[] = [];
             const indexReads: number[] = [];
             const bodyReads: number[] = [];
