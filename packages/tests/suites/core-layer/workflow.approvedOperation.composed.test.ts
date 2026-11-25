@@ -1,10 +1,10 @@
 import { resolveMachineRegistrationPath } from '@happier-dev/cli-common/firstPartyRuntime/cliMachineRegistration';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, delimiter, dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentFlowCostObserver, type DeploymentFlowCostObserver } from './workflow.deploymentFlowCosts.testkit';
 import axios from 'axios';
@@ -26,6 +26,21 @@ import {
     deriveWorkflowReplacementId, ArtifactJsonCreateHttpInputV1Schema, createEmptyMachineSetupDesiredV1,
 } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
+import { createProjectAccountSnapshotMutation } from '../../../../apps/cli/src/workspaces/projectAccountRows';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+    DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { createDeploymentDataMoveWorkflowV1, createDeploymentMoveWorkflowV1,
+    type StatefulDeploymentMoveWorkflowInputV1 } from '@happier-dev/protocol/workflows/builtins/deploymentMoveV1';
+import { DeploymentBackupConfigureResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { sealSavedSecretResourceRecipientEnvelopeV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { SFTP_BACKUP_DESTINATION_REF_V1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
+import { createDeploymentDumpBackupSourceV1, RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
+import { nativeRestic0191 } from '../../../../apps/cli/src/daemon/local/services/launch/nativeResticRegistry.testkit';
+import { installRestoreBoundary } from '../../../../apps/cli/src/deployments/targets/ownServer/nativeRestore.testkit';
+import { APPROVAL_REQUEST_DECIDE_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import {
     MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1,
     machinePresetActionEndpointPathV1, type MachinePresetActionInputV1,
@@ -36,7 +51,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { WorkflowOperationErrorCodeV1Schema, WorkflowTargetUnavailableDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { ProjectSourcesCreateInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -50,7 +65,9 @@ import { createWorkflowActionContextResolver } from '../../../../apps/cli/src/da
 import * as workflowApprovedOperationOwner from '../../../../apps/cli/src/daemon/workflows/workflowApprovedOperation';
 import { createCoordinatorWorkspaceResolver, prepareWorkflowAcceptedWorkspaceTarget } from '../../../../apps/cli/src/daemon/workflows/resolveWorkflowWorkspace';
 import { createCredentialedWorkflowMaterializationHostV1 } from '../../../../apps/cli/src/session/actions/workflowMaterializationHost';
-import { createWorkflowAcceptedAuthorizationCurrentness } from '../../../../apps/cli/src/daemon/workflows/daemonRuntime';
+import { createProductionDaemonWorkflowRuntime, createWorkflowAcceptedAuthorizationCurrentness } from '../../../../apps/cli/src/daemon/workflows/daemonRuntime';
+import { createWorkflowRunMachineTransport } from '../../../../apps/cli/src/daemon/workflows/workflowMachineTransport';
+import { retainWorkflowRequesterCredentials, retireWorkflowRequesterCredentials } from '../../../../apps/cli/src/daemon/workflows/requesterCustody';
 import { createWorkflowRunStorageClient } from '../../../../apps/cli/src/daemon/workflows/workflowRunStorageClient';
 import { createWorkflowInvocationRecoveryObserver, observeWorkflowInvocationRecoveryEvidence, resolveWorkflowSessionConversation } from '../../../../apps/cli/src/daemon/workflows/invocationRecoveryObserver';
 import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
@@ -64,6 +81,7 @@ import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalAct
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { readHttpStatus } from '../../../../apps/cli/src/api/client/httpStatusError';
 import { startAutomationWorker } from '../../../../apps/cli/src/daemon/automation/automationWorker';
+import { createAutomationClaimClient } from '../../../../apps/cli/src/daemon/automation/automationClaimClient';
 import { resolveAutomationWorkerAccountEncryption } from '../../../../apps/cli/src/plugins/runtime/automations/automationAccountCurrentness';
 import { prepareExternalActionRequesterAccountAuthorization, prepareExternalActionRequesterAccountAuthorizationWithEnvelope,
     dispatchOriginalAccountAction,
@@ -152,6 +170,7 @@ const nativeBoundary = vi.hoisted(() => ({
     credentials: null as import('../../../../apps/cli/src/persistence').StoredCredentials | null,
     launches: [] as Array<{ file: string; args: string[]; machineId: string | null }>,
     ptySpawnFault: null as { machineId: string; observed: boolean } | null,
+    dockerPlacement: null as { command: string; machineId: string; replacement: string } | null,
     failedPtyStarts: [] as string[],
     installationScope: null as AsyncLocalStorage<Readonly<{
         machineId: string;
@@ -246,6 +265,11 @@ vi.mock('node:child_process', async importOriginal => {
             || typeof env?.HAPPIER_NODE_PTY_RELAY_ROWS === 'string') {
             failArmedNativeSpawn(nativeBoundary.installationScope?.getStore()?.machineId ?? null);
         }
+        const placement = nativeBoundary.dockerPlacement;
+        const machineId = nativeBoundary.installationScope?.getStore()?.machineId ?? nativeBoundary.machineId;
+        if (placement && machineId === placement.machineId && (args[0] === placement.command || args[0] === 'docker')) {
+            args[0] = placement.replacement;
+        }
         return actual.spawn(...args);
     } };
 });
@@ -257,7 +281,7 @@ type ServerBoundary = Readonly<{
     accountId: string; tokenEpoch: number; token: string; homeId: string; baseUrl: string;
     currentness: AutomationAccountCurrentnessWitnessV1; machines: readonly Machine[];
     createTerminalCredential(): Promise<string>;
-    createDeploymentArtifact(input: Readonly<{ header: Readonly<Record<string, unknown>>; body: string }>): Promise<DeploymentContentReference>;
+    createDeploymentArtifact(input: Readonly<{ header: Readonly<Record<string, unknown>>; body: string; storedKind?: string }>): Promise<DeploymentContentReference>;
     createDeploymentProject(): Promise<{ projectSourceId: string; audience: readonly unknown[];
         environmentContent: DeploymentContentReference; runtimeContent: DeploymentContentReference }>;
     createDeploymentProjectSource(): Promise<{ projectSourceId: string; audience: readonly unknown[] }>;
@@ -285,7 +309,7 @@ type ServerBoundary = Readonly<{
 // implementation behind its owner-exported testkit rather than recursively
 // including server internals in the CLI-oriented shared TypeScript program.
 const serverTestkitPath = '../../../../apps/server/sources/testkit/workflowApprovedOperationServer.testkit';
-type ServerFixtureInput = Readonly<{ deploymentTeamOwned?: boolean; workflowSessions?: boolean; e2ee?: Readonly<{ contentPublicKey: Uint8Array;
+type ServerFixtureInput = Readonly<{ deploymentTeamOwned?: boolean; workflowSessions?: boolean; requireE2ee?: boolean; e2ee?: Readonly<{ contentPublicKey: Uint8Array;
     encodeMachine(key: Uint8Array, value: unknown): string;
     decodeMachine(key: Uint8Array, value: string): unknown }> }>;
 async function startServer(input: ServerFixtureInput = {}): Promise<ServerBoundary> {
@@ -303,7 +327,7 @@ afterEach(async () => {
 
 /** Only installed files and Docker are substituted; preparation/storage/target stay real. */
 async function createNativeSetupApp(server: ServerBoundary, machine: Machine, catalog = false,
-    credentials: StoredCredentials = { token: server.token, encryption: null }, flow?: DeploymentFlowCostObserver) {
+    credentials: StoredCredentials = { token: server.token, encryption: null }, flow?: DeploymentFlowCostObserver, withDatabase = false) {
     const directory = await mkdtemp(join(tmpdir(), 'happier-combined-setup-app-'));
     cleanups.push(async function removeNativeSetupDirectory() { await removeTempDir(directory); });
     const previousHome = configuration.happyHomeDir;
@@ -312,7 +336,14 @@ async function createNativeSetupApp(server: ServerBoundary, machine: Machine, ca
     const docker = await createOwnServerDockerBoundary(join(directory, 'tools'));
     vi.stubEnv('PATH', `${join(directory, 'tools')}${delimiter}${process.env.PATH ?? ''}`);
     const image = await docker.registerImage('app', 'combined-setup');
-    const document = JSON.stringify({ services: { app: { image: image.registryReference } } });
+    if (withDatabase) {
+        await docker.registerImage('database', 'postgres-17', { registryReferences: ['postgres:17'] });
+    }
+    const services = withDatabase ? ['app', 'database'] : ['app'];
+    const document = JSON.stringify({ services: { app: { image: image.registryReference },
+        ...(withDatabase ? { database: { image: 'postgres:17', environment: {
+            POSTGRES_USER: 'app', POSTGRES_DB: 'app', POSTGRES_PASSWORD: 'local-fixture',
+        } } } : {}) } });
     const pluginId = 'com.happier.setup-catalog-fixture';
     const authored = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Setup catalog fixture', registrySources: {
         apps: { title: 'Setup apps', format: 'happier-catalog', kinds: ['app'], packageContent: { path: 'resources/apps.json' } },
@@ -320,8 +351,10 @@ async function createNativeSetupApp(server: ServerBoundary, machine: Machine, ca
     const mounted = catalog ? await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
         plugins: [{ manifest: authored.manifest, files: { 'resources/apps.json': JSON.stringify({ schemaVersion: 1,
             apps: [{ itemId: 'setup-app', app: { schemaVersion: 1, title: 'Setup catalog app',
-                compose: { document, profiles: [], services: ['app'] }, variables: [], generatedSecrets: [], domains: [], volumes: [] } }] }) } }],
-        runtimeOptions: { pluginIds: ['happier.scm.backend.git', pluginId] } })
+                compose: { document, profiles: [], services }, variables: [], generatedSecrets: [], domains: [], volumes: [],
+                ...(withDatabase ? { data: { engine: 'postgres', service: 'database', port: 5432,
+                    logicalBackup: { adapter: 'postgres-v1' } } } : {}) } }] }) } }],
+        runtimeOptions: { pluginIds: ['happier.scm.backend.git', pluginId, ...(withDatabase ? ['happier.backup.destinations'] : [])] } })
         : await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
             runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
     cleanups.push(async function disposeNativeSetupPluginFixture() { await mounted.dispose(); });
@@ -381,7 +414,7 @@ async function createNativeSetupApp(server: ServerBoundary, machine: Machine, ca
         const item: MachinePresetItemV1 = { kind: 'app', definition: { name: input.environment.kind === 'create'
             ? input.environment.name : 'Setup catalog app', project: { kind: 'existing', projectSourceId: project.projectSourceId },
             definition: { from: 'catalogApp', templateRef }, bindings: [] } };
-        return { child, item, dependencies, createDependencies, docker, projectSourceId: project.projectSourceId,
+        return { child, item, dependencies, createDependencies, docker, document, projectSourceId: project.projectSourceId,
             environmentId: undefined, definition: undefined };
     }
     const artifact = await server.createDeploymentArtifact({
@@ -712,14 +745,15 @@ function reviewedSetupSources(presetRevision = 1): NonNullable<DeploymentPublish
 async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_removed' | 'second_reply_lost' | 'recoverable_reply_lost' | 'correspondence_write_lost'
     | 'retained_permission' | 'missing_permission' = 'exact',
     publishHostChoice?: PublishHostChoice, registeredPublish = false, registeredSetup = false, preparedApp = false,
-    authoredSetup?: 'multi' | 'app_missing', deploymentAdmission?: 'owner' | 'non_deployer', catalogAccountMode?: 'plain' | 'e2ee', flow?: DeploymentFlowCostObserver) {
+    authoredSetup?: 'multi' | 'app_missing', deploymentAdmission?: 'owner' | 'non_deployer', catalogAccountMode?: 'plain' | 'e2ee', flow?: DeploymentFlowCostObserver, deploymentWalk?: 'move' | 'dataMove') {
     nativeBoundary.installationScope ??= new AsyncLocalStorage();
     const mode = catalogAccountMode ?? 'plain';
     const catalog = catalogAccountMode !== undefined;
     const custodyRecovery = control === 'recoverable_reply_lost' || control === 'correspondence_write_lost';
     const contentKeys = mode === 'e2ee' ? tweetnacl.box.keyPair() : null;
     const server = await startServer({ deploymentTeamOwned: deploymentAdmission !== undefined,
-        ...(custodyRecovery ? { workflowSessions: true } : {}),
+        requireE2ee: deploymentWalk !== undefined && mode === 'e2ee',
+        ...(custodyRecovery || deploymentWalk ? { workflowSessions: true } : {}),
         ...(contentKeys ? { e2ee: { contentPublicKey: contentKeys.publicKey,
             encodeMachine: (key: Uint8Array, value: unknown) => encodeBase64(encryptWithDataKey(value, key)),
             decodeMachine: (key: Uint8Array, value: string): unknown => decryptWithDataKey(decodeBase64(value), key) } } : {}) });
@@ -1000,7 +1034,24 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
     // preparation. Its signed parent cannot stand in for target A admission.
     const permissionReplay = control === 'retained_permission' || control === 'missing_permission';
     const nativeMachine = deploymentAdmission || permissionReplay ? host : first;
-    const nativeApp = preparedApp || deploymentAdmission || catalog ? await createNativeSetupApp(server, nativeMachine, catalog, credentials, flow) : undefined;
+    const nativeApp = preparedApp || deploymentAdmission || catalog ? await createNativeSetupApp(server, nativeMachine, catalog, credentials, flow, deploymentWalk === 'dataMove') : undefined;
+    if (deploymentWalk === 'move') {
+        // The builder and the replacement runtime share a process in this
+        // suite, but each Machine owns its own deployment files in production.
+        const home = configuration.happyHomeDir;
+        const isolatedHomes = new Map([first, second].map(machine => [machine.id, join(home, machine.id)]));
+        await Promise.all([...isolatedHomes.values()].map(path => mkdir(path)));
+        const property = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir');
+        if (!property) throw new Error('The installed Machine needs a home directory');
+        Object.defineProperty(configuration, 'happyHomeDir', { configurable: true, enumerable: property.enumerable,
+            get: () => {
+                const machineId = nativeBoundary.installationScope?.getStore()?.machineId ?? nativeBoundary.machineId;
+                return (machineId && isolatedHomes.get(machineId)) || home;
+            } });
+        cleanups.push(async function restoreSharedFixtureHome() {
+            Object.defineProperty(configuration, 'happyHomeDir', property);
+        });
+    }
     if (nativeApp && (registeredPublish || registeredSetup)) {
         nativeBoundary.identity = { version: 1, createdAt: 1, installationId: host.installationId,
             publicKey: Buffer.from(host.keys.publicKey).toString('base64url'), privateKey: Buffer.from(host.keys.secretKey).toString('base64url') };
@@ -1379,9 +1430,11 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
         'machines.setup.apply': { approvalRequiredSurfaces: ['agent'] },
     } } : null);
     let installedHostTransport: Parameters<typeof createCliActionExecutorFromCredentials>[0]['machineActionDirectTargetTransport'];
+    let installedHostRunOperation: Parameters<typeof createWorkflowRunMachineTransport>[0]['runActionOperation'];
     const receiver = async (machine: Machine, installation: NonNullable<typeof nativeBoundary.identity>) => {
       const nativeReceiver = !deploymentAdmission && nativeApp !== undefined && nativeApp !== null && machine.id === first.id;
-      const desired: MachineSetupDesiredV1 = { version: 1, revision: 0, sources: registeredSetup
+      const desired: MachineSetupDesiredV1 = deploymentWalk ? createEmptyMachineSetupDesiredV1()
+        : { version: 1, revision: 0, sources: registeredSetup
         ? (setupInput.targets.find(target => target.machineId === machine.id)?.sources ?? reviewedSetupSources()).map(source => ({
             ...source, setup: { ...source.setup, ...(source.setup.items ? {
                 // This is admitted state before first Apply. App intent first
@@ -1404,7 +1457,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
             // Native transport consumes the real stored key basis and the same
             // snapshot/recovery loader as the daemon bootstrap owner.
             const api = await ApiClient.create(credentials);
-            if ((authoredSetup || installedParent) && machine.id === host.id) {
+            if (deploymentWalk || (authoredSetup || installedParent) && machine.id === host.id) {
                 // machineSyncClient consumes the daemon's retained Home
                 // observation, not an unobserved caller-selected identity.
                 const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: server.baseUrl, token: credentials.token });
@@ -1413,6 +1466,11 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
                         ? { status: snapshot.status, provenance: snapshot.provenance,
                             identity: readServerIdentityIdFromFeaturesSnapshot(snapshot), expectedIdentity: server.homeId }
                         : snapshot)}`);
+                if (deploymentWalk && machine.id === host.id) {
+                    expect(snapshot).toMatchObject({ status: 'ready', features: { capabilities: { encryption: {
+                        storagePolicy: mode === 'e2ee' ? 'required_e2ee' : 'optional',
+                    } } } });
+                }
                 api.setServerFeaturesSnapshotProvider(() => snapshot);
             }
             const published = await api.getMachine(machine.id);
@@ -1549,8 +1607,21 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
                     }, () => client.invokeLocalMachineAction(method, request, options)),
                     machineServiceAction: request => scope.run({
                         machineId: machine.id, identity: installation, credentials,
-                    }, () => client.executeMachineServiceAction(request)),
+                    }, async () => {
+                        const result = await client.executeMachineServiceAction(request);
+                        if (deploymentWalk === 'dataMove' && request.actionId === 'machines.services.detail') {
+                            const parsed = StrictJsonValueSchema.safeParse(result);
+                            receivingDiagnostics.push({ boundary: 'source-writer-detail',
+                                kind: 'kind' in result ? result.kind : result.errorCode,
+                                ...('kind' in result && result.kind === 'service'
+                                    ? { state: result.service.state, phase: result.service.native?.phase ?? '' } : {}),
+                                jsonIssues: parsed.success ? '' : parsed.error.issues.map(issue => issue.message).join(', ') });
+                        }
+                        return result;
+                    }),
                 };
+                installedHostRunOperation = request => scope.run({ machineId: machine.id, identity: installation, credentials },
+                    () => client.runActionOperation(request));
             }
             return { executor: installed.executor, installed, accountExecutor: null,
                 control: { port: runtime.controlPort, token: runtime.controlToken } };
@@ -1631,9 +1702,9 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
                 // Do not replace that executor, its dependencies or its result.
                 const normalize = actionResultProjection.normalizeActionExecutorThrownError;
                 const observation = vi.spyOn(actionResultProjection, 'normalizeActionExecutorThrownError')
-                    .mockImplementation(error => {
-                        const result = normalize(error);
-                        recordCatalogError('installed.normalizer', error, result.errorCode);
+                    .mockImplementation((...args) => {
+                        const result = normalize(...args);
+                        recordCatalogError('installed.normalizer', args[0], result.errorCode);
                         return result;
                     });
                 cleanups.push(async function restoreInstalledReplayObservation() { observation.mockRestore(); });
@@ -1733,8 +1804,10 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
         });
         server.setReceiver(machine.id, async (request, signal, transport) => {
             if (!installed && !handler) throw new Error('receiving_front_door_not_registered');
-            if (machine.id !== host.id) expect(request.executionAuthorization?.binding).toMatchObject({ machineId: machine.id,
-                installationId: machine.installationId, workflowActionOrigin: { runId: coordinatingRunId } });
+            if (machine.id !== host.id && (!deploymentWalk || request.executionAuthorization?.binding.workflowActionOrigin)) {
+                expect(request.executionAuthorization?.binding).toMatchObject({ machineId: machine.id,
+                    installationId: machine.installationId, workflowActionOrigin: { runId: coordinatingRunId } });
+            }
             if (machine.id !== host.id && registeredSetup && request.envelope.v === 1 && request.executionAuthorization) {
                 const { binding } = request.executionAuthorization;
                 const { input } = request.envelope;
@@ -1894,161 +1967,169 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
         ...(publishFixture || nativeApp ? { deploymentAction: deploymentStorage?.deploymentAction ?? hostActionDeps.deploymentAction } : {}),
         ...(nativeApp ? { resolveEnvironmentApprovalScope: deploymentStorage?.resolveEnvironmentApprovalScope ?? publishReadDeps.resolveEnvironmentApprovalScope } : {}),
     });
-    if (catalog) {
-        if (!nativeApp || nativeApp.child.actionId !== 'deployments.templates.instantiate')
-            throw new Error('catalog_setup_app_required');
-        const target = setupInput.targets[0];
-        if (!target) throw new Error('catalog_setup_target_required');
-        const { deploy: _deploy, ...definitionOnly } = nativeApp.child.input;
-        const omittedInput = { ...setupInput, targets: [{ ...target,
-            appChildren: [{ ...nativeApp.child, input: definitionOnly }] }] };
-        // Observe the real RPC transport without replacing its review or delivery.
-        const targetTransport = vi.spyOn(machineRpcTransport, 'callExactMachineRpc');
-        let deploymentSourceReads = 0;
-        const preparationHttpFacts: Array<Readonly<{ route: string; status: number }>> = [];
-        const machineReadFacts: Array<Readonly<Record<string, string | boolean>>> = [];
-        const machineObservation = axios.interceptors.response.use(response => {
-            const path = new URL(response.config.url!, response.config.baseURL).pathname;
-            const route = path === `/v1/projects/sources/${encodeURIComponent(nativeApp.projectSourceId)}` ? 'source'
-                : path === `/v1/projects/${encodeURIComponent(nativeApp.projectSourceId)}/deployment-defaults` ? 'project-defaults'
-                : path.startsWith('/v1/deployments/') ? 'deployment'
-                : path.startsWith('/v1/machines/setup/') ? 'setup-home' : undefined;
-            if (route) preparationHttpFacts.push({ route, status: response.status });
-            if (!path.startsWith('/v1/machines/')) return response;
-            const machine: unknown = response.data && typeof response.data === 'object'
-                ? Reflect.get(response.data, 'machine') : undefined;
-            const access: unknown = machine && typeof machine === 'object' ? Reflect.get(machine, 'access') : undefined;
-            machineReadFacts.push({ status: String(response.status), target: path.endsWith(`/${target.machineId}`),
-                host: path.endsWith(`/${host.id}`),
-                manage: Boolean(access && typeof access === 'object' && Reflect.get(access, 'role') === 'manage'),
-                revoked: Boolean(machine && typeof machine === 'object' && Reflect.get(machine, 'revokedAt') != null),
-                replaced: Boolean(machine && typeof machine === 'object' && Reflect.get(machine, 'replacedByMachineId') != null) });
-            return response;
-        });
-        const observation = axios.interceptors.request.use(request => {
-            if (new URL(request.url!, request.baseURL).pathname
-                === `/v1/projects/sources/${encodeURIComponent(nativeApp.projectSourceId)}`) deploymentSourceReads++;
-            return request;
-        });
-        try {
-            // Setup installs the app. Definition-only instantiate remains valid
-            // outside Setup, but cannot stand in for its literal deploy leaf.
-            // The ordinary installed Apply prepares its real target Plan
-            // before creating the parent's approval or any native work.
-            const omittedDeploy = await invokeInstalledHost('machines.setup.apply', omittedInput, randomUUID());
-            const targetTransportFacts = targetTransport.mock.calls.filter(([call]) => call.method === RPC_METHODS.MACHINE_SETUP_PLAN)
-                .map(([call]) => {
-                    const context = call.externalAction?.context;
-                    const authorization = context?.externalActionExecutionAuthorization;
-                    const envelope = ExternalActionRequestEnvelopeSchema.safeParse(context?.originalActionEnvelope);
-                    const child = MachineSetupPlanInputV1Schema.safeParse(call.request);
-                    const root = envelope.success && envelope.data.v === 1
-                        ? MachineSetupApplyInputV1Schema.safeParse(envelope.data.input) : null;
-                    const expected = { homeId: target.homeId, machineId: target.machineId, sources: target.sources,
-                        exclusions: target.exclusions, appChildren: omittedInput.targets[0]!.appChildren, mode: 'effects' };
-                    return { authorizationPresent: authorization !== undefined, envelopePresent: envelope.success,
-                        envelopeBound: Boolean(authorization && envelope.success && isExternalActionAuthorizationBoundToEnvelope(
-                            authorization.binding, { actionId: authorization.binding.actionId,
-                                machineId: authorization.binding.machineId, envelope: envelope.data })),
-                        childParsed: child.success, plainRootParsed: root?.success ?? false,
-                        plainRootMatches: Boolean(root?.success && sameStrictJsonValue(root.data, omittedInput)),
-                        rootActionMatches: authorization?.binding.actionId === 'machines.setup.apply',
-                        plainRootHomeMatches: Boolean(root?.success && root.data.homeId === authorization?.binding.serverIdentityId),
-                        canonicalChildMatches: Boolean(authorization && envelope.success && envelope.data.v === 1
-                            && readMachineSetupPlanChildInputV1({ rootActionId: authorization.binding.actionId,
-                                rootInput: envelope.data.input, machineId: call.machineId, input: call.request })),
-                        ...Object.fromEntries(Object.entries(expected).map(([key, value]) => [key,
-                            child.success && sameStrictJsonValue(Reflect.get(child.data, key), value)])) };
-                });
-            const omittedDiagnostics = JSON.stringify({ result: omittedDeploy, deploymentSourceReads, preparationHttpFacts,
-                machineReadFacts, targetTransportFacts, receivingDiagnostics: await readReceivingDiagnostics() });
-            expect(deploymentSourceReads, omittedDiagnostics).toBe(0);
-            expect(omittedDeploy, omittedDiagnostics).toMatchObject({ ok: false,
-                errorCode: 'machine_setup_app_plan_changed' });
-        } finally {
-            axios.interceptors.request.eject(observation);
-            axios.interceptors.response.eject(machineObservation);
-            targetTransport.mockRestore();
+    const seedAcceptedSetup = async () => {
+        if (catalog) {
+            if (!nativeApp || nativeApp.child.actionId !== 'deployments.templates.instantiate')
+                throw new Error('catalog_setup_app_required');
+            const target = setupInput.targets[0];
+            if (!target) throw new Error('catalog_setup_target_required');
+            const { deploy: _deploy, ...definitionOnly } = nativeApp.child.input;
+            const omittedInput = { ...setupInput, targets: [{ ...target,
+                appChildren: [{ ...nativeApp.child, input: definitionOnly }] }] };
+            // Observe the real RPC transport without replacing its review or delivery.
+            const targetTransport = vi.spyOn(machineRpcTransport, 'callExactMachineRpc');
+            let deploymentSourceReads = 0;
+            const preparationHttpFacts: Array<Readonly<{ route: string; status: number }>> = [];
+            const machineReadFacts: Array<Readonly<Record<string, string | boolean>>> = [];
+            const machineObservation = axios.interceptors.response.use(response => {
+                const path = new URL(response.config.url!, response.config.baseURL).pathname;
+                const route = path === `/v1/projects/sources/${encodeURIComponent(nativeApp.projectSourceId)}` ? 'source'
+                    : path === `/v1/projects/${encodeURIComponent(nativeApp.projectSourceId)}/deployment-defaults` ? 'project-defaults'
+                    : path.startsWith('/v1/deployments/') ? 'deployment'
+                    : path.startsWith('/v1/machines/setup/') ? 'setup-home' : undefined;
+                if (route) preparationHttpFacts.push({ route, status: response.status });
+                if (!path.startsWith('/v1/machines/')) return response;
+                const machine: unknown = response.data && typeof response.data === 'object'
+                    ? Reflect.get(response.data, 'machine') : undefined;
+                const access: unknown = machine && typeof machine === 'object' ? Reflect.get(machine, 'access') : undefined;
+                machineReadFacts.push({ status: String(response.status), target: path.endsWith(`/${target.machineId}`),
+                    host: path.endsWith(`/${host.id}`),
+                    manage: Boolean(access && typeof access === 'object' && Reflect.get(access, 'role') === 'manage'),
+                    revoked: Boolean(machine && typeof machine === 'object' && Reflect.get(machine, 'revokedAt') != null),
+                    replaced: Boolean(machine && typeof machine === 'object' && Reflect.get(machine, 'replacedByMachineId') != null) });
+                return response;
+            });
+            const observation = axios.interceptors.request.use(request => {
+                if (new URL(request.url!, request.baseURL).pathname
+                    === `/v1/projects/sources/${encodeURIComponent(nativeApp.projectSourceId)}`) deploymentSourceReads++;
+                return request;
+            });
+            try {
+                // Setup installs the app. Definition-only instantiate remains valid
+                // outside Setup, but cannot stand in for its literal deploy leaf.
+                // The ordinary installed Apply prepares its real target Plan
+                // before creating the parent's approval or any native work.
+                const omittedDeploy = await invokeInstalledHost('machines.setup.apply', omittedInput, randomUUID());
+                const targetTransportFacts = targetTransport.mock.calls.filter(([call]) => call.method === RPC_METHODS.MACHINE_SETUP_PLAN)
+                    .map(([call]) => {
+                        const context = call.externalAction?.context;
+                        const authorization = context?.externalActionExecutionAuthorization;
+                        const envelope = ExternalActionRequestEnvelopeSchema.safeParse(context?.originalActionEnvelope);
+                        const child = MachineSetupPlanInputV1Schema.safeParse(call.request);
+                        const root = envelope.success && envelope.data.v === 1
+                            ? MachineSetupApplyInputV1Schema.safeParse(envelope.data.input) : null;
+                        const expected = { homeId: target.homeId, machineId: target.machineId, sources: target.sources,
+                            exclusions: target.exclusions, appChildren: omittedInput.targets[0]!.appChildren, mode: 'effects' };
+                        return { authorizationPresent: authorization !== undefined, envelopePresent: envelope.success,
+                            envelopeBound: Boolean(authorization && envelope.success && isExternalActionAuthorizationBoundToEnvelope(
+                                authorization.binding, { actionId: authorization.binding.actionId,
+                                    machineId: authorization.binding.machineId, envelope: envelope.data })),
+                            childParsed: child.success, plainRootParsed: root?.success ?? false,
+                            plainRootMatches: Boolean(root?.success && sameStrictJsonValue(root.data, omittedInput)),
+                            rootActionMatches: authorization?.binding.actionId === 'machines.setup.apply',
+                            plainRootHomeMatches: Boolean(root?.success && root.data.homeId === authorization?.binding.serverIdentityId),
+                            canonicalChildMatches: Boolean(authorization && envelope.success && envelope.data.v === 1
+                                && readMachineSetupPlanChildInputV1({ rootActionId: authorization.binding.actionId,
+                                    rootInput: envelope.data.input, machineId: call.machineId, input: call.request })),
+                            ...Object.fromEntries(Object.entries(expected).map(([key, value]) => [key,
+                                child.success && sameStrictJsonValue(Reflect.get(child.data, key), value)])) };
+                    });
+                const omittedDiagnostics = JSON.stringify({ result: omittedDeploy, deploymentSourceReads, preparationHttpFacts,
+                    machineReadFacts, targetTransportFacts, receivingDiagnostics: await readReceivingDiagnostics() });
+                expect(deploymentSourceReads, omittedDiagnostics).toBe(0);
+                expect(omittedDeploy, omittedDiagnostics).toMatchObject({ ok: false,
+                    errorCode: 'machine_setup_app_plan_changed' });
+            } finally {
+                axios.interceptors.request.eject(observation);
+                axios.interceptors.response.eject(machineObservation);
+                targetTransport.mockRestore();
+            }
+            const response = await fetch(`${server.baseUrl}/v1/deployments/environments?serverId=${server.homeId}&projectSourceId=${nativeApp.projectSourceId}`,
+                { headers: { Authorization: `Bearer ${server.token}` } });
+            expect(response.status).toBe(200);
+            expect(DeploymentActionOutputSchemasV1['deployments.environments.list'].parse(await response.json()))
+                .toMatchObject({ ok: true, items: [] });
+            expect((await nativeApp.docker.readInvocations()).filter(call => call.args.includes('up'))).toEqual([]);
+            expect(nativeBoundary.launches.slice(nativeLaunchIndex)).toEqual([]);
         }
-        const response = await fetch(`${server.baseUrl}/v1/deployments/environments?serverId=${server.homeId}&projectSourceId=${nativeApp.projectSourceId}`,
-            { headers: { Authorization: `Bearer ${server.token}` } });
-        expect(response.status).toBe(200);
-        expect(DeploymentActionOutputSchemasV1['deployments.environments.list'].parse(await response.json()))
-            .toMatchObject({ ok: true, items: [] });
-        expect((await nativeApp.docker.readInvocations()).filter(call => call.args.includes('up'))).toEqual([]);
-        expect(nativeBoundary.launches.slice(nativeLaunchIndex)).toEqual([]);
-    }
-    // Parent effects review reaches real target Plan: install receiving daemons first.
-    flow?.setPhase('review');
-    const requested = installedParent ? await invokeInstalledHost(parentActionId, input, parentRequestId)
-        : await admission.execute(parentActionId, input, parentContext);
-    if (!requested.ok) throw new Error(`parent_approval_${requested.errorCode}_${JSON.stringify({ setupArtifactReads,
-        installedReplayFailures, receivingDiagnostics: await readReceivingDiagnostics() })}`);
-    expect(requested).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
-    if (!requested.ok || !requested.result || typeof requested.result !== 'object'
-        || !('artifactId' in requested.result) || typeof requested.result.artifactId !== 'string') throw new Error('parent_approval_not_created');
-    const artifactId = requested.result.artifactId;
-    const openApproval = await approvalsGet({ artifactId });
-    expect(openApproval).toMatchObject({ status: 'open', actionId: parentActionId });
-    if (control === 'retained_permission') expect(openApproval).toMatchObject({
-        executionOriginV1: { callerPermissionMode: 'default' } });
-    if (control === 'missing_permission') expect(openApproval).not.toHaveProperty('executionOriginV1.callerPermissionMode');
-    if (installedParent) parentPrompts.push(openApproval);
-    if (deploymentAdmission) expect(deploymentPreparationCalls, 'Publish prepares the owner preview once before Ask').toBe(1);
-    const { externalActionExecutionAuthorization: _originalRoot, ...decisionContext } = parentContext;
-    flow?.setPhase('approve');
-    const decision = installedParent ? await invokeInstalledHost('approval.request.decide', { artifactId, decision: 'approve' }, randomUUID(), true)
-        : await admission.execute('approval.request.decide', { artifactId, decision: 'approve' },
-            { ...decisionContext, authority: 'present_user', actionRequestId: randomUUID(),
-                ...(control === 'retained_permission' ? { callerPermissionMode: 'read-only' as const }
-                    : control === 'missing_permission' ? { callerPermissionMode: 'default' as const } : {}) });
-    expect(decision, decision.ok ? undefined : `parent_decision_${decision.errorCode}`).toMatchObject({ ok: true });
-    const settledApproval = await approvalsGet({ artifactId });
-    if (permissionReplay) expect(deploymentPreparationCalls, 'An admitted Publish reuses its retained native review on approval replay').toBe(1);
-    if (settledApproval?.status !== 'executed') {
-        const execution = settledApproval && 'execution' in settledApproval ? settledApproval.execution : null;
-        if (control === 'missing_permission') await expect(storage.execute({ operation: 'get', runId }))
-            .rejects.toMatchObject({ response: { status: 404 } });
-        throw Object.assign(new Error(`parent_replay_${settledApproval?.status}_${execution && !execution.ok ? execution.errorCode : 'unavailable'}_${JSON.stringify({ parentWorkflowFailure,
-            ...(installedParent ? { installedReplayFailures } : {}), receivingDiagnostics: await readReceivingDiagnostics() })}${
-            lastPublishRunRequest ? `_run_request_${JSON.stringify(lastPublishRunRequest)}` : ''}`),
-            { code: execution && !execution.ok ? execution.errorCode : 'unavailable' });
-    }
-    expect(settledApproval).toMatchObject({ status: 'executed', decision: { kind: 'approve' } });
-    if (deploymentAdmission) expect(deploymentPreparationCalls, 'approving the exact Publish Ask reuses its admitted owner preview').toBe(1);
-    expect(parentPrompts).toHaveLength(1);
-    const approved = await readStoredSnapshot();
-    const { encryption: runEncryption } = await readRunEncryption();
-    const sealMode = runEncryption.runCrypto.mode === 'e2ee'
-        ? { ...runEncryption.runCrypto, randomBytes: tweetnacl.randomBytes } : runEncryption.runCrypto;
-    const expectedSetupSteps = steps.map(step => ({ ...step, input: buildMachineSetupTargetApplyInput(step.input.targets[0]!) }));
-    expect(approved.approvedOperation).toMatchObject({ parent: { actionId: parentActionId, input },
-        approvedBy: { accountId: server.accountId }, steps: authoredSetup ? [{ actionId: 'machines.setup.apply', input: setupInput }] : publishFixture
-            ? [...expectedSetupSteps, { actionId: 'deployments.deploy', input: publishFixture.input.preparedChildren.deploy }]
-            : nativeApp ? [...expectedSetupSteps, { actionId: nativeApp.child.actionId, input: nativeApp.child.input }] : expectedSetupSteps });
-    // Publish approval replays on the deciding app with its witnessed review,
-    // not the original signed requester binding. It must not invent a starter.
-    if (registeredPublish) {
-        expect(resolveApprovalExecutor(StoredApprovalRequestSchema.parse(openApproval)))
-            .toEqual({ kind: 'app', placement: 'account' });
-        expect(approved.origin?.authenticatedStarterV1).toBeUndefined();
-    } else expect(approved.origin?.authenticatedStarterV1).toEqual({ requestRef: parentRequestId,
-        requester: { accountId: server.accountId, serverId: server.homeId } });
-    let claim = await server.claim(host.id);
-    expect(claim.runId).toBe(runId);
-    const checkpoint: WorkflowCheckpointEnvelopeV1 = { kind: 'happier.workflow-checkpoint.v1', rootRecordId: rootId,
-        nextSequence: '1', frontier: { nextBlockOrdinal: 0, paused: false } };
-    const initialized: unknown = await storage.execute({ operation: 'initialize', runId, parentAttempt: claim.attempt,
-        expectedRevision: claim.revision, accountCurrentness: server.currentness,
-        checkpointEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ ...sealMode,
-            binding: { v: 1, purpose: 'checkpoint', accountId: server.accountId, runId }, checkpoint })),
-        rootInvocation: { id: rootId, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
-            ...sealMode, binding: { v: 1, purpose: 'invocation_progress', accountId: server.accountId, runId,
-                recordId: rootId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' },
-            progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: '$root', scope: [] },
-                blockKind: 'root', attempt: '0', logicalInvocationRecordId: rootId } })) } });
-    const initial = initialized as { run: unknown };
-    const initializedRun = WorkflowRunSummaryV1Schema.parse(initial.run);
+        // Parent effects review reaches real target Plan: install receiving daemons first.
+        flow?.setPhase('review');
+        const requested = installedParent ? await invokeInstalledHost(parentActionId, input, parentRequestId)
+            : await admission.execute(parentActionId, input, parentContext);
+        if (!requested.ok) throw new Error(`parent_approval_${requested.errorCode}_${JSON.stringify({ setupArtifactReads,
+            installedReplayFailures, receivingDiagnostics: await readReceivingDiagnostics() })}`);
+        expect(requested).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
+        if (!requested.ok || !requested.result || typeof requested.result !== 'object'
+            || !('artifactId' in requested.result) || typeof requested.result.artifactId !== 'string') throw new Error('parent_approval_not_created');
+        const artifactId = requested.result.artifactId;
+        const openApproval = await approvalsGet({ artifactId });
+        expect(openApproval).toMatchObject({ status: 'open', actionId: parentActionId });
+        if (control === 'retained_permission') expect(openApproval).toMatchObject({
+            executionOriginV1: { callerPermissionMode: 'default' } });
+        if (control === 'missing_permission') expect(openApproval).not.toHaveProperty('executionOriginV1.callerPermissionMode');
+        if (installedParent) parentPrompts.push(openApproval);
+        if (deploymentAdmission) expect(deploymentPreparationCalls, 'Publish prepares the owner preview once before Ask').toBe(1);
+        const { externalActionExecutionAuthorization: _originalRoot, ...decisionContext } = parentContext;
+        flow?.setPhase('approve');
+        const decision = installedParent ? await invokeInstalledHost('approval.request.decide', { artifactId, decision: 'approve' }, randomUUID(), true)
+            : await admission.execute('approval.request.decide', { artifactId, decision: 'approve' },
+                { ...decisionContext, authority: 'present_user', actionRequestId: randomUUID(),
+                    ...(control === 'retained_permission' ? { callerPermissionMode: 'read-only' as const }
+                        : control === 'missing_permission' ? { callerPermissionMode: 'default' as const } : {}) });
+        expect(decision, decision.ok ? undefined : `parent_decision_${decision.errorCode}`).toMatchObject({ ok: true });
+        const settledApproval = await approvalsGet({ artifactId });
+        if (permissionReplay) expect(deploymentPreparationCalls, 'An admitted Publish reuses its retained native review on approval replay').toBe(1);
+        if (settledApproval?.status !== 'executed') {
+            const execution = settledApproval && 'execution' in settledApproval ? settledApproval.execution : null;
+            if (control === 'missing_permission') await expect(storage.execute({ operation: 'get', runId }))
+                .rejects.toMatchObject({ response: { status: 404 } });
+            throw Object.assign(new Error(`parent_replay_${settledApproval?.status}_${execution && !execution.ok ? execution.errorCode : 'unavailable'}_${JSON.stringify({ parentWorkflowFailure,
+                ...(installedParent ? { installedReplayFailures } : {}), receivingDiagnostics: await readReceivingDiagnostics() })}${
+                lastPublishRunRequest ? `_run_request_${JSON.stringify(lastPublishRunRequest)}` : ''}`),
+                { code: execution && !execution.ok ? execution.errorCode : 'unavailable' });
+        }
+        expect(settledApproval).toMatchObject({ status: 'executed', decision: { kind: 'approve' } });
+        if (deploymentAdmission) expect(deploymentPreparationCalls, 'approving the exact Publish Ask reuses its admitted owner preview').toBe(1);
+        expect(parentPrompts).toHaveLength(1);
+        const approved = await readStoredSnapshot();
+        const { encryption: runEncryption } = await readRunEncryption();
+        const sealMode = runEncryption.runCrypto.mode === 'e2ee'
+            ? { ...runEncryption.runCrypto, randomBytes: tweetnacl.randomBytes } : runEncryption.runCrypto;
+        const expectedSetupSteps = steps.map(step => ({ ...step, input: buildMachineSetupTargetApplyInput(step.input.targets[0]!) }));
+        expect(approved.approvedOperation).toMatchObject({ parent: { actionId: parentActionId, input },
+            approvedBy: { accountId: server.accountId }, steps: authoredSetup ? [{ actionId: 'machines.setup.apply', input: setupInput }] : publishFixture
+                ? [...expectedSetupSteps, { actionId: 'deployments.deploy', input: publishFixture.input.preparedChildren.deploy }]
+                : nativeApp ? [...expectedSetupSteps, { actionId: nativeApp.child.actionId, input: nativeApp.child.input }] : expectedSetupSteps });
+        // Publish approval replays on the deciding app with its witnessed review,
+        // not the original signed requester binding. It must not invent a starter.
+        if (registeredPublish) {
+            expect(resolveApprovalExecutor(StoredApprovalRequestSchema.parse(openApproval)))
+                .toEqual({ kind: 'app', placement: 'account' });
+            expect(approved.origin?.authenticatedStarterV1).toBeUndefined();
+        } else expect(approved.origin?.authenticatedStarterV1).toEqual({ requestRef: parentRequestId,
+            requester: { accountId: server.accountId, serverId: server.homeId } });
+        const claim = await server.claim(host.id);
+        expect(claim.runId).toBe(runId);
+        const checkpoint: WorkflowCheckpointEnvelopeV1 = { kind: 'happier.workflow-checkpoint.v1', rootRecordId: rootId,
+            nextSequence: '1', frontier: { nextBlockOrdinal: 0, paused: false } };
+        const initialized: unknown = await storage.execute({ operation: 'initialize', runId, parentAttempt: claim.attempt,
+            expectedRevision: claim.revision, accountCurrentness: server.currentness,
+            checkpointEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ ...sealMode,
+                binding: { v: 1, purpose: 'checkpoint', accountId: server.accountId, runId }, checkpoint })),
+            rootInvocation: { id: rootId, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+                ...sealMode, binding: { v: 1, purpose: 'invocation_progress', accountId: server.accountId, runId,
+                    recordId: rootId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0' },
+                progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: '$root', scope: [] },
+                    blockKind: 'root', attempt: '0', logicalInvocationRecordId: rootId } })) } });
+        const initial = initialized as { run: unknown };
+        const initializedRun = WorkflowRunSummaryV1Schema.parse(initial.run);
+        return { approved, claim, checkpoint, runEncryption, initializedRun };
+    };
+    const setup = deploymentWalk ? null : await seedAcceptedSetup();
+    const requireSetup = () => {
+        if (!setup) throw new Error('Fixture Setup Run was not requested');
+        return setup;
+    };
     const parentExecutor = (() => {
         if (!installedParent) return createActionExecutor(effectiveHostDeps);
         if (!installedHostExecutor || !installedHostTransport) throw new Error('catalog_installed_host_required');
@@ -2115,7 +2196,8 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
                 ...(request.signal ? { signal: request.signal } : {}) }),
             readWorkflowDefinition: async () => { throw new Error('inline_fixture_workflow_has_no_definition_reference'); },
         }));
-    const coordinate = async (snapshot: WorkflowAcceptedSnapshotV1 = approved) => {
+    const coordinate = async (snapshot: WorkflowAcceptedSnapshotV1 = requireSetup().approved) => {
+        const { claim, checkpoint, runEncryption, initializedRun } = requireSetup();
         // Every call reconstructs the real durable store and reader, proving
         // approved input survives a daemon/coordinator replacement.
         const store = await DurableWorkflowCoordinatorStore.load({ accountId: server.accountId, runId,
@@ -2141,7 +2223,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
         try { return await coordinator.run({ ...snapshot, runId, signal: receiverLifetime.signal }); }
         finally { coordinatingRunId = previousCoordinatingRunId; }
     };
-    const coordinateProduction = async (selectedClaim = claim) => {
+    const coordinateProduction = async (selectedClaim = requireSetup().claim) => {
         const action = { executor: parentExecutor, buildContext: async (execution: Parameters<typeof resolveWorkflowContext>[0]) => ({
             ...await resolveWorkflowContext(execution), serverId: profileId, serverIdentityId: server.homeId,
             runtimeAccountId: server.accountId }),
@@ -2171,6 +2253,48 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
             expectedRevision: selectedClaim.revision, accountCurrentness: server.currentness, signal: receiverLifetime.signal })); }
         finally { coordinatingRunId = previousCoordinatingRunId; }
     };
+    const coordinateDeploymentWalk = (runId: string) => runWithServerHttpBaseUrl(server.baseUrl, async () => {
+        if (!installedHostTransport || !installedHostRunOperation) throw new Error('The walk requires an installed runner');
+        const claimClient = createAutomationClaimClient({ token: credentials.token,
+            createPublisherHeader: async ({ path, body }) => server.publisherHeader({ machineId: host.id, path, body }) });
+        const claim = await claimClient.claimRun({ machineId: host.id, scope: 'workflow', leaseDurationMs: 30_000 });
+        if (!claim.run) throw new Error('The installed runner did not receive a Workflow claim');
+        expect(claim.run.id).toBe(runId);
+        expect(claim.run.machineAdmission).toMatchObject({ actorAccountId: server.accountId, machineId: host.id,
+            installationId: host.installationId, role: 'manage' });
+        const signal = receiverLifetime.signal;
+        const attribution = { accountId: server.accountId, serverId: profileId, machineId: host.id, installationId: host.installationId };
+        const happyHomeDir = configuration.happyHomeDir;
+        const requester = createWorkflowRunMachineTransport({ runId, credentials,
+            requesterWorkAttributionV1: attribution, machineAdmission: claim.run.machineAdmission,
+            isCurrent: async () => !signal.aborted && configuration.activeServerId === profileId,
+            signal, transport: installedHostTransport, runActionOperation: installedHostRunOperation,
+            boundary: { serverId: profileId, serverHttpBaseUrl: server.baseUrl, happyHomeDir,
+                getObservedServerIdentityId: () => server.homeId },
+        });
+        const previousCoordinatingRunId = coordinatingRunId;
+        coordinatingRunId = runId;
+        try {
+            const savedSecretOperationContext = await requester.resolveSavedSecretOperationContext();
+            if (!savedSecretOperationContext) throw new Error('The claimed requester did not open Account settings');
+            await retainWorkflowRequesterCredentials({ scopeId: runId, credentials, attribution, happyHomeDir,
+                homeServerIdentityId: server.homeId, fromRunClaim: true, machineAdmission: claim.run.machineAdmission });
+            const runtime = createProductionDaemonWorkflowRuntime({ credentials, accountId: server.accountId, serverId: profileId });
+            const coordinate = runtime.createCoordinatorForMachine({ machineId: host.id, serverIdentityId: server.homeId,
+                installationIdentity: { installationId: host.installationId, privateKey: host.keys.secretKey },
+                requesterWorkAttributionV1: attribution, savedSecretOperationContext,
+                machineAdmissionTransport: async () => { throw new Error('Deployment Workflows do not enqueue Session inputs'); },
+                machineActionDirectTargetTransport: requester.transport, runActionOperation: requester.runActionOperation,
+                resolveActionRequesterContext: requester.resolveActionRequesterContext });
+            const outcome = await coordinate({ runId, attempt: claim.run.attempt, expectedRevision: claim.run.revision,
+                accountCurrentness: claim.accountCurrentness, signal });
+            return { outcome, attempt: claim.run.attempt };
+        } finally {
+            coordinatingRunId = previousCoordinatingRunId;
+            await requester.dispose();
+            await retireWorkflowRequesterCredentials({ scopeId: runId, ...attribution, happyHomeDir, serverHttpBaseUrl: server.baseUrl });
+        }
+    });
     const recoverRetainedInvocations = createWorkflowRunRecoveryReader({ accountId: server.accountId, machineId: host.id, storage,
         resolveAccountEncryption: async () => {
             const encryption = await runWithServerHttpBaseUrl(server.baseUrl,
@@ -2198,12 +2322,14 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
             },
         }),
     });
-    const reconcileInvocations = async () => {
+    const reconcileInvocations = async (selectedRunId = runId, attempt = requireSetup().claim.attempt) => {
+        const runId = selectedRunId;
         const stored = await storage.execute({ operation: 'get', runId });
         if (!stored || typeof stored !== 'object' || !('run' in stored)) throw new Error('missing_stored_run');
         const run = WorkflowRunSummaryV1Schema.parse(stored.run);
+        const encryption = setup?.runEncryption ?? (await readRunEncryption(runId)).encryption;
         const writer = createWorkflowInvocationRecoveryFactWriter({ accountId: server.accountId, run,
-            parentAttempt: claim.attempt, storage, encryption: runEncryption });
+            parentAttempt: attempt, storage, encryption });
         const listed = await storage.execute({ operation: 'invocations.list', runId,
             pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES });
         if (!listed || typeof listed !== 'object' || !('invocations' in listed) || !Array.isArray(listed.invocations)) {
@@ -2216,10 +2342,10 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
             const index = WorkflowRunInvocationIndexV1Schema.parse(raw);
             const invocation = await writer.readInvocation(index.id);
             if (!invocation || invocation.progress.blockKind !== 'action') continue;
-            const observation = index.lifecycle === 'outcome_uncertain'
+            const observation = setup && index.lifecycle === 'outcome_uncertain'
                 ? await observer({ progress: invocation.progress, run, index,
                     terminalParent: false, cancellationRequested: false, observationOnly: true,
-                    frozenActionContract: approved.materializedLeaves.find(leaf => leaf.kind === 'action'
+                    frozenActionContract: setup.approved.materializedLeaves.find(leaf => leaf.kind === 'action'
                         && leaf.blockId === invocation.progress.invocationPath.blockId)?.actionContract })
                 : undefined;
             if (observation) await writer.commitObservation(invocation, observation);
@@ -2279,7 +2405,21 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
     };
     const publicSetupPreparation = (input: MachineSetupApplyInputV1) => hostActionDeps.prepareMachineSetupApply!({ input,
         context: publicActionContext() });
-    return { server, coordinate, coordinateProduction, publicSetupPlan, publicSetupApply, publicSetupPreparation, failNativeStarts, workflowDirectory, get effects() {
+    const invokeDeploymentWalkAction = (actionId: ActionId, input: unknown, machineId = host.id, reviewDigest?: string,
+        authority: 'present_user' | 'account_automation' = 'present_user') => {
+        const target = { kind: 'machine' as const, machineId,
+            ...(actionId === 'workflow.run.start' ? { project: { machineId, directory: workflowDirectory } } : {}) };
+        const context = { ...publicActionContext(), surface: 'ui' as const, externalActionTarget: target };
+        const confirmation = reviewDigest
+            ? bindPresentUserActionConfirmationV1(actionId, input, context, reviewDigest).presentUserConfirmation
+            : undefined;
+        return dispatchOriginalAccountAction({ actionId, input, requestId: context.actionRequestId!, target,
+            credentials, serverHttpBaseUrl: server.baseUrl, serverIdentityId: server.homeId,
+            authority, invocation: { caller: { kind: 'host' }, surface: authority === 'present_user' ? 'ui' : 'cli', authority,
+                callerPermissionMode: 'default', ...(confirmation ? { presentUserConfirmation: confirmation } : {}) },
+            signal: receiverLifetime.signal });
+    };
+    return { server, credentials, coordinate, coordinateProduction, coordinateDeploymentWalk, invokeDeploymentWalkAction, publicSetupPlan, publicSetupApply, publicSetupPreparation, failNativeStarts, workflowDirectory, get effects() {
         return registeredSetup ? nativeBoundary.launches.slice(nativeLaunchIndex).flatMap(launch => {
             const preset = setupInput.targets.find(target => target.machineId === launch.machineId)?.sources.find(source => source.kind === 'accountPreset');
             return launch.machineId && preset?.kind === 'accountPreset' ? [{ machineId: launch.machineId, presetRevision: preset.presetRevision }] : [];
@@ -2292,6 +2432,402 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
         held, approvalCoordinator, receiverLifetime, approvalsGet, receiverRefusals, hostSetupFailures, reconcileInvocations, recoverRetainedInvocations,
         readReceivingDiagnostics, readCatalogExecutionDiagnostics: () => ({ installedReplayFailures, catalogExecutionEvents }) };
 }
+
+async function invokeReviewedWalkAction(fixtureRun: Awaited<ReturnType<typeof fixture>>, actionId: ActionId,
+    input: unknown, machineId?: string) {
+    const result = await fixtureRun.invokeDeploymentWalkAction(actionId, input, machineId);
+    if (result.ok || result.errorCode !== 'action_interactive_review_required') return result;
+    const { details } = result;
+    const reviewDigest = details && typeof details === 'object' && 'reviewDigest' in details && details.reviewDigest;
+    if (typeof reviewDigest !== 'string') throw new Error(`Missing reviewed input for ${actionId}`);
+    return await fixtureRun.invokeDeploymentWalkAction(actionId, input, machineId, reviewDigest);
+}
+
+async function walkDeploymentWorkflow(fixtureRun: Awaited<ReturnType<typeof fixture>>,
+    request: ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>, decision: 'approve' | 'reject' = 'approve') {
+    const { server, host, receiverLifetime } = fixtureRun;
+    const { runId } = request;
+    const started = await invokeReviewedWalkAction(fixtureRun, 'workflow.run.start', request);
+    const definitionValidation = request.source.kind === 'inline' && !started.ok
+        ? validateWorkflowDefinition(request.source.definition).issues.map(({ code, path }) => ({ code, path })) : undefined;
+    expect(started, started.ok ? undefined : JSON.stringify({ code: started.errorCode,
+        failureCause: started.failureCause, validation: definitionValidation })).toMatchObject({
+        ok: true, result: { admission: 'created', run: { id: runId } },
+    });
+    const decisions = new Map<string, Promise<void>>();
+    const asks: string[] = [];
+    const settlements: { action: string; status: string; refusal?: string; failureCause?: unknown }[] = [];
+    const askOperands = new Set<string>();
+    const approvalAcknowledgement = axios.interceptors.response.use(response => {
+        if (response.config.url !== `${server.baseUrl}/v1/artifacts` || response.config.method !== 'post'
+            || response.status !== 200) return response;
+        const raw: unknown = response.config.data;
+        const stored = ArtifactJsonCreateHttpInputV1Schema.safeParse(typeof raw === 'string' ? JSON.parse(raw) : raw);
+        if (!stored.success || stored.data.approvalState !== 'open' || decisions.has(stored.data.id)) return response;
+        const artifactId = stored.data.id;
+        const decide = async () => {
+            const approval = await fixtureRun.approvalsGet({ artifactId });
+            if (approval?.status !== 'open') throw new Error('The acknowledged Approval Request must be open');
+            asks.push(approval.actionId);
+            const operands = JSON.stringify([approval.actionId, approval.actionArgs]);
+            if (askOperands.has(operands)) throw new Error(`Second Approval Request for ${approval.actionId}`);
+            askOperands.add(operands);
+            const result = await fixtureRun.invokeDeploymentWalkAction(APPROVAL_REQUEST_DECIDE_ACTION_ID_V1,
+                { artifactId, decision }, approval.executionOriginV1?.machineId ?? host.id);
+            expect(result, result.ok ? undefined : result.errorCode).toMatchObject({ ok: true });
+            const settled = await fixtureRun.approvalsGet({ artifactId });
+            if (!settled) throw new Error(`No durable approval settlement for ${approval.actionId}`);
+            expect(settled).toMatchObject({ decision: { kind: decision } });
+            expect(decision === 'approve' ? ['executed', 'failed', 'outcome_unknown'] : ['rejected']).toContain(settled.status);
+            expect(result).toMatchObject({ ok: true, result: { status: settled.status } });
+            settlements.push({ action: approval.actionId, status: settled.status,
+                refusal: settled.execution?.errorCode,
+                failureCause: settled.execution && 'failureCause' in settled.execution ? settled.execution.failureCause : undefined });
+        };
+        const pending = decide();
+        decisions.set(artifactId, pending);
+        void pending.catch(() => receiverLifetime.abort());
+        return response;
+    });
+    try {
+        const { outcome, attempt } = await fixtureRun.coordinateDeploymentWalk(runId);
+        await Promise.all(decisions.values());
+        const leaves = (await fixtureRun.reconcileInvocations(runId, attempt)).map(({ index, progress }) => ({
+            step: progress.invocationPath.blockId,
+            action: progress.execution?.kind === 'action' ? progress.execution.actionId : undefined,
+            state: index.lifecycle,
+            refusal: progress.reason?.code,
+            failureCause: progress.reason?.failureCause,
+        }));
+        expect((await fixtureRun.readApprovalRequests()).items.filter(item => item.status === 'open')).toEqual([]);
+        return { outcome, leaves, asks, settlements };
+    } finally {
+        axios.interceptors.response.eject(approvalAcknowledgement);
+        await Promise.allSettled(decisions.values());
+    }
+}
+
+async function executeReviewedDeploymentFixtureAction(fixtureRun: Awaited<ReturnType<typeof fixture>>,
+    actionId: ActionId, input: unknown, machineId: string) {
+    const invoked = await fixtureRun.invokeDeploymentWalkAction(actionId, input, machineId, undefined, 'account_automation');
+    if (!invoked.ok) throw new Error(`Fixture ${actionId}: ${invoked.errorCode}`);
+    const deferred = invoked.result;
+    if (!deferred || typeof deferred !== 'object' || !('artifactId' in deferred) || typeof deferred.artifactId !== 'string'
+        || !('kind' in deferred) || deferred.kind !== 'approval_request_created') return deferred;
+    const decided = await fixtureRun.invokeDeploymentWalkAction(APPROVAL_REQUEST_DECIDE_ACTION_ID_V1,
+        { artifactId: deferred.artifactId, decision: 'approve' }, machineId);
+    if (!decided.ok) throw new Error(`Fixture ${actionId} approval: ${decided.errorCode}`);
+    expect(decided.result).toMatchObject({ status: 'executed', execution: { ok: true } });
+    if (!decided.result || typeof decided.result !== 'object' || !('execution' in decided.result)
+        || !decided.result.execution || typeof decided.result.execution !== 'object'
+        || !('result' in decided.result.execution)) throw new Error(`Fixture ${actionId} approval did not return an effect`);
+    return decided.result.execution.result;
+}
+
+async function seedWorkflowDeploymentEnvironment(fixtureRun: Awaited<ReturnType<typeof fixture>>, machine: Machine,
+    content: ReturnType<typeof DeploymentEnvironmentContentV1Schema.parse>) {
+    const { server } = fixtureRun;
+    const project = await server.createDeploymentProjectSource();
+    const environmentArtifact = await server.createDeploymentArtifact({
+        storedKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: content.name }, body: JSON.stringify(content),
+    });
+    const linkArtifact = await server.createDeploymentArtifact({
+        storedKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
+        header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: content.name }, body: '{}',
+    });
+    const headers = { Authorization: `Bearer ${server.token}`, 'Content-Type': 'application/json' };
+    const created = await fetch(`${server.baseUrl}/v1/deployments/environments`, { method: 'POST', headers,
+        body: JSON.stringify({ serverId: server.homeId, projectSourceId: project.projectSourceId, requestKey: randomUUID(),
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: machine.id,
+            buildMachineId: machine.id, ...environmentArtifact }) });
+    const environment = DeploymentEnvironmentCreateResultV1Schema.parse(await created.json());
+    if (!environment.ok) throw new Error(`Move fixture Environment: ${environment.error}`);
+    const linked = await fetch(`${server.baseUrl}/v1/deployments/environments/${environment.environmentId}/targets`, {
+        method: 'POST', headers, body: JSON.stringify({ serverId: server.homeId, environmentId: environment.environmentId,
+            expectedRevision: environment.revision, requestKey: randomUUID(), targetId: 'own-server', role: 'runtime',
+            machines: [{ machineId: machine.id, installationId: machine.installationId }], ...linkArtifact }) });
+    const link = DeploymentActionOutputSchemasV1['deployments.targets.link'].parse(await linked.json());
+    if (!link.ok) throw new Error(`Move fixture Link: ${link.error}`);
+    const read = async () => {
+        const response = await fetch(`${server.baseUrl}/v1/deployments/environments/${environment.environmentId}?serverId=${server.homeId}`, { headers });
+        const current = DeploymentActionOutputSchemasV1['deployments.environments.get'].parse(await response.json());
+        if (!current.ok) throw new Error(current.error);
+        return current;
+    };
+    const readLink = async () => {
+        const current = await read();
+        const stored = current.targetLinks.find(candidate => candidate.id === link.targetLinkId);
+        if (stored?.source.kind !== 'host') throw new Error('The Move fixture must have a runtime Link');
+        return { ...stored, source: stored.source };
+    };
+    return { environmentId: environment.environmentId, targetLinkId: link.targetLinkId, read, readLink };
+}
+
+async function walkReplacementLinkMove(mode: 'plain' | 'e2ee', approvalDecision: 'approve' | 'reject') {
+    vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file');
+    const fixtureRun = await fixture('exact', undefined, false, true, false, undefined, undefined, mode, undefined, 'move');
+    const { server, host: source, first: destination, nativeApp } = fixtureRun;
+    expect(server.currentness.mode).toBe(mode);
+    if (!nativeApp) throw new Error('Move requires the installed Docker fixture');
+    const repository = createGitWorkspace('happier-deployment-move-source-');
+    cleanups.push(() => removeTempDir(repository));
+    vi.stubEnv('GIT_CONFIG_COUNT', '1');
+    vi.stubEnv('GIT_CONFIG_KEY_0', `url.${pathToFileURL(repository).href}.insteadOf`);
+    vi.stubEnv('GIT_CONFIG_VALUE_0', 'https://github.com/acme/publish-host.git');
+    const image = await nativeApp.docker.registerImage('app', 'move-source');
+    const destinationDocker = await createOwnServerDockerBoundary(join(dirname(nativeApp.docker.executablePath), 'destination'));
+    await destinationDocker.registerImage('app', 'move-source');
+    nativeBoundary.dockerPlacement = { command: nativeApp.docker.executablePath, machineId: destination.id,
+        replacement: destinationDocker.executablePath };
+    cleanups.push(async () => { nativeBoundary.dockerPlacement = null; });
+    await writeFile(join(repository, 'compose.yaml'), JSON.stringify({ services: { app: { image: image.registryReference } } }));
+    runGit(repository, ['add', 'compose.yaml']);
+    runGit(repository, ['commit', '-m', 'Create Move source']);
+    runGit(repository, ['remote', 'add', 'origin', 'https://github.com/acme/publish-host.git']);
+    const environment = await seedWorkflowDeploymentEnvironment(fixtureRun, source, DeploymentEnvironmentContentV1Schema.parse({
+        name: 'Move source', retainPreviousDeployments: 1, bindings: [],
+        definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [], primaryService: 'app' } },
+    }));
+    const beforeDeploy = await environment.read();
+    const mutateProjects = createProjectAccountSnapshotMutation({ credentials: fixtureRun.credentials, serverId: server.homeId });
+    const checkout = await runWithServerHttpBaseUrl(server.baseUrl, () => mutateProjects(snapshot => ({ ...snapshot,
+        workspaceRefs: [...snapshot.workspaceRefs, ...[source, destination].map(machine => ({
+            id: randomUUID(), serverId: server.homeId, machineId: machine.id, rootPath: repository, createdAtMs: Date.now(),
+            source: { sourceId: beforeDeploy.environment.projectSourceId, revision: 1 },
+        }))],
+    })));
+    expect(checkout.status).toBe('applied');
+    const sourceIntent = { kind: 'repository' as const, projectSourceId: beforeDeploy.environment.projectSourceId, sourceRevision: 1,
+        sha: runGit(repository, ['rev-parse', 'HEAD']),
+        compose: { path: 'compose.yaml', profiles: [], services: [], primaryService: 'app' } };
+    const existing = await executeReviewedDeploymentFixtureAction(fixtureRun, 'deployments.deploy', {
+        serverId: server.homeId, environmentId: environment.environmentId, targetLinkId: environment.targetLinkId,
+        sourceIntent, requestKey: randomUUID(),
+    }, source.id);
+    expect(existing).toMatchObject({ ok: true, state: 'succeeded' });
+    const current = await environment.read();
+    const currentSourceLink = await environment.readLink();
+    const walk = await walkDeploymentWorkflow(fixtureRun, WorkflowRunStartRequestV1Schema.parse({
+        runId: randomUUID(), source: { kind: 'inline', definition: createDeploymentMoveWorkflowV1() },
+        executionTarget: { kind: 'detached_run' },
+        inputs: { noLocalData: true, move: {
+            serverId: server.homeId, environmentId: environment.environmentId, expectedRevision: current.environment.revision,
+            targetId: currentSourceLink.source.id, sourceLinkId: currentSourceLink.id, sourceLinkRevision: currentSourceLink.revision,
+            sourceMachineId: source.id,
+            destinationMachineId: destination.id, destinationInstallationId: destination.installationId,
+            machines: [{ machineId: destination.id, installationId: destination.installationId }],
+            sourceIntent,
+            primaryService: 'app', bindings: [],
+            linkRequestKey: randomUUID(), deployRequestKey: randomUUID(),
+            teardownRequestKey: randomUUID(), unlinkRequestKey: randomUUID(),
+        } },
+    }), approvalDecision);
+    return { ...walk, links: (await environment.read()).targetLinks, sourceLinkId: currentSourceLink.id, destination };
+}
+
+async function walkStatefulDataMove(mode: 'plain' | 'e2ee') {
+    const fixtureRun = await fixture('exact', undefined, false, true, false, undefined, undefined, mode, undefined, 'dataMove');
+    const { server, host: source, first: destination, nativeApp, credentials } = fixtureRun;
+    expect(server.currentness.mode).toBe(mode);
+    if (nativeApp?.child.actionId !== 'deployments.templates.instantiate' || !('document' in nativeApp))
+        throw new Error('Data Move requires the PostgreSQL fixture definition');
+    const { document } = nativeApp;
+    const { templateRef } = nativeApp.child.input;
+    const composeDigest = `sha256:${createHash('sha256').update(document).digest('hex')}`;
+    const definition = { kind: 'stored' as const, contentRevision: 1, composeDigest };
+    const databaseEnvironment = (name: string) => DeploymentEnvironmentContentV1Schema.parse({
+        name, retainPreviousDeployments: 1, bindings: [],
+        definition: { ...definition, document, profiles: [], services: ['app', 'database'], primaryService: 'app' },
+        template: { templateRef, definition, services: ['app', 'database'],
+            data: [{ engine: 'postgres', service: 'database', port: 5432, logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } }] },
+    });
+    const sourceEnvironment = await seedWorkflowDeploymentEnvironment(fixtureRun, source, databaseEnvironment('Move source database'));
+    const target = await seedWorkflowDeploymentEnvironment(fixtureRun, destination, databaseEnvironment('Move destination database'));
+    const { environmentId, targetLinkId } = sourceEnvironment;
+    const execute = (actionId: ActionId, input: unknown, machineId = source.id) =>
+        executeReviewedDeploymentFixtureAction(fixtureRun, actionId, input, machineId);
+    const deploy = async (environment: typeof sourceEnvironment, machine: Machine) => {
+        const current = await environment.read();
+        const bindings = DeploymentActionOutputSchemasV1['deployments.bindings.set'].parse(await execute('deployments.bindings.set', {
+            serverId: server.homeId, environmentId: environment.environmentId, expectedRevision: current.environment.revision,
+            set: [{ purpose: 'variable', phase: 'runtime', name: 'DB_NAME', source: { kind: 'value', value: 'app' } }],
+            remove: [],
+        }, machine.id));
+        expect(bindings).toMatchObject({ ok: true });
+        const deployed = DeploymentActionOutputSchemasV1['deployments.deploy'].parse(await execute('deployments.deploy', {
+            serverId: server.homeId, environmentId: environment.environmentId, targetLinkId: environment.targetLinkId,
+            requestKey: randomUUID(),
+        }, machine.id));
+        if (!deployed.ok || !('deploymentId' in deployed) || deployed.state !== 'succeeded') {
+            throw new Error('Data Move requires a settled PostgreSQL deployment');
+        }
+        return deployed.deploymentId;
+    };
+    const deploymentId = await deploy(sourceEnvironment, source);
+    const destinationDeploymentId = await deploy(target, destination);
+
+    const dataKey = randomBytes(32);
+    const resourceId = randomUUID();
+    const content = { v: 1 as const, name: 'Move backup repository', kind: 'token' as const, value: randomUUID() };
+    const encryption = credentials.encryption;
+    try {
+        await execute('secrets.shared.create', { resourceId, displayName: content.name, kind: content.kind,
+            ...(encryption?.type === 'dataKey' ? { encryptionMode: 'e2ee',
+                storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey: dataKey, content, randomBytes }),
+                keyEnvelopes: [{ recipientAccountId: server.accountId, ...sealSavedSecretResourceRecipientEnvelopeV1({
+                    resourceDataKey: dataKey, recipientContentPublicKey: encryption.publicKey, randomBytes,
+                }) }] } : { encryptionMode: 'plain',
+                storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content }), keyEnvelopes: [] }),
+        });
+    } finally { dataKey.fill(0); }
+
+    const tools = dirname(nativeApp.docker.executablePath);
+    const repository = join(tools, 'data-move-backup');
+    await mkdir(join(repository, environmentId), { recursive: true });
+    await nativeApp.docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
+    await installRestoreBoundary(tools, 'success', { toolDirectory: tools, environmentId });
+    const backupSource = createDeploymentDumpBackupSourceV1('database');
+    const beforeConfigure = await sourceEnvironment.read();
+    const configured = DeploymentBackupConfigureResultV1Schema.parse(await execute('deployments.backups.configure', {
+        serverId: server.homeId, environmentId, expectedRevision: beforeConfigure.environment.revision, intent: 'initializeAndSave',
+        configuration: {
+            configRevision: 1, destinationRef: { pluginId: SFTP_BACKUP_DESTINATION_REF_V1.pluginId, localId: 'local' },
+            occurrenceId: 'resolved-by-configure', config: { path: repository },
+            credentialBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }],
+            sources: [backupSource], ownership: { environmentId, prefix: environmentId }, retention: { kind: 'keepEverything' },
+        },
+        backupBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
+            source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }],
+    }));
+    if (configured.kind !== 'configured') throw new Error(`Data Move backup fixture: ${configured.kind}`);
+    const current = await sourceEnvironment.read();
+    const targetEnvironment = await target.read();
+    const runtimeLink = await sourceEnvironment.readLink();
+    const destinationLink = await target.readLink();
+    const services = getActionSpec('machines.services.list').outputSchema.parse(await execute('machines.services.list', {
+        serverId: server.homeId, machineId: source.id, environmentId, composeService: 'app',
+    }));
+    if (services.kind !== 'snapshot' || services.services.length !== 1)
+        throw new Error('Data Move requires a single observed source writer');
+    const writer = services.services[0]!;
+    if (!writer.generation) throw new Error('Data Move requires a current writer generation');
+    const configRevision = configured.configuration.configRevision;
+    const reviewed: StatefulDeploymentMoveWorkflowInputV1 = {
+        kind: 'stateful', serverId: server.homeId, requestId: randomUUID(),
+        writers: [{ machineId: source.id, serviceId: writer.serviceId, expectedGeneration: writer.generation }],
+        backupTarget: { serverId: server.homeId, environmentId, machineId: source.id,
+            installationId: source.installationId, targetLinkId, deploymentId,
+            expectedRevision: current.environment.revision, configRevision },
+        sourceId: backupSource.sourceId, origin: { environmentId, targetLinkId },
+        restoreTarget: { serverId: server.homeId, environmentId: target.environmentId, machineId: destination.id,
+            installationId: destination.installationId, targetLinkId: destinationLink.id, deploymentId,
+            expectedRevision: targetEnvironment.environment.revision,
+            destination: { kind: 'database', service: 'database', database: 'restored_app' } },
+        cutover: { serverId: server.homeId, environmentId, expectedRevision: current.environment.revision,
+            contentArtifactId: current.environment.contentArtifactId, contentHeaderVersion: current.environment.contentHeaderVersion,
+            contentBodyVersion: current.environment.contentBodyVersion,
+            patch: { retainPreviousDeployments: 2 } },
+        deploy: { serverId: server.homeId, environmentId, targetLinkId: runtimeLink.id, requestKey: randomUUID() },
+        health: { environmentId: target.environmentId, machineId: destination.id, installationId: destination.installationId,
+            targetLinkId: destinationLink.id, deploymentId: destinationDeploymentId, composeService: 'database' },
+        appHealth: { environmentId, machineId: source.id, installationId: source.installationId,
+            targetLinkId: runtimeLink.id, composeService: 'app' },
+    };
+    const request = WorkflowRunStartRequestV1Schema.parse({
+        runId: randomUUID(), source: { kind: 'inline', definition: createDeploymentDataMoveWorkflowV1(reviewed) },
+        executionTarget: { kind: 'detached_run' }, inputs: { dataMove: reviewed },
+    });
+    const walk = await walkDeploymentWorkflow(fixtureRun, request);
+    const detailObservations = (await fixtureRun.readReceivingDiagnostics()).filter(item => item.boundary === 'source-writer-detail');
+    return { ...walk, detailObservations };
+}
+
+describe('built-in deployment Workflow step walks', () => {
+    it('preserves the source and returns the typed refusal when the Link approval is rejected', async () => {
+        const { outcome, leaves, asks, settlements, links, sourceLinkId } = await walkReplacementLinkMove('e2ee', 'reject');
+        expect(outcome).toMatchObject({ state: 'interrupted', reason: 'approval_rejected' });
+        expect(asks).toEqual(['deployments.targets.link']);
+        expect(settlements).toMatchObject([{ action: 'deployments.targets.link', status: 'rejected' }]);
+        expect(leaves).toMatchObject([
+            { step: 'domains', action: 'deployments.domains.list', state: 'completed' },
+            { step: 'link', action: 'deployments.targets.link', state: 'failed', refusal: 'approval_rejected' },
+        ]);
+        expect(links.map(link => link.id)).toEqual([sourceLinkId]);
+    });
+
+    const replacementPrefix = [
+        { step: 'domains', action: 'deployments.domains.list', state: 'completed' },
+        { step: 'link', action: 'deployments.targets.link', state: 'completed' },
+        { step: 'bindings', action: 'deployments.bindings.set', state: 'completed' },
+        { step: 'deploy', action: 'deployments.deploy', state: 'completed' },
+    ];
+    it.each(['plain', 'e2ee'] as const)('replays Link, bindings and deploy on the replacement Machine (%s)', async mode => {
+        const { leaves, asks, settlements, links, sourceLinkId, destination } = await walkReplacementLinkMove(mode, 'approve');
+        expect(leaves.slice(0, replacementPrefix.length), JSON.stringify({ leaves, settlements })).toMatchObject(replacementPrefix);
+        expect(leaves.filter(leaf => replacementPrefix.some(expected => expected.step === leaf.step))).toHaveLength(replacementPrefix.length);
+        expect(asks.filter(action => replacementPrefix.some(expected => expected.action === action)))
+            .toEqual(['deployments.targets.link', 'deployments.bindings.set', 'deployments.deploy']);
+        expect(settlements.slice(0, 3)).toMatchObject([
+            { action: 'deployments.targets.link', status: 'executed' },
+            { action: 'deployments.bindings.set', status: 'executed' },
+            { action: 'deployments.deploy', status: 'executed' },
+        ]);
+        expect(links.filter(link => link.id !== sourceLinkId)).toMatchObject([
+            { machines: [destination.id], members: [{ machineId: destination.id, installationId: destination.installationId }] },
+        ]);
+    });
+
+    it.skip.each(['plain', 'e2ee'] as const)('pending: read replacement services and health, then retire and unlink the source (%s)', async mode => {
+        const { outcome, leaves, asks, settlements } = await walkReplacementLinkMove(mode, 'approve');
+        expect(outcome.state, JSON.stringify({ leaves, asks, settlements })).toBe('succeeded');
+        expect(leaves).toMatchObject([
+            ...replacementPrefix,
+            { step: 'services', action: 'machines.services.list', state: 'completed' },
+            { step: 'health', action: 'deployments.health.read', state: 'completed' },
+            { step: 'teardown', action: 'deployments.teardown', state: 'completed' },
+            { step: 'current', action: 'deployments.environments.get', state: 'completed' },
+            { step: 'unlink', action: 'deployments.targets.unlink', state: 'completed' },
+        ]);
+        expect(settlements.every(approval => approval.status === 'executed')).toBe(true);
+    });
+
+    const dataMovePrefix = [
+        { step: 'quiesce0', action: 'machines.services.control', state: 'completed' },
+        { step: 'stopped0', action: 'machines.services.detail', state: 'completed' },
+        { step: 'backup', action: 'deployments.backups.run', state: 'completed' },
+        { step: 'verify', action: 'deployments.backups.verify', state: 'completed' },
+    ];
+    it.each(['plain', 'e2ee'] as const)('quiesces the writer and verifies the Data Move backup (%s)', async mode => {
+        const { leaves, asks, settlements, detailObservations } = await walkStatefulDataMove(mode);
+        expect(leaves.slice(0, dataMovePrefix.length), JSON.stringify({ leaves, settlements })).toMatchObject(dataMovePrefix);
+        expect(leaves.filter(leaf => dataMovePrefix.some(expected => expected.step === leaf.step))).toHaveLength(dataMovePrefix.length);
+        expect(asks.filter(action => dataMovePrefix.some(expected => expected.action === action)))
+            .toEqual(['machines.services.control', 'deployments.backups.run']);
+        expect(settlements.slice(0, 2)).toMatchObject([
+            { action: 'machines.services.control', status: 'executed' },
+            { action: 'deployments.backups.run', status: 'executed' },
+        ]);
+        expect(detailObservations).toMatchObject([{ kind: 'service', state: 'stopped', phase: 'stopped' }]);
+    });
+
+    it.skip.each(['plain', 'e2ee'] as const)('pending: restore the verified Data Move backup, cut over and verify the app (%s)', async mode => {
+        const { outcome, leaves, asks, settlements, detailObservations } = await walkStatefulDataMove(mode);
+        expect(outcome.state, JSON.stringify({ leaves, asks, settlements, detailObservations })).toBe('succeeded');
+        expect(leaves).toMatchObject([
+            ...dataMovePrefix,
+            { step: 'prepareRestore', action: 'deployments.backups.restore', state: 'completed' },
+            { step: 'restore', action: 'deployments.backups.restore', state: 'completed' },
+            { step: 'destinationServices', action: 'machines.services.list', state: 'completed' },
+            { step: 'destinationHealth', action: 'deployments.health.read', state: 'completed' },
+            { step: 'cutover', action: 'deployments.environments.update', state: 'completed' },
+            { step: 'deploy', action: 'deployments.deploy', state: 'completed' },
+            { step: 'appServices', action: 'machines.services.list', state: 'completed' },
+            { step: 'appHealth', action: 'deployments.health.read', state: 'completed' },
+        ]);
+        expect(settlements.every(approval => approval.status === 'executed')).toBe(true);
+    });
+});
 
 describe('server-stored combined Workflow approval across two receiving Action front doors', () => {
     it.each([

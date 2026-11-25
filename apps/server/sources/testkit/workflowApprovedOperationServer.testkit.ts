@@ -84,6 +84,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
     /** Full daemon journeys use actual sockets and the ordinary Home owners. */
     installedMachine?: Readonly<{ machineId: string; installation: MachineInstallationIdentityV1; happyHomeDir: string }>;
     deploymentTeamOwned?: boolean;
+    requireE2ee?: boolean;
     /** The owning client supplies codecs; Home stores only opaque Machine content. */
     e2ee?: Readonly<{ contentPublicKey: Uint8Array;
         encodeMachine(key: Uint8Array, value: unknown): string;
@@ -95,7 +96,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
     const harness = await createLightSqliteHarness({ tempDirPrefix: 'workflow-approved-operation-', initAuth: true, initEncrypt: true,
         env: { AUTH_REQUIRED_LOGIN_PROVIDERS: '', HAPPIER_SERVER_IDENTITY_ID: homeIdentityId,
             HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: input.requireE2ee ? 'required_e2ee' : 'optional' } });
     const app = Fastify({ logger: false, bodyLimit: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 }).withTypeProvider<ZodTypeProvider>();
     // Observe the real HTTP/authentication owners without substituting their decisions.
     let costPhase = 'fixture';
@@ -209,7 +210,8 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
             const contentKey = input.e2ee ? tweetnacl.randomBytes(32) : null;
             const metadata = { host: name, platform: 'linux', happyCliVersion: 'test',
                     homeDir: installed?.happyHomeDir ?? '/users/worker', happyHomeDir: installed?.happyHomeDir ?? '/users/worker/.happier',
-                    ...(installed ? { agentIsolation: { enabled: false } } : {}) };
+                    ...(installed ? { agentIsolation: { enabled: false } } : {}),
+                    ...(input.requireE2ee ? { installationPublicKey: Buffer.from(keys.publicKey).toString('base64url') } : {}) };
             const machine = await db.machine.create({ data: { id: installed?.machineId ?? randomUUID(), accountId: account.id,
                 metadata: contentKey && input.e2ee ? input.e2ee.encodeMachine(contentKey, metadata) : encodePlainMachineStoredContent(metadata),
                 dataEncryptionKey: contentKey && input.e2ee ? Uint8Array.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: contentKey,
@@ -343,11 +345,17 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
                 return { projectSourceId: source.source.id, sourceRevision: source.source.revision,
                     repository, baseCommit: input.baseCommit, workspace: key };
             },
-            createDeploymentArtifact: async (input: Readonly<{ header: Readonly<Record<string, unknown>>; body: string }>) => {
-                const created = await createArtifact({ actorUserId: account.id, artifactId: randomUUID(),
-                    header: decodeBase64(encodePlainArtifactStoredContent(input.header)),
-                    body: decodeBase64(encodePlainArtifactStoredContent({ body: input.body })),
-                    dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            createDeploymentArtifact: async (artifact: Readonly<{ header: Readonly<Record<string, unknown>>; body: string; storedKind?: string }>) => {
+                const encryption = input.requireE2ee ? input.e2ee : undefined;
+                const dataKey = encryption ? tweetnacl.randomBytes(32) : undefined;
+                const encode = (value: unknown) => decodeBase64(encryption && dataKey
+                    ? encryption.encodeMachine(dataKey, value) : encodePlainArtifactStoredContent(value));
+                const created = await createArtifact({ actorUserId: account.id, artifactId: randomUUID(), kind: artifact.storedKind,
+                    header: encode(artifact.header),
+                    body: encode({ body: artifact.body }),
+                    dataEncryptionKey: encryption && dataKey ? Uint8Array.from(sealEncryptedDataKeyEnvelopeV1({
+                        dataKey, recipientPublicKey: encryption.contentPublicKey, randomBytes: tweetnacl.randomBytes,
+                    })) : decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
                 if (!created.ok) throw new Error(created.error);
                 if (deploymentTeam) await db.artifactGrant.create({ data: { principalKind: 'team',
                     artifactId: created.artifact.id, teamId: deploymentTeam.id, accessLevel: 'admin', createdByAccountId: account.id,
