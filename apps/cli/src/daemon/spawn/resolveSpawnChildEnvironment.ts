@@ -1,6 +1,7 @@
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { resolveRetainedTeamProviderBindingRevisionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
 import { SPAWN_SESSION_ERROR_CODES, projectSpawnValidationFailure } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionErrorCode } from '@/session/shared/spawnSessionContract';
@@ -599,7 +600,10 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         ok: false,
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: validation.errorMessage,
-        errorDetail: projectSpawnValidationFailure('agent_runtime_prerequisites_refused').errorDetail,
+        errorDetail: projectSpawnValidationFailure(
+          validation.reasonCode ?? 'agent_runtime_prerequisites_refused',
+          validation.errorMessage,
+        ).errorDetail,
         cleanupOnFailure,
         cleanupOnExit,
         ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
@@ -658,13 +662,16 @@ async function resolveSpawnChildEnvironmentImpl(params: {
       augmentedEnvironment = stripSessionControlEnvOverrides(sanitizeEnvVarRecord(
         params.daemonSpawnHooks.augmentEnv(buildRuntimeSelection()),
       ));
-    } catch {
+    } catch (error) {
       params.logWarn('[DAEMON RUN] Agent daemon spawn environment hook failed');
+      const failure = isPluginError(error)
+        ? projectSpawnValidationFailure(error.code, projectPluginFailureMessage(error.message))
+        : projectSpawnValidationFailure('agent_spawn_environment_hook_failed', 'Agent daemon spawn environment hook failed.');
       return {
         ok: false,
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-        errorMessage: 'Agent daemon spawn environment hook failed.',
-        errorDetail: projectSpawnValidationFailure('agent_spawn_environment_hook_failed').errorDetail,
+        errorCode: failure.errorCode,
+        errorMessage: failure.errorMessage,
+        errorDetail: failure.errorDetail,
         cleanupOnFailure,
         cleanupOnExit,
         ...(materializationDiagnostics ? { materializationDiagnostics } : {}),

@@ -1,7 +1,7 @@
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { randomUUID } from 'node:crypto';
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
     AgentCliAuthContributionV1,
     AgentAccountSettingsContributionV1,
@@ -411,7 +411,7 @@ function createOccurrenceBoundAgentDaemonSpawnHooks(params: Readonly<{
                 signal: bound.signal,
             });
             if (unavailableBefore) {
-                throw new Error(unavailableBefore.errorMessage);
+                throw new PluginError({ code: unavailableBefore.reasonCode, message: unavailableBefore.errorMessage });
             }
             let rawEnvironment: unknown;
             try {
@@ -425,7 +425,7 @@ function createOccurrenceBoundAgentDaemonSpawnHooks(params: Readonly<{
                 signal: bound.signal,
             });
             if (unavailableAfter) {
-                throw new Error(unavailableAfter.errorMessage);
+                throw new PluginError({ code: unavailableAfter.reasonCode, message: unavailableAfter.errorMessage });
             }
             const environment = readDaemonSpawnHookEnvironment(rawEnvironment);
             if (!environment) {

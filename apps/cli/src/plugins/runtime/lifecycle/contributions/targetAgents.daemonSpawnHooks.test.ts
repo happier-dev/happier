@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import type { ActivationTarget } from '../activation/targets';
 import type { ContributionRuntimeRegistration } from '../../api/registrationRightsHost';
 import { createTargetAgentRuntimeRegistry } from './targetAgents.testkit';
@@ -40,6 +41,40 @@ function registration(daemonSpawnHooks: unknown): Readonly<{
 }
 
 describe('Agent daemon spawn-hook lease', () => {
+    it.each([
+        { resolveRuntimePrerequisites: async () => ({ ok: true as const }) },
+        { augmentEnv: () => ({ REQUIRED_ENV: 'ready' }) },
+    ])('reports a retired Agent generation in the daemon spawn failure (%o)', async (hooks) => {
+        const retirement = new AbortController();
+        const registry = await createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'spawn-agent', pluginId: 'acme.spawn-hooks' }],
+            activationTargets: [target()],
+            targetRegistrations: [registration(hooks)],
+            isOccurrenceCurrent: () => !retirement.signal.aborted,
+            retirementSignal: retirement.signal,
+            onDuplicate: vi.fn(),
+        });
+        const daemonSpawnHooks = registry.get('spawn-agent')?.daemonSpawnHooks;
+        expect(daemonSpawnHooks).toBeDefined();
+        retirement.abort();
+
+        const result = await resolveSpawnChildEnvironment({
+            options: { directory: '/workspace' },
+            profileEnvironmentVariables: {},
+            daemonSpawnHooks: daemonSpawnHooks ?? null,
+            processEnv: {},
+            logDebug: () => {},
+            logInfo: () => {},
+            logWarn: () => {},
+            connectedServiceAuth: null,
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            errorDetail: { kind: 'launch_error', code: 'plugin_generation_stale' },
+        });
+    });
+
     it('binds an Agent spawn hook to its generation and aborts an in-flight call on retirement', async () => {
         const retirement = new AbortController();
         let current = true;
