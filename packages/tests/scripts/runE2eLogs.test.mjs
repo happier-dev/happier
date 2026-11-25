@@ -15,14 +15,16 @@ test('the e2e heartbeat owner drops passing run logs and retains failed run logs
     { label: 'default-pass', code: 0, retained: false },
     { label: 'default-fail', code: 1, retained: true },
     { label: 'evidence-pass', code: 0, configured: evidenceDir, retained: true },
+    { label: 'empty-explicit-pass', code: 0, configured: '' },
   ]) {
     const capture = join(parent, label);
     const command = `
       const { writeFileSync } = require('node:fs');
       const { join } = require('node:path');
-      const root = process.env.HAPPIER_E2E_LOGS_DIR ?? process.env.HAPPIER_E2E_OWNED_RUN_LOGS_DIR;
-      writeFileSync(process.argv[1], JSON.stringify({ root, configured: process.env.HAPPIER_E2E_LOGS_DIR }));
-      writeFileSync(join(root, 'test.log'), 'test output');
+      const owned = process.env.HAPPIER_E2E_OWNED_RUN_LOGS_DIR;
+      const root = process.env.HAPPIER_E2E_LOGS_DIR || owned;
+      writeFileSync(process.argv[1], JSON.stringify({ root, owned, configured: process.env.HAPPIER_E2E_LOGS_DIR }));
+      if (root) writeFileSync(join(root, 'test.log'), 'test output');
       process.exit(Number(process.argv[2]));
     `;
     const wrapper = `
@@ -35,15 +37,16 @@ test('the e2e heartbeat owner drops passing run logs and retains failed run logs
       });
     `;
     const env = { ...process.env };
-    if (configured) env.HAPPIER_E2E_LOGS_DIR = configured;
+    if (configured !== undefined) env.HAPPIER_E2E_LOGS_DIR = configured;
     else delete env.HAPPIER_E2E_LOGS_DIR;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', wrapper], {
       encoding: 'utf8', env,
     });
     assert.equal(result.status, code, result.stderr);
-    const { root: runDir, configured: configuredInChild } = JSON.parse(readFileSync(capture, 'utf8'));
+    const { root: runDir, owned, configured: configuredInChild } = JSON.parse(readFileSync(capture, 'utf8'));
     assert.equal(configuredInChild, configured, 'only caller-set overrides reach setup cache readers');
-    assert.equal(existsSync(join(runDir, 'test.log')), retained, label);
+    if (configured !== undefined) assert.equal(owned, undefined, 'caller-defined overrides never create an owned run');
+    if (runDir) assert.equal(existsSync(join(runDir, 'test.log')), retained, label);
     if (configured) assert.equal(runDir, configured);
   }
   assert.equal(readFileSync(join(parent, 'other-run.log'), 'utf8'), 'keep');

@@ -164,7 +164,7 @@ export async function runHeartbeatWrappedCommand(params) {
   let spawnOptions = params.spawnOptions;
   const childEnv = spawnOptions.env ?? process.env;
   let ownedRunLogDir;
-  if (!childEnv.HAPPIER_E2E_LOGS_DIR?.trim()) {
+  if (childEnv.HAPPIER_E2E_LOGS_DIR === undefined) {
     await mkdir(params.runLogBaseDir, { recursive: true });
     const stamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
     ownedRunLogDir = await mkdtemp(join(params.runLogBaseDir, `${stamp}-${params.toolName}-run-`));

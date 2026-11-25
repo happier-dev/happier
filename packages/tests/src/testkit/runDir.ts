@@ -88,9 +88,9 @@ export function createRunDirs(opts?: { runLabel?: string; logsDir?: string }): R
   const label = opts?.runLabel ? safeSegment(opts.runLabel) : 'run';
   const runId = `${stamp}-${label}-${randomUUID().slice(0, 8)}`;
   // The runner's handoff scopes logs without changing shared setup cache selection.
-  const ownedRunLogsDir = process.env.HAPPIER_E2E_LOGS_DIR?.trim()
-    ? undefined
-    : process.env.HAPPIER_E2E_OWNED_RUN_LOGS_DIR;
+  const ownedRunLogsDir = process.env.HAPPIER_E2E_LOGS_DIR === undefined
+    ? process.env.HAPPIER_E2E_OWNED_RUN_LOGS_DIR
+    : undefined;
   const logsDir = resolve(opts?.logsDir ?? ownedRunLogsDir ?? projectLogsDir());
   mkdirSync(logsDir, { recursive: true });
   assertRunLogsFreeDisk({ logsDir });
