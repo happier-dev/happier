@@ -9,7 +9,9 @@ import type {
 import {
   readServiceCheckDefinitions,
   serviceCheckTitle,
+  type ServiceCheckDefinitionFacts,
 } from '@/components/projects/deployments/serviceCheckPresentation';
+import { createDeploymentReadTransport } from '@/components/projects/deployments/deploymentReadTransport';
 import { retainAutomationDefinitionDetailsDemand } from '@/sync/domains/automations/automationReadDemand';
 import {
   isPluginEventAutomationTrigger,
@@ -25,46 +27,48 @@ import { storage } from '@/sync/domains/state/storage';
 
 import { openConfiguredCheckContentAccess } from './useConfiguredCheckDefinitions';
 
-/**
- * The saved Checks a person picks from (the Check widget's choices), named as the Checks list names them
- * ({@link serviceCheckTitle}). A Key flow says its routes beside its name. A Check whose definition cannot be opened
- * keeps its saved name, so it can still be picked.
- */
-export function projectSavedServiceCheckOptions(
+type SavedServiceCheck = Readonly<{
+  automationId: string;
+  triggerId: string;
+  sourceInstanceId?: string;
+  automationName: string;
+  savedName?: string;
+  definition: ServiceCheckDefinitionFacts | null;
+}>;
+
+function readSavedServiceChecks(
   automations: readonly AutomationDefinition[],
   access: PluginEventAutomationStoredContentAccess | null,
+): readonly SavedServiceCheck[] {
+  return automations.flatMap(native =>
+    native.triggers.flatMap((trigger): SavedServiceCheck[] => {
+      if (!isPluginEventAutomationTrigger(trigger) || !isHealthCheckEventSourceV1(trigger)) return [];
+      const detail = access ? readPluginEventAutomationPrivateDetail(native, trigger.id, access) : null;
+      const definitions = detail ? readServiceCheckDefinitions(detail.storedDefinition) : null;
+      if (definitions?.length === 0) return [];
+      return [{
+        automationId: native.id,
+        triggerId: trigger.id,
+        ...(detail ? { sourceInstanceId: detail.storedDefinition.sourceInstanceId } : {}),
+        automationName: native.name,
+        savedName: workflowTriggerDisplayNameV1(native),
+        definition: definitions?.[0] ?? null,
+      }];
+    }),
+  );
+}
+
+/** A Check whose private definition cannot be opened keeps its saved name. */
+function presentSavedServiceCheckOptions(
+  checks: readonly SavedServiceCheck[],
+  environmentNames?: ReadonlyMap<string, string>,
 ): readonly SavedHealthCheckOptionV1[] {
-  return automations
-    .flatMap((native) =>
-      native.triggers.flatMap((trigger): SavedHealthCheckOptionV1[] => {
-        if (
-          !isPluginEventAutomationTrigger(trigger) ||
-          !isHealthCheckEventSourceV1(trigger)
-        )
-          return [];
-        const detail = access
-          ? readPluginEventAutomationPrivateDetail(native, trigger.id, access)
-          : null;
-        const definitions = detail ? readServiceCheckDefinitions(detail.storedDefinition) : null;
-        if (definitions?.length === 0) return [];
-        const definition = definitions?.[0] ?? null;
-        const named = serviceCheckTitle(definition, undefined, native.name);
-        const savedName = workflowTriggerDisplayNameV1(native);
-        const description = definition?.targetLabel && named.title !== definition.targetLabel
-          ? definition.targetLabel
-          : named.title !== savedName ? savedName : null;
-        return [
-          {
-            automationId: native.id,
-            triggerId: trigger.id,
-            ...(detail ? { sourceInstanceId: detail.storedDefinition.sourceInstanceId } : {}),
-            label: named.title,
-            ...(description ? { description } : {}),
-          },
-        ];
-      }),
-    )
-    .sort((left, right) => left.label.localeCompare(right.label));
+  return checks.map(({ automationName, savedName, definition, ...identity }) => {
+    const { title } = serviceCheckTitle(definition, environmentNames, automationName);
+    const description = definition?.targetLabel && title !== definition.targetLabel
+      ? definition.targetLabel : title !== savedName ? savedName : null;
+    return { ...identity, label: title, ...(description ? { description } : {}) };
+  }).sort((left, right) => left.label.localeCompare(right.label));
 }
 
 /**
@@ -113,12 +117,16 @@ export async function listSavedServiceCheckOptions(
         errorCode: 'server_scope_mismatch',
         error: 'server_scope_mismatch',
       };
-    return {
-      items: projectSavedServiceCheckOptions(
-        Object.values(storage.getState().automations),
-        access,
-      ),
-    };
+    const checks = readSavedServiceChecks(Object.values(storage.getState().automations), access);
+    const environmentIds = [...new Set(checks.flatMap(({ definition }) =>
+      definition?.titleTarget?.kind === 'environment' ? [definition.titleTarget.id] : []))];
+    const environmentPage = environmentIds.length > 0
+      ? await createDeploymentReadTransport(lifetime).listEnvironments(lifetime.scope,
+        { environmentIds, allPages: true }, { signal: controller.signal }) : null;
+    controller.signal.throwIfAborted();
+    const environmentNames = environmentPage?.ok
+      ? new Map(environmentPage.value.items.map(row => [row.environment.id, row.title])) : undefined;
+    return { items: presentSavedServiceCheckOptions(checks, environmentNames) };
   } finally {
     release();
     retirement.dispose();

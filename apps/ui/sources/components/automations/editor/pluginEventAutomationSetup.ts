@@ -4,6 +4,8 @@ import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/protocol/a
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { PluginUiJsonValueV1Schema, reconstructPluginUiSelectedActionInput, type PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import { AutomationEventSourceDisplayLabelV1Schema } from '@happier-dev/protocol/automations/automationEventV1';
+import { SavedHealthTransitionSourceV1Schema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { readInputPath, writeInputPath } from '@happier-dev/protocol/inputs';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -19,6 +21,7 @@ import {
     type PluginContributedActionCurrentSnapshot,
     type PluginContributedActionDispatch,
 } from '@/components/plugins/actions/pluginContributedActionController';
+import type { ReadSubmittedActionOption } from '@/components/plugins/actions/ActionInputFormModal';
 import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
 import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import { randomUUID } from '@/platform/randomUUID';
@@ -355,6 +358,9 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                 ...(customSetupSurface ? { allowRendererOnlyDraftFields: true } : {}),
             } : {}),
         });
+        const savedCheckField = initial.event.setupAction.inputHints?.fields.find(({ inputType }) =>
+            inputType && 'hostType' in inputType && inputType.hostType === 'savedHealthSourceId');
+        const submittedCheck: { current?: Readonly<{ value: string; label: string }> } = {};
         const settled = selection.kind === 'form'
             ? await (async () => {
                 try {
@@ -452,6 +458,9 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                         form: selection.form,
                         signal: operationScope.signal,
                         actionId: formatQualifiedPluginActionId(initial.event.setupAction.identity),
+                        ...(savedCheckField ? { onSubmitOptions: (readOption: ReadSubmittedActionOption) => {
+                            submittedCheck.current = readOption(savedCheckField.path);
+                        } } : {}),
                         pickerContext: {
                             machineId: initial.actionSnapshot.host.machineId,
                             serverId: initial.actionSnapshot.host.serverId,
@@ -536,9 +545,13 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         const selectsDurablePush = params.observationTransport === 'durablePush'
             || (source.result.webhookDelivery !== undefined
                 && supportsPluginEventAutomationObservationTransport(current.event, 'durablePush'));
+        const selectedCheck = submittedCheck.current;
+        const savedCheck = selectedCheck ? SavedHealthTransitionSourceV1Schema.safeParse(source.result.sourceConfig) : null;
+        const displayLabel = selectedCheck && savedCheck?.success && savedCheck.data.nativeSourceInstanceId === selectedCheck.value
+            ? AutomationEventSourceDisplayLabelV1Schema.safeParse(selectedCheck.label.normalize('NFC')) : null;
         const draft = createPluginEventAutomationAuthoringDraft({
             eligibleEvent: current.event,
-            setupResult: source.result,
+            setupResult: displayLabel?.success ? { ...source.result, displayLabel: displayLabel.data } : source.result,
             watcherOrigin: current.origin.origin,
             observation: selectsDurablePush && webhookEndpoint
                 ? { kind: 'durablePush', webhookEndpointId: webhookEndpoint.webhookEndpointId }

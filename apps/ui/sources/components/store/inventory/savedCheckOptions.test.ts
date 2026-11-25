@@ -1,5 +1,8 @@
 import { afterEach, expect, it, onTestFinished } from 'vitest';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
 import { standardCleanup } from '@/dev/testkit';
 import {
   createProviderSettingsAccountHarness,
@@ -151,16 +154,34 @@ it('names each saved Check as the Checks list does, from its private definition,
       },
     }),
   ]);
-  const page = { body: { automations, nextCursor: null } };
+  const localHttp = await savedCheck('3', 'Billing local', {
+    kind: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'http' },
+    config: { endpoint: 'http://127.0.0.1:8080/health', expectStatus: 200 },
+  });
+  const page = { body: { automations: [...automations, localHttp], nextCursor: null } };
+  const serverIdentityId = 'srv_saved_check_options';
+  const environment = createDeploymentEnvironmentHeaderV1({
+    id: 'env-billing-prod', serverId: serverIdentityId, contentArtifactId: 'artifact-billing-production',
+  });
   await account.restore({
-    serverIdentityId: 'srv_saved_check_options',
+    serverIdentityId,
     machines: [],
     httpAnswers: {
       'POST /v3/automations/query': page,
       'GET /v3/automations': page,
+      'GET /v1/deployments/environments': { body: { ok: true, items: [environment], nextCursor: null } },
     },
   });
   const scope = storage.getState().settingsScope!;
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const writer = await captureLazyActionAccountContext(scope.serverId);
+  try {
+    const { content } = createDeploymentEnvironmentDetailV1({ environment });
+    await writer.createArtifactDocument({ artifactId: environment.contentArtifactId,
+      header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Billing production' },
+      body: JSON.stringify({ ...content, name: 'Billing production' }),
+    });
+  } finally { writer.dispose(); }
   const listed = await listSavedServiceCheckOptions(
     { serverId: scope.serverId },
     undefined,
@@ -173,6 +194,13 @@ it('names each saved Check as the Checks list does, from its private definition,
         sourceInstanceId: 'health:billing:1',
         label: 'Checkout',
         description: 'GET /api/cart, POST /checkout',
+      },
+      {
+        automationId: 'automation-3',
+        triggerId: localHttp.triggers[0]!.id,
+        sourceInstanceId: 'health:billing:3',
+        label: 'HTTP · Billing production',
+        description: '127.0.0.1:8080/health',
       },
       {
         automationId: 'automation-2',

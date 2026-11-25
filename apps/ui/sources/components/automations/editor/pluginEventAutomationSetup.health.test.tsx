@@ -616,6 +616,24 @@ it.each([
             });
             const result = await setup;
             expect({ result, submitted }).toMatchObject({ result: { kind: 'configured' }, submitted: [selection] });
+            if (triggerSubject.kind === 'environment') {
+                setup = configurePluginEventAutomationSetup({ eligibleEvent: event, observationTransport: 'checkpointedPull',
+                    initialSetupSeed: { eventRef: event.event.identity, setupInput: { v: 1, serverId: selection.serverId } },
+                    filter: null, maximumObservationAgeMs: null, accountLifetime, signal: operation.signal,
+                    resolveExecutionOrigin: () => fresh,
+                    loadCurrentProjection: target => loadDaemonMergedProjectionInputs({ ...target, accountLifetime, sections: 'complete' }),
+                    present: ({ form, onSubmitOptions }) => {
+                        form.replaceInput(selection);
+                        onSubmitOptions?.(path => path === 'nativeSourceInstanceId'
+                            ? { value: nativeSourceInstanceId, label: 'HTTP · Production' } : undefined);
+                        void form.submit().then(submission => {
+                            if (submission.kind !== 'settled' || !submission.outcome.ok) form.cancel();
+                        });
+                    },
+                });
+                expect(await setup).toMatchObject({ kind: 'configured', draft: { draft: { source: { displayLabel: 'HTTP · Production' } } },
+                    trigger: { displayLabel: 'HTTP · Production' } });
+            }
             return;
         }
         // The native surface adapter is the UI platform boundary; source selection, schema,

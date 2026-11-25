@@ -2,7 +2,7 @@ import { Modal } from '@/modal';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PopoverAnchor } from '@/components/ui/popover';
 
-import { ActionInputFormModal } from './ActionInputFormModal';
+import { ActionInputFormModal, type ReadSubmittedActionOption } from './ActionInputFormModal';
 import type { ActionInputForm, ActionInputFormSubmissionResult } from './actionInputForm';
 import type { InputTypePickerHostContext } from '@/components/sessions/actions/InputTypePickerHostProvider';
 
@@ -19,6 +19,7 @@ export function presentActionInputForm(params: Readonly<{
     pickerContext?: InputTypePickerHostContext;
     actionId?: string;
     anchor?: PopoverAnchor;
+    onSubmitOptions?: (readOption: ReadSubmittedActionOption) => void;
 }>): void {
     let modalId = '';
     let retired = false;
@@ -52,6 +53,7 @@ export function presentActionInputForm(params: Readonly<{
             actionId: params.actionId,
             anchor: params.anchor,
             onRetire: retire,
+            onSubmitOptions: params.onSubmitOptions,
         },
         onRequestClose: cancel,
         onHostUnmount: retire,

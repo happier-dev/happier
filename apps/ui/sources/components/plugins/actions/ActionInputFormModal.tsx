@@ -6,6 +6,7 @@ import {
     resolveHappierFormPending,
 } from '@happier-dev/plugin-ui/presentation';
 
+import { readInputPath } from '@happier-dev/protocol/inputs';
 import type { CustomModalInjectedProps } from '@/modal';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
@@ -58,7 +59,10 @@ function isSuccessfulSubmit(
     return outcome.kind === 'settled' && outcome.outcome.ok;
 }
 
+export type ReadSubmittedActionOption = (fieldPath: string) => Readonly<{ value: string; label: string }> | undefined;
+
 export type ActionInputFormModalProps = Readonly<{
+    onSubmitOptions?: (readOption: ReadSubmittedActionOption) => void;
     form: AnyActionInputForm;
     pickerContext?: InputTypePickerHostContext;
     actionId?: string;
@@ -112,6 +116,13 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
 
     const submit = React.useCallback(() => {
         if (props.form.isSubmitting()) return;
+        props.onSubmitOptions?.(path => {
+            const field = fields.find(candidate => candidate.path === path);
+            const value = readInputPath(props.form.getInput(), path);
+            if (!field || typeof value !== 'string') return undefined;
+            const option = fieldOptions.resolveOptions(field).find(choice => choice.value === value);
+            return option ? { value, label: option.label } : undefined;
+        });
         setError(null);
         void (async () => {
             try {
@@ -145,7 +156,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 setError(presentActionExecutionFailure({ ok: false, ...normalizeActionExecutorThrownError(error) }, t('pluginRuntime.unavailableGeneric')));
             }
         })();
-    }, [props.form, props.onClose]);
+    }, [fieldOptions.resolveOptions, fields, props.form, props.onClose, props.onSubmitOptions]);
 
     const repairConnectedAccounts = React.useCallback(() => {
         // A fresh open after repair re-resolves the form's options on its admitted target.
