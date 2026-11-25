@@ -2019,6 +2019,7 @@ export const de: TranslationStructure = {
         dismissHint: "Bricht die Anfrage ab, ohne sie freizugeben oder abzulehnen. Die Aktion wird nicht ausgeführt.",
         cancelRequest: "Anfrage abbrechen",
         deliveryAskingSessionUnavailable: "Die anfragende Sitzung ist nicht mehr verfügbar, daher wurde ihr das Ergebnis nicht gesendet.",
+        deliveryRequesterAccountUnavailable: "Der Daemon konnte nicht auf die zum Senden des Ergebnisses erforderlichen Kontodaten zugreifen. Du kannst dem Agenten die Entscheidung in der anfragenden Sitzung mitteilen.",
         includedStepsTitle: "Enthaltene Schritte",
         includedStepsDescription: "Mit der Freigabe laufen auch diese Schritte, ohne dass du erneut gefragt wirst.",
         includedStepFromPlugin: ({ plugin }: { plugin: string }) => `Ein Schritt aus ${plugin}`,

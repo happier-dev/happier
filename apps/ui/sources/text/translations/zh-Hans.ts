@@ -2223,6 +2223,7 @@ export const zhHans: TranslationStructure = {
     dismissHint: "取消此请求，不批准也不拒绝。不会执行该操作。",
     cancelRequest: "取消请求",
     deliveryAskingSessionUnavailable: "发起请求的会话已不可用，因此结果未发送给它。",
+    deliveryRequesterAccountUnavailable: "守护进程无法访问发送结果所需的账户资料。你可以在发起请求的会话中将决定告知代理。",
     includedStepsTitle: "包含的步骤",
     includedStepsDescription: "批准后，这些步骤也会运行，不再询问你。",
     includedStepFromPlugin: ({ plugin }: { plugin: string }) => `来自 ${plugin} 的步骤`,

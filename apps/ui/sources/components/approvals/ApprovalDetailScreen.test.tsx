@@ -2014,15 +2014,21 @@ describe('ApprovalDetailScreen', () => {
     await screen.unmount();
   });
 
-  it.each(['rejected', 'accepted'] as const)('retains the ORIGINAL %s result delivery beside successful execution', async deliveryStatus => {
+  it.each([
+    ['rejected', 'session.message.target_lookup', 'session_input_target_unavailable', 'approvals.deliveryAskingSessionUnavailable'],
+    ['rejected', 'approval.result.delivery', 'requester_account_material_unavailable', 'approvals.deliveryRequesterAccountUnavailable'],
+    ['accepted', null, null, null],
+  ] as const)('retains the original %s result delivery (%s) beside successful execution', async (deliveryStatus, phase, errorCode, subtitle) => {
     const artifact = await createDaemonRoutedApprovalArtifact('session.stop');
     const request = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
     const execution = { executedAtMs: 3, ok: true, result: {} } as const;
     const settled = ApprovalRequestV2Schema.parse({ ...request, automaticChecks: undefined, status: 'executed', updatedAtMs: 3,
       decision: { kind: 'approve', decidedAtMs: 2 }, execution,
       delivery: { status: 'accepted', localId: 'approval-result:later-delivery' } });
-    const cause = { phase: 'session.message.input_schema', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null } as const;
-    const delivery = deliveryStatus === 'rejected' ? { status: 'rejected', code: 'session_input_target_unavailable', failureCause: cause }
+    const delivery = deliveryStatus === 'rejected'
+      ? { status: 'rejected', code: 'session_input_target_unavailable', failureCause: {
+        phase, errorClass: 'Error', errorCode, httpStatus: null,
+      } }
       : { status: 'accepted', localId: 'approval-result:original' };
     currentArtifact = artifact;
     remoteArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled) };
@@ -2033,11 +2039,10 @@ describe('ApprovalDetailScreen', () => {
     await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.executed'));
     if (deliveryStatus === 'rejected') {
       expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe('session.askRecord.notSent');
-      // The asking Session is gone: the receipt names that, not a message-send mechanism.
-      expect(approvalItem(screen, 'approvals.result-delivery')?.props.subtitle).toBe('approvals.deliveryAskingSessionUnavailable');
+      expect(approvalItem(screen, 'approvals.result-delivery')?.props.subtitle).toBe(subtitle);
       await screen.pressByTestIdAsync('approvals.technical-details.header');
-      expect(screen.getTextContent()).toContain(cause.phase);
-      expect(screen.getTextContent()).toContain(cause.errorCode);
+      expect(screen.getTextContent()).toContain(phase);
+      expect(screen.getTextContent()).toContain(errorCode);
       // Delivery retries leave the executed Artifact unchanged. A fresh read of that
       // success must not replace the original result-delivery receipt on this view.
       await act(async () => {
@@ -2047,7 +2052,7 @@ describe('ApprovalDetailScreen', () => {
         storage.getState().updateArtifact(refreshed);
       });
       expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe('session.askRecord.notSent');
-      expect(screen.getTextContent()).toContain(cause.phase);
+      expect(screen.getTextContent()).toContain(phase);
     } else expect(approvalItem(screen, 'approvals.result-delivery')).toBeUndefined();
     await screen.unmount();
   });

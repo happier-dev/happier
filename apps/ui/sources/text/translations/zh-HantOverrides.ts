@@ -1734,6 +1734,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     dismissHint: "取消此請求，不核准也不拒絕。不會執行該操作。",
     cancelRequest: "取消請求",
     deliveryAskingSessionUnavailable: "發出請求的工作階段已無法使用，因此結果未傳送給它。",
+    deliveryRequesterAccountUnavailable: "背景程序無法存取傳送結果所需的帳戶資料。你可以在發出請求的工作階段中將決定告知代理程式。",
     includedStepsTitle: "包含的步驟",
     includedStepsDescription: "核准後，這些步驟也會執行，不再詢問你。",
     includedStepFromPlugin: ({ plugin }: { plugin: string }) => `來自 ${plugin} 的步驟`,

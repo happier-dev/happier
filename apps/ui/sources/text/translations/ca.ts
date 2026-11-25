@@ -2245,6 +2245,7 @@ export const ca: TranslationStructure = {
         dismissHint: "Cancel·la la sol·licitud sense aprovar-la ni rebutjar-la. L’acció no s’executa.",
         cancelRequest: "Cancel·la la sol·licitud",
         deliveryAskingSessionUnavailable: "La sessió que ho va demanar ja no està disponible, així que no se li ha enviat el resultat.",
+        deliveryRequesterAccountUnavailable: "El dimoni no ha pogut accedir al material del compte necessari per enviar el resultat. Pots comunicar la decisió a l’agent a la sessió que la va sol·licitar.",
         includedStepsTitle: "Passos inclosos",
         includedStepsDescription: "En aprovar, aquests passos també s’executen sense tornar-te a preguntar.",
         includedStepFromPlugin: ({ plugin }: { plugin: string }) => `Un pas de ${plugin}`,

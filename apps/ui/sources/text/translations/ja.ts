@@ -2392,6 +2392,7 @@ export const ja: TranslationStructure = {
     dismissHint: "承認も拒否もせずにリクエストを取り消します。アクションは実行されません。",
     cancelRequest: "リクエストを取り消す",
     deliveryAskingSessionUnavailable: "依頼したセッションはもう利用できないため、結果は送信されませんでした。",
+    deliveryRequesterAccountUnavailable: "結果の送信に必要なアカウント情報にデーモンがアクセスできませんでした。リクエスト元のセッションでエージェントに決定を伝えることができます。",
     includedStepsTitle: "含まれる手順",
     includedStepsDescription: "承認すると、これらの手順も再確認なしで実行されます。",
     includedStepFromPlugin: ({ plugin }: { plugin: string }) => `${plugin} の手順`,

@@ -2238,6 +2238,7 @@ export const pl: TranslationStructure = {
     dismissHint: "Anuluje prośbę bez zatwierdzania ani odrzucania. Akcja nie zostanie wykonana.",
     cancelRequest: "Anuluj prośbę",
     deliveryAskingSessionUnavailable: "Sesja, która o to prosiła, nie jest już dostępna, więc wynik nie został do niej wysłany.",
+    deliveryRequesterAccountUnavailable: "Demon nie mógł uzyskać dostępu do danych konta potrzebnych do wysłania wyniku. Możesz przekazać decyzję agentowi w sesji, która o nią poprosiła.",
     includedStepsTitle: "Uwzględnione kroki",
     includedStepsDescription: "Zatwierdzenie pozwala też uruchomić te kroki bez ponownego pytania.",
     includedStepFromPlugin: ({ plugin }: { plugin: string }) => `Krok z ${plugin}`,

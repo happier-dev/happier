@@ -2446,6 +2446,7 @@ export const pt: TranslationStructure = {
     dismissHint: "Cancela o pedido sem o aprovar nem rejeitar. A ação não é executada.",
     cancelRequest: "Cancelar pedido",
     deliveryAskingSessionUnavailable: "A sessão que o pediu já não está disponível, por isso o resultado não lhe foi enviado.",
+    deliveryRequesterAccountUnavailable: "O daemon não conseguiu aceder aos dados da conta necessários para enviar o resultado. Podes comunicar a decisão ao agente na sessão que a pediu.",
     includedStepsTitle: "Passos incluídos",
     includedStepsDescription: "Ao aprovar, estes passos também são executados sem voltar a perguntar.",
     includedStepFromPlugin: ({ plugin }: { plugin: string }) => `Um passo de ${plugin}`,

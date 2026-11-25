@@ -1815,6 +1815,7 @@ const enApprovals = {
   dismissHint: "Cancels the request without approving or denying it. The Action doesn’t run.",
   cancelRequest: "Cancel request",
   deliveryAskingSessionUnavailable: "The Session that asked is no longer available, so the result wasn’t sent to it.",
+  deliveryRequesterAccountUnavailable: "The daemon couldn’t access the Account material needed to send the result. You can tell the Agent the decision in the asking Session.",
   includedStepsTitle: "Steps it includes",
   includedStepsDescription: "Approving this also lets these steps run without asking you again.",
   includedStepFromPlugin: ({ plugin }: { plugin: string }) => `A step from ${plugin}`,

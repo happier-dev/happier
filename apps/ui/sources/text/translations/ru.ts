@@ -2239,6 +2239,7 @@ export const ru: TranslationStructure = {
     dismissHint: "Отменяет запрос, не подтверждая и не отклоняя его. Действие не выполняется.",
     cancelRequest: "Отменить запрос",
     deliveryAskingSessionUnavailable: "Сеанс, который это запросил, больше недоступен, поэтому результат ему не отправлен.",
+    deliveryRequesterAccountUnavailable: "Демон не смог получить доступ к данным аккаунта, необходимым для отправки результата. Вы можете сообщить решение агенту в сеансе, из которого поступил запрос.",
     includedStepsTitle: "Включённые шаги",
     includedStepsDescription: "После подтверждения эти шаги тоже выполнятся без повторного вопроса.",
     includedStepFromPlugin: ({ plugin }: { plugin: string }) => `Шаг из ${plugin}`,

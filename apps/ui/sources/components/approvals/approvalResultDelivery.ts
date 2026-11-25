@@ -44,13 +44,30 @@ export function presentApprovalResultDelivery(
       error: delivery.code,
       failureCause: delivery.failureCause,
     });
+    const cause = delivery.failureCause;
+    const causeCode = cause && 'errorCode' in cause ? cause.errorCode : undefined;
+    let subtitle = failure.reason ?? undefined;
+    if (delivery.code === 'session_input_archived') {
+      subtitle = t('session.pendingMessages.admissionRejected.archived');
+    } else if (delivery.code === 'session_input_target_unavailable') {
+      // This receipt code also wraps failures before the asking Session is read.
+      subtitle = undefined;
+      if (causeCode === 'requester_account_material_unavailable') {
+        subtitle = t('approvals.deliveryRequesterAccountUnavailable');
+      } else if (causeCode === 'machine_offline') {
+        subtitle = t('session.machineOfflineNoticeTitle');
+      } else if (
+        (causeCode === 'session_input_target_unavailable'
+          && (cause?.phase === 'session.message.target_lookup' || delivery.effectAttempted === false))
+        || (!cause && delivery.effectAttempted === false)
+      ) {
+        subtitle = t('approvals.deliveryAskingSessionUnavailable');
+      }
+    }
     return {
       kind: 'not_sent',
       detail: t('session.askRecord.notSent'),
-      // The Session that asked is gone: say that, not the message-send words for an unavailable conversation.
-      subtitle: delivery.code === 'session_input_target_unavailable'
-        ? t('approvals.deliveryAskingSessionUnavailable')
-        : failure.reason ?? undefined,
+      subtitle,
       failure,
     };
   }

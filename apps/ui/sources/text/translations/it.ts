@@ -2224,6 +2224,7 @@ export const it: TranslationStructure = {
     dismissHint: "Annulla la richiesta senza approvarla né rifiutarla. L’azione non viene eseguita.",
     cancelRequest: "Annulla richiesta",
     deliveryAskingSessionUnavailable: "La sessione che l’ha chiesto non è più disponibile, quindi il risultato non le è stato inviato.",
+    deliveryRequesterAccountUnavailable: "Il daemon non ha potuto accedere ai dati dell’account necessari per inviare il risultato. Puoi comunicare la decisione all’agente nella sessione che l’ha richiesta.",
     includedStepsTitle: "Passaggi inclusi",
     includedStepsDescription: "Approvando, anche questi passaggi vengono eseguiti senza chiederti di nuovo.",
     includedStepFromPlugin: ({ plugin }: { plugin: string }) => `Un passaggio di ${plugin}`,
