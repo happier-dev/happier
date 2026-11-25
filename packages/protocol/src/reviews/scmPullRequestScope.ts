@@ -52,15 +52,17 @@ export type ScmPullRequestReviewObservationV1 = z.infer<typeof ScmPullRequestRev
  * It carries no Triage or source entry identity, no provider bag, no local
  * workspace path, no engine id, no finding and no mutable review state.
  */
-const scmPullRequestReviewScopeFieldsV1 = {
-  kind: z.literal('scm_pull_request_review_scope.v1'),
-  pullRequest: ScmPullRequestReferenceSchema,
-  observed: ScmPullRequestReviewObservationV1Schema,
-};
-export const ScmPullRequestReviewScopeV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ ...scmPullRequestReviewScopeFieldsV1, account: asProtocolZod(QualifiedConnectedAccountRefSchema) }),
-  z.strictObject({ ...scmPullRequestReviewScopeFieldsV1, nativeService: asProtocolZod(PluginContributionIdentityV1Schema) }),
-]));
+export const ScmPullRequestReviewScopeV1Schema = lazyZodSchema(() => {
+  const scmPullRequestReviewScopeFieldsV1 = {
+    kind: z.literal('scm_pull_request_review_scope.v1'),
+    pullRequest: ScmPullRequestReferenceSchema,
+    observed: ScmPullRequestReviewObservationV1Schema,
+  };
+  return z.union([
+    z.strictObject({ ...scmPullRequestReviewScopeFieldsV1, account: asProtocolZod(QualifiedConnectedAccountRefSchema) }),
+    z.strictObject({ ...scmPullRequestReviewScopeFieldsV1, nativeService: asProtocolZod(PluginContributionIdentityV1Schema) }),
+  ]);
+});
 export type ScmPullRequestReviewScopeV1 = z.infer<typeof ScmPullRequestReviewScopeV1Schema>;
 
 /**

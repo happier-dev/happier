@@ -143,7 +143,7 @@ export type WorkBoardUnknownSourceV1 = Readonly<{ sections?: readonly string[]; 
  * aside in `unknown` (and re-tried there on every read), so a newer app's board still shows what this
  * version can draw.
  */
-const StoredWorkBoardSourceV1Schema = createStoredReadSchema(z.pipe(z.strictObject({
+const StoredWorkBoardSourceV1Schema = createStoredReadSchema(lazyZodSchema(() => z.pipe(z.strictObject({
     sections: z.optional(z.array(z.string())),
     filter: z.optional(SessionListFilterV1Schema),
     picked: z._default(z.array(z.unknown()), []),
@@ -178,7 +178,7 @@ const StoredWorkBoardSourceV1Schema = createStoredReadSchema(z.pipe(z.strictObje
         picked,
         ...(Object.keys(unknown).length > 0 ? { unknown } : {}),
     };
-})));
+}))));
 
 export type WorkBoardV1 = Readonly<{
     id: string;

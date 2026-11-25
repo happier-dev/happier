@@ -26,6 +26,37 @@ async function importInFreshProcess(relativeEntryPath: string, afterImport = '',
 }
 
 describe('protocol ESM import safety', () => {
+  it.each(['reviews/comments/actions.ts', 'reviews/comments/mutation.ts'])(
+    'reads stored work boards with %s first under the native source runtime',
+    async (entryPath) => {
+      const boardUrl = pathToFileURL(path.join(__dirname, 'boards/workBoardV1.ts')).href;
+      await importInFreshProcess(entryPath, `
+        const { strict: assert } = await import('node:assert');
+        const { WorkBoardV1Schema } = await import(${JSON.stringify(boardUrl)});
+        const board = WorkBoardV1Schema.parse({ id: 'cold-import', name: 'Cold import', source: { picked: [] } });
+        assert.equal(board.id, 'cold-import');
+        assert.deepEqual(board.source.picked, []);
+        assert.equal(board.mode, 'canvas');
+      `, true);
+    },
+    MODULE_IMPORT_TIMEOUT_MS + 5_000,
+  );
+
+  it('loads selected pull-request review scopes with the SCM reference owner first', async () => {
+    const scopeUrl = pathToFileURL(path.join(__dirname, 'reviews/scmPullRequestScope.ts')).href;
+    await importInFreshProcess('scm/pullRequests.ts', `
+      const { strict: assert } = await import('node:assert');
+      const { ScmPullRequestReviewScopeV1Schema } = await import(${JSON.stringify(scopeUrl)});
+      const scope = {
+        kind: 'scm_pull_request_review_scope.v1',
+        account: { service: { pluginId: 'happier.scm-github', localId: 'github' }, accountId: 'account-1' },
+        pullRequest: { number: 1 },
+        observed: { baseSha: 'base', headSha: 'head', nativeRevision: 'revision', observedAtMs: 1 },
+      };
+      assert.deepEqual(JSON.parse(JSON.stringify(ScmPullRequestReviewScopeV1Schema.parse(scope))), scope);
+    `, true);
+  }, MODULE_IMPORT_TIMEOUT_MS + 5_000);
+
   it('loads every public Protocol subpath in fresh processes with different entry orders', async () => {
     const root = path.join(__dirname, '..');
     const matcher = pathToFileURL(path.join(__dirname, '../../cli-common/packageExportMatch.cjs')).href;
