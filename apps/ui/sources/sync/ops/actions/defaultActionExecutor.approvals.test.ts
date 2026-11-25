@@ -2351,9 +2351,9 @@ describe('createDefaultActionExecutor approvals', () => {
             sessionId: 's1', requestId: 'user-action-1', decision: 'approve',
             answers: [{ question: 'Where should this run?', values: ['Washington, D.C.', 'Virginia', 'A custom, exact answer'] }],
             reason: ' approved from UI ', updatedPermissions: { allowedTools: ['shell'] },
-        }, context());
+        }, { ...context(), actionRequestId: 'answer-action-1' });
         expect(result).toEqual(outcome === 'refused'
-            ? { ok: false, errorCode: 'permission_response_invalid', error: 'permission_response_invalid' }
+            ? { ok: false, errorCode: 'permission_response_invalid', error: 'permission_response_invalid', requestId: 'answer-action-1' }
             : { ok: true, result: { ok: true } });
         expect(outgoing.at(-1)).toMatchObject({ method: 's1:' + RPC_METHODS.SESSION_USER_ACTION_ANSWER, params: {
             id: 'user-action-1', approved: true, answers: { 'Where should this run?': ['Washington, D.C.', 'Virginia', 'A custom, exact answer'] },

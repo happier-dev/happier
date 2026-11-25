@@ -2237,7 +2237,10 @@ describe('createCliActionDeps workflow boundary', () => {
     const input = { artifactId: 'definition-1', principal: { kind: 'team', teamId: 'team-1' }, accessLevel: 'edit' };
     await expect(createActionExecutor(deps).execute('artifact.access.grants.set' as ActionId, input, {
       surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, bypassApprovals: true,
-    })).resolves.toEqual({ ok: true, result: grants });
+    })).resolves.toEqual({
+      ok: true, result: grants,
+      automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
+    });
     expect(http.put).toHaveBeenCalledWith(expect.stringContaining('/v1/artifacts/definition-1/access/grants'), input, expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer token' }) }));
     expect(http.post).not.toHaveBeenCalled();
   });
