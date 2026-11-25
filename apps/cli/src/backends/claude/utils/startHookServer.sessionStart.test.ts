@@ -163,6 +163,7 @@ describe('startHookServer (/hook/session-start authentication, A5-MED-2)', () =>
     servers.push(server);
     const path = '.happier/uploads/messages/message-1/12345678-image.png';
     const customPath = 'custom uploads/messages/message-1/1234abcd-diagram (2).pdf';
+    const multilineNamePath = '.happier/uploads/messages/message-1/1234abcd-plot_final.png';
     const result = await runSessionForwarder({
       port: server.port,
       hookEventName: 'UserPromptSubmit',
@@ -174,6 +175,7 @@ describe('startHookServer (/hook/session-start authentication, A5-MED-2)', () =>
           '',
           'Attachments: open and analyze these files before answering.',
           '[attachments]',
+          `- ${multilineNamePath} (plot\nfinal.png, image/png, 22 bytes)`,
           `- ${path} (image.png, image/png, 22 bytes)`,
           `- ${customPath} (diagram (2).pdf, application/pdf, 80 bytes)`,
           '- ../outside/messages/message-1/1234abcd-private.txt (private.txt, text/plain, 80 bytes)',
@@ -187,6 +189,7 @@ describe('startHookServer (/hook/session-start authentication, A5-MED-2)', () =>
     expect(hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
     expect(hookSpecificOutput.additionalContext).toContain(JSON.stringify(resolve(sessionWorkingDirectory, path)));
     expect(hookSpecificOutput.additionalContext).toContain(JSON.stringify(resolve(sessionWorkingDirectory, customPath)));
+    expect(hookSpecificOutput.additionalContext).toContain(JSON.stringify(resolve(sessionWorkingDirectory, multilineNamePath)));
     expect(hookSpecificOutput.additionalContext).not.toContain('private.txt');
   });
 
