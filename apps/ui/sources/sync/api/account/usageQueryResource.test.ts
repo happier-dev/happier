@@ -27,7 +27,7 @@ import { publishHomeAccountChange, publishHomeAccountChangeWake, subscribeHomeAc
 import { buildConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
-import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { buildConnectedServicesAccountChangeV1, HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { createArtifactReadBatchHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { planSyncActionsFromChanges, plannedChangesAffectUsageQuery, plannedChangesAffectUsageAccounting } from '@/sync/runtime/orchestration/changesPlanner';
 // These source-adapter tests do not register unrelated Settings surfaces.
@@ -4818,6 +4818,75 @@ describe('usage query captured Resource adapter', () => {
       expect(cold.pace[0]?.value).toMatchObject({ status: 'available', elapsedFraction: 3_100 / 60_000 });
       expect(cold.current).toEqual(mounted().current);
       expect(mounted().pace).toEqual(cold.pace);
+    } finally {
+      release();
+      vi.useRealTimers();
+    }
+  });
+
+  it('projects an ended cycle after a service-binding wake with the same fixed range and head (J-A46)', async () => {
+    const { buildProviderAccountUsagePageProjectionV1, packProviderAccountUsagePageProjectionV1 } =
+      await import('@happier-dev/protocol/connect/providerAccountUsagePageProjection');
+    const opening = Date.UTC(2026, 10, 25, 12);
+    const resetAtMs = opening + 100;
+    const range = { startAtMs: opening - 1_000, endAtMs: opening + 1_000 };
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'fixed-range' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const recordId = buildProviderAccountUsageRecordId(recordKey);
+    const head = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId, recordKey,
+      accountSubject: { kind: 'providerSubject', id: ref.accountId }, providerId: 'codex',
+      observedAtMs: opening - 100, fetchedAtMs: opening - 100, staleAfterMs: 60_000, source: 'providerHttp',
+      confidence: 'confirmed', state: 'loaded_data', meters: [{ meterId: 'quota', label: 'Quota', used: 40, limit: 100,
+        utilizationPct: 40, unit: 'requests', status: 'ok', resetsAt: resetAtMs, windowDurationMs: 60_000, details: {} }] });
+    const frontier = { id: 'fixed-observation', observedAtMs: head.fetchedAtMs };
+    const demand = { range, resolution: 'accepted_observations' as const };
+    const projection = buildProviderAccountUsagePageProjectionV1({ recordId, range,
+      history: { entries: [{ ...frontier, snapshot: head }], nextCursor: null } });
+    const metadata = { fetchedAt: head.fetchedAtMs, staleAfterMs: head.staleAfterMs, status: 'ok' };
+    const captured = await context(request => {
+      if (request.path.endsWith('/sources/resolve')) return Response.json({ source, recordId, providerAccountId: ref.accountId,
+        fetchedAt: metadata.fetchedAt, staleAfterMs: metadata.staleAfterMs });
+      if (request.path.endsWith('/record')) return Response.json({ content: { t: 'plain', v: head }, metadata, sources: [source] });
+      if (request.path.endsWith('/day-summaries')) return Response.json({ summaries: [], missingDays: [] });
+      if (request.path.endsWith('/history')) return Response.json({ projection: { recordId, demand, frontier, observationCount: 1,
+        content: { t: 'plain', v: packProviderAccountUsagePageProjectionV1(projection) } }, complete: true });
+      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      return undefined;
+    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+    const query = normalizeUsageQuery({ period: { startMs: range.startAtMs, endMs: range.endAtMs }, includeQuota: true,
+      includeQuotaHistory: true, includeQuotaExactHistory: true, includeAccounting: false, includeCoach: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const input = { queries: [query] };
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(input) });
+    vi.useFakeTimers();
+    vi.setSystemTime(opening);
+    const release = entry.subscribe(() => {}, true);
+    const settle = async () => {
+      await vi.advanceTimersByTimeAsync(0);
+      await flushHookEffects({ cycles: 150 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(entry.getSnapshot().pending).toBe('idle');
+    };
+    const mounted = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota![0]!;
+    try {
+      await settle();
+      expect(mounted().pageFacts?.historyStatus).toBe('complete');
+      expect(mounted().unusedCapacity?.windows).toEqual([]);
+      expect(mounted().current?.fetchedAtMs).toBe(head.fetchedAtMs);
+      vi.setSystemTime(resetAtMs + 100);
+      const beforeWake = home!.requests.length;
+      publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId, { t: 'account-change', changeKinds: ['account'],
+        entityIds: [buildConnectedServicesAccountChangeV1(ref.service).entityId], sessionSystemRecords: [] }, 'socket');
+      await settle();
+      const resolvedRoutes = home!.requests.slice(beforeWake).filter(request =>
+        request.path.endsWith('/sources/resolve') || request.path.endsWith('/record')).map(request => request.path.split('/').at(-1));
+      const cold = (await readUiUsageQueryBatch(captured, input)).results[0]!.quota![0]!;
+      expect(cold.unusedCapacity?.windows.map(value => value.window.resetAtMs)).toEqual([resetAtMs]);
+      expect.soft(mounted().unusedCapacity).toEqual(cold.unusedCapacity);
+      expect.soft(resolvedRoutes).toEqual(['resolve', 'record']);
+      expect(mounted().current?.fetchedAtMs).toBe(head.fetchedAtMs);
     } finally {
       release();
       vi.useRealTimers();

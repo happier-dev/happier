@@ -590,7 +590,6 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
         return { ...view, sources };
     });
     const addressedReads = new Map<string, ProviderAccountUsageRecordId>();
-    const retainedBindings = new Map<string, readonly ConnectedServiceQuotaGetResultV1[]>();
     const recordIds = admissions.map(({ admitted }, index) => admitted.usageRecordId
         ?? progress.find(view => view.sources[index]?.value?.current)?.sources[index]?.value?.current?.recordId);
     // A publication for an as-yet unknown record can be the first reading
@@ -599,16 +598,10 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
     const requestedIndices = admissions.flatMap(({ admitted, source, sourceKey }, index) => {
         if (recoverySources && !recoverySources.has(`quota:${sourceKey}`)) return [];
         if (!targets || targets.sourceKeys.includes(sourceKey)) return [index];
+        // Resolve a changed service's bindings before using any named record address.
+        // Its old record can remain accessible through another source.
+        if (targets.bindingServiceKeys?.includes(buildQualifiedPluginContributionKey(source.ref.service))) return [index];
         const recordId = recordIds[index];
-        if (targets.bindingServiceKeys?.includes(buildQualifiedPluginContributionKey(source.ref.service))) {
-            // A named record still requires a body read. Resolve the source first
-            // since its old record can remain accessible through another source.
-            if (recordId && !targets.recordIds.includes(recordId)) {
-                const retained = progress.flatMap(view => view.sources[index]?.previous ?? []);
-                if (retained.length === progress.length) retainedBindings.set(sourceKey, retained);
-            }
-            return [index];
-        }
         if (!recordId) return findUnknownRecord ? [index] : [];
         if (!targets.recordIds.includes(recordId)) return [];
         if (admitted.supported !== false) addressedReads.set(sourceKey, recordId);
@@ -681,12 +674,10 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
             const { source } = scope.sources[index]!;
             try {
                 await read({ source, ...(range ? { projection: { range, resolution: 'accepted_observations' as const } } : {}) });
-                if (!retainedBindings.has(admissions[index]!.sourceKey) || progress.some(view => view.sources[index]?.accepted)) {
-                    publishProgress(index, undefined, true);
-                }
+                publishProgress(index, undefined, true);
             } catch (error) { failSource(index, error); }
         })), { includePendingWork: !!range, changesCursor, dayChange, addressedReads, ...(daily ? { historyView: 'daily', exactHistoryRange } : {}), readAllHistory: {
-            views, retainedBindings,
+            views,
             onProgress: (value, projectedViews) => publishProgress(indexForSource(value.source), projectedViews),
             onViewFailure: (source, queryKeys, error) => failSource(indexForSource(source), error, queryKeys),
         } });

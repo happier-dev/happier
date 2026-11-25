@@ -49,7 +49,6 @@ it.each([
   { producer: 'Profile', wake: 'mixed feed' },
   { producer: 'descriptor catalog', wake: 'mixed feed' },
   { producer: 'Profile', wake: 'midnight binding' },
-  { producer: 'Profile', wake: 'newer quota clock' },
 ])('settles stock Plans with late qualification by $producer and a $wake wake', async ({ producer, wake }) => {
     const midnight = Date.UTC(2026, 10, 26);
     const dayMs = 24 * 3600_000;
@@ -257,35 +256,26 @@ it.each([
         changes = rows.map(row => ({ ...row, cursor: ++cursor, changedAt: nowMs }));
         await act(async () => { await sync.resumeSync('socket-reconnect'); });
       };
-      if (wake !== 'mixed feed') {
+      if (wake === 'midnight binding') {
         const row = records[16]!;
         const snapshot = row.snapshot!;
         const exactRead = () => slices.flatMap(slice => slice.quota ?? [])
           .find(quota => quota.current?.recordId === snapshot.recordId && quota.pageFacts?.historyStatus === 'complete');
         await expect.poll(() => exactRead()?.current?.recordId).toBe(snapshot.recordId);
-        if (wake === 'midnight binding') {
-          expect(exactRead()?.unusedCapacity?.windows.map(value => value.window.resetAtMs)).toEqual([snapshot.meters[0]!.resetsAt]);
-          nowMs = midnight + 1_000;
-          expect(nowMs - snapshot.observedAtMs).toBeLessThan(snapshot.staleAfterMs);
-        } else {
-          acceptObservation(row, nowMs);
-        }
+        expect(exactRead()?.unusedCapacity?.windows.map(value => value.window.resetAtMs)).toEqual([snapshot.meters[0]!.resetsAt]);
+        nowMs = midnight + 1_000;
+        expect(nowMs - snapshot.observedAtMs).toBeLessThan(snapshot.staleAfterMs);
         const before = traffic.length;
         await consume([buildConnectedServicesAccountChangeV1(row.source.ref.service)]);
         await expect.poll(() => traffic.slice(before).filter(request => request.route === 'resolve').length).toBe(2);
         await expect.poll(() => slices.every(slice => !slice.pending)).toBe(true);
         await flushHookEffects({ cycles: 30 });
         const reads = traffic.slice(before);
-        if (wake === 'midnight binding') {
-          expect.soft(exactRead()?.unusedCapacity?.windows, 'Today must not show yesterday’s ended cycle').toEqual([]);
-          expect.soft(reads.filter(request => request.route === 'day-summaries').map(request => request.range))
-            .toEqual(records.slice(16).map(() => ({ startAtMs: midnight, endAtMs: nowMs })));
-          expect.soft(reads.filter(request => request.route === 'record').map(request => request.recordId).sort())
-            .toEqual(records.slice(16).map(row => row.snapshot!.recordId).sort());
-        } else {
-          expect.soft(exactRead()?.current?.fetchedAtMs, 'same binding with a newer Home clock requires the new body').toBe(nowMs);
-          expect.soft(reads.filter(request => request.route === 'record').map(request => request.recordId)).toEqual([snapshot.recordId]);
-        }
+        expect.soft(exactRead()?.unusedCapacity?.windows, 'Today must not show yesterday’s ended cycle').toEqual([]);
+        expect.soft(reads.filter(request => request.route === 'day-summaries').map(request => request.range))
+          .toEqual(records.slice(16).map(() => ({ startAtMs: midnight, endAtMs: nowMs })));
+        expect.soft(reads.filter(request => request.route === 'record').map(request => request.recordId).sort())
+          .toEqual(records.slice(16).map(row => row.snapshot!.recordId).sort());
         return;
       }
 
@@ -354,13 +344,17 @@ it.each([
         expect(storage.getState().profile.connectedAccountsV4).toEqual(beforeProfile);
         const bindings = bindingTargets.map(row => row.snapshot!.recordId);
         expect(bindings).toEqual(cause === 'changed binding' ? [rebound.snapshot!.recordId, originalBindings[1]] : originalBindings);
-        const expected = cause === 'changed binding' ? [...named, rebound.snapshot!.recordId] : named;
+        const expectedRecords = cause === 'equal profile' ? named : [...named, ...bindings];
+        const expectedHistory = cause === 'changed binding' ? [...named, rebound.snapshot!.recordId] : named;
         expect.soft(mixed.filter(row => row.route === 'resolve').map(row => JSON.stringify(row.ref)).sort()).toEqual(
           cause === 'equal profile' ? [] : bindingTargets.map(row => JSON.stringify(row.source.ref)).sort());
-        for (const route of ['record', 'day-summaries', 'history']) {
+        for (const route of ['record', 'day-summaries']) {
           expect.soft(mixed.filter(row => row.route === route).map(row => row.recordId).sort(), `${cause}: ${route}`)
-            .toEqual([...expected].sort());
+            .toEqual([...expectedRecords].sort());
         }
+        // The ordinary history reader can reuse unchanged admitted coverage.
+        expect.soft(mixed.filter(row => row.route === 'history').map(row => row.recordId).sort(), cause)
+          .toEqual([...expectedHistory].sort());
         expect(slices.some(slice => slice.quota?.some(quota => quota.current?.recordId === rebound.snapshot!.recordId))).toBe(true);
       }
     } finally {
