@@ -3,6 +3,7 @@ import { readReviewCommentChangesHintV1, type ReviewCommentChangesHintV1 } from 
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { isProviderAccountUsageChangeEntityIdV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { MANAGED_MACHINE_SIGN_IN_OCCURRENCE_ENTITY_PREFIX_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentReceiptCompletionWakeV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import {
@@ -721,6 +722,7 @@ export function planSyncActionsFromChanges(
         }
 
         if (kind === 'account') {
+            if (change.entityId.startsWith(MANAGED_MACHINE_SIGN_IN_OCCURRENCE_ENTITY_PREFIX_V1)) continue;
             // Receiver demand is routed separately from the ordinary Session
             // projection. This key changes neither Settings nor the Account profile.
             if (readSessionFollowReceiverChangeV1(change) !== null) continue;
@@ -1247,6 +1249,7 @@ export function plannedChangesAffectUsageQuery(planned: PlannedChangeActions): b
         if (['machine', 'machinePool', 'artifact', 'feed', 'friends', 'friend_request', 'friend_accepted',
             'pet', 'automation', 'kv', 'pluginDomain', 'savedSecretResource'].includes(change.kind)) return false;
         if (change.kind === 'account' && (change.entityId === 'public-profile'
+            || change.entityId.startsWith(MANAGED_MACHINE_SIGN_IN_OCCURRENCE_ENTITY_PREFIX_V1)
             || change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1
             || workflowEntityIds.has(change.entityId) || getChangeSessionDraftHint(change)
             || isDeploymentAccountChange(change))) return false;
@@ -1285,7 +1288,8 @@ export function plannedChangesAffectUsageAccounting(planned: PlannedChangeAction
         // Home/Team administration publishes reconstructible rosters and
         // policy. Account-owned UsageEvents retain their independent push.
         if (change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1
-            || change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) return false;
+            || change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
+            || change.entityId.startsWith(MANAGED_MACHINE_SIGN_IN_OCCURRENCE_ENTITY_PREFIX_V1)) return false;
         // These canonical rows contain service configuration, allowances or
         // Machine policy, not UsageEvents, message counts or entered prices.
         // Other self changes and unknown Account rows remain conservative.

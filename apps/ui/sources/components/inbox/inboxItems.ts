@@ -36,6 +36,9 @@ import { readStoredSessionTranscriptForAddress } from '@/sync/domains/messages/r
 import type { StorageState } from '@/sync/store/types';
 import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
+import type { ManagedMachineSignInOccurrenceV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { selectSessionRelationRecords } from '@/components/sessions/work/reportSubtree';
 import { readSessionPresentationRecord, readSessionPresentationInputDisplay, readSessionPresentationInputSource,
     type SessionPresentationRecord, type SessionRelationRecord,
@@ -45,6 +48,47 @@ export const INBOX_ITEM_VIEWS = ['needs_you', 'updates', 'mentions'] as const sa
 export function getInboxNeedsYouItemTypes() {
     return ['approval', 'decision', 'blocked'] as const;
 }
+
+export type InboxMachineSignInTarget = Readonly<{
+    kind: 'managed_machine_sign_in_approval';
+    serverId: string;
+    requesterAccountId: string;
+    homeId: string;
+    managedId: string;
+    operationId: string;
+    taskId: string;
+}>;
+
+// An explicit consumer opts in to this item. The generic Inbox row accepts only InboxItem.
+export type InboxMachineSignInItem = Readonly<{
+    key: string;
+    type: 'confirm_machine_sign_in';
+    view: Extract<InboxItemView, 'needs_you'>;
+    machine: Readonly<{ homeId: string; id: string }>;
+    openTarget: InboxMachineSignInTarget;
+}>;
+
+export function buildInboxMachineSignInItems(
+    scope: ServerAccountScope,
+    occurrences: readonly ManagedMachineSignInOccurrenceV1[],
+    previous?: readonly InboxMachineSignInItem[],
+): readonly InboxMachineSignInItem[] {
+    const items: InboxMachineSignInItem[] = [];
+    for (const occurrence of occurrences) {
+        if (occurrence.state !== 'pending' || occurrence.requesterAccountId !== scope.accountId) continue;
+        const { requesterAccountId, homeId, managedId, operationId, taskId } = occurrence;
+        items.push({
+            key: serverAccountScopedResourceKey(scope, 'managed-sign-in', homeId, managedId, operationId, taskId),
+            type: 'confirm_machine_sign_in',
+            view: 'needs_you',
+            machine: { homeId, id: managedId },
+            openTarget: { kind: 'managed_machine_sign_in_approval', serverId: scope.serverId,
+                requesterAccountId, homeId, managedId, operationId, taskId },
+        });
+    }
+    return retainKeyedRows(previous, items, item => item.key);
+}
+
 export type AccountNoticeInboxEntry = AccountNoticeArtifact;
 export type InboxExecutionRunAddress = Readonly<{ serverId: string } & (
     { sessionId: string; machineId?: never } | { machineId: string; sessionId?: never }
