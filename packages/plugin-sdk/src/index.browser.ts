@@ -242,7 +242,6 @@ export type { PluginServiceLaunchEnvironmentInputV1 } from './serviceLaunchEnvir
 export type { PluginServiceLaunchEnvironmentProjectionV1 } from './serviceLaunchEnvironments.js';
 export type { PluginServiceLaunchEnvironmentResultV1 } from './serviceLaunchEnvironments.js';
 export type { PluginServiceLaunchEnvironmentRuntimeV1 } from './serviceLaunchEnvironments.js';
-export type { PluginWorktreeDatabaseMemberV1 } from './serviceLaunchEnvironments.js';
 export type { PluginServices } from './services/index.js';
 export type { PluginSkillContributionV1 } from './manifest.js';
 export type { PluginStoreItemReferenceV1 } from './storeKinds.js';
@@ -266,6 +265,7 @@ export type { PluginWorkItemsResolveResultV1 } from './workItems.js';
 export type { PluginWorkItemsRuntime } from './workItems.js';
 export type { PluginWorkItemsWatchRequestV1 } from './workItems.js';
 export type { PluginWorkflowContributionV1 } from './manifest.js';
+export type { PluginWorktreeDatabaseMemberV1 } from './serviceLaunchEnvironments.js';
 export type { ProjectDefinitionDetectionV1 } from './projectNativeAdapters.js';
 export type { ProjectNativeAdapterRoleV1 } from './projectNativeAdapters.js';
 export type { ProjectNativeRefV1 } from './projectNativeAdapters.js';

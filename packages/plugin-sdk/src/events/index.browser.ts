@@ -23,6 +23,7 @@ export type { EventContribution } from '../events.js';
 export type { EventSubscriptionTarget } from '../events.js';
 export type { EventsService } from '../events.js';
 export { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '../events.js';
+export { GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 } from '../events.js';
 export type { GuardStoppedEventV1 } from './machineServices.js';
 export { GuardStoppedEventV1ProtocolSchema } from './machineServices.js';
 export type { HostEventEnvelope } from '../events.js';

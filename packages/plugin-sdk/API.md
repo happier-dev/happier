@@ -306,6 +306,7 @@
 | `.` | `PluginWorkItemsRuntime` | type | any |
 | `.` | `PluginWorkItemsWatchRequestV1` | type | any |
 | `.` | `PluginWorkflowContributionV1` | type | any |
+| `.` | `PluginWorktreeDatabaseMemberV1` | type | any |
 | `.` | `ProjectDefinitionDetectionV1` | type | any |
 | `.` | `ProjectNativeAdapterRoleV1` | type | any |
 | `.` | `ProjectNativeRefV1` | type | any |
@@ -406,6 +407,8 @@
 | `./access-providers` | `AccessCredentialPurposeRefV1` | type | any |
 | `./access-providers` | `AccessProviderAuthorDefinitionV1` | type | any |
 | `./access-providers` | `AccessProviderContributionV1` | type | any |
+| `./access-providers` | `AccessProviderMembershipFactsV1` | type | any |
+| `./access-providers` | `AccessProviderMembershipIntentV1` | type | any |
 | `./access-providers` | `AccessProviderRefV1` | type | any |
 | `./access-providers` | `AccessProviderRefV1Schema` | value | any |
 | `./access-providers` | `AccessProviderRoleInputV1` | type | any |
@@ -889,6 +892,7 @@
 | `./actions` | `readExecutionRunStartRunCreation` | value | any |
 | `./actions` | `readInputPath` | value | any |
 | `./actions` | `readInputTypePickerLaunchInput` | value | any |
+| `./actions` | `readPluginActionFailureAuthorPayload` | value | any |
 | `./actions` | `resolveEffectiveActionInputFields` | value | any |
 | `./actions` | `resolveEffectiveInputFields` | value | any |
 | `./actions` | `seedInputByFieldHints` | value | any |
@@ -1538,6 +1542,7 @@
 | `./connected-accounts` | `CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1` | value | any |
 | `./connected-accounts` | `CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1` | value | any |
 | `./connected-accounts` | `CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV` | value | any |
+| `./connected-accounts` | `CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES` | value | any |
 | `./connected-accounts` | `ConnectedAccountAccessTokenFingerprint` | type | any |
 | `./connected-accounts` | `ConnectedAccountActionFormSelectionV1` | type | any |
 | `./connected-accounts` | `ConnectedAccountActionFormSelectionV1Schema` | value | any |
@@ -1638,6 +1643,8 @@
 | `./connected-accounts` | `UnsupportedAccountUsage` | type | any |
 | `./connected-accounts` | `addSafeEpochMilliseconds` | value | any |
 | `./connected-accounts` | `buildConnectedAccountRequestAuthClientSource` | value | any |
+| `./connected-accounts` | `buildOAuthAuthorizationCodeForm` | value | any |
+| `./connected-accounts` | `buildOAuthAuthorizationCodeUrl` | value | any |
 | `./connected-accounts` | `buildOauthAuthEntry` | value | daemon |
 | `./connected-accounts` | `classifyConnectedAccountTokenEndpointFailure` | value | any |
 | `./connected-accounts` | `classifyProviderLimitEvidence` | value | any |
@@ -1653,7 +1660,9 @@
 | `./connected-accounts` | `parseProviderTimestampMs` | value | any |
 | `./connected-accounts` | `parseRetryAfterHeader` | value | any |
 | `./connected-accounts` | `parseRetryAfterValue` | value | any |
+| `./connected-accounts` | `publicOAuthClientUnavailable` | value | any |
 | `./connected-accounts` | `requestDeviceGrantStep` | value | any |
+| `./connected-accounts` | `requestOAuthEndpoint` | value | any |
 | `./connected-accounts` | `requireOauthCredentialRecordWithExpiry` | value | daemon |
 | `./connected-accounts` | `requireTokenCredentialRecord` | value | daemon |
 | `./connected-accounts` | `resolveConnectedAccountPlanLabel` | value | any |
@@ -1711,6 +1720,7 @@
 | `./database` | `DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_COST_TOKEN_FIELDS_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1` | value | any |
+| `./database` | `DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1` | value | any |
@@ -1724,8 +1734,10 @@
 | `./database` | `DATABASE_DESCRIBE_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_EDITS_APPLY_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1` | value | any |
+| `./database` | `DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1` | value | any |
+| `./database` | `DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1` | value | any |
 | `./database` | `DATABASE_INSIGHT_SOURCES_POINT_ID_V1` | value | any |
 | `./database` | `DATABASE_INSIGHT_SOURCES_POINT_REF_V1` | value | any |
 | `./database` | `DATABASE_INSIGHT_SOURCE_PROTOCOL_ID_V1` | value | any |
@@ -1788,6 +1800,8 @@
 | `./database` | `DatabaseCaptureEndpointsListInputV1Schema` | value | any |
 | `./database` | `DatabaseCaptureEndpointsListResultV1` | type | any |
 | `./database` | `DatabaseCaptureEndpointsListResultV1Schema` | value | any |
+| `./database` | `DatabaseCaptureFindingDetailV1` | type | any |
+| `./database` | `DatabaseCaptureFindingDetailV1ProtocolSchema` | value | any |
 | `./database` | `DatabaseCaptureLogCorrelationV1` | type | any |
 | `./database` | `DatabaseCaptureLogCorrelationV1Schema` | value | any |
 | `./database` | `DatabaseCaptureLogsListInputV1` | type | any |
@@ -1852,6 +1866,7 @@
 | `./database` | `DatabaseFailureV1` | type | any |
 | `./database` | `DatabaseFailureV1Schema` | value | any |
 | `./database` | `DatabaseFilterV1` | type | any |
+| `./database` | `DatabaseFilterV1Schema` | value | any |
 | `./database` | `DatabaseFindingBaselineV1` | type | any |
 | `./database` | `DatabaseFindingBaselineV1Schema` | value | any |
 | `./database` | `DatabaseFindingBriefBuildInputV1` | type | any |
@@ -1859,6 +1874,9 @@
 | `./database` | `DatabaseFindingBriefBuildResultV1` | type | any |
 | `./database` | `DatabaseFindingBriefBuildResultV1ProtocolSchema` | value | any |
 | `./database` | `DatabaseFindingBriefBuildResultV1Schema` | value | any |
+| `./database` | `DatabaseFindingDismissInputV1` | type | any |
+| `./database` | `DatabaseFindingDismissInputV1ProtocolSchema` | value | any |
+| `./database` | `DatabaseFindingDismissResultV1ProtocolSchema` | value | any |
 | `./database` | `DatabaseFindingObservationV1` | type | any |
 | `./database` | `DatabaseFindingObservationV1ProtocolSchema` | value | any |
 | `./database` | `DatabaseFindingReadInputV1` | type | any |
@@ -1884,6 +1902,7 @@
 | `./database` | `DatabaseInsightSourceDescriptorV1` | type | any |
 | `./database` | `DatabaseInsightSourceDescriptorV1ProtocolSchema` | value | any |
 | `./database` | `DatabaseInsightSourceOperationSchemasV1` | value | any |
+| `./database` | `DatabaseInsightSourceReadSchemasV1` | value | any |
 | `./database` | `DatabaseManagedDeploymentTargetV1` | type | any |
 | `./database` | `DatabaseManagedDeploymentTargetV1Schema` | value | any |
 | `./database` | `DatabaseManualTargetV1` | type | any |
@@ -2037,6 +2056,7 @@
 | `./events` | `EventSubscriptionTarget` | type | any |
 | `./events` | `EventsService` | type | any |
 | `./events` | `GITHUB_EVENT_SETUP_ACTIONS_V1` | value | any |
+| `./events` | `GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1` | value | any |
 | `./events` | `GuardStoppedEventV1` | type | any |
 | `./events` | `GuardStoppedEventV1ProtocolSchema` | value | any |
 | `./events` | `HostEventEnvelope` | type | any |
@@ -2049,6 +2069,7 @@
 | `./events` | `MACHINE_OUTCOME_SUMMARY_PREFIX` | value | any |
 | `./events` | `MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1` | value | any |
 | `./events` | `MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1` | value | any |
+| `./events` | `MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1` | value | any |
 | `./events` | `MCP_SERVER_CATALOG_ACCOUNT_KEY_V1` | value | any |
 | `./events` | `MachinePressureEventV1ProtocolSchema` | value | any |
 | `./events` | `MachineResourceOutcomeV1` | type | any |
@@ -2112,6 +2133,7 @@
 | `./exec` | `SystemToolDiagnostic` | type | daemon |
 | `./exec` | `SystemToolResolveRequest` | type | daemon |
 | `./exec` | `SystemToolsService` | type | daemon |
+| `./exec` | `isSuccessfulProcessResult` | value | any |
 | `./exec` | `resolveGhNativeToken` | value | daemon |
 | `./exec/protocol-clients` | `JsonRpcApplicationError` | type | daemon |
 | `./exec/protocol-clients` | `JsonRpcApplicationRejectionDetails` | type | daemon |
@@ -2366,6 +2388,7 @@
 | `./machine-provisioners` | `projectMachineProvisionerActionFailure` | value | any |
 | `./machine-provisioners` | `projectMachineProvisionerDeleteReadback` | value | any |
 | `./machine-provisioners` | `projectMachineProvisionerGuestCommandFailure` | value | any |
+| `./machine-provisioners` | `projectMachineProvisionerOptionsFailure` | value | any |
 | `./machine-provisioners` | `projectMachineProvisionerSelectionV1` | value | any |
 | `./machine-provisioners` | `quoteMachineProvisionerShellArgument` | value | any |
 | `./machine-provisioners` | `readMachineProvisionerCredentialRefusal` | value | any |
@@ -2577,9 +2600,9 @@
 | `./notifications` | `NotificationSender` | type | daemon |
 | `./notifications` | `NotificationsService` | type | daemon |
 | `./notifications` | `PluginNotificationRegistrationApi` | type | daemon |
+| `./protocol` | `AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1` | value | any |
 | `./protocol` | `ActionOperationGetV1Response` | type | any |
 | `./protocol` | `ActionOperationGetV1ResponseProtocolSchema` | value | any |
-| `./protocol` | `AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1` | value | any |
 | `./protocol` | `CONVERSATION_CHANNEL_RELATION_ID_PRINTABLE_ASCII_PATTERN_V1` | value | any |
 | `./protocol` | `CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1` | value | any |
 | `./protocol` | `CONVERSATION_DELIVERY_RETRY_KINDS_V1` | value | any |
@@ -2783,6 +2806,7 @@
 | `./protocol` | `TriageIdentifierV1ProtocolSchema` | value | any |
 | `./protocol` | `TriageSourceInstanceIdV1` | type | any |
 | `./protocol` | `TriageSourceInstanceIdV1Schema` | value | any |
+| `./protocol` | `areDeploymentSourceLabelsEqualV1` | value | any |
 | `./protocol` | `buildTranscriptAnnotationPresentationV1` | value | any |
 | `./protocol` | `createProtocolStoredReadSchema` | value | any |
 | `./protocol` | `decodeBase64` | value | any |
@@ -3029,6 +3053,7 @@
 | `./reviews` | `parseReviewFindingsV2` | value | daemon |
 | `./reviews` | `preflightReviewCommentPublicationRoutingV1` | value | any |
 | `./reviews` | `produceScmPullRequestReviewScope` | value | daemon |
+| `./reviews` | `readReviewFindingDecisionV1` | value | any |
 | `./reviews` | `readReviewStartActionResultV1` | value | daemon |
 | `./reviews` | `redactReviewCommentSensitiveText` | value | any |
 | `./reviews` | `renderReviewFindingsForVerifyV1` | value | daemon |
@@ -3901,7 +3926,12 @@
 | `./testing` | `AgentSessionRuntimeHarness` | type | any |
 | `./testing` | `AgentSkillDeclarationContractInput` | type | any |
 | `./testing` | `AgentSkillDeliveryContractInput` | type | any |
+| `./testing` | `MachineProvisionerConformanceFixture` | type | daemon |
 | `./testing` | `ObservedAgentLaunch` | type | any |
+| `./testing` | `PROVIDER_CONFORMANCE_MANAGED_ID` | value | daemon |
+| `./testing` | `PROVIDER_CONFORMANCE_NATIVE_EXPIRY` | value | daemon |
+| `./testing` | `PROVIDER_CONFORMANCE_PRIVATE_BINDING` | value | daemon |
+| `./testing` | `PROVIDER_CONFORMANCE_PUBLIC_KEY` | value | daemon |
 | `./testing` | `PluginClientTestkit` | type | daemon |
 | `./testing` | `PluginClientTestkitOptions` | type | daemon |
 | `./testing` | `PluginClientTestkitRegistration` | type | daemon |
@@ -3960,9 +3990,20 @@
 | `./testing` | `PluginUiTestkitStatOpenableContentInput` | type | daemon |
 | `./testing` | `PluginUiTestkitTargetedSurfaceAdmission` | type | daemon |
 | `./testing` | `PluginUiTestkitWatchResourceInput` | type | daemon |
+| `./testing` | `ProviderConformanceCase` | type | daemon |
+| `./testing` | `ProviderConformanceExpectedFailures` | type | daemon |
+| `./testing` | `ProviderConformanceFailure` | type | daemon |
+| `./testing` | `ProviderConformanceFixture` | type | daemon |
+| `./testing` | `ProviderConformanceHttpReply` | type | daemon |
+| `./testing` | `ProviderConformanceHttpRequestFacts` | type | daemon |
+| `./testing` | `ProviderConformanceVendor` | type | daemon |
+| `./testing` | `ProviderConformanceVendorFacts` | type | daemon |
+| `./testing` | `ProviderConformanceVendorState` | type | daemon |
+| `./testing` | `ProviderConformanceWorld` | type | daemon |
 | `./testing` | `SURFACE_CONTEXT_THEME_FIXTURE` | value | any |
 | `./testing` | `createAgentLaunchObserver` | value | any |
 | `./testing` | `createAgentSessionRuntimeHarness` | value | any |
+| `./testing` | `createMachineProvisionerConformanceFixture` | value | daemon |
 | `./testing` | `createPluginActionHandlerUnavailableFixture` | value | any |
 | `./testing` | `createPluginClientTestkit` | value | daemon |
 | `./testing` | `createPluginHttpFixture` | value | daemon |
@@ -3971,6 +4012,8 @@
 | `./testing` | `createPluginUiTestkit` | value | daemon |
 | `./testing` | `createSurfaceContextFixture` | value | any |
 | `./testing` | `createTestResourceInvocationContext` | value | any |
+| `./testing` | `matchesTestCollectionNumericRange` | value | any |
+| `./testing` | `parseTestCollectionQueryLimit` | value | any |
 | `./testing` | `readPluginUiTestkitTargetedSurfaceAdmission` | value | daemon |
 | `./testing` | `runAgentMcpToolPolicyContract` | value | any |
 | `./testing` | `runAgentSkillDeliveryContract` | value | any |
@@ -4281,17 +4324,27 @@
 | `./ui/client` | `createPluginUiHostApiClient` | value | browser |
 | `./ui/client` | `createPluginUiRenderContext` | value | browser |
 | `./ui/client` | `isSecondaryEntityRowControl` | value | browser |
+| `./usage` | `APP_CALLS_SPEND_EVIDENCE_LABEL` | value | any |
 | `./usage` | `AppCallsCostMetricIntervalV1` | type | any |
 | `./usage` | `AppCallsUsageCoverageV1` | type | any |
 | `./usage` | `AppCallsUsagePartV1` | type | any |
 | `./usage` | `AppCallsUsageV1` | type | any |
 | `./usage` | `AppCallsUsageWindowV1` | type | any |
+| `./usage` | `UsageAppCallsExecute` | type | any |
+| `./usage` | `UsageAppEnvironment` | type | any |
 | `./usage` | `UsageModelPriceOverridesV1Schema` | value | any |
 | `./usage` | `UsageModelPriceReadResultSchema` | value | any |
+| `./usage` | `appCallsPricingModelIds` | value | any |
+| `./usage` | `listUsageAppEnvironments` | value | any |
 | `./usage` | `projectAppCallsCostMetricSeriesV1` | value | any |
 | `./usage` | `projectAppCallsUsageSourcesV1` | value | any |
 | `./usage` | `projectAppCallsUsageV1` | value | any |
 | `./usage` | `projectUsagePageCost` | value | any |
+| `./usage` | `readAppCallsOperandsV1` | value | any |
+| `./usage` | `readAppCallsPricingV1` | value | any |
+| `./usage` | `readUsageAppCallsAccounting` | value | any |
+| `./usage` | `readUsageAppCallsEnvironmentIds` | value | any |
+| `./usage` | `usageAppCallsSourceId` | value | any |
 | `./voice` | `ConnectedAccountHttpHeadersRequest` | type | any |
 | `./voice` | `PluginVoiceProviderDefinition` | type | any |
 | `./voice` | `RegisteredVoiceProviderRuntime` | type | any |
