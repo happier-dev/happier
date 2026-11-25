@@ -25,7 +25,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import { isInboxSessionStatusOnly, readInboxSessionTitle } from './sessionAttention/inboxSessionPrivacy';
 import { SESSION_CONTENT_AVAILABILITIES } from '@/sync/domains/session/encryptedContentAvailability';
-import { countInbox, countInboxNeedsYou } from './inboxCounts';
+import { countInbox, countInboxNeedsYou, countInboxNeedsYouByKind } from './inboxCounts';
 import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { createInboxItemRoute, readInboxItemFocus } from './inboxItemFocus';
 import { projectInboxReadItemV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
@@ -629,5 +629,18 @@ describe('one Inbox row projection', () => {
             entry: { ...item.entry, pendingPermissions: [], pendingUserActions: [request] } }] }] });
         expect(rows[0]).toMatchObject({ question: { requestId: 'question', mode: 'continue', assumption: 'Use the default',
             currentHandler: { kind: 'session', address: { serverId: 'home-a', sessionId: 'manager' } } } });
+    });
+    it('places a pending machine sign-in under Needs you approvals, named by its machine and bound to its exact task', () => {
+        const target = { kind: 'managed_machine_sign_in_approval', serverId: 'home-a', requesterAccountId: 'account-a',
+            homeId: 'home-id', managedId: 'managed-1', operationId: 'operation-1', taskId: 'task-1' } as const;
+        const item = { key: 'sign-in-1', type: 'confirm_machine_sign_in', view: 'needs_you',
+            machine: { homeId: 'home-id', id: 'managed-1' }, openTarget: target } as const;
+        const rows = buildInboxItems({ ...emptyInput, machineSignIns: [{ item, name: 'Build box' }] });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ view: 'needs_you', type: 'approval', sourceLabel: 'Build box', machineSignIn: target,
+            focus: { kind: 'managed_machine', serverId: 'home-a', id: 'managed-1' } });
+        expect(countInboxNeedsYouByKind({ items: rows, openApprovals: [], openUsageNotices: [], actionOperationEntries: [],
+            friendRequests: [], sessionPresentation: { sessionsNeedingAttention: [], readySessions: [] },
+            workflowAttention: { runIds: [] }, automationAttention: { runIds: [] } }).approvals).toBe(1);
     });
 });

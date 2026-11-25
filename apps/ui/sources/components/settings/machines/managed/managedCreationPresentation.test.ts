@@ -27,6 +27,12 @@ it('presents the typed acquire cause instead of its generic Action wrapper', () 
       errorCode: 'credential_scope_denied', httpStatus: null } }, undefined)).toBe(t('errors.permissionDenied'));
 });
 
+it('says an expired sign-in approval in the app\'s words, with the retry it needs', () => {
+  expect(describeManagedInstallationFailure({ errorCode: 'auth_request_expired', error: 'auth_request_expired',
+    failureCause: { phase: 'ssh.auth.wait', errorClass: 'SystemTaskExecutionError', errorCode: 'auth_request_expired', httpStatus: null } },
+    undefined)).toBe(t('machineSignIn.expired'));
+});
+
 const machine = {
   id: 'managed',
   homeId: 'home',

@@ -55,6 +55,8 @@ export type InboxCountSource = Readonly<{
     /** One entry per work item (repeated failures fold into one, `selectInbox`). */
     actionOperationEntries: ArrayLike<Readonly<{ reason?: string }>>;
     machineDeletionEntries?: ArrayLike<unknown>;
+    /** Pending machine sign-ins the person confirms; an open Inbox counts their rows instead. */
+    machineSignInItems?: ArrayLike<unknown>;
     machineReachabilityEntries?: ArrayLike<unknown>;
     friendRequests: ArrayLike<unknown>;
     sessionPresentation: Readonly<{ sessionsNeedingAttention: ArrayLike<unknown>; readySessions: ArrayLike<unknown> }>;
@@ -99,7 +101,7 @@ export function countInboxNeedsYou(model: InboxCountSource): number {
         approvalsAndNotices: model.openApprovals.length + model.openUsageNotices.length,
         operations: model.actionOperationEntries.length,
         friendRequests: 0,
-        machines: model.machineDeletionEntries?.length ?? 0,
+        machines: (model.machineDeletionEntries?.length ?? 0) + (model.machineSignInItems?.length ?? 0),
     });
 }
 

@@ -965,4 +965,12 @@ export const managedMachines: ManagedMachinesTranslations = {
         tasks: ({ count }: { count: number }) => `${count} 项活跃工作`,
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 个终端` : `${count} 个终端`),
     },
+    machineSignIn: {
+        inboxTitle: "确认机器登录",
+        confirm: "确认登录",
+        consequence: "这会让新机器登录你的账户。由你确认。",
+        consequenceTitle: "账户登录",
+        expired: "登录批准已过期。重试设置以再次请求。",
+        notWaiting: "这次登录已被处理或已过期。",
+    },
 };

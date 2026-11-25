@@ -965,4 +965,12 @@ export const managedMachines: ManagedMachinesTranslations = {
         tasks: ({ count }: { count: number }) => (count === 1 ? `1 aktive Arbeit` : `${count} aktive Arbeiten`),
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 Terminal` : `${count} Terminals`),
     },
+    machineSignIn: {
+        inboxTitle: "Anmeldung der Maschine bestätigen",
+        confirm: "Anmeldung bestätigen",
+        consequence: "Damit wird die neue Maschine bei deinem Konto angemeldet. Du bestätigst das.",
+        consequenceTitle: "Kontoanmeldung",
+        expired: "Die Anmeldefreigabe ist abgelaufen. Wiederhole die Einrichtung, um erneut zu fragen.",
+        notWaiting: "Diese Anmeldung wurde schon beantwortet oder ist abgelaufen.",
+    },
 };

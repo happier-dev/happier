@@ -965,4 +965,12 @@ export const managedMachines: ManagedMachinesTranslations = {
         tasks: ({ count }: { count: number }) => (count === 1 ? `1 trabalho ativo` : `${count} trabalhos ativos`),
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 terminal` : `${count} terminais`),
     },
+    machineSignIn: {
+        inboxTitle: "Confirmar o início de sessão da máquina",
+        confirm: "Confirmar início de sessão",
+        consequence: "Isto inicia a sessão da nova máquina na sua conta. Você confirma.",
+        consequenceTitle: "Início de sessão na conta",
+        expired: "A aprovação do início de sessão expirou. Tente a configuração de novo para pedir outra vez.",
+        notWaiting: "Este início de sessão já foi respondido ou expirou.",
+    },
 };

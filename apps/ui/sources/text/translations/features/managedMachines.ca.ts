@@ -965,4 +965,12 @@ export const managedMachines: ManagedMachinesTranslations = {
         tasks: ({ count }: { count: number }) => (count === 1 ? `1 treball actiu` : `${count} treballs actius`),
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 terminal` : `${count} terminals`),
     },
+    machineSignIn: {
+        inboxTitle: "Confirma l’inici de sessió de la màquina",
+        confirm: "Confirma l’inici de sessió",
+        consequence: "Això inicia la sessió de la màquina nova al teu compte. Tu ho confirmes.",
+        consequenceTitle: "Inici de sessió al compte",
+        expired: "L’aprovació de l’inici de sessió ha caducat. Torna a provar la configuració per demanar-la de nou.",
+        notWaiting: "Aquest inici de sessió ja s’ha respost o ha caducat.",
+    },
 };

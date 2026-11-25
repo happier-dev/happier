@@ -593,4 +593,13 @@ describe('the shared Action approval presentation owner', () => {
         expect(presentActionApproval({ actionId: 'artifact.public_link.create', authoredSummary: 'My own explanation' }).summary)
             .toBe('My own explanation');
     });
+    it('says a managed Create signs the new machine into the requester\'s account only when its review records it', () => {
+        const actionArgs = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true };
+        const request = { actionId: 'machines.managed.acquire', actionArgs };
+        const consequence = t('machineSignIn.consequence');
+        const preview = { actionId: 'machines.managed.acquire', actionArgs, summary: 'Create managed machine' };
+        expect(readApprovalPreviewSummary({ ...preview, accountSignIn: 'requester_confirms' }, request)).toContain(consequence);
+        expect(readApprovalPreviewSummary(preview, request) ?? '').not.toContain(consequence);
+    });
 });

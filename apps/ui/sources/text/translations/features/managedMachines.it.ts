@@ -965,4 +965,12 @@ export const managedMachines: ManagedMachinesTranslations = {
         tasks: ({ count }: { count: number }) => (count === 1 ? `1 attività in corso` : `${count} attività in corso`),
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 terminale` : `${count} terminali`),
     },
+    machineSignIn: {
+        inboxTitle: "Conferma l’accesso della macchina",
+        confirm: "Conferma accesso",
+        consequence: "Questo collega la nuova macchina al tuo account. Sei tu a confermarlo.",
+        consequenceTitle: "Accesso all’account",
+        expired: "L’approvazione dell’accesso è scaduta. Riprova la configurazione per richiederla di nuovo.",
+        notWaiting: "Questo accesso ha già ricevuto risposta o è scaduto.",
+    },
 };

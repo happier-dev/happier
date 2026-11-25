@@ -965,4 +965,12 @@ export const managedMachines: ManagedMachinesTranslations = {
         tasks: ({ count }: { count: number }) => `${count} 件のアクティブな作業`,
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 個のターミナル` : `${count} 個のターミナル`),
     },
+    machineSignIn: {
+        inboxTitle: "マシンのサインインを確認",
+        confirm: "サインインを確認",
+        consequence: "新しいマシンをあなたのアカウントにサインインさせます。確認するのはあなたです。",
+        consequenceTitle: "アカウントへのサインイン",
+        expired: "サインインの承認の期限が切れました。もう一度依頼するにはセットアップを再試行してください。",
+        notWaiting: "このサインインはすでに応答済みか、期限切れです。",
+    },
 };

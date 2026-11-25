@@ -5,6 +5,9 @@ import type { InboxItem } from '@/components/inbox/inboxItems';
 import { resolveInboxItemPageRoute } from '@/components/inbox/inboxItemFocus';
 import { createInboxAttentionFixture } from '@/dev/testkit/fixtures/inboxFixtures';
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { t } from '@/text';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 /**
  * Dev-only specimen of the Inbox's Mentions view (coordination lab V3 P4-Mp) drawn by the real `InboxContent`:
@@ -12,7 +15,8 @@ import type { InboxModel } from '@/hooks/inbox/useInboxModel';
  * the same rows while a followed Run could not be read (`?scene=failed`: the stale line with its one Retry).
  * Fixture facts only; nothing is read, opened or retried.
  */
-export type InboxStatesSpecimenScene = 'mentions' | 'failed';
+export type InboxStatesSpecimenScene = 'mentions' | 'failed' | 'signIn' | 'signInBusy' | 'signInFailed';
+const SIGN_IN_SCENES: readonly InboxStatesSpecimenScene[] = ['signIn', 'signInBusy', 'signInFailed'];
 
 const SERVER = 'specimen-home';
 const MINUTE = 60_000;
@@ -55,6 +59,36 @@ function mention(
   };
 }
 
+/**
+ * Needs you with a pending machine sign-in (`?scene=signIn|signInBusy|signInFailed`) beside a deletion reminder: the
+ * real row and its Confirm sign-in through a fixture answer (confirmed after a beat, still running, or refused).
+ */
+function signInItems(now: number): InboxItem[] {
+  const reminderFocus = { kind: 'managed_machine', serverId: SERVER, id: 'managed-gpu' } as const;
+  const signInFocus = { kind: 'managed_machine', serverId: SERVER, id: 'managed-build' } as const;
+  return [{
+    key: 'sign-in:build', producer: 'live', type: 'approval', view: 'needs_you', title: t('machineSignIn.inboxTitle'),
+    context: null, sourceLabel: 'Build box', createdAt: 0, read: false, focus: signInFocus,
+    pageRoute: resolveInboxItemPageRoute(signInFocus),
+    machineSignIn: { kind: 'managed_machine_sign_in_approval', serverId: SERVER, requesterAccountId: 'account-you',
+      homeId: 'home-specimen', managedId: 'managed-build', operationId: 'operation-build', taskId: 'task-build' },
+    source: { kind: 'managed_machine_sign_in', serverId: SERVER, id: 'sign-in:build' },
+  }, {
+    key: 'managed-machine:gpu', producer: 'live', type: 'blocked', view: 'needs_you', title: 'GPU runner',
+    context: t('managedRetention.consequence.deleteAt', { time: formatAsOfTime(now + 26 * 60 * MINUTE) }),
+    createdAt: now - 40 * MINUTE, read: false, focus: reminderFocus, pageRoute: resolveInboxItemPageRoute(reminderFocus),
+    source: { kind: 'managed_machine', serverId: SERVER, id: 'managed-gpu' },
+  }];
+}
+
+function confirmFor(scene: InboxStatesSpecimenScene): InboxModel['confirmMachineSignIn'] {
+  return () => new Promise<ActionExecuteResult>((resolve) => {
+    if (scene === 'signInBusy') return;
+    setTimeout(() => resolve(scene === 'signInFailed'
+      ? { ok: false, errorCode: 'no_prompt', error: 'no_prompt' } : { ok: true, result: { ok: true } }), 1_200);
+  });
+}
+
 function buildModel(scene: InboxStatesSpecimenScene): InboxModel {
   const now = Date.now();
   const items: InboxItem[] = [
@@ -90,10 +124,12 @@ function buildModel(scene: InboxStatesSpecimenScene): InboxModel {
     }),
   ];
   const attention = createInboxAttentionFixture(SERVER);
+  const signIn = SIGN_IN_SCENES.includes(scene);
   // A dev specimen: the screen reads only these fields for the Mentions view, so the rest of the model is omitted.
   return {
     ...attention,
-    items,
+    items: signIn ? signInItems(now) : items,
+    confirmMachineSignIn: confirmFor(scene),
     executionRunAttention: {
       loading: false,
       failed: scene === 'failed',
@@ -130,5 +166,5 @@ export function InboxStatesSpecimen(
   props: Readonly<{ scene: InboxStatesSpecimenScene }>,
 ) {
   const model = React.useMemo(() => buildModel(props.scene), [props.scene]);
-  return <InboxContent model={model} view="mentions" />;
+  return <InboxContent model={model} view={SIGN_IN_SCENES.includes(props.scene) ? 'needs_you' : 'mentions'} />;
 }

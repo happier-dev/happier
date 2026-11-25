@@ -72,6 +72,7 @@ import type { MachinePresetCollectionOptions, MachinePresetCollectionSettledResu
 import { useMachinePresetQuery, useMachinePresets, isMachinePresetAccessLost } from './useMachinePresets';
 import { ManagedStartFromSection, managedStartFromPresets } from './ManagedStartFromSection';
 import { showManagedCreationReview } from './ManagedCreationReview';
+import { readManagedAcquireAccountSignInReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { readMachineSetupRecipeInputState } from './machineSetupRecipeInputsModel';
 import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
@@ -629,6 +630,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         ? { ...draft, categoryPreferences: accountSettings.settings.machineRetentionDefaultsV1 } : null, [presetQuery.sameScope, draft, accountSettings.settings]);
     const projection = React.useMemo(() => effectiveDraft ? managedConfiguratorProjection(effectiveDraft) : null, [effectiveDraft]);
     const facts = React.useMemo(() => effectiveDraft ? managedConfiguratorFacts(effectiveDraft, projection) : null, [effectiveDraft, projection]);
+    // The Create's own selection says whether it signs the new machine into the person's account (BL63).
+    const accountSignInLine = React.useMemo(() => {
+        if (props.presetOnly || !effectiveDraft || !catalog.homeId) return null;
+        const selection = effectiveDraft.preset
+            ? { kind: 'preset' as const, homeId: catalog.homeId, id: effectiveDraft.preset.id, revision: effectiveDraft.preset.revision }
+            : managedConfiguratorAcquireInput(effectiveDraft, catalog.homeId)?.selection;
+        return selection && readManagedAcquireAccountSignInReviewV1(selection) === 'requester_confirms' ? t('machineSignIn.consequence') : null;
+    }, [props.presetOnly, effectiveDraft, catalog.homeId]);
     const presetLaunch = React.useMemo(() => props.presetOnly && presetQuery.sameScope && draft
         ? managedConfiguratorPresetLaunch(draft, fieldInput) : null, [props.presetOnly, presetQuery.sameScope, draft, fieldInput]);
     const launchRefusal = effectiveDraft?.optionStatus === 'current' ? projection?.unavailableReason : undefined;
@@ -936,6 +945,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             preset: { name: draft.preset.name ?? title, revision: draft.preset.revision },
             server: { title, spec: [summarySpec, cost ? `${cost.value}${cost.unit}` : null].filter(Boolean).join(' · '), mark: receiptMark },
             administrator: identity?.kind === 'dedicatedDaemonUser' ? t(`managedMachines.identity.${identity.adminAccessAtCreation}`) : undefined,
+            accountSignIn: accountSignInLine ?? undefined,
             confirmLabel: [t('managedMachines.creationReview.confirm'), cost ? `${cost.value}${cost.unit}` : null].filter(Boolean).join(' · '),
             onConfirm: () => { if (props.onUse) void commitUse(); else void create(); } });
     };
@@ -994,7 +1004,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             disabled: props.presetOnly ? !maySave : !mayCreate, loading: busy, testID: props.onUse && !props.createOnUse && !props.presetOnly ? 'managed-config.use' : 'managed-config.create',
             // Why the action is off, or who bills, under the action that starts the billing.
             ...(props.presetOnly ? saveUnavailableReason ? { footnote: saveUnavailableReason } : {}
-                : creationUnavailableReason ?? billingFootnote ? { footnote: creationUnavailableReason ?? billingFootnote! } : {}) },
+                : creationUnavailableReason ?? (billingFootnote || accountSignInLine)
+                    ? { footnote: creationUnavailableReason ?? [billingFootnote, accountSignInLine].filter(Boolean).join(' ') } : {}) },
         secondary: !props.presetOnly ? [...(continuationCancel ?? []), { label: t('managedMachines.receipt.saveAsPreset'), onPress: () => { void save(); }, disabled: !maySave, testID: 'managed-config.save-preset', tone: 'text' }]
             : continuationCancel,
         secondaryNote: !props.presetOnly && presetRetention?.kind === 'deadline' ? t('machinePresets.deadlineOmitted') : undefined,
@@ -1111,10 +1122,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                         showManagedCreationReview({ name, setup: creationPreset.setup, scope: activeBinding?.scope ?? null,
                             projection: setupProjection, onEditSetup: () => router.push(`/settings/machines/presets/${encodeURIComponent(creationPreset.id)}?serverId=${encodeURIComponent(props.serverId)}&edit=true` as never),
                             preset: { name: creationPreset.name, revision: creationPreset.revision },
-                            server: { title, spec: creationPreset.name, mark: receiptMark },
+                            server: { title, spec: creationPreset.name, mark: receiptMark }, accountSignIn: t('machineSignIn.consequence'),
                             confirmLabel: t('managedMachines.creationReview.confirm'), onConfirm: () => { void submit(); } });
                     } else void submit();
-                }, disabled: !maySubmit, ...(poolUnavailableAtReview ? { footnote: t('machinePresets.poolNoMachine') } : {}),
+                }, disabled: !maySubmit,
+                // A preset Create always signs the new machine into the person's account (readManagedAcquireAccountSignInReviewV1).
+                footnote: poolUnavailableAtReview ? t('machinePresets.poolNoMachine') : t('machineSignIn.consequence'),
                 loading: busy, testID: props.onUse && !props.createOnUse ? 'managed-config.use' : 'managed-config.create' },
         };
         return <ManagedMachineConfigurator title={title} mark={receiptMark} compact={compact} testID="managed-config" receiptIsBody

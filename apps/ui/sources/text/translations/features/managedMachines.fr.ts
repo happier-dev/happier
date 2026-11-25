@@ -965,4 +965,12 @@ export const managedMachines: ManagedMachinesTranslations = {
         tasks: ({ count }: { count: number }) => (count === 1 ? `1 travail actif` : `${count} travaux actifs`),
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 terminal` : `${count} terminaux`),
     },
+    machineSignIn: {
+        inboxTitle: "Confirmer la connexion de la machine",
+        confirm: "Confirmer la connexion",
+        consequence: "Cela connecte la nouvelle machine à ton compte. Tu le confirmes.",
+        consequenceTitle: "Connexion au compte",
+        expired: "L’approbation de connexion a expiré. Relance la configuration pour la redemander.",
+        notWaiting: "Cette connexion a déjà reçu une réponse ou a expiré.",
+    },
 };

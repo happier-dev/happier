@@ -30,6 +30,8 @@ export type ManagedCreationReviewProps = Readonly<{
     projection: PluginUiProjectionModel | null;
     onEditSetup: () => void;
     administrator?: string;
+    /** What Create does to the person's account, in the same words as the acquire Ask. */
+    accountSignIn?: string;
     confirmLabel: string;
     /** The one acquire. The review closes first: progress, approval and failure read on the configurator. */
     onConfirm: () => void;
@@ -107,6 +109,8 @@ function ManagedCreationReview(props: ManagedCreationReviewProps & CustomModalIn
                     subtitle={props.administrator} mode="info" showChevron={false} /> : null}
                 <Item testID="managed-config.review.downtime" title={t('machinePresets.setup.review.downtime')}
                     subtitle={t('managedMachines.creationReview.downtimeNone', { name: props.name })} mode="info" showChevron={false} />
+                {props.accountSignIn ? <Item testID="managed-config.review.account-sign-in" title={t('machineSignIn.consequenceTitle')}
+                    subtitle={props.accountSignIn} subtitleLines={0} mode="info" showChevron={false} /> : null}
             </ItemGroup>
         </ItemList>
     );

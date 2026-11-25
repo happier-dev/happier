@@ -39,6 +39,7 @@ export function describeManagedInstallationFailure(
     }
     if (error.errorCode === 'provider_unavailable' && progress?.kind === 'phase'
         && progress.phase === 'ssh.auth.wait') return t('managedMachines.creation.enrollmentUnavailable');
+    if (error.errorCode === 'auth_request_expired') return t('machineSignIn.expired');
     // A refusal outside the typed controller codes reaches the executor's result as `action_failed` with its code as the message.
     const code = error.errorCode === 'action_failed' ? error.error : error.errorCode;
     return resolveActionExecutionFailureMessage({ ok: false, errorCode: error.errorCode, details, failureCause: error.failureCause },

@@ -966,4 +966,12 @@ export const managedMachines: ManagedMachinesTranslations = {
         tasks: ({ count }: { count: number }) => `${count} ${count === 1 ? 'aktywna praca' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'aktywne prace' : 'aktywnych prac'}`,
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 terminal` : `${count} terminali`),
     },
+    machineSignIn: {
+        inboxTitle: "Potwierdź logowanie maszyny",
+        confirm: "Potwierdź logowanie",
+        consequence: "To loguje nową maszynę na twoje konto. Ty to potwierdzasz.",
+        consequenceTitle: "Logowanie na konto",
+        expired: "Zgoda na logowanie wygasła. Ponów konfigurację, aby poprosić ponownie.",
+        notWaiting: "To logowanie zostało już obsłużone albo wygasło.",
+    },
 };

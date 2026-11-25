@@ -65,6 +65,11 @@ import { useInboxMachineReachability, type InboxMachineReachabilityEntry } from 
 import { useManagedMachineDeletionAttention } from '@/activity/source/useManagedMachineDeletionSource';
 import { projectExpectedHealthNotice } from '@/sync/domains/artifacts/projectExpectedHealthNotice';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
+import { openInboxMachineSignInTarget, useInboxMachineSignInItems } from './useInboxMachineSignInItems';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
+import { readManagedLaunchName } from '@/components/approvals/approvalReferenceReading';
+import type { InboxMachineSignInItem, InboxMachineSignInTarget } from '@/components/inbox/inboxItems';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { InboxPluginSessionControlInvoker } from './useInboxPluginSessionControls';
 import { useInboxDiscussionSource } from './useInboxDiscussionSource';
@@ -108,6 +113,8 @@ export type InboxModel = Readonly<{
     /** Updates data; operation custody and actual reachability are independent facts. */
     machineReachabilityEntries: readonly InboxMachineReachabilityEntry[];
     machineDeletionEntries: ReturnType<typeof useManagedMachineDeletionAttention>;
+    /** Answers one pending machine sign-in through the member-client approval, on the active Account. */
+    confirmMachineSignIn: (target: InboxMachineSignInTarget) => Promise<ActionExecuteResult>;
     pendingReadKeys: ReadonlySet<string>;
     /** Known unavailable Homes retain rows, but cannot accept a read acknowledgement. */
     readUnavailableReasonBySessionAddress: ReadonlyMap<string, string>;
@@ -142,6 +149,25 @@ async function runInboxAction(actionId: 'session.attention.set' | 'session.read_
         ...(serverId ? { serverId } : {}),
     });
     if (!result.ok) throw new Error(result.errorCode ?? 'unavailable');
+}
+
+const NO_SIGN_IN_ROWS: readonly Readonly<{ item: InboxMachineSignInItem; name: string | null }>[] = Object.freeze([]);
+
+/** Each pending sign-in with its managed Machine's name, from the inventory the deletion reminders already read. */
+function useInboxMachineSignInRows(items: readonly InboxMachineSignInItem[]) {
+    const serverIds = React.useMemo(() => [...new Set(items.map(item => item.openTarget.serverId))], [items]);
+    const inventory = useManagedMachineInventory(serverIds, undefined, undefined, true);
+    const previous = React.useRef(NO_SIGN_IN_ROWS);
+    return React.useMemo(() => {
+        if (items.length === 0) return previous.current = NO_SIGN_IN_ROWS;
+        const rows = items.map(item => {
+            const machine = inventory.entries[item.openTarget.serverId]?.machines.find(row =>
+                row.id === item.machine.id && row.homeId === item.machine.homeId);
+            return { item, name: readManagedLaunchName(machine) ?? null };
+        });
+        previous.current = retainKeyedRows(previous.current, rows, row => `${row.item.key}:${row.name ?? ''}`);
+        return previous.current;
+    }, [items, inventory.entries]);
 }
 
 const InboxModelContext = React.createContext<InboxModel | null>(null);
@@ -188,6 +214,11 @@ function useCreateInboxModel(
     const actionOperationEntries = useInboxActionOperations();
     const machineReachabilityEntries = useInboxMachineReachability(captureActiveServerAccountScopeLifetime());
     const machineDeletionEntries = useManagedMachineDeletionAttention(profileScope?.serverId ?? null);
+    const signInLifetime = useActiveServerAccountScopeLifetime();
+    const machineSignIns = useInboxMachineSignInRows(useInboxMachineSignInItems(signInLifetime));
+    const confirmMachineSignIn = React.useCallback(async (target: InboxMachineSignInTarget): Promise<ActionExecuteResult> => signInLifetime
+        ? openInboxMachineSignInTarget({ target, binding: signInLifetime })
+        : { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' }, [signInLifetime]);
 
     const approvalSourceAddresses = React.useMemo(() => Object.values(openApprovalEntries).flatMap(entry => {
         const serverId = resolveApprovalHomeServerId(entry.source);
@@ -236,14 +267,14 @@ function useCreateInboxModel(
             workflowRunOnceDeliveries, automationPresentation,
             accountServerId: profileScope?.serverId ?? null, notices: openAccountNotices,
             executionRuns: executionRuns.entries,
-            machineDeletionEntries,
+            machineDeletionEntries, machineSignIns,
             pluginSessionRows: pluginSessionInbox.rows,
             sessionsById, sessionListRowsByServerId: source.sessionListRowsByServerId,
             sessionMessagesById: source.sessionMessagesById, attentionStandings,
             discussions: discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames }, previousItems.current);
         previousItems.current = next;
         return next;
-    }, [workGroups, sessionPresentation, isRecordingVisible, workflowAttention.serverId, workflowRunOnceDeliveries, automationPresentation, profileScope?.serverId, openAccountNotices, nextBoundaryMs, executionRuns.entries, machineDeletionEntries, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
+    }, [workGroups, sessionPresentation, isRecordingVisible, workflowAttention.serverId, workflowRunOnceDeliveries, automationPresentation, profileScope?.serverId, openAccountNotices, nextBoundaryMs, executionRuns.entries, machineDeletionEntries, machineSignIns, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
 
     const spansHomes = React.useMemo(
         () => new Set(overview.candidates.map((candidate) => candidate.address?.serverId ?? candidate.serverId ?? '')).size > 1,
@@ -411,6 +442,7 @@ function useCreateInboxModel(
         actionOperationEntries,
         machineReachabilityEntries,
         machineDeletionEntries,
+        confirmMachineSignIn,
         pendingReadKeys,
         readUnavailableReasonBySessionAddress,
         markAllReadUnavailableReason,
@@ -437,6 +469,7 @@ function useCreateInboxModel(
         actionOperationEntries,
         machineReachabilityEntries,
         machineDeletionEntries,
+        confirmMachineSignIn,
         friends.requests,
         hasPrimaryAttention,
         isLoading,

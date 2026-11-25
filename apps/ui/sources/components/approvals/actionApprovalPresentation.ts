@@ -10,6 +10,7 @@ import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '
 import { formatGovernanceChange, formatGovernanceSummary, readGovernanceApprovalPhase, type GovernanceApprovalPhase } from './governanceApprovalSummary';
 import { appendTeamCredentialSourceSummary } from '@happier-dev/protocol/actions/specs/teamCredentialApproval';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { describeApprovalActionFields, readSettledSessionTeamApproval, readTeamMemberApprovalPresentation,
     type ApprovalActionReference, type SettledSessionTeamApproval } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { resolveActionConfirmVerb, resolveActionSummary, resolveActionTitle, resolveBotDraftActionTitle } from '@/text/actionTitles';
@@ -335,7 +336,10 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         : !distinctAuthoredSummary && summarySource === `${spec.title}.`
         && (summary === titleSource || summary === `${titleSource}.`) ? null : summary;
     // Backup authority follows the Action into both confirmation and Inbox, including authored previews.
-    const disclosure = spec.id === 'relay.runtime.personal_home.backup' ? t('personalHome.settings.backupDisclosureBody') : null;
+    const disclosure = spec.id === 'relay.runtime.personal_home.backup' ? t('personalHome.settings.backupDisclosureBody')
+        // A Create whose review records the sign-in says it beside what it creates (BL63); older previews omit it.
+        : spec.id === MANAGED_ACQUIRE_ACTION_ID_V1 && readRecord(input.preview).accountSignIn === 'requester_confirms'
+            ? t('machineSignIn.consequence') : null;
     const confirmationDraftSubject = input.kind === 'confirmation' && spec.id === 'session.draft.delete'
         ? draftSubject : null;
     const subjectInReview = input.kind === 'confirmation' && input.preview !== undefined

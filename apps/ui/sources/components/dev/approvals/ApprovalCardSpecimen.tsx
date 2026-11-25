@@ -26,7 +26,7 @@ const NO_PERMISSIONS = Object.freeze([]);
 const NO_LOCATIONS = new Map<string, null>();
 const noop = () => {};
 
-export const APPROVAL_CARD_SCENES = ['open', 'facts', 'failed', 'earlierFailures', 'names', 'choices', 'clear', 'technical', 'translated', 'projectCommand', 'delivery', 'code'] as const;
+export const APPROVAL_CARD_SCENES = ['open', 'facts', 'failed', 'earlierFailures', 'names', 'choices', 'clear', 'technical', 'translated', 'projectCommand', 'delivery', 'code', 'acquire', 'acquireWithoutSignIn'] as const;
 export type ApprovalCardScene = (typeof APPROVAL_CARD_SCENES)[number];
 
 const SCRIPT_MACHINE = createMachineFixture({ id: '67cffe92-bd4e-4b28-8512-706b1cc4ab77',
@@ -62,6 +62,17 @@ function sceneApproval(scene: Exclude<ApprovalCardScene, 'earlierFailures' | 'de
     return { ...base, actionId: 'projects.script.run', actionArgs, status: 'open',
       summary: buildApprovalPreviewSummary(getActionSpec('projects.script.run'), actionArgs),
       executionOriginV1: origin('projects.script.run') } as ApprovalRequest;
+  }
+  // An Agent's managed Create; `acquire` carries the reviewed sign-in effect, `acquireWithoutSignIn` is an older preview.
+  if (scene === 'acquire' || scene === 'acquireWithoutSignIn') {
+    const actionArgs = { selection: { kind: 'one-off', homeId: scope.serverId, launch: {
+      provider: { pluginId: 'happier.machine.lima', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } };
+    const summary = buildApprovalPreviewSummary(getActionSpec('machines.managed.acquire'), actionArgs);
+    return { ...base, actionId: 'machines.managed.acquire', actionArgs, status: 'open', summary,
+      preview: { actionId: 'machines.managed.acquire', actionArgs, summary,
+        ...(scene === 'acquire' ? { accountSignIn: 'requester_confirms' } : {}) },
+      executionOriginV1: origin('machines.managed.acquire') } as ApprovalRequest;
   }
   const fieldScenes = {
     names: { actionId: 'artifact.delete', actionArgs: {

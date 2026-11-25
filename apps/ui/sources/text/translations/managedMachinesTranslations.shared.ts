@@ -977,6 +977,14 @@ export const managedMachinesEn = {
         tasks: ({ count }: { count: number }) => (count === 1 ? `1 active work item` : `${count} active work items`),
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 terminal` : `${count} terminals`),
     },
+    machineSignIn: {
+        inboxTitle: "Confirm machine sign-in",
+        confirm: "Confirm sign-in",
+        consequence: "This signs the new machine into your account. You confirm it.",
+        consequenceTitle: "Account sign-in",
+        expired: "Sign-in approval expired. Retry setup to ask again.",
+        notWaiting: "This sign-in was already answered or has expired.",
+    },
 };
 
 type TranslationShape<T> = T extends (...args: infer Args) => infer Return

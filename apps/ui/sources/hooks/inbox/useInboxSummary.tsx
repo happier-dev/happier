@@ -5,7 +5,7 @@ import { useActivityOverviewSummary } from '@/activity/source/useActivityOvervie
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { useInboxActionOperationSummary } from '@/sync/domains/actionOperations/useActionOperations';
-import { useFriendRequestCount } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScopeLifetime, useFriendRequestCount } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { countInboxDiscussionItems, countInboxItems, countInboxNeedsYou } from '@/components/inbox/inboxCounts';
 import { useInboxDiscussionAttention } from './useInboxDiscussionSource';
@@ -15,6 +15,7 @@ import { InboxArtifactSourceBoundary, useInboxArtifactSource, useInboxArtifactOp
 import { useAutomationAttentionSource, useWorkflowAttentionSource, WorkflowAttentionSourceBoundary } from './useWorkflowAttentionSource';
 import { useManagedMachineDeletionAttention } from '@/activity/source/useManagedMachineDeletionSource';
 import { useInboxMachineReachability } from './useInboxMachineReachability';
+import { useInboxMachineSignInItems } from './useInboxMachineSignInItems';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 export type InboxSummary = Readonly<{
@@ -33,6 +34,7 @@ export function useInboxSummary(): InboxSummary {
     const serverId = storage(state => state.profileScope?.serverId ?? null);
     const machineDeletionEntries = useManagedMachineDeletionAttention(serverId);
     const machineReachabilityEntries = useInboxMachineReachability(captureActiveServerAccountScopeLifetime());
+    const machineSignInItems = useInboxMachineSignInItems(useActiveServerAccountScopeLifetime());
     const openApprovalCount = useInboxArtifactOpenCount();
     const friendsEnabled = useFriendsEnabled();
     const friendsIdentityReadiness = useFriendsIdentityReadiness();
@@ -59,7 +61,7 @@ export function useInboxSummary(): InboxSummary {
         operations: actionOperations.count,
         friendRequests: visibleFriendRequestCount,
         discussions: discussionCount,
-        machines: machineDeletionEntries.length + machineReachabilityEntries.length,
+        machines: machineDeletionEntries.length + machineReachabilityEntries.length + machineSignInItems.length,
     });
 
     // The same "Needs you" formula the open Inbox uses, fed lengths from the narrow projections.
@@ -68,7 +70,7 @@ export function useInboxSummary(): InboxSummary {
         workflowAttention, automationAttention,
         openApprovals: { length: openApprovalCount }, openUsageNotices: NO_ROWS,
         actionOperationEntries: { length: actionOperations.count },
-        machineDeletionEntries, friendRequests: NO_ROWS,
+        machineDeletionEntries, machineSignInItems, friendRequests: NO_ROWS,
     });
 
     return React.useMemo(() => artifactSource.phase === 'current' ? { count, needsYouCount, hasContent: count > 0 }

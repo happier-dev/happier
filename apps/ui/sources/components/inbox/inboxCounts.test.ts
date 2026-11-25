@@ -26,6 +26,11 @@ describe('Inbox counts', () => {
         expect(countInboxUpdates(model)).toBe(1);
         expect(countInbox(model)).toBe(2);
     });
+    it('counts a pending machine sign-in in Needs you before the Inbox is open', () => {
+        const model = source({ machineSignInItems: [{}] });
+        expect(countInboxNeedsYou(model)).toBe(1);
+        expect(countInbox(model)).toBe(1);
+    });
     it('counts ordinary Automation attention even with no Workflow or Session rows', () => {
         const model = source({ automationAttention: { runIds: ['pre-session-failure'] } });
         expect(countInboxNeedsYou(model)).toBe(1);

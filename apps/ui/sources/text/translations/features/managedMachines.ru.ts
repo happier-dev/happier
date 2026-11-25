@@ -966,4 +966,12 @@ export const managedMachines: ManagedMachinesTranslations = {
         tasks: ({ count }: { count: number }) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'активная работа' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'активные работы' : 'активных работ'}`,
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 терминал` : `${count} терминалов`),
     },
+    machineSignIn: {
+        inboxTitle: "Подтвердите вход машины",
+        confirm: "Подтвердить вход",
+        consequence: "Новая машина войдёт в ваш аккаунт. Вы это подтверждаете.",
+        consequenceTitle: "Вход в аккаунт",
+        expired: "Срок подтверждения входа истёк. Повторите настройку, чтобы запросить снова.",
+        notWaiting: "На этот вход уже ответили, или срок его действия истёк.",
+    },
 };

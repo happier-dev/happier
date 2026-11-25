@@ -138,6 +138,8 @@ export type InboxItem = Readonly<{
     author?: Readonly<{ name: string; isSelf?: boolean; avatar?: ReturnType<typeof resolveAccountActorPresentation>['avatar'] }> | null;
     excerpt?: string | null;
     pluginSessionRows?: readonly InboxPluginSessionRow[];
+    /** A pending machine sign-in's exact occurrence: the row answers this task, never a replacement. */
+    machineSignIn?: InboxMachineSignInTarget;
     /** The immediate lead; an unavailable or unreadable lead has no display title. */
     reportsTo?: Readonly<{ address: SessionAddress; title: string | null }>;
     /** Latest matching WorkerUpdate already held in the lead's readable transcript. */
@@ -164,6 +166,8 @@ export type InboxItemsInput = Readonly<{
     notices: readonly AccountNoticeInboxEntry[];
     executionRuns?: readonly InboxExecutionRun[];
     machineDeletionEntries?: ReturnType<typeof useManagedMachineDeletionAttention>;
+    /** Pending sign-ins with the managed Machine's name from its inventory (null until read). */
+    machineSignIns?: readonly Readonly<{ item: InboxMachineSignInItem; name: string | null }>[];
     workflowRunOnceDeliveries?: ReadonlyMap<string, readonly PersonalRunFollowOnceOccurrenceV1[]>;
     automationPresentation?: ReadonlyMap<string, { title?: string; causeLabel?: string }>;
     /** Already resolved package names from the app's Account-scoped plugin projection. */
@@ -190,6 +194,15 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
             context: t('managedRetention.consequence.deleteAt', { time: formatAsOfTime(entry.reminder.notice.at) }),
             createdAt: entry.reminder.remindAt, read: false, focus, pageRoute: resolveInboxItemPageRoute(focus),
             source: { kind: 'managed_machine', serverId: entry.serverId, id: entry.managedId } });
+    }
+    // A sign-in asks the person to approve: it reads with the approvals, and opens its Machine's page.
+    for (const { item, name } of input.machineSignIns ?? []) {
+        const { serverId, managedId } = item.openTarget;
+        const focus = { kind: 'managed_machine', serverId, id: managedId } as const;
+        rows.push({ key: item.key, producer: 'live', type: 'approval', view: 'needs_you',
+            title: t('machineSignIn.inboxTitle'), context: null, sourceLabel: name ?? t('common.machine'),
+            createdAt: 0, read: false, focus, pageRoute: resolveInboxItemPageRoute(focus), machineSignIn: item.openTarget,
+            source: { kind: 'managed_machine_sign_in', serverId, id: item.key } });
     }
     // Resolve each Home once within this projection through the existing relation reader.
     const relationRecordsByHome = new Map<string, Readonly<Record<string, SessionRelationRecord>>>();
@@ -444,6 +457,7 @@ function sameItem(left: InboxItem, right: InboxItem): boolean {
         && JSON.stringify(left.author) === JSON.stringify(right.author)
         && JSON.stringify(left.question) === JSON.stringify(right.question)
         && JSON.stringify(left.discussion) === JSON.stringify(right.discussion)
+        && left.machineSignIn === right.machineSignIn
         && (left.pluginSessionRows?.length ?? 0) === (right.pluginSessionRows?.length ?? 0)
         && (left.pluginSessionRows ?? []).every((row, index) => row === right.pluginSessionRows?.[index]);
 }

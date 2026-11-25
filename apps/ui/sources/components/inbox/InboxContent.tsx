@@ -12,6 +12,7 @@ import { AccountNoticeRecoveryChoices } from '@/components/inbox/cards/AccountNo
 import type { AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { MachineVitalsNoticeInboxRow, readMachineVitalsNotice } from '@/components/inbox/cards/MachineVitalsNoticeInboxRow';
 import { InboxReadySessionRow } from '@/components/inbox/InboxReadySessionRow';
+import { MachineSignInConfirm } from '@/components/inbox/cards/MachineSignInConfirm';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -107,6 +108,9 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
     /** A stored notice's own recovery choices (roll back, or keep and fix forward), when it offers any. */
     noticeEntry?: AccountNoticeArtifact;
     noticeRecovery?: InboxModel['noticeInvestigation'];
+    /** A pending machine sign-in's answer; beneath the text on a phone's page, as the approval rows decide. */
+    confirmMachineSignIn?: InboxModel['confirmMachineSignIn'];
+    decideBelow?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const { item, navigate, onSelectItem, markOpened, dismissNotice } = props;
@@ -133,13 +137,17 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
     }, [dismissNotice, item]);
     // Where it comes from leads the line, unless the title already says it.
     const source = item.sourceLabel ?? (item.source.displayName && item.source.displayName !== item.title ? item.source.displayName : null);
-    return <InboxWorkRow testID={item.focus.kind === 'execution_run' ? `inbox.run.${item.focus.id}`
+    const signIn = item.machineSignIn && props.confirmMachineSignIn ? (
+        <MachineSignInConfirm target={item.machineSignIn} confirm={props.confirmMachineSignIn} testID={`inbox.item.${item.key}.confirm`} />
+    ) : undefined;
+    return <InboxWorkRow testID={item.machineSignIn ? `inbox.machine-sign-in.${item.machineSignIn.managedId}`
+        : item.focus.kind === 'execution_run' ? `inbox.run.${item.focus.id}`
         : item.focus.kind === 'managed_machine' ? `inbox.machine-deletion.${item.focus.id}` : `inbox.item.${item.key}`} title={item.title}
         facts={[source, item.expectedDuring ? t('inbox.actionOperations.expectedDuring', { operation: item.expectedDuring.kind }) : null, fact]}
         byline={byline}
         selected={props.selected} showDivider={props.showDivider} narrow={props.narrow}
         phase={item.phase ?? (item.view === 'needs_you' ? 'attention' : 'finished')} status={item.workStatus}
-        time={<InboxRelativeTime timestamp={item.createdAt} />}
+        time={item.createdAt > 0 ? <InboxRelativeTime timestamp={item.createdAt} /> : undefined}
         // Who wrote it leads a written item (lab P4-Mp: the author's face); otherwise the item's type glyph.
         mark={item.author?.avatar ? (
             <Avatar id={item.author.avatar.id} imageUrl={item.author.avatar.imageUrl} size={SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize} />
@@ -152,8 +160,8 @@ const InboxItemRow = React.memo(function InboxItemRow(props: Readonly<{
             <InboxDismissRowMenu testID={`inbox.item.${item.key}.dismiss`} onDismiss={dismiss}
                 reminder={noticeEntry ? { entry: noticeEntry,
                     onSetReminder: remindAt => props.setNoticeReminder(noticeEntry, remindAt) } : undefined} />
-        ) : undefined}
-        belowAccessory={item.pluginSessionRows?.length ? (
+        ) : props.decideBelow ? undefined : signIn}
+        belowAccessory={props.decideBelow && signIn ? signIn : item.pluginSessionRows?.length ? (
             <InboxPluginSessionLines rows={item.pluginSessionRows} invoke={props.invokePluginSessionControl}
                 testID={`inbox.item.${item.key}.plugin_rows`} />
         ) : props.noticeEntry && props.noticeRecovery ? (
@@ -347,7 +355,8 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
                 setNoticeReminder={model.setAccountNoticeReminder}
                 invokePluginSessionControl={model.invokePluginSessionControl}
                 noticeEntry={item.producer === 'notice' ? accountNoticesById.get(item.source.id) : undefined}
-                noticeRecovery={model.noticeInvestigation} />
+                noticeRecovery={model.noticeInvestigation}
+                confirmMachineSignIn={item.machineSignIn ? model.confirmMachineSignIn : undefined} decideBelow={page && !wide} />
         );
     };
 
