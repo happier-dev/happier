@@ -398,14 +398,17 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
     const settleFailedMutation=React.useCallback(async(
         key:string,mutation:SessionGrantMutationV1|null,subject:PrincipalRefV1,failure:SessionAccessUiError,
     )=>{
-        // A Team or Group refused because this sign-in does not meet the Team's rule says which sign-in it
-        // needs and leads to it, under that Team's row; adding again could only be refused again.
-        const teamId=subject.kind==='account'?null:subject.teamId;
+        // A removal qualifies the actor's authority, which can come from a different Team than the removed row.
+        // A policy that could not be read also cannot justify sending the person to sign in.
+        const teamId=mutation&&subject.kind!=='account'?subject.teamId:null;
         const team=teamId?directoryTeamsRef.current.find((candidate)=>candidate.teamId===teamId):undefined;
-        const issue:SessionAccessUiError=teamId&&(failure.code==='session_access_authentication_required'||failure.code==='session_access_authentication_unavailable')
+        const issue:SessionAccessUiError=teamId&&failure.code==='session_access_authentication_required'
             ? presentTeamSignInRequired({code:failure.code,teamId,serverId:input.scope.serverId,
                 accepted:team?.authenticationPolicy?.accepted??[],origin:shareSignInOrigin(subject.kind === 'team'),navigate:(href)=>routerRef.current.push(href as Href)})
             : failure;
+        if(!mutation&&stateRef.current.confirmingRemoval===key){
+            dispatch({type:'confirm',scopeKey,key:null});
+        }
         dispatch({type:'operation',scopeKey,key,operation:issue.retryable
             ? {kind:'error',error:issue,reconcileIntent:mutation?{kind:'set',mutation}:{kind:'remove',subject}}
             : {kind:'error',error:issue}});

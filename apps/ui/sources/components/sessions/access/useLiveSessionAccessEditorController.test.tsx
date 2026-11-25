@@ -183,6 +183,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
         grantAccessLevel: 'view' as 'view' | 'edit' | 'admin',
         grantMode: 'normal' as 'normal' | 'malformed_after_commit' | 'malformed_without_commit',
         grantFailure: null as null | Readonly<{ status: number; code: string }>,
+        removeFailure: null as null | Readonly<{ status: number; code: string }>,
         mutationChanged: true,
         mutationGate: null as Promise<void> | null,
         primaryTeamId: null as string | null,
@@ -369,6 +370,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
             return new Response(JSON.stringify({ changed: state.mutationChanged, grant: {...GRANT_ROW.grant,accessLevel:state.grantAccessLevel} }));
         }
         if (path === '/v2/sessions/access-grants/remove') {
+            if (state.removeFailure) return Response.json({ error: state.removeFailure.code }, { status: state.removeFailure.status });
             state.granted = false;
             await state.mutationGate;
             return new Response(JSON.stringify({ changed: state.mutationChanged, subject: GRANT_ROW.grant.subject }));
@@ -527,6 +529,38 @@ describe('Team grant refusals', () => {
         }));
         expect(controller().model.content.issue).toBeUndefined();
         expect(controller().model.grants).toHaveLength(0);
+    });
+});
+
+describe('Share removal refusals', () => {
+    it.each([
+        { code: 'session_access_authentication_required', status: 403, label: 'session.access.authenticationRequired' },
+        { code: 'session_access_authentication_unavailable', status: 503, label: 'session.access.authenticationUnavailable' },
+        { code: 'session_access_forbidden', status: 403, label: 'errors.permissionDenied' },
+        { code: 'session_access_subject_not_found', status: 404, label: 'session.access.subjectNotFound' },
+        { code: 'session_access_session_not_found', status: 404, label: 'session.access.sessionNotAvailable' },
+        { code: 'session_access_team_policy_required', status: 409, label: 'session.access.teamPolicyRequired' },
+        { code: 'session_access_self_grant_invalid', status: 400, label: 'session.access.selfGrantManaged' },
+        { code: 'session_access_owner_grant_invalid', status: 400, label: 'session.access.ownerGrantManaged' },
+    ] as const)('settles $code on the row without a stale confirmation or a guess at sign-in', async ({ code, status, label }) => {
+        const home = await setupHome({ sharing: true, encrypted: false });
+        home.state.includeContextGroupGrant = true;
+        home.state.removeFailure = { code, status };
+        const controller = await mountController(home.profile.id);
+        const subject = { kind: 'group', teamId: 'team-acme', groupId: 'reviewers' } as const;
+        const row = () => controller().model.grants.find(grant => grant.grant.kind === 'group');
+        await vi.waitFor(() => expect(row()?.removal.kind).toBe('allowed'));
+        act(() => { controller().actions.requestRemove(subject); });
+        expect(row()?.removal.kind).toBe('confirming');
+
+        await act(async () => { controller().actions.confirmRemove(subject); });
+        await vi.waitFor(() => expect(row()?.operation.kind).toBe('error'));
+        const operation = row()?.operation;
+        expect(operation).toMatchObject({ kind: 'error', error: { code, message: t(label), retryable: false } });
+        expect(operation?.kind === 'error' && operation.error.action).toBeUndefined();
+        expect(row()?.removal.kind).toBe('allowed');
+        await act(async () => { controller().actions.confirmRemove(subject); });
+        expect(home.paths.filter(path => path === '/v2/sessions/access-grants/remove')).toHaveLength(1);
     });
 });
 
