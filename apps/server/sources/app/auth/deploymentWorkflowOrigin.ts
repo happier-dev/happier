@@ -6,7 +6,7 @@ import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
     DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
     DEPLOYMENT_TARGET_LINK_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1,
+    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
     isDeploymentBackupActionIdV1, isDeploymentNativeReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isAutomationOriginRunPublisherTx } from '@/app/automations/automationTriggerCauseChain';
 import { canDeployDeploymentEnvironment, canTeardownDeploymentEnvironment, admitDeploymentMachineInTx } from '@/app/deployments/deploymentAdmission';
@@ -26,6 +26,8 @@ export type DeploymentWorkflowOriginInput = Readonly<{
     authentication?: Readonly<{ evidence?: readonly AuthTokenAuthenticationEvidenceV1[] }>;
     deploymentNativeAdmission?: DeploymentNativeAdmissionV1;
     deploymentReadAdmission?: ExternalActionExecutionAuthorizationBindingV1['deploymentReadAdmission'];
+    /** The request's public Environment operand, before issuance binds it as `environmentId`. */
+    deploymentMetadataEnvironmentId?: string;
     deploymentCandidatePublication?: ExternalActionExecutionAuthorizationBindingV1['deploymentCandidatePublication'];
     deploymentPreparationAdmission?: ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission'];
     deploymentLinkAdmission?: Pick<NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>, 'environmentId' | 'replacement'>;
@@ -90,6 +92,17 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
         return read !== undefined && read.actionId === input.actionId && 'machineId' in read
             && read.machineId === input.target.machineId
             && (!('installationId' in read) || read.installationId === target.installationId);
+    }
+    if (input.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1) {
+        // The bindings writer checks the runner's own Manage right and the exact data-role content once, at the
+        // effect. This gate binds the leaf to the Run and to the controller of an Environment the runner can read.
+        const environmentId = input.environmentId ?? input.deploymentMetadataEnvironmentId;
+        if (!environmentId) return false;
+        const environment = await loadDeploymentEnvironmentInTx(reader, input.accountId,
+            input.serverIdentityId ?? await getOrCreateServerIdentityId(), environmentId, {
+                authenticationAuthority: 'account_automation', authenticationEvidence: input.authentication?.evidence,
+            }, phase === 'execution' ? { environmentId } : undefined);
+        return environment.ok && !environment.row.deletedAt && environment.row.controllerMachineId === input.target.machineId;
     }
     // Mint admitted definition Manage. Move runs finite SCM work on the selected
     // workspace; the active Run and installed receiver retain that admission.

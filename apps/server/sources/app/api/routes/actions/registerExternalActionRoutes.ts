@@ -165,6 +165,7 @@ async function readInstalledWorkflowRequestPrincipal(actionId: string,
             ...(workflowAdmission ? { admittedMachineRole: workflowAdmission.binding.admittedMachineRole } : {}),
             deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: body.envelope }),
             deploymentReadAdmission: projectExternalActionDeploymentReadEnvelopeAdmissionV1({ actionId, envelope: body.envelope }),
+            deploymentMetadataEnvironmentId: projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1({ actionId, envelope: body.envelope }),
             deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope: body.envelope }),
             ...(actionId === 'deployments.targets.link' ? { deploymentLinkAdmission: {
                 environmentId: projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1({ actionId, envelope: body.envelope }) ?? '',

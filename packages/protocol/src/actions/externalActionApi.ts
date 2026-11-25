@@ -1483,6 +1483,8 @@ export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boo
     // Data Move health checks and its reviewed cutover; Home's read and native
     // admission owners still decide the Environment for the Run's Account.
     || isDeploymentNativeReadActionIdV1(actionId) || actionId === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
+    // Move's reviewed data-role grants; the bindings writer decides the runner's Manage right at the effect.
+    || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
     || isDeploymentDomainChildActionIdV1(actionId)
     || isDeploymentBackupActionIdV1(actionId) || actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
     || deploymentOperationForRootActionV1(actionId) !== undefined;

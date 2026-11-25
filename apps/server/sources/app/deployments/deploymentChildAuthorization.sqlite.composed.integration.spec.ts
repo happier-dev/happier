@@ -138,7 +138,7 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { auth } from '@/app/auth/auth';
 import * as loginEligibility from '@/app/auth/enforceLoginEligibility';
-import { verifyExternalActionMachineRpcExecution, verifyExternalActionDomainExecutionRequest,
+import { hasCurrentExternalActionWorkflowOriginInTx, verifyExternalActionMachineRpcExecution, verifyExternalActionDomainExecutionRequest,
     isDeploymentNativeHttpPurpose, isDeploymentReadPreparation, readAdmittedFiniteOperationPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { isDeploymentPreparationHttpPurposeInTx, isDeploymentReadOperandInAdmittedScopeInTx,
     isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands } from './deploymentPreparationAuthorization';
@@ -6814,6 +6814,94 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).toMatchObject({
             revision: f.environmentRevision + 1, contentArtifactId: artifactId, runtimeTargetLinkId: runtime.id });
         expect(await readEnvironmentMachineSecretGrantsInTx(db, { environmentId: f.environment.id })).toEqual([grant]);
+    });
+
+    // Move's reviewed data-role grant from an accepted Run (owner ruling SEC-WORKFLOW-STEP-AUTHZ-1125, 2026-11-25 12:15Z):
+    // the runner's own Manage right and the exact writer content are decided once, at the bindings effect.
+    it('settles a Workflow Run’s reviewed data-role binding only with the runner’s Manage right and the writer’s exact content', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true, platformTarget: 'vercel', workflowOrigin: true });
+        if (!f.workflowActionOrigin) throw new Error('Expected an accepted Workflow Run');
+        await db.deploymentTargetLink.update({ where: { id: f.link.id },
+            data: { pluginId: 'happier.deploy.railway', contributionLocalId: 'railway' } });
+        const managedLink = await db.deploymentTargetLink.create({ data: {
+            environmentId: f.environment.id, createdByAccountId: f.account.id, ...await f.content('deployment-target-link.v1'),
+            role: 'data', state: 'deployed', sourceKind: 'plugin', targetKind: 'platform',
+            pluginId: 'happier.deploy.railway', contributionLocalId: 'railway-postgres',
+        } });
+        const resourceId = crypto.randomUUID();
+        const secret = { v: 1 as const, kind: 'password' as const, name: 'Writer login', value: 'fixture-write-login' };
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: f.account.id, resourceId,
+            displayName: secret.name, kind: secret.kind, encryptionMode: 'plain',
+            storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain', content: secret }) })))
+            .toMatchObject({ ok: true });
+        const source = { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } as const;
+        const selected = { purpose: 'dataRole', targetLinkId: managedLink.id, role: 'write', source } as const;
+        const actionId = DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+        const input = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision, set: [selected], remove: [] };
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const requestId = crypto.randomUUID();
+        const workflowActionOrigin = { ...f.workflowActionOrigin, requestId };
+        const root = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.controller.id, target, requestId, workflowActionOrigin,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input }) }, { input });
+        expect(root.binding).toMatchObject({ actionId, environmentId: f.environment.id, workflowActionOrigin });
+        const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: f.environment.id,
+            machineId: f.controller.id, installationId: f.controller.installationId, resourceId, resourceRevision: 1 },
+            installationPublicKey: f.controller.keys.publicKey, content: { kind: 'secret', value: secret.value } });
+        const artifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...root.binding, environmentId: f.environment.id });
+        const storage = async (bindings: readonly unknown[]) => {
+            const content = { ...createDeploymentEnvironmentDetailV1().content, bindings };
+            return DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id,
+                expectedRevision: f.environmentRevision, ...await f.content('deployment-environment.v1', content, artifactId),
+                referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(content.bindings as never), grants: [grant] });
+        };
+        const payload = await storage([selected]);
+        const path = `/v1/deployments/environments/${f.environment.id}/bindings`;
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const save = (body: typeof payload) => app.inject({ method: 'POST', url: path, payload: body, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                    effectActionId: actionId, target, installationId: f.controller.installationId, requestId,
+                    method: 'POST', path, body, privateKey: f.controller.keys.secretKey }),
+            } });
+            // A non-controller grant and a non-dataRole binding are outside the writer's exact content.
+            const wrongRecipient = await save({ ...payload,
+                grants: [{ ...grant, machineId: f.builder.id, installationId: f.builder.installationId }] });
+            expect(wrongRecipient.statusCode, wrongRecipient.body).toBe(409);
+            expect(wrongRecipient.body).toContain('deployment_conflict');
+            const variable = await save(await storage([{ purpose: 'variable', name: 'DATABASE_PASSWORD', phase: 'runtime', source }]));
+            expect(variable.statusCode, variable.body).toBe(409);
+            expect(variable.body).toContain('deployment_conflict');
+            // The runner's own Manage right, read at the effect and typed through.
+            const source0 = await db.projectSource.findUniqueOrThrow({ where: { id: f.environment.projectSourceId } });
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await db.projectSource.update({ where: { id: source0.id }, data: { owner: { kind: 'account', accountId: owner.id },
+                audience: [{ principal: { kind: 'account', accountId: f.account.id }, level: 'view' }] } });
+            const notManager = await save(payload);
+            expect(notManager.statusCode, notManager.body).toBe(403);
+            expect(notManager.body).toContain('deployment_access_denied');
+            await db.projectSource.update({ where: { id: source0.id }, data: { owner: source0.owner as never,
+                audience: source0.audience as never } });
+            const saved = await save(payload);
+            expect(saved.statusCode, saved.body).toBe(200);
+            expect(saved.json()).toMatchObject({ ok: true, revision: f.environmentRevision + 1 });
+        }, { authentication: 'real' });
+        expect(await readEnvironmentMachineSecretGrantsInTx(db, { environmentId: f.environment.id })).toEqual([grant]);
+        // Home's dispatch admission of the installed proposal: its Environment is projected from the request.
+        // Another Run, another Environment and another controller stay outside this Run's leaf.
+        const dispatched = { accountId: f.account.id, serverIdentityId: serverId, actionId, requestId, target,
+            machineId: f.controller.id, publisherMachineId: f.controller.id, workflowActionOrigin,
+            requestEnvelopeDigest: root.binding.requestEnvelopeDigest, deploymentMetadataEnvironmentId: f.environment.id };
+        expect(await hasCurrentExternalActionWorkflowOriginInTx(db, dispatched)).toBe(true);
+        expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...dispatched,
+            workflowActionOrigin: { ...workflowActionOrigin, runId: crypto.randomUUID() } })).toBe(false);
+        expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...dispatched, deploymentMetadataEnvironmentId: crypto.randomUUID() })).toBe(false);
+        expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...dispatched, deploymentMetadataEnvironmentId: undefined })).toBe(false);
+        expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...dispatched, target: { kind: 'machine', machineId: f.builder.id } })).toBe(false);
     });
 
     it('admits only an Environment manager’s reviewed managed database read binding', async () => {

@@ -96,6 +96,27 @@ function openRequest(): ApprovalRequestV2 {
 }
 
 describe('Environment binding person selection approval transition', () => {
+  // A Workflow's data-role grant Ask (SEC-WORKFLOW-STEP-AUTHZ-1125, 12:15Z): the choice cannot leave the reviewed selection.
+  it('refuses a data-role choice outside the reviewed binding selection', () => {
+    const actionId = 'deployments.bindings.set';
+    const actionArgs = { serverId: 'home', environmentId: 'environment', expectedRevision: 7,
+      set: [{ purpose: 'dataRole', targetLinkId: 'data-link', role: 'write', source: { kind: 'secret', ref: 'person_selects' } }], remove: [] };
+    const source = { kind: 'secret', ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 3 };
+    const chosen = { ...actionArgs, set: [{ ...actionArgs.set[0]!, source }] };
+    const original = openRequest();
+    const existing = ApprovalRequestV2Schema.parse({ ...original, actionId, actionArgs,
+      executionOriginV1: { ...original.executionOriginV1, actionId } });
+    const approved = ApprovalRequestV2Schema.parse({ ...existing, status: 'approved', updatedAtMs: 2,
+      decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2, narrowedInput: chosen } });
+    expect(decideApprovalRequestTransition(existing, approved)).toEqual({ ok: true, changed: true });
+    for (const narrowedInput of [{ ...chosen, set: [{ ...chosen.set[0]!, targetLinkId: 'other-data-link' }] },
+      { ...chosen, set: [{ ...chosen.set[0]!, role: 'readOnlyPassword' }] },
+      { ...chosen, set: [...chosen.set, { ...chosen.set[0]!, targetLinkId: 'other-data-link' }] }]) {
+      expect(decideApprovalRequestTransition(existing, { ...approved,
+        decision: { ...approved.decision!, narrowedInput } })).toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+    }
+  });
+
   it('admits only exact present-user choices without replacing the original binding patch', () => {
     const actionId = 'deployments.bindings.set';
     const actionArgs = { serverId: 'home', environmentId: 'environment', expectedRevision: 7,
