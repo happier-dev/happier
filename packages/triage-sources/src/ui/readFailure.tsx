@@ -5,7 +5,7 @@ import type { TriageSourceReadFailureV1 } from '../invocation/failure.js';
 
 /** Show the source and host owners' bounded diagnostics without raw provider data. */
 export function TriageSourceReadFailureDetails({ failures }: Readonly<{
-  failures: readonly (TriageSourceReadFailureV1 | null)[];
+  failures: readonly (Pick<TriageSourceReadFailureV1, 'code' | 'requestId' | 'detail' | 'diagnostics' | 'retryable'> | null)[];
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
   const lines = failures.flatMap(failure => failure === null ? [] : [{

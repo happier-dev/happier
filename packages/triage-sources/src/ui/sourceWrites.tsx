@@ -18,6 +18,7 @@ import {
   usePluginHostApi,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import {
   TriageTaskWriteResultV1Schema,
   describeTriageSourceFailureV1,
@@ -25,6 +26,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { useTriagePostMutationCompletion } from './postMutation.js';
+import { TriageSourceReadFailureDetails } from './readFailure.js';
 
 /**
  * A person's native source writes in a source detail panel (Sentry resolve, a Linear comment, …).
@@ -37,16 +39,20 @@ import { useTriagePostMutationCompletion } from './postMutation.js';
  * the entry is read again.
  */
 
+type SourceWriteExecution = PluginUiActionControlExecution | PluginActionExecution;
+type SourceWriteTransportFailure = Readonly<{ code: string; requestId?: string }>;
+
 /** What a settled write means to the person who pressed it. */
 export type TriageSourceWriteSettlementV1 =
   /** `result` is the Action's own result, for a source that shows what it confirmed (the posted comment). */
   | Readonly<{ kind: 'applied'; result?: unknown }>
   | Readonly<{ kind: 'refused' }>
-  | Readonly<{ kind: 'uncertain' }>
+  | Readonly<{ kind: 'uncertain'; transportFailure?: SourceWriteTransportFailure }>
   | Readonly<{
       kind: 'failed';
       failure?: TriageSourceFailureV1;
       message?: string;
+      transportFailure?: SourceWriteTransportFailure;
     }>
   | Readonly<{ kind: 'approval' }>;
 
@@ -62,38 +68,54 @@ function ranNothing(code: string): boolean {
   );
 }
 
+function projectTransportFailure({ code, message, requestId, effectAttempted }: {
+  code: string;
+  message: string;
+  requestId: string | undefined;
+  effectAttempted: boolean | undefined;
+}): TriageSourceWriteSettlementV1 | null {
+  const transportFailure = { code, ...(requestId === undefined ? {} : { requestId }) };
+  if (isActionOutcomeUnknownErrorCodeV1(code) || effectAttempted === true) return { kind: 'uncertain', transportFailure };
+  if (ranNothing(code)) return null;
+  return { kind: 'failed', message, transportFailure };
+}
+
 /**
- * Reads the canonical Action envelope a host control settles with. `null` means nothing ran and
- * nothing needs saying. Anything that may have dispatched without a readable answer is uncertain.
+ * Projects the Action settlement from a host control or a property hook. `null` means there is
+ * nothing to present. Anything that may have dispatched without a readable answer is uncertain.
  */
 export function projectTriageSourceWriteSettlementV1(
-  execution: PluginUiActionControlExecution,
+  execution: SourceWriteExecution,
   readResult?: TriageSourceWriteResultReaderV1,
 ): TriageSourceWriteSettlementV1 | null {
-  if (execution.ok) {
-    if (isPluginActionApprovalRequestCreated(execution.result))
-      return { kind: 'approval' };
-    if (readResult !== undefined) return readResult(execution.result);
-    const result = TriageTaskWriteResultV1Schema.safeParse(execution.result);
-    if (!result.success) return { kind: 'uncertain' };
-    switch (result.data.kind) {
-      case 'applied':
-        return { kind: 'applied' };
-      case 'refused':
-        return { kind: 'refused' };
-      case 'uncertain':
-        return { kind: 'uncertain' };
-      case 'failed':
-        return { kind: 'failed', failure: result.data.failure };
+  if ('status' in execution) {
+    if (execution.status === 'idle' || execution.status === 'pending') return null;
+    if (execution.status === 'error' || execution.status === 'outcomeUnknown') {
+      return projectTransportFailure({
+        code: execution.code, message: execution.message, requestId: execution.requestId,
+        effectAttempted: execution.status === 'outcomeUnknown' || execution.effectAttempted,
+      });
     }
+  } else if (!execution.ok) {
+    return projectTransportFailure({
+      code: execution.errorCode, message: execution.error, requestId: execution.requestId,
+      effectAttempted: execution.effectAttempted,
+    });
   }
-  if (
-    isActionOutcomeUnknownErrorCodeV1(execution.errorCode) ||
-    execution.effectAttempted === true
-  )
-    return { kind: 'uncertain' };
-  if (ranNothing(execution.errorCode)) return null;
-  return { kind: 'failed', message: execution.error };
+  if (isPluginActionApprovalRequestCreated(execution.result)) return { kind: 'approval' };
+  if (readResult !== undefined) return readResult(execution.result);
+  const result = TriageTaskWriteResultV1Schema.safeParse(execution.result);
+  if (!result.success) return { kind: 'uncertain' };
+  switch (result.data.kind) {
+    case 'applied':
+      return { kind: 'applied' };
+    case 'refused':
+      return { kind: 'refused' };
+    case 'uncertain':
+      return { kind: 'uncertain' };
+    case 'failed':
+      return { kind: 'failed', failure: result.data.failure };
+  }
 }
 
 /** Applied and unreadable outcomes may have changed the provider, so the aggregate reads the entry again. */
@@ -152,7 +174,7 @@ export function TriageSourceWrites({
    */
   children?: (group: Readonly<{
     held: boolean;
-    settle: (id: string, execution: PluginUiActionControlExecution) => TriageSourceWriteSettlementV1 | null;
+    settle: (id: string, execution: SourceWriteExecution) => TriageSourceWriteSettlementV1 | null;
   }>) => React.ReactNode;
 }>): React.ReactElement {
   const text = usePluginTranslation();
@@ -166,7 +188,7 @@ export function TriageSourceWrites({
     latest.current = { writes, onSettled, completePostMutation };
   });
 
-  const settle = React.useCallback((id: string, execution: PluginUiActionControlExecution) => {
+  const settle = React.useCallback((id: string, execution: SourceWriteExecution) => {
     const settlement = projectTriageSourceWriteSettlementV1(
       execution,
       latest.current.writes.find((write) => write.id === id)?.readResult,
@@ -205,6 +227,7 @@ export function TriageSourceWrites({
   const values = { source: sourceName };
   let notice: React.ReactNode = null;
   const settlement = last?.settlement;
+  const transportFailure = settlement && 'transportFailure' in settlement ? settlement.transportFailure : undefined;
   const lastWrite =
     last === null ? undefined : writes.find((write) => write.id === last.id);
   if (settlement?.kind === 'applied') {
@@ -321,6 +344,7 @@ export function TriageSourceWrites({
         </Row>
       )}
       {notice}
+      {transportFailure === undefined ? null : <TriageSourceReadFailureDetails failures={[transportFailure]} />}
     </>
   );
 }

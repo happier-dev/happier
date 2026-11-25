@@ -24,7 +24,11 @@ describe('composed source writes', () => {
         surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       }); });
       expect(state?.held).toBe(false);
-      await act(async () => { expect(state?.settle('assignment', { ok: false, errorCode: 'outcome_unknown', error: 'Connection lost', effectAttempted: true })).toEqual({ kind: 'uncertain' }); });
+      await act(async () => { expect(state?.settle('assignment', { status: 'outcomeUnknown', code: 'outcome_unknown', message: 'Connection lost', requestId: 'assignment-request' })).toEqual({
+        kind: 'uncertain', transportFailure: { code: 'outcome_unknown', requestId: 'assignment-request' },
+      }); });
+      await act(async () => { await fixture?.press(await fixture.findByRole('button', { name: 'Details' })); });
+      await expect(fixture?.getByText('assignment-request')).resolves.toBeDefined();
       expect(state?.held).toBe(true);
       expect(completions).toBe(1);
     } finally { await fixture?.dispose(); }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { Button, PropertyList, Row, Stack, Text, useExecutePluginAction, usePluginTranslation, useTabPanelActivity } from '@happier-dev/plugin-ui';
 import { useTriageDetailRequest, type TriageSourceWriteSettlementV1 } from '@happier-dev/triage-sources/ui';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
@@ -12,7 +12,7 @@ export function SentryIssueAssignment({ input, current, held, settle }: Readonly
   input: TriageDetailSurfaceInputV1;
   current: SentryAssigneeV1 | null | undefined;
   held: boolean;
-  settle: (id: string, execution: PluginUiActionControlExecution) => TriageSourceWriteSettlementV1 | null;
+  settle: (id: string, execution: PluginActionExecution) => TriageSourceWriteSettlementV1 | null;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const request = useTriageDetailRequest(input);
@@ -70,11 +70,7 @@ export function SentryIssueAssignment({ input, current, held, settle }: Readonly
           if (selected === undefined) return;
           const execution = await assign({ v: 1, ...request, assignee: selected === null ? null : { type: selected.type, id: selected.id } });
           if (activeSignal.aborted) return;
-          const outcome = execution.status === 'success'
-            ? settle('assignment', { ok: true, result: execution.result })
-            : execution.status === 'error' || execution.status === 'outcomeUnknown'
-              ? settle('assignment', { ok: false, errorCode: execution.code, error: execution.message,
-                ...(execution.status === 'outcomeUnknown' ? { effectAttempted: true } : {}) }) : null;
+          const outcome = settle('assignment', execution);
           if (outcome?.kind === 'applied' || outcome?.kind === 'uncertain') refresh();
           // The group renders the outcome once and owns any uncertain hold.
           return undefined;

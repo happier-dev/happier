@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { Button, ErrorState, LoadingState, PropertyList, Stack, Text, useExecutePluginAction, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { TriageSourceReadFailureDetails, useTriageDetailRequest, type TriageSourceWriteSettlementV1 } from '@happier-dev/triage-sources/ui';
@@ -13,7 +13,7 @@ export function PosthogAssigneeProperty({ input, assignment, reading, held, sett
     assignment: PosthogAssignmentReadV1 | undefined;
     reading: boolean;
     held: boolean;
-    settle: (id: string, execution: PluginUiActionControlExecution) => TriageSourceWriteSettlementV1 | null;
+    settle: (id: string, execution: PluginActionExecution) => TriageSourceWriteSettlementV1 | null;
     onRefresh: () => void;
 }>): React.ReactElement {
     const text = usePluginTranslation();
@@ -31,12 +31,7 @@ export function PosthogAssigneeProperty({ input, assignment, reading, held, sett
         const target = PosthogIssueAssignInputV1Schema.safeParse({ v: 1, ...request, assignee: id === null ? null : choice?.assignee });
         if (!target.success) return { status: 'refused' };
         const result = await execute(target.data);
-        const settlement = result.status === 'success'
-            ? settle('assign', { ok: true, result: result.result })
-            : result.status === 'error' || result.status === 'outcomeUnknown'
-                ? settle('assign', { ok: false, errorCode: result.code, error: result.message,
-                    ...(result.status === 'outcomeUnknown' ? { effectAttempted: true } : {}) })
-                : null;
+        const settlement = settle('assign', result);
         if (settlement === null) return { status: 'refused' };
         if (settlement.kind === 'applied' || settlement.kind === 'uncertain') onRefresh();
         // The containing source-write group presents the one settlement notice.
