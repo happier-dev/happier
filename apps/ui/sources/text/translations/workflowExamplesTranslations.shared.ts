@@ -49,7 +49,7 @@ export const workflowExamplesTranslationsEnglish: Pick<Record<'en'|'de'|'es'|'fr
         deploymentMove: { title: 'Move to another Machine', description: 'Move a stateless repository app without Domains. Keep the source until destination health is verified, then retire only its replaced Machine and retain its data.' },
         backupVerify: { title: "Verify a backup", description: "Check one backup snapshot at the level you choose. Nothing is restored or changed." },
         nightlyBackups: { title: "Nightly backups", description: "Back up your data, verify every new snapshot, then keep only what your retention allows. Turn on its schedule to run it each night." },
-        restoreDrill: { title: 'Restore drill', description: 'Verify a snapshot, restore it into a separate saved environment, check its data, then stop its services. Keep that environment and its grants for the next drill.' },
+        restoreDrill: { title: 'Restore drill', description: "Proves your backups restore: puts a copy in a separate environment, checks its data, then stops it." },
         dailyHealthDigest: { title: "Daily health digest", description: "Sum up how your environments and services did and send it to you. Add a trigger to get it every day." },
         restartWhenNeeded: { title: 'Restart when needed', description: 'Check Setup’s update facts on a schedule and restart only when needed. Maintenance windows and normal reboot approvals still apply.' },
         noSessions: 'Start a working session to use this template.',

@@ -19400,7 +19400,7 @@ settingsSession: {
             emptyTitle: "Bring dieses Projekt ins Internet",
             autoSectionTitle: "App-Setups vorschlagen",
             autoAgentTitle: "Agent für App-Vorschläge",
-            emptyBody: "Eine Umgebung ist ein Ort, an dem dieses Projekt läuft, etwa Staging auf einem deiner Rechner. Füge hier eine hinzu oder bitte einen Agenten in diesem Projekt darum; du gibst sie frei, bevor etwas bereitgestellt wird.",
+            emptyBody: "Eine Umgebung ist ein Ort, an dem dieses Projekt läuft, etwa Staging auf einer deiner Maschinen. Stelle eine App bereit, um die erste hinzuzufügen; du genehmigst, bevor etwas bereitgestellt wird.",
             noSourceTitle: "Speichere dieses Projekt als Quelle, um es bereitzustellen",
             noSourceBody: "Umgebungen gehören zur Projektquelle, damit jeder Checkout und jedes Teammitglied dieselben sieht.",
             allTitle: "Alle Deployments",

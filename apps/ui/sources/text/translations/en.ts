@@ -22681,7 +22681,7 @@ const enProjects = {
       emptyTitle: "Put this project on the internet",
       autoSectionTitle: "Suggesting an app setup",
       autoAgentTitle: "Agent for app suggestions",
-      emptyBody: "An environment is a place this project runs, like Staging on one of your Machines. Add one here, or ask an agent in this project to set it up; you approve before anything deploys.",
+      emptyBody: "An environment is a place this project runs, like Staging on one of your Machines. Deploy an app to add the first one; you approve before anything deploys.",
       noSourceTitle: "Save this project as a source to deploy it",
       noSourceBody: "Environments belong to the project source, so every checkout and teammate sees the same ones.",
       allTitle: "All deployments",

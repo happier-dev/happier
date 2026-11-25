@@ -19188,7 +19188,7 @@ settingsSession: {
         emptyTitle: "Mettez ce projet en ligne",
         autoSectionTitle: "Propositions de configuration",
         autoAgentTitle: "Agent pour les propositions d’app",
-        emptyBody: "Un environnement est un endroit où ce projet s’exécute, comme Staging sur l’une de vos machines. Ajoutez-en un ici ou demandez à un agent de ce projet de le configurer ; vous validez avant tout déploiement.",
+        emptyBody: "Un environnement est un endroit où ce projet s’exécute, comme Staging sur l’une de vos Machines. Déployez une app pour ajouter le premier ; vous approuvez avant tout déploiement.",
         noSourceTitle: "Enregistrez ce projet comme source pour le déployer",
         noSourceBody: "Les environnements appartiennent à la source du projet : chaque checkout et chaque coéquipier voit les mêmes.",
         allTitle: "Tous les déploiements",

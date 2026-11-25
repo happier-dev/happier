@@ -141,6 +141,8 @@ export const DeploymentReceiptDetail = React.memo(
     const environmentValue = environment.snapshot.value;
     const activeId = environmentValue?.runtimeTargetLink?.activeDeploymentId ?? null;
     const [latestPress, setLatestPress] = React.useState<'rollback' | 'deploy' | 'cancel' | null>(null);
+    // The version a press is rolling back to, said while it runs (R17-D7) instead of a bare spinner.
+    const [rollingBackTo, setRollingBackTo] = React.useState<string | null>(null);
     const rollbackPress = useDeploymentPress(props.review, props.onOpenReceipt);
     const againPress = useDeploymentPress(props.review, props.onOpenReceipt);
     const receipt = useDeploymentReceipt(
@@ -327,6 +329,9 @@ export const DeploymentReceiptDetail = React.memo(
     const rollBack = (deploymentId: string, restoreBackupId?: string) => {
       if (!rollback) return;
       setLatestPress('rollback');
+      setRollingBackTo(deploymentId === retainedTarget?.deploymentId ? deploymentRevisionLabel(retainedTarget.revision)
+        : deploymentId === rollbackTarget?.deploymentId ? deploymentRevisionLabel(rollbackTarget.revision)
+          : deploymentId === retryRollbackTo ? sourceLabel : null);
       void rollbackPress.press(() => rollback({ environmentId, deploymentId,
         ...(restoreBackupId === undefined ? {} : { restoreBackupId }) }));
     };
@@ -656,7 +661,17 @@ export const DeploymentReceiptDetail = React.memo(
             ) : null}
             {showInvestigationOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}
               testID="project-deployments.receipt.investigate" onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
-            {!pressAttention && notice ? (
+            {/* A rollback pressed here says what runs, to which version, while the Action works (the Overview banner's
+                title); this receipt stays beneath it until the new one opens (R17-D7). */}
+            {rollingBack && !pressAttention ? (
+              <AttentionBanner
+                testID="project-deployments.receipt.rollingBack"
+                tone="neutral"
+                title={rollingBackTo !== null ? t('projects.deployments.headlineRollingBack', { sha: rollingBackTo })
+                  : deploymentOperationLabel('rollback')}
+              />
+            ) : null}
+            {!pressAttention && !rollingBack && notice ? (
               <AttentionBanner
                 testID={`project-deployments.receipt.notice.${noticeState}`}
                 tone={notice.tone}

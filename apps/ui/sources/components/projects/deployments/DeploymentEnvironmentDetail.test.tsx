@@ -375,7 +375,8 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
           errorCode: 'destination_exists', effectAttempted: false, requestId: checkoutRequestId,
         });
       }
-      if (openResult === 'opened') expect(openedReceipts).toEqual(['first-deploy']);
+      // The Overview stays where the person is: its banner offers the receipt, the page never jumps there (R17-D7).
+      if (openResult === 'opened') expect(openedReceipts).toEqual([]);
       else expect(screen.findByTestId('project-deployments.outcome.refused.other')).not.toBeNull();
       if (openResult === 'unsupported-forge') {
         expect(openedReceipts).toEqual([]);
@@ -753,7 +754,8 @@ it.each(['succeeded', 'refused'] as const)('continues settled Reinstall into ord
     await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
     await waitForHomeGovernance(() => {
       expect(effects).toEqual(['link', 'seal', 'review', 'deploy']);
-      expect(receipts).toEqual(settlement === 'succeeded' ? ['reinstall-receipt'] : []);
+      // The Overview never opens the receipt by itself after its Deploy (R17-D7).
+      expect(receipts).toEqual([]);
     });
     if (settlement === 'refused') {
       // A lagging Environment read can still carry the pre-relink notice. Keep the new Deploy remedy visible.

@@ -149,8 +149,10 @@ export function DeploymentBackupSectionActions(props: Readonly<{
     <View style={styles.sectionActions}>
       {props.onRestore ? <SectionActionButton testID={`${props.testID}.restore`} icon="clock-counter-clockwise"
         title={t('projects.deployments.restoreAction')} onPress={props.onRestore} /> : null}
-      {operations.run ? <SectionActionButton testID={`${props.testID}.run`} title={t('projects.deployments.backupRun')}
-        disabled={operations.change.running} loading={operations.backingUp} onPress={operations.run} /> : null}
+      {/* While it runs, the button says so in words rather than turning into a bare spinner (R17-D9). */}
+      {operations.run ? <SectionActionButton testID={`${props.testID}.run`}
+        title={operations.backingUp ? t('projects.deployments.checksBackingUp') : t('projects.deployments.backupRun')}
+        disabled={operations.change.running} onPress={operations.run} /> : null}
       {items.length > 0 ? (
         <DropdownMenu open={open} onOpenChange={setOpen} items={items} matchTriggerWidth={false} placement="bottom"
           popoverAccessibilityLabel={t('projects.deployments.dataBackups')}
@@ -745,11 +747,6 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     {destination.definition.locality === 'local' ? <Item mode="info" title={t('projects.deployments.settingsSections.setupLocalWarning')}
       subtitle={retention?.kind === 'keepEverything' ? t('projects.deployments.settingsSections.setupLocalGrowth') : undefined} /> : null}
     {/* Free space belongs to a disk (a Machine folder, an SFTP host); an object-storage bucket has none to read. */}
-    {/* A folder on this Machine has nothing to say about free space until there is a directory to read it for (R16-D7);
-        a disk elsewhere keeps pointing to the Machine that owns it. */}
-    {!result?.review?.capacity && (anotherMachine || (destination.definition.resticTransport !== 's3'
-      && (destination.definition.locality !== 'local' || (typeof fields.path === 'string' && fields.path.trim() !== '')))) ? <BackupPathCapacityReview
-      capacity={pathCapacity.capacity} machine={pathCapacity.machineName || props.machine} testID={id} /> : null}
     {anotherMachine ? <>
       <SessionMachineField serverId={serverId} testID={`${id}.receiver`} machines={receiverMachines}
         title={t('projects.deployments.settingsSections.setupReceiverMachine')}
@@ -772,6 +769,12 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     </> : <ActionInputFields fields={configFields} input={fields} editable={!locked} busy={busy}
       resolveFieldOptions={destinationFieldOptions} resolveFieldTestID={field => `${id}.${field.path}.input`}
       onPatch={patch => { setFields(current => ({ ...current, ...patch })); setResult(null); }} />}
+    {/* Free space reads under the folder it is for, before Test as after it, so it never moves (R17-D9). A folder on
+        this Machine has nothing to say about free space until there is a directory to read it for (R16-D7);
+        a disk elsewhere keeps pointing to the Machine that owns it. */}
+    {!result?.review?.capacity && (anotherMachine || (destination.definition.resticTransport !== 's3'
+      && (destination.definition.locality !== 'local' || (typeof fields.path === 'string' && fields.path.trim() !== '')))) ? <BackupPathCapacityReview
+      capacity={pathCapacity.capacity} machine={pathCapacity.machineName || props.machine} testID={id} /> : null}
     {/* What Test found reads under the place it tested, where the person is looking (R15-D3). */}
     <DeploymentBackupConfigurationResult result={result} machine={pathCapacity.machineName || props.machine} testID={id}
       capacity={result?.review?.capacity ? pathCapacity.capacity : undefined} />

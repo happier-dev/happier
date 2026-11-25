@@ -31,6 +31,7 @@ import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Status } from '@happier-dev/plugin-ui';
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
+import { useDeploymentSavedChecks } from './useDeploymentSavedChecks';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
@@ -481,6 +482,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             />
           ) : undefined}
         >
+          {/* The checks the person saved for this Environment are listed whether or not it has deployed yet (R17-D3). */}
+          <SavedCheckRows {...props} testID={section('checks-alerts')} />
           {/* Health is what deployed services report; where nothing runs there is nothing to read yet. */}
           {detail.runtimeTargetLink?.activeDeploymentId ? (
             <ChecksRows {...props} testID={section('checks-alerts')} />
@@ -611,6 +614,18 @@ type SectionProps = Readonly<{
 }>;
 
 /** Native deployed-service health; saved checks and alerts use the source editor above. */
+/** The Environment's saved checks (their owner's read), one row each: what it checks and where. */
+function SavedCheckRows(props: SectionProps) {
+  const { environment } = props.detail;
+  const saved = useDeploymentSavedChecks(props.lifetime ?? null, environment.id,
+    props.demand.mounted && props.demand.visible, props.environmentTitle(environment.id) ?? undefined);
+  return <>{saved.rows.map(row => (
+    <Item key={`${row.source.automationId}:${row.source.triggerId}:${row.check.checkId}`}
+      testID={`${props.testID}.saved.${row.check.checkId}`} title={row.title}
+      subtitle={row.targetLabel ?? undefined} mode="info" />
+  ))}</>;
+}
+
 function ChecksRows(props: SectionProps) {
   const { environment, runtimeTargetLink } = props.detail;
   const checks = useDeploymentEnvironmentChecks(props.controller, environment.id, props.demand);

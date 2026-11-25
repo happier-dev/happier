@@ -461,7 +461,7 @@ export const deploymentSettingsTranslations = {
     setupAnotherMachine: "Another Machine",
     setupReceiverMachine: "Destination Machine",
     setupLocalWarning: "On this Machine · not an off-site copy",
-    setupLocalGrowth: "Every backup is kept, so this disk can fill up.",
+    setupLocalGrowth: "This disk can fill up.",
     keepEverythingNote: "With every count at 0, all backups are kept.",
     setupCapacityKnown: "Free space",
     setupCapacityUnknown: "Free space unavailable",

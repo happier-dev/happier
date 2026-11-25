@@ -19316,7 +19316,7 @@ settingsSession: {
         emptyTitle: "Metti questo progetto su internet",
         autoSectionTitle: "Suggerimenti di configurazione",
         autoAgentTitle: "Agente per i suggerimenti di app",
-        emptyBody: "Un ambiente è un luogo in cui gira questo progetto, come Staging su una delle tue macchine. Aggiungine uno qui o chiedi a un agente di questo progetto di configurarlo; approvi prima che venga distribuito qualcosa.",
+        emptyBody: "Un ambiente è un luogo in cui gira questo progetto, come Staging su una delle tue Macchine. Distribuisci un’app per aggiungere il primo; approvi prima di ogni distribuzione.",
         noSourceTitle: "Salva questo progetto come sorgente per distribuirlo",
         noSourceBody: "Gli ambienti appartengono alla sorgente del progetto, così ogni checkout e ogni collega vede gli stessi.",
         allTitle: "Tutti i deployment",

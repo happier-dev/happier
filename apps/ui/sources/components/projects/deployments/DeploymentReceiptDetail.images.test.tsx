@@ -392,6 +392,47 @@ describe('Receipt → failed rollback (PAGE-ACCEPT-85 D11)', () => {
   });
 });
 
+describe('Receipt → while a rollback runs (R17-D7)', () => {
+  it('says what is rolling back, to which version, in place of a bare spinner, and keeps the receipt it came from', async () => {
+    const base = createDeploymentReceiptDetailV1();
+    const failure = { code: 'deployment_failed_unclassified', phase: 'activate' as const };
+    const content = DeploymentOwnServerContentV1Schema.parse({ ...base.content, failure });
+    const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+      id: 'failed-rollback', state: 'failed', operation: 'rollback', rollbackOfDeploymentId: 'retained',
+      predecessorDeploymentId: 'retained', requestedAtMs: 2000, startedAtMs: 2001, settledAtMs: 2002 }), content });
+    const detail = createDeploymentEnvironmentDetailV1();
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: detail }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    // The Action owner's rollback is the boundary; it has not answered yet.
+    const rollback = vi.fn(() => new Promise<never>(() => {}));
+    const screen = await renderScreen(
+      <AccountNoticeInvestigationBoundary>
+        <DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+          deploymentId="failed-rollback" environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
+          accountId={scope.accountId} serverId={scope.serverId} readLogs={null} onBack={() => {}} rollback={rollback as never}
+          cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }}
+          onOpenReceipt={() => {}} />
+      </AccountNoticeInvestigationBoundary>,
+    );
+    try {
+      await act(async () => {
+        await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.receipt.outcome.failed'), node => node !== null);
+      });
+      expect(screen.findByTestId('project-deployments.receipt.rollingBack')).toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.action');
+      const banner = screen.findAll(node => node.props.testID === 'project-deployments.receipt.rollingBack'
+        && node.props.title !== undefined)[0];
+      expect(String(banner?.props.title ?? '')).toMatch(/^Rolling back to \S+/);
+      // The receipt it came from stays on screen beneath it.
+      expect(screen.findByTestId('project-deployments.receipt.outcome.failed')).not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});
+
 describe('Environment Build Logs', () => {
   it('opens and retries the exact Receipt with no Environment or history reads', async () => {
     const detail = createDeploymentEnvironmentDetailV1();

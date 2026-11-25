@@ -19420,7 +19420,7 @@ settingsSession: {
         emptyTitle: "Coloque este projeto na internet",
         autoSectionTitle: "Sugestões de configuração",
         autoAgentTitle: "Agente para sugestões de app",
-        emptyBody: "Um ambiente é um lugar onde este projeto roda, como Staging em uma das suas máquinas. Adicione um aqui ou peça a um agente deste projeto para configurá-lo; você aprova antes de qualquer implantação.",
+        emptyBody: "Um ambiente é um lugar onde este projeto roda, como Staging em uma das suas Máquinas. Implante um app para adicionar o primeiro; você aprova antes de qualquer implantação.",
         noSourceTitle: "Salve este projeto como fonte para implantá-lo",
         noSourceBody: "Os ambientes pertencem à fonte do projeto, então cada checkout e cada colega vê os mesmos.",
         allTitle: "Todas as implantações",

@@ -19139,7 +19139,7 @@ settingsSession: {
         emptyTitle: "Udostępnij ten projekt w internecie",
         autoSectionTitle: "Propozycje konfiguracji",
         autoAgentTitle: "Agent do propozycji aplikacji",
-        emptyBody: "Środowisko to miejsce, w którym działa ten projekt, np. Staging na jednej z twoich maszyn. Dodaj je tutaj albo poproś agenta w tym projekcie o konfigurację; zatwierdzasz, zanim cokolwiek zostanie wdrożone.",
+        emptyBody: "Środowisko to miejsce, w którym działa ten projekt, na przykład Staging na jednej z Twoich Maszyn. Wdróż aplikację, aby dodać pierwsze; zatwierdzasz, zanim cokolwiek zostanie wdrożone.",
         noSourceTitle: "Zapisz ten projekt jako źródło, aby go wdrożyć",
         noSourceBody: "Środowiska należą do źródła projektu, więc każdy checkout i każdy członek zespołu widzi te same.",
         allTitle: "Wszystkie wdrożenia",

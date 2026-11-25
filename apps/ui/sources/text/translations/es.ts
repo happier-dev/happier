@@ -19314,7 +19314,7 @@ settingsSession: {
         emptyTitle: "Pon este proyecto en internet",
         autoSectionTitle: "Sugerencias de configuración",
         autoAgentTitle: "Agente para sugerencias de apps",
-        emptyBody: "Un entorno es un lugar donde se ejecuta este proyecto, como Staging en una de tus máquinas. Añade uno aquí o pide a un agente de este proyecto que lo configure; apruebas antes de que se despliegue nada.",
+        emptyBody: "Un entorno es un lugar donde se ejecuta este proyecto, como Staging en una de tus Máquinas. Despliega una app para añadir el primero; apruebas antes de que se despliegue nada.",
         noSourceTitle: "Guarda este proyecto como fuente para desplegarlo",
         noSourceBody: "Los entornos pertenecen a la fuente del proyecto, así que cada checkout y cada compañero ve los mismos.",
         allTitle: "Todos los despliegues",

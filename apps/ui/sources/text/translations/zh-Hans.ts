@@ -18934,7 +18934,7 @@ settingsSession: {
         emptyTitle: "把这个项目发布到互联网",
         autoSectionTitle: "应用配置推荐",
         autoAgentTitle: "应用推荐代理",
-        emptyBody: "环境是这个项目运行的地方，比如在你的某台机器上运行的 Staging。在这里添加一个，或让此项目中的智能体来设置；部署之前由你批准。",
+        emptyBody: "环境是这个项目运行的地方，比如你某台机器上的 Staging。部署一个应用来添加第一个环境；任何部署前都需要你批准。",
         noSourceTitle: "将此项目保存为源后即可部署",
         noSourceBody: "环境属于项目源，因此每个检出和每位队友看到的都是同一组环境。",
         allTitle: "所有部署",

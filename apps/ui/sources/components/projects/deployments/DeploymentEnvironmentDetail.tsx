@@ -201,6 +201,8 @@ const noEnvironmentName = () => null;
 const readMachineOnline = (machine: Machine | null) =>
   machine ? isMachineOnline(machine) : null;
 const RECENT_COUNT = 5;
+/** The Overview's Deploy opens no receipt by itself; its banner's Open receipt does (R17-D7). */
+const STAY_ON_OVERVIEW = () => {};
 const OVERVIEW: DeploymentEnvironmentDestinationV1 = Object.freeze({
   tab: 'overview',
   section: null,
@@ -276,7 +278,9 @@ export const DeploymentEnvironmentDetail = React.memo(
     const pinned = usePinnedEnvironmentIds(props.serverId);
     const {
       running: deploying, outcome, reviewPending, press, banner,
-    } = useDeploymentPress(props.review, props.onOpenReceipt);
+    // The Overview stays where the person pressed: the Deploying banner offers its receipt, and the page never jumps
+    // to it on its own when the Action answers (R17-D7).
+    } = useDeploymentPress(props.review, STAY_ON_OVERVIEW);
     const environment = useDeploymentEnvironment(
       props.controller,
       props.environmentId,
