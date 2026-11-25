@@ -686,9 +686,9 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))));
 });
 
-function token(kind: 'account' | 'terminal' = 'account') {
+function token(kind: 'account' | 'terminal' = 'account', accountId = 'bob') {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
-  return `${encode({ alg: 'none' })}.${encode({ sub: 'bob', tokenEpoch: 7, provenance: {
+  return `${encode({ alg: 'none' })}.${encode({ sub: accountId, tokenEpoch: 7, provenance: {
     v: 1, kind, authority: kind === 'account' ? 'present_user' : 'account_automation',
   } })}.signature`;
 }
@@ -1167,17 +1167,28 @@ it('spends the same contributed requester custody through CLI and native HTTP po
 });
 
 describe('ordinary CLI requester Account custody on the existing Action carrier', () => {
-  it.each(['review.start', 'review.new_round', 'review.prepare_round', 'review.settle_round'] as const)(
-    'retains the admitted Review record root %s at the Artifact HTTP boundary', async actionId => {
+  it.each(['review.start', 'review.new_round', 'review.prepare_round', 'review.settle_round', 'action.invoke'] as const)(
+    'uses the admitted requester for Review records under %s at the Artifact HTTP boundary', async actionId => {
       await withConfiguredDaemonTestHome({ prefix: 'review-record-root-' }, async () => {
         const observed: Array<Readonly<{ path: string; effect: unknown; authorization: unknown; signature: unknown }>> = [];
         const artifacts = fastify();
+        const requesterToken = token();
+        const contributed = actionId === 'action.invoke';
+        artifacts.get('/v1/artifacts/:artifactId', async (request, reply) => {
+          if (!contributed || request.headers.authorization !== `Bearer ${requesterToken}`) {
+            return reply.code(401).send({ error: 'invalid_token' });
+          }
+          return reply.code(404).send({ error: 'artifact_not_found' });
+        });
         // Home authorization is covered by its server composed suite. This HTTP
         // boundary returns the ordinary missing-record response after observing
         // the real caller's signed JSON frame through its canonical decoder.
         artifacts.post('/v1/artifacts/:artifactId', async (request, reply) => {
           const frame = decodeExternalActionHttpBodyV1(request.body);
           if (!frame) throw new Error('Expected signed Artifact read frame');
+          if (contributed) {
+            return reply.code(401).send({ error: 'invalid_token', authorizationRefusal: 'verification_purpose' });
+          }
           observed.push({ path: request.url, effect: frame.headers['x-happier-action-effect'],
             authorization: frame.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER],
             signature: frame.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER] });
@@ -1205,7 +1216,8 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
             serverId, serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, target: root.binding.target,
             installationId: root.binding.installationId, privateKey: target.privateKey, rootAdmitted: true });
           if (!authorization?.requesterHttpProjection) throw new Error('Expected Review requester HTTP projection');
-          const deps = createCliActionDeps({ token: credentials.token, credentials, serverId,
+          const daemonCredentials = contributed ? { ...credentials, token: token('account', 'alice') } : credentials;
+          const deps = createCliActionDeps({ token: daemonCredentials.token, credentials: daemonCredentials, serverId,
             serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '',
             externalActionMachineInstallationId: root.binding.installationId,
             externalActionMachineRequestPrivateKey: target.privateKey });
@@ -1213,12 +1225,52 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
             externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization });
           if (!records) throw new Error('Expected real Review record port');
           expect(await records.read('new-review-record')).toBeNull();
+          if (contributed) return;
           const read = observed.find(request => request.path === '/v1/artifacts/new-review-record');
           expect(read).toMatchObject({ effect: actionId,
             authorization: root.token, signature: expect.any(String) });
         } finally { await requester?.dispose(); await channel.close(); await artifacts.close(); }
       });
     });
+
+  it('refuses contributed Review records without retained requester custody instead of borrowing the installed Account', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'review-record-no-requester-' }, async () => {
+      const bearers: unknown[] = [];
+      const artifacts = fastify();
+      artifacts.get('/v1/artifacts/:artifactId', async (request, reply) => {
+        if (!request.headers.authorization) return reply.code(401).send({ error: 'invalid_token' });
+        bearers.push(request.headers.authorization);
+        return reply.code(404).send({ error: 'artifact_not_found' });
+      });
+      artifacts.post('/v1/artifacts/:artifactId', async (_request, reply) => reply.code(401).send({ error: 'invalid_token' }));
+      await artifacts.ready();
+      try {
+        const target = await home('plain', [], { originalOwnAction: 'action.invoke', artifacts });
+        const serverId = configuration.activeServerId;
+        const custodian: StoredCredentials = { token: token('account', 'alice'), encryption: null, credentialProvenance: 'stored_session' };
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-contribution', binding: {
+          accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 7 },
+          accountEncryptionMode: 'plain', serverIdentityId: homeIdentityId, machineId: 'alice-machine',
+          installationId: 'alice-installation', actionId: 'action.invoke', requestId: 'review-record-no-requester',
+          requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'alice-machine' },
+        } });
+        const projected = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
+          serverId, serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, target: root.binding.target,
+          installationId: root.binding.installationId, privateKey: target.privateKey, rootAdmitted: true });
+        const deps = createCliActionDeps({ token: custodian.token, credentials: custodian, serverId,
+          serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '',
+          externalActionMachineInstallationId: root.binding.installationId,
+          externalActionMachineRequestPrivateKey: target.privateKey });
+        for (const authorization of projected ? [root, projected] : [root]) {
+          const records = deps.reviewRecords?.({ surface: 'cli', authority: 'present_user',
+            externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization });
+          if (!records) throw new Error('Expected real Review record port');
+          await expect(records.read('new-review-record')).rejects.toBeDefined();
+        }
+        expect(bearers).not.toContain(`Bearer ${custodian.token}`);
+      } finally { await artifacts.close(); }
+    });
+  });
 
   it.each(['same', 'installation', 'target', 'account', 'home', 'automation', 'api-token'] as const)('reuses disclosed requester custody only for its exact installed target (%s)', async mismatch => {
     await withConfiguredDaemonTestHome({ prefix: 'ordinary-child-custody-' }, async () => {

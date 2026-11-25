@@ -36,7 +36,7 @@ import { createCombinedMachineSetupActionDeps, createMachineSetupApplyDispatcher
 import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { importCliSavedSecretPasskeysForOperation } from './cliActionDeps/browserProfileLogins';
@@ -1738,8 +1738,13 @@ export function createCliActionDeps(params: CliActionDepsParams,
     scmActionExecute: executeSessionBoundScmAction,
     ...executionRunActionDeps,
     ...(roleArtifactStore ? { reviewRecords: (context: ActionExecutorContext) => {
+      const binding = context.externalActionExecutionAuthorization?.binding;
+      // Contributed Review records use the native effect so the transport can select requester Account custody.
+      const effectActionId = binding?.actionId === ACTION_INVOKE_ACTION_ID_V1 && 'authentication' in binding
+        ? REVIEW_START_ACTION_ID_V1
+        : binding?.actionId ?? REVIEW_START_ACTION_ID_V1;
       const authorizationHeaders = (request: Readonly<{ method: string; path: string; body?: unknown }>) =>
-        resolveAccountStorageHeaders(context, context.externalActionExecutionAuthorization?.binding.actionId ?? 'review.start', request);
+        resolveAccountStorageHeaders(context, effectActionId, request);
       const invoke = <T>(operation: () => Promise<T>) => params.serverHttpBaseUrl
         ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
       return createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport({
