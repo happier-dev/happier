@@ -541,6 +541,8 @@ describe('useWorkflowActionCatalog', () => {
             await waitForHomeGovernance(() => expect(requested).toBe(true));
             expect(screen.findByTestId(command)).toBeNull();
             expect(screen.findByTestId(webhook)).toBeNull();
+            expect(screen.getTextContent()).toContain('common.loading');
+            expect(screen.getTextContent()).not.toContain('selectionList.emptyMatch');
             await act(async () => { gate.resolve(); });
             await waitForHomeGovernance(() => {
                 expect(screen.findByTestId(command)).not.toBeNull();

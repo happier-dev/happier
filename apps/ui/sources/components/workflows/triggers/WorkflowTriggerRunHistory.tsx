@@ -52,8 +52,10 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     const empty = read.rows.length === 0 && read.status !== 'failed';
     // An empty History with a future occurrence says both in one sentence (07 S4), so the next run isn't said twice.
     const emptyWithNext = empty && read.status !== 'loading' && nextRunAt !== null && nextRunAt > nowMs;
-    // A due occurrence held by an earlier open run links to that run.
-    const holdPresentation = presentScheduleHold(props.hold);
+    // Use the same admitted Run as the history row when it has loaded since the trigger snapshot.
+    const heldRunId = props.hold && 'runId' in props.hold ? props.hold.runId : undefined;
+    const holdingRun = heldRunId === undefined ? undefined : read.rows.find(row => row.id === heldRunId)?.summary;
+    const holdPresentation = presentScheduleHold(props.hold, holdingRun);
     const held = holdPresentation !== null && (nextRunAt === null || nextRunAt <= nowMs) ? holdPresentation : null;
     const router = useRouter();
     const holdingRunId = held?.runId ?? null;

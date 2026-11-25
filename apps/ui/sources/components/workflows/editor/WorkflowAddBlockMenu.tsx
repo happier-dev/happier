@@ -257,10 +257,12 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             </Text> } : {}),
             onSelect: spec.projectionError ? undefined : add({ kind: 'action', actionId: spec.id }),
         });
+        const actionDiscoveryLabel = catalog.phase === 'loading' ? t('common.loading') : undefined;
         const actionsStep: SelectionListStep = {
             id: 'add-action',
             title: t('workflows.page.blocks.menuAction'),
             inputPlaceholder: t('workflows.page.blocks.actionSearch'),
+            emptyStateLabel: actionDiscoveryLabel,
             sections: [
                 { kind: 'static', id: 'host-actions', title: t('workflows.actionTitles.host'),
                     options: catalog.specs.filter((spec) => !spec.plugin).map(actionOption) },
@@ -301,6 +303,7 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                 id: 'verb-root',
                 title: t('workflows.sentence.verbs.title'),
                 inputPlaceholder: t('common.search'),
+                emptyStateLabel: actionDiscoveryLabel,
                 searchAcrossSections: true,
                 sections: [
                     { kind: 'static', id: 'verbs', options: [
@@ -321,6 +324,7 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             id: 'add-root',
             title: t('workflows.editor.add'),
             inputPlaceholder: t('common.search'),
+            emptyStateLabel: actionDiscoveryLabel,
             searchAcrossSections: true,
             sections: [
                 {

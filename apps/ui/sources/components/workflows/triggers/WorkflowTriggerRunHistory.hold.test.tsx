@@ -10,6 +10,7 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 // Only Home HTTP/credentials and navigation leave the real path.
@@ -147,6 +148,28 @@ it('says a due schedule waits for its interrupted previous run and opens that ru
       serverId,
     ),
   );
+});
+
+it('updates the hold copy from the same Run admitted by History after the trigger snapshot', async () => {
+  home.answer(serverId, route, {
+    body: { runs: [createWorkflowRunSummaryFixture({
+      id: 'run-held', ownerAccountId: 'account-a', state: 'interrupted',
+      revision: 2, origin: { kind: 'automation', automationId: 'hourly' },
+    })], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} },
+  });
+  const screen = await renderScreen(
+    <WorkflowTriggerRunHistory
+      automationId="hourly"
+      triggerId={triggerId}
+      nextRunAt={Date.now() - 60_000}
+      hold={{ triggerId, reason: 'open_occurrence', runId: 'run-held', runState: 'running' }}
+    />,
+  );
+  await waitForHomeGovernance(() =>
+    expect(screen.findByTestId('session-work-trigger-history-row:run-held')).not.toBeNull(),
+  );
+  expect(screen.getTextContent()).toContain(t('workflows.triggers.row.heldByInterruptedRun'));
+  expect(screen.getTextContent()).not.toContain(t('workflows.triggers.row.heldByRun'));
 });
 
 it('shows a pending occurrence when no Run holds the schedule', async () => {

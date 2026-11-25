@@ -1,4 +1,5 @@
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { t } from '@/text';
 
@@ -40,9 +41,11 @@ export function readSetScheduleHold(
 
 export function presentScheduleHold(
   hold: ScheduleHold | null | undefined,
+  holdingRun?: Pick<WorkflowRunSummaryV1, 'id' | 'state'> | null,
 ): ScheduleHoldPresentation | null {
   if (!hold || !('runId' in hold)) return null;
-  const interrupted = hold.runState === 'interrupted';
+  const state = holdingRun?.id === hold.runId ? holdingRun.state : hold.runState;
+  const interrupted = state === 'interrupted';
   return {
     text: t(
       interrupted
