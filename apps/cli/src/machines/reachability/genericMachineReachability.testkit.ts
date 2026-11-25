@@ -1153,7 +1153,7 @@ export function createGenericHostNativeBoundary(params: Readonly<{
     }
     if (command.executable.replace(/\\/gu, '/').split('/').at(-1) === 'tailscale') {
       if (args[0] === 'status') return ok(JSON.stringify({ BackendState: tailscaleState, HaveNodeKey: true, TUN: true,
-        TailscaleIPs: ['100.92.0.7'], Self: { DNSName: 'host.example.ts.net.' },
+        TailscaleIPs: ['100.92.0.7'], Self: { DNSName: 'host.example.ts.net.', Online: tailscaleState === 'Running' },
         CurrentTailnet: { Name: 'example.ts.net', MagicDNSEnabled: true } }));
       if (args[0] === 'switch') {
         expect(args).toEqual(['switch', '--list', '--json']);
