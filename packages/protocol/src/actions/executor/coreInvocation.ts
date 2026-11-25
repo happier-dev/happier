@@ -27,6 +27,8 @@ export type PreparedCoreAdmission = Readonly<{
     sessionReadSetFailures?: readonly import('../sessionTargetV1.js').ActionSessionReadSetFailureV1[];
     /** Core-resolved review classification, including contextual overrides; never caller input. */
     safety?: ActionSpec['safety'];
+    /** Selected native Review profile facts, shared by policy and dispatch. */
+    reviewEngineAdmission?: import('./review/engineAdmission.js').ReviewEngineAdmissionV1;
     /** Exact host-derived scope for this admitted Action; never caller context or persisted. */
     workflowSessionScope?: WorkflowSessionScopeV1 | null;
     /** Private parent-child admission survives preparation; never caller-authored or persisted. */

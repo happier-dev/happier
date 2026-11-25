@@ -36,6 +36,7 @@ import { SessionStatusResultSchema } from '../../../sessions/control/contract.js
 import { AgentsBackendsListOutputSchema } from '../../agentBackendInventory.js';
 import { buildQualifiedPluginContributionKey } from '../../../plugins/contributionIdentity.js';
 import { reviewStartExecutionRunCompletion } from '../../specs/executionRunCompletion.js';
+import { readReviewStartEngineInventoryV1, selectReviewEngineItemV1, type ReviewEngineAdmissionV1 } from './engineAdmission.js';
 
 export { reviewScopeForInput } from '../../../reviews/reviewEngines.js';
 
@@ -234,6 +235,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
 }
 
 export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionId' | 'parsed' | 'ctx' | 'data' | 'deps'> & Readonly<{
+  reviewEngineAdmission?: ReviewEngineAdmissionV1;
   workflowSessionScope: WorkflowSessionScopeV1 | null;
   executeHostChild: (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) => Promise<ActionExecuteResult>;
   startExecutionRunWithSelection: (sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0], input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1], opts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2], context: ActionExecutorContext) => ReturnType<NonNullable<ActionExecutorDeps['executionRunStart']>>;
@@ -332,13 +334,6 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             comparisonId: reviewInput.comparisonId, ...(sessionId ? { sessionId } : {}) } } : undefined;
         const reviewers = reviewInput.steps?.flatMap(step => step.reviewers) ?? reviewInput.reviewers;
         const transcriptReviewers = reviewers.filter(reviewer => reviewer.kind !== 'person' && reviewer.includeSessionTranscript === true);
-        const profileSelections = reviewers.flatMap((selection, index) => {
-          if (selection.kind !== 'engine') return [];
-          const engineInput = { ...reviewInput, ...selection,
-            ...(!workflowComposition ? ctx.reviewReviewerLaunchInputs?.[index] : undefined) };
-          return engineInput.profileId ? [{ engineId: selection.engineId, profileId: engineInput.profileId,
-            ...(engineInput.profileSourceCustody ? { profileSourceCustody: engineInput.profileSourceCustody } : {}) }] : [];
-        });
         const workflowReviewRound = reviewInput.reviewRoundSettlement === 'workflow' ? reviewInput.reviewRound : undefined;
         const workflowReviewerId = reviewInput.reviewReviewerId;
         const completedLaunchRefusals = (results: readonly Readonly<{ key: string; ok: boolean; errorCode?: string }>[]) => ({
@@ -346,41 +341,24 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           result: reviewStartExecutionRunCompletion.terminal({ intent: 'review', sessionId, results, reviewRound: workflowReviewRound }, []),
         });
         const readReviewEngineInventory = async (dispatchOptions = opts) => {
-          try {
-            const inventory = await deps.reviewEnginesList!({
-              sessionId,
-              ...(detached && dispatchOptions?.targetMachineId ? { machineId: dispatchOptions.targetMachineId } : {}),
-              includeDisabled: false,
-              engineIds: [...new Set(reviewers.flatMap(selection => selection.kind === 'engine' ? [selection.engineId] : []))],
-              ...(profileSelections.length > 0 ? { profileSelections } : {}),
-              scope: reviewScopeForInput(reviewInput),
-            }, ctx);
-            return { ok: true as const, inventory };
-          } catch (error) {
-            const refusal = readActionFailureEnvelope(error);
-            if (!workflowReviewRound || !workflowReviewerId || !refusal || refusal.errorCode === 'action_failed'
-              || isActionOutcomeUnknownErrorCodeV1(refusal.errorCode) || ctx.signal?.aborted) throw error;
-            // Inventory ran before any native reviewer start.
-            return { ok: false as const, result: completedLaunchRefusals([
-              { key: workflowReviewerId, ok: false, errorCode: refusal.errorCode },
-            ]) };
-          }
+          return readReviewStartEngineInventoryV1(deps, reviewInput, ctx, dispatchOptions?.targetMachineId);
         };
-        let reviewEngineInventory: unknown;
+        let reviewEngineInventory: unknown = inv.reviewEngineAdmission?.inventory;
         if (transcriptReviewers.some(reviewer => reviewer.kind === 'engine')) {
           if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const inventory = await readReviewEngineInventory();
-          if (!inventory.ok) return inventory.result;
-          reviewEngineInventory = inventory.inventory;
+          if (reviewEngineInventory === undefined || reviewEngineInventory === null) {
+            const inventory = await readReviewEngineInventory();
+            if (!inventory.ok) return inventory.result;
+            reviewEngineInventory = inventory.inventory;
+          }
           const defaultOptions = readReviewNarratorOptions(reviewEngineInventory);
           const profileOptions = readReviewNarratorOptions({ items: readRecord(reviewEngineInventory).selectionItems });
           if (reviewers.some((selection, index) => {
             if (selection.kind !== 'engine' || selection.includeSessionTranscript !== true) return false;
             const engineInput = { ...reviewInput, ...selection,
               ...(!workflowComposition ? ctx.reviewReviewerLaunchInputs?.[index] : undefined) };
-            const options = engineInput.profileId ? profileOptions : defaultOptions;
-            return options.find(option => option.value === normalizeExecutionBackendOptionValue(selection.engineId)
-              && (!engineInput.profileId || option.profileId === engineInput.profileId))?.capabilities.sessionTranscript !== true;
+            return selectReviewEngineItemV1(selection.engineId, engineInput.profileId,
+              defaultOptions, profileOptions)?.capabilities.sessionTranscript !== true;
           })) return { ok: false, errorCode: 'invalid_input', error: 'The selected review profile does not accept ordinary instructions.' };
         }
         const transcript = transcriptReviewers.length > 0 && reviewInput.sourceSession
@@ -579,13 +557,9 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         }
         const narratorOptions = readReviewNarratorOptions(reviewEngineInventory);
         const explicitProfileOptions = readReviewNarratorOptions({ items: readRecord(reviewEngineInventory).selectionItems });
-        const selectedReviewEngineItems = new Map(admittedEngineSelections.map(({ reviewerId, selection, engineInput }) => {
-          const backendKey = normalizeExecutionBackendOptionValue(selection.engineId);
-          const options = engineInput.profileId ? explicitProfileOptions : narratorOptions;
-          const item = options.find((option) => option.value === backendKey
-            && (!engineInput.profileId || option.profileId === engineInput.profileId));
-          return [reviewerId, item] as const;
-        }));
+        const selectedReviewEngineItems = inv.reviewEngineAdmission?.selectedItems
+          ?? new Map(admittedEngineSelections.map(({ reviewerId, selection, engineInput }) => [reviewerId,
+            selectReviewEngineItemV1(selection.engineId, engineInput.profileId, narratorOptions, explicitProfileOptions)] as const));
         const narrationRequested = reviewInput.outputs?.includes('walkthrough') === true;
         const narrationPolicy = resolveReviewNarratorPolicy({
           selectedEngineIds: engineSelections.map(entry => entry.reviewerId),

@@ -24,3 +24,8 @@ export function isAgentOrUnresolvedSurface(ctx?: Readonly<{ surface?: ActionExec
   const surface = resolveApprovalSurface(ctx);
   return surface.kind === 'agent' || surface.kind === 'ambiguous';
 }
+
+/** Agent, external MCP and unresolved surfaces share configurable Agent defaults. */
+export function sharesAgentApprovalDefault(surface: ApprovalSurfaceResolution): boolean {
+  return surface.kind !== 'non_agent' || surface.surface === 'mcp';
+}

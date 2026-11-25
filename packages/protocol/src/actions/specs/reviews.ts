@@ -106,6 +106,8 @@ function createReviewActionSpecs(): readonly [
   } satisfies PreNormalizedActionSpec,
   {
     id: REVIEW_NEW_ROUND_ACTION_ID_V1, executionPlacement: 'session', approval: { result: 'optional', flow: 'deferred' },
+    approvalPolicy: { agentDefaultForInput: input => readRecord(input).costConsent === true
+      && ('sessionId' in readRecord(input) || 'target' in readRecord(input)) },
     executionPlacements: ['account', 'session', 'machine'],
     executionPlacementForInput: resolveReviewNewRoundExecutionPlacementForInput,
     requesterAccountContentDemandForInput: input => resolveReviewNewRoundExecutionPlacementForInput(input) === 'machine',

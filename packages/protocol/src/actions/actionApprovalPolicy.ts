@@ -12,7 +12,7 @@ import {
 import { resolveActionApprovalFlow, type ActionApprovalFlow, type ActionApprovalResult } from './actionApprovalMetadata.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput, type ActionSpec } from './actionSpecs.js';
 import { lazyActionSpecArray } from './lazyActionSpecValue.js';
-import { isAgentOrUnresolvedSurface, resolveApprovalSurface, type ApprovalSurfaceResolution } from './actionApprovalSurface.js';
+import { isAgentOrUnresolvedSurface, resolveApprovalSurface, sharesAgentApprovalDefault } from './actionApprovalSurface.js';
 import { readBuiltInSettingDeclarationV1, readBuiltInSettingsPermissionChangingV1 } from './settings/settingsDeclarations.js';
 import { isSettingsDeclarationWriteActionIdV1 } from './settingsDeclarationActionIdsV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
@@ -241,10 +241,6 @@ function requiresDefaultApprovalFloor(
   // Require/Waive preferences are resolved above this floor (owner 2026-10-12/29).
   return sharesAgentApprovalDefault(surface)
     && (policy?.agentDefault !== undefined || policy?.agentDefaultForInput?.(input) === true);
-}
-
-function sharesAgentApprovalDefault(surface: ApprovalSurfaceResolution): boolean {
-  return surface.kind !== 'non_agent' || surface.surface === 'mcp';
 }
 
 /**

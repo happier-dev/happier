@@ -50,12 +50,16 @@ export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHost
 export type { HostReviewedChildV1, HostReviewedParentV1, HostReviewedChildPolicyV1,
   ManagedOpaquePresetCustodianAdmissionV1 } from './executor/deploymentRoleChild.js';
 export { WorkflowApprovedOperationParentV1Schema as HostReviewedParentV1Schema } from './approvedOperationV1.js';
+import { resolveApprovalSurface, sharesAgentApprovalDefault } from './actionApprovalSurface.js';
 export { resolveApprovalSurface } from './actionApprovalSurface.js';
 export { readTeamCredentialApprovalSources } from './specs/teamCredentialApproval.js';
 import { dispatchMachineControls1, dispatchMachineControls2, dispatchMachineControls3 } from './executor/machine/controls.js';
 import { dispatchMachineManaged } from './executor/machine/managed.js';
 import { dispatchAgentsSubagents1, dispatchAgentsSubagents2 } from './executor/agents/subagents.js';
 import { dispatchReviewDispatch1, dispatchReviewDispatch2, reviewScopeForInput } from './executor/review/dispatch.js';
+import { prepareReviewEngineAdmissionV1 } from './executor/review/engineAdmission.js';
+import { isReviewNewRoundRunActionV1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from './actionIds.js';
+import { ExecutionRunActionInputSchema } from './specs/executionRuns.js';
 import { dispatchRunsDispatch1, dispatchRunsDispatch2 } from './executor/runs/dispatch.js';
 import { dispatchAgentsAcp, projectAcpUpsertRefusal } from './executor/agents/acp.js';
 import { dispatchAgentsCatalog } from './executor/agents/catalog.js';
@@ -3724,6 +3728,13 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       ? admittedInput as z.infer<(typeof WidgetInstanceActionInputSchemasV1)['widgets.item.network.set']> : null;
     const widgetNetworkInstance = widgetNetworkChange && widgetSourceRead?.instances
       .find(entry => entry.instance.id === widgetNetworkChange.ref.instanceId)?.instance;
+    const reviewEnginePreparation = existingAdmission?.reviewEngineAdmission
+      ? { ok: true as const, admission: existingAdmission.reviewEngineAdmission }
+      : await prepareReviewEngineAdmissionV1(actionId, admittedInput, deps, ctx);
+    if (reviewEnginePreparation && !reviewEnginePreparation.ok) return reviewEnginePreparation.result;
+    const reviewEngineAdmission = reviewEnginePreparation?.admission;
+    const paidReviewDefault = reviewEngineAdmission?.costConsentRequired === true
+      && sharesAgentApprovalDefault(resolveApprovalSurface(ctx));
     let contextualSafety = existingAdmission?.safety ?? (widgetNetworkChange ? await readWidgetNetworkSafetyV1({ network: widgetNetworkChange.network,
       instance: widgetNetworkInstance || undefined, definitions: deps.widgetDefinitionArtifacts, signal: ctx.signal })
       : visualAdmission?.expandsVisualAuthority ? 'danger' as const
@@ -3998,7 +4009,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         inputRequired,
         ...(approvalScope ? { approvalScope } : {}),
         ...(approvedOperation ? { approvedOperation } : {}),
-        ...(sharedRequesterEffect ? { defaultConfirmation: true } : {}),
+        ...(sharedRequesterEffect || paidReviewDefault ? { defaultConfirmation: true } : {}),
         ...(retainHostOperationApproval ? { retainHostOperationApproval: true } : {}),
         hasSessionActionConfirmation: !!deps.sessionActionConfirmation,
         ...(computerSelection ? { computerConsentGranted: computerSelection.consentGranted } : {}),
@@ -4143,6 +4154,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       ? { safety: contextualSafety ?? spec.safetyForInput?.(admittedInput) ?? spec.safety } : {};
     const retainPreparedAdmission = (input: unknown, context: ActionExecutorContext): PreparedCoreAdmission => ({
       actionId, input, context,
+      ...(reviewEngineAdmission ? { reviewEngineAdmission } : {}),
       ...(sessionReadSetFailures ? { sessionReadSetFailures } : {}),
       ...(contextualSafety ? { safety: contextualSafety } : {}),
       ...reviewClassification,
@@ -4665,6 +4677,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         // Continuations and operations consume every fact already admitted by this owner.
         ...existingAdmission,
         actionId, input: admittedInput, context: ctx,
+        ...(reviewEngineAdmission ? { reviewEngineAdmission } : {}),
         ...(sessionReadSetFailures ? { sessionReadSetFailures } : {}),
         ...(contextualSafety ? { safety: contextualSafety } : {}),
         ...reviewClassification,
@@ -6453,6 +6466,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         return completeActionResult(result);
       }
       const dispatchReviewDispatch2Result = await dispatchReviewDispatch2({ actionId, parsed, ctx, executeHostChild, data, deps, startExecutionRunWithSelection,
+        reviewEngineAdmission,
         workflowSessionScope: workflowSessionScope ?? null });
       if (dispatchReviewDispatch2Result !== null) return dispatchReviewDispatch2Result;
       const dispatchAgentsSubagents1Result = await dispatchAgentsSubagents1({ actionId, data, parsed, ctx, deps, startExecutionRunWithSelection });
@@ -8510,6 +8524,17 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     inheritedWorkflowSessionScope?: CoreOptions['workflowSessionScope'],
     onEffectDispatch?: CoreOptions['onEffectDispatch'],
   ): Promise<PrivatePrepareResult> => {
+    // Public Run aliases share the semantic Action's admission and preferences.
+    // Its private host child still dispatches the retained Run without recursion.
+    if (!hostInternal && isReviewNewRoundRunActionV1(actionId, readRecord(input).actionId)) {
+      const native = ExecutionRunActionInputSchema.safeParse(input);
+      if (native.success) {
+        const sessionId = resolveSessionIdFromInput(native.data, context ?? {});
+        actionId = REVIEW_NEW_ROUND_ACTION_ID_V1;
+        input = { ...readRecord(native.data.input), runId: native.data.runId,
+          ...(sessionId ? { sessionId } : { target: { kind: 'detached' } }) };
+      }
+    }
     const normalizedContext = normalizeActionCallerContext(context ?? {});
     if (!normalizedContext) return settlePrepareResult(actionId, {
       ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters',
