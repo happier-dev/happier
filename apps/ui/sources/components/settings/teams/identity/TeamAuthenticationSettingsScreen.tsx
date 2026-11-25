@@ -270,14 +270,10 @@ const AuthorizedAuthenticationContent = React.memo(
           <ItemGroup
             title={t('teams.authentication.connectionsSection')}
             description={t('teams.authentication.connectionsDescription')}
+            action={state.kind === 'loading' ? <HeldSectionAction kind="connection" /> : undefined}
           >
             {state.kind === 'loading' ? (
-              <ItemLoadStateRows
-                testID="team-authentication-loading"
-                state={{ kind: 'loading' }}
-                {...knownConnectionReserve(props.context.team)}
-                accessibilityLabel={t('common.loading')}
-              />
+              <TeamConnectionsReserve team={props.context.team} />
             ) : (
               <SurfaceStateCard
                 testID="team-authentication-unavailable"
@@ -556,7 +552,7 @@ const DirectorySection = React.memo(function DirectorySection(
           title={t('teams.authentication.directory.setup.add')}
           onPress={openDirectory}
         />
-      ) : undefined}
+      ) : state.kind === 'loading' ? <HeldSectionAction kind="directory" /> : undefined}
     >
       <SettingAnchor setting={TEAM_AUTHENTICATION_SETTINGS.settings.directory}>
         {state.kind === 'loading' ? (
@@ -809,18 +805,51 @@ const AuthenticationFacts = React.memo(function AuthenticationFacts(
 });
 
 /**
- * The connections the Team summary proves exist: an "Only these" policy names each accepted Team connection. The
- * count is otherwise unknown, so the reserve holds one row, in the empty line's one-line shape.
+ * The connections the Team summary proves exist: an "Only these" policy names each accepted Team connection, and
+ * each holds a connection row's place. Otherwise the count is unknown and one quiet line waits, in the empty
+ * line's own shape (the same line component), so an empty list replaces it without a move.
  */
-function knownConnectionReserve(team: TeamSectionContext['team']): Readonly<{ rows: number; lines: 1 | 2 }> {
-  const policy = team.policy.authenticationPolicy;
+function TeamConnectionsReserve(props: Readonly<{ team: TeamSectionContext['team'] }>) {
+  const policy = props.team.policy.authenticationPolicy;
   const known = policy?.mode === 'restricted'
     ? policy.accepted.filter((reference) => reference.kind === 'team_connection').length
     : 0;
-  return known > 0 ? { rows: known, lines: 2 } : { rows: 1, lines: 1 };
+  return known > 0 ? (
+    <ItemLoadStateRows
+      testID="team-authentication-loading"
+      state={{ kind: 'loading' }}
+      rows={known}
+      lines={2}
+      accessibilityLabel={t('common.loading')}
+    />
+  ) : (
+    <SurfaceStateCard
+      testID="team-authentication-loading"
+      kind="loading"
+      size="line"
+      title={t('common.loading')}
+      accessibilitySemantics="status"
+    />
+  );
 }
 
 const NO_OP = () => {};
+
+/**
+ * A manager's section "+" while what it adds to is read: it stands where it lands, disabled, so the section's
+ * description does not rewrap when it arrives.
+ */
+function HeldSectionAction(props: Readonly<{ kind: 'connection' | 'directory' }>) {
+  return (
+    <SectionActionButton
+      testID={props.kind === 'connection' ? 'team-authentication-add-connection' : 'team-authentication-directory-add'}
+      icon="plus"
+      title={props.kind === 'connection' ? t('teams.authentication.add.action') : t('teams.authentication.directory.setup.add')}
+      disabled
+      onPress={NO_OP}
+    />
+  );
+}
 
 type AuthenticationLoadingKnown = Parameters<
   NonNullable<React.ComponentProps<typeof TeamSection>['renderLoading']>
@@ -861,7 +890,6 @@ function AuthenticationLoading(known: AuthenticationLoadingKnown) {
   if (held && !held.team.capabilities.manageAuthentication) {
     return <AuthenticationFacts context={held} />;
   }
-  const connections = held ? knownConnectionReserve(held.team) : { rows: 1, lines: 1 as const };
   return (
     <>
       {held ? (
@@ -892,12 +920,14 @@ function AuthenticationLoading(known: AuthenticationLoadingKnown) {
       <ItemGroup
         title={t('teams.authentication.connectionsSection')}
         description={t('teams.authentication.connectionsDescription')}
+        action={held ? <HeldSectionAction kind="connection" /> : undefined}
       >
-        {reserve(connections.rows, connections.lines)}
+        {held ? <TeamConnectionsReserve team={held.team} /> : reserve(1, 1)}
       </ItemGroup>
       <ItemGroup
         title={t('teams.authentication.directory.section')}
         description={t('teams.authentication.directory.overviewSubtitle')}
+        action={held ? <HeldSectionAction kind="directory" /> : undefined}
       >
         {held?.team.directoryMembership === null ? (
           <DirectoryEmptyLine />

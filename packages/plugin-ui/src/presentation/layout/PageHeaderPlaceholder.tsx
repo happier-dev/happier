@@ -4,7 +4,7 @@ import { HappierPageHeader, type HappierPageHeaderProps } from './PageHeader.js'
 import { happierPageTextMetrics } from './pageText.js';
 
 export type HappierPageHeaderPlaceholderProps = Pick<HappierPageHeaderProps,
-  'testID' | 'showTitle' | 'largeTitle' | 'columnMaxWidthPx' | 'renderText' | 'leading' | 'meta'> & Readonly<{
+  'testID' | 'showTitle' | 'largeTitle' | 'columnMaxWidthPx' | 'renderText' | 'leading' | 'meta' | 'renderBack' | 'initialFrameWidthPx'> & Readonly<{
   color: string;
   reducedMotion?: boolean;
 }>;

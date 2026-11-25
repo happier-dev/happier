@@ -404,6 +404,8 @@ describe('TeamMemberEncryptionSection mounted membership history', () => {
         expect(back.findRow('team-member-encryption-status')).not.toBeNull();
         expect(back.getTextContent()).toContain(t('teams.members.encryption.scopeBody'));
         await vi.waitFor(() => expect(collectionGets).toBe(2));
+        // The revalidation is quiet: the last-known row holds still, with no spinner beside its value.
+        expect(back.findRow('team-member-encryption-status')?.props.loading).toBeFalsy();
         await act(async () => { second.resolve(readyPage()); });
         await vi.waitFor(() => expect(back.findRow('team-member-encryption-status')).not.toBeNull());
     });

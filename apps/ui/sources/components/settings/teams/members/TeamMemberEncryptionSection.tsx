@@ -213,9 +213,10 @@ export function TeamMemberEncryptionSection(props: Readonly<{
         if (state.kind === 'ready' || state.kind === 'setup_required') lastSettledEncryptedAccess.set(scopeKey, state);
     }, [scopeKey, state]);
 
-    const discover = React.useCallback(() => {
+    // `quiet`: a return revalidating its last settled result; the row keeps that result still, without a spinner.
+    const discover = React.useCallback((quiet = false) => {
         const currentGeneration = (generation.current += 1);
-        setRefreshing(true);
+        if (!quiet) setRefreshing(true);
         setState((previous) => previous.kind === 'checking' ? CHECKING : previous);
         void (async () => {
             try {
@@ -254,7 +255,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
             setState(UNSUPPORTED);
             return;
         }
-        discover();
+        discover(lastSettledEncryptedAccess.has(scopeKey));
         return () => {
             generation.current += 1;
         };
@@ -336,7 +337,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
                     title={t('teams.unavailable.offline')}
                     detail={t('common.retry')}
                     loading={refreshing}
-                    onPress={discover}
+                    onPress={() => discover()}
                     showChevron={false}
                 />
             </ItemGroup>
@@ -386,7 +387,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
                         testID="team-member-encryption-check-again"
                         title={t('externalSessions.settingsIntegrationActionCheckAgain')}
                         disabled={refreshing}
-                        onPress={discover}
+                        onPress={() => discover()}
                         showChevron={false}
                     />
                 ) : null}
@@ -414,7 +415,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
                     testID="team-member-encryption-recipient-changed"
                     title={t('teams.members.encryption.recipientChanged')}
                     detail={t('common.retry')}
-                    onPress={discover}
+                    onPress={() => discover()}
                     showChevron={false}
                 />
             </ItemGroup>

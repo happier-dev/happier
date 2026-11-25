@@ -208,16 +208,41 @@ function usePageHeaderMeta(facts: readonly PageHeaderMetaFact[] | undefined) {
     })), [facts, theme.colors.text.secondary]);
 }
 
+/**
+ * Where the page's Back goes: into retained phone title chrome, or onto the header's own title line (the gutter or
+ * the line above the title, placed by the shared header). The header and its placeholder both take it from here,
+ * so a header that arrives stands where its placeholder stood, back line included.
+ */
+function usePageHeaderBack(options: Readonly<{ alwaysShowTitle?: boolean; alwaysShowBack?: boolean }>) {
+    const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
+    const chromeShowsBack = useNavigationChromeShowsBack();
+    const setChromeBack = useNavigationTitleChromePublisher()?.setBack;
+    const BackControl = useNavigationBackControl();
+    // An entity page under retained title chrome puts its Back in that bar even on a deep link with no
+    // history, so the identity starts on the same edge however the page was opened (DESIGN-9 P12).
+    const publishesBack = Boolean(setChromeBack && chromeShowsTitle && BackControl && (chromeShowsBack || options.alwaysShowTitle === true || options.alwaysShowBack === true));
+    const renderBack = React.useMemo(
+        () => (BackControl && !chromeShowsBack && !publishesBack ? (style: StyleProp<ViewStyle>) => <BackControl style={[BACK_INK_ON_EDGE_STYLE, style]} /> : null),
+        [BackControl, chromeShowsBack, publishesBack],
+    );
+    React.useEffect(() => {
+        if (!publishesBack || !setChromeBack || !BackControl) return;
+        // A retained phone header must use the same departure owner as its
+        // inline Back, not the Expo stack that only mirrors its URL.
+        setChromeBack(<BackControl style={{}} />);
+        return () => setChromeBack(null);
+    }, [BackControl, publishesBack, setChromeBack]);
+    return renderBack;
+}
+
 export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps) {
     const maxWidth = useLayoutMaxWidth();
     const initialFrameWidthPx = React.useContext(PageFrameWidthsContext)?.frame;
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
-    const chromeShowsBack = useNavigationChromeShowsBack();
     const largeTitle = useNavigationLeavesLargeTitle();
     const publisher = useNavigationTitleChromePublisher();
     const setChromeTitle = publisher?.setTitle;
     const setPageTitle = publisher?.setPageTitle;
-    const setChromeBack = publisher?.setBack;
     React.useEffect(() => {
         setPageTitle?.(props.title);
     }, [props.title, setPageTitle]);
@@ -232,21 +257,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         return () => setChromeTitle(undefined);
     }, [largeTitle, props.alwaysShowTitle, props.navigationTitle, props.title, setChromeTitle]);
     const showTitle = props.alwaysShowTitle === true || largeTitle || !chromeShowsTitle;
-    const BackControl = useNavigationBackControl();
-    // An entity page under retained title chrome puts its Back in that bar even on a deep link with no
-    // history, so the identity starts on the same edge however the page was opened (DESIGN-9 P12).
-    const publishesBack = Boolean(setChromeBack && chromeShowsTitle && BackControl && (chromeShowsBack || props.alwaysShowTitle === true || props.alwaysShowBack === true));
-    const renderBack = React.useMemo(
-        () => (BackControl && !chromeShowsBack && !publishesBack ? (style: StyleProp<ViewStyle>) => <BackControl style={[BACK_INK_ON_EDGE_STYLE, style]} /> : null),
-        [BackControl, chromeShowsBack, publishesBack],
-    );
-    React.useEffect(() => {
-        if (!publishesBack || !setChromeBack || !BackControl) return;
-        // A retained phone header must use the same departure owner as its
-        // inline Back, not the Expo stack that only mirrors its URL.
-        setChromeBack(<BackControl style={{}} />);
-        return () => setChromeBack(null);
-    }, [BackControl, publishesBack, setChromeBack]);
+    const renderBack = usePageHeaderBack({ alwaysShowTitle: props.alwaysShowTitle, alwaysShowBack: props.alwaysShowBack });
     // Navigation owns ordinary page actions; an entity can retain its frequent operations by its identity.
 
     // A phone bar too narrow to draw the primary whole (large text) hands it back: it sits under the title,
@@ -368,8 +379,12 @@ export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(p
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
     const largeTitle = useNavigationLeavesLargeTitle();
     const reducedMotion = useReducedMotionPreference();
+    const renderBack = usePageHeaderBack({ alwaysShowTitle: props.alwaysShowTitle });
+    const initialFrameWidthPx = React.useContext(PageFrameWidthsContext)?.frame;
     return (
         <HappierPageHeaderPlaceholder
+            renderBack={renderBack}
+            initialFrameWidthPx={initialFrameWidthPx}
             color={theme.colors.surface.skeleton}
             reducedMotion={reducedMotion}
             // The same rule as the header that replaces it, so it stands at the same top.

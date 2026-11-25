@@ -175,3 +175,23 @@ describe('PageHeader back control placement', () => {
     });
 });
 
+
+describe('PageHeaderPlaceholder back control placement', () => {
+    it.each([390, 1440])('reserves the back line the arriving header draws at %i px', async (widthPx) => {
+        const { PageHeaderPlaceholder } = await import('@/components/ui/layout/PageHeader');
+        const lineOf = async (element: React.ReactElement) => {
+            const screen = await renderScreen(<NavigationBackChromeProvider control={BackArrow}>{element}</NavigationBackChromeProvider>);
+            layoutPane(screen, widthPx);
+            const placement = {
+                line: screen.root.findAll((node: ReactTestInstance) => typeof node.type === 'string' && node.props.testID === 'page-header-back-line').length,
+                gutter: gutterBacks(screen),
+            };
+            await screen.unmount();
+            return placement;
+        };
+        // An entity page's placeholder and the header that replaces it put Back in the same place.
+        expect(await lineOf(<PageHeaderPlaceholder testID="page-header" alwaysShowTitle />))
+            .toEqual(await lineOf(<PageHeader testID="page-header" title="Tomas Berg" alwaysShowTitle />));
+        expect(await lineOf(<PageHeaderPlaceholder testID="page-header" alwaysShowTitle />)).not.toEqual({ line: 0, gutter: 0 });
+    });
+});

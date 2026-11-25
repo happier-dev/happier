@@ -553,6 +553,10 @@ describe('the Authentication page while its Team is read', () => {
         expect(admission?.props.subtitle).toBe('teams.authentication.policy.admissionInviteOnlyDescription');
         // No directory in the summary: its one line, not a reserved row. Connections are unknown: one row.
         expect(stateLine(screen, 'team-authentication-directory')?.title).toBe('teams.authentication.directory.empty');
-        expect(screen.findAllByType(ItemLoadStateRows).map((node) => node.props.rows ?? 2)).toEqual([1]);
+        // No connection is proven: one quiet line waits in the empty line's own shape, beside the held "+".
+        expect(screen.findAllByType(ItemLoadStateRows)).toHaveLength(0);
+        expect(stateLine(screen, 'team-authentication-loading')).toBeDefined();
+        expect(screen.findByTestId('team-authentication-add-connection')).not.toBeNull();
+        expect(screen.findByTestId('team-authentication-directory-add')).not.toBeNull();
     });
 });
