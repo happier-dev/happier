@@ -20,9 +20,9 @@ not supported for ordinary author use; consult its unblock condition.
 This reference describes 0.3 development source. It does not establish released
 availability or verify a loaded runtime.
 
-At the time this page was generated: **68 of 68 contribution families**,
-**25 of 25 services**, **10 of 13 host-access capabilities**
-and **54 of 54 SDK entrypoints** are implemented.
+At the time this page was generated: **71 of 71 contribution families**,
+**28 of 28 services**, **10 of 13 host-access capabilities**
+and **55 of 55 SDK entrypoints** are implemented.
 
 ## Contribution families available in Developer Preview
 
@@ -78,14 +78,17 @@ and **54 of 54 SDK entrypoints** are implemented.
 | `scmHostingProviders` | `available` | `scmHostingProviders` | `.` | any |
 | `searchProviders` | `available` | `searchProviders` | `.` | any |
 | `secretSources` | `available` | `secretSources` | `.` | any |
+| `serviceLaunchEnvironments` | `available` | `serviceLaunchEnvironments` | `.` | any |
 | `sessionHeaderActions` | `available` | `sessionHeaderActions` | `.` | any |
 | `sessionInfoSections` | `available` | `sessionInfoSections` | `.` | any |
 | `settings` | `available` | `settings` | `.` | any |
 | `settings.fields` | `available` | `settings` | `.` | any |
 | `skills` | `preview` | `skills` | `.` | any |
 | `storeKinds` | `available` | `storeKinds` | `.` | any |
+| `subjectKinds` | `available` | `subjectKinds` | `.` | any |
 | `systemTools` | `available` | `systemTools` | `.` | any |
 | `targetedPluginContributions` | `available` | `contributesTo` | `.` | any |
+| `themes` | `available` | `themes` | `.` | any |
 | `transcriptActivities` | `available` | `transcriptActivities` | `.` | any |
 | `ui.listExtensions` | `available` | `ui` | `.` | any |
 | `ui.renderers` | `available` | `ui` | `.` | any |
@@ -113,8 +116,10 @@ Reached through `context.services` inside a plugin invocation.
 | `context.services.backgroundServices` | `available` | `BackgroundServicesService` | `./background-services` | invocation-scoped |
 | `context.services.composerContent` | `available` | `ComposerContentService` | `.` | invocation-scoped |
 | `context.services.connectedAccounts` | `available` | `ConnectedAccountsService` | `./connected-accounts` | invocation-scoped |
+| `context.services.deploymentDatabases` | `available` | `DeploymentDatabasesServiceV1` | `.` | invocation-scoped |
 | `context.services.deploymentExecEnv` | `preview` | `DeploymentExecEnvPortV1` | `./exec` | invocation-scoped |
 | `context.services.deploymentSource` | `preview` | `DeploymentSourceMaterializationPortV1` | `.` | invocation-scoped |
+| `context.services.deploymentTelemetry` | `available` | `DeploymentTelemetryServiceV1` | `.` | invocation-scoped |
 | `context.services.events` | `available` | `EventsService` | `./events` | invocation-scoped |
 | `context.services.exec` | `available` | `ExecService` | `./exec` | invocation-scoped |
 | `context.services.fs` | `available` | `FileSystemService` | `./fs` | invocation-scoped |
@@ -134,6 +139,7 @@ Reached through `context.services` inside a plugin invocation.
 | `context.services.settings` | `available` | `SettingsService` | `./settings` | invocation-scoped |
 | `context.services.storage` | `available` | `StorageService` | `./storage` | invocation-scoped |
 | `context.services.targetedContributions` | `available` | `TargetedContributionsService` | `.` | invocation-scoped |
+| `context.services.worktreeEnvironment` | `available` | `WorktreeEnvironmentServiceV1` | `.` | invocation-scoped |
 
 ## Services that are deferred
 
@@ -183,6 +189,7 @@ names suggest.
 | `./connected-accounts` | `available` | daemon |
 | `./connected-accounts/request-auth` | `available` | daemon |
 | `./contributions` | `available` | any |
+| `./deployment-targets` | `available` | any |
 | `./errors` | `available` | any |
 | `./events` | `available` | any |
 | `./exec` | `available` | daemon |
