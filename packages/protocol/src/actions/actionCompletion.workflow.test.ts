@@ -52,6 +52,37 @@ it('completes an admitted person-only Review without mistaking its empty executa
   ] } });
 });
 
+it('retains the failed launch beside the exact completed detached Plan after a receipt round-trip', async () => {
+  const completion = getActionSpec('subagents.plan.start').completion;
+  if (!completion) throw new Error('Expected Plan completion declaration');
+  const receipt = {
+    intent: 'plan', sessionId: null, results: [
+      { key: 'eligible', ok: true, result: { runId: 'native-plan' } },
+      { key: 'unavailable', ok: false, errorCode: 'engine_unavailable',
+        details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') },
+    ],
+  };
+  const prepared = prepareActionCompletionV1(completion, { ok: true, result: receipt });
+  if (prepared.kind !== 'awaiting') throw new Error('Expected admitted detached Plan');
+  const state = ActionCompletionStateV1Schema.parse(JSON.parse(JSON.stringify(prepared.state)));
+  expect(state.awaitedRuns).toEqual([{ key: 'eligible', runId: 'native-plan' }]);
+
+  expect(await resumeActionCompletionV1({
+    actionId: 'subagents.plan.start', completion: freezeActionCompletionContractV1(completion),
+    state, resolveDeclaration: () => completion,
+    observeRun: async ({ runId }) => {
+      expect(runId).toBe('native-plan');
+      return { kind: 'completed', result: 'keep this Plan' };
+    },
+  })).toEqual({ kind: 'completed', value: {
+    plans: [{ key: 'eligible', runId: 'native-plan', value: 'keep this Plan' }],
+    perEngineOutcome: [
+      { key: 'eligible', runId: 'native-plan', outcome: 'completed' },
+      { key: 'unavailable', outcome: 'launch_failed', errorCode: 'engine_unavailable' },
+    ],
+  } });
+});
+
 it('retains the accepted workflow handle and waits for its terminal output once', async () => {
   const prepared = prepareActionCompletionV1(declaration, { ok: true, result: { workflowRunId: 'inner' } });
   expect(prepared).toEqual({ kind: 'awaiting', state: { output: { workflowRunId: 'inner' },
