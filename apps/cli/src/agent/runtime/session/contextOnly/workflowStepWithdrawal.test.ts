@@ -83,6 +83,7 @@ describe('workflow step dispatch ownership', () => {
     if (!withdrawFirst) {
       await publicationStarted.promise;
       expect(owner.withdrawWorkflowStepInput({ localInputId })).toBe('dispatched');
+      messageQueue.push({ text: 'queued after dispatch', localId: 'user-after-dispatch' }, 'default');
     }
     publication.resolve();
     const result = await finalize;
@@ -93,6 +94,14 @@ describe('workflow step dispatch ownership', () => {
     expect(providerInputs).toEqual(withdrawFirst ? [] : ['required workflow text']);
     expect(owner.withdrawWorkflowStepInput({ localInputId })).toBe(withdrawFirst ? 'withdrawn' : 'dispatched');
     expect(owner.withdrawWorkflowStepInput({ localInputId })).toBe(withdrawFirst ? 'withdrawn' : 'dispatched');
+    if (!withdrawFirst) {
+      const restartedOwner = createWorkflowStepWithdrawal({ reportWithdrawn: async () => undefined });
+      restartedOwner.observeWorkflowStepDispatched({ localInputId });
+      expect(restartedOwner.withdrawWorkflowStepInput({ localInputId })).toBe('dispatched');
+      expect(restartedOwner.claimDispatch({ localInputId }, () => { events.push(localInputId); })).toBe(false);
+      expect((await consumer.waitForNextInput({ abortSignal }))?.message.localId).toBe('user-after-dispatch');
+      expect(events).toEqual([localInputId]);
+    }
   });
 
   it('defers a taken step for user input arriving during recheck and leaves the step withdrawable', async () => {

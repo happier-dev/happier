@@ -128,11 +128,11 @@ describe('origin workflow current-state pull', () => {
     }
   });
 
-  it('continues origin delivery when the first pending Run acknowledgement fails', async () => {
+  it('retrieves the accepted Plan and its started Run together and continues when the Plan acknowledgement fails', async () => {
     const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, envelope: parseWorkflowStoredContentEnvelopeV1(acceptedEnvelope) });
     if (opened.kind !== 'available') throw new Error('expected fixture snapshot');
-    const secondId = 'run-2';
+    const secondId = 'follow-up-run';
     const secondEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId: secondId }, acceptedSnapshot: opened.content }));
     let secondRevision = 5;
@@ -142,8 +142,11 @@ describe('origin workflow current-state pull', () => {
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
       storage: { execute: async operation => {
         if (operation.operation === 'run-key.census') return { ...plainCensus, runId: operation.runId };
+        if (operation.operation === 'invocations.get' && operation.runId === runId) {
+          return { invocation: { index: producerIndex, contentEnvelope: producerEnvelope } };
+        }
         if (operation.operation === 'delivery.pull') return { runs: [
-          { run, acceptedEnvelope },
+          { run, acceptedEnvelope, resultEnvelope },
           { run: { ...run, id: secondId, revision: secondRevision, originDeliveryAckRevision: secondAck }, acceptedEnvelope: secondEnvelope },
         ] };
         if (operation.operation === 'delivery.ack') {
@@ -155,13 +158,16 @@ describe('origin workflow current-state pull', () => {
       } }, onError: error => { errors.push(error); } });
     const signal = new AbortController().signal;
     const first = await port.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 });
-    expect(first).toHaveLength(2);
+    expect(first.map(({ update }) => update)).toEqual([
+      expect.objectContaining({ workerId: runId, headline: expect.stringContaining(secondId) }),
+      expect.objectContaining({ workerId: secondId, ownerState: 'succeeded' }),
+    ]);
     first.forEach(item => item.acknowledgeAccepted());
     secondRevision = 6;
     const next = await port.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 });
     expect(secondAck).toBe(5);
     expect(next).toHaveLength(1);
-    expect(next[0]?.localId).toBe('workflow-run:run-2:6');
+    expect(next[0]?.localId).toBe(`workflow-run:${secondId}:6`);
     expect(errors).toHaveLength(1);
   });
 

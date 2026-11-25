@@ -2316,6 +2316,36 @@ describe("workflowRunService (integration)", () => {
         await expect(heartbeatAutomationRun(heartbeat)).resolves.toMatchObject({ ok: false });
     });
 
+    it("withdraws the original origin input after the paused lease is reclaimed", async () => {
+        const seeded = await seedPendingAdmission(true);
+        const envelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+            mode: "plain",
+            binding: { v: 1, purpose: "invocation_progress", accountId: seeded.accountId, runId: seeded.runId,
+                recordId: seeded.invocationId, sequence: "1", parentRecordId: seeded.rootId, memberOrdinal: "0", attempt: "0" },
+            progress: { kind: "happier.workflow-progress.v1", invocationPath: { blockId: "step", scope: [] },
+                blockKind: "step", attempt: "0", logicalInvocationRecordId: seeded.invocationId,
+                execution: { kind: "session", sessionId: seeded.sessionId, localInputId: "original-origin-input" } },
+        }));
+        await commitWorkflowInvocationFact({ ...seeded.fact, contentEnvelope: envelope });
+        await pauseWorkflowRun({ ...seeded, expectedRevision: 2 });
+        await db.automationRun.update({ where: { id: seeded.runId }, data: { leaseExpiresAt: new Date(0) } });
+        const reclaimed = await claimAutomationRun({ accountId: seeded.accountId, machineId: seeded.machineId,
+            leaseDurationMs: 30_000, recipeFeaturePolicy: { workflowsEnabled: true } });
+        expect(reclaimed.run).toMatchObject({ id: seeded.runId, state: "pause_requested", attempt: 2, revision: 4 });
+
+        const currentness = await accountCurrentness(seeded.accountId);
+        const withdraw = () => workflowRunService.recordWorkflowRunOriginInputWithdrawn({
+            accountId: seeded.accountId, originSessionId: seeded.sessionId, runId: seeded.runId,
+            invocationRecordId: seeded.invocationId, expectedRevision: 4,
+            accountCurrentness: currentness,
+        });
+        const result = await withdraw();
+        expect(result.index).toMatchObject({ id: seeded.invocationId, attempt: "0", lifecycle: "pending" });
+        await expect(withdraw()).resolves.toEqual(result);
+        await expect(getWorkflowRunInvocation({ ...seeded, invocationId: seeded.invocationId })).resolves
+            .toMatchObject({ invocation: { index: result.index, contentEnvelope: envelope } });
+    });
+
     it("renews the exact pause_requested claim without advancing parent revision", async () => {
         const seeded = await seedPendingAdmission();
         await pauseWorkflowRun({ accountId: seeded.accountId, runId: seeded.runId, expectedRevision: 2 });

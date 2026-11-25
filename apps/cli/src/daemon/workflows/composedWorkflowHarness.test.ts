@@ -4778,7 +4778,51 @@ describe('composed fresh-process reconstruction over durable rows', () => {
   });
 });
 
-describe('composed boundary pause across admitted siblings', () => {
+describe('composed control across admitted siblings', () => {
+  it('closes a held native result while retaining a completed fail-stop sibling', async () => {
+    const runId = '50505050-5050-4050-8050-505050505050';
+    const directory = await projectDirectory();
+    const definition: WorkflowDefinitionV1 = {
+      version: 1,
+      inputs: [],
+      defaults: retainedConversationDefaults(),
+      blocks: [{
+        kind: 'parallel',
+        id: 'fan',
+        failurePolicy: 'fail_stop',
+        branches: [
+          { id: 'held', blocks: [step('held-turn', { pauseForReview: true }), step('must-not-start')] },
+          { id: 'failure', blocks: [step('failed-turn')] },
+          { id: 'completed', blocks: [step('completed-turn')] },
+        ],
+      }],
+    };
+    const kit = createWorkflowRunStorageTestkit({
+      runId, machineId, origin: { kind: 'direct' },
+      acceptedEnvelope: await sealDirectAccepted({ runId, definition, directory }),
+    });
+
+    const sessionInput = sessionInputBoundary({ 'failed-turn': 'failed' }, {
+      onObserve: async (label) => {
+        if (label !== 'failed-turn') return;
+        await vi.waitFor(() => {
+          expect(rowFor(kit, 'held-turn')?.lifecycle).toBe('waiting_for_review');
+          expect(rowFor(kit, 'completed-turn')?.lifecycle).toBe('completed');
+        });
+      },
+    });
+    await expect(workflowDaemonProcess({ storage: kit, sessionInput, directory })({
+      runId, attempt: 0, expectedRevision: kit.run().revision,
+      accountCurrentness: currentness, acceptedEnvelope: kit.acceptedEnvelope()!,
+    })).resolves.toMatchObject({ state: 'interrupted' });
+    expect(rowFor(kit, 'failed-turn')?.lifecycle).toBe('failed');
+    const held = rowFor(kit, 'held-turn')!;
+    expect(held.lifecycle).toBe('cancelled');
+    expect(openRowProgress(kit, held)).toMatchObject({ reason: { code: expect.stringMatching(/^container_fail_stop:/) } });
+    expect(openRowProgress(kit, rowFor(kit, 'completed-turn')!)).toMatchObject({ result: 'completed-turn' });
+    expect(rowFor(kit, 'must-not-start')).toBeUndefined();
+  });
+
   it('drains an already admitted fail-stop sibling instead of aborting it when pause closes the next admission', async () => {
     const runId = '55555555-5555-4555-8555-555555555555';
     const directory = await projectDirectory();

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createProductionWorkflowSessionContextReader } from './workflowSessionContext';
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT } from '@happier-dev/protocol/actions/actionSpecs';
+import { MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { addUsageMeasuredTokens, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { evaluateWorkflowCondition } from './input';
 import type { WorkflowCondition, WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
@@ -113,6 +114,53 @@ describe('production workflow session context', () => {
     await expect(reader.resolveSessionContextField('goal.tokenBudget')).resolves.toBe(50);
     vi.mocked(axios.post).mockRejectedValueOnce(new Error('usage unavailable'));
     await expect(reader.resolveSessionContextField('goal.tokenBudget')).resolves.toBe(50);
+  });
+
+  it('keeps scoped usage and the goal when a Judge drops the over-budget transcript and records its decision', async () => {
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    vi.mocked(axios.get).mockImplementation(async (url, config) => {
+      if (String(url).includes('/messages')) return { status: 200, data: { messages: [{
+        id: 'old', seq: 1, createdAt: 1, messageRole: 'user',
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text',
+          text: 'x'.repeat(MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES + 1) } } },
+      }], hasMore: false } };
+      return get(url, config);
+    });
+    const body: Extract<WorkflowDefinitionV1['blocks'][number], { kind: 'step' }> = {
+      kind: 'step', id: 'work', document: { text: 'work', references: [], attachments: [] },
+      input: [], result: { kind: 'text' }, execution: { conversation: { kind: 'fresh' } },
+    };
+    const definition: WorkflowDefinitionV1 = { version: 1, inputs: [],
+      defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+      blocks: [{ kind: 'loop', id: 'rounds', body: [body], repetition: {
+        kind: 'evaluate', maxIterations: 2, history: 'none', evaluator: { ...body, id: 'judge',
+          input: [{ kind: 'session_context', recentTurns: 1 }], result: { kind: 'decision', decisions: ['continue', 'done', 'stuck'] } },
+      } }],
+    };
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const expectedContext = expect.objectContaining({
+      goal: expect.objectContaining({ title: 'Ship', tokenBudget: 50 }),
+      usage: { kind: 'accounted', tokensUsed: 3 }, turns: [], truncated: true,
+    });
+    const coordinator = createTestWorkflowCoordinator({ store,
+      sessionContext: createProductionWorkflowSessionContextReader({ credentials, machineId: 'machine', originSessionId: sessionId }),
+      // Simulate the external Judge only after the real context reader and materializer prepare its input.
+      executeStep: async params => {
+        await params.beforeInputAdmission();
+        if (params.step.id !== 'judge') return { kind: 'completed', result: 'worked' };
+        expect(params.input.values).toContainEqual(expectedContext);
+        return { kind: 'completed', resultEncoding: 'typed', result: { decision: 'done', reason: 'target met' },
+          usage: { inputTokens: 8, outputTokens: 3 } };
+      },
+      resolveWorkspace: async () => ({ ok: true, workspace: { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' } }),
+    });
+    await expect(coordinator.run({ runId: 'judge-context', definition, inputs: {}, originSessionId: sessionId,
+      executionTarget: { kind: 'session' }, authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+    })).resolves.toEqual({ state: 'succeeded' });
+    expect(store.list().find(row => row.blockId === 'judge')).toMatchObject({ lifecycle: 'completed',
+      input: { input: expect.arrayContaining([expectedContext]) }, usage: { inputTokens: 8, outputTokens: 3 } });
+    expect([...store.records.values()].find(row => row.blockId === 'rounds' && !row.frame)?.container?.closing)
+      .toMatchObject({ outcome: { kind: 'decision', value: 'done', reason: 'target met' } });
   });
 
   it.each([

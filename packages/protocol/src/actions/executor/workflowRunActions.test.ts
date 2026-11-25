@@ -1464,7 +1464,22 @@ describe('shared Account workflow run owner', () => {
       authenticatedStarterV1: { requestRef: 'forged', requester: { serverId: 'home', accountId: 'victim' } } }).success).toBe(false);
   });
 
-  it.each(['agent', 'ui'] as const)('admits an unprivileged Wait-only run for a read-only %s caller without widening its stamped ceiling', async surface => {
+  it.each(['agent', 'ui', 'signed nested agent'] as const)('admits an unprivileged Wait-only run for a read-only %s caller without widening its stamped ceiling', async scenario => {
+    const surface = scenario === 'ui' ? 'ui' : 'agent';
+    const signed = scenario === 'signed nested agent';
+    const sessionCaller = { kind: 'session' as const, sessionId: 'origin-1', starterDepth: signed ? 1 : 0, turnDepth: signed ? 2 : 0 };
+    const causalPermissionAuthority = { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'read-only' as const };
+    const externalActionTarget = { kind: 'machine' as const, machineId: 'machine-a',
+      project: { machineId: 'machine-a', directory: '/repo' } };
+    // The Home transport has already authenticated this exact Session turn and source installation.
+    const homeReceipt: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-admitted-agent-start', binding: {
+      serverIdentityId: 'home', accountId: 'account-1', custodianAccountId: 'account-1',
+      authentication: { kind: 'account', tokenEpoch: 0 }, machineId: 'machine-a', installationId: 'installed-machine',
+      actionId: 'workflow.run.start', requestId: 'nested-agent-start', requestEnvelopeDigest: 'd'.repeat(43),
+      target: externalActionTarget, sessionActionSource: { machineId: 'machine-a', installationId: 'installed-machine' },
+      sessionActionOrigin: { v: 1, caller: sessionCaller, sourceTurnId: 'origin-turn-2', sourceInputId: 'origin-input-2',
+        callerPermissionMode: 'default', causalPermissionAuthority, requestId: 'nested-agent-start' },
+    } };
     let acceptedEnvelope: string | undefined;
     const owner = createWorkflowAccountRunActionOwner({
       ...ownerDeps({ execute: async operation => {
@@ -1481,12 +1496,14 @@ describe('shared Account workflow run owner', () => {
       runId, source: { kind: 'inline', definition: { version: 1,
         blocks: [{ kind: 'wait', id: 'wait', document: { text: 'Continue' } }] } },
     }), context: {
-      surface, authority: surface === 'ui' ? 'present_user' : 'account_automation', callerPermissionMode: 'read-only',
+      surface, authority: surface === 'ui' ? 'present_user' : 'account_automation', callerPermissionMode: signed ? 'default' : 'read-only',
+      ...(signed ? { actionCaller: sessionCaller, defaultSessionId: sessionCaller.sessionId, causalPermissionAuthority,
+        externalActionExecutionAuthorization: homeReceipt } : {}),
       sessionAgentSpawnPolicyV1: SessionAgentSpawnPolicyV1StrictSchema.parse({}),
-      agentStartContext: { caller: { kind: 'session', sessionId: 'origin-1', starterDepth: 0, turnDepth: 0 },
+      agentStartContext: { caller: sessionCaller,
         baseline: { machineId: 'machine-a', directory: '/repo', configuration: { permissionMode: 'read-only' } },
         roles: {}, callerPermissionCeiling: 'read-only', ledSubtreeSessionIds: [], workDepthLimit: 4 },
-      externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } },
+      externalActionTarget,
     } });
     expect(result).toMatchObject({ admission: 'created', run: { id: runId } });
     const envelope = acceptedEnvelope && parseWorkflowStoredContentEnvelopeV1(acceptedEnvelope);
@@ -1495,7 +1512,10 @@ describe('shared Account workflow run owner', () => {
     const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain', envelope,
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId } });
     expect(opened).toMatchObject({ kind: 'available', content: {
-      authorization: { admittedPermissionCeiling: 'read-only' }, workDepth: surface === 'agent' ? 1 : 0,
+      authorization: { admittedPermissionCeiling: 'read-only',
+        ...(signed ? { principal: { kind: 'session', sessionId: sessionCaller.sessionId } } : {}) },
+      workDepth: signed ? 3 : surface === 'agent' ? 1 : 0,
+      ...(signed ? { origin: { kind: 'direct', originSessionId: sessionCaller.sessionId } } : {}),
     } });
   });
 
