@@ -6,7 +6,7 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { ScmCredentialFreeRepositorySelectorV1Schema, ScmRepositoryContainedSubdirV1Schema } from '../../scm/repositoryClone.js';
 import { PrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
 import { ResourceTeamShareScopeV1Schema } from '../../teams/resourceGrantAccessV1.js';
-import { ProjectSourceIdentityV1Schema, ProjectSourceOwnerV1Schema, ProjectSourceAudienceTeamV1Schema } from './projectSourceIdentityV1.js';
+import { ProjectSourceIdentityV1Schema, ProjectSourceOwnerV1Schema, ProjectSourceAudienceTeamV1Schema, projectSourceCreateFieldsV1 } from './projectSourceIdentityV1.js';
 export { ProjectSourceOwnerV1Schema, type ProjectSourceOwnerV1 } from './projectSourceIdentityV1.js';
 import { PromptArtifactRefV1Schema, PromptDocArtifactRefV1Schema } from '../../prompts/library/promptArtifactRefsV1.js';
 import { PromptStackEntryV1Schema, PromptStackEntryAuthoringV1Schema, PromptStackSetEnabledIntentV1Schema } from '../../prompts/library/promptStacksV1.js';
@@ -87,7 +87,10 @@ export type ProjectSourceListItemV1 = z.infer<typeof ProjectSourceListItemV1Sche
 const id = z.string().check(z.minLength(1));
 const revision = z.number().check(z.int(), z.positive());
 export const ProjectSourcesListInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: id, query: z.optional(z.string()), audience: z.optional(PrincipalRefV1Schema), sharedWithTeamId: z.optional(id), cursor: z.optional(id), limit: z.optional(z.number().check(z.int(), z.positive())) }));
-export const ProjectSourcesCreateInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.pick(ProjectSourceV1Schema, { name: true, repository: true, owner: true, defaultRef: true, subdir: true }), { serverId: id, requestKey: id, audience: z.optional(z.array(ProjectSourceGrantV1Schema)) })));
+export const ProjectSourcesCreateInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...z.pick(ProjectSourceV1Schema, { name: true, repository: true, owner: true, defaultRef: true, subdir: true }).shape,
+  serverId: id, requestKey: projectSourceCreateFieldsV1.requestKey, audience: z.optional(z.array(ProjectSourceGrantV1Schema)),
+}));
 export const ProjectSourceAttachmentIntentV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('attach'), attachment: SourceAttachmentAuthoringV1Schema }),
   z.strictObject({ kind: z.literal('detach'), purpose: z.literal('context'), attachmentId: id }),

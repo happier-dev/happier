@@ -13,7 +13,7 @@ import { ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js'
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from '../automations/automationTriggerIdentity.js';
 import { AutomationOccurrenceKeyV1Schema } from '../automations/automationOccurrenceKeyV1.js';
-import { ProjectSourcesCreateInputV1Schema, ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
+import { ProjectSourceOwnerV1Schema, projectSourceCreateFieldsV1 } from '../projects/sources/projectSourceIdentityV1.js';
 import { WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchema.js';
 import { DeploymentFolderReviewRevisionV1Schema } from './deploymentFolderReviewRevisionV1.js';
 import { CloudflareTunnelConnectorsPerMachineV1Schema } from './cloudflareTunnelConnectorsV1.js';
@@ -361,8 +361,9 @@ export const StoredAppPresetBindingsV1Schema = lazyZodSchema(() => z.array(Store
     z.refine(bindings => new Set(bindings.map(binding => JSON.stringify([binding.phase, binding.name]))).size === bindings.length,
         { message: 'Variable phase/name identities must be unique.' })));
 /** The ordinary Source creator owns this reviewed, repository-free create intent. */
-export const DeploymentNewProjectV1Schema = lazyZodSchema(() => z.extend(z.pick(ProjectSourcesCreateInputV1Schema,
-    { name: true, requestKey: true }), { owner: ProjectSourceOwnerV1Schema }));
+export const DeploymentNewProjectV1Schema = lazyZodSchema(() => z.strictObject({
+    ...projectSourceCreateFieldsV1, owner: ProjectSourceOwnerV1Schema,
+}));
 export type DeploymentNewProjectV1 = z.infer<typeof DeploymentNewProjectV1Schema>;
 export function hasOneDeploymentProjectV1(source: unknown, newProject: unknown): boolean {
     return (source === undefined) !== (newProject === undefined);
