@@ -1,21 +1,22 @@
-import type { AgentInstallJob, AgentInstallJobConsent, AgentInstallJobEvent, AgentInstallJobIntent, DaemonAgentInstallCancelResponse, DaemonAgentInstallStartRequest } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import type { AgentInstallJob, AgentInstallJobConsent, AgentInstallJobEvent, AgentInstallJobIntent, AgentInstallJobUpdate, DaemonAgentInstallCancelResponse, DaemonAgentInstallStartRequest } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilities';
 
-import { MACHINE_RPC_POLL_INTERVAL_MS } from '@/sync/ops/machineRpcPollInterval';
 import { serverAccountScopedResourceKey, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { machineAgentInventoryStore } from '../machineAgentInventoryStore';
 import type { MachineAgentJob, MachineAgentJobStep } from '../machineAgentTypes';
-import { AgentInstallJobRpcError, cancelAgentInstallJobRpc, listAgentInstallJobsRpc, readAgentInstallJobRpc, startAgentInstallJobRpc } from './api';
+import { AgentInstallJobRpcError, cancelAgentInstallJobRpc, followAgentInstallJobRpc, listAgentInstallJobsRpc, readAgentInstallJobRpc, startAgentInstallJobRpc } from './api';
 
 export type MachineAgentInstallJobTarget = ServerAccountScope & Readonly<{ machineId: string }>;
 export type AgentInstallJobTarget = MachineAgentInstallJobTarget & Readonly<{ agentId: string; definitionId?: string }>;
 export type AgentInstallJobStartOptions = Readonly<{ consent: AgentInstallJobConsent; force?: boolean;
     expectedDefinitionVersion?: DaemonAgentInstallStartRequest['expectedDefinitionVersion'] }>;
 
-type JobRecord = { target: AgentInstallJobTarget; job: MachineAgentJob; cursor: number; hydrated: boolean; polling: boolean; timer?: ReturnType<typeof setTimeout> };
+type JobObservation = { controller: AbortController; follow: boolean };
+type JobRecord = { target: AgentInstallJobTarget; job: MachineAgentJob; cursor: number; hydrated: boolean; observation?: JobObservation };
 type JobDiscovery = { controller: AbortController; promise: Promise<void>; readers: number };
-type MachineJobs = { target: MachineAgentInstallJobTarget; controller: AbortController; jobs: ReadonlyMap<string, MachineAgentJob>; records: Map<string, JobRecord>; listeners: Set<() => void>; agentListeners: Map<string, Set<() => void>>; loading?: JobDiscovery; starts: Map<string, Promise<MachineAgentJob>> };
+type MachineJobs = { target: MachineAgentInstallJobTarget; controller: AbortController; jobs: ReadonlyMap<string, MachineAgentJob>; records: Map<string, JobRecord>; listeners: Set<() => void>; agentListeners: Map<string, Set<() => void>>; loading?: JobDiscovery; starts: Map<string, Promise<MachineAgentJob>>; detachRecovery?: () => void };
 const machines = new Map<string, MachineJobs>();
 const machineKey = (target: MachineAgentInstallJobTarget) => serverAccountScopedResourceKey(target, 'agent-install-jobs', target.machineId);
 const inventoryKey = (target: MachineAgentInstallJobTarget) => serverAccountScopedResourceKey(target, 'machine-agents', target.machineId);
@@ -26,7 +27,8 @@ subscribeHomeCredentialChange(({ serverId }) => {
     for (const [key, state] of [...machines]) {
         if (state.target.serverId !== serverId) continue;
         state.controller.abort();
-        for (const record of state.records.values()) if (record.timer) clearTimeout(record.timer);
+        state.detachRecovery?.();
+        for (const record of state.records.values()) stopObserving(record);
         machines.delete(key);
         machineAgentInventoryStore.publishJobs(inventoryKey(state.target), new Map());
         for (const listener of state.listeners) listener();
@@ -96,13 +98,25 @@ function hasReaders(state: MachineJobs, record: JobRecord): boolean {
     return state.listeners.size > 0 || (state.agentListeners.get(buildMachineAgentInventoryKey(record.target))?.size ?? 0) > 0;
 }
 
-function updatePolling(state: MachineJobs, record: JobRecord): void {
-    if (hasReaders(state, record) && !record.job.readFailure) {
-        if (!record.timer) void poll(record.target, record);
-    } else if (record.timer) {
-        clearTimeout(record.timer);
-        record.timer = undefined;
+function stopObserving(record: JobRecord): void {
+    const observation = record.observation;
+    record.observation = undefined;
+    observation?.controller.abort();
+}
+
+function updateDemand(state: MachineJobs, record?: JobRecord): void {
+    if (state.controller.signal.aborted) return;
+    if (state.listeners.size || state.agentListeners.size) {
+        state.detachRecovery ??= subscribeMachineRpcRecovery({ ...state.target, expectedAccountId: state.target.accountId }, () => {
+            for (const current of state.records.values()) if (hasReaders(state, current)) void observe(state, current);
+        });
+    } else {
+        state.detachRecovery?.();
+        state.detachRecovery = undefined;
     }
+    if (!record) return;
+    if (hasReaders(state, record)) void observe(state, record);
+    else if (record.observation?.follow) stopObserving(record);
 }
 
 export function subscribeAgentInstallJob(target: AgentInstallJobTarget, listener: () => void): () => void {
@@ -114,23 +128,25 @@ export function subscribeAgentInstallJob(target: AgentInstallJobTarget, listener
         state.agentListeners.set(targetKey, listeners);
     }
     listeners.add(listener);
-    const record = state.records.get(targetKey);
-    if (record) updatePolling(state, record);
+    updateDemand(state, state.records.get(targetKey));
     return () => {
         listeners.delete(listener);
         if (listeners.size === 0) state.agentListeners.delete(targetKey);
-        const current = state.records.get(targetKey);
-        if (current) updatePolling(state, current);
+        updateDemand(state, state.records.get(targetKey));
     };
 }
 
 export function subscribeMachineAgentInstallJobs(target: MachineAgentInstallJobTarget, listener: () => void): () => void {
     const state = machine(target);
     state.listeners.add(listener);
-    for (const record of state.records.values()) updatePolling(state, record);
+    updateDemand(state);
+    for (const record of state.records.values()) void observe(state, record);
     return () => {
         state.listeners.delete(listener);
-        for (const record of state.records.values()) updatePolling(state, record);
+        updateDemand(state);
+        for (const record of state.records.values()) {
+            if (record.observation?.follow && !hasReaders(state, record)) stopObserving(record);
+        }
     };
 }
 
@@ -166,16 +182,31 @@ function applyEvents(job: MachineAgentJob, events: readonly AgentInstallJobEvent
     return next;
 }
 
-async function poll(target: AgentInstallJobTarget, record: JobRecord): Promise<void> {
-    const state = machine(target);
+async function observe(state: MachineJobs, record: JobRecord): Promise<void> {
+    const { target } = record;
     const targetKey = buildMachineAgentInventoryKey(target);
-    if (state.controller.signal.aborted || record.polling || record.job.outcome || state.records.get(targetKey) !== record) return;
-    if (record.timer) clearTimeout(record.timer);
-    record.timer = undefined;
-    record.polling = true;
+    if (state.controller.signal.aborted || record.observation || record.job.outcome || state.records.get(targetKey) !== record) return;
+    const observation = { controller: new AbortController(), follow: hasReaders(state, record) };
+    record.observation = observation;
+    const isCurrent = () => !state.controller.signal.aborted && state.records.get(targetKey) === record
+        && record.observation === observation;
+    const applyUpdate = (update: AgentInstallJobUpdate, outcome?: MachineAgentJob['outcome']) => {
+        if (update.nextCursor < record.cursor) return;
+        const events = update.events.slice(Math.max(0, update.events.length - (update.nextCursor - record.cursor)));
+        let next = applyEvents(record.job.readFailure ? { ...record.job, readFailure: undefined } : record.job, events);
+        if (outcome) next = { ...next, outcome };
+        record.cursor = update.nextCursor;
+        record.job = next;
+        publish(target, next);
+    };
+    let completedFiniteRead = false;
     try {
-        const response = await readAgentInstallJobRpc({ ...target, signal: state.controller.signal }, { jobId: record.job.jobId, cursor: record.cursor });
-        if (state.controller.signal.aborted || state.records.get(targetKey) !== record) return;
+        const rpcTarget = { ...target, signal: observation.controller.signal };
+        const input = { jobId: record.job.jobId, cursor: record.cursor };
+        const response = observation.follow
+            ? await followAgentInstallJobRpc(rpcTarget, input, update => { if (isCurrent()) applyUpdate(update); })
+            : await readAgentInstallJobRpc(rpcTarget, input);
+        if (!isCurrent()) return;
         if (!response.ok) {
             if (response.errorCode === 'job_not_found') {
                 state.records.delete(targetKey);
@@ -186,8 +217,7 @@ async function poll(target: AgentInstallJobTarget, record: JobRecord): Promise<v
                     await ensureMachineAgentInstallJobs(target);
                     requireCurrent(state);
                 } catch (error) {
-                    // Discovery can lose the connection too. Keep the last projection and
-                    // retry through the same poll owner rather than declaring an outcome.
+                    // Keep the last projection for the next authenticated reconnect.
                     if (!state.controller.signal.aborted && !state.records.has(targetKey)) state.records.set(targetKey, record);
                     throw error;
                 }
@@ -196,26 +226,15 @@ async function poll(target: AgentInstallJobTarget, record: JobRecord): Promise<v
             }
             throw new AgentInstallJobRpcError(response.errorCode, response.error);
         }
-        let next = applyEvents(record.job.readFailure ? { ...record.job, readFailure: undefined } : record.job, response.events);
-        if (response.outcome && JSON.stringify(next.outcome) !== JSON.stringify(response.outcome)) next = { ...next, outcome: response.outcome };
-        record.cursor = response.nextCursor;
-        record.job = next;
-        publish(target, next);
-        if (response.done) return;
+        applyUpdate(response, response.outcome);
+        completedFiniteRead = !observation.follow && !response.done;
     } catch (error) {
-        if (!state.controller.signal.aborted && state.records.get(targetKey) === record && retainObservationFailure(record, error)) return;
-        // A disconnected presenter cannot establish a daemon outcome. Keep the job and cursor;
-        // the next read resumes it, and job_not_found handles a daemon restart.
+        if (isCurrent()) retainObservationFailure(record, error);
     } finally {
-        record.polling = false;
-    }
-    // The daemon has no progress push port. Only demanded jobs repeat cursor reads;
-    // closing a presenter suspends observation, never the daemon's installation.
-    if (!state.controller.signal.aborted && state.records.get(targetKey) === record && !record.job.outcome && hasReaders(state, record)) {
-        record.timer = setTimeout(() => {
-            record.timer = undefined;
-            void poll(target, record);
-        }, MACHINE_RPC_POLL_INTERVAL_MS);
+        if (record.observation === observation) {
+            record.observation = undefined;
+            if (completedFiniteRead && hasReaders(state, record)) void observe(state, record);
+        }
     }
 }
 
@@ -251,12 +270,12 @@ export function ensureMachineAgentInstallJobs(target: MachineAgentInstallJobTarg
                 if (previous && !previous.hydrated && previous.job.jobId !== wire.jobId) continue;
                 if (previous?.job.jobId === wire.jobId && previous.hydrated && !previous.job.readFailure) continue;
                 if (wire.done && previous && previous.job.jobId !== wire.jobId && previous.job.startedAtMs > wire.startedAt) continue;
-                if (previous?.timer) clearTimeout(previous.timer);
+                if (previous) stopObserving(previous);
                 const agentTarget = { ...target, agentId: wire.agentId, definitionId: wire.definitionId };
-                const record: JobRecord = { target: agentTarget, job: fromWire(wire), cursor: 0, hydrated: true, polling: false };
+                const record: JobRecord = { target: agentTarget, job: fromWire(wire), cursor: 0, hydrated: true };
                 state.records.set(targetKey, record);
                 publish(agentTarget, record.job);
-                if (!wire.done) void poll(agentTarget, record);
+                if (!wire.done) void observe(state, record);
             }
         })().catch(error => {
             if (!controller.signal.aborted) {
@@ -271,7 +290,7 @@ export function ensureMachineAgentInstallJobs(target: MachineAgentInstallJobTarg
             // cursor read can retire the retained projection through job_not_found.
             // Clear loading first: that read can itself request fresh discovery.
             for (const record of state.records.values()) {
-                if (record.job.readFailure) void poll(record.target, record);
+                if (record.job.readFailure) void observe(state, record);
             }
         });
         state.loading = { controller, promise, readers: 0 };
@@ -314,8 +333,8 @@ export function startAgentInstallJob(target: AgentInstallJobTarget, intent: Agen
         if (!response.ok) throw new AgentInstallJobRpcError(response.errorCode, response.error);
         if (state.records.get(targetKey)?.job.jobId !== response.jobId) {
             const previous = state.records.get(targetKey);
-            if (previous?.timer) clearTimeout(previous.timer);
-            const record: JobRecord = { target, job: { jobId: response.jobId, intent, ...(response.executionScope ? { executionScope: response.executionScope } : {}), startedAtMs: Date.now(), steps: [], logLine: null, outcome: null }, cursor: 0, hydrated: false, polling: false };
+            if (previous) stopObserving(previous);
+            const record: JobRecord = { target, job: { jobId: response.jobId, intent, ...(response.executionScope ? { executionScope: response.executionScope } : {}), startedAtMs: Date.now(), steps: [], logLine: null, outcome: null }, cursor: 0, hydrated: false };
             state.records.set(targetKey, record);
             publish(target, record.job);
         }
@@ -324,11 +343,11 @@ export function startAgentInstallJob(target: AgentInstallJobTarget, intent: Agen
         // Native admission is already acknowledged. Discovery must not turn that
         // acknowledgement into a failed start if the Account retires while reading.
         void (async () => {
-            // Fetch daemon-owned timing/steps before polling, sharing any mount-time list request.
+            // Fetch daemon-owned timing and steps through the shared discovery request.
             try { await ensureMachineAgentInstallJobs(target); } catch { /* Read still resumes the admitted job. */ }
             if (state.controller.signal.aborted) return;
             const current = state.records.get(targetKey);
-            if (current) void poll(target, current);
+            if (current) void observe(state, current);
         })();
         return record.job;
     })().finally(() => { if (shareAdmission) state.starts.delete(targetKey); });
@@ -363,10 +382,7 @@ export async function cancelMachineAgentInstallJob(target: MachineAgentInstallJo
 export function observeMachineAgentInstallJobCancellation(target: MachineAgentInstallJobTarget, jobId: string): void {
     const state = machines.get(machineKey(target));
     const record = state && [...state.records.values()].find((candidate) => candidate.job.jobId === jobId);
-    if (record) {
-        if (record.timer) clearTimeout(record.timer);
-        void poll(record.target, record);
-    }
+    if (state && record) void observe(state, record);
 }
 
 /** Queue and update adapters await the daemon job's terminal outcome. */

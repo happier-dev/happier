@@ -3,7 +3,7 @@ import { resolveCanonicalAgentIdFromFlavor } from '@happier-dev/agents';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { ExecFileTerminationError } from '@happier-dev/cli-common/process';
 import { installAgentCliForRuntime } from '@happier-dev/cli-common/agents';
-import { buildAgentInstallJobCliStepId, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { buildAgentInstallJobCliStepId, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema, type AgentInstallJobUpdate } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AgentInstallJob, AgentInstallJobEvent, AgentInstallJobOutcome, DaemonAgentInstallStartRequest, DaemonAgentInstallReadRequest, DaemonAgentInstallCancelRequest, DaemonAgentInstallStartResponse, DaemonAgentInstallReadResponse, DaemonAgentInstallCancelResponse, DaemonAgentInstallListResponse } from '@happier-dev/protocol';
 import type { ResolvedAgentContribution, ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
@@ -60,10 +60,17 @@ type JobRecord = {
   recentKey: string;
   snapshot: AgentInstallJob;
   events: AgentInstallJobEvent[];
+  lastLog?: string;
+  observers?: Set<(update: AgentInstallJobUpdate) => void>;
   controller: AbortController;
   completion: Promise<void>;
   cleanupError: ExecFileTerminationError | null;
 };
+
+type JobObservation = Readonly<{
+  signal: AbortSignal;
+  send: (update: AgentInstallJobUpdate) => Promise<unknown>;
+}>;
 
 export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions = {}) {
   let accountId = options.accountId;
@@ -100,15 +107,26 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
   let shuttingDown = false;
 
   const emit = (job: JobRecord, event: AgentInstallJobEvent) => {
-    job.events.push(event);
     if (event.t === 'step') {
+      const previous = job.snapshot.steps.find(step => step.stepId === event.stepId);
+      if (previous?.state === event.state && previous.label === event.label) return;
       job.snapshot.steps = [...job.snapshot.steps.filter((step) => step.stepId !== event.stepId), {
         stepId: event.stepId, label: event.label, state: event.state,
       }];
     } else if (event.t === 'progress') {
+      const previous = job.snapshot.progress.find(progress => progress.stepId === event.stepId);
+      if (previous?.bytesDone === event.bytesDone && previous.bytesTotal === event.bytesTotal) return;
       job.snapshot.progress = [...job.snapshot.progress.filter((progress) => progress.stepId !== event.stepId), {
         stepId: event.stepId, bytesDone: event.bytesDone, bytesTotal: event.bytesTotal,
       }];
+    } else {
+      if (job.lastLog === event.line) return;
+      job.lastLog = event.line;
+    }
+    job.events.push(event);
+    if (job.observers?.size) {
+      const update = { events: [event], nextCursor: job.events.length };
+      for (const observer of job.observers) observer(update);
     }
   };
   const targetKey = (target: Pick<DaemonAgentInstallStartRequest, 'agentId' | 'definitionId'>, account?: string) =>
@@ -141,15 +159,44 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
   function read(input: DaemonAgentInstallReadRequest & { waitForTerminal: true }, requestedAccountId?: string): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse>;
   function read(input: DaemonAgentInstallReadRequest & { waitForTerminal?: false }, requestedAccountId?: string): DaemonAgentInstallReadResponse;
   function read(input: DaemonAgentInstallReadRequest, requestedAccountId?: string): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse>;
-  function read(input: DaemonAgentInstallReadRequest, requestedAccountId = accountId): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse> {
+  function read(input: DaemonAgentInstallReadRequest, requestedAccountId: string | undefined, observation: JobObservation | undefined): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse>;
+  function read(input: DaemonAgentInstallReadRequest, requestedAccountId = accountId, observation?: JobObservation): DaemonAgentInstallReadResponse | Promise<DaemonAgentInstallReadResponse> {
     if (!DaemonAgentInstallReadRequestSchema.safeParse(input).success) return { ok: false, errorCode: 'invalid_request', error: 'Invalid install read request.' };
     const job = jobs.get(input.jobId);
     if (!job || job.accountId !== requestedAccountId) return { ok: false, errorCode: 'job_not_found', error: 'Install job not found.' };
     if (input.cursor > job.events.length) return { ok: false, errorCode: 'invalid_request', error: 'Install cursor is beyond the available events.' };
-    const snapshot = (): DaemonAgentInstallReadResponse => ({ ok: true, events: structuredClone(job.events.slice(input.cursor)), nextCursor: job.events.length,
+    const snapshot = (cursor = input.cursor): DaemonAgentInstallReadResponse => ({ ok: true, events: structuredClone(job.events.slice(cursor)), nextCursor: job.events.length,
       steps: structuredClone(job.snapshot.steps), progress: structuredClone(job.snapshot.progress),
       done: job.snapshot.done, outcome: structuredClone(job.snapshot.outcome) });
-    return input.waitForTerminal ? job.completion.then(snapshot) : snapshot();
+    if (observation && !job.snapshot.done) {
+      return follow(job, input.cursor, observation).then(() => snapshot(job.events.length));
+    }
+    return input.waitForTerminal ? job.completion.then(() => snapshot()) : snapshot();
+  }
+
+  function follow(job: JobRecord, cursor: number, { signal, send }: JobObservation): Promise<void> {
+    signal.throwIfAborted();
+    const observers = job.observers ??= new Set();
+    let pending: Promise<unknown> = Promise.resolve();
+    let stopped = false;
+    let onAbort: () => void;
+    let receive: (update: AgentInstallJobUpdate) => void;
+    const observed = new Promise<void>((resolve, reject) => {
+      onAbort = () => reject(signal.reason);
+      receive = update => {
+        pending = pending.then(() => { if (!stopped) return send(update); });
+        void pending.catch(reject);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      observers.add(receive);
+      receive({ events: structuredClone(job.events.slice(cursor)), nextCursor: job.events.length });
+      void job.completion.then(() => pending).then(() => resolve(), reject);
+    });
+    return observed.finally(() => {
+      stopped = true;
+      observers.delete(receive);
+      signal.removeEventListener('abort', onAbort);
+    });
   }
 
   return {

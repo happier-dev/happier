@@ -1321,6 +1321,15 @@ export class RpcHandlerManager {
                     content: { mode: 'plain' }, returnTo: returnTo.data, signal: controller.signal,
                     onRequest: async () => { throw new Error('Host Resource watch only sends updates'); } });
             }
+            if (request.continuation === true && privateMethod === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) {
+                const returnTo = SocketRpcContinuationReturnV1Schema.safeParse(request.continuationReturn);
+                if (source !== 'authenticated_home_socket' || !machineAdmission?.success || !returnTo.success || !this.socket || !requestId) {
+                    return await deny('machine_admission');
+                }
+                operationContinuation = createSocketRpcContinuation({ socket: this.socket, requestId, method: request.method,
+                    content: rpcContent, returnTo: returnTo.data, signal: controller.signal,
+                    onRequest: async () => { throw new Error('Agent install observation only sends updates'); } });
+            }
             const projectOpenRequestId = source === 'authenticated_home_socket'
                 && targetMethod === RPC_METHODS.PROJECTS_OPEN && machineAdmission?.success
                 && request.projectOpenRequestId !== undefined
@@ -1337,6 +1346,8 @@ export class RpcHandlerManager {
                 signal: controller.signal,
                 ...(privateMethod === RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW && operationContinuation
                     ? { sendHostResourceWatchFrame: operationContinuation.call } : {}),
+                ...(privateMethod === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ && operationContinuation
+                    ? { sendAgentInstallJobUpdate: operationContinuation.call } : {}),
                 reportSessionEffect: (effect: NonNullable<RpcHandlerActiveExecution['sessionEffect']>) => this.reportSessionEffect(handlerExecutionId, effect),
                 reportOperationDiagnostics: (operation: RpcOperationDiagnostics) => this.reportOperationDiagnostics(diagnostic, operation),
                 requestStartedAtMs,

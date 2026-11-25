@@ -1,12 +1,20 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
+import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import fastify from 'fastify';
+import type { Socket } from 'socket.io-client';
+import { callSocketRpc, type SocketRpcContent } from '@happier-dev/sync-client';
+import { SOCKET_RPC_EVENTS, SocketRpcContinuationFrameV1Schema, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { DaemonAgentInstallStartResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import type { RpcHandler, RpcHandlerContext } from '../rpc/types';
+import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from './machineRpcAuthorization';
+import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { createAgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
 import { registerMachineAgentInstallJobRpcHandlers } from './rpcHandlers.agentInstallJobs';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -20,6 +28,94 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+it.each(['plain', 'e2ee'] as const)('follows one admitted member install and pushes only changed facts over %s RPC', async mode => {
+  const owner = createAgentInstallJobOwner({ accountId: 'custodian', readTrackedSessions: () => [],
+    readRegistry: () => ({ agents: [{ id: 'fixture', runtimeSpec: { id: 'fixture', title: 'Fixture', binaryName: 'fixture',
+      sourcePreferenceDefault: 'system-first', managedInstall: null, manualInstallKind: 'none',
+      manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false } }] }) });
+  const progress = { t: 'progress', stepId: 'cli', bytesDone: 1, bytesTotal: 10 } as const;
+  const controller = new AbortController();
+  const frames: unknown[] = [];
+  let establish!: () => void;
+  const established = new Promise<void>(resolve => { establish = resolve; });
+  const key = new Uint8Array(32).fill(21);
+  const content: SocketRpcContent = mode === 'plain' ? { mode: 'plain' } : { mode: 'e2ee', cipher: {
+    encryptRaw: async value => encodeBase64(encrypt(key, 'dataKey', value)),
+    decryptRaw: async value => decrypt(key, 'dataKey', decodeBase64(value)),
+  } };
+  const installation = { machineId: 'machine', resolveCustodianAccountId: vi.fn(async () => 'custodian'),
+    resolveInstallationId: () => 'installation',
+    verifyMachineAdmission: vi.fn(async () => { throw new Error('Authenticated Home already admitted the call'); }) };
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', logger: () => {},
+    ...(mode === 'plain' ? { encryptionMode: 'plain' as const } : { encryptionMode: 'e2ee' as const, encryptionKey: key, encryptionVariant: 'dataKey' as const }),
+    authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, installation, source) });
+  registerMachineAgentInstallJobRpcHandlers({ owner, rpcHandlerManager: rpc });
+
+  // Substitute only the Home/socket boundary. Both continuation endpoints, codecs,
+  // request admission, the daemon RPC dispatcher and the install journal run normally.
+  const clientEvents = new EventEmitter();
+  const daemonEvents = new EventEmitter();
+  const relay = (senderSocketId: string, targetEvents: EventEmitter, requestId: string, raw: unknown) => {
+    const { returnTo, ...frame } = SocketRpcContinuationFrameV1Schema.parse(raw);
+    targetEvents.emit(SOCKET_RPC_EVENTS.CONTINUATION, { ...frame, senderSocketId, requestId: returnTo?.requestId ?? requestId });
+  };
+  rpc.onSocketConnect({
+    on: daemonEvents.on.bind(daemonEvents), off: daemonEvents.off.bind(daemonEvents),
+    emit(event: string, raw: unknown) {
+      if (event === SOCKET_RPC_EVENTS.CONTINUATION) relay('daemon-socket', clientEvents, '', raw);
+    },
+  } as unknown as Socket);
+  const read = (actorAccountId: string, jobId: string) => {
+    const requestId = `read-${actorAccountId}`;
+    const targetRequestId = `target-${requestId}`;
+    return callSocketRpc({
+      socket: { connected: true, on: clientEvents.on.bind(clientEvents), off: clientEvents.off.bind(clientEvents),
+        emit(event: string, raw: unknown, callback?: (ack: unknown) => void) {
+          if (event === SOCKET_RPC_EVENTS.CONTINUATION) relay('client-socket', daemonEvents, targetRequestId, raw);
+          if (event !== SOCKET_RPC_EVENTS.CALL) return;
+          const request = raw as SocketRpcRequestPayload;
+          clientEvents.emit(SOCKET_RPC_EVENTS.CONTINUATION, { requestId, selectedSocketId: 'daemon-socket' });
+          void rpc.handleRequest({ ...request, requestId: targetRequestId, continuationReturn: { socketId: 'client-socket', requestId },
+            machineAdmission: { actorAccountId, custodianAccountId: 'custodian', machineId: 'machine', installationId: 'installation',
+              role: actorAccountId === 'member' ? 'use' : 'manage', encryptionMode: mode },
+          }, undefined, 'authenticated_home_socket').then(result => callback?.({ ok: true, result }));
+        },
+      },
+      randomBytes, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_READ, target: { kind: 'machine', id: 'machine' },
+      requestId, content, params: { jobId, cursor: 0 }, timeoutMs: null, signal: controller.signal,
+      async onContinuation(value) { frames.push(value); establish(); return null; },
+    });
+  };
+  try {
+    const started = owner.start({ agentId: 'fixture', intent: 'install', consent: { vendorRecipe: true } }, {
+      accountId: 'member', async executeMember(_operation, signal, emit) {
+        // The member process is the system boundary. Job admission, history and settlement are real.
+        await Promise.race([established, new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))]);
+        emit(progress);
+        emit(progress);
+        emit({ ...progress, bytesDone: 2 });
+        return { kind: 'succeeded', version: '1.0' };
+      },
+    });
+    if (!started.ok) throw new Error(started.errorCode);
+    await expect(read('custodian', started.jobId)).resolves.toMatchObject({ ok: false, errorCode: 'job_not_found' });
+    expect(frames).toEqual([]);
+    installation.resolveCustodianAccountId.mockClear();
+    const terminal = await read('member', started.jobId);
+    expect(frames).toEqual([
+      { events: [], nextCursor: 0 },
+      { events: [progress], nextCursor: 1 },
+      { events: [{ ...progress, bytesDone: 2 }], nextCursor: 2 },
+    ]);
+    expect(terminal).toMatchObject({ ok: true, done: true, events: [], nextCursor: 2, outcome: { kind: 'succeeded' } });
+    expect(installation.resolveCustodianAccountId).toHaveBeenCalledTimes(1);
+    expect(installation.verifyMachineAdmission).not.toHaveBeenCalled();
+    expect(owner.read({ jobId: started.jobId, cursor: 1 }, 'member')).toMatchObject({
+      ok: true, events: [{ ...progress, bytesDone: 2 }], nextCursor: 2, done: true,
+    });
+  } finally { controller.abort(); rpc.onSocketDisconnect(); await owner.shutdown(); }
+});
 
 it('carries a closed member isolation cause through the install RPC and Action failure', async () => {
   const handlers = new Map<string, RpcHandler>();

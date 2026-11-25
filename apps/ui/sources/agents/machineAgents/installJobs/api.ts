@@ -1,13 +1,14 @@
 import {
     DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema,
-    DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema,
+    AgentInstallJobUpdateSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema,
     DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema,
     DaemonAgentInstallListRequestSchema, DaemonAgentInstallListResponseSchema,
     type DaemonAgentInstallStartRequest, type DaemonAgentInstallReadRequest,
-    type DaemonAgentInstallCancelRequest,
+    type DaemonAgentInstallCancelRequest, type AgentInstallJobUpdate,
 } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcError, isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import type { SocketRpcContinuationHandler } from '@happier-dev/sync-client';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { resolveMachineRpcTargetServerId } from '@/sync/runtime/orchestration/serverScopedRpc/resolveMachineRpcTargetServerId';
@@ -37,6 +38,7 @@ async function invoke<Request extends object, Response>(
     responseSchema: Readonly<{ safeParse(value: unknown): { success: true; data: Response } | { success: false } }>,
     input: Request,
     actionId?: 'machines.agents.install.status' | 'machines.agents.install.cancel',
+    onContinuation?: SocketRpcContinuationHandler,
 ): Promise<Response> {
     const payload = requestSchema.parse(input);
     let raw: unknown;
@@ -58,7 +60,9 @@ async function invoke<Request extends object, Response>(
                 raw = execution.result;
             } finally { account.dispose(); }
         } else {
-            raw = await machineRpcWithServerScope<unknown, Request>({ ...target, method, payload });
+            raw = await machineRpcWithServerScope<unknown, Request>({ ...target, method, payload,
+                ...(onContinuation ? { onContinuation } : {}),
+            });
         }
     } catch (error) {
         if (target.signal?.aborted) throw error;
@@ -81,6 +85,12 @@ export const startAgentInstallJobRpc = (target: AgentInstallJobRpcTarget, input:
     invoke(target, RPC_METHODS.DAEMON_AGENTS_INSTALL_START, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, input);
 export const readAgentInstallJobRpc = (target: AgentInstallJobRpcTarget, input: DaemonAgentInstallReadRequest) =>
     invoke(target, RPC_METHODS.DAEMON_AGENTS_INSTALL_READ, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, input, 'machines.agents.install.status');
+export const followAgentInstallJobRpc = (target: AgentInstallJobRpcTarget, input: DaemonAgentInstallReadRequest, receive: (update: AgentInstallJobUpdate) => void) =>
+    invoke(target, RPC_METHODS.DAEMON_AGENTS_INSTALL_READ, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, input, undefined,
+        async value => {
+            receive(AgentInstallJobUpdateSchema.parse(value));
+            return null;
+        });
 export const cancelAgentInstallJobRpc = (target: AgentInstallJobRpcTarget, input: DaemonAgentInstallCancelRequest) =>
     invoke(target, RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema, input, 'machines.agents.install.cancel');
 export const listAgentInstallJobsRpc = (target: AgentInstallJobRpcTarget) =>

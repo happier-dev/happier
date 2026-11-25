@@ -94,7 +94,8 @@ export function registerMachineAgentInstallJobRpcHandlers(params: { rpcHandlerMa
     const parsed = DaemonAgentInstallReadRequestSchema.safeParse(raw);
     const accountId = await admittedAccount(context);
     if (context && !accountId || parsed.success && owner.isDefinitionJob(parsed.data.jobId) && !accountId) return unavailable;
-    return parsed.success ? await owner.read(parsed.data, accountId ?? undefined) : invalid;
+    return parsed.success ? await owner.read(parsed.data, accountId ?? undefined, context?.sendAgentInstallJobUpdate
+      ? { signal: context.signal, send: context.sendAgentInstallJobUpdate } : undefined) : invalid;
   });
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL, async (raw: unknown, context?: RpcHandlerContext) => {
     const parsed = DaemonAgentInstallCancelRequestSchema.safeParse(raw);

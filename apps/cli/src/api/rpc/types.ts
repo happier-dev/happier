@@ -118,6 +118,7 @@ export type RpcHandlerContext = Readonly<{
     /** Validated transport correlation; authenticated relays replace caller values before dispatch. */
     transportRequestId?: string;
     sendHostResourceWatchFrame?: (frame: unknown) => Promise<unknown>;
+    sendAgentInstallJobUpdate?: (update: import('@happier-dev/protocol/daemon/agent-install-jobs').AgentInstallJobUpdate) => Promise<unknown>;
     followHostResource?: Pick<Parameters<import('@/plugins/runtime/invocation/services/uiResourceWatch').PluginUiResourceWatchOwner['followHost']>[0],
         'onOpen' | 'onEvent'>;
     /** Home-stamped request identity for an admitted Project Open operation. */

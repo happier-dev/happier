@@ -302,7 +302,7 @@ async function machineRpcWithServerTransport<R, A>(
             await resolveTransferPolicyAllowsMachineRpcDirect({ serverId: params.serverId ?? undefined, timeoutMs, signal: params.signal }))
         : true;
     const policyPreferScoped = guarded && !allowDirect;
-    const initialPreferScoped = params.preferScoped === true || params.requireEncryptedPayload === true || policyPreferScoped;
+    const initialPreferScoped = params.preferScoped === true || params.requireEncryptedPayload === true || !!params.onContinuation || policyPreferScoped;
     const requestedServerId = normalizeId(params.serverId);
     const requestedAccountId = normalizeId(params.accountId);
     const activeServerId = normalizeId(getActiveServerSnapshot().serverId);
@@ -648,6 +648,7 @@ async function machineRpcWithServerTransport<R, A>(
                                 },
                             timeoutMs,
                             authorization: params.authorization,
+                            onContinuation: params.onContinuation,
                             requestId: params.requestId,
                             onIssued: () => {
                                 if (params.operationTimeoutMs !== null && timeoutBudget.resolveRemainingTimeoutMs() <= 0) {
@@ -700,7 +701,7 @@ async function machineRpcWithServerTransport<R, A>(
                 if (params.waitForResultOnCancel && socketRpcAbortScope.issued) throw error;
                 throw createMachineRpcAbortError(params.method, error);
             }
-            if (exactIssuanceAttempted) {
+            if (exactIssuanceAttempted || params.onContinuation && socketRpcAbortScope.issued) {
                 throw error;
             }
             if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE && attempt === 0) {
@@ -752,7 +753,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
 
     try {
         const result = effectiveParams.onIssued || effectiveParams.requireEncryptedPayload || effectiveParams.waitForResultOnCancel
-            || effectiveParams.onContentMode
+            || effectiveParams.onContentMode || effectiveParams.onContinuation
             ? await machineRpcWithServerTransport<R, A>(effectiveParams, socketRpcAbortScope, timeoutBudget, onNoEffect, observeScope)
             : await withMachineRpcAbort(
                 effectiveParams.method,

@@ -51,6 +51,11 @@ export const AgentInstallJobEventSchema = lazyZodSchema(() => z.discriminatedUni
   z.extend(AgentInstallJobProgressSchema, { t: z.literal('progress') }),
   z.strictObject({ t: z.literal('log'), line: z.string() }),
 ]));
+export const AgentInstallJobUpdateSchema = lazyZodSchema(() => z.strictObject({
+  events: z.array(AgentInstallJobEventSchema),
+  nextCursor: z.number().check(z.int(), z.nonnegative()),
+}));
+export type AgentInstallJobUpdate = z.infer<typeof AgentInstallJobUpdateSchema>;
 export const AgentInstallJobSchema = lazyZodSchema(() => z.strictObject({
   jobId: z.string().check(z.minLength(1)),
   agentId: z.string().check(z.minLength(1)),
@@ -100,10 +105,10 @@ export const DaemonAgentInstallReadRequestSchema = lazyZodSchema(() => z.strictO
 }));
 export const DaemonAgentInstallReadResponseSchema = lazyZodSchema(() => z.union([
   z.strictObject({
-    ok: z.literal(true), events: z.array(AgentInstallJobEventSchema),
+    ok: z.literal(true), ...AgentInstallJobUpdateSchema.shape,
     steps: AgentInstallJobSchema.shape.steps,
     progress: AgentInstallJobSchema.shape.progress,
-    nextCursor: z.number().check(z.int(), z.nonnegative()), done: z.boolean(),
+    done: z.boolean(),
     outcome: z.nullable(AgentInstallJobOutcomeSchema),
   }),
   DaemonAgentInstallErrorSchema,

@@ -2244,6 +2244,12 @@ Member jobs use that member's home and explicit install environment, without
 daemon credentials or private configuration. Job identity, reads, lists and
 cancellation are scoped to the requester, including built-in Agents. Missing
 member isolation and unsupported platforms return `member_install_unavailable`.
+An open job presenter follows the daemon's event cursor over the existing
+Machine RPC continuation. Opening a presenter or recovering its connection
+reads the cursor once, then the daemon sends each changed step, progress
+sample or log line. Closing the last presenter releases that observation while
+the daemon continues the install. The finite status Action still reads the
+same journal.
 Member executable discovery runs as the same native user with the canonical
 `sourcePolicy: 'member'`, retaining explicitly shared managed tools as a read-only
 fallback. Its own vendor or managed installation takes priority. Retained launch

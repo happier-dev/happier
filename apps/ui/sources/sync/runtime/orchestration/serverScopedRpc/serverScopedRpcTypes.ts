@@ -1,4 +1,5 @@
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import type { SocketRpcContinuationHandler } from '@happier-dev/sync-client';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption, EncryptionGenerationScope, EncryptionGenerationScopeAuthority, EncryptionScopeInput } from '@/sync/encryption/encryption';
@@ -39,6 +40,7 @@ export type ServerScopedMachineRpcParams<A, R = unknown> = Readonly<{
     /** Account key material requires Machine encryption or the private installed-key sealed carrier. */
     requireEncryptedPayload?: true;
     authorization?: SocketRpcAuthorizationContext;
+    onContinuation?: SocketRpcContinuationHandler;
     signal?: AbortSignal;
     /** Cancel remote work cooperatively while retaining its own acknowledgement. */
     waitForResultOnCancel?: boolean;

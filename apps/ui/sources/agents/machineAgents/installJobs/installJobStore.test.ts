@@ -15,6 +15,7 @@ import { buildMachineAgentInventoryKey, MachineAgentInventoryItemSchema } from '
 import { AgentInstallJobSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallStartRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
+import { clearMachineRequestReachabilityForMachine } from '@/sync/domains/machines/reachability/machineReachability';
 import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -179,48 +180,69 @@ describe('agent install job owner', () => {
         await observer.unmount();
     });
 
-    it('shares one poll while presented, reads nothing for 60s hidden or unmounted, and resumes its cursor until terminal', async () => {
+    it.each(['custodian', 'member'])('pushes one render per update and takes one cursor read on reconnect for %s', async accountId => {
         vi.useFakeTimers();
-        const server = await addJobHome({ serverUrl: 'https://pf58-presentation.example.test' });
-        const target = { serverId: server.id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
+        const server = await addJobHome({ serverUrl: `https://${accountId}.pf58-presentation.example.test`, accountId });
+        const target = { serverId: server.id, accountId, machineId: 'machine', agentId: 'codex' };
         let presented = true;
-        let settled = false;
+        let renderCount = 0;
+        const disconnected = createDeferred<void>();
+        const release = createDeferred<unknown>();
+        const progress = { t: 'progress', stepId: 'cli', bytesDone: 8, bytesTotal: 10 };
+        let push: ((frame: unknown) => Promise<unknown>) | undefined;
         const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(PluginSurfaceFocusEligibilityProvider,
             { active: presented, children });
-        boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { cursor?: number } }) => {
+        boundary.rpc.mockImplementation(async ({ method, payload, onContinuation, signal }: {
+            method: string; payload: { cursor?: number };
+            onContinuation?: (frame: unknown) => Promise<unknown>; signal?: AbortSignal;
+        }) => {
             if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST) return { ok: true, jobs: [wireJob('codex', 'pf58-job')] };
             if (method !== RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) throw new Error('Unexpected PF-58 fixture RPC');
-            return { ok: true, steps: [], progress: [], events: settled
-                ? [{ t: 'progress', stepId: 'cli', bytesDone: 8, bytesTotal: 10 }] : [],
-                nextCursor: (payload.cursor ?? 0) + 1, done: settled, outcome: settled
-                    ? { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Fixture settled' } : null };
+            if (!onContinuation) return { ok: true, steps: [], progress: [], events: [], nextCursor: 0, done: false, outcome: null };
+            push = onContinuation;
+            const cursor = payload.cursor ?? 0;
+            await push({ events: [], nextCursor: cursor });
+            if (cursor === 0) {
+                await disconnected.promise;
+                throw new Error('Socket disconnected');
+            }
+            return await Promise.race([release.promise, new Promise<never>((_resolve, reject) => {
+                signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+            })]);
         });
         const reads = () => boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ);
+        const useCountedJob = () => { renderCount += 1; return useAgentInstallJob(target); };
         try {
-            const first = await renderHook(() => useAgentInstallJob(target), { wrapper });
+            const first = await renderHook(useCountedJob, { wrapper });
             const second = await renderHook(() => useAgentInstallJob(target), { wrapper });
-            const beforeTick = reads().length;
+            expect(reads()).toHaveLength(1);
+            const beforeTick = renderCount;
             await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
-            expect(reads().length - beforeTick).toBe(1);
+            expect(reads()).toHaveLength(1);
+            expect(renderCount).toBe(beforeTick);
+            await act(async () => { await push?.({ events: [progress], nextCursor: 1 }); });
+            expect(first.getCurrent().job?.steps[0]?.bytesDone).toBe(8);
+            expect(renderCount - beforeTick).toBe(1);
+            await act(async () => { await push?.({ events: [progress], nextCursor: 1 }); });
+            expect(renderCount - beforeTick).toBe(1);
+            expect(reads().at(-1)?.[0]).toMatchObject({ accountId, machineId: target.machineId });
+            await act(async () => { disconnected.resolve(); });
+            await act(async () => { clearMachineRequestReachabilityForMachine(target, target.machineId); });
+            expect(reads()).toHaveLength(2);
+            expect(reads().at(-1)?.[0].payload).toEqual({ jobId: 'pf58-job', cursor: 1 });
             presented = false;
             await first.rerender();
             await second.rerender();
-            const beforeHidden = reads().length;
             await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-            expect.soft(reads().length - beforeHidden).toBe(0);
-            const cursor = reads().at(-1)?.[0].payload.cursor + 1;
-            presented = true;
-            await first.rerender();
-            expect(reads().at(-1)?.[0].payload).toEqual({ jobId: 'pf58-job', cursor });
+            expect(reads()).toHaveLength(2);
             await first.unmount();
             await second.unmount();
-            const beforeUnmounted = reads().length;
-            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
-            expect.soft(reads().length - beforeUnmounted).toBe(0);
-            const remounted = await renderHook(() => useAgentInstallJob(target), { wrapper });
+            presented = true;
+            const remounted = await renderHook(useCountedJob, { wrapper });
             expect(remounted.getCurrent().job?.jobId).toBe('pf58-job');
-            settled = true;
-            await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
+            expect(reads()).toHaveLength(3);
+            await act(async () => { release.resolve({ ok: true, steps: [], progress: [], events: [], nextCursor: 1, done: true,
+                outcome: { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Fixture settled' } }); });
             expect(remounted.getCurrent().job).toMatchObject({ steps: [{ bytesDone: 8 }],
                 outcome: { kind: 'failed', code: 'cancelled' } });
             const terminalReads = reads().length;
@@ -235,20 +257,19 @@ describe('agent install job owner', () => {
     it('keeps a queue completion waiter observed without a presenter and stops reads after settlement', async () => {
         vi.useFakeTimers();
         const target = { serverId: (await addJobHome({ serverUrl: 'https://pf58-queue.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
-        let settled = false;
-        boundary.rpc.mockImplementation(async ({ method }: { method: string }) => method.endsWith('.list')
+        const terminal = createDeferred<unknown>();
+        boundary.rpc.mockImplementation(async ({ method, onContinuation }: { method: string; onContinuation?: unknown }) => method.endsWith('.list')
             ? { ok: true, jobs: [wireJob('codex', 'queue-job')] }
-            : { ok: true, steps: [], progress: [], events: [], nextCursor: 1, done: settled,
-                outcome: settled ? { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Cancelled' } : null });
+            : onContinuation ? terminal.promise : { ok: true, steps: [], progress: [], events: [], nextCursor: 0, done: false, outcome: null });
         await ensureMachineAgentInstallJobs(target);
         const completion = waitForAgentInstallJob(target);
         await act(async () => {});
         const reads = () => boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ).length;
         const beforeTick = reads();
         await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
-        expect(reads() - beforeTick).toBe(1);
-        settled = true;
-        await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
+        expect(reads()).toBe(beforeTick);
+        terminal.resolve({ ok: true, steps: [], progress: [], events: [], nextCursor: 0, done: true,
+            outcome: { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Cancelled' } });
         expect(await completion).toMatchObject({ kind: 'failed', code: 'cancelled' });
         const terminalReads = reads();
         await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
@@ -474,7 +495,6 @@ describe('agent install job owner', () => {
     });
 
     it('publishes daemon cursor progress and cancellation into the shared inventory without replacing unrelated agents', async () => {
-        vi.useFakeTimers();
         const target = { serverId: (await addJobHome({ serverUrl: 'https://store-inventory.test', accountId: 'account-a' })).id, accountId: 'account-a', machineId: 'machine', agentId: 'codex' };
         const key = serverAccountScopedResourceKey(target, 'machine-agents', target.machineId);
         const facts = (agentId: string): MachineAgentInventoryItem => ({ agentId, title: agentId, installed: false, version: null, latestVersion: null,
@@ -482,20 +502,24 @@ describe('agent install job owner', () => {
             install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [{ key: 'helper', installed: true, version: '1' }] });
         machineAgentInventoryStore.publish(key, { status: 'ready', items: [facts('codex'), facts('claude')], lastCheckedAt: 1, dependencyTitlesByKey: { helper: 'Agent helper' } });
         const unrelated = machineAgentInventoryStore.read(key).agents[1];
-        const read = createDeferred<unknown>();
-        boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { cursor?: number } }) => {
+        const terminal = createDeferred<unknown>();
+        let push: ((value: unknown) => Promise<unknown>) | undefined;
+        boundary.rpc.mockImplementation(async ({ method, onContinuation }: { method: string; onContinuation?: typeof push }) => {
             if (method.endsWith('.list')) return { ok: true, jobs: [wireJob('codex', 'job-inventory')] };
-            if (payload.cursor === 0) return read.promise;
-            return { ok: true, steps: [], progress: [], events: [], nextCursor: 2, done: true, outcome: { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Cancelled' } };
+            push = onContinuation;
+            return terminal.promise;
         });
         const unsubscribe = subscribeMachineAgentInstallJobs(target, () => {});
         await ensureMachineAgentInstallJobs(target);
         expect(machineAgentInventoryStore.read(key).agents[0]).toMatchObject({ state: 'installing', job: { jobId: 'job-inventory', steps: [{ bytesDone: 3 }] } });
         await act(async () => {
-            read.resolve({ ok: true, steps: [], progress: [], events: [{ t: 'progress', stepId: 'cli', bytesDone: 7, bytesTotal: 10 }], nextCursor: 1, done: false, outcome: null });
+            await push?.({ events: [{ t: 'progress', stepId: 'cli', bytesDone: 7, bytesTotal: 10 }], nextCursor: 1 });
         });
         expect(machineAgentInventoryStore.read(key).agents[0]?.job?.steps[0]?.bytesDone).toBe(7);
-        await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
+        await act(async () => {
+            terminal.resolve({ ok: true, steps: [], progress: [], events: [], nextCursor: 1, done: true,
+                outcome: { kind: 'failed', code: 'cancelled', stepId: 'cli', message: 'Cancelled' } });
+        });
         expect(machineAgentInventoryStore.read(key).agents[0]).toMatchObject({ state: 'notInstalled', job: { outcome: { code: 'cancelled' } } });
         expect(machineAgentInventoryStore.read(key).agents[1]).toBe(unrelated);
         unsubscribe();
@@ -604,7 +628,6 @@ describe('agent install job owner', () => {
     });
 
     it('retains the last projection and retries when reconnect discovery loses its connection', async () => {
-        vi.useFakeTimers();
         const target = { serverId: (await addJobHome({ serverUrl: 'https://store-pruned-offline.test' })).id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         let listCount = 0;
         boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { jobId?: string } }) => {
@@ -620,7 +643,7 @@ describe('agent install job owner', () => {
         await ensureMachineAgentInstallJobs(target);
         await act(async () => {});
         expect(readAgentInstallJob(target)).toMatchObject({ jobId: 'job-offline-pruned', outcome: null });
-        await act(async () => { await vi.advanceTimersByTimeAsync(MACHINE_RPC_POLL_INTERVAL_MS); });
+        await act(async () => { clearMachineRequestReachabilityForMachine(target, target.machineId); });
         expect(readAgentInstallJob(target)).toMatchObject({ jobId: 'job-offline-current', outcome: { kind: 'succeeded', version: '3.0' } });
         unsubscribe();
     });
@@ -654,16 +677,18 @@ describe('agent install job owner', () => {
         unsubscribe();
     });
 
-    it('retains an in-flight read across unmount and remounts the same job without notifying unrelated agents', async () => {
+    it('releases an in-flight observation on unmount and remounts the same job without notifying unrelated agents', async () => {
         const server = await addJobHome({ serverUrl: 'https://install-lifetime.example.test' });
         const target = { serverId: server.id, accountId: 'store-account', machineId: 'machine', agentId: 'codex' };
         const read = createDeferred<unknown>();
-        boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
+        const observations: AbortSignal[] = [];
+        boundary.rpc.mockImplementation(async ({ method, signal }: { method: string; signal: AbortSignal }) => {
             if (method.endsWith('.list')) return { ok: true, jobs: [
                 wireJob('codex', 'job-lifetime'),
                 { ...wireJob('claude', 'job-unrelated'), done: true, outcome: { kind: 'succeeded', version: '1.0' } },
             ] };
             if (method.endsWith('.start')) return { ok: true, jobId: 'job-lifetime' };
+            observations.push(signal);
             return read.promise;
         });
         const unrelatedTarget = { ...target, agentId: 'claude' };
@@ -676,7 +701,9 @@ describe('agent install job owner', () => {
         expect(unrelatedBefore?.jobId).toBe('job-unrelated');
         unrelatedNotified.mockClear();
         await first.unmount();
+        expect(observations[0]?.aborted).toBe(true);
         const second = await renderHook(() => useAgentInstallJob(target));
+        expect(observations).toHaveLength(2);
         expect(second.getCurrent().job).toBe(before);
         await act(async () => {
             read.resolve({ ok: true, steps: [], progress: [], events: [{ t: 'progress', stepId: 'cli', bytesDone: 10, bytesTotal: 10 }],
