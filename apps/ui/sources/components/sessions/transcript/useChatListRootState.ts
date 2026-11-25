@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useTranscriptWorkflowRunCardsAvailable, useTranscriptWorkflowRunStarts } from './source/useTranscriptWorkflowRuns';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { resolveTranscriptToolVisibility } from './resolveTranscriptToolVisibility';
 import {
@@ -317,6 +318,9 @@ export function useChatListRootState(props: ChatListProps) {
     );
 
     const transcriptSource = useSessionTranscriptSource();
+    const workflowRunCardsAvailable = useTranscriptWorkflowRunCardsAvailable(transcriptSource.serverId);
+    const workflowRunStarts = useTranscriptWorkflowRunStarts(transcriptSource.sessionId, transcriptSource.serverId,
+        transcriptSource.kind === 'app' && workflowRunCardsAvailable);
     const interaction = transcriptSource.useInteraction();
     // Trigger Runs that fired from this Session's turn ends, read through the one Account Run owner, so a
     // Run that wrote no turn (Keep going checked done) still gets its fold (07 U9).
@@ -464,6 +468,7 @@ export function useChatListRootState(props: ChatListProps) {
         sessionId: props.session.id,
         sessionTurns: props.session.sessionTurns?.turns ?? null,
         triggerRuns: originRuns.runs,
+        workflowRunStarts,
         toolCallsGroupStrategy,
     });
     const onOpenPluginTranscriptActivityAction = React.useCallback((action: Readonly<{

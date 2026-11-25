@@ -18,6 +18,8 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
 
 /**
  * The agent-origin managed workflow card at the real transcript row.
@@ -73,6 +75,7 @@ const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { ToolTimelineRow } = await import('@/components/tools/shell/views/ToolTimelineRow');
 const { ToolView } = await import('@/components/tools/shell/views/ToolView');
+const { useTranscriptWorkflowRunNotice } = await import('../source/useTranscriptWorkflowRuns');
 let serverId: string;
 let credentials: Awaited<ReturnType<typeof TokenStorage.getCredentialsForServerUrl>>;
 let previousState = storage.getState();
@@ -199,6 +202,28 @@ afterEach(async () => {
 });
 
 describe('inline transcript workflow Run result', () => {
+    it('updates only the named Run subscriber when its worker notice arrives', async () => {
+        const sessionId = 'session-1';
+        storage.setState({ sessions: { ...storage.getState().sessions, [sessionId]: createSessionFixture({ id: sessionId, serverId }) } });
+        const named = await renderHook(() => useTranscriptWorkflowRunNotice(sessionId, serverId, RUN_ID));
+        const another = await renderHook(() => useTranscriptWorkflowRunNotice(sessionId, serverId, 'another-run'));
+        let namedUpdates = 0;
+        let otherUpdates = 0;
+        named.subscribe(() => { namedUpdates += 1; });
+        another.subscribe(() => { otherUpdates += 1; });
+
+        await act(async () => {
+            storage.getState().applyMessages(sessionId, [{
+                id: 'held-notice', localId: null, seq: 1, createdAt: 1, role: 'event', isSidechain: false,
+                content: { type: 'worker-update', update: { v: 1, workerKind: 'workflow_run', workerId: RUN_ID,
+                    ownerState: 'waiting_for_review', wake: 'needs_you', headline: 'Check the result', canInspect: true,
+                    transcriptPointer: { kind: 'workflow_run', runId: RUN_ID, invocationRecordId: 'held-step' } } },
+            }]);
+        });
+        expect(named.getCurrent()?.ownerState).toBe('waiting_for_review');
+        expect([namedUpdates, otherUpdates]).toEqual([1, 0]);
+    });
+
     it('promotes a membership-only row through the existing exact reader before showing its private title', async () => {
         const run = createWorkflowRunSummaryFixture({ id: RUN_ID, ownerAccountId: ACCOUNT_ID, revision: 2,
             origin: { kind: 'direct', originSessionId: 'session-1' } });
@@ -296,14 +321,27 @@ describe('inline transcript workflow Run result', () => {
             id: RUN_ID,
             ownerAccountId: ACCOUNT_ID,
             origin: { kind: 'direct', originSessionId: 'session-1' },
-            state: 'running',
-            revision: 3,
+            state: 'waiting_for_review',
+            attentionRequired: true,
+            invocationAttentionRequired: true,
+            heldStep: { invocationId: 'waiting-invocation', label: 'Check the result' },
+            revision: 2,
         }))]);
         const screen = await renderCardRow();
         await settle();
 
         expect(rowReads()).toHaveLength(0);
+        expect(collectHostText(screen.tree)).toContain('workStatus.buckets.needs_you');
+        await screen.pressByTestIdAsync(`transcript-workflow-run-${RUN_ID}-review`);
+        expect(pushSpy).toHaveBeenCalledWith(`/workflows/runs/${RUN_ID}?invocationId=waiting-invocation&serverId=${encodeURIComponent(serverId)}`);
+
+        await act(async () => {
+            storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
+                id: RUN_ID, ownerAccountId: ACCOUNT_ID, state: 'running', revision: 3,
+            }))]);
+        });
         expect(collectHostText(screen.tree)).toContain('workflows.runState.running');
+        expect(screen.findAllHostsByTestId(`transcript-workflow-run-${RUN_ID}-review`)).toHaveLength(0);
 
         // The canonical invalidation owner upserts the newer revision; the
         // card follows the one shared row rather than polling.

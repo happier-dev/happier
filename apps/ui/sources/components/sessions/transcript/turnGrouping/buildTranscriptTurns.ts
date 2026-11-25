@@ -2,6 +2,7 @@ import type { Message, ToolCallMessage, UserTextMessage } from "@happier-dev/ses
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
 import { filterVisibleTranscriptMessageIds } from '@/components/sessions/transcript/events/runtimeIssueRepeatProjection';
+import type { TranscriptWorkflowRunStarts } from '@/sync/store/latestWorkerUpdates';
 
 export type TranscriptTurnToolCallsGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
 
@@ -318,10 +319,11 @@ export function buildTranscriptTurnsCached(opts: {
     forkBoundaryBeforeMessageIds?: ReadonlySet<string>;
     forkBoundarySignature?: string;
     forkMetadataByMessageId?: Readonly<Record<string, unknown>>;
+    workflowRunStarts?: TranscriptWorkflowRunStarts;
 }): TranscriptTurnsBuildCache {
     // Keep user anchors as turn boundaries even when Pending owns their presentation.
     // projectPendingTranscriptItems replaces their visible row after grouping.
-    const visibleMessageIdsOldestFirst = filterVisibleTranscriptMessageIds(opts.messageIdsOldestFirst, opts.messagesById);
+    const visibleMessageIdsOldestFirst = filterVisibleTranscriptMessageIds(opts.messageIdsOldestFirst, opts.messagesById, opts.workflowRunStarts);
     if (opts.forkBoundaryBeforeMessageIds?.size && visibleMessageIdsOldestFirst.length < opts.messageIdsOldestFirst.length) {
         // A filtered first child event still separates its origin from the parent.
         // Carry that existing boundary to the next visible row using the canonical

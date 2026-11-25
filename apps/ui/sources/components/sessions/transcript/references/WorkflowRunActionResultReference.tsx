@@ -1,4 +1,5 @@
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useTranscriptWorkflowRunCardsAvailable, useTranscriptWorkflowRunNotice } from '@/components/sessions/transcript/source/useTranscriptWorkflowRuns';
 import * as React from 'react';
 import { View } from 'react-native';
 import {
@@ -17,18 +18,16 @@ import { Text } from '@/components/ui/text/Text';
 import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
-import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
 import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
 import { useSaveRunAsWorkflow } from '@/components/workflows/run/useSaveRunAsWorkflow';
 import { Typography } from '@/constants/Typography';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ToolCall } from "@happier-dev/session-core/messages";
-import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useServerScopedMachineLabel, useWorkflowRun } from '@/sync/store/hooks';
+import { useActiveServerAccountScopeLifetime, useServerScopedMachineLabel, useWorkflowRun } from '@/sync/store/hooks';
 import { refreshWorkflowRunById } from '@/sync/engine/workflows/refreshWorkflowRun';
 import { workflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
-import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { createWorkflowInvocationRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 
@@ -109,20 +108,16 @@ function MountedWorkflowRunReference(props: Readonly<{
     const workTheme = useWorkTheme();
     const transcriptSource = useSessionTranscriptSource();
     const { runId } = props.reference;
-    const activeScope = useActiveServerAccountScope();
     // The card answers the one canonical Workflows decision its destination
     // route answers. A historical start result outlives the feature being
     // turned off; while Workflows are unavailable — or not yet known to be
     // available — it neither advertises the Run nor reads it.
-    const workflowsAvailable = useWorkflowsAvailability().available;
-    // Exact-Home: the active store holds only the active Account's Runs, so a
-    // row from another Home never reads or refreshes it.
-    const homeIsActive = activeScope !== null
-        && areServerProfileIdentifiersEquivalent(activeScope.serverId, props.serverId);
-    const readable = workflowsAvailable && homeIsActive;
+    const readable = useTranscriptWorkflowRunCardsAvailable(props.serverId);
     const row = useWorkflowRun(readable ? runId : null);
     const summary = row?.summary ?? null;
     const summaryKnown = summary !== null;
+    const notice = useTranscriptWorkflowRunNotice(transcriptSource.sessionId, props.serverId,
+        readable && transcriptSource.kind === 'app' ? runId : null);
 
     React.useEffect(() => {
         if (!readable || summaryKnown) return;
@@ -153,12 +148,27 @@ function MountedWorkflowRunReference(props: Readonly<{
         : metadata?.kind === 'unavailable'
             ? t('workflows.contentUnavailable')
             : t('workflows.run.untitled');
-    const status = summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary) }) : null;
+    const status = summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary) })
+        : notice ? resolveWorkStatusTone({ kind: 'worker_update', facts: { update: notice } }) : null;
     const progress = summary ? describeWorkflowRunProgress(summary.stepProgress) : null;
     const canNavigate = transcriptSource.navigate !== null;
     const open = (): void => {
         navigateWithBlurOnWeb(() => {
             transcriptSource.navigate?.(createWorkflowRunRoute(runId, props.serverId));
+        });
+    };
+    const needsReview = status?.bucket === 'needs_you';
+    const pointer = notice?.transcriptPointer;
+    const reviewInvocationId = summary?.heldStep?.invocationId
+        ?? (notice?.wake === 'needs_you' && pointer?.kind === 'workflow_run' && pointer.runId === runId
+            ? pointer.invocationRecordId : undefined);
+    const review = (): void => {
+        if (!reviewInvocationId) {
+            open();
+            return;
+        }
+        navigateWithBlurOnWeb(() => {
+            transcriptSource.navigate?.(createWorkflowInvocationRoute(runId, reviewInvocationId, props.serverId));
         });
     };
     // A workflow written for this task has no source in the library; only it can be saved as one.
@@ -191,8 +201,11 @@ function MountedWorkflowRunReference(props: Readonly<{
                 actions={canNavigate ? (
                     <>
                         {sourceless && summary ? <SaveRunAsWorkflowAction runId={runId} serverId={props.serverId} /> : null}
-                        <RoundButton testID={`transcript-workflow-run-${runId}-open`} size="small" display="secondary"
-                            title={t('workflows.run.open')} accessibilityLabel={[t('workflows.run.open'), title].join(', ')} onPress={open} />
+                        {needsReview
+                            ? <RoundButton testID={`transcript-workflow-run-${runId}-review`} size="small" display="default"
+                                title={t('inbox.work.rows.review')} onPress={review} />
+                            : <RoundButton testID={`transcript-workflow-run-${runId}-open`} size="small" display="secondary"
+                                title={t('workflows.run.open')} accessibilityLabel={[t('workflows.run.open'), title].join(', ')} onPress={open} />}
                     </>
                 ) : undefined}
             >

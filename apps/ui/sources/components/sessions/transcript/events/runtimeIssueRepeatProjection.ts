@@ -1,5 +1,7 @@
 import * as React from 'react';
 import type { Message } from '@happier-dev/session-core/messages';
+import type { TranscriptWorkflowRunStarts } from '@/sync/store/latestWorkerUpdates';
+import { isWorkflowRunNoticeRepresentedByStart } from '../turnGrouping/workflowTranscriptTurns';
 
 import { filterVisibleContextCompactionLifecycleMessageIds } from './contextCompactionLifecycleProjection';
 import {
@@ -37,9 +39,10 @@ function readRuntimeIssueRepeatKey(
  * same way turn after turn) reads as one row: the latest, carrying the run's size. The persisted rows
  * are untouched; only which of them is drawn is decided here.
  */
-function collectRuntimeIssueRepeatRuns(
+function collectHiddenTranscriptRows(
   visibleMessageIdsOldestFirst: readonly string[],
   messagesById: Readonly<Record<string, Message>>,
+  workflowRunStarts?: TranscriptWorkflowRunStarts,
 ): Readonly<{
   hidden: ReadonlySet<string>;
   counts: TranscriptRuntimeIssueRepeatCountByMessageId;
@@ -50,7 +53,11 @@ function collectRuntimeIssueRepeatRuns(
   let previousId: string | null = null;
   let runLength = 0;
   for (const messageId of visibleMessageIdsOldestFirst) {
-    const key = readRuntimeIssueRepeatKey(messagesById[messageId]);
+    const message = messagesById[messageId];
+    if (isWorkflowRunNoticeRepresentedByStart(message, workflowRunStarts, messagesById)) {
+      (hidden ??= new Set()).add(messageId);
+    }
+    const key = readRuntimeIssueRepeatKey(message);
     if (key !== null && key === previousKey && previousId !== null) {
       (hidden ??= new Set()).add(previousId);
       runLength += 1;
@@ -63,19 +70,20 @@ function collectRuntimeIssueRepeatRuns(
     previousKey = key;
     previousId = messageId;
   }
-  return hidden && counts ? { hidden, counts } : null;
+  return hidden ? { hidden, counts: counts ?? EMPTY_REPEAT_COUNTS } : null;
 }
 
 /** The transcript's one row-visibility decision for committed messages, shared by linear and turn grouping. */
 export function filterVisibleTranscriptMessageIds(
   messageIdsOldestFirst: readonly string[],
   messagesById: Readonly<Record<string, Message>>,
+  workflowRunStarts?: TranscriptWorkflowRunStarts,
 ): string[] {
   const visible = filterVisibleContextCompactionLifecycleMessageIds(
     messageIdsOldestFirst,
     messagesById,
   );
-  const runs = collectRuntimeIssueRepeatRuns(visible, messagesById);
+  const runs = collectHiddenTranscriptRows(visible, messagesById, workflowRunStarts);
   return runs
     ? visible.filter((messageId) => !runs.hidden.has(messageId))
     : visible;
@@ -93,7 +101,7 @@ export function resolveTranscriptRuntimeIssueRepeatCountByMessageId(
     input.messagesById,
   );
   return (
-    collectRuntimeIssueRepeatRuns(visible, input.messagesById)?.counts ??
+    collectHiddenTranscriptRows(visible, input.messagesById)?.counts ??
     EMPTY_REPEAT_COUNTS
   );
 }

@@ -12,6 +12,7 @@ import {
     readWorkflowTurnProvenance,
 } from '@/components/sessions/transcript/turnGrouping/workflowTranscriptTurns';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { TranscriptWorkflowRunStarts } from '@/sync/store/latestWorkerUpdates';
 import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 import type { ForkAwareMessageDescriptors } from '@/components/sessions/transcript/forkContext/buildForkAwareMessageDescriptors';
@@ -65,6 +66,7 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
     sessionTurns: readonly SessionTurnV1[] | null;
     /** The Session's origin Runs; a turn-end firing that wrote no turn folds where it fired. */
     triggerRuns: readonly WorkflowRunSummaryV1[];
+    workflowRunStarts?: TranscriptWorkflowRunStarts;
     toolCallsGroupStrategy: 'all_tools_in_turn' | 'consecutive_tools';
 }>) {
     const {
@@ -87,6 +89,7 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
         sessionId,
         sessionTurns,
         triggerRuns,
+        workflowRunStarts,
         toolCallsGroupStrategy,
     } = params;
     const syncTuning = sync.getSyncTuning();
@@ -125,6 +128,7 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                 forkBoundaryBeforeMessageIds: forkAwareMessageDescriptors?.forkBoundaryBeforeMessageIds,
                 forkBoundarySignature: forkAwareMessageDescriptors?.forkBoundarySignature,
                 forkMetadataByMessageId: forkAwareMessageDescriptors?.metadataByMessageId,
+                workflowRunStarts,
             });
         });
     }, [
@@ -137,6 +141,7 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
         messagesById,
         pendingMessages,
         toolCallsGroupStrategy,
+        workflowRunStarts,
     ]);
 
     React.useEffect(() => {
@@ -180,6 +185,7 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                 forkBoundaryBeforeMessageIds: forkAwareMessageDescriptors?.forkBoundaryBeforeMessageIds,
                 forkBoundarySignature: forkAwareMessageDescriptors?.forkBoundarySignature,
                 forkMetadataByMessageId: forkAwareMessageDescriptors?.metadataByMessageId,
+                workflowRunStarts,
             });
         });
     }, [
@@ -192,6 +198,7 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
         messagesById,
         pendingMessages,
         pendingUserActionRequests,
+        workflowRunStarts,
     ]);
 
     React.useEffect(() => {
@@ -228,6 +235,7 @@ export function useTranscriptRootDerivedItems(params: Readonly<{
                     pendingMessages,
                     discardedMessages: discardedPendingMessages,
                     pendingUserActionRequests,
+                    workflowRunStarts,
                 });
                 const base = foldWorkflowOriginRuns(
                     turnsCache ? groupWorkflowTranscriptTurns(linearItems, turnsCache.turns, (id) => messagesById[id] ?? null) : linearItems,

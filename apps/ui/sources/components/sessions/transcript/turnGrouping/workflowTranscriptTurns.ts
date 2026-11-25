@@ -4,6 +4,19 @@ import type { ChatListItem } from '@/components/sessions/chatListItems';
 import type { TranscriptTurn, TranscriptTurnContent } from './buildTranscriptTurns';
 import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { TranscriptWorkflowRunStarts } from '@/sync/store/latestWorkerUpdates';
+
+/** A named start in this slice owns its Run's place. Updates remain in the message store. */
+export function isWorkflowRunNoticeRepresentedByStart(
+    message: Message | undefined,
+    starts: TranscriptWorkflowRunStarts | undefined,
+    messagesById: Readonly<Record<string, Message>>,
+): boolean {
+    if (!starts || message?.kind !== 'agent-event' || message.event.type !== 'worker-update'
+        || message.event.update.workerKind !== 'workflow_run') return false;
+    const startId = starts.get(message.event.update.workerId);
+    return startId !== undefined && messagesById[startId] !== undefined;
+}
 
 export type WorkflowTranscriptTurnItem = {
     kind: 'turn';

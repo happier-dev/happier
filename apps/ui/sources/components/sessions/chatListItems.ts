@@ -3,6 +3,7 @@ import type { Message } from "@happier-dev/session-core/messages";
 import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
 import { resolveTranscriptMessageItemId } from '@/components/sessions/transcript/events/contextCompactionLifecycleProjection';
 import { filterVisibleTranscriptMessageIds } from '@/components/sessions/transcript/events/runtimeIssueRepeatProjection';
+import type { TranscriptWorkflowRunStarts } from '@/sync/store/latestWorkerUpdates';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { projectPendingTranscriptItems } from '@/components/sessions/transcript/items/projectPendingTranscriptItems';
 import type { PendingMessagesPresentationByRecipient } from '@/components/sessions/pending/pendingMessageVisualState';
@@ -221,9 +222,10 @@ export function buildChatListItems(opts: {
     pendingUserActionRequests?: readonly PendingPermissionRequest[] | null;
     includeCommittedMessages?: boolean;
     groupConsecutiveToolCalls?: boolean;
+    workflowRunStarts?: TranscriptWorkflowRunStarts;
 }): ChatListItem[] {
     const items: ChatListItem[] = [];
-    const visibleMessageIds = new Set(filterVisibleTranscriptMessageIds(opts.messageIdsOldestFirst, opts.messagesById));
+    const visibleMessageIds = new Set(filterVisibleTranscriptMessageIds(opts.messageIdsOldestFirst, opts.messagesById, opts.workflowRunStarts));
 
     const includeCommittedMessages = opts.includeCommittedMessages !== false;
     if (includeCommittedMessages) {
@@ -274,6 +276,7 @@ export function buildChatListItemsCached(opts: {
     forkBoundaryBeforeMessageIds?: ReadonlySet<string>;
     forkBoundarySignature?: string;
     forkMetadataByMessageId?: Readonly<Record<string, ForkMessageMetadata>>;
+    workflowRunStarts?: TranscriptWorkflowRunStarts;
 }): { cache: ChatListItemsBuildCache; items: ChatListItem[] } {
     const groupConsecutiveToolCalls = opts.groupConsecutiveToolCalls === true;
     const forkBoundarySignature = opts.forkBoundarySignature;
@@ -373,19 +376,20 @@ export function buildChatListItemsCached(opts: {
         }
     }
 
-    const visibleMessageIdsOldestFirst = filterVisibleTranscriptMessageIds(opts.messageIdsOldestFirst, opts.messagesById);
+    const visibleMessageIdsOldestFirst = filterVisibleTranscriptMessageIds(opts.messageIdsOldestFirst, opts.messagesById, opts.workflowRunStarts);
     const visibleMessageIds = new Set(visibleMessageIdsOldestFirst);
     if (
         canReuse &&
         opts.cache != null &&
-        opts.cache.messageIdsOldestFirst.length === opts.messageIdsOldestFirst.length &&
         areSameStringList(opts.cache.visibleMessageIdsOldestFirst, visibleMessageIdsOldestFirst) &&
         areSameSourceList(opts.cache.pendingMessagesRef, opts.pendingMessages) &&
         areSameSourceList(opts.cache.discardedMessagesRef, opts.discardedMessages) &&
         areSameSourceList(opts.cache.pendingUserActionRequestsRef, opts.pendingUserActionRequests)
     ) {
         return {
-            cache: opts.cache,
+            cache: opts.cache.messageIdsOldestFirst.length === opts.messageIdsOldestFirst.length
+                ? opts.cache
+                : { ...opts.cache, committedItems, messageIdsOldestFirst: opts.messageIdsOldestFirst, messageStructureKeysOldestFirst },
             items: opts.cache.items,
         };
     }
