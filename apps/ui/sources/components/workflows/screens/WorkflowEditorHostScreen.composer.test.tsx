@@ -1316,8 +1316,10 @@ describe('editor workflow composer', () => {
         expect(fresh.directory).toBe('/repo/elsewhere');
         expect(fresh.extraActionChips).toEqual([agentChip]);
         await select('builtin:repository-review');
-        expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('/repo/elsewhere');
-        expect(screen.root.findByType(WorkflowRunComposer).props.retainedText).toBe('Reviewed brief');
+        const repositoryReview = screen.root.findByType(WorkflowRunComposer).props;
+        expect(repositoryReview.directory).toBe('/repo/elsewhere');
+        expect(repositoryReview.retainedText).toBe('Reviewed brief');
+        expect(screen.findByTestId('new-session-composer-input')).toBeNull();
         await screen.unmount();
     });
 

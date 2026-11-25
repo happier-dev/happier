@@ -98,7 +98,7 @@ it('files a machine alert under Machines, opens the tab its push would, and dism
     expect(screen.findByTestId('inbox.section.machines')).not.toBeNull();
     expect(screen.findByTestId('inbox.section.usage')).toBeNull();
     expect(screen.getTextContent()).toContain('edge-1 is short on memory');
-    expect(screen.getTextContent()).toContain('Critical for 5 min · swap 1.8 of 2 GB');
+    expect(screen.getTextContent()).toContain('Critical for 5 min · swap 1.8 of 2 GiB');
     await chooseDropdownMenuItem(screen, 'inbox.machine-notice.dismiss.notice-machine', 'inbox.dismiss');
     expect(dismiss.mock.calls[0]?.[0]).toEqual(model.openUsageNotices[0]);
     await screen.pressByTestIdAsync('inbox.machine-notice.notice-machine');

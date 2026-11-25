@@ -80,7 +80,9 @@ vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+    return createTextModuleMock({
+        translate: (key, options) => key === 'time.compactAge.minutes' ? `${options?.count}m` : key,
+    });
 });
 
 const NOW = Date.parse('2026-09-30T12:00:00.000Z');
