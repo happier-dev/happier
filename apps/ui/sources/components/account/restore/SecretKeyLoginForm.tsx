@@ -16,6 +16,8 @@ import { getActiveServerHomeCarrier, getActiveServerSnapshot } from '@/sync/doma
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { t } from '@/text';
 import { trackAccountRestored } from '@/track';
+import { recordRecoveryKeyEntered } from '@/components/account/useRecoveryKeyReminder';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { SecretKeyEntryForm, type SecretKeyEntrySubmitResult } from './SecretKeyEntryForm';
 import {
     presentFirstKeyCredentialLifecycle,
@@ -152,6 +154,9 @@ const SecretKeyLoginFormBody = React.memo(function SecretKeyLoginFormBody(props:
                 },
             });
             if (!completed || !isCurrent()) return { kind: 'cancelled' };
+            // The key was just entered here, which is evidence the person holds it: its reminder is done. It
+            // never holds the sign-in's own return.
+            fireAndForget(recordRecoveryKeyEntered(persistenceTarget), { tag: 'SecretKeyLoginForm.recoveryKeyEntered' });
             trackAccountRestored();
             if (props.onAuthenticated) await props.onAuthenticated(credentials);
             else handleSuccess();

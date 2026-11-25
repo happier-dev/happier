@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { resolveHomeDisplayLabel, resolveHomeDisplayName, resolveHomeDisplayNameForServerIdentity } from '@/components/settings/server/homeDisplayName';
+import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { teamAcceptedSignInNames } from '@/components/teams/entry/teamSignInRequirement';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -204,6 +204,12 @@ type TeamAuthEntrySurfaceProps = Readonly<{
      * not what that member came for.
      */
     purpose?: 'sign_in_rule';
+    /**
+     * Draws a chosen method's own step (its form) on this page. With `purpose: 'sign_in_rule'` and exactly one
+     * accepted method that has a form, there is nothing to choose, so the page opens that method in place under the
+     * same Team, Account and Home instead of offering one tile that leads to a second step.
+     */
+    renderChosenMethod?: (selection: TeamAuthEntrySelection) => React.ReactNode;
 }> & (
     | Readonly<{
         teamId: string;
@@ -676,12 +682,11 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
         // accepts: the page says which, and offers only those.
         const meetingSignInRule = props.purpose === 'sign_in_rule' && accountScope !== undefined
             && projection.state === 'admission_required' && !invitation;
-        // The Home by its name. A member meeting a rule is on a Home this device already has, so it is named by the
-        // Home display-name owner (the name the Home publishes, else the one this device gave it); an unnamed Home is
-        // not named by its address, which the entry answer may carry as its label.
+        // The Home by its name. A member meeting a rule is on a Home this device already has, so it is labelled by the
+        // Home display-name owner (the name the Home publishes, else the one this device gave it, else "This Home"),
+        // never by the address the entry answer may carry as its label.
         const homeDisplayName = meetingSignInRule
-            ? resolveHomeDisplayName(getServerProfileById(projection.home.serverId))
-                ?? resolveHomeDisplayNameForServerIdentity(projection.home.serverId)
+            ? resolveHomeDisplayLabel(getServerProfileById(projection.home.serverId), projection.home.serverId)
             : projection.home.displayName
                 ?? resolveHomeDisplayLabel(getServerProfileById(projection.home.serverId), projection.home.serverId);
         // The Home's entry answer may carry the Account without its name (an end-to-end encrypted profile): this
@@ -720,6 +725,28 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                 : action.origin === 'team' ? [{ kind: 'team_connection' as const }]
                     : [{ kind: 'home_method' as const, methodId: action.methodId }])) : '';
         const firstRunnableAuthenticateIndex = entryActions.findIndex((action) => action.kind === 'authenticate');
+        const selectionFor = (action: TeamAuthenticationAction): TeamAuthEntrySelection => ({
+            action,
+            teamId: projection.team.teamId,
+            teamName: projection.team.name,
+            teamLogo: projection.team.logo ?? null,
+            target: props.target,
+            ...(invitation ? {
+                invitationEmailVerificationRequired:
+                    invitationProjection?.invitationEmailVerificationRequired === true,
+            } : {}),
+        });
+        // One accepted sign-in with a form and nothing else to offer: its form is this page's body. A one-tap method
+        // keeps its card, because pressing it is the sign-in and it must not start on arrival.
+        const onlyAction = meetingSignInRule && entryActions.length === 1 && entryActions[0]!.kind === 'authenticate'
+            && accountServiceContext.kind === 'none'
+            ? entryActions[0]! as TeamAuthenticationAction
+            : null;
+        const onlyActionKind = onlyAction ? projectTeamAuthAction(onlyAction)?.execution.kind : undefined;
+        const chosenMethod = onlyAction && props.renderChosenMethod
+            && (onlyActionKind === 'key_entry' || onlyActionKind === 'email_password')
+            ? props.renderChosenMethod(selectionFor(onlyAction))
+            : null;
         // One message per state, matching the actions below it: a member opens the Team, a signed-in
         // person with a usable invitation joins, and an invitation that cannot be used (or is still
         // being read) is explained by its preview alone. Only the sign-in choices ask to sign in.
@@ -875,17 +902,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                                 subtitle={native ? presentation?.description : undefined}
                                 {...(iconName ? { iconName } : {})}
                                 accentColor={action.presentation.connectButtonColor}
-                                onPress={() => props.onSelectAction({
-                                    action,
-                                    teamId: projection.team.teamId,
-                                    teamName: projection.team.name,
-                                    teamLogo: projection.team.logo ?? null,
-                                    target: props.target,
-                                    ...(invitation ? {
-                                        invitationEmailVerificationRequired:
-                                            invitationProjection?.invitationEmailVerificationRequired === true,
-                                    } : {}),
-                                })}
+                                onPress={() => props.onSelectAction(selectionFor(action))}
                             />
                         );
                     })}
@@ -1019,7 +1036,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                         ? resolveTeamJoinPresentation(completedAdmission.result, teamName).title
                         : undefined}
                 >
-                    {completedAdmission || !homeDisplayName ? null : (
+                    {completedAdmission || !homeDisplayName || (meetingSignInRule && accountLabel) ? null : (
                         <Text style={styles.subtitle}>
                             {t('teams.entry.onHome', {
                                 home: homeDisplayName,
@@ -1033,7 +1050,10 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                             accessibilityRole="text"
                             style={styles.guidance}
                         >
-                            {t('teams.entry.signedInTo', { account: accountLabel })}
+                            {meetingSignInRule && homeDisplayName
+                                // Who and where on one identity line: the Account and the Home it is signed in to.
+                                ? `${t('teams.entry.signedInTo', { account: accountLabel })} · ${homeDisplayName}`
+                                : t('teams.entry.signedInTo', { account: accountLabel })}
                         </Text>
                     ) : null}
                 </TeamEntryIdentity>
@@ -1066,7 +1086,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                         {invitation ? (
                             <TeamInvitationPreviewDetails state={previewState} onRetry={retry} />
                         ) : null}
-                        {entryActionList}
+                        {chosenMethod ?? entryActionList}
                     </>
                 )}
             </View>

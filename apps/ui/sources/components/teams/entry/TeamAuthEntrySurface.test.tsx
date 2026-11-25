@@ -1235,6 +1235,41 @@ describe('TeamAuthEntrySurface', () => {
         expect(screen.getTextContent()).toContain(t('teams.errors.signInRequired', { methods: t('teams.errors.signInMethodRecoveryKey') }));
     });
 
+    it('opens the one accepted sign-in in place for a member meeting the rule, under one identity line that names the Home', async () => {
+        // One accepted method is not a choice: its form opens on this page, under the same Team, Account and Home.
+        entryScope = 'team';
+        const keyLogin = { kind: 'authenticate', methodId: 'key_challenge', action: 'login', mode: 'keyed', origin: 'home',
+            presentation: { displayName: 'Recovery key' } };
+        const account = { firstName: 'Maya', lastName: 'Lindqvist', username: null, avatarUrl: null };
+        const actions = [keyLogin, { ...keyLogin, action: 'provision' }, { kind: 'switch_account' }];
+        endpointFetch.mockImplementation(async () => readyResponse('team', undefined, account, 'Acme Home', actions));
+        authorityFetch.mockImplementation(async () => readyResponse('team', undefined, account, 'Acme Home', actions));
+        const chosen: string[] = [];
+        const { View } = await import('react-native');
+        const screen = await renderScreen(
+            <TeamAuthEntrySurface
+                teamId="team-1"
+                target={target}
+                accountScope={{ serverId: homeId, accountId: 'account-1' }}
+                purpose="sign_in_rule"
+                onContinue={() => {}}
+                onRecoverIdentity={() => {}}
+                onSelectAction={() => {}}
+                renderChosenMethod={(selection) => {
+                    chosen.push(`${selection.action.methodId}:${selection.action.action}`);
+                    return <View testID="team-auth-entry-chosen-method" />;
+                }}
+            />,
+        );
+        await waitForTestId(screen, 'team-auth-entry-chosen-method');
+        expect(chosen.at(-1)).toBe('key_challenge:login');
+        expect(screen.findByTestId('team-auth-entry-action:key_challenge')).toBeNull();
+        expect(screen.findByTestId('team-auth-entry-action:key_challenge:login')).toBeNull();
+        const identity = [screen.findByTestId('team-auth-entry-account-label')?.props.children].flat().join('');
+        expect(identity).toContain(t('teams.entry.signedInTo', { account: 'Maya Lindqvist' }));
+        expect(identity).toContain('Acme Home');
+    });
+
     it('states the personal-hosting consequence only when the Home published that purpose', async () => {
         entryScope = 'invitation';
         previewResult = {

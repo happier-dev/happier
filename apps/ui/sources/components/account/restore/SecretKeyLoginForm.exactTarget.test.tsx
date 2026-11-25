@@ -164,6 +164,9 @@ it.each(['plain', 'e2ee'] as const)('commits exact Home B %s credentials before 
     await vi.waitFor(() => expect(completed).toEqual({ token: fixture.token, secret: 'A'.repeat(43),
         ...(mode === 'plain' ? { custody: 'historical' } : {}) }));
     expect(getActiveServerId()).toBe(activeHomeA);
+    // The key just entered here is evidence the person holds it: Home B's reminder is done, Home A's untouched.
+    await vi.waitFor(async () => expect(await TokenStorage.getRecoveryKeyReminderDismissed({ serverUrl: homeB.serverUrl, serverId: 'srv_home_b' })).toBe(true));
+    expect(await TokenStorage.getRecoveryKeyReminderDismissed({ serverUrl: homeA.serverUrl, serverId: 'srv_home_a' })).toBe(false);
     expect(getCurrentAuth()?.credentials).toEqual(credentialsA);
     expect(await TokenStorage.getCredentialsForServerUrl(homeA.serverUrl, { serverId: 'srv_home_a' })).toEqual(credentialsA);
     const homeBPaths: string[] = [];

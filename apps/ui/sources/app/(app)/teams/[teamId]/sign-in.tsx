@@ -19,6 +19,7 @@ import { HomeCredentialUnreadableCard } from '@/components/sessions/access/Unbou
 import { t } from '@/text';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import type { TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol/teams';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { TeamJoinScreen } from '@/components/teams/join/TeamJoinScreen';
 import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell';
 import { UnauthenticatedRouteStep, type AuthRouteStepAction } from '@/components/onboarding/ui/AuthRouteStepFrame';
@@ -134,6 +135,14 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
      * second one.
      */
     const [recoveringIdentity, setRecoveringIdentity] = React.useState(false);
+    // The only accepted method opened in place on the Team page (`renderChosenMethod`). Like a chosen step, it keeps
+    // its page while the credential it just saved re-resolves the scope, so the sign-in can return where it began.
+    const methodInPlaceRef = React.useRef(false);
+    const lastBoundScopeRef = React.useRef<ServerAccountScope | null>(null);
+    if (scopeResolution.kind === 'bound') lastBoundScopeRef.current = scopeResolution.scope;
+    const heldScope = scopeResolution.kind === 'bound'
+        ? scopeResolution.scope
+        : scopeResolution.kind === 'resolving' && methodInPlaceRef.current ? lastBoundScopeRef.current : null;
     const selected = selection ? projectTeamAuthSelection(selection) : null;
     const [postAuthState, setPostAuthState] = React.useState<
         | Readonly<{ kind: 'loading' }>
@@ -236,7 +245,7 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
     // device addresses but has not signed in to is simply an anonymous visit.
     // A sign-in in progress keeps its step: the credential it just saved re-resolves this scope, and
     // replacing the step with a wait would end the sign-in before it can return to where it was opened from.
-    if (savedProfileId !== null && scopeResolution.kind === 'resolving' && !selection) {
+    if (savedProfileId !== null && scopeResolution.kind === 'resolving' && !selection && !heldScope) {
         return (
             <TeamSignInStateShell stepId="resolving-account" onBack={goBackHome}>
                 <SurfaceStateCard
@@ -312,42 +321,54 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
     const recoverIdentity = (recovering: boolean) => runStepMove({
         layer: 'workflow', kind: recovering ? 'step' : 'back', commit: () => setRecoveringIdentity(recovering),
     });
-    if (selection && selected) {
+    // One method's own step, whether chosen from the list or opened in place when it is the only accepted one.
+    const renderMethodFlow = (chosen: TeamAuthEntrySelection, onBack: () => void) => {
+        const chosenAction = projectTeamAuthSelection(chosen);
+        if (!chosenAction) return null;
         // A Home-origin mTLS action still needs the exact Team-bound native
         // continuation. Unlike ordinary Home mTLS, the native callback must
         // return to this Team without inferring it from the focused Home or
         // manufacturing membership authority.
-        const requiresTeamContinuation = selection.action.origin === 'team'
-            || selected.execution.kind === 'mtls';
+        const requiresTeamContinuation = chosen.action.origin === 'team'
+            || chosenAction.execution.kind === 'mtls';
+        return (
+            <HomeAuthenticationFlow
+                target={home.target}
+                actions={[chosenAction]}
+                openChosenAction
+                returnTo={returnTo}
+                teamAdmission={requiresTeamContinuation ? {
+                    teamId: chosen.teamId,
+                    accountSelection: recoveringIdentity ? 'another' : 'current',
+                } : undefined}
+                onAuthenticated={() => resolvePostAuthLanding({
+                    replace: router.replaceAdmitted, teamContinuation: destination ?? returnTo, revealHome: router.replace,
+                })}
+                onBack={onBack}
+            />
+        );
+    };
+    if (selection && selected) {
         return (
             <TeamAuthenticationStep selection={selection} onBack={leaveMethod}>
-                <HomeAuthenticationFlow
-                    target={home.target}
-                    actions={[selected]}
-                    openChosenAction
-                    returnTo={returnTo}
-                    teamAdmission={requiresTeamContinuation ? {
-                        teamId: selection.teamId,
-                        accountSelection: recoveringIdentity ? 'another' : 'current',
-                    } : undefined}
-                    onAuthenticated={() => resolvePostAuthLanding({
-                        replace: router.replaceAdmitted, teamContinuation: destination ?? returnTo, revealHome: router.replace,
-                    })}
-                    onBack={leaveMethod}
-                />
+                {renderMethodFlow(selection, leaveMethod)}
             </TeamAuthenticationStep>
         );
     }
-    if (scopeResolution.kind === 'bound' && !recoveringIdentity) return (
+    if (heldScope && !recoveringIdentity) return (
         <TeamAuthEntrySurface
             teamId={teamId}
             target={home.target}
             onBack={goBackHome}
-            accountScope={scopeResolution.scope}
+            accountScope={heldScope}
             accountServiceReturnTo={returnTo}
             {...(destination ? { purpose: 'sign_in_rule' as const } : {})}
+            renderChosenMethod={(chosen) => {
+                methodInPlaceRef.current = true;
+                return renderMethodFlow(chosen, goBackHome);
+            }}
             onContinue={() => router.replace(destination ?? teamSessionsPath({
-                serverId: scopeResolution.scope.serverId,
+                serverId: heldScope.serverId,
                 teamId,
             }))}
             onRecoverIdentity={() => recoverIdentity(true)}

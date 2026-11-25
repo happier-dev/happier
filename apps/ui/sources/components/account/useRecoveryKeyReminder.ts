@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import { TokenStorage, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { TokenStorage, isLegacyAuthCredentials, type RecoveryKeyReminderTarget } from '@/auth/storage/tokenStorage';
 import { getCachedReadyServerFeatures, getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -63,6 +63,18 @@ function ensureLoaded() {
 async function markHandled(): Promise<void> {
     await TokenStorage.setRecoveryKeyReminderDismissed(true);
     publish({ dismissed: true });
+}
+
+/**
+ * A recovery key the person just typed or pasted on this device to sign in to `target` is evidence
+ * they hold it, so its reminder is done, recorded with the same device-local evidence as saved or
+ * dismissed. Only the active Home's reminder is on screen; another Home's is read when it is.
+ */
+export async function recordRecoveryKeyEntered(target: RecoveryKeyReminderTarget): Promise<void> {
+    // The sign-in already committed; a device that cannot store this keeps offering the reminder.
+    if (!await TokenStorage.setRecoveryKeyReminderDismissed(true, target).catch(() => false)) return;
+    const active = TokenStorage.getCachedRecoveryKeyReminderDismissed();
+    if (active !== null && active !== readState().dismissed) publish({ dismissed: active });
 }
 
 /**
