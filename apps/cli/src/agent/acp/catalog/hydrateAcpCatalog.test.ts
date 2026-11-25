@@ -591,7 +591,41 @@ describe('ACP Account catalog hydration', () => {
     expect(read()?.acpCatalog).toMatchObject({ status: 'ready', revision: 6 });
   });
 
-  it('withdraws invocation ACP authority during refresh and does not regress its acknowledged row revision', async () => {
+
+  it.each(['ambient', 'invocation'] as const)('keeps cold loading and settled identity on unchanged %s reads', async scope => {
+    const credentials = account();
+    const operationContext = scope === 'invocation' ? createInvocationSavedSecretOperationContextV1({ credentials,
+      serverHttpBaseUrl: resolveServerHttpBaseUrl(), snapshot: getActiveAccountSettingsSnapshot()!, isCurrent: async () => true }) : undefined;
+    const read = () => operationContext?.readSnapshot() ?? getActiveAccountSettingsSnapshot();
+    let release!: () => void;
+    let entered!: () => void;
+    let rowEntered = new Promise<void>(resolve => { entered = resolve; });
+    let rowRelease = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
+      if (path === '/v1/account/entity-rows/acp') {
+        entered(); await rowRelease;
+        return { status: 200, data: { status: 'present', revision: 4, content: { t: 'plain', v: record('unchanged') } } };
+      }
+      throw new Error(`Unexpected ACP read: ${path}`);
+    });
+    const cold = refreshActiveAcpCatalog({ credentials, operationContext });
+    await rowEntered;
+    expect(read()?.acpCatalog).toEqual({ status: 'loading' });
+    release(); const settled = await cold;
+    rowEntered = new Promise<void>(resolve => { entered = resolve; });
+    rowRelease = new Promise<void>(resolve => { release = resolve; });
+    const next = refreshActiveAcpCatalog({ credentials, operationContext });
+    await rowEntered;
+    const during = read()?.acpCatalog;
+    release(); const refreshed = await next;
+    expect(during).toBe(settled);
+    expect(refreshed).toBe(settled);
+    expect(read()?.acpCatalog).toBe(settled);
+  });
+
+  it('retains settled invocation ACP authority during a read and rejects a lower row revision', async () => {
     const credentials = account();
     const snapshot = getActiveAccountSettingsSnapshot()!;
     const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
@@ -606,13 +640,14 @@ describe('ACP Account catalog hydration', () => {
         data: { status: 'present', revision: 4, content: { t: 'plain', v: record('older') } } }; }
       throw new Error(`Unexpected invocation ACP read: ${path}`);
     });
+    const settled = operationContext.readSnapshot()?.acpCatalog;
     const pending = refreshActiveAcpCatalog({ credentials, operationContext });
     try {
       await vi.waitFor(() => expect(rowRequested).toBe(true));
-      expect(operationContext.readSnapshot()?.acpCatalog).toEqual({ status: 'loading' });
+      expect(operationContext.readSnapshot()?.acpCatalog).toBe(settled);
       release();
       expect(await pending).toEqual({ status: 'unavailable', reason: 'source-stale' });
-      expect(operationContext.readSnapshot()?.acpCatalog).toEqual({ status: 'loading' });
+      expect(operationContext.readSnapshot()?.acpCatalog).toBe(settled);
       expect(getActiveAccountSettingsSnapshot()?.acpCatalog).toBeUndefined();
     } finally { release(); await pending; }
   });

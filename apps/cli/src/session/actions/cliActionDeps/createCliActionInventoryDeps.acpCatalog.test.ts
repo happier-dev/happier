@@ -59,7 +59,7 @@ async function createInventory(status: 'ready' | 'partial' | 'unavailable' = 're
   history?: 'complete' | 'unavailable';
   initialRowAbsent?: boolean;
   interleaveOnHistoryRead?: boolean;
-  admitPurposes?: boolean;
+  admitPurposes?: boolean; beforeRowRead?: () => Promise<void>;
 }> = {}) {
   const requests: string[] = [];
   const writes: unknown[] = [];
@@ -70,7 +70,7 @@ async function createInventory(status: 'ready' | 'partial' | 'unavailable' = 're
   let current = true;
   let interleaved = false;
   let purposeStatus: 'ready' | 'unavailable' | 'absent' = 'ready';
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
     requests.push(`${request.method} ${request.url}`);
     expect(request.headers.authorization, request.url).toBe('Bearer requester-acp');
     response.setHeader('Content-Type', 'application/json');
@@ -96,6 +96,7 @@ async function createInventory(status: 'ready' | 'partial' | 'unavailable' = 're
         });
         return;
       }
+      await options.beforeRowRead?.();
       if (options.retireOnRead) current = false;
       if (status === 'unavailable') { response.statusCode = 403; response.end(JSON.stringify({ error: 'forbidden' })); }
       else response.end(JSON.stringify(revision < 0 ? { status: 'absent' } : { status: 'present', revision, content: { t: 'plain', v: status === 'partial'
@@ -502,6 +503,55 @@ describe('ACP Action inventory row authority', () => {
     });
   });
 
+  it('two overlapping Review preflights over unchanged revision both succeed', async () => {
+    const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return {promise, resolve}; };
+    const secondRead = deferred(); const releaseRow = deferred(); const firstProbe = deferred(); const releaseProbe = deferred();
+    let reads = 0;
+    const { credentials, operationContext, requests } = await createInventory('ready', {
+      beforeRowRead: async () => { reads++; if (reads === 2) { secondRead.resolve(); await releaseRow.promise; } },
+    });
+    let probes = 0;
+    const executor = createActionExecutor(createCliActionDeps({
+      token: credentials.token, savedSecretOperationContext: operationContext,
+      sessionId: '', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke: async (method) => {
+        if (method === 'daemon.extensions.contributionRegistryProjection.describe') return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {} } };
+        if (method !== 'capabilities.detect') throw new Error('Unexpected Machine RPC');
+        if (++probes === 1) { firstProbe.resolve(); await releaseProbe.promise; }
+        return { results: {} };
+      } },
+    }));
+    const list = () => executor.execute('review.engines.list', { sessionId: null, machineId: 'machine' }, {surface: 'cli', authority: 'account_automation'});
+    const a = list(); await firstProbe.promise;
+    const b = list(); await secondRead.promise;
+    const during = operationContext.readSnapshot()?.acpCatalog;
+    releaseProbe.resolve(); const resultA = await a;
+    releaseRow.resolve(); const resultB = await b;
+    expect(during?.status).toBe('ready');
+    expect(operationContext.readSnapshot()?.acpCatalog).toBe(during);
+    expect(requests.filter(request => request === `GET ${ACP_CATALOG_ROWS_ROUTE_V1}`)).toHaveLength(2);
+    expect(resultA.ok).toBe(true); expect(resultB.ok).toBe(true);
+  });
+
+
+  it('unchanged control succeeds and real revision change refuses', async () => {
+    const { credentials, operationContext, setRow } = await createInventory();
+    let change = false;
+    const executor = createActionExecutor(createCliActionDeps({
+      token: credentials.token, savedSecretOperationContext: operationContext, sessionId: '', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke: async method => {
+        if (method === 'daemon.extensions.contributionRegistryProjection.describe') return { protocolVersion: 1, projection: {v: 2, generation: 1, familiesById: {}, agentsById: {}} };
+        if (method !== 'capabilities.detect') throw new Error('Unexpected Machine RPC');
+        if (change) { setRow({ v: 1, definitions: [] }); await refreshActiveAcpCatalog({ credentials, operationContext }); }
+        return {results: {}};
+      } },
+    }));
+    const list = () => executor.execute('review.engines.list', {sessionId: null, machineId: 'machine'}, {surface: 'cli', authority: 'account_automation'});
+    expect((await list()).ok).toBe(true);
+    change = true;
+    expect(await list()).toMatchObject({ok: false, errorCode: 'ACP_CATALOG_UNAVAILABLE', failureCause: {phase: 'acp_catalog.snapshot.source_stale'}});
+    expect(operationContext.readSnapshot()?.acpCatalog).toMatchObject({status: 'ready', record: {definitions: []}});
+  });
   it('does not report an equivalent concurrent invocation catalog publication as stale', async () => {
     const { deps, operationContext } = await createInventory();
     const first = await deps.readAccountAcpCatalog({});

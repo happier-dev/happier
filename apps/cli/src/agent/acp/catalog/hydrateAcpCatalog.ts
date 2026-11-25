@@ -52,7 +52,10 @@ function refresh(input: RefreshInput, captured?: CapturedAccount, afterChange = 
   if (operation) return (async () => {
     const store = createCliAcpCatalogStore(input);
     let catalog: AcpCatalogSnapshotV1;
-    if (!await operation.commitAcpCatalog({ catalog: { status: 'loading' } })) return { status: 'unavailable', reason: 'scope-retired' };
+    // Ordinary reads retain settled authority; publication admits revisions and retains equal observations.
+    if (!await operation.isCurrent()) return { status: 'unavailable', reason: 'scope-retired' };
+    if (!operation.readSnapshot()?.acpCatalog
+      && !await operation.commitAcpCatalog({ catalog: { status: 'loading' } })) return { status: 'unavailable', reason: 'scope-retired' };
     try { catalog = await store.readCatalog(); } catch (error) { catalog = failure(error, input.signal); }
     if (!await operation.isCurrent()) return { status: 'unavailable', reason: 'scope-retired' };
     // The holder may retain an equivalent publication from a concurrent read.
@@ -71,7 +74,8 @@ function refresh(input: RefreshInput, captured?: CapturedAccount, afterChange = 
     if (afterChange) { beginActiveAcpCatalogRefresh({ scopeKey, lifetimeToken }); refreshAfterInFlight.add(key); }
     return existing;
   }
-  beginActiveAcpCatalogRefresh({ scopeKey, lifetimeToken });
+  // Known source changes withdraw immediately; an ordinary refresh keeps the settled observation.
+  if (afterChange || !getActiveAccountSettingsSnapshot()?.acpCatalog) beginActiveAcpCatalogRefresh({ scopeKey, lifetimeToken });
   let work!: Promise<AcpCatalogSnapshotV1>;
   work = (async (): Promise<AcpCatalogSnapshotV1> => {
     let requestInput: RefreshInput = afterChange ? { credentials: input.credentials } : input;
