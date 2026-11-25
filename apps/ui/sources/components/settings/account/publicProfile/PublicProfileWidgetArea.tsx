@@ -101,6 +101,7 @@ export function PublicProfileWidgetArea(
     <UsageWidgetBatchProvider clauses={props.clauses}>
       <View style={styles.area} testID="public-profile-area-editor">
         <WidgetAreaLayoutBar
+          inventoryStatus={bar.inventoryStatus}
           layouts={bar.layouts}
           selectedId={bar.selectedId}
           onSelect={bar.onSelect}

@@ -224,7 +224,7 @@ export function PluginPageWidgetArea(props: PluginUiWidgetAreaPresentation & Rea
         {/* One header: the layout tabs name the area (lab `p-overview`, as on Usage and a Project), so the
             area below draws no second title and adds through its one dashed line. Held while loading so
             nothing moves on arrival. */}
-        <WidgetAreaLayoutBar layouts={options} selectedId={selectedId} onSelect={id => { void selectLayout(id); }}
+        <WidgetAreaLayoutBar inventoryStatus={layouts.state.status} layouts={options} selectedId={selectedId} onSelect={id => { void selectLayout(id); }}
             onCreate={ready?.canEdit ? () => { void create(); } : null} actions={actions} readFailure={layouts.readFailure}
             labels={labels} heading="section" testID={`${testID}.layouts`} />
         {ready?.preset?.isEdited ? <WidgetAreaPresetLine preset={ready.preset} surface={ready.surface} testID={`${testID}.preset`}

@@ -503,6 +503,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
           view through the bar's folded picker, which also names the current one (USAGE-ACCEPT 1122 #30: without it the
           other views were unreachable); arranging (+ and ⋯: create, rename, reorder, delete) stays desktop work (D23). */}
       {session ? null : <WidgetAreaLayoutBar
+        inventoryStatus={bar.inventoryStatus}
         layouts={tabViews}
         selectedId={selectedLayoutId}
         onSelect={bar.onSelect}

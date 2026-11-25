@@ -353,6 +353,7 @@ export const ProjectDashboardHeader = React.memo(function ProjectDashboardHeader
           // A phone has no top tab naming the page, so the dashboard's name does.
           // Elsewhere the Project's tab already names the page: a dashboard's name is one section of it, never a second page title.
           heading={phone ? 'page' : 'section'}
+          inventoryStatus={dashboards.state.status}
           layouts={options}
           labels={DASHBOARD_LABELS}
           selectedId={props.attachedDashboard?.artifactId ?? selected?.artifactId ?? unavailableId ?? 'default'}
