@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import ts from 'typescript';
+import { isUnsupportedBrowserBuiltin, rejectUnsupportedBrowserBuiltins } from '../test-support/browserBuiltins.js';
 import { createSdkSourceProgram } from '../test-support/sourceProgram.js';
 import { createWorkspacePackageSourcesPlugin } from '../../../../scripts/testing/vitestWorkspacePackageResolution';
 import type { ScmHostingProviderContribution as ProtocolScmHostingProviderContribution } from '@happier-dev/protocol';
@@ -367,6 +368,7 @@ async function bundlePortableValues(input: (typeof PORTABLE_VALUE_PROJECTIONS)[n
             target: 'es2022',
             write: false,
             rollupOptions: {
+                ...rejectUnsupportedBrowserBuiltins,
                 input: 'virtual:scm-portable-value-projection',
                 preserveEntrySignatures: 'strict',
                 output: {
@@ -376,9 +378,7 @@ async function bundlePortableValues(input: (typeof PORTABLE_VALUE_PROJECTIONS)[n
             },
         },
     });
-    return [...moduleIds].filter((id) => (
-        id.startsWith('node:') || id.includes('__vite-browser-external')
-    ));
+    return [...moduleIds].filter(isUnsupportedBrowserBuiltin);
 }
 
 function createSdkProgram(): ts.Program {

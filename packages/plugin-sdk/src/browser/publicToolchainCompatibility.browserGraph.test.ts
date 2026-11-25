@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 
 import { build } from 'vite';
 import { describe, expect, it } from 'vitest';
+import { isUnsupportedBrowserBuiltin, rejectUnsupportedBrowserBuiltins } from '../test-support/browserBuiltins.js';
 
 describe('browser public toolchain packet', () => {
     it('bundles and loads the browser entry without build-realm or Node edges', async () => {
@@ -28,6 +29,7 @@ describe('browser public toolchain packet', () => {
                 target: 'es2022',
                 write: false,
                 rollupOptions: {
+                    ...rejectUnsupportedBrowserBuiltins,
                     input: 'virtual:browser-public-toolchain-entry',
                     preserveEntrySignatures: 'strict',
                     output: {
@@ -39,8 +41,7 @@ describe('browser public toolchain packet', () => {
         });
 
         expect([...emittedModules].filter((id) => (
-            id.includes('node:')
-            || id.includes('__vite-browser-external')
+            isUnsupportedBrowserBuiltin(id)
             || id.includes('/ui/build/bin.')
             || id.includes('/ui/build/buildUiArtifacts.')
         ))).toEqual([]);

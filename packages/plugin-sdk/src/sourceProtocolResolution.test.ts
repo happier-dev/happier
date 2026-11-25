@@ -36,6 +36,10 @@ const protocolSourceCases = [
             '../../protocol/src/strings/opaqueIdentifier.ts',
         ),
     },
+    {
+        specifier: '@happier-dev/protocol/plugins/contributions/strictJsonValue',
+        source: resolve(import.meta.dirname, '../../protocol/src/plugins/contributions/strictJsonValue.ts'),
+    },
 ] as const;
 
 const pluginSdkSourceCases = [
@@ -51,7 +55,6 @@ const pluginSdkSourceCases = [
 
 const privateSourceSpecifiers = [
     '@happier-dev/plugin-sdk/identity',
-    '@happier-dev/protocol/plugins/contributions/strictJsonValue',
 ] as const;
 
 describe('Plugin SDK source Protocol resolution', () => {

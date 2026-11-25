@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { build } from 'vite';
 import { describe, expect, it } from 'vitest';
+import { isUnsupportedBrowserBuiltin, rejectUnsupportedBrowserBuiltins } from '../test-support/browserBuiltins.js';
 
 describe('External Session takeover browser graph', () => {
     it('reaches the bounded runtime-descriptor Protocol leaf without the Protocol root', async () => {
@@ -18,48 +18,9 @@ describe('External Session takeover browser graph', () => {
             '../../../protocol/src/strings/opaqueIdentifier.ts',
         );
         const emittedModules = new Set<string>();
-        const protocolPackage = JSON.parse(readFileSync(
-            resolve(import.meta.dirname, '../../../protocol/package.json'),
-            'utf8',
-        )) as { exports?: Record<string, unknown> };
-
-        expect(protocolPackage.exports).toHaveProperty(
-            './sessions/metadata/runtime-descriptor',
-            {
-                'happier-source': './src/sessions/metadata/runtimeDescriptorV1.ts',
-                types: './dist/sessions/metadata/runtimeDescriptorV1.d.ts',
-                default: './dist/sessions/metadata/runtimeDescriptorV1.js',
-            },
-        );
-        expect(protocolPackage.exports).toHaveProperty(
-            './strings/opaqueIdentifier',
-            {
-                'happier-source': './src/strings/opaqueIdentifier.ts',
-                types: './dist/strings/opaqueIdentifier.d.ts',
-                default: './dist/strings/opaqueIdentifier.js',
-            },
-        );
-
         await build({
-            configFile: false,
+            configFile: resolve(import.meta.dirname, '../../vitest.source.config.ts'),
             logLevel: 'silent',
-            resolve: {
-                alias: [
-                    {
-                        find: '@happier-dev/protocol/plugins/agents',
-                        replacement: protocolAgentsLeaf,
-                    },
-                    {
-                        find: '@happier-dev/protocol/sessions/metadata/runtime-descriptor',
-                        replacement: runtimeDescriptorLeaf,
-                    },
-                    {
-                        find: '@happier-dev/protocol/strings/opaqueIdentifier',
-                        replacement: opaqueIdentifierLeaf,
-                    },
-                    { find: /^@happier-dev\/protocol$/, replacement: protocolRoot },
-                ],
-            },
             plugins: [{
                 name: 'external-session-takeover-browser-graph',
                 generateBundle() {
@@ -71,6 +32,7 @@ describe('External Session takeover browser graph', () => {
                 target: 'es2022',
                 write: false,
                 rollupOptions: {
+                    ...rejectUnsupportedBrowserBuiltins,
                     input: sdkEntry,
                     preserveEntrySignatures: 'strict',
                     output: {
@@ -82,9 +44,8 @@ describe('External Session takeover browser graph', () => {
         });
 
         expect([...emittedModules]).not.toContain(protocolRoot);
-        expect([...emittedModules].filter((id) => (
-            id.includes('node:') || id.includes('__vite-browser-external')
-        ))).toEqual([]);
+        expect([...emittedModules]).not.toContain(protocolAgentsLeaf);
+        expect([...emittedModules].filter(isUnsupportedBrowserBuiltin)).toEqual([]);
         expect([...emittedModules].filter((id) => (
             id === runtimeDescriptorLeaf
         ))).toHaveLength(1);
