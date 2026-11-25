@@ -8,7 +8,9 @@ type ApprovalAutomaticChecksDecision =
 
 /** The decision offered while the approval owner's recorded before checks hold an Action. */
 export function readApprovalAutomaticChecksDecision(
-  checks: ApprovalAutomaticChecksV1 | null | undefined,
+  checks: (Pick<ApprovalAutomaticChecksV1, 'consents' | 'humanApprovalRequired'> & {
+    phase: ApprovalAutomaticChecksV1['phase'] | null;
+  }) | null | undefined,
 ): ApprovalAutomaticChecksDecision {
   if (checks?.phase === 'consent') {
     const pending = checks.consents.find(consent => consent.decision === 'pending');

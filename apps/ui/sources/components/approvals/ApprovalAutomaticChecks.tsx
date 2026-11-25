@@ -7,7 +7,8 @@ import {
 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
 import { readActionFailurePresentationV1, type ActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-import type { ApprovalRequest, ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { isApprovalRequestV2TerminalStatus, type ApprovalRequest, type ApprovalRequestV2 }
+  from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -35,25 +36,26 @@ import { readApprovalAutomaticChecksDecision } from './approvalAutomaticChecksDe
 import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { presentWorkflowRunMachineWait } from '@/components/work/status/workflowWorkStatusFacts';
 
-type PresentedApprovalAutomaticChecks = ApprovalAutomaticChecksV1 & {
+type PresentedApprovalAutomaticChecks = Omit<ApprovalAutomaticChecksV1, 'phase'> & {
+  phase: ApprovalAutomaticChecksV1['phase'] | null;
   startRefusal?: ActionFailurePresentationV1['startRefusal'];
 };
 
-/** The stored check phase retains the failed occurrence after a person's final Deny. */
+/** A settled request keeps recorded check history without a live phase. */
 export function readApprovalAutomaticChecksForRequest(
   request: Readonly<{ status: ApprovalRequestV2['status']; automaticChecks?: ApprovalAutomaticChecksV1;
     execution?: Readonly<{ ok?: boolean; errorCode?: string; details?: unknown }> }> | null,
 ): PresentedApprovalAutomaticChecks | null {
-  const checks = request?.automaticChecks;
-  if (!checks) return null;
-  if (request?.status !== 'open' && checks.phase === 'consent') {
+  if (!request?.automaticChecks) return null;
+  const checks = request.automaticChecks;
+  if ((checks.phase === 'consent' || checks.phase === 'checking' || checks.phase === 'override')
+    && isApprovalRequestV2TerminalStatus(request.status)) {
+    return { ...checks, phase: request.status === 'rejected' && checks.phase === 'override' ? 'refused' : null };
+  }
+  if (request.status !== 'open' && checks.phase === 'consent') {
     return { ...checks, consents: checks.consents.filter(consent => consent.decision !== 'pending') };
   }
-  if (request?.status === 'canceled' && (checks.phase === 'checking' || checks.phase === 'override')) return null;
-  if (request?.status === 'rejected' && checks.phase === 'override') {
-    return { ...checks, phase: 'refused' };
-  }
-  const execution = request?.execution;
+  const execution = request.execution;
   if (checks.phase === 'refused' && execution?.ok === false) {
     const startRefusal = readActionFailurePresentationV1(execution.errorCode, execution.details)?.startRefusal;
     if (startRefusal) return { ...checks, startRefusal };
@@ -77,7 +79,7 @@ function presentAutomaticCheckReason(reason: string | null | undefined): string 
 /** Run admission's ineligible reasons for a check whose Automation or trigger no longer exists. */
 const CHECK_REMOVED_START_REASONS: ReadonlySet<string> = new Set(['automationNotFound', 'triggerNotFound']);
 
-function readFailedApprovalAutomaticCheck(checks: ApprovalAutomaticChecksV1) {
+function readFailedApprovalAutomaticCheck(checks: Pick<ApprovalAutomaticChecksV1, 'results'>) {
   return checks.results.find(result => result.outcome === 'failed' || result.outcome === 'unavailable');
 }
 
@@ -135,7 +137,7 @@ export function readApprovalAutomaticChecksCarryRefusal(checks: PresentedApprova
  * consent (approving the Action is not consent), and Cancel for a running check. Failures alert as every decision does.
  */
 export function useApprovalAutomaticChecksControls(input: Readonly<{
-  checks: ApprovalAutomaticChecksV1 | null | undefined;
+  checks: PresentedApprovalAutomaticChecks | null | undefined;
   decide: (decision: 'approve' | 'reject' | 'cancel', options?: ApprovalDecisionOptions) => Promise<boolean>;
   unavailable: boolean;
   isDeciding: boolean;

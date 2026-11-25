@@ -144,6 +144,15 @@ describe('Action before checks on the approval card', () => {
     expect(readApprovalAutomaticChecksDecision(canceled)).toBeNull();
   });
 
+  it.each(['canceled', 'rejected', 'executed', 'failed', 'outcome_unknown'] as const)(
+    'retires live check decisions when the request is %s', (status) => {
+      for (const phase of ['consent', 'checking', 'override'] as const) {
+        const presented = readApprovalAutomaticChecksForRequest({ status, automaticChecks: checks({ phase }) });
+        expect(readApprovalAutomaticChecksDecision(presented)).toBeNull();
+      }
+    },
+  );
+
   it('shows a declined check reason and its Run when the Workflow name is unavailable', async () => {
     const runId = 'run-private';
     const screen = await renderScreen(<ApprovalAutomaticChecks
