@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createWriteStream, renameSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Duplex } from 'node:stream';
@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
-import { attachSessionHolderWorkspaceClient, openSessionHolderWorkspaceClient, spawnSessionHolderChild, type SessionHolderChild, type SessionHolderTarget } from '@/subprocess/supervision/sessionHolder';
+import { attachSessionHolderWorkspaceChannel, attachSessionHolderWorkspaceClient, openSessionHolderWorkspaceClient, spawnSessionHolderChild, type SessionHolderChild, type SessionHolderTarget } from '@/subprocess/supervision/sessionHolder';
 import { createHostScmCommandRunner, runScmCommand, runWithRequesterScmCommandRunner } from '@/scm/runtime';
 import { runWithScmCommandOperation } from '@/scm/commandOperation';
 
@@ -23,7 +23,7 @@ import { startGitSmartHttpFixture } from '@/testkit/scm/gitSmartHttpFixture';
 import { materializeManagedProjectClone, runScmRepositoryCloneRoute } from '@/scm/rpc/repositoryProvisioningDispatch';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
-import { ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
+import { SCM_OPERATION_ERROR_CODES, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createGitScmBackendRuntimeRegistration } from '../../../../packages/plugins/scm-git/src/backend';
 import { createScmHostingProviderRuntimeServicesForTest } from '../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
@@ -226,7 +226,7 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         await expect(readFile(join(addressedRepository, '.git/index'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('counts the Git commands for a summary read on the held workspace', async () => {
+    it('overlaps Git summary reads and reuses executable resolution on the held workspace', async () => {
         const repository = join(root, 'status-command-shape');
         await mkdir(repository);
         runGit(repository, ['init', '-q', '-b', 'main']);
@@ -239,29 +239,73 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
             executableDefinition: registration.runtime, registration,
             hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(),
         })]);
-        const source = createHolderWorkspaceSource({ id: 'status-command-shape', rootPath: root,
-            holder, helperPath: helperExecutable! });
-        let toolLookups = 0;
-        const commands: Array<readonly string[]> = [];
-        const observedSource = { ...source,
-            resolveExecutable: (...args: Parameters<typeof source.resolveExecutable>) => {
-                toolLookups += 1;
-                return source.resolveExecutable(...args);
-            },
-            spawn: (request: Parameters<typeof source.spawn>[0]) => {
-                commands.push(request.args);
-                return source.spawn(request);
-            },
-        };
-        const response = ScmStatusSnapshotResponseSchema.parse(await runWithWorkspaceSource(observedSource,
-            () => executeScmActionOperation({
-                actionId: 'scm.status.snapshot', input: { cwd: repository, detail: 'summary' },
-                workingDirectory: root, registry, rpcCompatibility: true,
-            })));
-        expect(response).toMatchObject({ success: true, snapshot: { branch: { head: 'main' }, entries: [] } });
-        expect(commands.filter(args => args.includes('--porcelain=v2'))).toHaveLength(1);
-        expect(commands.filter(args => args.includes('--numstat'))).toHaveLength(2);
-        expect(toolLookups).toBeLessThanOrEqual(commands.length);
+        const bin = join(directory, 'summary-bin');
+        await mkdir(bin);
+        const child = spawn(holderExecutable!, ['workspace', '--root', root], {
+            stdio: ['pipe', 'pipe', 'ignore'],
+            env: { ...process.env, PATH: bin },
+        });
+        const exited = new Promise(resolve => child.once('close', resolve));
+        const channel = Duplex.from({ readable: child.stdout, writable: child.stdin });
+        child.once('close', () => channel.destroy());
+        try {
+            const projectHolder = await attachSessionHolderWorkspaceChannel(channel);
+            const request = projectHolder.request.bind(projectHolder);
+            const isGitStream = (body: Parameters<typeof request>[0]) =>
+                body.op === 'spawn' && Array.isArray(body.argv) && String(body.argv[0]).endsWith('/git');
+            let inFlight = 0;
+            let peak = 0;
+            const sent = vi.spyOn(projectHolder, 'request').mockImplementation(async body => {
+                if (!isGitStream(body)) return request(body);
+                peak = Math.max(peak, ++inFlight);
+                try {
+                    return await request(body);
+                } finally {
+                    inFlight -= 1;
+                }
+            });
+            const workspaceSource = () => createHolderWorkspaceSource({ id: 'status-command-shape', rootPath: root,
+                holder: projectHolder, helperPath: helperExecutable! });
+            const readSummary = () => runWithWorkspaceSource(workspaceSource(), async () =>
+                ScmStatusSnapshotResponseSchema.parse(await executeScmActionOperation({
+                    actionId: 'scm.status.snapshot', input: { cwd: repository, detail: 'summary' },
+                    workingDirectory: root, registry, rpcCompatibility: true,
+                })));
+            await expect(runWithWorkspaceSource(workspaceSource(), () => registry.listBackends()[0]!.detectRepo({ cwd: repository })))
+                .rejects.toMatchObject({ errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_NOT_INSTALLED });
+            const gitPath = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+            await symlink(gitPath, join(bin, 'git'));
+            sent.mockClear();
+            const count = () => {
+                const requests = sent.mock.calls.map(([body]) => body);
+                return {
+                    lookups: requests.filter(body => body.op === 'which' && body.command === 'git').length,
+                    streams: requests.filter(isGitStream).length,
+                };
+            };
+            const cold = await readSummary();
+            expect(cold).toMatchObject({ success: true, snapshot: {
+                branch: { head: 'main', detached: false }, repo: { rootPath: repository, worktrees: [{ path: repository }] },
+                entries: [],
+            } });
+            expect(count()).toEqual({ streams: 8, lookups: 1 });
+            expect(peak).toBe(6);
+
+            sent.mockClear();
+            const file = join(repository, 'tracked.txt');
+            await writeFile(file, 'included\n');
+            runGit(repository, ['add', 'tracked.txt']);
+            await writeFile(file, 'included\npending\n');
+            const warm = await readSummary();
+            expect(warm).toMatchObject({ success: true, snapshot: { entries: [{
+                path: 'tracked.txt', hasIncludedDelta: true, hasPendingDelta: true,
+                stats: { includedAdded: 1, pendingAdded: 1 },
+            }] } });
+            expect(count()).toEqual({ streams: 8, lookups: 0 });
+        } finally {
+            channel.destroy();
+            await exited;
+        }
     });
 
     it('prepares and publishes the selected branch through the target filesystem', async () => {

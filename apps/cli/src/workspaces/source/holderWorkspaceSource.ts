@@ -43,6 +43,18 @@ type TargetListEntry = Readonly<{ name: string; kind: string; stats?: Pick<Targe
 type TargetResult = Readonly<{ status: string; entry?: TargetEntry; entries?: readonly TargetListEntry[];
   target?: string; path?: string; sha256?: string; code?: string; message?: string }>;
 
+// Bind the positive resolution to the client so a replacement holder resolves its own PATH.
+const holderGitExecutables = new WeakMap<SessionHolderChild, Promise<string | null>>();
+
+async function lookupHolderExecutable(holder: SessionHolderChild, command: string): Promise<string | null> {
+  const reply = await holder.request({ op: 'which', command });
+  if (reply.ok !== true) {
+    throw new PluginError({ code: readRpcErrorCode(reply) ?? 'agent_cli_target_unavailable', retryable: false,
+      message: 'The Session target could not resolve a workspace executable' });
+  }
+  return typeof reply.value === 'string' ? reply.value : null;
+}
+
 function unavailable(operation: string): PluginError {
   return new PluginError({ code: 'workspace_source_operation_unavailable', retryable: false,
     message: `This workspace runs in a container target; ${operation} is not available there` });
@@ -180,7 +192,16 @@ export function createHolderWorkspaceSource(input: Readonly<{
     }
   };
   const spawn = (request: Parameters<WorkspaceSource['spawn']>[0]): WorkspaceChildProcess => {
-    const child = holder().spawnStream(resolveHolderWorkspaceCommand(root, request, guestRoot));
+    const client = holder();
+    const child = client.spawnStream(resolveHolderWorkspaceCommand(root, request, guestRoot));
+    const gitExecutable = holderGitExecutables.get(client);
+    if (gitExecutable) child.once('error', (error: NodeJS.ErrnoException) => {
+      // A removed executable can be installed again while the holder remains open.
+      if (error.code !== 'ENOENT' && error.code !== 'EACCES') return;
+      void gitExecutable.then(executable => {
+        if (executable === request.command && holderGitExecutables.get(client) === gitExecutable) holderGitExecutables.delete(client);
+      }, () => undefined);
+    });
     if (request.stdoutFd !== undefined) child.pipeStdoutTo(createWriteStream('', { fd: request.stdoutFd, autoClose: false }));
     return child as unknown as WorkspaceChildProcess;
   };
@@ -368,12 +389,15 @@ export function createHolderWorkspaceSource(input: Readonly<{
     }) as WorkspaceSource['replaceFile'],
     resolveExecutable: async (command: string) => {
       if (path.posix.isAbsolute(command)) return command;
-      const reply = await holder().request({ op: 'which', command });
-      if (reply.ok !== true) {
-        throw new PluginError({ code: readRpcErrorCode(reply) ?? 'agent_cli_target_unavailable', retryable: false,
-          message: 'The Session target could not resolve a workspace executable' });
-      }
-      return typeof reply.value === 'string' ? reply.value : null;
+      const client = holder();
+      if (command !== 'git') return lookupHolderExecutable(client, command);
+      const cached = holderGitExecutables.get(client);
+      if (cached) return cached;
+      const pending = lookupHolderExecutable(client, command);
+      holderGitExecutables.set(client, pending);
+      const forget = () => { holderGitExecutables.delete(client); };
+      void pending.then(path => { if (!path) forget(); }, forget);
+      return pending;
     },
     spawn,
     // The target's own tools on its PATH; a missing tool is the consumer's typed missing-tool outcome.

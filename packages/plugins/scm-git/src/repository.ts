@@ -142,49 +142,54 @@ export async function getGitSnapshot(input: {
         };
     }
 
+    const statusRaw = statusResult.stdout ?? '';
+    const parsedStatus = parseGitStatusPorcelainV2Z(statusRaw);
     const noScan: ScmExecResult = { success: true, stdout: '', stderr: '', exitCode: 0 };
-    const includedResult = factsOnly ? noScan : await runScmCommand({
-        bin: 'git',
-        cwd: context.cwd,
-        args: ['diff', '--cached', '--numstat', '-z'],
-        timeoutMs: 10_000,
-    });
-    const pendingResult = factsOnly ? noScan : await runScmCommand({
-        bin: 'git',
-        cwd: context.cwd,
-        args: ['diff', '--numstat', '-z'],
-        timeoutMs: 10_000,
-    });
-    const worktreesResult = await runScmCommand({
-        bin: 'git',
-        cwd: repoRoot,
-        args: ['worktree', 'list', '--porcelain', '-z'],
-        timeoutMs: 10_000,
-    });
-    const remotesResult = await runScmCommand({
-        bin: 'git',
-        cwd: repoRoot,
-        args: ['remote', '-v'],
-        timeoutMs: 10_000,
-    });
-    const remoteHeadRefsResult = await runScmCommand({
-        bin: 'git',
-        cwd: repoRoot,
-        args: ['for-each-ref', '--format=%(refname:short)%09%(symref:short)', 'refs/remotes/*/HEAD'],
-        timeoutMs: 10_000,
-    });
+    // These reads have no dependency on one another. Dispatch them together so a
+    // placed workspace does not pay a channel round trip between Git processes.
+    const [includedResult, pendingResult, worktreesResult, remotesResult, remoteHeadRefsResult,
+        operationState, upstreamOidResult, untrackedStatsByPath] = await Promise.all([
+        factsOnly ? noScan : runScmCommand({
+            bin: 'git',
+            cwd: context.cwd,
+            args: ['diff', '--cached', '--numstat', '-z'],
+            timeoutMs: 10_000,
+        }),
+        factsOnly ? noScan : runScmCommand({
+            bin: 'git',
+            cwd: context.cwd,
+            args: ['diff', '--numstat', '-z'],
+            timeoutMs: 10_000,
+        }),
+        runScmCommand({
+            bin: 'git',
+            cwd: repoRoot,
+            args: ['worktree', 'list', '--porcelain', '-z'],
+            timeoutMs: 10_000,
+        }),
+        runScmCommand({
+            bin: 'git',
+            cwd: repoRoot,
+            args: ['remote', '-v'],
+            timeoutMs: 10_000,
+        }),
+        runScmCommand({
+            bin: 'git',
+            cwd: repoRoot,
+            args: ['for-each-ref', '--format=%(refname:short)%09%(symref:short)', 'refs/remotes/*/HEAD'],
+            timeoutMs: 10_000,
+        }),
+        factsOnly ? null : readGitBranchOperationState(context, parsedStatus.branch.oid),
+        parsedStatus.branch.upstream && !factsOnly ? runScmCommand({
+            bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', '@{upstream}^{commit}'],
+        }) : null,
+        repoRoot && parsedStatus.notAdded.length > 0 && !factsOnly
+            ? readUntrackedFileStats(repoRoot, parsedStatus.notAdded) : {},
+    ]);
     const commandPaths = readCurrentBackendRuntimeServices()?.repositoryFileSystem?.commandPaths;
     const mainWorktreePath = worktreesResult.success ? await resolveGitMainWorktreePath({
         worktreesOutput: worktreesResult.stdout, currentWorktreePath: context.detection.rootPath,
     }) : null;
-    const statusRaw = statusResult.stdout ?? '';
-    const parsedStatus = parseGitStatusPorcelainV2Z(statusRaw);
-    const operationState = factsOnly ? null : await readGitBranchOperationState(context, parsedStatus.branch.oid);
-    const upstreamOidResult = parsedStatus.branch.upstream && !factsOnly ? await runScmCommand({
-        bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', '@{upstream}^{commit}'],
-    }) : null;
-    const untrackedPaths = parsedStatus.notAdded;
-    const untrackedStatsByPath = repoRoot && untrackedPaths.length > 0 && !factsOnly ? await readUntrackedFileStats(repoRoot, untrackedPaths) : {};
 
     const baseSnapshot = buildGitSnapshot({
         projectKey: context.projectKey,
