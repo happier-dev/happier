@@ -206,7 +206,6 @@ describe('Agent External Session takeover registration staging', () => {
         }
         const snapshot = registration.value.externalSessionTakeover;
         expect(snapshot).not.toBe(contribution);
-        expect(Object.isFrozen(snapshot)).toBe(true);
         expect(snapshot).not.toHaveProperty('ignoredByRegistration');
         await expect(Reflect.apply(snapshot.resolveLaunch, { owner: 'foreign' }, [])).resolves.toMatchObject({
             value: {
@@ -272,6 +271,7 @@ describe('Agent External Session takeover registration staging', () => {
             'assistant',
             value,
         );
+        registrationScope.api.agents.registerExternalSessions('assistant', externalSessions);
         expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/u);
     });
 });

@@ -174,13 +174,13 @@ describe('Agent External Session observation registration staging', () => {
             'assistant',
             value as AgentExternalSessionObservationContribution,
         );
+        registrationScope.api.agents.registerExternalSessions('assistant', externalSessions);
         expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/u);
     });
 
-    it('rejects an unknown own enumerable callable operation through the attributable diagnostic', () => {
+    it('keeps author-only observation helpers outside the registered surface', () => {
         const fourthOperationName = ['resolve', 'TopologyRoots'].join('');
         const fourthOperation = vi.fn(() => ['/provider/sessions']);
-        const diagnostic = vi.fn();
         const registrationScope = createPluginRegistrationScope({
             pluginId: 'acme.external',
             target: { realm: 'daemon' },
@@ -190,7 +190,6 @@ describe('Agent External Session observation registration staging', () => {
                 target: { realm: 'daemon' },
                 requiredFields: ['externalSessions'],
             }],
-            onFailure: diagnostic,
         });
         registrationScope.api.agents.registerExternalSessions('assistant', externalSessions);
         registrationScope.api.agents.registerExternalSessionObservation(
@@ -202,13 +201,9 @@ describe('Agent External Session observation registration staging', () => {
             } as AgentExternalSessionObservationContribution,
         );
 
-        expect(() => registrationScope.commit()).toThrow(
-            "Plugin 'acme.external' registered an invalid 'agents/assistant' runtime",
-        );
-        expect(diagnostic).toHaveBeenCalledOnce();
-        expect(diagnostic).toHaveBeenCalledWith(
-            "Plugin 'acme.external' registered an invalid 'agents/assistant' runtime",
-        );
+        const [registration] = registrationScope.commit();
+        if (registration?.family !== 'agents') throw new Error('Expected Agent registration');
+        expect(registration.value.externalSessionObservation).not.toHaveProperty(fourthOperationName);
         expect(fourthOperation).not.toHaveBeenCalled();
     });
 
@@ -264,7 +259,6 @@ describe('Agent External Session observation registration staging', () => {
         }
         const snapshot = registration.value.externalSessionObservation;
         expect(snapshot).not.toBe(contribution);
-        expect(Object.isFrozen(snapshot)).toBe(true);
         expect(snapshot).not.toHaveProperty('ignoredByRegistration');
         expect(Reflect.apply(snapshot.describeResource, { owner: 'foreign' }, [])).toMatchObject({
             owner: 'structural-observation',

@@ -56,7 +56,6 @@ describe('Agent External Sessions registration staging', () => {
             exec: {} as Parameters<typeof snapshot.readAccounting>[0]['exec'],
             ripgrep: { run: async () => ({ exitCode: 1, stdout: '', stderr: '' }) },
         })).toEqual({ ok: true, value: { outcome: 'unchanged' } });
-        expect(Object.isFrozen(snapshot)).toBe(true);
     });
     it('retains optional endpoint and media materialization operations', () => {
         const declaring: AgentExternalSessionsContribution = {
@@ -107,12 +106,11 @@ describe('Agent External Sessions registration staging', () => {
         expect(() => registrationScope.commit()).not.toThrow();
     });
 
-    it('rejects an unknown own enumerable callback through the attributable registration diagnostic', () => {
+    it('keeps author-only helper callbacks outside the registered External Sessions surface', () => {
         const contribution = {
             ...externalSessions,
             notAnOperation: vi.fn(),
         } as unknown as AgentExternalSessionsContribution;
-        const diagnostic = vi.fn();
         const registrationScope = createPluginRegistrationScope({
             pluginId: 'acme.external',
             target: { realm: 'daemon' },
@@ -122,17 +120,12 @@ describe('Agent External Sessions registration staging', () => {
                 target: { realm: 'daemon' },
                 requiredFields: ['externalSessions'],
             }],
-            onFailure: diagnostic,
         });
         registrationScope.api.agents.registerExternalSessions('assistant', contribution);
 
-        expect(() => registrationScope.commit()).toThrow(
-            "Plugin 'acme.external' registered an invalid 'agents/assistant' runtime",
-        );
-        expect(diagnostic).toHaveBeenCalledOnce();
-        expect(diagnostic).toHaveBeenCalledWith(
-            "Plugin 'acme.external' registered an invalid 'agents/assistant' runtime",
-        );
+        const [registration] = registrationScope.commit();
+        if (registration?.family !== 'agents') throw new Error('Expected Agent registration');
+        expect(registration.value.externalSessions).not.toHaveProperty('notAnOperation');
     });
 
     it('does not inspect receiver state, symbols, non-enumerable members, or unknown accessors', () => {
@@ -160,12 +153,14 @@ describe('Agent External Sessions registration staging', () => {
         expect(unknownAccessor).not.toHaveBeenCalled();
     });
 
-    it('captures current callbacks at commit and freezes their facades', async () => {
-        const mutable = { ...externalSessions };
-        const replacement = vi.fn(async () => ({ ok: true as const, value: { source: {} as never } }));
+    it('captures current callbacks at commit on the live receiver', async () => {
+        const mutable = { ...externalSessions, sourceKind: 'before' };
+        const committed = vi.fn(async function (this: typeof mutable) {
+            return { ok: true as const, value: { source: { kind: this.sourceKind } } };
+        });
         const registrationScope = scope();
         registrationScope.api.agents.registerExternalSessions('assistant', mutable);
-        mutable.resolveSource = replacement;
+        mutable.resolveSource = committed;
         const [registration] = registrationScope.commit();
         const snapshot = registration?.family === 'agents'
             ? registration.value.externalSessions
@@ -173,21 +168,14 @@ describe('Agent External Sessions registration staging', () => {
 
         expect(snapshot).toBeDefined();
         if (!snapshot) throw new Error('Expected committed External Sessions snapshot');
-        expect(snapshot).not.toBe(mutable);
-        expect(Object.isFrozen(snapshot)).toBe(true);
-        expect(Reflect.ownKeys(snapshot)).toEqual(Reflect.ownKeys(mutable));
-        for (const operation of Reflect.ownKeys(snapshot)) {
-            expect(Object.getOwnPropertyDescriptor(snapshot, operation))
-                .toMatchObject({
-                    enumerable: true,
-                    writable: false,
-                    configurable: false,
-                    value: expect.any(Function),
-                });
-        }
-        mutable.resolveSource = vi.fn();
-        await Reflect.apply(snapshot.resolveSource, snapshot, [{}]);
-        expect(replacement).toHaveBeenCalledOnce();
+        mutable.sourceKind = 'live';
+        const replacement = vi.fn();
+        mutable.resolveSource = replacement;
+        await expect(Reflect.apply(snapshot.resolveSource, undefined, [{}])).resolves.toEqual({
+            ok: true, value: { source: { kind: 'live' } },
+        });
+        expect(committed).toHaveBeenCalledOnce();
+        expect(replacement).not.toHaveBeenCalled();
     });
 
     it('captures the same runner companion independently for each committed generation', () => {
@@ -281,7 +269,6 @@ describe('Agent External Sessions registration staging', () => {
 
         const snapshot = registration.value.externalSessions;
         expect(snapshot).not.toBe(contribution);
-        expect(Object.isFrozen(snapshot)).toBe(true);
         await expect(Reflect.apply(snapshot.resolveSource, { owner: 'foreign' }, [{ source: 'source' }]))
             .resolves.toEqual({
                 ok: true,
@@ -334,7 +321,7 @@ describe('Agent External Sessions registration staging', () => {
             .toThrow(/duplicate Agent External Sessions/u);
     });
 
-    it('rejects retired follow coordination beyond the closed External Sessions callback contract', () => {
+    it('keeps retired follow coordination outside the registered External Sessions surface', () => {
         const registrationScope = scope();
         const withFollowPath = {
             ...externalSessions,
@@ -348,9 +335,9 @@ describe('Agent External Sessions registration staging', () => {
             'assistant',
             withFollowPath,
         );
-        expect(() => registrationScope.commit()).toThrow(
-            "Plugin 'acme.external' registered an invalid 'agents/assistant' runtime",
-        );
+        const [registration] = registrationScope.commit();
+        if (registration?.family !== 'agents') throw new Error('Expected Agent registration');
+        expect(registration.value.externalSessions).not.toHaveProperty('resolveFollowTranscriptPath');
     });
 
     it('requires every Agent subfield declared by the manifest', () => {

@@ -288,6 +288,11 @@ export function validateAgentExternalSessionHooksContribution(
         ['installationVariants', 'resolveInstallation', 'mapHookEvent'],
         'contribution',
     );
+    return captureAgentExternalSessionHooks(value);
+}
+
+/** Hook declarations are data; executable methods use their trusted live receiver. */
+export function captureAgentExternalSessionHooks(value: unknown) {
     const receiver = requireStaticRegistrationObject(
         value,
         'External Session hooks contribution',

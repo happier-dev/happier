@@ -118,70 +118,35 @@ describe('Agent External Session hook registration staging', () => {
         },
     );
 
-    it('captures plain-DTO hooks while cloning static declarations and rejecting live receivers', async () => {
-        const owner = 'structural-hooks';
-        const mapHookEventImplementation = () => Promise.resolve({
-            ok: true as const,
-            value: { kind: 'ignored' as const, owner },
-        });
-        const contribution = {
-            installationVariants: createExternalSessionHooks().installationVariants,
-            resolveInstallation: () => Promise.resolve({
-                ok: true as const,
-                value: { kind: 'ignored' as const, owner },
-            }),
-            mapHookEvent: mapHookEventImplementation,
-        } as unknown as AgentExternalSessionHooksContribution;
+    it('captures hook callbacks against their live receiver and retains static installation data', async () => {
+        class HookRuntime {
+            owner = 'before-commit';
+            installationVariants = createExternalSessionHooks().installationVariants;
+            resolveInstallation = createExternalSessionHooks().resolveInstallation;
+
+            async mapHookEvent() {
+                return { ok: true as const, value: { kind: 'ignored' as const, owner: this.owner } };
+            }
+        }
+        const contribution = new HookRuntime();
         const registrationScope = scope();
         registrationScope.api.agents.registerExternalSessions('assistant', externalSessions);
-        registrationScope.api.agents.registerExternalSessionHooks(
-            'assistant',
-            contribution,
-        );
-
+        registrationScope.api.agents.registerExternalSessionHooks('assistant', contribution);
         const [registration] = registrationScope.commit();
-        expect(registration?.family).toBe('agents');
         if (registration?.family !== 'agents' || !registration.value.externalSessionHooks) {
-            throw new Error('Expected Agent External Session hooks snapshot');
+            throw new Error('Expected Agent External Session hook registration');
         }
-        const snapshot = registration.value.externalSessionHooks;
-        expect(snapshot).not.toBe(contribution);
-        expect(Object.isFrozen(snapshot)).toBe(true);
-        expect(snapshot.installationVariants).not.toBe(contribution.installationVariants);
-        expect(Object.isFrozen(snapshot.installationVariants)).toBe(true);
-        // The captured callback stays bound to the author receiver: a foreign
-        // `this` cannot redirect the invocation.
-        await expect(Reflect.apply(snapshot.mapHookEvent, { owner: 'foreign' }, [])).resolves.toMatchObject({
-            value: { owner },
+        const hooks = registration.value.externalSessionHooks;
+        contribution.owner = 'live';
+        contribution.mapHookEvent = vi.fn();
+        expect(hooks.installationVariants).toEqual(contribution.installationVariants);
+        await expect(Reflect.apply(hooks.mapHookEvent, undefined, [])).resolves.toMatchObject({
+            value: { owner: 'live' },
         });
-
-        // Live class receivers (prototype/accessor-backed hooks) are rejected:
-        // registered hook DTOs must be static plain objects that cannot mutate
-        // or re-bind after commit.
-        class StructuralHooks {
-            readonly ignoredByRegistration = true;
-            get mapHookEvent() {
-                return mapHookEventImplementation;
-            }
-            resolveInstallation() {
-                return Promise.resolve({
-                    ok: true as const,
-                    value: { kind: 'ignored' as const, owner },
-                });
-            }
-        }
-        const liveReceiverScope = scope();
-        liveReceiverScope.api.agents.registerExternalSessions('assistant', externalSessions);
-        liveReceiverScope.api.agents.registerExternalSessionHooks(
-            'assistant',
-            new StructuralHooks() as unknown as AgentExternalSessionHooksContribution,
-        );
-        expect(() => liveReceiverScope.commit()).toThrow(
-            /invalid 'agents\/assistant' runtime/u,
-        );
+        expect(contribution.mapHookEvent).not.toHaveBeenCalled();
     });
 
-    it('rejects unknown External Session helper callbacks while ignoring unrelated data', () => {
+    it('keeps helper callbacks and their data private to the receiver', () => {
         const authorOnly = vi.fn();
         const helperTag = 'trusted-helper';
         const registrationScope = scope();
@@ -204,20 +169,14 @@ describe('Agent External Session hook registration staging', () => {
         expect(registration.value.externalSessions).toMatchObject(externalSessionsSnapshotShape());
         expect(registration.value.externalSessions).not.toHaveProperty('helperTag');
 
-        // A helper that is itself a callable is rejected through the
-        // attributable registration diagnostic: only the closed callback
-        // vocabulary may be executable on the registered runtime.
-        const rejectingScope = scope();
-        rejectingScope.api.agents.registerExternalSessions(
-            'assistant',
-            {
-                ...externalSessions,
-                authorOnly,
-            } as AgentExternalSessionsContribution,
-        );
-        expect(() => rejectingScope.commit()).toThrow(
-            /invalid 'agents\/assistant' runtime/u,
-        );
+        const helperScope = scope();
+        helperScope.api.agents.registerExternalSessions('assistant', {
+            ...externalSessions,
+            authorOnly,
+        } as AgentExternalSessionsContribution);
+        const [helperRegistration] = helperScope.commit();
+        if (helperRegistration?.family !== 'agents') throw new Error('Expected Agent registration');
+        expect(helperRegistration.value.externalSessions).not.toHaveProperty('authorOnly');
         expect(authorOnly).not.toHaveBeenCalled();
     });
 
@@ -237,6 +196,7 @@ describe('Agent External Session hook registration staging', () => {
             malformed.api.agents,
             ['assistant', legacyAdapterAggregate],
         );
+        malformed.api.agents.registerExternalSessions('assistant', externalSessions);
         expect(() => malformed.commit()).toThrow(/invalid 'agents\/assistant' runtime/u);
 
         const missingExternalSessions = scope();

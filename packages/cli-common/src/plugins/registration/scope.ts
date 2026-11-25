@@ -1,9 +1,13 @@
 import type { Disposable, JsonValue } from './contracts.js';
 import type { PluginContributionRegistrationRight } from '@happier-dev/protocol';
 import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PROJECT_NATIVE_ADAPTER_ROLES_V1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import { normalizeWorkItemsRuntime } from './staticRegistrationSnapshots.js';
 import { snapshotConnectedAccountRuntime } from './connectedAccountSnapshots.js';
 import { withPluginActionReadObserver } from './actionInputParser.js';
+import { captureAgentExternalSessionHooks } from './externalSessionHooks.js';
+import { validateAgentExternalSessionTakeoverContribution } from './externalSessionTakeover.js';
+import { captureRegistrationMethods, requireStaticRegistrationObject } from './staticCapture.js';
 
 export type PluginRegistrationFamily = (typeof REGISTRATION_FAMILY)[keyof typeof REGISTRATION_FAMILY];
 export type PluginRuntimeRegistration = Readonly<{ family: PluginRegistrationFamily; localId: string; value: unknown }>;
@@ -22,6 +26,18 @@ export type PluginRegistrationScopeTarget =
     }>;
 
 type StagedAgentRuntimeRegistration = Readonly<Record<string, unknown>>;
+
+const agentCallbackCaptures = {
+    terminal: (value: unknown) => captureRegistrationMethods(value, 'Agent terminal', ['resolveLaunch']),
+    externalSessions: (value: unknown) => captureRegistrationMethods(value, 'Agent External Sessions', [
+        'resolveSource', 'listCandidates', 'resolveLinkIdentity', 'resolveLinkedIdentity', 'pageTranscript', 'readAfterTranscript',
+    ], ['resolveManagedEndpointService', 'readAccounting', 'hydrateCandidates', 'materializeTranscriptMedia']),
+    externalSessionObservation: (value: unknown) => captureRegistrationMethods(value, 'Agent External Session observation', [
+        'describeResource', 'observeResource', 'reconcileResource',
+    ]),
+    externalSessionHooks: captureAgentExternalSessionHooks,
+    externalSessionTakeover: validateAgentExternalSessionTakeoverContribution,
+};
 
 type StagedProviderRuntimeRegistration = Readonly<Record<string, unknown>>;
 
@@ -254,8 +270,14 @@ export function createPluginRegistrationScope(
         assertRegistrationOpen();
         assertRegistrationLocalId(localId);
         const key = registrationKey(REGISTRATION_FAMILY.agents, localId);
-        if (!rightsByKey.has(key)) {
+        const right = rightsByKey.get(key);
+        if (!right) {
             fail(`Plugin '${params.pluginId}' cannot register undeclared contribution 'agents/${localId}'`);
+        }
+        if (right.requiredFields && !right.requiredFields.includes('externalSessions')
+            && (fields.externalSessionHooks !== undefined || fields.externalSessionObservation !== undefined
+                || fields.externalSessionTakeover !== undefined)) {
+            fail(`Plugin '${params.pluginId}' cannot register ${duplicateLabel} without External Sessions entitlement for Agent '${localId}'`);
         }
         const existing = stagedByKey.get(key);
         if (existing && existing.family !== REGISTRATION_FAMILY.agents) {
@@ -535,7 +557,75 @@ export function createPluginRegistrationScope(
             const registrations = [...stagedByKey.values()].map(staged => {
                 if (staged.family === REGISTRATION_FAMILY.agents) {
                     const { options, ...fields } = staged.value as StagedAgentRuntimeRegistration;
-                    return { ...staged, value: { ...(options as Readonly<Record<string, unknown>> | undefined), ...fields } };
+                    const value = { ...(options as Readonly<Record<string, unknown>> | undefined), ...fields };
+                    const required = rightsByKey.get(registrationKey(staged.family, staged.localId))?.requiredFields;
+                    if (required?.includes('factory') && value.factory === undefined) {
+                        fail(`Plugin '${params.pluginId}' activation is missing Agent runtime for 'agents/${staged.localId}'`);
+                    }
+                    if (required?.includes('externalSessions') && value.externalSessions === undefined) {
+                        fail(`Plugin '${params.pluginId}' activation is missing Agent External Sessions contribution for 'agents/${staged.localId}'`);
+                    }
+                    if (required?.includes('terminal') && value.terminal === undefined) {
+                        fail(`Plugin '${params.pluginId}' activation is missing Agent terminal contribution for 'agents/${staged.localId}'`);
+                    }
+                    if (required && !required.includes('terminal') && value.terminal !== undefined) {
+                        fail(`Plugin '${params.pluginId}' registered an undeclared Agent terminal contribution for 'agents/${staged.localId}'`);
+                    }
+                    try {
+                        for (const [field, capture] of Object.entries(agentCallbackCaptures)) {
+                            if (value[field] !== undefined) value[field] = capture(value[field]);
+                        }
+                    } catch {
+                        fail(`Plugin '${params.pluginId}' registered an invalid 'agents/${staged.localId}' runtime`);
+                    }
+                    return freezeRegistration(staged.family, staged.localId, value);
+                }
+                if (staged.family === REGISTRATION_FAMILY.providers) {
+                    const value = staged.value as StagedProviderRuntimeRegistration;
+                    if (value.managedRuntime === undefined) return staged;
+                    try {
+                        return freezeRegistration(staged.family, staged.localId, {
+                            ...value,
+                            managedRuntime: captureRegistrationMethods(value.managedRuntime, 'Managed Provider runtime', ['start']),
+                        });
+                    } catch {
+                        fail(`Plugin '${params.pluginId}' registered an invalid 'providers/${staged.localId}' runtime`);
+                    }
+                }
+                if (staged.family === REGISTRATION_FAMILY.dynamicResources
+                    || staged.family === REGISTRATION_FAMILY.composerReferences) {
+                    try {
+                        const methods = staged.family === REGISTRATION_FAMILY.dynamicResources ? ['read', 'observe'] : ['search', 'resolve'];
+                        return freezeRegistration(staged.family, staged.localId,
+                            captureRegistrationMethods(staged.value, staged.family, methods));
+                    } catch {
+                        fail(`Plugin '${params.pluginId}' registered an invalid '${staged.family}/${staged.localId}' runtime`);
+                    }
+                }
+                if (staged.family === REGISTRATION_FAMILY.voiceProviders) {
+                    const declaration = rightsByKey.get(registrationKey(staged.family, staged.localId))?.voiceProviderDeclaration;
+                    if (declaration && (staged.value as { kind?: unknown } | null)?.kind !== declaration.kind) {
+                        fail(`Plugin '${params.pluginId}' registered an invalid 'voiceProviders/${staged.localId}' runtime`);
+                    }
+                }
+                if (staged.family === REGISTRATION_FAMILY.projectNativeAdapters) {
+                    const roles = rightsByKey.get(registrationKey(staged.family, staged.localId))?.projectNativeAdapterRoles;
+                    if (roles) {
+                        try {
+                            const receiver = requireStaticRegistrationObject(staged.value, 'Project native adapter');
+                            if (PROJECT_NATIVE_ADAPTER_ROLES_V1.some(role => roles.includes(role) !== (Reflect.get(receiver, role) !== undefined))) {
+                                throw new TypeError('Unexpected Project native adapter runtime role');
+                            }
+                            const nativeServiceLifecycle = Reflect.get(receiver, 'nativeServiceLifecycle');
+                            const methods = captureRegistrationMethods(receiver, 'Project native adapter', roles.filter(role => role !== 'nativeServiceLifecycle'));
+                            return freezeRegistration(staged.family, staged.localId, {
+                                ...methods,
+                                ...(nativeServiceLifecycle === undefined ? {} : { nativeServiceLifecycle }),
+                            });
+                        } catch {
+                            fail(`Plugin '${params.pluginId}' Project native adapter '${staged.localId}' runtime roles do not match its declaration`);
+                        }
+                    }
                 }
                 if (staged.family === REGISTRATION_FAMILY.workItems) {
                     return { ...staged, value: normalizeWorkItemsRuntime(staged.value) };

@@ -33,11 +33,11 @@ describe('Agent terminal registration staging', () => {
         if (registration?.family !== 'agents' || !registration.value.terminal) {
             throw new Error('Expected committed Agent terminal contribution');
         }
+        terminal.executable = 'updated-terminal';
         terminal.resolveLaunch = vi.fn(() => ({ argv: ['replacement'] }));
 
         expect(await registration.value.terminal.resolveLaunch({} as never))
-            .toEqual({ argv: ['fixture-terminal'] });
-        expect(Object.isFrozen(registration.value.terminal)).toBe(true);
+            .toEqual({ argv: ['updated-terminal'] });
         expect(committedResolver).toHaveBeenCalledOnce();
     });
 

@@ -2336,13 +2336,6 @@ const COMPOSER_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     project(input) {
         const composer = input.composer as PluginComposerDefinition | undefined;
         return {
-            composerReferences: Object.entries(composer?.references ?? {}).map(([localId, definition]) => {
-                const { search: _search, resolve: _resolve, ...declaration } = definition;
-                return Object.freeze({
-                    ...captureDefinePluginAuthorValue(declaration) as typeof declaration,
-                    id: localId,
-                });
-            }),
             composerAttachments: Object.entries(composer?.attachments ?? {}).map(([localId, definition]) => (
                 projectComposerAttachmentDefinition(localId, definition)
             )),
@@ -2783,9 +2776,10 @@ function omitUndeclaredDefinePluginColdArrayFacts(
  */
 function projectDefinePluginColdContributes(
     authorInput: Readonly<Record<string, unknown>>,
+    composerReferences: readonly (Omit<PluginComposerReferenceDefinition, 'search' | 'resolve'> & { id: string })[],
 ): DefinedPluginContributes {
     const projected = Object.assign(
-        {},
+        { composerReferences },
         ...DEFINE_PLUGIN_AUTHOR_ADAPTERS.map((adapter) => adapter.project(authorInput)),
     ) as Readonly<Record<string, unknown>>;
 
@@ -2932,12 +2926,16 @@ function definePluginImplementation<
     assertDefinePluginOwnKeys(input);
     const capturedInput = captureDefinePluginAuthorValue(input) as typeof input;
     const authorInput = capturedInput as Readonly<Record<string, unknown>>;
+    const composerReferences = Object.entries(capturedInput.composer?.references ?? {}).map(([id, definition]) => {
+        const { search: _search, resolve: _resolve, ...declaration } = definition;
+        return Object.freeze({ ...captureDefinePluginAuthorValue(declaration) as typeof declaration, id });
+    });
     // Capture author input now, but project descriptor bytes only when a host
     // requests them. Runtime activation does not consume a manifest projection.
     let manifest: DefinedPluginManifest | undefined;
     const readManifest = (): DefinedPluginManifest => {
         if (manifest !== undefined) return manifest;
-        const contributes = projectDefinePluginColdContributes(authorInput);
+        const contributes = projectDefinePluginColdContributes(authorInput, composerReferences);
         const projected = {
             schemaVersion: 2,
             id: capturedInput.id,

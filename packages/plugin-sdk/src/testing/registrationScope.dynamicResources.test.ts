@@ -71,8 +71,11 @@ describe('dynamic resource producer registration', () => {
         const value = new MutableRuntime();
         registrationScope.api.resources.registerDynamicResource('live-status', value);
 
-        const committedRead = vi.fn(() => 'committed');
-        const committedObserve = vi.fn((invalidate: () => void) => {
+        const committedRead = vi.fn(function (this: MutableRuntime) {
+            return `committed:${++this.reads}`;
+        });
+        const committedObserve = vi.fn(function (this: MutableRuntime, invalidate: () => void) {
+            this.observations += 1;
             invalidate();
             return { dispose() {} };
         });
@@ -83,10 +86,9 @@ describe('dynamic resource producer registration', () => {
         if (registration?.family !== 'resources') {
             throw new Error('Expected the committed dynamic Resource registration');
         }
-        const snapshot = registration.value;
-        expect(snapshot).not.toBe(value);
-        expect(Object.isFrozen(snapshot)).toBe(true);
+        const { read, observe } = registration.value;
 
+        value.reads = 2;
         value.read = () => 'replacement';
         value.observe = () => ({ dispose() { throw new Error('replacement observe'); } });
 
@@ -94,14 +96,14 @@ describe('dynamic resource producer registration', () => {
             signal: new AbortController().signal,
             context: { kind: 'global' },
         });
-        expect(snapshot.read(options)).toBe('committed');
+        expect(read(options)).toBe('committed:3');
         let invalidations = 0;
-        await (await snapshot.observe(() => { invalidations += 1; }, options)).dispose();
+        await (await observe(() => { invalidations += 1; }, options)).dispose();
 
         expect(committedRead).toHaveBeenCalledOnce();
         expect(committedObserve).toHaveBeenCalledOnce();
-        expect(value.reads).toBe(0);
-        expect(value.observations).toBe(0);
+        expect(value.reads).toBe(3);
+        expect(value.observations).toBe(1);
         expect(invalidations).toBe(1);
     });
 
