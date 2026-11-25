@@ -11,6 +11,8 @@ import type {
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 import { buildPiAgentRuntimeDescriptorV1 } from '../../protocol/runtimeDescriptorV1.js';
 import { createPiAgentRuntime } from './engine.js';
@@ -23,6 +25,37 @@ describe('Pi Agent runtime', () => {
   afterEach(async () => {
     for (const session of openedSessions.splice(0)) await session.dispose();
     vi.useRealTimers();
+  });
+
+  it.each(['get_state', 'set_model'])('preserves the process exit diagnostic when Pi exits during startup %s', async command => {
+    const boundary = hostBoundaries();
+    const write = boundary.write.getMockImplementation()!;
+    boundary.write.mockImplementation(async record => {
+      if (record === null || typeof record !== 'object' || Array.isArray(record) || record.type !== command) {
+        await write(record);
+        return;
+      }
+      boundary.finish({
+        termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
+        stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+      });
+    });
+    const error = await createPiAgentRuntime().sessions.open({
+      kind: 'create', sessionId: 'pi-startup-exit', cwd: '/workspace',
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 },
+        model: { value: 'github-copilot/fixture-model', updatedAtMs: 0 },
+        permissionIntent: { value: null, updatedAtMs: 0 },
+        options: {},
+      },
+    }, boundary.context).catch((error: unknown) => error);
+    const issue = classifyPrimarySessionRuntimeIssue({
+      cause: 'session_error', startupPhase: 'client_start',
+      error: sanitizeNativeAgentSessionBoundaryError(error, true),
+    });
+    expect(issue.failureCause).toMatchObject({
+      phase: 'client_start', providerErrorCode: 'pi_rpc_unexpected_exit',
+    });
   });
 
   it.each([false, true])('retains a typed native configuration failure through Session opening (cleanup fails=%s)', async cleanupFails => {

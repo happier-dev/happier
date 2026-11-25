@@ -67,7 +67,7 @@ export function hostBoundaries(signal = new AbortController().signal, sessionSta
   // Only the Account and OS service members reached by these tests are supplied.
   } as unknown as AgentSessionRuntimeContext;
   return {
-    context, subscriptions, getBinding, spawn, write, disposeProcess,
+    context, subscriptions, getBinding, spawn, write, disposeProcess, finish,
     async emit(record: JsonValue) { await listener?.(record); },
   };
 }

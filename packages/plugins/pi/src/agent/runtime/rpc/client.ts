@@ -38,8 +38,17 @@ export type PiJsonStreamRpcClient = Readonly<{
 export type PiJsonStreamRpcExit = Readonly<{
   exitCode: number | null;
   signal: string | null;
-  error: Error;
+  error: PiRpcProcessExitError;
 }>;
+
+export class PiRpcProcessExitError extends Error {
+  readonly code = 'pi_rpc_unexpected_exit';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'PiRpcProcessExitError';
+  }
+}
 
 export class PiRpcNegativeAcknowledgementError extends Error {
   readonly kind = 'negative_acknowledgement';
@@ -89,7 +98,7 @@ function createPiProcessExit(result: PluginProcessResult): PiJsonStreamRpcExit {
   return Object.freeze({
     exitCode,
     signal,
-    error: new Error(`Pi RPC process ${terminalDescription}${stderrDescription}`),
+    error: new PiRpcProcessExitError(`Pi RPC process ${terminalDescription}${stderrDescription}`),
   });
 }
 

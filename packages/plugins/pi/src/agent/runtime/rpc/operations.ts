@@ -46,6 +46,7 @@ import { buildPiRpcLaunch, readPiConnectedServiceIdFromEnv } from './args.js';
 import {
   createPiJsonStreamRpcClient,
   PiRpcNegativeAcknowledgementError,
+  PiRpcProcessExitError,
   type PiJsonStreamRpcClient,
 } from './client.js';
 import {
@@ -928,7 +929,7 @@ function createRuntimeOperations(params: Readonly<{
       emittedAtMs: Date.now(),
       cause: 'processExited',
       retryable: true,
-      diagnostic: diagnostic('pi_rpc_unexpected_exit', result.error.message, result.error),
+      diagnostic: diagnostic(result.error.code, result.error.message, result.error),
     }, result.error);
   }
 
@@ -1440,8 +1441,10 @@ function createPiConversationRuntime(params: Readonly<{
           // Native negative acknowledgements carry only refusal text. Keep that
           // diagnostic available to the initial configuration's startup classifier;
           // transport exceptions retain their independent canonical cause evidence.
-          diagnostic: diagnostic('pi_configuration_failed', error instanceof Error ? error.message : String(error),
-            error instanceof PiRpcNegativeAcknowledgementError ? undefined : error),
+          diagnostic: error instanceof PiRpcProcessExitError
+            ? diagnostic(error.code, error.message)
+            : diagnostic('pi_configuration_failed', error instanceof Error ? error.message : String(error),
+              error instanceof PiRpcNegativeAcknowledgementError ? undefined : error),
         };
       }
     },
