@@ -1,5 +1,5 @@
 import { hostBoundaries } from './nativeProcess.test-support.js';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +20,7 @@ import { createPiAgentRuntime } from './engine.js';
 import { PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../auth/services/requestAuth/purposes.js';
 import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '../auth/services/requestAuth/index.js';
 import { PI_PROVIDER_SECRET_ENV_KEY } from '../launchEnvironment.js';
+import { formatPiSessionDirectoryForCwd } from '../sessionFiles.js';
 
 const openedSessions: AgentSessionRuntime[] = [];
 
@@ -28,6 +29,54 @@ describe('Pi Agent runtime', () => {
     for (const session of openedSessions.splice(0)) await session.dispose();
     vi.useRealTimers();
   });
+
+  it.skipIf(process.platform !== 'linux').each(['oversized', 'configured', 'ordinary'] as const)(
+    'opens a persistent Session with %s Pi storage',
+    async (storage) => {
+      const root = mkdtempSync(join(tmpdir(), 'pi-deep-checkout-'));
+      try {
+        const cwd = storage === 'ordinary' ? join(root, 'project')
+          : join(root, 'managed-project-'.repeat(9), 'nested-checkout-'.repeat(9));
+        const agentDir = join(root, 'native-home');
+        const sessionsRoot = join(agentDir, 'sessions');
+        const configuredSessionDir = storage === 'configured' ? join(root, 'configured-sessions') : undefined;
+        mkdirSync(cwd, { recursive: true });
+        if (configuredSessionDir) {
+          mkdirSync(join(cwd, '.pi'));
+          writeFileSync(join(cwd, '.pi', 'settings.json'), JSON.stringify({ sessionDir: configuredSessionDir }));
+        }
+        const boundary = hostBoundaries();
+        const spawn = boundary.spawn.getMockImplementation()!;
+        boundary.spawn.mockImplementation(async (spec) => {
+          // Match Pi 1.6.0's mkdir at the process boundary, using the real filesystem.
+          const flag = spec.launch.args.indexOf('--session-dir');
+          const sessionDir = flag === -1
+            ? configuredSessionDir ?? join(sessionsRoot, formatPiSessionDirectoryForCwd(cwd))
+            : spec.launch.args[flag + 1]!;
+          mkdirSync(sessionDir, { recursive: true });
+          return spawn(spec);
+        });
+        const session = await createPiAgentRuntime().sessions.open({
+          kind: 'create', sessionId: 'deep-checkout-session', cwd,
+          launchEnvironment: { values: { PI_CODING_AGENT_DIR: agentDir }, unset: [] },
+        }, boundary.context);
+        try {
+          if (configuredSessionDir) {
+            expect(existsSync(configuredSessionDir)).toBe(true);
+            expect(existsSync(sessionsRoot)).toBe(false);
+          } else if (storage === 'ordinary') {
+            expect(existsSync(join(sessionsRoot, formatPiSessionDirectoryForCwd(cwd)))).toBe(true);
+          } else {
+            expect(readdirSync(sessionsRoot, { withFileTypes: true }).filter(entry => entry.isDirectory())).toHaveLength(1);
+          }
+        } finally {
+          await session.dispose();
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each(['get_state', 'set_model'])('preserves the process exit diagnostic when Pi exits during startup %s', async command => {
     const boundary = hostBoundaries();

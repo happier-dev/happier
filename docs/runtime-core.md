@@ -9,6 +9,16 @@ individual Session. Older local end responses without a cause retain their exit
 code. A missing admitted runner source names
 `RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING` at `client_start`.
 
+In 0.3 development, Pi RPC uses an explicit directory under the existing Pi
+`sessions` root on Linux when its default working-directory encoding exceeds the
+filesystem's 255-byte component limit. The directory name is derived from the
+checkout path so the same checkout reopens the same native storage. Explicit Pi
+storage configuration keeps precedence. Pi's structured startup-exit record uses
+the existing plugin invocation log. For a daemon-hosted launch, look in the
+daemon log for `Pi RPC exited during Session startup` near the failed launch.
+The record uses the invocation correlation ID and carries the redacted stderr
+tail. The Action and stored Session carry the typed exit code.
+
 In 0.3 development, the Machine Session-start binding for Automation preserves
 the Action's content-free `failureCause` in the existing Session creation
 result. A credential-store read exception returns `spawn_failed` with its

@@ -44,7 +44,7 @@ import {
   PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
 } from '../../auth/services/requestAuth/index.js';
 import { PI_THINKING_LEVEL_ENV, resolvePiThinkingLevelFromEnv } from '../../../protocol/thinking.js';
-import { buildPiRpcLaunch, readPiConnectedServiceIdFromEnv } from './args.js';
+import { buildPiRpcLaunch, readPiConnectedServiceIdFromEnv, resolvePiRpcSessionDirectory } from './args.js';
 import {
   createPiJsonStreamRpcClient,
   PiRpcNegativeAcknowledgementError,
@@ -485,6 +485,7 @@ function createPiExecSpec(
   params: PiExecutionRunConversationParams,
   executable: ManagedExecutableRef,
   modelDiscoveryExtensionPath?: string,
+  sessionDirectory?: string,
 ) {
   const thinkingLevel = resolvePiThinkingLevelFromEnv(params.env);
   return {
@@ -496,6 +497,7 @@ function createPiExecSpec(
         modelDiscoveryExtensionPath,
         permissionMode: params.permissionMode,
         thinkingLevel,
+        sessionDirectory,
         resumeSessionId: params.resumeSessionSelector,
         connectedServiceId: readPiConnectedServiceIdFromEnv(params.env),
         providerModelId: params.providerModelId,
@@ -1563,6 +1565,12 @@ async function createPiConversationRuntimeOperations(
       mode: 0o600,
     });
   }
+  const sessionDirectory = await resolvePiRpcSessionDirectory({
+    cwd: params.cwd,
+    env: normalizedEnv,
+    unsetEnvKeys: params.unsetEnvKeys,
+    readEnvironment: params.services.exec.readEnvironment,
+  });
   const spec = createPiExecSpec({
     ...params,
     happierToolsExtension,
@@ -1572,7 +1580,7 @@ async function createPiConversationRuntimeOperations(
         ? { [PI_REQUEST_AUTH_PRODUCER_VERSION_ENV]: requestAuthProducerVersion }
         : {}),
     },
-  }, executable, modelDiscoveryExtensionPath);
+  }, executable, modelDiscoveryExtensionPath, sessionDirectory);
   // The Session opener supplies Pi's admitted launch overlay. The broker
   // substitutes the credential in that same environment slot.
   const environmentVariablePresent = Object.hasOwn(spec.launch.env, PI_PROVIDER_SECRET_ENV_KEY);

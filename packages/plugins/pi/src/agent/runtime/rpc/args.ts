@@ -1,6 +1,11 @@
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+
+import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 
 import { PI_PROVIDER_ID, PI_PROVIDER_MODELS_FILE } from '../../providerBinding.js';
+import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../sessionFileStoreDescriptor.js';
 import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from '../../auth/services/qualifiedPurposes.js';
 import { PI_CONNECTED_ACCOUNT_MODEL_ENV } from '../../launchEnvironment.js';
 import { normalizePiThinkingLevel } from '../../../protocol/thinking.js';
@@ -13,6 +18,45 @@ import { buildPiToolsForPermissionMode } from './permissions.js';
 import type { PiPermissionMode } from './types.js';
 
 const HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY = 'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON';
+
+export async function resolvePiRpcSessionDirectory(params: Readonly<{
+  cwd: string;
+  env: Readonly<Record<string, string | undefined>>;
+  unsetEnvKeys?: readonly string[];
+  readEnvironment?: (keys: readonly string[]) => Readonly<Record<string, string>>;
+}>): Promise<string | undefined> {
+  const product = PI_SESSION_FILE_STORE_DESCRIPTOR_V1;
+  const encoded = product.encodeCwdSubdir(params.cwd);
+  // Pi flattens the entire cwd into one filename. Linux filesystems such as
+  // ext4 limit each component to 255 bytes, even when the full cwd fits.
+  if (process.platform !== 'linux' || Buffer.byteLength(encoded) <= 255) return undefined;
+
+  const keys = [product.agentDirEnvVar, ...product.legacySessionDirEnvVars, 'HOME'];
+  const env = { ...params.readEnvironment?.(keys), ...params.env };
+  for (const key of params.unsetEnvKeys ?? []) delete env[key];
+  if (product.legacySessionDirEnvVars.some(key => Boolean(env[key]))) return undefined;
+
+  const homeDir = resolveHomeDirFromEnvironment(env);
+  const configuredAgentDir = env[product.agentDirEnvVar];
+  // Older hosts may expose only the launch overlay. Never redirect a member's
+  // Session files into the host process's home on missing environment evidence.
+  if (!configuredAgentDir && !env.HOME) return undefined;
+  const agentDir = configuredAgentDir
+    ? resolve(params.cwd, expandHomePath(configuredAgentDir, homeDir))
+    : join(homeDir, ...product.defaultAgentDirSegments);
+  // Leave explicit storage settings with Pi. We only replace its impossible
+  // default and leave resolution of the configured path to the native CLI.
+  for (const dir of [agentDir, join(params.cwd, product.configDirName)]) {
+    try {
+      const settings = readRecord(JSON.parse((await readFile(join(dir, 'settings.json'), 'utf8')).replace(/^\uFEFF/, '')));
+      if (readString(settings?.sessionDir)) return undefined;
+    } catch {
+      // A missing or invalid settings file supplies no storage override.
+    }
+  }
+  const projectKey = createHash('sha256').update(resolve(params.cwd)).digest('hex');
+  return join(agentDir, 'sessions', `happier-${projectKey}`);
+}
 
 type PiConnectedServiceLaunchSelection = Readonly<{
   provider: string;
@@ -73,6 +117,7 @@ type PiRpcArgsOptions = Readonly<{
   modelDiscoveryExtensionPath?: string;
   permissionMode?: PiPermissionMode;
   thinkingLevel?: string | null;
+  sessionDirectory?: string;
   resumeSessionId?: string | null;
   connectedServiceId?: string | null;
   providerModelId?: string;
@@ -126,6 +171,7 @@ export function buildPiRpcLaunch(opts?: PiRpcArgsOptions): Readonly<{ args: read
   if (tools) args.push('--tools', tools.join(','));
   const thinking = normalizePiThinkingLevel(opts?.thinkingLevel);
   if (thinking) args.push('--thinking', thinking);
+  if (opts?.sessionDirectory) args.push('--session-dir', opts.sessionDirectory);
   // Pi minted this id; the operand carries its exact bytes.
   const resumeSessionId = typeof opts?.resumeSessionId === 'string' && opts.resumeSessionId.trim().length > 0
     ? opts.resumeSessionId
