@@ -20122,6 +20122,8 @@ const zhHans: WorkflowTriggersCopy = {
         missed: "此计划运行已错过。请重新安排或选择立即运行。",
         missedOffline: "由于计算机在计划时间离线，此次运行已错过。请重新安排或选择立即运行。",
         missedUnavailable: "由于无法确认计算机在计划时间是否可用，此次运行已错过。请重新安排或选择立即运行。",
+        missedCauseOffline: "计算机在计划时间离线。",
+        missedCauseUnavailable: "无法确认计算机在计划时间是否可用。",
     },
     activity: {
         create: "根据此事件创建触发器",

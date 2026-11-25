@@ -20122,6 +20122,8 @@ const zhHant: WorkflowTriggersCopy = {
         missed: "此排程執行已錯過。請重新排程或選擇立即執行。",
         missedOffline: "由於電腦在排程時間離線，此次執行已錯過。請重新排程或選擇立即執行。",
         missedUnavailable: "由於無法確認電腦在排程時間是否可用，此次執行已錯過。請重新排程或選擇立即執行。",
+        missedCauseOffline: "電腦在排程時間離線。",
+        missedCauseUnavailable: "無法確認電腦在排程時間是否可用。",
     },
     activity: {
         create: "根據此事件建立觸發條件",

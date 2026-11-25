@@ -22,7 +22,7 @@ import { joinList } from '@/utils/text/joinList';
 import { resolveActionTitle } from '@/text/actionTitles';
 
 import type { ScheduleHoldPresentation } from './scheduleHoldPresentation';
-import { formatCalendarDate, formatClockTime, formatMonthName, formatOnceScheduleInstant, parseCalendarSchedule, readOnceScheduleState, formatOnceScheduleStateLabel } from './triggerSchedule';
+import { formatCalendarDate, formatClockTime, formatMonthName, formatOnceScheduleInstant, parseCalendarSchedule, presentSpentOnceSchedule } from './triggerSchedule';
 
 function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
     const next = new Date(nextRunAt);
@@ -424,16 +424,16 @@ export function formatTriggerSetSummary(
     const [first, ...rest] = triggers;
     if (first === undefined) return t('workflows.triggers.summary.manual');
     // A trigger that won't fire says so first, as its row does ("Off · Every day at 2:00 AM"); a spent
-    // one-time schedule says how it ended ("Completed · Once at …"), a pending one keeps its due time.
+    // one-time schedule says how it ended ("Ran once on …"), a pending one keeps its due time.
     // A collection row never shows a raw expression: a cron that can't be said reads "On a schedule" there.
     const when = first.kind === 'schedule' && first.schedule?.kind === 'cron'
         && formatCronSentence(first.schedule.scheduleExpr ?? '') === null
         ? t('workflows.triggers.summary.schedule')
         : formatTriggerSummary(first, first.kind === 'action' && 'phase' in first && first.phase === 'before'
             ? { ...options, form: 'clause' } : options);
-    const once = readOnceScheduleState(first, lastRunState);
-    const state = formatOnceScheduleStateLabel(once)
-        ?? (first.enabled === false && options?.offSaidElsewhere !== true ? t('workflows.triggers.row.off') : null);
-    const summary = state === null ? when : [state, when].join(' · ');
+    // A spent one-time schedule reads in the one phrase family every trigger surface uses (R12 M12, FIN ruling).
+    const spent = presentSpentOnceSchedule(first, lastRunState);
+    const state = first.enabled === false && options?.offSaidElsewhere !== true ? t('workflows.triggers.row.off') : null;
+    const summary = spent !== null ? spent.line : state === null ? when : [state, when].join(' · ');
     return rest.length === 0 ? summary : t('workflows.triggers.summary.more', { first: summary, count: rest.length });
 }

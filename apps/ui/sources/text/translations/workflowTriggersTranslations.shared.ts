@@ -22,6 +22,8 @@ export const en = {
         missed: "This scheduled run was missed. Reschedule it or choose Run now.",
         missedOffline: "This run was missed because its machine was offline at the scheduled time. Reschedule it or choose Run now.",
         missedUnavailable: "This run was missed because machine availability at the scheduled time could not be confirmed. Reschedule it or choose Run now.",
+        missedCauseOffline: "Its machine was offline at the scheduled time.",
+        missedCauseUnavailable: "Its machine’s availability at the scheduled time couldn’t be confirmed.",
     },
     activity: {
         create: 'Create a trigger from this event',

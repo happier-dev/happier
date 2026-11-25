@@ -15,6 +15,7 @@ type WorkflowRunWindowRowProps = Readonly<{
     accountLifetime: ServerAccountScopeLifetime | null;
     fallbackName?: string;
     inTriggerHistory?: boolean;
+    outcomeStated?: boolean;
     testID: string;
 }>;
 
@@ -24,7 +25,8 @@ function WorkflowRunWindowRowBody(props: WorkflowRunWindowRowProps) {
     return <WorkflowRunItemBody kind="workflow_run" runId={props.row.id} serverId={props.serverId}
         accountLifetime={props.accountLifetime}
         sourceProfile={sourcePeople.profiles.get(props.row.summary?.sourceSavedBy?.accountId ?? '')?.profile ?? null}
-        includeResult inTriggerHistory={props.inTriggerHistory} fallbackName={props.fallbackName} />;
+        includeResult inTriggerHistory={props.inTriggerHistory} outcomeStated={props.outcomeStated}
+        fallbackName={props.fallbackName} />;
 }
 
 /** History and Recent runs retain geometry in their containing scroller. */

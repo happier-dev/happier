@@ -20270,6 +20270,8 @@ const pl: WorkflowTriggersCopy = {
         missed: "Pominięto zaplanowane uruchomienie. Zaplanuj je ponownie lub wybierz Uruchom teraz.",
         missedOffline: "Pominięto uruchomienie, ponieważ komputer był offline w zaplanowanym czasie. Zaplanuj je ponownie lub wybierz Uruchom teraz.",
         missedUnavailable: "Pominięto uruchomienie, ponieważ nie udało się potwierdzić dostępności komputera w zaplanowanym czasie. Zaplanuj je ponownie lub wybierz Uruchom teraz.",
+        missedCauseOffline: "Komputer był offline w zaplanowanym czasie.",
+        missedCauseUnavailable: "Nie udało się potwierdzić dostępności komputera w zaplanowanym czasie.",
     },
     activity: {
         create: "Utwórz wyzwalacz z tego zdarzenia",

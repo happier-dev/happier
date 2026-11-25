@@ -75,7 +75,7 @@ it('says a spent one-time trigger already ran, with no switch, when its outcome 
   await screen.unmount();
 });
 
-it('leaves the outcome to an open History and keeps only the way to run it again', async () => {
+it('leaves the outcome and the way to run it again to an open History, which states them in that order (R12 M12)', async () => {
   const screen = await renderScreen(
     block(
       { ...once, remainingOccurrences: 0, nextRunAt: null },
@@ -87,7 +87,7 @@ it('leaves the outcome to an open History and keeps only the way to run it again
   expect(screen.getTextContent()).not.toContain(
     t('workflows.triggers.once.alreadyRan'),
   );
-  expect(screen.getTextContent()).toContain(
+  expect(screen.getTextContent()).not.toContain(
     t('workflows.triggers.once.runAgain'),
   );
   await screen.unmount();

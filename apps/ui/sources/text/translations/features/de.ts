@@ -19753,6 +19753,8 @@ const de: WorkflowTriggersCopy = {
         missed: "Dieser geplante Lauf wurde verpasst. Plane ihn neu oder wähle Jetzt ausführen.",
         missedOffline: "Dieser Lauf wurde verpasst, weil sein Computer zur geplanten Zeit offline war. Plane ihn neu oder wähle Jetzt ausführen.",
         missedUnavailable: "Dieser Lauf wurde verpasst, weil die Verfügbarkeit des Computers zur geplanten Zeit nicht bestätigt werden konnte. Plane ihn neu oder wähle Jetzt ausführen.",
+        missedCauseOffline: "Sein Computer war zur geplanten Zeit offline.",
+        missedCauseUnavailable: "Die Verfügbarkeit des Computers zur geplanten Zeit konnte nicht bestätigt werden.",
     },
     activity: {
         create: "Aus diesem Ereignis einen Auslöser erstellen",

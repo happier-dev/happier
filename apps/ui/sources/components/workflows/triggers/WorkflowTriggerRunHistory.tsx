@@ -22,6 +22,12 @@ import { formatAutomationTriggerObservationWarning } from '@/components/automati
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { presentScheduleHold, type ScheduleHold } from './scheduleHoldPresentation';
+import { formatWorkflowRunMissedCause } from '../presentation/workflowProblemPresentation';
+
+/** Two sentences of one note, the cause first. */
+function joinSentences(...sentences: readonly (string | null)[]): string {
+    return sentences.filter((sentence): sentence is string => Boolean(sentence)).join(' ');
+}
 
 /** Mounted only for the expanded trigger; the shared Run window owns reads and pagination. */
 export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunHistory(props: Readonly<{
@@ -75,8 +81,11 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
                 label={t('workflows.events.openRun')} onPress={openHoldingRun} />} />
             : nextRunAt !== null && !emptyWithNext ? <Item title={formatNextScheduledRun(nextRunAt, true, nowMs)} mode="info"
                 accessibilityLabel={formatNextScheduledRunAccessibilityLabel(nextRunAt, true, nowMs)} /> : null}
+        {/* A spent one-time trigger states how it ended once, then the one way on (R12 M12). */}
         {spent ? <Item testID={`session-work-trigger-history:${props.automationId}-once`} mode="info"
-            title={spent.line} titleLines={0} /> : null}
+            title={spent.line} titleLines={0} subtitle={joinSentences(
+                spent.state === 'missed' && read.rows[0]?.summary ? formatWorkflowRunMissedCause(read.rows[0].summary) : null,
+                t('workflows.triggers.once.runAgain'))} subtitleLines={0} /> : null}
         {read.status === 'failed' ? <SurfaceFreshnessLine
             tone="warning" reason={t('workflows.destination.history.loadFailedTitle')}
             action={{ label: t('workflows.retry'), onPress: read.retry }} /> : null}
@@ -90,7 +99,8 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
             progress wrap rather than clip (QA-LAYOUT H1). */}
         {serverId !== null ? <ListPresentationProvider value="page">{read.rows.map(row => <WorkflowRunWindowRow
             key={row.id} row={row} serverId={serverId} accountLifetime={read.accountLifetime}
-            fallbackName={props.triggerName} inTriggerHistory testID={`session-work-trigger-history-row:${row.id}`} />)}</ListPresentationProvider> : null}
+            fallbackName={props.triggerName} inTriggerHistory
+            outcomeStated={spent !== null && spent.state !== 'unknown' && row.id === read.rows[0]?.id} testID={`session-work-trigger-history-row:${row.id}`} />)}</ListPresentationProvider> : null}
         {read.hasMore ? <ToolbarButton testID={`session-work-trigger-history:${props.automationId}-loadMore`}
             label={t(read.loadMoreFailed ? 'workflows.retry' : 'workflows.destination.history.loadMore')}
             busy={read.loadingMore} disabled={read.loadingMore} onPress={read.loadMore} /> : null}

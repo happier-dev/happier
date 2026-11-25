@@ -18,6 +18,29 @@ function set(automationId: string, overrides: Record<string, unknown>): Workflow
 const project = (accountTriggers: readonly WorkflowTriggerSetV1[]) => projectWorkflowLibraryRecords({
     definitions: { library: [], sharedWithYou: [] }, accountTriggers, summaries: null, automationSummaries: null });
 
+// R12 M12 (FIN ruling): a spent one-time trigger reads in the editor's phrase family in the Library too.
+describe('spent one-time trigger in the Library row', () => {
+    const onceAt = Date.UTC(2026, 10, 25, 6, 55);
+    const spent = set('once', { triggers: [{ ...schedule('t1', 9), remainingOccurrences: 0, nextRunAt: null,
+        schedule: { kind: 'once', scheduledAt: onceAt } }] });
+    type RunSummary = NonNullable<Parameters<typeof describeAccountWorkflowLibraryRecord>[1]>;
+    it.each([
+        ['missed', 'workflows.triggers.once.missedOn'],
+        ['succeeded', 'workflows.triggers.once.ranOn'],
+    ] as const)('says a spent trigger whose Run %s ended in the dated past tense, not Completed · Once at', async (state, key) => {
+        const { formatOnceScheduleInstant } = await import('../triggers/triggerSchedule');
+        const summary = { lastRun: { state } } as RunSummary;
+        const { triggerSummary } = describeAccountWorkflowLibraryRecord(spent, summary);
+        expect(triggerSummary).toContain(key);
+        expect(triggerSummary).toContain(formatOnceScheduleInstant(onceAt));
+        expect(triggerSummary).not.toContain('workflows.runState');
+        expect(triggerSummary).not.toContain('workflows.triggers.once.at');
+    });
+    it('says Already ran while the last Run is not read', () => {
+        expect(describeAccountWorkflowLibraryRecord(spent).triggerSummary).toBe('workflows.triggers.once.alreadyRan');
+    });
+});
+
 describe('retained triggers whose Workflow is gone', () => {
     it('presents deployment observer identity names as Events while retaining each distinct enrollment', () => {
         // Account C/#164: each Environment has separate failed/succeeded observation-only definitions.

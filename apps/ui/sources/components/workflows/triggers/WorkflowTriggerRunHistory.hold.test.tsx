@@ -222,6 +222,31 @@ it.each([
   expect(screen.getTextContent()).not.toContain(t('workflows.triggers.once.alreadyRan'));
 });
 
+it('states a missed one-time schedule once, then the one instruction, with no outcome sentence on its Run row (R12 M12)', async () => {
+  const run = createWorkflowRunSummaryFixture({
+    id: 'run-once', ownerAccountId: 'account-a', state: 'missed', errorCode: 'machine_offline',
+    revision: 2, origin: { kind: 'automation', automationId: 'once' },
+  });
+  home.answer(serverId, route, { body: { runs: [run], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {} } });
+  const { formatOnceScheduleInstant } = await import('./triggerSchedule');
+  const { resolveWorkflowRunProblemPresentation } = await import('../presentation/workflowProblemPresentation');
+  const screen = await renderScreen(
+    <WorkflowTriggerRunHistory automationId="once" triggerId={triggerId} nextRunAt={null} trigger={spentOnce} />,
+  );
+  await waitForHomeGovernance(() =>
+    expect(screen.findByTestId('session-work-trigger-history-row:run-once')).not.toBeNull(),
+  );
+  const text = screen.getTextContent();
+  const heading = t('workflows.triggers.once.missedOn', { time: formatOnceScheduleInstant(onceAt) });
+  const instruction = t('workflows.triggers.once.runAgain');
+  expect(text).toContain(heading);
+  const cause = t('workflows.triggers.once.missedCauseOffline');
+  expect(text.indexOf(cause)).toBeGreaterThan(text.indexOf(heading));
+  expect(text.indexOf(instruction)).toBeGreaterThan(text.indexOf(cause));
+  expect(text).not.toContain(resolveWorkflowRunProblemPresentation(run)!.message);
+  expect(text).not.toContain(t('workflows.readState.historyTitle'));
+});
+
 it('says only that a spent one-time schedule already ran while its Run is not read', async () => {
   const screen = await renderScreen(
     <WorkflowTriggerRunHistory automationId="once" triggerId={triggerId} nextRunAt={null} trigger={spentOnce} />,

@@ -20182,6 +20182,8 @@ const ja: WorkflowTriggersCopy = {
         missed: "予定された実行が見送られました。再設定するか、今すぐ実行を選んでください。",
         missedOffline: "予定時刻にマシンがオフラインだったため、実行が見送られました。再設定するか、今すぐ実行を選んでください。",
         missedUnavailable: "予定時刻のマシンの稼働状況を確認できなかったため、実行が見送られました。再設定するか、今すぐ実行を選んでください。",
+        missedCauseOffline: "予定時刻にマシンがオフラインでした。",
+        missedCauseUnavailable: "予定時刻のマシンの稼働状況を確認できませんでした。",
     },
     activity: {
         create: "このイベントからトリガーを作成",

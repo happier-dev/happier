@@ -20246,6 +20246,8 @@ const it: WorkflowTriggersCopy = {
         missed: "Questa esecuzione programmata è stata persa. Riprogrammala o scegli Esegui ora.",
         missedOffline: "Questa esecuzione è stata persa perché la macchina era offline all’ora programmata. Riprogrammala o scegli Esegui ora.",
         missedUnavailable: "Questa esecuzione è stata persa perché non è stato possibile confermare la disponibilità della macchina all’ora programmata. Riprogrammala o scegli Esegui ora.",
+        missedCauseOffline: "La macchina era offline all’ora programmata.",
+        missedCauseUnavailable: "Non è stato possibile confermare la disponibilità della macchina all’ora programmata.",
     },
     activity: {
         create: "Crea un trigger da questo evento",

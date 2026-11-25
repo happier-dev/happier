@@ -366,6 +366,16 @@ export function resolveWorkflowRunProblemPresentation(
     return startupCause ? { ...present(null, { ...GENERIC_SHAPE, repair: 'none' }), message: startupCause } : null;
 }
 
+/**
+ * Why a missed Run was missed, without restating that it was missed or what to do: for a surface whose heading
+ * already says "Missed on …" and states its own instruction (a spent one-time trigger's History, R12 M12).
+ */
+export function formatWorkflowRunMissedCause(run: Pick<WorkflowRunSummaryV1, 'state' | 'errorCode'>): string | null {
+    if (run.state !== 'missed') return null;
+    return run.errorCode === 'machine_offline' ? t('workflows.triggers.once.missedCauseOffline')
+        : run.errorCode === 'machine_presence_at_due_unavailable' ? t('workflows.triggers.once.missedCauseUnavailable') : null;
+}
+
 /** The same typed refusal is shown for an Action and a persisted invocation failure. */
 export function formatWorkflowConversationProblem(details: WorkflowConversationUnavailableDetailsV1): string {
     return t(`workflows.problem.conversationChecks.${details.reason}`);

@@ -20303,6 +20303,8 @@ const fr: WorkflowTriggersCopy = {
         missed: "Cette exécution programmée a été manquée. Reprogramme-la ou choisis Exécuter maintenant.",
         missedOffline: "Cette exécution a été manquée car sa machine était hors ligne à l’heure prévue. Reprogramme-la ou choisis Exécuter maintenant.",
         missedUnavailable: "Cette exécution a été manquée car la disponibilité de la machine à l’heure prévue n’a pas pu être confirmée. Reprogramme-la ou choisis Exécuter maintenant.",
+        missedCauseOffline: "Sa machine était hors ligne à l’heure prévue.",
+        missedCauseUnavailable: "La disponibilité de la machine à l’heure prévue n’a pas pu être confirmée.",
     },
     activity: {
         create: "Créer un déclencheur à partir de cet événement",

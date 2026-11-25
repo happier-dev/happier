@@ -20232,6 +20232,8 @@ const pt: WorkflowTriggersCopy = {
         missed: "Esta execução agendada foi perdida. Reagende-a ou escolha Executar agora.",
         missedOffline: "Esta execução foi perdida porque a máquina estava offline no horário agendado. Reagende-a ou escolha Executar agora.",
         missedUnavailable: "Esta execução foi perdida porque não foi possível confirmar a disponibilidade da máquina no horário agendado. Reagende-a ou escolha Executar agora.",
+        missedCauseOffline: "A máquina estava offline no horário agendado.",
+        missedCauseUnavailable: "Não foi possível confirmar a disponibilidade da máquina no horário agendado.",
     },
     activity: {
         create: "Criar um gatilho a partir deste evento",

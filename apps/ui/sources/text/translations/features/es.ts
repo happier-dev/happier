@@ -20182,6 +20182,8 @@ const es: WorkflowTriggersCopy = {
         missed: "Se perdió esta ejecución programada. Reprográmala o elige Ejecutar ahora.",
         missedOffline: "Se perdió esta ejecución porque su máquina estaba desconectada a la hora programada. Reprográmala o elige Ejecutar ahora.",
         missedUnavailable: "Se perdió esta ejecución porque no se pudo confirmar la disponibilidad de la máquina a la hora programada. Reprográmala o elige Ejecutar ahora.",
+        missedCauseOffline: "Su máquina estaba desconectada a la hora programada.",
+        missedCauseUnavailable: "No se pudo confirmar la disponibilidad de la máquina a la hora programada.",
     },
     activity: {
         create: "Crear un activador a partir de este evento",

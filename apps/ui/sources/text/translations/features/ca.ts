@@ -20260,6 +20260,8 @@ const ca: WorkflowTriggersCopy = {
         missed: "S’ha perdut aquesta execució programada. Torna-la a programar o tria Executa ara.",
         missedOffline: "S’ha perdut aquesta execució perquè la màquina estava desconnectada a l’hora programada. Torna-la a programar o tria Executa ara.",
         missedUnavailable: "S’ha perdut aquesta execució perquè no s’ha pogut confirmar la disponibilitat de la màquina a l’hora programada. Torna-la a programar o tria Executa ara.",
+        missedCauseOffline: "La màquina estava desconnectada a l’hora programada.",
+        missedCauseUnavailable: "No s’ha pogut confirmar la disponibilitat de la màquina a l’hora programada.",
     },
     activity: {
         create: "Crea un activador a partir d’aquest esdeveniment",

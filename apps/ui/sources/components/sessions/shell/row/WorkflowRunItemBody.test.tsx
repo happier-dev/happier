@@ -173,8 +173,10 @@ describe('opened habit History result', () => {
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-run-row:habit-run')).not.toBeNull());
         expect(screen.findHostByTestId('session-work-trigger-history:auto-1-once')).not.toBeNull();
         expect(screen.getTextContent()).toContain(formatOnceScheduleStateLabel('missed'));
+        // The reason is kept once, under History's "Missed on …" heading, not as a second "missed" sentence (R12 M12).
         expect(screen.getTextContent()).toContain(errorCode === 'machine_offline'
-            ? 'workflows.triggers.once.missedOffline' : 'workflows.triggers.once.missedUnavailable');
+            ? 'workflows.triggers.once.missedCauseOffline' : 'workflows.triggers.once.missedCauseUnavailable');
+        expect(screen.getTextContent()).not.toContain('workflows.triggers.once.missedOffline');
         expect(screen.getTextContent()).not.toContain('workflows.finalOutput.none');
         await screen.pressByTestIdAsync('workflow-run-row:habit-run');
         expect(routerPush).toHaveBeenCalledWith(`/workflows/runs/habit-run?target=occurrence&automationId=auto-1&serverId=${encodeURIComponent(home.id)}`);

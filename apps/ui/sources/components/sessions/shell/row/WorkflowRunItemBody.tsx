@@ -63,6 +63,9 @@ export type WorkflowRunItemProps = Readonly<{
     sourceProfile?: Parameters<typeof resolveEditedByLabel>[0]['profile'];
     /** A row of Workflow History: the only place the viewer's own save reads "Edited by you". */
     inTriggerHistory?: boolean;
+    /** History's heading already states how this Run ended (a spent one-time trigger): the row repeats neither
+     * its outcome sentence nor why its title could not be read (R12 M12). */
+    outcomeStated?: boolean;
     /** Work-pane configuration rows use the same Item anatomy as Triggers. */
     presentation?: 'list' | 'work';
     /** Writes-here rows retain their destination, separately from the Run's origin. */
@@ -215,11 +218,11 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     // A Writes-here row leads with the step that writes into this Session, then the Run's aggregate
     // progress; when the Run began is not what this row is for. Without a known destination step the
     // work row keeps its start time, so it never reads bare.
-    const runProblem = resolveWorkflowRunProblemPresentation(summary);
+    const runProblem = props.outcomeStated === true ? null : resolveWorkflowRunProblemPresentation(summary);
     const context = [runProblem?.message, ...destinationProgress,
         props.presentation === 'work' && destinationProgress.length === 0 ? formatAsOfTime(Date.parse(summary.createdAt)) : null,
         describeWorkflowRunProgress(summary.stepProgress),
-        props.presentation !== 'work' ? starterLabel : null, unreadable].filter(Boolean).join(' · ');
+        props.presentation !== 'work' ? starterLabel : null, props.outcomeStated === true ? null : unreadable].filter(Boolean).join(' · ');
     // A Run without a final output keeps its own status line; "No final output selected" is the editor's phrase.
     const resultLine = !resultEnabled ? null : result.text
         ?? (result.status === 'failed' ? t('workflows.contentUnavailable')

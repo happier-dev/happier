@@ -892,10 +892,10 @@ function ScheduleTrackRows(
               }
             />
           </TrackRow>
-          {props.spentOnce ? (
+          {/* With History open, History states the outcome and then the instruction, after it (R12 M12). */}
+          {props.spentOnce && !props.historyShown ? (
             <Text testID={`${props.testID}-spent`} style={styles.note}>
-              {props.historyShown ? t('workflows.triggers.once.runAgain')
-                : joinHappierFacts(props.spentOnce.line, t('workflows.triggers.once.runAgain'))}
+              {joinHappierFacts(props.spentOnce.line, t('workflows.triggers.once.runAgain'))}
             </Text>
           ) : null}
         </>
