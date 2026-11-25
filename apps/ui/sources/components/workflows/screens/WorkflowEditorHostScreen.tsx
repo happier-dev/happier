@@ -24,6 +24,7 @@ import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountS
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { t, tLoose } from '@/text';
 import { getWorkflowContextChipDefinition } from '../workflowComposerControlPlacements';
+import { takeWorkflowReviewDirectory } from '../run/WorkflowReviewCompositionControl';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { useNavigationFocusReturn, type NavigationFocusReturnCapture } from '@/utils/navigation/useNavigationFocusReturn';
@@ -550,7 +551,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const hydrationRefreshRef = React.useRef<(() => void) | null>(null);
     const [view, setView] = React.useState<WorkflowEditorView>(definitionDraftSeed?.initialView ?? 'steps');
     const [selection, setSelection] = React.useState<WorkflowEditorViewState>(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
-    const [inputValues, setInputValues] = React.useState<Readonly<Record<string, JsonValue | undefined>>>(reviewedRunSeed?.inputs ?? definitionDraftSeed?.inputValues ?? {});
+    const reviewSeedDefinition = draftStore.get();
+    const reviewInputSeed = React.useMemo(() => takeWorkflowReviewDirectory(reviewSeedDefinition,
+        reviewedRunSeed?.inputs ?? definitionDraftSeed?.inputValues ?? {}), [definitionDraftSeed, reviewSeedDefinition, reviewedRunSeed]);
+    const [inputValues, setInputValues] = React.useState<Readonly<Record<string, JsonValue | undefined>>>(reviewInputSeed.values);
     const [inputRawTextValues, setInputRawTextValues] = React.useState<Readonly<Record<string, string>>>({});
     const [inputSheetOpen, setInputSheetOpen] = React.useState(reviewedRunSeed?.planReview !== undefined);
     const [planEditingAccepted, setPlanEditingAccepted] = React.useState(false);
@@ -612,9 +616,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         return isWorkflowProjectTarget(project) ? project : null;
     };
     const starterProject = definitionDraftSeed?.sessionTarget === undefined ? null : resolveStarterProject(definitionDraftSeed.sessionTarget);
-    const [projectTarget, setProjectTargetState] = React.useState<WorkflowProjectTargetV1 | null>(
-        definitionDraftSeed?.project ?? rememberedProject ?? reviewedRunSeed?.project ?? newSessionProject ?? starterProject,
-    );
+    const [projectTarget, setProjectTargetState] = React.useState<WorkflowProjectTargetV1 | null>(() => {
+        const target = definitionDraftSeed?.project ?? rememberedProject ?? reviewedRunSeed?.project ?? newSessionProject ?? starterProject;
+        return target && reviewInputSeed.directory !== undefined ? { ...target, directory: reviewInputSeed.directory } : target;
+    });
     const savedProjectTargetRef = React.useRef(projectTarget);
     const authoredProjectTargetRef = React.useRef(false);
     const setProjectTarget = React.useCallback((target: WorkflowProjectTargetV1 | null) => {
@@ -629,10 +634,11 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // A delayed Account projection may replace only the contextual seed,
         // never a Machine/path the person or a mounted Action already authored.
         if (definitionDraftSeed?.project !== undefined || rememberedProject === null || authoredProjectTargetRef.current) return;
-        savedProjectTargetRef.current = rememberedProject;
+        const target = reviewInputSeed.directory === undefined ? rememberedProject : { ...rememberedProject, directory: reviewInputSeed.directory };
+        savedProjectTargetRef.current = target;
         seededContextualTargetRef.current = true;
-        setProjectTargetState(rememberedProject);
-    }, [definitionDraftSeed?.project, rememberedProject]);
+        setProjectTargetState(target);
+    }, [definitionDraftSeed?.project, rememberedProject, reviewInputSeed.directory]);
     React.useEffect(() => {
         if (seededContextualTargetRef.current) return;
         const contextual = resolveContextualWorkflowProjectTarget({
@@ -644,9 +650,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // visibly unresolved and Run now states that as its blocking reason.
         if (contextual === null) return;
         seededContextualTargetRef.current = true;
-        savedProjectTargetRef.current = contextual;
-        setProjectTargetState((current) => current ?? contextual);
-    }, [accountLifetime, activeAccountScope, initializationKey, machines, recentMachinePaths]);
+        const target = reviewInputSeed.directory === undefined ? contextual : { ...contextual, directory: reviewInputSeed.directory };
+        savedProjectTargetRef.current = target;
+        setProjectTargetState((current) => current ?? target);
+    }, [accountLifetime, activeAccountScope, initializationKey, machines, recentMachinePaths, reviewInputSeed.directory]);
     // Run as is one page-level, Run-scoped choice. A reviewed copy keeps the
     // runtime its predecessor actually accepted rather than silently reverting
     // to the protocol default. Which runtimes are offered is projected from the
@@ -736,7 +743,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         setHydrationFailure(null);
         setSelection(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
         setView(withdrawn ? 'steps' : definitionDraftSeed?.initialView ?? 'steps');
-        setInputValues(withdrawn ? {} : nextReviewedRunSeed?.inputs ?? definitionDraftSeed?.inputValues ?? {});
+        const nextReviewInputSeed = takeWorkflowReviewDirectory(next, withdrawn ? {} : nextReviewedRunSeed?.inputs ?? definitionDraftSeed?.inputValues ?? {});
+        setInputValues(nextReviewInputSeed.values);
         setInputRawTextValues({});
         setInputSheetOpen(!withdrawn && nextReviewedRunSeed?.planReview !== undefined);
         setPlanEditingAccepted(false);
@@ -752,7 +760,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // contextual Agent is offered to it again rather than being consumed
         // for the whole mount.
         seededContextualAgentRef.current = false;
-        const nextProjectTarget = withdrawn ? null : definitionDraftSeed?.project ?? rememberedProject ?? nextReviewedRunSeed?.project ?? newSessionProject ?? starterProject;
+        const seededProjectTarget = withdrawn ? null : definitionDraftSeed?.project ?? rememberedProject ?? nextReviewedRunSeed?.project ?? newSessionProject ?? starterProject;
+        const nextProjectTarget = seededProjectTarget && nextReviewInputSeed.directory !== undefined
+            ? { ...seededProjectTarget, directory: nextReviewInputSeed.directory } : seededProjectTarget;
         setProjectTargetState(nextProjectTarget);
         savedProjectTargetRef.current = nextProjectTarget;
         authoredProjectTargetRef.current = false;
@@ -920,11 +930,14 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         inputs: Readonly<Record<string, JsonValue>> | undefined,
         roleOverrides?: WorkflowRunComposerModalProps['roleOverrides'],
         visibleTeamId?: string,
+        directory?: string,
     ): Promise<void> => {
         const draft = draftStore.get();
         if (planPendingRef.current || draft === null) return;
         const retained = runNow.retainedRequest;
-        if (retained === null && (projectTarget === null || projectTarget.directory.trim().length === 0)) return;
+        const runProjectTarget = retained === null && projectTarget && directory !== undefined ? { ...projectTarget, directory } : projectTarget;
+        if (retained === null && (runProjectTarget === null || runProjectTarget.directory.trim().length === 0)) return;
+        if (retained === null && runProjectTarget !== projectTarget) setProjectTarget(runProjectTarget);
         const validation = validateWorkflowEditorDraft(testSource === null ? draft : buildWorkflowEditorDraftFromDefinition({
             draftId: draft.draftId, name: testSource.metadata.title, definition: testSource.definition,
         }));
@@ -977,7 +990,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 source,
                 ...(inputs === undefined ? {} : { inputs }),
                 ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }),
-                ...(projectTarget === null ? {} : { project: projectTarget }),
+                ...(runProjectTarget === null ? {} : { project: runProjectTarget }),
                 ...(ownedPlanOriginId && reportBack ? { onComplete: { kind: 'originating_session' as const } } : {}),
                 // A saved revision is sent by reference; its reviewed contents stay with this admission so a
                 // later review shows that revision, never one saved since.
@@ -1057,7 +1070,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         const openRun = () => router.pushRetainingCurrent(createWorkflowRunRoute(admitted.run.id, lifetime.scope.serverId) as never);
         if (focusReturn) focusReturn.navigate(openRun);
         else openRun();
-    }, [accountLifetime, captureSourceGeneration, draftStore, executionTarget, pendingRunId, projectTarget, router, runAsTargets, runNow, planReview, reviewedRunSeed, ownedPlanOriginId, reportBack, saved?.definitionId, testSource]);
+    }, [accountLifetime, captureSourceGeneration, draftStore, executionTarget, pendingRunId, projectTarget, router, runAsTargets, runNow, planReview, reviewedRunSeed, ownedPlanOriginId, reportBack, saved?.definitionId, setProjectTarget, testSource]);
 
     const handleRunNow = React.useCallback(() => {
         if (draftStore.get() === null || testSourcePending || runNow.isPending(pendingRunId ?? '')) return;
@@ -1069,9 +1082,12 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             return;
         }
         // Every Run is reviewed in the composer, including a no-input recipe.
+        if (!authoredProjectTargetRef.current && projectTarget !== null && reviewInputSeed.directory !== undefined) {
+            setProjectTarget({ ...projectTarget, directory: reviewInputSeed.directory });
+        }
         setTestSource(null);
         setInputSheetOpen(true);
-    }, [draftStore, navigateWithFocusReturn, pendingRunId, runNow, testSourcePending]);
+    }, [draftStore, navigateWithFocusReturn, pendingRunId, projectTarget, reviewInputSeed.directory, runNow, setProjectTarget, testSourcePending]);
 
     const handleTestRun = React.useCallback(() => {
         if (saved === null || testSourcePending || runNow.isPending(pendingRunId ?? '')) return;
@@ -1086,6 +1102,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         void getWorkflowDefinition({ definitionId: saved.definitionId, accountLifetime }).then((result) => {
             if (!lifetime.isCurrent() || !sourceIsCurrent()) return;
             setTestSource(result);
+            if (!authoredProjectTargetRef.current && projectTarget !== null) {
+                const seed = takeWorkflowReviewDirectory(result.definition, {});
+                if (seed.directory !== undefined) setProjectTarget({ ...projectTarget, directory: seed.directory });
+            }
             setInputValues({});
             setInputRawTextValues({});
             setInputSheetOpen(true);
@@ -1094,7 +1114,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         }).finally(() => {
             if (lifetime.isCurrent() && sourceIsCurrent()) setTestSourcePending(false);
         });
-    }, [accountLifetime, captureSourceGeneration, pendingRunId, runNow, saved, testSourcePending]);
+    }, [accountLifetime, captureSourceGeneration, pendingRunId, projectTarget, runNow, saved, setProjectTarget, testSourcePending]);
 
     const { clearRefusal } = runNow;
     // While a start is unsettled, the review is the request it already sent: Start re-sends that
@@ -1155,6 +1175,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         includesUnsavedEdits: runRetained === null && testSource === null && (definitionDraftDirty || descriptionDraftDirty),
         machineId: (runRetained?.project ?? projectTarget)?.machineId ?? null,
         directory: (runRetained?.project ?? projectTarget)?.directory ?? null,
+        ...(runRetained ? {} : { onChangeDirectory: (directory: string) => {
+            if (projectTarget) setProjectTarget({ ...projectTarget, directory });
+        } }),
         machineName: whereMachineName,
         machineHomeDir: whereHomeDir,
         executionTarget: runRetained !== null ? runRetained.input.executionTarget : { kind: executionTarget },
@@ -1186,7 +1209,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             // The review row already names the field, so its control is the unlabelled field select (C24).
             presentation="selects" onChange={changeReviewedEngine}
             facts={authoringHost.authoringFacts} testIDPrefix="workflow-run-inputs-review-engine" /> } : {}),
-        onRun: (inputs, roleOverrides, visibleTeamId) => { void startRun(inputs, roleOverrides, visibleTeamId); },
+        onRun: (inputs, roleOverrides, visibleTeamId, directory) => { void startRun(inputs, roleOverrides, visibleTeamId, directory); },
         onCancel: dismissInputSheet,
         pending: planPending || runNow.isPending(pendingRunId ?? ''),
         reconciling: runNow.stateFor(pendingRunId ?? '') === 'reconciling',

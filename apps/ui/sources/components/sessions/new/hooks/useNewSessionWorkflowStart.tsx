@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readWorkflowReviewCompositionInputs, takeWorkflowReviewDirectory } from '@/components/workflows/run/WorkflowReviewCompositionControl';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
@@ -100,11 +101,16 @@ export function useNewSessionWorkflowStart(params: Readonly<{
     const retained = runNow.retainedRequest?.unresolved === true && runNow.retainedRequest.input.runId === pendingRunId.current
         ? runNow.retainedRequest : null;
     const retainedMachine = useMachinePresenceSummary(scope?.serverId, retained?.project?.machineId);
-    const select = React.useCallback((next: WorkflowStartSelection) => {
+    const select = React.useCallback(async (next: WorkflowStartSelection) => {
         retireManagedAttempt();
-        setSelection({ value: next, lifetime: captureActiveServerAccountScopeLifetime() });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const seed = takeWorkflowReviewDirectory(next.definition, {});
+        if (seed.directory !== undefined && !props.managedMachineDraft?.selection && props.onChangeDirectory
+            && await props.onChangeDirectory(seed.directory) === false) return;
+        if (lifetime !== null && !lifetime.isCurrent()) return;
+        setSelection({ value: next, lifetime });
         setValues({}); setRawTextValues({}); pendingRunId.current = null; clearRefusal();
-    }, [clearRefusal, retireManagedAttempt]);
+    }, [clearRefusal, props.managedMachineDraft?.selection, props.onChangeDirectory, retireManagedAttempt]);
     const remove = React.useCallback(() => {
         retireManagedAttempt();
         setSelection(null); setValues({}); setRawTextValues({}); pendingRunId.current = null; clearRefusal();
@@ -129,26 +135,31 @@ export function useNewSessionWorkflowStart(params: Readonly<{
                 </HappierPressable> : null}
             </View> };
     }, [remove, select, selection]);
-    const main = selection ? findWorkflowMainInput(selection.definition.inputs) : undefined;
+    const mainCandidate = selection ? findWorkflowMainInput(selection.definition.inputs) : undefined;
+    const directoryInput = selection && props.onChangeDirectory && !props.managedMachineDraft?.selection
+        ? readWorkflowReviewCompositionInputs(selection.definition)?.cwd : undefined;
+    // A repository folder is not the New draft's prompt. Keep that prompt through the existing retained-text path.
+    const main = mainCandidate?.name === directoryInput ? undefined : mainCandidate;
     const changeRawTextValues = React.useCallback((next: Readonly<Record<string, string>>) => {
         if (main && next[main.name] !== undefined) props.setSessionPrompt(next[main.name]);
         setRawTextValues(next);
     }, [main, props.setSessionPrompt]);
-    const submittedValues = React.useRef<Readonly<{ inputs: Readonly<Record<string, JsonValue>> | undefined; roleOverrides?: readonly RoleOverrideV1[] }> | null>(null);
+    const submittedValues = React.useRef<Readonly<{ inputs: Readonly<Record<string, JsonValue>> | undefined; roleOverrides?: readonly RoleOverrideV1[]; directory?: string }> | null>(null);
     const submit = React.useCallback(async (inputs: Readonly<Record<string, JsonValue>> | undefined, roleOverrides?: readonly RoleOverrideV1[],
-        recovery?: Readonly<{ retryInstallation?: boolean; setupRecovery?: 'retry' | 'skip' }>) => {
+        recovery?: Readonly<{ retryInstallation?: boolean; setupRecovery?: 'retry' | 'skip' }>, directory?: string) => {
         if (!selection || workflowDecision?.state !== 'enabled' || !targetIsCurrent || managedAbort.current) return;
         const managed = props.managedMachineDraft;
         const draft = managed?.selection;
         // Try again re-sends the retained request; today's machine and folder belong to the next start.
         const project = props.selectedMachineId && props.selectedPath
-            ? { machineId: props.selectedMachineId, directory: props.selectedPath } : null;
+            ? { machineId: props.selectedMachineId, directory: directory ?? props.selectedPath } : null;
         if (retained === null && project === null && !draft) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) return;
         const runId = pendingRunId.current ?? randomUUID();
         pendingRunId.current = runId;
-        submittedValues.current = { inputs, roleOverrides };
+        submittedValues.current = { inputs, roleOverrides, directory };
+        if (retained === null && directory !== undefined && directory !== props.selectedPath) void props.onChangeDirectory?.(directory);
         const startRun = (target: typeof project, managedCreation?: SessionManagedCreationV1) => runNow.runNow({
             runId,
             ...(retained !== null ? { ...retained.input, ...(retained.project === undefined ? {} : { project: retained.project }) } : {
@@ -219,7 +230,7 @@ export function useNewSessionWorkflowStart(params: Readonly<{
         if (!admitted || !lifetime.isCurrent() || selectionRef.current !== selection) return;
         pendingRunId.current = null;
         router.push(createWorkflowRunRoute(admitted.run.id, lifetime.scope.serverId) as never);
-    }, [props.managedMachineDraft, props.selectedMachineId, props.selectedPath, retained, router, runNow, selection,
+    }, [props.managedMachineDraft, props.onChangeDirectory, props.selectedMachineId, props.selectedPath, retained, router, runNow, selection,
         targetIsCurrent, workflowDecision?.state, managedApproval.requestApproval, mounted]);
     const managedProgress = React.useMemo(() => managedState?.attempt === managedAttempt.current
         && sameStrictJsonValue(managedMachineCreationIntent(managedState?.attempt.draft), managedMachineCreationIntent(props.managedMachineDraft?.selection))
@@ -229,9 +240,9 @@ export function useNewSessionWorkflowStart(params: Readonly<{
     const managedMachineDraft: NewSessionManagedMachineDraftModel | undefined = selection && props.managedMachineDraft ? {
         ...props.managedMachineDraft, creationScope: 'task', progress: managedProgress ?? { kind: 'idle' },
         cancel: () => { retireManagedAttempt(); props.managedMachineDraft?.cancel?.(); },
-        retryInstallation: () => { const values = submittedValues.current; if (values) void submit(values.inputs, values.roleOverrides, { retryInstallation: true }); },
-        retrySetup: () => { const values = submittedValues.current; if (values) void submit(values.inputs, values.roleOverrides, { setupRecovery: 'retry' }); },
-        continueWithoutSetup: () => { const values = submittedValues.current; if (values) void submit(values.inputs, values.roleOverrides, { setupRecovery: 'skip' }); },
+        retryInstallation: () => { const values = submittedValues.current; if (values) void submit(values.inputs, values.roleOverrides, { retryInstallation: true }, values.directory); },
+        retrySetup: () => { const values = submittedValues.current; if (values) void submit(values.inputs, values.roleOverrides, { setupRecovery: 'retry' }, values.directory); },
+        continueWithoutSetup: () => { const values = submittedValues.current; if (values) void submit(values.inputs, values.roleOverrides, { setupRecovery: 'skip' }, values.directory); },
         // Delete remains available through the admitted Machine's canonical detail/review owner.
         deleteMachine: undefined,
     } : undefined;
@@ -255,8 +266,9 @@ export function useNewSessionWorkflowStart(params: Readonly<{
         workflowChip={chip} retainedText={main ? undefined : prompt}
         machineId={retained ? retained.project?.machineId ?? null : props.selectedMachineId}
         directory={retained ? retained.project?.directory ?? null : props.selectedPath}
+        onChangeDirectory={retained || props.managedMachineDraft?.selection ? undefined : props.onChangeDirectory}
         retainedRequest={retained}
-        serverId={props.targetServerId} onRun={(inputs, roleOverrides) => { void submit(inputs, roleOverrides); }} onCancel={remove}
+        serverId={props.targetServerId} onRun={(inputs, roleOverrides, _visibleTeamId, directory) => { void submit(inputs, roleOverrides, undefined, directory); }} onCancel={remove}
         startDisabled={(props.managedMachineDraft?.selection ? !props.managedMachineDraft.onAcquisitionChange : !props.selectedMachineId || !props.selectedPath) || props.isCreating
             || !targetIsCurrent || workflowDecision?.state !== 'enabled'}
         pending={managedBusy || runNow.isPending(pendingRunId.current ?? '')}

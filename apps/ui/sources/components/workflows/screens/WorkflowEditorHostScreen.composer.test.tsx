@@ -719,6 +719,39 @@ describe('editor workflow composer', () => {
         expect(screen.root.findAllByType(WorkflowEditorBody)).toHaveLength(0);
     });
 
+    it.each(['input', 'default'] as const)('adopts a prepared Hunt %s Cwd into its editable project folder', async source => {
+        const { resolveBuiltinWorkflowDefinitionV1 } = await import('@happier-dev/protocol/workflows/builtins/catalog');
+        const { storeWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+        const builtin = resolveBuiltinWorkflowDefinitionV1('repository-review')!.definition;
+        const directory = '/prepared/hunt-repository';
+        const definition = source === 'default' ? { ...builtin, inputs: builtin.inputs.map(input => input.name === 'cwd'
+            ? { ...input, required: false, default: directory } : input) } : builtin;
+        const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ name: 'Prepared Hunt', definition,
+            project: { machineId: 'machine-1', directory: '~' },
+            inputValues: { reviewers: [{ kind: 'engine', engineId: 'clawpatch' }], instructions: 'Inspect the repository',
+                ...(source === 'input' ? { cwd: directory } : {}) } });
+        runStart.mockImplementation(async request => ({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: request.runId }) }));
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId }} /></AppPaneProvider>);
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        expect(screen.root.findByType(WorkflowEditorBody).props.projectTarget).toEqual({ machineId: 'machine-1', directory });
+        await screen.pressByTestIdAsync('workflow-editor-run-now');
+        const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
+        await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowRunComposer)).toHaveLength(1));
+        const composer = screen.root.findByType(WorkflowRunComposer);
+        expect(composer.props.directory).toBe(directory);
+        expect(composer.props.values.cwd).toBeUndefined();
+        expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe(directory);
+        await act(async () => screen.changeTextByTestId('new-session-composer-input', ''));
+        expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('');
+        expect(composer.props.directory).toBe(directory);
+        const edited = '/edited/hunt-repository';
+        await act(async () => screen.changeTextByTestId('new-session-composer-input', edited));
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(runStart.mock.calls.map(([request, project]) => ({ inputs: request.inputs, project }))).toEqual([
+            { inputs: expect.objectContaining({ cwd: edited }), project: { machineId: 'machine-1', directory: edited } },
+        ]);
+    });
+
     it('opens a concrete habit seed with its trigger and exact session placement without writing', async () => {
         const { WORKFLOW_STARTER_EXAMPLES_V1} = await import('@happier-dev/protocol/workflows/builtins/examples');
         const { storeWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
@@ -1241,6 +1274,7 @@ describe('editor workflow composer', () => {
                 emptyAutocompleteKinds: [], emptyAutocompleteSuggestions: async () => [],
                 agentType: 'codex', permissionMode: 'default', modelMode: 'default', modelOptions: [],
                 machineName: 'Current machine', selectedMachineId: props.machineId, selectedPath: props.path,
+                onChangeDirectory: () => {},
                 targetServerId: appliedHome.serverId, agentInputExtraActionChips: [agentChip],
                 useProfiles: false, selectedProfileId: null, showResumePicker: false, resumeSessionId: null, isResumeSupportChecking: false,
             } as unknown as Panel;
@@ -1282,6 +1316,9 @@ describe('editor workflow composer', () => {
         expect(fresh.retainedRequest ?? null).toBeNull();
         expect(fresh.directory).toBe('/repo/elsewhere');
         expect(fresh.extraActionChips).toEqual([agentChip]);
+        await select('builtin:repository-review');
+        expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('/repo/elsewhere');
+        expect(screen.root.findByType(WorkflowRunComposer).props.retainedText).toBe('Reviewed brief');
         await screen.unmount();
     });
 

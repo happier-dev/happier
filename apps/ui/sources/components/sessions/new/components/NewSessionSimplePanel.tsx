@@ -143,6 +143,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     machineName: string | null | undefined;
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     selectedPath: string;
+    onChangeDirectory?: (directory: string) => void | Promise<boolean>;
     pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
     /** The one folder chip's state (folder, no folder, loading, machine unavailable). */
     folderChipState?: React.ComponentProps<typeof AgentInput>['folderChipState'];

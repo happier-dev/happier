@@ -12,6 +12,7 @@ import { Modal } from '@/modal';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { WorkflowRunComposer, type WorkflowRunComposerProps } from './WorkflowRunComposer';
+import { createWorkflowStartPlacementChips } from './workflowStartPlacementChips';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -43,7 +44,7 @@ describe('workflow composer accessibility', () => {
     });
     it('preserves runner, model and Account when composing a repository Hunt through the shared picker', async () => {
         const { definition } = resolveBuiltinWorkflowDefinitionV1('repository-review')!;
-        const input = ReviewStartInputSchema.parse({ target: { kind: 'detached' }, scope: 'repository', cwd: '/repo',
+        const input = ReviewStartInputSchema.parse({ target: { kind: 'detached' }, scope: 'repository', cwd: '/tmp/u9-adapters-eval-pmjign5d/fixture',
             instructions: 'Find hidden defects', reviewers: [{ kind: 'engine', engineId: 'clawpatch',
                 runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                 modelSelection: { agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), providerConnectionId: null, modelId: 'gpt-6.2-sol' },
@@ -61,10 +62,14 @@ describe('workflow composer accessibility', () => {
         let selected!: () => void;
         const selectionApplied = new Promise<void>(resolve => { selected = resolve; });
         function Hunt() {
+            const [directory, onChangeDirectory] = React.useState('/authored-repo');
             const [values, onChangeValues] = React.useState<WorkflowRunComposerProps['values']>({ cwd: '/repo', instructions: 'Find hidden defects' });
             const [rawTextValues, onChangeRawTextValues] = React.useState<Readonly<Record<string, string>>>({ cwd: '/authored-repo', instructions: 'An earlier focus' });
             return <WorkflowRunComposer definition={definition} inputs={definition.inputs}
-                machineId="hunt-machine" directory="/repo" serverId="server-a"
+                machineId="hunt-machine" directory={directory} onChangeDirectory={onChangeDirectory} serverId="server-a"
+                extraActionChips={createWorkflowStartPlacementChips({ target: { machineId: 'hunt-machine', directory },
+                    machineName: 'Hunt machine', onChange: target => { if ('directory' in target) onChangeDirectory(target.directory); },
+                    testID: 'hunt-where', testIDPrefix: 'hunt-where' })}
                 values={values} onChangeValues={next => { onChangeValues(next); selected(); }}
                 rawTextValues={rawTextValues} onChangeRawTextValues={onChangeRawTextValues}
                 onRun={onRun} onCancel={() => {}} />;
@@ -79,10 +84,13 @@ describe('workflow composer accessibility', () => {
         expect(show.mock.calls[0]?.[0].props).toMatchObject({ projection: 'composition',
             draft: { scope: 'repository', cwd: '/authored-repo', instructions: 'An earlier focus' },
             workspace: { machineId: 'hunt-machine', cwd: '/authored-repo' } });
+        expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe(input.cwd);
+        expect(screen.getTextContent()).toContain(input.cwd);
+        expect(screen.root.findByType(WorkflowRunComposer).props.directory).toBe(input.cwd);
         await screen.pressByTestIdAsync('workflow-run-inputs-inputs-chip');
         expect(screen.findByTestId('workflow-run-inputs-reviewers')).toBeNull();
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
-        expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ reviewers: input.reviewers, instructions: input.instructions }), []);
+        expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ cwd: input.cwd, reviewers: input.reviewers, instructions: input.instructions }), [], undefined, input.cwd);
     });
     it('renders a contributed Workflow’s declared input title, placeholder and choice label', async () => {
         const { definition } = normalizePluginWorkflowContributionV1({

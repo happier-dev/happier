@@ -15,7 +15,7 @@ import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 type CompositionInputs = Readonly<{ reviewers: string; instructions: string; cwd: string; steps?: string }>;
 
 /** Bind saved Hunts as well as the built-in through their authored Action inputs. */
-export function readWorkflowReviewCompositionInputs(definition: WorkflowDefinitionV1 | undefined): CompositionInputs | null {
+export function readWorkflowReviewCompositionInputs(definition: Pick<WorkflowDefinitionV1, 'blocks'> | null | undefined): CompositionInputs | null {
     const review = definition && walkWorkflowBlocks(definition.blocks).find(block => block.kind === 'action'
         && block.actionId === REVIEW_START_ACTION_ID_V1 && block.input.scope?.kind === 'literal' && block.input.scope.value === 'repository');
     if (!review || review.kind !== 'action') return null;
@@ -24,6 +24,18 @@ export function readWorkflowReviewCompositionInputs(definition: WorkflowDefiniti
         || instructions.path?.length || cwd?.kind !== 'input' || cwd.path?.length) return null;
     return { reviewers: reviewers.name, instructions: instructions.name, cwd: cwd.name,
         steps: steps?.kind === 'input' && !steps.path?.length ? steps.name : undefined };
+}
+
+/** Transfer prepared Review inputs into an editable start's existing folder owner. */
+export function takeWorkflowReviewDirectory(definition: Pick<WorkflowDefinitionV1, 'blocks' | 'inputs'> | null | undefined,
+    values: Readonly<Record<string, JsonValue | undefined>>) {
+    const name = readWorkflowReviewCompositionInputs(definition)?.cwd;
+    const authored = name === undefined ? undefined : values[name];
+    const directory = authored === undefined ? definition?.inputs.find(input => input.name === name)?.default : authored;
+    if (name === undefined || typeof directory !== 'string') return { directory: undefined, values };
+    const remaining = { ...values };
+    delete remaining[name];
+    return { directory, values: remaining };
 }
 
 /** The workflow retains its inputs; the existing Review author owns runner, model and Account selection. */

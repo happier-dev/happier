@@ -2432,6 +2432,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         const path = typeof next === 'function' ? next(selectedPath) : next;
         void draftActions.setDirectory({ kind: 'path', path });
     }, [draftActions.setDirectory, selectedPath]);
+    const setWorkflowDirectoryWithAction = React.useCallback((directory: string) =>
+        draftActions.setDirectory({ kind: 'path', path: directory }), [draftActions.setDirectory]);
     const creationModelPickerProps = React.useMemo<React.ComponentProps<typeof SessionModelPicker> | undefined>(() => {
         if (!creationProfile) return undefined;
         const hostCatalog = creationProfile.modelCatalog;
@@ -4895,6 +4897,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             machinePopover,
             selectedMachineHomeDir: displayedMachineHomeDir,
             selectedPath,
+            onChangeDirectory: directoryIntentFixed ? undefined : setWorkflowDirectoryWithAction,
             pathPopover,
             folderChipState,
             onRemoveFolder: removeFolder,

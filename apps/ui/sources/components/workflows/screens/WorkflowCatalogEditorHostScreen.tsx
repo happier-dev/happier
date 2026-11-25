@@ -21,6 +21,7 @@ import { preparePluginWorkflowTemplateDraft, storeWorkflowDefinitionDraftSeed } 
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
 import { createWorkflowStartPlacementChips } from '../run/workflowStartPlacementChips';
+import { takeWorkflowReviewDirectory } from '../run/WorkflowReviewCompositionControl';
 import { useWorkflowPluginSource } from '../library/workflowLibraryReads';
 import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
 import { AccountTriggersReadContent } from '../triggers/AccountTriggersSection';
@@ -89,8 +90,12 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     const { recentMachinePaths } = useWorkflowEditorAccountMemory(accountLifetime, { workspaceRefs: false });
     const [focusedLifetime] = React.useState(captureActiveServerAccountScopeLifetime);
     const lifetime = accountLifetime === undefined ? focusedLifetime : accountLifetime;
-    const [target, setTarget] = React.useState<WorkflowAuthoringTarget | null>(() => resolveContextualWorkflowProjectTarget({ machines, recentMachinePaths,
-        scope: lifetime?.isCurrent() ? lifetime.scope : null }));
+    const [target, setTarget] = React.useState<WorkflowAuthoringTarget | null>(() => {
+        const target = resolveContextualWorkflowProjectTarget({ machines, recentMachinePaths,
+            scope: lifetime?.isCurrent() ? lifetime.scope : null });
+        const seed = takeWorkflowReviewDirectory(plugin.definition, {});
+        return target && seed.directory !== undefined ? { ...target, directory: seed.directory } : target;
+    });
     const mounted = useMountedRef();
     const isCurrent = React.useCallback(() => mounted.current && lifetime?.isCurrent() === true, [lifetime, mounted]);
     const [open, setOpen] = React.useState(props.intent === 'run' && !sessionBound);
@@ -122,12 +127,14 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
         router.push({ pathname: '/workflows/new', params: { definitionDraftSeedId,
             ...(accountLifetime ? { serverId: accountLifetime.scope.serverId } : {}) } } as never);
     };
-    const admit = async (inputs: Readonly<Record<string, JsonValue>> | undefined, roleOverrides?: readonly RoleOverrideV1[]) => {
+    const admit = async (inputs: Readonly<Record<string, JsonValue>> | undefined, roleOverrides?: readonly RoleOverrideV1[], directory?: string) => {
         if (!isCurrent() || sessionBound || target === null || !isWorkflowProjectTarget(target) || target.directory.trim().length === 0) return;
+        const project = directory === undefined ? target : { ...target, directory };
+        if (runNow.retainedRequest === null && project !== target) setTarget(project);
         const accepted = await runNow.runNow({
             source: catalogSource,
             metadata: { title: plugin.title }, ...(inputs === undefined ? {} : { inputs: { ...inputs } }),
-            ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }), project: target, isInvocationCurrent: isCurrent,
+            ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }), project, isInvocationCurrent: isCurrent,
             refusal: 'inline' });
         if (accepted !== null && isCurrent()) {
             setOpen(false);
@@ -143,12 +150,14 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
         optionsConsumer: { kind: 'workflow', workflow: catalogSource.workflow },
         preview: plugin.description ?? '', values, onChangeValues: setValues, rawTextValues, onChangeRawTextValues: setRawTextValues,
         machineId: shownTarget?.machineId ?? null, directory: shownTarget && isWorkflowProjectTarget(shownTarget) ? shownTarget.directory : null, serverId: props.serverId,
+        ...(retained ? {} : { onChangeDirectory: (directory: string) => setTarget(current => current && isWorkflowProjectTarget(current)
+            ? { ...current, directory } : current) }),
         retainedRequest: retained,
         extraActionChips: createWorkflowStartPlacementChips({ target: shownTarget, machines,
             machineName: shownMachine ? getMachineDisplayName(shownMachine) : null,
             ...(retained?.project ? {} : { onChange: setTarget }),
             testID: `${prefix}:run-where`, testIDPrefix: `${prefix}:run` }),
-        onRun: (inputs, overrides) => { void admit(inputs, overrides); }, onCancel: () => { runNow.clearRefusal(); setOpen(false); },
+        onRun: (inputs, overrides, _visibleTeamId, directory) => { void admit(inputs, overrides, directory); }, onCancel: () => { runNow.clearRefusal(); setOpen(false); },
         pending: runNow.isPending(runNow.pendingRunId ?? ''),
         startProblem: runNow.refusal,
         reconciling: runNow.stateFor(runNow.pendingRunId ?? '') === 'reconciling',

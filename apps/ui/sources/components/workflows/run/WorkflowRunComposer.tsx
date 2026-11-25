@@ -218,6 +218,8 @@ export type WorkflowRunComposerProps = Readonly<{
     inputs: Readonly<Record<string, JsonValue>> | undefined,
     roleOverrides?: readonly RoleOverrideV1[],
     visibleTeamId?: string,
+    /** The committed repository folder after applying any unfinished text buffer. */
+    directory?: string,
   ) => void;
   definition?: WorkflowDefinitionV1;
   sourceArtifactId?: string | null;
@@ -265,6 +267,8 @@ export type WorkflowRunComposerProps = Readonly<{
   notice?: string;
   machineId?: string | null;
   directory?: string | null;
+  /** An editable start's folder owner; repository Review inputs project this same directory. */
+  onChangeDirectory?: (directory: string) => void;
   machineName?: string | null;
   machineHomeDir?: string | null;
   executionTarget?: WorkflowRunNowRequest['executionTarget'];
@@ -431,21 +435,33 @@ export function WorkflowRunComposer(
   const [localRawTextValues, setLocalRawTextValues] = React.useState<
     Readonly<Record<string, string>>
   >({});
+  const directoryInput = retained === null && props.onChangeDirectory ? reviewCompositionInputs?.cwd : undefined;
   const rawTextValues = retained
     ? EMPTY_RAW_TEXT
     : (props.rawTextValues ?? localRawTextValues);
   const setRawTextValues = props.onChangeRawTextValues ?? setLocalRawTextValues;
-  const values = retained
+  const authoredValues = retained
     ? (retained.input.inputs ?? EMPTY_VALUES)
     : props.values;
+  const values = React.useMemo(() => directoryInput
+    ? { ...authoredValues, [directoryInput]: props.directory ?? '' } : authoredValues,
+  [authoredValues, directoryInput, props.directory]);
+  const changeValues = React.useCallback((next: WorkflowRunComposerProps['values']) => {
+    if (!directoryInput) { props.onChangeValues(next); return; }
+    const directory = next[directoryInput];
+    if (typeof directory === 'string' && directory !== props.directory) props.onChangeDirectory?.(directory);
+    const inputs = { ...next };
+    delete inputs[directoryInput];
+    props.onChangeValues(inputs);
+  }, [directoryInput, props.directory, props.onChangeDirectory, props.onChangeValues]);
   const changeReviewCompositionValues = React.useCallback((next: WorkflowRunComposerProps['values']) => {
-    props.onChangeValues(next);
+    changeValues(next);
     const buffers = { ...rawTextValues };
     for (const name of Object.values(reviewCompositionInputs ?? {})) {
       if (name !== undefined) delete buffers[name];
     }
     setRawTextValues(buffers);
-  }, [props.onChangeValues, rawTextValues, reviewCompositionInputs, setRawTextValues]);
+  }, [changeValues, rawTextValues, reviewCompositionInputs, setRawTextValues]);
   const fields = React.useMemo(
     () =>
       projectWorkflowRunInputFields({
@@ -611,19 +627,22 @@ export function WorkflowRunComposer(
       const next = { ...rawTextValues };
       delete next[name];
       setRawTextValues(next);
-      props.onChangeValues({ ...props.values, [name]: value });
+      changeValues({ ...values, [name]: value });
     },
-    [props.onChangeValues, props.values, rawTextValues, setRawTextValues],
+    [changeValues, values, rawTextValues, setRawTextValues],
   );
   const submit = React.useCallback(() => {
     if (disabled) return;
     const inputs = buildWorkflowRunStartInputs(fields);
-    if (visibleTeamId !== null)
+    const directory = directoryInput ? inputs?.[directoryInput] : undefined;
+    if (typeof directory === 'string') props.onRun(inputs, roleOverrides, visibleTeamId ?? undefined, directory);
+    else if (visibleTeamId !== null)
       props.onRun(inputs, roleOverrides, visibleTeamId);
     else if (props.definition) props.onRun(inputs, roleOverrides);
     else props.onRun(inputs);
   }, [
     disabled,
+    directoryInput,
     fields,
     props.definition,
     props.onRun,

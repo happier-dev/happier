@@ -108,6 +108,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         | 'machinePopover'
         | 'selectedMachineHomeDir'
         | 'selectedPath'
+        | 'onChangeDirectory'
         | 'pathPopover'
         | 'folderChipState'
         | 'onRemoveFolder'
