@@ -10,6 +10,7 @@ import { CODEX_RAW_PROXY_FIXTURE_SCRIPT, createCodexControlSocketFixture } from 
 
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { redactTranscriptSecrets, runInExecutionRunTranscriptSecretScope, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 
@@ -1126,7 +1127,9 @@ describe('createStablePluginExecService', () => {
                 }),
                 resolvePath: async () => root,
             });
-            const launch = await authorizePluginExecLaunchForHost(service, {
+            // A detached Run's launch runs in that Run's own transcript secret scope (its bridge owner's store).
+            const runSecrets = new Map<string, number>();
+            const launch = await runInExecutionRunTranscriptSecretScope(runSecrets, () => authorizePluginExecLaunchForHost(service, {
                 executable, args: ['--session', 'opaque "resume" \\'],
                 cwd: { root: 'workspace', relativePath: '' },
                 stdin: new Uint8Array([0, 255]), maxStdoutBytes: 1024,
@@ -1164,7 +1167,7 @@ describe('createStablePluginExecService', () => {
                         }],
                     }),
                 },
-            });
+            }));
             expect(launch).toMatchObject({
                 command: process.execPath,
                 args: [...installedArgs, '--session', 'opaque "resume" \\'],
@@ -1174,6 +1177,11 @@ describe('createStablePluginExecService', () => {
             expect(launch.env).not.toHaveProperty('REMOVE');
             expect(launch.secretRedactionLease?.redact('exact-project-key KEEP=native NATIVE=active'))
                 .toBe('[REDACTED] KEEP=native NATIVE=active');
+            // What this Run's Agent writes is masked with the value; another Run or Session in the host is not.
+            const readMasked = () => runInExecutionRunTranscriptSecretScope(runSecrets, () => redactTranscriptSecrets('use exact-project-key'));
+            expect(readMasked()).toBe(`use ${TRANSCRIPT_SECRET_REDACTED}`);
+            expect(runInExecutionRunTranscriptSecretScope(new Map(), () => redactTranscriptSecrets('use exact-project-key'))).toBe('use exact-project-key');
+            expect(redactTranscriptSecrets('use exact-project-key')).toBe('use exact-project-key');
             const processOwner = spawnSupervisedPluginProcess(launch);
             try {
                 const observed = await processOwner.handle.wait();
@@ -1191,6 +1199,7 @@ describe('createStablePluginExecService', () => {
                 launch.release(); launch.release();
             }
             expect(released).toBe(1);
+            expect(readMasked()).toBe('use exact-project-key');
         });
     });
 

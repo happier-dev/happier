@@ -19,24 +19,37 @@
  * that writes this Session's transcript. Inside a hosted Session it goes to that Session's scope, so
  * a session host serving several Accounts never masks (or reveals the presence of) one Session's
  * values in another's content; outside any Session it goes to the process set, which every
- * Session's content is masked with.
+ * Session's content is masked with. A detached Execution Run in the daemon has its own scope the
+ * same way: the exec owner registers the Project environment it materialized for the Run's launch
+ * there, and that Run's result, profile and Run writers mask with it.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { NativePermissionChoicesV1Schema, type NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 const processSecrets = new Map<string, number>();
+/**
+ * A detached Execution Run (no Session) is hosted by the daemon, which serves several Accounts'
+ * Runs. Its launch secrets belong to that Run the way a hosted Session's belong to that Session.
+ */
+const executionRunSecrets = new AsyncLocalStorage<Map<string, number>>();
 
-export const TRANSCRIPT_SECRET_REDACTED = '[redacted]';
-
-/** Whether stored text carries this masker's marker (a reader of the stored form can name the cause). */
-export function containsTranscriptSecretMask(text: string): boolean {
-    return text.includes(TRANSCRIPT_SECRET_REDACTED);
+/** The current scope's own store: the hosted Session's, else the detached Run's; absent outside both. */
+function readOwnScopeSecrets(create: boolean): Map<string, number> | undefined {
+    const hosted = readHostedSessionScope();
+    if (hosted) return create ? hosted.transcriptSecrets ??= new Map() : hosted.transcriptSecrets;
+    return executionRunSecrets.getStore();
 }
 
-/** Register a live secret; the returned function releases this registration. */
-export function registerTranscriptSecret(secret: string): () => void {
-    const scope = readHostedSessionScope();
-    const store = scope ? scope.transcriptSecrets ??= new Map() : processSecrets;
+/**
+ * Run one detached Execution Run's work in its own secret scope (its bridge owner keeps one store
+ * per Run). Inside a hosted Session the Session scope stays the scope.
+ */
+export function runInExecutionRunTranscriptSecretScope<T>(secrets: Map<string, number>, run: () => T): T {
+    return executionRunSecrets.run(secrets, run);
+}
+
+function registerIn(store: Map<string, number>, secret: string): () => void {
     store.set(secret, (store.get(secret) ?? 0) + 1);
     let released = false;
     return () => {
@@ -48,14 +61,27 @@ export function registerTranscriptSecret(secret: string): () => void {
     };
 }
 
+export const TRANSCRIPT_SECRET_REDACTED = '[redacted]';
+
+/** Whether stored text carries this masker's marker (a reader of the stored form can name the cause). */
+export function containsTranscriptSecretMask(text: string): boolean {
+    return text.includes(TRANSCRIPT_SECRET_REDACTED);
+}
+
+/** Register a live secret; the returned function releases this registration. */
+export function registerTranscriptSecret(secret: string): () => void {
+    const scope = readHostedSessionScope();
+    return registerIn(scope ? scope.transcriptSecrets ??= new Map() : processSecrets, secret);
+}
+
 /**
- * Register a Session's own secret in its hosted Session scope only. A Session's launch secrets
- * never enter the process set, where they would mask (and reveal) other Accounts' content in the
- * same host; outside a hosted Session nothing is registered.
+ * Register a launch's own secret in its own scope only: the hosted Session's, or the detached
+ * Execution Run's. Launch secrets never enter the process set, where they would mask (and reveal)
+ * other Accounts' content in the same host; outside both scopes nothing is registered.
  */
 export function registerSessionTranscriptSecret(secret: string): () => void {
-    if (!readHostedSessionScope()) return () => {};
-    return registerTranscriptSecret(secret);
+    const store = readOwnScopeSecrets(true);
+    return store ? registerIn(store, secret) : () => {};
 }
 
 function redactString(value: string, secrets: readonly string[]): string {
@@ -99,7 +125,7 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
 }
 
 function readActiveSecrets(): readonly string[] | undefined {
-    const scoped = readHostedSessionScope()?.transcriptSecrets;
+    const scoped = readOwnScopeSecrets(false);
     if (processSecrets.size === 0 && !scoped?.size) return undefined;
     return [...new Set([...processSecrets.keys(), ...(scoped?.keys() ?? [])])]
         .sort((left, right) => right.length - left.length);

@@ -159,6 +159,7 @@ import type {
 import { runWithExecutionRunTranscriptCustody, createExecutionRunTranscriptProjection } from './messages/sessionStateEmission';
 import { createExecutionRunTranscriptCustodyError, isExecutionRunTranscriptCustodyError } from './executionRunTranscriptPublisher';
 import { logger } from '@/ui/logger';
+import { runInExecutionRunTranscriptSecretScope } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { projectSessionComposerAttachmentDispatchInput } from '@/agent/runtime/runPermissionModePromptLoop';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveExecutionRunLifecycle } from './resolveExecutionRunLifecycle';
@@ -535,6 +536,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly boundedRecoveryInputs = new Map<string, { localId: string; consumer?: ExecutionRunPendingInputConsumer }>();
   private readonly markerWriteChains = new Map<string, Promise<void>>();
   private readonly terminalMarkerWritePromises = new Map<string, Promise<void>>();
+  /** Each Run's own transcript secret store: its launches register there, its writers mask with it. */
+  private readonly runTranscriptSecrets = new Map<string, Map<string, number>>();
   private readonly runStateChangeWaiters = new Set<(runId: string) => void>();
   private readonly voiceAgentManager: VoiceAgentManager;
   private executionRunProfileCatalog: ExecutionRunProfileContributionCatalog;
@@ -1920,6 +1923,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     await this.markerWriteChains.get(runId);
     await deleteRetainedExecutionRunHistory(runId);
     this.runs.delete(runId);
+    this.runTranscriptSecrets.delete(runId);
     this.terminalMarkerWritePromises.delete(runId);
     this.emitPublicStateUpdated(runId);
     return { success: true };
@@ -2433,7 +2437,29 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     return await this.startWithRetainedRuntime(params);
   }
 
+  /** The Run's store, created once; a start binds the store its launch already registered into. */
+  private readRunTranscriptSecrets(runId: string, startStore?: Map<string, number>): Map<string, number> {
+    let secrets = this.runTranscriptSecrets.get(runId);
+    if (!secrets) {
+      secrets = startStore ?? new Map<string, number>();
+      this.runTranscriptSecrets.set(runId, secrets);
+    }
+    return secrets;
+  }
+
   private async startWithRetainedRuntime(
+    params: ExecutionRunManagerStartParams,
+    retained?: Readonly<{ runId: string; controller: ExecutionRunBackendController }>,
+    capturedAccountSource?: Pick<ExecutionRunRuntimeCreateOptions, 'resolveAccountSettingsSnapshot'>,
+  ): Promise<ExecutionRunStartResult> {
+    // The Run id exists only once Start allocates it; its launch registers into this store first.
+    const secrets = retained ? this.readRunTranscriptSecrets(retained.runId) : new Map<string, number>();
+    return await runInExecutionRunTranscriptSecretScope(secrets, () => (
+      this.startInRunSecretScope(secrets, params, retained, capturedAccountSource)));
+  }
+
+  private async startInRunSecretScope(
+    secrets: Map<string, number>,
     params: ExecutionRunManagerStartParams,
     retained?: Readonly<{ runId: string; controller: ExecutionRunBackendController }>,
     capturedAccountSource?: Pick<ExecutionRunRuntimeCreateOptions, 'resolveAccountSettingsSnapshot'>,
@@ -2709,10 +2735,13 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         writeActivityMarker: this.writeActivityMarker.bind(this),
         finishRun: this.finishRun.bind(this),
         executeBoundedRun: (args) => this.executeBoundedRun(args, resolution.profileCatalog),
-        send: (runId, sendParams) => this.send(runId, {
-          ...sendParams,
-          ...(runInteractionStore ? { permissionRequestStore: runInteractionStore } : {}),
-        }),
+        send: (runId, sendParams) => {
+          this.readRunTranscriptSecrets(runId, secrets);
+          return this.send(runId, {
+            ...sendParams,
+            ...(runInteractionStore ? { permissionRequestStore: runInteractionStore } : {}),
+          });
+        },
         ...(this.sessionInteractionHost?.session.enqueueSessionUserMessageWithDisposition
           ? {
               enqueueRetainedRunInitialInput: async ({ runId, text, localId, requestedAction }) => {
@@ -2742,9 +2771,11 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
                 dispatch => this.handleExecutionRunPermissionResponseTargetDispatch(dispatch), { application: 'beforeCompletion' }),
             };
           }
+          this.readRunTranscriptSecrets(occurrenceParams.runId, secrets);
           return this.registerRunOccurrence(occurrenceParams);
         },
       });
+      this.readRunTranscriptSecrets(started.runId, secrets);
       const startedController = this.controllers.get(started.runId);
       if (startedController) {
         startedController.readNativeOfferedModel = resolution.readNativeOfferedModel;
@@ -2860,6 +2891,14 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         observe: (outcome: SessionProviderInputOutcome) => void;
       }>;
     }>,
+  ): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+    // Every turn of a Run masks with the secrets its own launches registered (detached: in the daemon).
+    return await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId), () => this.sendInRunSecretScope(runId, params));
+  }
+
+  private async sendInRunSecretScope(
+    runId: string,
+    params: Parameters<ExecutionRunHostBridge['send']>[1],
   ): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
     if (params.actionRequestAttributionV1) params = { ...params,
       actionRequestAttributionV1: materializeActionRequestAttributionV1(params.actionRequestAttributionV1) };
@@ -3235,6 +3274,14 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       actionRequestAttributionV1?: import('@happier-dev/protocol/actions/actionRequestAttributionV1').ActionRequestAttributionV1;
       projectLaunchContext?: ExecutionRunRuntimeCreateOptions['projectLaunchContext'];
     }>,
+  ): Promise<ExecutionRunEnsureResult> {
+    // A resumed launch registers its secrets in the Run's own store, as Start's does.
+    return await runInExecutionRunTranscriptSecretScope(this.readRunTranscriptSecrets(runId), () => this.ensureInRunSecretScope(runId, params));
+  }
+
+  private async ensureInRunSecretScope(
+    runId: string,
+    params: Parameters<ExecutionRunHostBridge['ensure']>[1],
   ): Promise<ExecutionRunEnsureResult> {
     await this.recoverRetainedRuns();
     this.ensurePermissionResponseTargetHandlerRegistered();

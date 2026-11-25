@@ -36,6 +36,8 @@ import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actio
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { materializeWorkflowAcceptedSnapshotV1, type WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 import { createWorkflowCoordinator } from '@/daemon/workflows/coordinator';
+import { evaluateWorkflowCondition } from '@/daemon/workflows/input';
+import { registerSessionTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { createInMemoryWorkflowCoordinatorStore } from '@/daemon/workflows/workflowCoordinator.testkit';
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
@@ -874,6 +876,57 @@ describe('ExecutionRunHostBridge detached task scope', () => {
       expect(createdRuntimeOptions[0]).toHaveProperty('happierSessionId', 'happier_parent_session_1');
       // The owning Happier Session id is the real Session scope, never the run id.
       expect(createdRuntimeOptions[0].happierSessionId).not.toBe(started.runId);
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it('masks a detached typed result with the Project secrets its own launch materialized, keeps declared values exact, and leaves a concurrent Run unmasked', async () => {
+    // The QA shape: two common-word Project secrets, a typed result with closed choices and a free-text body.
+    const answer = { choice: 'postgres', ordinal: '1', count: 1, body: 'connect postgres on replica 1 FIN-CONTROL-OK' };
+    const resultContract = { kind: 'json' as const, schema: { type: 'object', required: ['choice', 'ordinal', 'count', 'body'],
+      properties: { choice: { enum: ['postgres', 'sqlite'] }, ordinal: { enum: ['1', '2'] }, count: { type: 'integer' },
+        body: { type: 'string', minLength: 20 } } } };
+    const createRun = (projectSecrets: readonly string[]) => {
+      let releases: Array<() => void> = [];
+      const runtime: TestExecutionRunHostRuntime = createTestExecutionRunHostRuntime({
+        // The Agent launch is where the exec owner materializes the Project environment and registers its values.
+        onProvisionRuntime: () => { releases = projectSecrets.map(registerSessionTranscriptSecret); },
+        onSendPrompt: async (_runtimeId, prompt) => runtime.emitMessage({ type: 'model-output',
+          fullText: prompt.includes('Return the typed result') ? JSON.stringify(answer) : 'ready' } as AgentMessage),
+        onWaitForTurnCompletion: async () => {},
+        onDispose: () => { for (const release of releases) release(); },
+      });
+      return runtime;
+    };
+    const runtimes = [createRun(['postgres', '1']), createRun([])];
+    runtimeFactoryMock.createExecutionRunBridgeRuntime.mockImplementation(() => runtimes.shift());
+    const manager = new ExecutionRunHostBridge({ parentProvider: TEST_BACKEND_ID, cwd: process.cwd(), sendAcp: async () => {} });
+    const start = () => manager.start({ sessionId: null, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID },
+      instructions: 'Stay ready.', permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived',
+      ioMode: 'request_response' });
+    try {
+      const withSecrets = await start();
+      const withoutSecrets = await start();
+      // Each typed turn arrives later through its own Action call, outside the start that launched the Agent.
+      // The start turn settles first; an exact typed turn is admitted only as a new ordinary turn.
+      for (const runId of [withSecrets.runId, withoutSecrets.runId]) {
+        await vi.waitFor(async () => expect(await manager.send(runId, { message: 'Return the typed result',
+          localInputId: `typed-${runId}`, resultContract })).toEqual({ ok: true }));
+      }
+      const readResult = async (runId: string) => {
+        await vi.waitFor(() => expect(manager.get(runId)?.inputTurns?.last?.state).toBe('completed'));
+        return manager.get(runId)!.inputTurns!.last!.result;
+      };
+      const masked = await readResult(withSecrets.runId);
+      expect(masked).toEqual({ kind: 'json', value: { choice: 'postgres', ordinal: '1', count: 1,
+        body: `connect ${TRANSCRIPT_SECRET_REDACTED} on replica ${TRANSCRIPT_SECRET_REDACTED} FIN-CONTROL-OK` } });
+      const value = masked?.kind === 'json' ? masked.value : null;
+      const choice = { kind: 'result', producer: { blockId: 'step', scope: { kind: 'current' } }, path: ['choice'] } as const;
+      await expect(evaluateWorkflowCondition({ kind: 'compare', operator: 'eq', left: choice, right: { kind: 'literal', value: 'postgres' } },
+        { inputs: {}, resolveResult: async () => value })).resolves.toBe(true);
+      // Another Run in the same host (another Account's, possibly) is neither masked nor probed with these values.
+      expect(await readResult(withoutSecrets.runId)).toEqual({ kind: 'json', value: answer });
     } finally {
       await manager.dispose();
     }

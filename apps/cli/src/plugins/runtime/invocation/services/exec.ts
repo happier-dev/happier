@@ -63,6 +63,7 @@ import { consumeDeploymentExecEnvForHost, type HostDeploymentRuntimeProjectionV1
     type HostRuntimeDockerTuple, type HostRuntimeProjectedDockerInput } from '@/deployments/secrets/deploymentExecEnvPort';
 import { carryNativeDockerContextSelectionForHost } from '@/deployments/secrets/environmentRegistryConfig';
 import { createProviderRedactionLease, type ProviderRedactionLease } from '@/providers/spawn/redaction';
+import { registerSessionTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { awaitExecLaunchPreparation } from './execLaunchPreparation';
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
@@ -1029,13 +1030,17 @@ async function finalizeHostExecLaunch(input: Readonly<{
     let nativeExecutable: ResolvedPluginExecutable | undefined;
     let secretRedactionLease = input.launch.secretRedactionLease;
     let ownsRedactionLease = false;
+    let releaseTranscriptSecrets: readonly (() => void)[] = [];
     const release = () => {
         if (released) return;
         released = true;
         try { nativeExecutable?.release?.(); }
         finally {
             try { input.launch.release?.(); }
-            finally { if (ownsRedactionLease) secretRedactionLease?.close(); }
+            finally {
+                for (const releaseSecret of releaseTranscriptSecrets) releaseSecret();
+                if (ownsRedactionLease) secretRedactionLease?.close();
+            }
         }
     };
     const assertCurrent = () => {
@@ -1067,6 +1072,9 @@ async function finalizeHostExecLaunch(input: Readonly<{
             assertCurrent();
             environment = native.env;
             if (native.secretValues.length) {
+                // The launch's own transcript scope (a hosted Session's, or a detached Run's in the
+                // daemon) masks these values in what that Agent writes; a runner registers its copy.
+                releaseTranscriptSecrets = native.secretValues.map(registerSessionTranscriptSecret);
                 if (secretRedactionLease) secretRedactionLease.add(native.secretValues);
                 else {
                     secretRedactionLease = createProviderRedactionLease({ values: native.secretValues });
