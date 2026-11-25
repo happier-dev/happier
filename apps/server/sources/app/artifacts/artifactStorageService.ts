@@ -275,11 +275,13 @@ export async function readStorageInventoryInTx(tx: Tx, accountId: string, select
         try { after = inventoryCursor.parse(JSON.parse(Buffer.from(selection.cursor, 'base64url').toString('utf8'))); }
         catch { throw new InvalidStorageInventoryCursorError(); }
     }
+    if (selection.kinds?.length === 0) return { ...summary, kinds, page: { items: [] } };
+
     const size = sql.sql`COALESCE(${name("storedSizeBytes")}, -1)`;
     const position = sql.sql`kind, ${name("parentKey")}, ${name("itemId")}`;
-    const kindFilter = selection.kinds?.length
+    const kindFilter = selection.kinds
         ? sql.sql`AND kind IN (${sql.join([...selection.kinds])})`
-        : selection.kinds ? sql.sql`AND 1 = 0` : sql.empty;
+        : sql.empty;
     const seek = after ? sql.sql`AND (${size} < ${after[0]} OR (${size} = ${after[0]}
         AND (${position}) > (${after[1]}, ${after[2]}, ${after[3]})))` : sql.empty;
     const found = await tx.$queryRaw<InventoryItemRow[]>(sql.sql`

@@ -130,6 +130,16 @@ describe('Account storage and admitted Artifact page', () => {
             expect(usage.json()).toEqual({ totalBytes, byKind: breakdown, artifactLimitBytes: null,
                 unmeasuredKinds: [] });
             expect(inventoryResults).toEqual([expect.arrayContaining(Object.keys(breakdown).map(kind => expect.objectContaining({ kind })))]);
+            let summaryOnlyQueries = 0;
+            const stopSummaryOnly = observePrismaRequests(db, { before: ({ action }) => {
+                if (action === 'queryRaw') summaryOnlyQueries += 1;
+            } });
+            const summaryOnly = await app.inject({ url: `${inventoryPath}&paged=true&kinds=`, headers }).finally(stopSummaryOnly);
+            expect(summaryOnly.statusCode, summaryOnly.body).toBe(200);
+            const parsedSummary = StorageInventoryV1Schema.parse(summaryOnly.json());
+            expect(parsedSummary).toMatchObject({ totalBytes, byKind: breakdown, page: { items: [] } });
+            expect(parsedSummary.page?.nextCursor).toBeUndefined();
+            expect(summaryOnlyQueries).toBe(1);
             vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', '1000');
             const quota = await app.inject({ url: '/v1/artifacts/storage/usage', headers });
             expect(quota.statusCode, quota.body).toBe(200);
