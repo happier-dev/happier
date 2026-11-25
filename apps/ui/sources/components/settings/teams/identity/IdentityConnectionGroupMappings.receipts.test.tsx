@@ -7,7 +7,7 @@ import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions
 
 import { createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit';
 import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
 installSettingsViewCommonModuleMocks({ storage: 'real', modal: async () => {
@@ -40,6 +40,54 @@ const binding: TeamExternalGroupBindingV1 = {
 
 beforeEach(async () => { await harness.reset(); });
 afterEach(standardCleanup);
+
+describe('IdentityConnectionGroupMappings list refusals', () => {
+    async function renderMappings(serverId: string) {
+        return renderScreen(<IdentityConnectionGroupMappings
+            scope={{ serverId, accountId: 'owner' }} address={{ serverId, teamId: 'team-1' }}
+            connectionId="connection-1" mutationsAvailable requestApproval={() => undefined}
+        />);
+    }
+
+    it.each([
+        { status: 403, code: 'team_authentication_required', message: 'session.access.authenticationRequired', action: 'sign-in' },
+        { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: null },
+        { status: 403, code: 'team_forbidden', message: 'teams.errors.forbidden', action: null },
+        { status: 404, code: 'team_not_found', message: 'teams.errors.notFound', action: null },
+        { status: 409, code: 'team_archived', message: 'teams.errors.archived', action: null },
+        { status: 400, code: 'directory_group_mapping_invalid', message: 'identityAdministration.errorMissing', action: null },
+        { status: 400, code: 'invalid_team_input', message: 'homeGovernance.invalidRead', action: null },
+        { status: 404, code: 'teams_unavailable', message: 'teams.unavailable.disabled', action: null },
+        { status: 502, code: 'server_error', message: 'teams.errors.loadFailed', action: 'retry' },
+    ])('presents the $code refusal and only the available recovery', async ({ status, code, message, action }) => {
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://identity-home.example', accountId: 'owner', teamsEnabled: true });
+        harness.answer(serverId, `GET ${LIST_PATH}`, { status, body: { error: code } });
+        const screen = await renderMappings(serverId);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.getTextContent().split(message)).toHaveLength(2);
+        expect(screen.findByTestId('identity-group-bindings-retry') !== null).toBe(action === 'retry');
+        expect(screen.findByTestId('identity-group-bindings-sign-in') !== null).toBe(action === 'sign-in');
+    });
+
+    it('opens a fresh first page after a rejected continuation', async () => {
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://identity-home.example', accountId: 'owner', teamsEnabled: true });
+        const continuation = bindHomeDomainActionHttpRequestV1('teams.externalGroupBindings.list', {
+            v: 1, teamId: 'team-1', ownerKind: 'identity_connection', teamIdentityConnectionId: 'connection-1', limit: 50, cursor: 'expired',
+        }).path;
+        harness.answer(serverId, `GET ${LIST_PATH}`, { body: { items: [binding], nextCursor: 'expired' } });
+        harness.answer(serverId, `GET ${continuation}`, { status: 400, body: { error: 'invalid_team_cursor' } });
+        const screen = await renderMappings(serverId);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-bindings-load-more')).not.toBeNull());
+        await screen.pressByTestIdAsync('identity-group-bindings-load-more');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('teams.errors.listCursorExpired'));
+        expect(screen.findByTestId('identity-group-bindings-retry')).toBeNull();
+        harness.answer(serverId, `GET ${LIST_PATH}`, { body: { items: [], nextCursor: null } });
+        await screen.pressByTestIdAsync('identity-group-bindings-reload');
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).not.toContain('teams.errors.listCursorExpired'));
+        expect(harness.requestsFor(LIST_PATH)).toHaveLength(2);
+        expect(harness.requestsFor(continuation)).toHaveLength(1);
+    });
+});
 
 describe('IdentityConnectionGroupMappings acknowledged writes', () => {
     it.each(['set', 'remove'] as const)('releases %s pending state while its list revalidation is pending', async (operation) => {

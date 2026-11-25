@@ -20,6 +20,7 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import { buildIdentityConnectionGroupMappingCommand } from './identityConnectionGroupMapping';
 import { createIdentityAdministrationClient, executeIdentityAdministrationRead, type TeamExternalGroupBindingActionOutput } from './identityAdministrationClient';
 import { teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 
 export const IdentityConnectionGroupMappings = React.memo(function IdentityConnectionGroupMappings(props: Readonly<{
     scope: Parameters<typeof createIdentityAdministrationClient>[0];
@@ -34,6 +35,7 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
         }),
         [props.requestApproval, props.scope.accountId, props.scope.serverId],
     );
+    const readFailureAction = useTeamReadFailureAction(props.address);
     const [externalGroupId, setExternalGroupId] = React.useState('');
     const [choosingTarget, setChoosingTarget] = React.useState(false);
     const [pending, setPending] = React.useState<string | null>(null);
@@ -53,7 +55,7 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
         }, options), signal);
         return result.ok
             ? { kind: 'succeeded' as const, value: { items: result.value.items, nextCursor: result.value.nextCursor } }
-            : { kind: 'failed' as const, failure: result.failure.domainFailure ?? { kind: 'unknown' as const, retryable: result.failure.retryable, code: null } };
+            : { kind: 'failed' as const, failure: result.failure.domainFailure ?? { kind: 'unknown' as const, retryable: result.failure.retryable, code: result.failure.code } };
     }, [client, props.address.teamId, props.connectionId]);
     const bindings = useTeamObservedPagedList({
         scope: props.scope,
@@ -63,6 +65,12 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
         loadPage,
     });
     const nativeGroups = useTeamGroups({ scope: props.scope, address: props.address, archived: 'active', enabled: choosingTarget && props.mutationsAvailable });
+    const bindingsFailureLabel = bindings.error?.code === 'directory_group_mapping_invalid'
+        ? t('identityAdministration.errorMissing')
+        : bindings.error?.code === 'invalid_team_input'
+            ? t('homeGovernance.invalidRead')
+            : bindings.error ? teamReadFailureLabel(bindings.error) : null;
+    const recoverBindings = bindings.failedContinuation && bindings.error?.code !== 'invalid_team_cursor' ? bindings.loadMore : bindings.reload;
     const groupLabelInputs = React.useMemo(() => {
         const groups = new Map<string, { id: string; name: (typeof nativeGroups.rows)[number]['name'] }>();
         for (const binding of bindings.rows) groups.set(binding.target.teamGroupId, {
@@ -131,10 +139,10 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
                 {choosingTarget && nativeGroups.status === 'loading' && nativeGroups.rows.length === 0 ? <SurfaceStateCard testID="identity-group-native-loading" kind="loading" size="line" title={t('common.loading')} /> : null}
                 {choosingTarget && nativeGroups.isCurrent && nativeGroups.rows.length === 0 ? <SurfaceStateCard testID="identity-group-native-empty" kind="empty" size="line" title={t('teams.groups.emptyTitle')} /> : null}
                 {choosingTarget ? nativeGroups.rows.map((group) => <Item key={group.id} testID={`identity-group-native-target:${group.id}`} title={openedGroupDisplayNames.get(group.id) ?? t('common.unavailable')} subtitle={t('teams.groups.memberCount', { count: group.memberCount })} disabled={pending !== null || !props.mutationsAvailable || !nativeGroups.isCurrent} onPress={() => void bind({ kind: 'native_target', teamGroupId: group.id })} showChevron={false} />) : null}
-                {choosingTarget && nativeGroups.error ? <SurfaceStateCard testID="identity-group-native-error" kind="error" size="line" title={teamReadFailureLabel(nativeGroups.error)} action={nativeGroups.error.retryable ? { testID: 'identity-group-native-retry', label: t('common.retry'), onPress: () => void nativeGroups.reload() } : undefined} /> : null}
+                {choosingTarget && nativeGroups.error ? <SurfaceStateCard testID="identity-group-native-error" kind="error" size="line" title={teamReadFailureLabel(nativeGroups.error)} action={readFailureAction(nativeGroups.error, { testIDPrefix: 'identity-group-native', reloadsFirstPage: true, onPress: () => void nativeGroups.reload() })} /> : null}
                 {choosingTarget && nativeGroups.hasMore && nativeGroups.status !== 'loading' && !nativeGroups.error ? <Item title={t('identityAdministration.loadMore')} loading={nativeGroups.status === 'loading_more'} disabled={nativeGroups.status === 'loading_more'} onPress={() => void nativeGroups.loadMore()} showChevron={false} /> : null}
             </ItemGroup>
-            {bindings.error ? <ItemGroup><SurfaceStateCard kind="error" size="line" title={teamReadFailureLabel(bindings.error)} action={bindings.error.retryable ? { testID: 'identity-group-bindings-retry', label: t('common.retry'), onPress: () => void bindings.reload() } : undefined} /></ItemGroup> : null}
+            {bindings.error && bindingsFailureLabel ? <ItemGroup><SurfaceStateCard kind="error" size="line" title={bindingsFailureLabel} action={readFailureAction(bindings.error, { testIDPrefix: 'identity-group-bindings', reloadsFirstPage: true, onPress: () => void recoverBindings() })} /></ItemGroup> : null}
             {failure ? <ItemGroup><SurfaceStateCard testID="identity-group-mapping-failure" kind="error" size="line" title={failure} /></ItemGroup> : null}
         </>
     );
