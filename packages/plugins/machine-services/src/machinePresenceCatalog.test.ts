@@ -52,7 +52,7 @@ describe('Machine presence producer availability', () => {
         const services = { actions: { execute } } satisfies PluginTestServicesFixture;
         try {
             expect(await kit.invokeAction(`${eventId}/setup`, { v: 1, serverId: 'home', machineId: 'watched' },
-                { surface: 'agent', services })).toMatchObject({ sourceConfig: {
+                { surface: 'agent', services })).toMatchObject({ displayLabel: 'Selected Machine', sourceConfig: {
                     v: 1, serverId: 'home', machineId: 'watched', afterRevision: 7,
                 } });
         } finally { await kit.dispose(); }

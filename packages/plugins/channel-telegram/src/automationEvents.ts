@@ -152,7 +152,7 @@ export async function buildTelegramChatEventSourceSetupResult(input: Readonly<{
     sourceInstanceId: buildTelegramAutomationSourceInstanceId(sourceConfig),
     sourceContractVersion: TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
     sourceConfig,
-    displayLabel: input.label?.trim() || `Chat ${input.chatId}`,
+    displayLabel: input.label?.trim() || 'Selected Telegram chat',
   });
 }
 

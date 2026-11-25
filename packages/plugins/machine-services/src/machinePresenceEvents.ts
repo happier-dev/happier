@@ -38,7 +38,7 @@ export const machinePresenceEventActions = Object.fromEntries(descriptors.map(ev
         const config = source.parse({ ...selected, afterRevision: retained?.revision ?? 0 });
         return { v: 1 as const, sourceInstanceId: `presence:${computeCanonicalDomainSeparatedDigest('happier.machine.presence.source.v1',
             [selected.serverId, selected.machineId ?? '', event.id, String(context.invokedAtMs)])}`,
-            sourceContractVersion: 1, sourceConfig: config, displayLabel: selected.machineId ?? 'Any Machine' };
+            sourceContractVersion: 1, sourceConfig: config, displayLabel: selected.machineId === undefined ? 'Any Machine' : 'Selected Machine' };
     },
 }]));
 export const machinePresenceEvents = Object.fromEntries(descriptors.map(event => [event.id, { declaration: {

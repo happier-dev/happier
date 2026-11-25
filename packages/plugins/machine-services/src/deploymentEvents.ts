@@ -101,7 +101,7 @@ const setupAction = (event: EventId) => ({
         const config = configSchema.parse({ ...scope, observingSince: context.invokedAtMs,
             ...(credentialPrincipal ? { credentialPrincipal } : {}) });
         return { v: 1 as const, sourceInstanceId: sourceId(config, event), sourceContractVersion: 1,
-            sourceConfig: config, displayLabel: config.environmentId ?? 'Deployments' };
+            sourceConfig: config, displayLabel: config.environmentId === undefined ? 'Deployments' : 'Selected Environment' };
     },
 });
 export const deploymentEventActions = Object.fromEntries((Object.keys(outcomes) as EventId[])

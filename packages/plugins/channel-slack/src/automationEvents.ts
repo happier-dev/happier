@@ -88,7 +88,7 @@ export async function setupSlackAutomationMessageSource(input: unknown, context:
   const sourceConfig = { v: 1, teamId: identity.teamId, appId: identity.appId, channelId: channel.id };
   return { v: 1, sourceInstanceId: createSlackAutomationMessageSourceInstanceId(sourceConfig),
     sourceContractVersion: SLACK_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION, sourceConfig,
-    displayLabel: channel.name ? `#${channel.name}` : `Slack conversation ${channel.id}` };
+    displayLabel: channel.name ? `#${channel.name}` : 'Selected Slack conversation' };
 }
 
 export async function admitSlackAutomationEvent(input: unknown, context: PluginInvocationContext): Promise<ConversationProviderAutomationEventAdmitResultV1> {

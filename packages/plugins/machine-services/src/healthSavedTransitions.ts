@@ -40,7 +40,7 @@ export const savedHealthTransitionActions = Object.fromEntries([HEALTH_CHECK_FAI
         const sourceConfig = savedHealthTransitionSourceSchema.parse({ ...selected, observingSince: context.invokedAtMs });
         return { v: 1 as const, sourceContractVersion: 1,
             sourceInstanceId: createSavedHealthTransitionSourceInstanceIdV1(event, sourceConfig),
-            sourceConfig, displayLabel: 'Saved health checks' };
+            sourceConfig, displayLabel: selected.nativeSourceInstanceId === undefined ? 'Saved health checks' : 'Selected health check' };
     },
 }]));
 

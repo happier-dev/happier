@@ -445,7 +445,7 @@ export async function setupDiscordAutomationMessageSource(
     sourceInstanceId: createDiscordAutomationMessageSourceInstanceId(sourceConfig),
     sourceContractVersion: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
     sourceConfig,
-    displayLabel: label ? `#${label}` : `Discord channel ${channel.channelId}`,
+    displayLabel: label ? `#${label}` : 'Selected Discord channel',
   };
 }
 

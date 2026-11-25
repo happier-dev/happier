@@ -92,7 +92,9 @@ export const machineOutcomeEventActions = Object.fromEntries(eventIds.map(event 
         }
         return { v: 1 as const, sourceInstanceId: 'machine-event:' + computeCanonicalDomainSeparatedDigest('happier.machine.event-source.v1',
             [sourceConfig.serverId, sourceConfig.machineId ?? '', sourceConfig.environmentId ?? '', event]),
-            sourceContractVersion: 1, sourceConfig, displayLabel: sourceConfig.environmentId ?? sourceConfig.machineId ?? 'Machine resources' };
+            sourceContractVersion: 1, sourceConfig,
+            displayLabel: sourceConfig.machineId !== undefined ? 'Selected Machine'
+                : descriptors[event].scope === 'backup' ? 'Backups on the selected Home' : 'Machine resources' };
     },
 }]));
 export const machineOutcomeEvents = Object.fromEntries(eventIds.map(event => {
