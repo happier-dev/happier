@@ -28,3 +28,10 @@ it('keeps invalid-value codes without rejected values or schema literals', () =>
   expect(readActionOutputDiagnostic(failure)?.issues).toEqual([{ path: ['status'], code: 'invalid_value' }]);
   expect(JSON.stringify(readActionOutputDiagnostic(failure))).not.toContain('PRIVATE_');
 });
+
+it('omits response-owned record paths as well as values on request', () => {
+  const parsed = z.record(z.string(), z.number()).safeParse({ 'PRIVATE_KEY': 'PRIVATE_VALUE' });
+  if (parsed.success) throw new Error('Expected invalid producer output');
+  const failure = invalidActionOutputFailure(parsed.error, 'action.output', undefined, { issuePaths: 'omit' });
+  expect(readActionOutputDiagnostic(failure)?.issues).toEqual([{ path: [], code: 'invalid_type' }]);
+});

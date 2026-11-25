@@ -30,7 +30,9 @@ export const ARTIFACT_FOLDER_ACTION_SPECS_V1: ArtifactFolderActionSpec[] = lazyA
   surfaces: { ui: true, cli: true, agent: true, mcp: true, rpc: true, voice: true },
   bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_') },
   inputSchema: ARTIFACT_FOLDER_ACTION_INPUT_SCHEMAS_V1[id], outputSchema: ARTIFACT_FOLDER_ACTION_OUTPUT_SCHEMAS_V1[id],
-  ...(id === 'artifact.folder.set' ? { approvalPresentation: { clearInputPaths: ['folderId'] } } : {}),
+  ...(id === 'artifact.folders.delete'
+    ? { approvalPresentation: { summary: () => ARTIFACT_FOLDER_ACTION_COPY[id][1] } }
+    : id === 'artifact.folder.set' ? { approvalPresentation: { clearInputPaths: ['folderId'] } } : {}),
   inputHints: { description: ARTIFACT_FOLDER_ACTION_COPY[id][1], fields: id === 'artifact.folder.set'
     ? [{ path: 'folderId', title: 'Folder', widget: 'text' as const }] : [] },
   cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },

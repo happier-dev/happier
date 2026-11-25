@@ -1581,6 +1581,13 @@ describe('workspace file approvals read as the effect, not the mechanism', () =>
   });
 });
 
+it('tells a reviewer that deleting a document folder keeps its documents', async () => {
+  const { buildApprovalPreviewSummary } = await import('./actionExecutor.js');
+  const spec = getActionSpec('artifact.folders.delete');
+  const input = spec.inputSchema.parse({ folderId: 'folder', expectedRevision: 1 });
+  expect(buildApprovalPreviewSummary(spec, input)).toMatch(/documents in it are kept/i);
+});
+
 describe('plugin development confirmation summary', () => {
   // PLUGQA 2026-10-15: "Submit plugin development snapshot" asked "Submit plugin development snapshot."
   // — the confirmation repeated its title and never named the folder the daemon would build and run.
