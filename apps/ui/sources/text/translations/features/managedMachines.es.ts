@@ -366,6 +366,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             creatingShort: "Creando",
             installing: ({ name }: { name: string }) => `Instalando Happier en ${name}`,
             joining: ({ name }: { name: string }) => `${name} se está uniendo`,
+            vercelSessionEnded: "La sesión del sandbox de Vercel terminó antes de que Happier completara la configuración. Reanuda el sandbox si se conservó su almacenamiento, o elimínalo y crea uno nuevo con una duración mayor.",
             installFailedShort: "Falló la instalación",
             installFailedTitle: ({ name }: { name: string }) => `Happier no se pudo instalar en ${name}`,
             messageWaiting: ({ name }: { name: string }) => `Tu mensaje espera aquí hasta que ${name} se una.`,

@@ -1,4 +1,4 @@
-import { classifyManagedMachineAllocationV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { classifyManagedMachineAllocationV1, readManagedBootstrapRetryRefusalV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { RetentionCapabilitiesV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { t } from '@/text';
@@ -213,6 +213,7 @@ type InstallationRecoveryContext = Pick<ManagedCreationContext, 'providerAvailab
 
 export function resolveManagedInstallationRecovery(machine: ManagedMachineReadSnapshotV1, operation?: ActionOperationProjection | null,
     context: InstallationRecoveryContext = {}): ManagedInstallationRecoveryKind | null {
+    if (readManagedBootstrapRetryRefusalV1(machine.observation)) return null;
     const lifecycle = managedCreationState(machine, { ...context, operation });
     if (context.providerAvailable === false || machine.creationState !== 'active' || machine.archivedAt !== undefined || machine.desired === 'delete'
         || machine.allocation !== 'bound' || !machine.resource || machine.cleanup

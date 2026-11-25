@@ -1,4 +1,6 @@
 import { t } from '@/text';
+import { VERCEL_RESOURCE_STOPPED_CODE } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 
 /**
  * The typed use-time refusal of a managed acquisition in one sentence, or `null` for a code it does not know.
@@ -16,6 +18,7 @@ export function describeManagedAcquisitionRefusal(code: string): string | null {
         case 'intent_changed': return t('session.startFailure.cause.intent_changed');
         case 'managed_not_found': return t('session.startFailure.cause.managed_not_found');
         case 'enrollment_retired': return t('session.startFailure.cause.enrollment_retired');
+        case VERCEL_RESOURCE_STOPPED_CODE: return resolveSystemTaskFailureMessage({ code }) ?? null;
         default: return null;
     }
 }

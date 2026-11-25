@@ -2,7 +2,12 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 import { createVercelNativeClient } from './nativeClient.js';
 import { MachineProvisionerPowerResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { RECONCILIATION, reference, VercelOperationSchema, type VercelOperation } from './schemas.js';
+import { RECONCILIATION, reference, ROLE_SCHEMAS, VercelOperationSchema, VercelResourceSchema, type VercelOperation } from './schemas.js';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedControllerReportV1Schema, projectManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { createManagedNativeBootstrapIO, ManagedMachineControllerError, reconcileManagedMachine, type ManagedMachineReconciliation } from '@happier-dev/cli-common/machines/managed';
+import { deliverManagedNativeArchive } from '../../../../cli-common/src/machines/managed/nativeFileDelivery.js';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 const scope = { teamId: 'team_one', projectId: 'prj_one' };
 const launch = { image: 'vercel/sandbox/universal:latest', region: 'iad1', vcpus: 2, timeoutMs: 300000, snapshotExpirationMs: 0 };
@@ -24,6 +29,102 @@ const snapshot = { id: 'snap_one', sourceSessionId: session.id, status: 'created
 const emptyPage = { snapshots: [], pagination: { count: 0, next: null } };
 const command = { id: 'cmd_one', sessionId: session.id, exitCode: null, args: ['-c', 'cat > /payload'],
   cwd: '/vercel/sandbox', name: 'sh', startedAt: 2000 };
+
+describe('Vercel enrollment recovery', () => {
+  const stoppedCode = 'vercel_resource_stopped';
+  it.each([
+    { vendorCode: 'sandbox_stopped', errorCode: stoppedCode },
+    { vendorCode: 'snapshot_not_found', errorCode: 'vercel_http_410' },
+  ])('carries $vendorCode from native file delivery to the Action and retained Machine', async ({ vendorCode, errorCode }) => {
+    let status = 'running';
+    let failTransfer = true;
+    const { client, calls } = fixture((url, init) => {
+      if (url.pathname.endsWith('/stdin')) {
+        if (failTransfer) return json({ error: { code: vendorCode, message: 'private vendor text' } }, 410);
+        return json({ command });
+      }
+      if (url.pathname.endsWith('/logs')) return new Response('');
+      if (url.pathname.endsWith('/cmd')) return json({ command });
+      if (url.pathname.endsWith('/' + command.id)) return json({ command: { ...command, exitCode: 0 } });
+      if (url.pathname.endsWith('/' + snapshot.id)) return json({ snapshot });
+      if (init?.method === 'GET' && url.pathname.endsWith('/' + resource.name)) {
+        if (url.searchParams.get('resume') === 'true') status = 'running';
+        return json({ sandbox: named(status), session });
+      }
+      throw new Error('Unexpected Vercel request');
+    });
+    const bound = reference(resource);
+    let retained = ManagedMachineFullV1Schema.parse({
+      id: resource.managedId, homeId: 'home', custodianAccountId: 'owner',
+      controller: { machineId: 'controller', installationId: 'installation' },
+      launch: { provider: bound.contributionRef, schemaVersion: 1, name: 'Sandbox', choices: launch },
+      allocation: 'bound', creationState: 'active', resource: bound, desired: 'start', desiredWhen: 'now',
+      intentRevision: 0, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+    });
+    const unused = async (): Promise<never> => { throw new Error('Unexpected unbound or credential path'); };
+    const run = (action: ManagedMachineReconciliation['action']) => ManagedMachineControllerError.withActionFailure(action,
+      () => reconcileManagedMachine({
+        action, machine: retained, requestId: 'request',
+        home: {
+          correlation: row => ({ homeId: row.homeId, managedId: row.id, controller: row.controller,
+            expectedIntentRevision: row.intentRevision, requestId: 'request' }),
+          projectEnrollmentCorrelation: projectManagedEnrollmentCorrelationV1,
+          row: async (path, body) => {
+            if (path === 'report') {
+              const report = ManagedControllerReportV1Schema.parse(body);
+              retained = ManagedMachineFullV1Schema.parse({ ...retained, observation: report.observation });
+            } else if (path !== 'enrollment-context') throw new Error('Unexpected Home request');
+            return retained;
+          },
+          submit: unused, reportIssuedAcquireFact: unused, preparePendingAcquireBoundReport: unused,
+        },
+        createNative: () => ({ prepareRoles: unused, invoke: async (role, body) => {
+          switch (role) {
+            case 'bootstrap': return client.bootstrap(resource);
+            case 'inspect': return client.inspect(VercelResourceSchema.parse((body as { resource: unknown }).resource));
+            case 'exec': return client.exec(ROLE_SCHEMAS.execInput.parse(body));
+            case 'putFile': return client.putFile(ROLE_SCHEMAS.putFileInput.parse(body));
+            default: throw new Error(`Unexpected role ${role}`);
+          }
+        } }),
+        bootstrap: {
+          preflight: unused, prepareCredential: unused, readCredential: unused,
+          enroll: async ({ machine, correlation, invoke }) => {
+            await deliverManagedNativeArchive({ chunks: (async function* () { yield Uint8Array.of(42); })(),
+              guestPath: '/payload', resource: bound.value, totalBytes: 1 }, createManagedNativeBootstrapIO(correlation, invoke));
+            return { ...machine, enrolledMachineId: 'guest' };
+          },
+        },
+        waitForObservation: unused,
+      }));
+    const failure = (action: ManagedMachineReconciliation['action']) => run(action).catch(error => normalizeActionExecutorThrownError(error, action));
+
+    const acquired = await failure('machines.managed.acquire');
+    expect(calls.some(call => call.url.pathname.endsWith('/stdin'))).toBe(true);
+    expect(acquired).toMatchObject({ errorCode, failureCause: { errorCode }, details: { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx' } } });
+    expect(JSON.stringify(acquired)).not.toContain('private vendor text');
+    expect(retained.observation).toMatchObject({ reason: `bootstrap.${errorCode}` });
+    if (errorCode !== stoppedCode) return;
+
+    status = 'stopped';
+    const beforeRetry = calls.length;
+    expect(await failure('machines.managed.bootstrap.retry')).toMatchObject({ errorCode, failureCause: { errorCode } });
+    expect(calls).toHaveLength(beforeRetry);
+    await run('machines.managed.inspect');
+    expect(retained.observation).toMatchObject({ power: 'stopped', storage: 'retained', reason: `bootstrap.${errorCode}` });
+    expect(await client.power(resource, 'resume')).toEqual({ kind: 'confirmed' });
+    failTransfer = false;
+    await run('machines.managed.inspect');
+    expect(await run('machines.managed.bootstrap.retry')).toMatchObject({ observation: { power: 'running' } });
+    expect(calls.slice(beforeRetry).filter(call => call.url.pathname.endsWith('/stdin'))).toHaveLength(1);
+  });
+
+  it('returns the same cause from a stopped read before starting a file command', async () => {
+    const { client, calls } = fixture(() => json({ sandbox: named('stopped'), session }));
+    expect(await client.putFile({ resource, guestPath: '/payload', bytesBase64: 'YQ==' })).toMatchObject({ code: stoppedCode });
+    expect(calls.map(call => call.init?.method)).toEqual(['GET']);
+  });
+});
 // Current Gateway Anthropic endpoint/transport; the leaf consumes descriptors,
 // while the parent composed test derives these from the real Provider owner.
 const credentialBinding = (bindingKey = 'binding-a') => ({ bindingKey, destination: 'https://ai-gateway.vercel.sh/claude-code',

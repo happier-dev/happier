@@ -1,5 +1,6 @@
 import { t, type TranslationKey } from '@/text';
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { VERCEL_BOOTSTRAP_STOPPED_REASON, VERCEL_RESOURCE_STOPPED_CODE } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveCliAcquisitionFailureMessage } from './cliAcquisitionPresentation';
 
 /**
@@ -9,6 +10,8 @@ import { resolveCliAcquisitionFailureMessage } from './cliAcquisitionPresentatio
 const SYSTEM_TASK_FAILURE_TRANSLATION_KEYS: Readonly<Record<string, TranslationKey>> = {
     tailscale_operator_authorization_refused: 'settings.relayAccess.tailscaleOperatorAuthorizationRefused',
     managed_controller_request_failed: 'managedMachines.detail.controllerRequestFailed',
+    [VERCEL_RESOURCE_STOPPED_CODE]: 'managedMachines.creation.vercelSessionEnded',
+    [VERCEL_BOOTSTRAP_STOPPED_REASON]: 'managedMachines.creation.vercelSessionEnded',
     home_not_guest_reachable: 'managedMachines.creation.homeNotGuestReachable',
     preset_limit_reached: 'machinePresets.limitWaits',
     pool_no_available_machine: 'machinePresets.poolNoMachine',

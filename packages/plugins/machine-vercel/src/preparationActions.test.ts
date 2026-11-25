@@ -28,7 +28,7 @@ function vendor() {
   let loseCreate = false, loseSnapshot = false, commandFailure: 'install' | 'setup' | undefined, holdDelete = false;
   let cancelSnapshot: AbortController | undefined;
   let wrongOwner = false, foreignSnapshot = false;
-  let commandHttpFailure = false;
+  let commandHttpFailure: 'unavailable' | 'stopped' | undefined;
   let readHttpFailure = false;
   const session = () => ({ id: 'sbx_build', sourceSandboxName: acquisition.name, projectId: scope.projectId, createdAt: 1000 });
   const named = () => ({ name: acquisition.name, tags: { 'happier-managed-id': wrongOwner ? 'other-person' : acquisition.managedId },
@@ -73,7 +73,11 @@ function vendor() {
       if (path === '/v2/sandboxes/sessions/sbx_build') return response(200, { session: session() });
       if (path === '/v2/sandboxes/sessions/sbx_other') return response(200, { session: { ...session(), id: 'sbx_other', sourceSandboxName: 'someone-elses-sandbox' } });
       if (path.endsWith('/cmd')) {
-        if (commandHttpFailure) return response(503, {});
+        if (commandHttpFailure === 'unavailable') return response(503, {});
+        if (commandHttpFailure === 'stopped') {
+          stopped = true;
+          return response(410, { error: { code: 'sandbox_stopped', message: 'Sandbox has stopped execution' } });
+        }
         const command = body as { command: string; args: string[] };
         const id = 'cmd_' + commands.size; commands.set(id, command);
         return response(200, { command: { id, sessionId: 'sbx_build', exitCode: null } });
@@ -98,7 +102,7 @@ function vendor() {
     loseCreate() { loseCreate = true; }, loseSnapshot() { loseSnapshot = true; },
     cancelSnapshot(controller: AbortController) { cancelSnapshot = controller; },
     failCommand(value: 'install' | 'setup') { commandFailure = value; }, setStatus(value: string) { snapshotStatus = value; },
-    failCommandHttp() { commandHttpFailure = true; },
+    failCommandHttp(failure: typeof commandHttpFailure = 'unavailable') { commandHttpFailure = failure; },
     failReadHttp(value: boolean) { readHttpFailure = value; },
     holdDelete() { holdDelete = true; }, wrongOwner() { wrongOwner = true; },
     foreignSnapshot() { foreignSnapshot = true; },
@@ -180,6 +184,16 @@ describe('Vercel preparation through public Actions', () => {
     });
     v.failReadHttp(false);
     expect(v.calls.filter(call => call.url.pathname.endsWith('/snapshot'))).toHaveLength(0);
+    expect(await kit.invokeAction('prepare-destroy', { nativeOperation: reference({ acquisition, launch }) }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
+  }));
+
+  it('retains a stopped preparation build for cleanup without publishing an artifact', async () => withKit(async (kit, v) => {
+    v.failCommandHttp('stopped');
+    expect(await kit.invokeAction('prepare-build', buildInput, { surface: 'plugin' })).toMatchObject({
+      kind: 'unknown', code: 'vercel_resource_stopped', nativeCause: { httpStatusClass: '4xx' },
+      nativeOperationRef: { value: { acquisition } },
+    });
+    expect(v.calls.some(call => call.url.pathname.endsWith('/snapshot'))).toBe(false);
     expect(await kit.invokeAction('prepare-destroy', { nativeOperation: reference({ acquisition, launch }) }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
   }));
 

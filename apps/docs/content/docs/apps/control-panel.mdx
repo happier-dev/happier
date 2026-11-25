@@ -229,6 +229,11 @@ team and project that will host the Sandbox. A team-only account returns
 [choose a project](/plugins/services/auth-connected-services#choose-a-project-for-vercel-sandboxes).
 The guest must reach your Home outbound over the public internet.
 
+If the Vercel session ends during setup, check the Machine's status. If its
+storage is retained, resume the sandbox and then retry installation. If you
+can't resume it, delete the Machine and create a new sandbox with a longer
+lifetime.
+
 The planned creation review includes the image, region, CPU, run timeout and
 snapshot retention. Vercel's default image is `vercel/sandbox/universal:latest`;
 custom images must be prepared for `linux/amd64` in Vercel Container Registry.

@@ -366,6 +366,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             creatingShort: "Tworzenie",
             installing: ({ name }: { name: string }) => `Instalowanie Happier na ${name}`,
             joining: ({ name }: { name: string }) => `${name} dołącza`,
+            vercelSessionEnded: "Sesja środowiska izolowanego Vercel zakończyła się, zanim Happier ukończył konfigurację. Wznów środowisko, jeśli zachowano jego dane, lub usuń je i utwórz nowe z dłuższym czasem działania.",
             installFailedShort: "Instalacja nie powiodła się",
             installFailedTitle: ({ name }: { name: string }) => `Nie udało się zainstalować Happier na ${name}`,
             messageWaiting: ({ name }: { name: string }) => `Twoja wiadomość czeka tutaj, aż ${name} dołączy.`,

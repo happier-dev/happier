@@ -2,7 +2,7 @@ import type { JsonValue } from '@happier-dev/protocol';
 import type { ActionOperationProgressV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ManagedEnrollmentFullCorrelationV1Schema, type ManagedControllerPresetContentV1, type ManagedControllerCurrentnessV1, type ManagedEnrollmentCorrelationV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { readManagedBootstrapRetryRefusalV1, VERCEL_BOOTSTRAP_STOPPED_REASON, type ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type AcquireResultV1, type ManagedBootstrapCarrierV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1,
     readMachineProvisionerSelectionForLaunchV1, readMachineProvisionerPrerequisitesV1, type MachineProvisionerDestroyResultV1Schema, type MachineProvisionerPowerResultV1Schema, type MachineProvisionerRebuildResultV1Schema, type MachineProvisionerOptionsResultV1, type MachineProvisionerContributionV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -268,9 +268,14 @@ function hasUnverifiedSshService(machine: ManagedMachineFullV1, provisioner?: Ma
 /** Native Running does not confirm Happier enrollment or SSH user-service readiness. */
 function withManagedBootstrapObservation(machine: ManagedMachineFullV1, observation: ProviderObservationV1,
     provisioner?: MachineProvisionerContributionV1): ProviderObservationV1 {
-    if (observation.availability === 'absent'
-        || ((machine.enrolledMachineId || observation.reason) && !hasUnverifiedSshService(machine, provisioner))) return observation;
-    const retained = machine.observation?.reason?.startsWith('bootstrap.') ? machine.observation : undefined;
+    if (observation.availability === 'absent') return observation;
+    const stopped = readManagedBootstrapRetryRefusalV1(machine.observation);
+    if (stopped && observation.power !== 'running') {
+        const nativeCause = machine.observation?.nativeCause;
+        return { ...observation, reason: VERCEL_BOOTSTRAP_STOPPED_REASON, ...(nativeCause ? { nativeCause } : {}) };
+    }
+    if ((machine.enrolledMachineId || observation.reason) && !hasUnverifiedSshService(machine, provisioner)) return observation;
+    const retained = !stopped && machine.observation?.reason?.startsWith('bootstrap.') ? machine.observation : undefined;
     if (!retained && (observation.availability !== 'present' || observation.power !== 'running')) return observation;
     return { ...observation, reason: retained?.reason ?? 'bootstrap.incomplete',
         ...(retained?.nativeCause ? { nativeCause: retained.nativeCause } : {}),
@@ -325,6 +330,7 @@ export async function inspectManagedMachine(input: Pick<ManagedMachineReconcilia
         outstanding: machine.submittedNativeEffect });
     const observation = ProviderObservationV1Schema.parse(await input.invoke('inspect', { resource: machine.resource.value }));
     if (machine.enrolledMachineId && machine.observation?.reason?.startsWith('bootstrap.')
+        && (!readManagedBootstrapRetryRefusalV1(machine.observation) || observation.power === 'running')
         && observation.availability === 'present' && !hasUnverifiedSshService(machine, provisioner)) await input.complete?.(machine);
     return await input.home.row('report', { ...input.home.correlation(machine), result: { kind: 'bound', resource: machine.resource },
         observation: withManagedBootstrapObservation(machine, observation, provisioner) });
@@ -344,6 +350,11 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') return machine;
     // Home can register the Machine before the guest service and creation policies finish.
     const retry = input.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1;
+    const retryRefusal = retry && readManagedBootstrapRetryRefusalV1(machine.observation);
+    if (retryRefusal) {
+        const nativeCause = machine.observation?.nativeCause;
+        throw new ManagedMachineControllerError(retryRefusal, undefined, nativeCause ? { kind: 'managedNative', nativeCause } : undefined);
+    }
     const resumeSetup = retry && hasUnverifiedSshService(machine, provisioner);
     const unverifiedServiceReason = resumeSetup ? machine.observation?.reason : undefined;
     if (machine.enrolledMachineId && retry && !resumeSetup && !provisioner?.bootstrapTransport) {

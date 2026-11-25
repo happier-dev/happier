@@ -372,6 +372,7 @@ export const managedMachinesEn = {
             creatingShort: "Creating",
             installing: ({ name }: { name: string }) => `Installing Happier on ${name}`,
             joining: ({ name }: { name: string }) => `${name} is joining`,
+            vercelSessionEnded: "The Vercel sandbox session ended before Happier finished setup. Resume the sandbox if its storage was retained, or delete it and create a new one with a longer lifetime.",
             installFailedShort: "Install failed",
             installFailedTitle: ({ name }: { name: string }) => `Happier couldn’t install on ${name}`,
             messageWaiting: ({ name }: { name: string }) => `Your message waits here until ${name} joins.`,

@@ -48,6 +48,8 @@ const teamSchema = defineProtocolObject({
   id: text, billing: defineProtocolObject({ plan: defineProtocolUnion([defineProtocolLiteral('hobby'), defineProtocolLiteral('pro'), defineProtocolLiteral('enterprise')]) }, open).nullable(),
 }, open);
 const logSchema = defineProtocolObject({ stream: defineProtocolUnion([defineProtocolLiteral('stdout'), defineProtocolLiteral('stderr')]), data: defineProtocolString() }, open);
+const vendorErrorSchema = defineProtocolObject({ error: defineProtocolObject({ code: text }, open) }, open);
+const RESOURCE_STOPPED = 'vercel_resource_stopped';
 type Native = ProtocolSchemaOutput<typeof namedResponse>;
 type ResourceIdentity = Pick<VercelResource, 'teamId' | 'projectId' | 'name' | 'managedId'> & Partial<Pick<VercelResource, 'createdAt'>>;
 type Http = Readonly<{ kind: 'ok'; value: unknown }> | Readonly<{ kind: 'absent'; nativeCause?: MachineProvisionerNativeCauseV1 }> | (Failure & Readonly<{ httpStatus?: number }>);
@@ -84,13 +86,19 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       return projectMachineProvisionerActionFailure(error, transportFailure);
     }
     if (!response.ok) {
-      // The observed status class is a native fact. Vendor bodies/codes are not
-      // admitted diagnostic content, and are never copied into public results.
+      // Only the allowlisted stopped-session discriminator affects classification.
+      // The vendor body and its message stay private.
       const nativeCause: MachineProvisionerNativeCauseV1 = { httpStatusClass: response.status >= 400 && response.status < 500
         ? '4xx' : response.status >= 500 && response.status < 600 ? '5xx' : response.status >= 300 && response.status < 400 ? '3xx' : 'other' };
       if (response.status === 404) return { kind: 'absent', nativeCause };
       const credentialRefusal = readMachineProvisionerCredentialRefusal(response.status);
       if (credentialRefusal) return { kind: 'unavailable', code: credentialRefusal, nativeCause };
+      if (response.status === 410) {
+        const vendor = vendorErrorSchema.safeParse(await response.json().catch(() => undefined));
+        if (vendor.success && vendor.data.error.code === 'sandbox_stopped') {
+          return { kind: 'refused', code: RESOURCE_STOPPED, nativeCause, httpStatus: response.status };
+        }
+      }
       return { kind: effect ? response.status < 500 ? 'refused' : 'unknown' : 'unavailable',
         code: 'vercel_http_' + response.status, nativeCause, httpStatus: response.status };
     }
@@ -254,7 +262,9 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
   async function running(resource: VercelResource): Promise<Native> {
     const result = await read(resource);
     if (result.kind !== 'present') fail(result.kind === 'absent' ? 'vercel_resource_absent' : result.code, result.nativeCause);
-    if (result.value.sandbox.status !== 'running') fail('vercel_resource_stopped');
+    if (result.value.sandbox.status !== 'running') {
+      fail(result.value.sandbox.status === 'stopped' ? RESOURCE_STOPPED : 'vercel_stopping');
+    }
     return result.value;
   }
   async function execute(native: Native, argv: readonly string[], input?: Uint8Array, timeoutMs?: number | null) {

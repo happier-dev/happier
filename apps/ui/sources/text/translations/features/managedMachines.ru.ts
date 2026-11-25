@@ -366,6 +366,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             creatingShort: "Создаётся",
             installing: ({ name }: { name: string }) => `Установка Happier на ${name}`,
             joining: ({ name }: { name: string }) => `${name} присоединяется`,
+            vercelSessionEnded: "Сеанс песочницы Vercel завершился до окончания настройки Happier. Если хранилище сохранилось, возобновите работу песочницы. Иначе удалите её и создайте новую с более длительным временем работы.",
             installFailedShort: "Ошибка установки",
             installFailedTitle: ({ name }: { name: string }) => `Не удалось установить Happier на ${name}`,
             messageWaiting: ({ name }: { name: string }) => `Ваше сообщение ждёт здесь, пока ${name} не присоединится.`,

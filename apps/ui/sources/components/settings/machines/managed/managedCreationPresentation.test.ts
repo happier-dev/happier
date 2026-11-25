@@ -1136,7 +1136,12 @@ describe('managed creation presentation', () => {
     expect(canRetryManagedInstallation(retained, null, connected)).toBe(true);
     expect(canRetryManagedInstallation({ ...retained, observation: { availability: 'unavailable', observedAt: 4 } }, null, connected)).toBe(false);
   });
-  it('keeps an unenrolled resource retryable after a later power operation replaces the visible operation', () => {
+  it('withholds Retry on a stopped setup until a running observation after Resume', () => {
+    const stopped: ManagedMachineV1 = { ...machine,
+      observation: { availability: 'present', power: 'stopped', storage: 'retained', reason: 'bootstrap.vercel_resource_stopped', observedAt: 2 } };
+    expect(canRetryManagedInstallation(stopped)).toBe(false);
+    expect(describeManagedCreation(stopped).actions).toContain('start');
+    const resumed: ManagedMachineV1 = { ...stopped, observation: { availability: 'present', power: 'running', observedAt: 4 } };
     const powerOperation: ActionOperationProjection = {
       serverId: machine.homeId,
       observation: 'available',
@@ -1162,7 +1167,7 @@ describe('managed creation presentation', () => {
         result: { kind: 'accepted' },
       },
     };
-    expect(canRetryManagedInstallation(machine, powerOperation)).toBe(true);
+    expect(canRetryManagedInstallation(resumed, powerOperation)).toBe(true);
   });
   it.each([
     ['managed.intent.busy', 'busy'],

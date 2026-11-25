@@ -5760,6 +5760,14 @@ counter does not replay the write; sequential byte offsets and final command exi
 confirmation remain required. The five-hour explicit command-timeout ceiling in
 the [OpenAPI](https://vercel.com/openapi.json) is distinct from the 24-hour VM-run
 ceiling; current enrollment uses shorter task budgets or omits an explicit timeout.
+
+In 0.3 development, native command and file operations report
+`vercel_resource_stopped` for a stopped sandbox read or a 410 with Vercel's
+`sandbox_stopped` code. Other 410 responses, such as a missing snapshot, keep
+their generic HTTP classification. Enrollment retains the stopped cause on the
+bound Machine. Retry Installation returns that cause before native invocation
+until the existing observation path confirms the sandbox is running again.
+
 Same-Machine restoration, confidential enrollment IO and billed-attachment cleanup
 still need the authorized Vercel release journey. These are implementation targets,
 not functional development support, released support or credentialed

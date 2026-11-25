@@ -312,6 +312,15 @@ export const ManagedMachineReadSnapshotV1Schema = lazyDefinition(() => z.union([
 ]));
 export type ManagedMachineReadSnapshotV1 = z.infer<typeof ManagedMachineReadSnapshotV1Schema>;
 
+export const VERCEL_RESOURCE_STOPPED_CODE = 'vercel_resource_stopped';
+export const VERCEL_BOOTSTRAP_STOPPED_REASON = `bootstrap.${VERCEL_RESOURCE_STOPPED_CODE}` as const;
+
+/** Recovery uses the retained setup failure until a later observation establishes running or absence. */
+export function readManagedBootstrapRetryRefusalV1(observation: ManagedMachineReadSnapshotV1['observation']) {
+  return observation && 'reason' in observation && observation.reason === VERCEL_BOOTSTRAP_STOPPED_REASON
+    && observation.availability !== 'absent' && observation.power !== 'running' ? VERCEL_RESOURCE_STOPPED_CODE : undefined;
+}
+
 export function isManagedOpaquePresetMachineV1(machine: ManagedMachineReadSnapshotV1): machine is ManagedOpaquePresetMachineV1 {
   return machine.launch === undefined;
 }

@@ -366,6 +366,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             creatingShort: "正在建立",
             installing: ({ name }: { name: string }) => `正在 ${name} 上安裝 Happier`,
             joining: ({ name }: { name: string }) => `${name} 正在加入`,
+            vercelSessionEnded: "Happier 完成設定前，Vercel 沙箱工作階段已結束。如果儲存空間已保留，請恢復沙箱。否則，請刪除沙箱並建立一個執行時間更長的沙箱。",
             installFailedShort: "安裝失敗",
             installFailedTitle: ({ name }: { name: string }) => `Happier 無法安裝到 ${name}`,
             messageWaiting: ({ name }: { name: string }) => `你的訊息會在這裡等待，直到 ${name} 加入。`,

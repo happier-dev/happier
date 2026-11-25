@@ -366,6 +366,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             creatingShort: "作成中",
             installing: ({ name }: { name: string }) => `${name} に Happier をインストールしています`,
             joining: ({ name }: { name: string }) => `${name} が参加しています`,
+            vercelSessionEnded: "Happier のセットアップが完了する前に Vercel サンドボックスのセッションが終了しました。ストレージが保持されている場合はサンドボックスを再開してください。保持されていない場合は削除して、実行時間を長く設定した新しいサンドボックスを作成してください。",
             installFailedShort: "インストールに失敗しました",
             installFailedTitle: ({ name }: { name: string }) => `${name} に Happier をインストールできませんでした`,
             messageWaiting: ({ name }: { name: string }) => `${name} が参加するまで、メッセージはここで待機します。`,
