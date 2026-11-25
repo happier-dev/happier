@@ -65,7 +65,6 @@ import {
 import {
     projectTriageActionPlacementCandidatesV1,
     projectTriageNewSessionDestinationV1,
-    triageNewSessionDraftSeedV1,
     type TriageNewSessionPreferenceV1,
     type TriageReviewWorkspacePreparationV1,
 } from '../ui/header/newSessionDestination.js';
@@ -1006,12 +1005,15 @@ export function createTriageEntrySessionStartController(
                     // The host supplies the chosen Session setup. This press still
                     // owns the prepared checkout and the linked Review continuation.
                     setPhase(CHOOSING);
-                    const draft = await requestTriageNewSessionDraft(host,
-                        triageNewSessionDraftSeedV1(preference, executionPlacement ?? undefined, {
+                    const draft = await requestTriageNewSessionDraft(host, {
+                        preference,
+                        placement: executionPlacement ?? undefined,
+                        actionContext: {
                             ...(action.profileId === null ? {} : { profileId: action.profileId }),
                             checkoutIntent: checkout,
-                            ...(placementCandidates === undefined ? {} : { candidates: placementCandidates }),
-                        }), { signal: selectionLifetime.signal });
+                        },
+                        candidates: placementCandidates,
+                    }, { signal: selectionLifetime.signal });
                     if (retired.current) return;
                     if (draft.status !== 'settled') {
                         setPhase(draft.status === 'cancelled' ? IDLE : unavailable(

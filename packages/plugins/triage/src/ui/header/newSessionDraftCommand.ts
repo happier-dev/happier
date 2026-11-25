@@ -1,4 +1,8 @@
-import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import type { PluginUiHostApi, PluginUiSessionPlacementCandidateV1 } from '@happier-dev/plugin-sdk/ui';
+import type { TriageActionExecutionPlacementV1 } from '../../sessions/actionLaunch.js';
+import { selectTriageSessionPlacementV1 } from '../../sessions/newSessionAuthoring.js';
+import { triageNewSessionDraftSeedV1, type TriageNewSessionDraftActionContextV1, type TriageNewSessionPreferenceV1 } from './newSessionDestination.js';
 import { isHostCancellation } from '../../hostCancellation.js';
 import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from './newSessionSeedCommand.js';
 
@@ -18,8 +22,8 @@ import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from
  * creation, the link and the open all still happen in one place, behind this
  * plugin's own start Action.
  *
- * The module owns no state and makes no decision. It does not read the draft,
- * pick a directory, mint a key or interpret an outcome.
+ * The host owns project and Agent choice. The draft carries the selected
+ * placement after the shared project picker settles.
  */
 
 /** The literal host selection this header is allowed to ask for, and no other. */
@@ -37,15 +41,8 @@ const NEW_SESSION_DRAFT_REQUEST = Object.freeze({
  * filters and all — on a host that cannot select an Action input. The press
  * asks instead, and reports its own typed refusal.
  */
-export type TriageNewSessionDraftHostV1 = Readonly<{
+export type TriageNewSessionDraftHostV1 = Pick<PluginUiHostApi, 'selectActionInput'> & Readonly<{
     version(): Readonly<{ methods: readonly string[] }>;
-    selectActionInput(
-        request: Readonly<{
-            hostAction: typeof NEW_SESSION_DRAFT_REQUEST;
-            draft?: Readonly<Record<string, JsonValue>>;
-        }>,
-        options?: PluginCancellationOptions,
-    ): Promise<unknown>;
 }>;
 
 export type TriageNewSessionDraftResultV1 =
@@ -60,7 +57,12 @@ export type TriageNewSessionDraftResultV1 =
 
 export async function requestTriageNewSessionDraft(
     host: TriageNewSessionDraftHostV1,
-    seed: Readonly<Record<string, JsonValue>> | null,
+    input: Readonly<{
+        preference: TriageNewSessionPreferenceV1;
+        placement?: TriageActionExecutionPlacementV1;
+        actionContext?: TriageNewSessionDraftActionContextV1;
+        candidates?: readonly PluginUiSessionPlacementCandidateV1[];
+    }>,
     options?: PluginCancellationOptions,
 ): Promise<TriageNewSessionDraftResultV1> {
     let installed: readonly string[];
@@ -71,21 +73,29 @@ export async function requestTriageNewSessionDraft(
     }
     if (!installed.includes('selectActionInput')) return { status: 'unsupported' };
 
-    let selected: unknown;
     try {
-        selected = await host.selectActionInput({
+        let placement = input.placement;
+        let preference = input.preference;
+        // Offer the complete list through the host's typed project selector.
+        // The draft carries only the resulting target and directory.
+        if (input.candidates?.length && (placement === undefined || input.candidates.length > 1 || preference.directory?.trim())) {
+            const chosen = await selectTriageSessionPlacementV1(host, input.candidates, options?.signal);
+            if (options?.signal?.aborted || chosen.kind === 'cancelled') return { status: 'cancelled' };
+            if (chosen.kind !== 'sessionPlacement') return { status: 'unavailable' };
+            const { serverId, machineId, rootPath } = chosen.candidate;
+            placement = { executionTarget: { serverId, machineId }, directory: rootPath };
+            preference = preference.agentId === undefined ? {} : { agentId: preference.agentId };
+        }
+        const seed = triageNewSessionDraftSeedV1(preference, placement, input.actionContext);
+        const selected = await host.selectActionInput({
             hostAction: NEW_SESSION_DRAFT_REQUEST,
             ...(seed ? { draft: seed } : {}),
         }, options);
+        if (selected.kind === 'cancelled') return { status: 'cancelled' };
+        if (selected.kind !== 'serverStartDraft') return { status: 'unavailable' };
+        return { status: 'settled', settlement: selected.draft };
     } catch (error) {
         if (isHostCancellation(error, options?.signal)) return { status: 'cancelled' };
         return { status: 'unavailable', failure: projectTriageNewSessionFailureV1(error) };
     }
-    // `kind`, not a member of the settled draft, is what says which arm this is
-    // — the same discrimination the host's own result schema makes.
-    if (typeof selected !== 'object' || selected === null) return { status: 'unavailable' };
-    const kind = (selected as Readonly<{ kind?: unknown }>).kind;
-    if (kind === 'cancelled') return { status: 'cancelled' };
-    if (kind !== 'serverStartDraft') return { status: 'unavailable' };
-    return { status: 'settled', settlement: (selected as Readonly<{ draft?: unknown }>).draft };
 }

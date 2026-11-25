@@ -74,12 +74,11 @@ export type TriageNewSessionPlacementSeedV1 = Readonly<{
 export type TriageNewSessionDraftActionContextV1 = Readonly<{
     profileId?: string;
     checkoutIntent: TriageActionCheckoutResolutionV1;
-    candidates?: readonly PluginUiSessionPlacementCandidateV1[];
 }>;
 
 /**
- * Projects the placement owner's candidate unchanged into the public New
- * Session seed grammar.
+ * Projects the placement owner's candidate into the host's saved-project
+ * selector grammar.
  *
  * Both the single-entry and bulk authoring paths reach this one conversion so
  * neither invents a second candidate shape or drops the project identity that
@@ -154,9 +153,6 @@ export function triageNewSessionDraftSeedV1(
     const executionTarget = pinnedDirectory ? undefined : resolved?.executionTarget;
     const actionSeed = actionContext
         ?? (placement !== undefined && 'checkoutIntent' in placement ? placement : undefined);
-    const candidates = actionContext?.candidates ?? (actionSeed === undefined || !('placement' in actionSeed)
-        ? undefined
-        : projectTriageActionPlacementCandidatesV1(actionSeed.placement, actionSeed.checkoutIntent));
     const seed = {
         ...(agentId ? { agentId } : {}),
         ...(actionSeed?.profileId === undefined ? {} : { profileId: actionSeed.profileId }),
@@ -164,7 +160,6 @@ export function triageNewSessionDraftSeedV1(
         ...(directory ? { directory } : {}),
         ...(pinnedDirectory || resolved?.directoryIntent === undefined ? {} : { directoryIntent: resolved.directoryIntent }),
         ...(executionTarget === undefined ? {} : { executionTarget }),
-        ...(candidates === undefined ? {} : { candidates }),
     };
     return Object.keys(seed).length === 0 ? null : Object.freeze(seed);
 }

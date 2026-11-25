@@ -26,6 +26,18 @@ export function canShareTriageNewSessionCheckoutV1(checkout: TriageActionCheckou
     return checkout !== 'preparedReviewWorkspace' || entryCount === 1;
 }
 
+/** Ask the host's project selector with the eligible registry rows. */
+export function selectTriageSessionPlacementV1(
+    host: Pick<PluginUiHostApi, 'selectActionInput'>,
+    candidates: readonly PluginUiSessionPlacementCandidateV1[],
+    signal?: AbortSignal,
+): ReturnType<PluginUiHostApi['selectActionInput']> {
+    return host.selectActionInput({
+        hostAction: { action: 'session.spawn_new', projection: 'sessionPlacement' },
+        candidates: [...candidates],
+    }, { signal });
+}
+
 /** Single and bulk compose share the same preparation, seed and host handoff. */
 export async function requestTriageNewSessionAuthoringV1(
     host: TriageNewSessionSeedHostV1 & Pick<PluginUiHostApi, 'selectActionInput'>,
@@ -63,10 +75,7 @@ export async function requestTriageNewSessionAuthoringV1(
                 preparation: review.preparation, placement, candidates: input.candidates,
             });
             if (draft.workspace === undefined) {
-                const chosen = await host.selectActionInput({
-                    hostAction: { action: 'session.spawn_new', projection: 'sessionPlacement' },
-                    candidates: [...input.candidates],
-                }, { signal: input.signal });
+                const chosen = await selectTriageSessionPlacementV1(host, input.candidates, input.signal);
                 if (chosen.kind === 'cancelled' || input.signal?.aborted || input.isCurrent?.() === false) return { status: 'cancelled' };
                 if (chosen.kind !== 'sessionPlacement') return { status: 'refused', reason: 'preparedWorkspaceUnsupported' };
                 placement = { executionTarget: { serverId: chosen.candidate.serverId, machineId: chosen.candidate.machineId },

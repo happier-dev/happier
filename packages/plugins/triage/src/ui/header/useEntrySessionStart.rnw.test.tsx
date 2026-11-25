@@ -256,6 +256,7 @@ async function mountProbe(input: Readonly<{
     linkedSession?: Readonly<{ sessionId: string; serverId?: string; machineId: string; path: string }>;
     projects?: readonly unknown[];
     cancelPlacement?: boolean;
+    cancelDraft?: boolean;
     missingRevisionRead?: 'ready' | 'refused';
     profilePlacement?: TriageActionProfilePreferencesV1['placement'];
 }> = {}): Promise<Readonly<{
@@ -346,9 +347,10 @@ async function mountProbe(input: Readonly<{
                     if (request.hostAction.projection === 'sessionPlacement' && input.cancelPlacement) return { kind: 'cancelled' as const };
                     if (request.hostAction.projection === 'sessionPlacement') return {
                         kind: 'sessionPlacement' as const,
-                        candidate: { projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
+                        candidate: ('candidates' in request ? request.candidates[0] : undefined) ?? { projectKey: { id: 'workspace-a' }, serverId: 'server-a', machineId: 'machine-a',
                             rootPath: '/workspaces/example', worktrees: [], reachable: true },
                     };
+                    if (request.hostAction.projection === 'serverStartDraft' && input.cancelDraft) return { kind: 'cancelled' as const };
                     return {
                         kind: 'serverStartDraft' as const,
                         draft: {
@@ -558,6 +560,45 @@ it('keeps the detached typed Review Session refusal through a second PR remount 
     expect(phase).toEqual({ kind: 'idle' });
 });
 
+describe('Review New Session selection', () => {
+    it('offers every matching project while keeping the validated New Session draft constant across registry sizes', async () => {
+        const draftSizes: number[] = [];
+        for (const count of [19, 200]) {
+            const projects = Array.from({ length: count }, (_, index) => ({
+                projectKey: { id: `workspace-${String(index).padStart(3, '0')}` }, serverId: 'server-a', machineId: 'machine-a',
+                rootPath: `/workspaces/${'checkout/'.repeat(38)}repo-${String(index).padStart(3, '0')}`,
+                worktrees: [], reachable: true, forge: START_REQUEST.repository,
+            }));
+            const { fixture } = await mountProbe({
+                request: {
+                    ...PREPARED_REVIEW_START_REQUEST,
+                    action: { ...PREPARED_REVIEW_START_REQUEST.action, actionId: 'review',
+                        target: { kind: 'reviewStart', promptInvocationId: null, seededFallbackInstruction: 'Review this change.' } },
+                },
+                projects, cancelDraft: true,
+            });
+            await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+            await settle();
+
+            const [placement, draft] = draftRequests.splice(0);
+            expect(phase).toEqual({ kind: 'idle' });
+            expect(placement).toMatchObject({
+                hostAction: { projection: 'sessionPlacement' }, candidates: Array.from({ length: count }, (_, index) => ({
+                    projectKey: projects[index]!.projectKey, rootPath: projects[index]!.rootPath,
+                })),
+            });
+            expect(draft).toEqual({
+                hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+                draft: { profileId: 'profile-worktree', checkoutIntent: 'preparedReviewWorkspace',
+                    executionTarget: { serverId: 'server-a', machineId: 'machine-a' }, directory: projects[0]!.rootPath },
+            });
+            draftSizes.push(new TextEncoder().encode(JSON.stringify(draft)).byteLength);
+        }
+        expect(draftSizes[0]).toBe(draftSizes[1]);
+        expect(startInputs).toEqual([]);
+    });
+});
+
 describe('single-entry compose checkout handoff', () => {
     it.each([PREPARED_REVIEW_START_REQUEST, PREPARED_REVIEW_SEND_REQUEST])(
         'withdraws its prepared-workspace selector on entry retirement ($action.actionId)', async (request) => {
@@ -604,13 +645,19 @@ describe('single-entry compose checkout handoff', () => {
     it('keeps a real seed failure visible instead of treating generic unavailability as Decline', async () => {
         const { fixture } = await mountProbe({
             request: PREPARED_REVIEW_START_REQUEST,
-            seedError: new PluginError({ code: 'unavailable', diagnostics: [{ code: 'prepared_review_workspace_unavailable', severity: 'error' }] }),
+            seedError: new PluginError({ code: 'unavailable',
+                diagnostics: [{ code: 'prepared_review_workspace_unavailable', severity: 'error' }],
+                details: { requestId: 'new-session-host-request' },
+            }),
         });
         await act(async () => {
             await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' }));
         });
         await settle();
-        expect(notice).toBe('plugins.triage.surface.session.newSessionUnavailable');
+        expect(settledNotice).toMatchObject({
+            failureCode: 'unavailable',
+            failure: { codes: ['unavailable', 'prepared_review_workspace_unavailable'], requestId: 'new-session-host-request' },
+        });
     });
 
     it('carries the resolved profile worktree answer and exact entry attachment into the host seed', async () => {

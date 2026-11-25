@@ -303,8 +303,8 @@ function renderEntrySessionNotice(
 ) {
   if (notice === null) return null;
   const label = text(notice.labelKey, notice.label, notice.labelParams);
-  if (notice.failureDetails !== undefined && notice.failureCode !== undefined) {
-    return <ActionFailureDetails code={notice.failureCode} details={notice.failureDetails}
+  if (notice.failureCode !== undefined && (notice.failureDetails !== undefined || notice.failure !== undefined)) {
+    return <ActionFailureDetails code={notice.failureCode} details={notice.failureDetails} requestId={failure?.requestId}
       inline={{ fallback: label, diagnostics: failure?.codes }} />;
   }
   if (notice.failureCode !== undefined) return <ActionFailureDetails code={notice.failureCode} message={label} />;

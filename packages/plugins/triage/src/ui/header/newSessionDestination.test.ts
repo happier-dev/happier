@@ -307,15 +307,6 @@ describe('seeding the new-Session surface', () => {
             executionTarget: { serverId: 'server-1', machineId: 'machine-b' },
             directory: '/checkouts/api',
             checkoutIntent: 'reuseWorkspace',
-            candidates: [{
-                projectKey: { id: 'project-api' },
-                serverId: 'server-1',
-                machineId: 'machine-b',
-                rootPath: '/checkouts/api',
-                label: 'API',
-                reachable: true,
-                worktrees: [{ path: '/checkouts/api', branch: 'main', isMain: true, isCurrent: true }],
-            }],
         });
     });
 
@@ -336,45 +327,6 @@ describe('seeding the new-Session surface', () => {
             profileId: 'profile-repair',
             executionTarget: { serverId: 'server-1', machineId: 'machine-b' },
             checkoutIntent: 'reuseWorkspace',
-            candidates: [],
-        });
-    });
-
-    it('carries an ambiguous placement to the Session owner without picking a checkout', () => {
-        const candidates = ['a', 'b'].map((projectId) => ({
-            projectKey: { id: projectId },
-            serverId: 'server-1',
-            machineId: `machine-${projectId}`,
-            rootPath: `/src/${projectId}`,
-            reachable: true,
-            worktrees: [],
-        }));
-
-        expect(triageNewSessionDraftSeedV1({}, {
-            profileId: 'profile-repair',
-            checkoutIntent: 'ask',
-            placement: { kind: 'prefill', reason: 'ambiguous', candidates },
-        })).toEqual({
-            profileId: 'profile-repair',
-            checkoutIntent: 'ask',
-            candidates: [
-                {
-                    projectKey: { id: 'a' },
-                    serverId: 'server-1',
-                    machineId: 'machine-a',
-                    rootPath: '/src/a',
-                    reachable: true,
-                    worktrees: [],
-                },
-                {
-                    projectKey: { id: 'b' },
-                    serverId: 'server-1',
-                    machineId: 'machine-b',
-                    rootPath: '/src/b',
-                    reachable: true,
-                    worktrees: [],
-                },
-            ],
         });
     });
 

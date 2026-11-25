@@ -41,7 +41,6 @@ import {
 import {
     projectTriageSessionPlacementCandidateV1,
     projectTriageNewSessionDestinationV1,
-    triageNewSessionDraftSeedV1,
 } from '../ui/header/newSessionDestination.js';
 import {
     requestTriageNewSessionDraft,
@@ -887,15 +886,15 @@ export function createTriageBulkEntrySessionsController(
                     const explicitSettlement = request.settlementForEntries?.(unit.entries);
                     const draft = explicitSettlement === undefined ? await requestTriageNewSessionDraft(
                         host,
-                        triageNewSessionDraftSeedV1(
-                            {},
-                            placement.kind === 'exact' ? placement.placement : undefined,
-                            {
+                        {
+                            preference: {},
+                            placement: placement.kind === 'exact' ? placement.placement : undefined,
+                            actionContext: {
                                 ...(action.profileId === null ? {} : { profileId: action.profileId }),
                                 checkoutIntent,
-                                ...(placementCandidates.length === 0 ? {} : { candidates: placementCandidates }),
                             },
-                        ),
+                            candidates: placementCandidates,
+                        },
                         { signal: controller.signal },
                     ) : { status: 'settled' as const, settlement: explicitSettlement };
                     if (retired.current) return;
