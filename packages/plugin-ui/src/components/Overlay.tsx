@@ -14,7 +14,7 @@ import {
 import { HappierPressable, type HappierPressableStyleState } from '../presentation/interaction/Pressable.js';
 import { HappierScrollArea, HappierStack } from '../presentation/layout/Layout.js';
 import { HappierText } from '../presentation/text/Text.js';
-import { HappierBadge } from '../presentation/content/Foundation.js';
+import { HappierBadge, HappierDivider } from '../presentation/content/Foundation.js';
 import {
   HAPPIER_MENU_ROW_METRICS,
   HAPPIER_MENU_ROW_SHAPE,
@@ -164,6 +164,9 @@ type PopoverPresentationProps = PopoverProps & Readonly<{
   triggerCount?: number;
   menu?: PluginUiMenuPresentation;
 }>;
+
+/** A divider between a menu's sections runs edge to edge, with the menu's section padding on each side. */
+const menuSectionDividerStyle = { marginVertical: HAPPIER_MENU_ROW_METRICS.sectionPaddingVerticalPx } as const;
 
 /** A group heading starts on the rows' own text edge, with the menu's row rhythm above it. */
 const groupLabelStyle = {
@@ -799,13 +802,18 @@ function MenuRows({
         <HappierText tone="secondary" style={menuTextEdgeStyle}>{translate('happier.plugin-ui.select.noMatches', 'No matches')}</HappierText>
       ) : null}
       {renderEntries(ungroupedRenderEntries)}
-      {content.groups.map((group) => (
+      {content.groups.map((group, index) => (
         <View
           key={`menu-group:${group.id}`}
           role="group"
           accessibilityLabel={group.accessibilityLabel}
           aria-label={group.accessibilityLabel}
         >
+          {/* A section after other rows is parted from them edge to edge, so its rows never read as more of the ones
+              above (R16-D6: "Fix this deploy" under "Edit action…" read as a fourth Investigate choice). */}
+          {index > 0 || ungroupedRenderEntries.length > 0 ? (
+            <HappierDivider color={theme.colors.divider} style={menuSectionDividerStyle} />
+          ) : null}
           {showGroupLabels ? (
             <HappierText variant="micro" tone="secondary" style={groupLabelStyle}>{group.accessibilityLabel}</HappierText>
           ) : null}

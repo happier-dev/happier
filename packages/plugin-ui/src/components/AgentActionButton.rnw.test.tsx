@@ -136,4 +136,32 @@ describe('AgentActionButton (owner ruling 2026-11-07 "Agent actions: one shared 
     );
     expect(selected).toEqual(['session-a']);
   });
+
+  it.each([false, true])(
+    "parts the caller's other actions from this action's own choices (labels %s)",
+    async (showGroupLabels) => {
+      const fixture = await mount(() => (
+        <AgentActionButton
+          title="Investigate"
+          launchMode="start"
+          onLaunch={() => undefined}
+          onEdit={() => undefined}
+          groups={[
+            {
+              id: 'other-agent-actions',
+              accessibilityLabel: 'More',
+              items: [{ id: 'fix', label: 'Fix this deploy' }],
+            },
+          ]}
+          showGroupLabels={showGroupLabels}
+          onSelectDestination={() => undefined}
+        />
+      ));
+      await expect(fixture.queryByRole('separator')).resolves.toBeUndefined();
+      await fixture.press(
+        await fixture.getByRole('button', { name: 'Investigate options' }),
+      );
+      await expect(fixture.getByRole('separator')).resolves.toBeDefined();
+    },
+  );
 });
