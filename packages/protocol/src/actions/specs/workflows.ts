@@ -152,6 +152,8 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazy
       ? { irreversible: true as const, confirmVerb: { key: 'common.delete', fallback: 'Delete' } } : {}),
     approvalPresentation: {
       referenceForField: workflowApprovalReferenceForField(actionId),
+      // A start preallocates its new Run's id: nothing exists to name yet, so it waits in Technical details.
+      ...(actionId === 'workflow.run.start' ? { technicalInputPaths: ['runId'] } : {}),
       ...(actionId === 'workflow.definition.delete' || actionId === 'workflow.trigger.remove' ? {
         summary: (input: unknown) => actionId === 'workflow.trigger.remove'
           && !removesWholeTriggerSet(input) ? null : WORKFLOW_AUTOMATION_REMOVAL_WARNING,

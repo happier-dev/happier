@@ -2318,6 +2318,30 @@ describe('ApprovalDetailScreen', () => {
     expect(decodedArtifactWrite().body).toMatchObject({ status: 'approved', input });
   });
 
+  // FIN 11-25: the Channels session pull request binding (API origin) acts on the Session that asked. Its operand
+  // moves to Technical details, so Requested by is where the person reads that Session, by its title.
+  it('names the asking Session in Requested by when a contributed Action\'s Session operand is that Session', async () => {
+    const base = TargetActionApprovalRequestV1Schema.parse({ ...JSON.parse(createTargetActionApprovalArtifact().body),
+      qualifiedActionId: 'happier.channels/actions/session-pull-request-binding-v1',
+      summary: 'Manage session pull request binding?', input: { kind: 'attach', sessionId: 'session-1',
+        pullRequest: { repository: 'leeroybrun/happier-qa-pr-sandbox', number: 4 } } });
+    const invocation = projectTargetActionApprovalInvocationV1(base);
+    if (!invocation) throw new Error('Expected the contributed Action invocation');
+    const { source, context } = await captureApiApprovalProducer(invocation.actionId, invocation.actionArgs, base.qualifiedActionId);
+    let request: TargetApprovalRequest;
+    try {
+      const executionOriginV1 = buildApprovalExecutionOriginV1({ ...invocation, input: invocation.actionArgs,
+        context, targetSessionId: 'session-1' });
+      if (!executionOriginV1) throw new Error('Expected admitted API target provenance');
+      request = await produceTargetApprovalRequest(base, { executionOriginV1 });
+    } finally { source.dispose(); }
+    currentArtifact = { id: 'target-api-artifact-1', header: buildTargetActionApprovalArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('approvals.requester-title')).not.toBeNull());
+    expect(readRenderedText(screen)).toContain('Repo session');
+  });
+
   // DESIGN-ACCEPT-7 NF-24: Declined replaces Pending in the header's place; the page does not grow a Request section.
   it('keeps a settled request\'s status in the header where Pending was', async () => {
     const artifact = await createApiTargetActionApprovalArtifact();

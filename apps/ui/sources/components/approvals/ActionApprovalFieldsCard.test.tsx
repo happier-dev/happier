@@ -914,7 +914,8 @@ it('names a Workflow, a Run and a Project by what they are, and says so neutrall
     const scope = { serverId: home.id, accountId: 'account' };
     const active = await activateStorageAccountScope(scope);
     // The Home's reads are the network boundary: anything not already in the stores settles as unread.
-    vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+    let homeReads = 0;
+    vi.stubGlobal('fetch', async () => { homeReads += 1; throw new Error('offline'); });
     try {
         const definitionId = '33333333-3333-4333-8333-333333333333';
         const runId = 'run-nightly';
@@ -931,7 +932,7 @@ it('names a Workflow, a Run and a Project by what they are, and says so neutrall
                 projectKey: 'payments' }, revision: 1, value: { label: 'Payments service' } }] });
         });
         const project = { key: { projectKey: 'payments' }, value: { label: 'Payments service' } };
-        const read = async (actionId: 'workflow.definition.delete' | 'workflow.run.cancel', actionArgs: Record<string, unknown>) => {
+        const read = async (actionId: 'workflow.definition.delete' | 'workflow.run.cancel' | 'workflow.run.start', actionArgs: Record<string, unknown>) => {
             const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id}
                 presentation={describeApprovalActionFields({ actionId, actionArgs: getActionSpec(actionId).inputSchema.parse(actionArgs) })} />);
             return screen;
@@ -941,6 +942,17 @@ it('names a Workflow, a Run and a Project by what they are, and says so neutrall
         expect(workflow.getTextContent()).not.toContain(definitionId);
         await expandDisclosureAsync(workflow.findAllByTestId('approvals.technical-details'));
         expect(workflow.getTextContent()).toContain(definitionId);
+
+        // The READY309 start request's own arguments: its Run id is preallocated, so nothing reads it and it is not shown.
+        const newRunId = '344a1e73-9fd5-46a9-8287-daee97bad1d2';
+        const readsBeforeStart = homeReads;
+        const start = await read('workflow.run.start', { runId: newRunId,
+            source: { kind: 'saved', definitionId, revision: { headerVersion: 1, bodyVersion: 1 } } });
+        expect(start.getTextContent()).toContain('Nightly triage');
+        expect(start.getTextContent()).not.toContain(newRunId);
+        await expandDisclosureAsync(start.findAllByTestId('approvals.technical-details'));
+        expect(start.getTextContent()).toContain(newRunId);
+        expect(homeReads).toBe(readsBeforeStart);
 
         const run = await read('workflow.run.cancel', { runId, expectedRevision: 1 });
         expect(run.getTextContent()).toContain(`Nightly triage · ${formatRelativeTimeShort(startedAt, Date.now())}`);
