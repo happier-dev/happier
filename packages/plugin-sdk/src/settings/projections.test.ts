@@ -50,6 +50,7 @@ const SETTINGS_EXPORTS = [
     'PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1',
     'PluginSettingFieldIdV2',
     'PluginSettingFieldSchemaV2',
+    'PluginSettingFieldSchemaV2Schema',
     'PluginSettingsActionDeclaration',
     'PluginSettingsActionInput',
     'PluginSettingsActionResult',
@@ -81,7 +82,7 @@ function moduleExportNames(program: ts.Program, relativePath: string): readonly 
 }
 
 describe('Settings package-local projection', () => {
-    it('contains exactly the approved type-only surface with canonical identities', () => {
+    it('contains the approved Settings surface with canonical identities', () => {
         const program = createSdkProgram();
         expect(moduleExportNames(program, 'src/settings/projections.ts'))
             .toEqual([...SETTINGS_EXPORTS].sort());

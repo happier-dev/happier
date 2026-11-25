@@ -131,7 +131,19 @@ import type {
     SessionModelSelectionResolutionErrorCode,
 } from './projections.js';
 
+const PROVIDER_TYPE_ADDITIONS = ['ProviderCatalogFormatParser', 'ProviderErrorV1'] as const;
+const PROVIDER_RUNTIME_ADDITIONS = [
+    'ProviderBrokerAdmissionFailureCodeV1Schema',
+    'ProviderErrorCodeV1Schema',
+    'createProviderErrorV1',
+    'formatProviderReasoningEffortLevelLabel',
+    'formatReasoningEffortTierLabel',
+    'resolveProviderCatalogFormatParser',
+] as const;
+
 const PROVIDER_EXPORTS = [
+    ...PROVIDER_TYPE_ADDITIONS,
+    ...PROVIDER_RUNTIME_ADDITIONS,
     'DaemonProviderUsageRefreshRequestV1',
     'ProviderUsageParseResultV1',
     'PROVIDER_REASONING_EFFORT_LEVELS_V1',
@@ -223,6 +235,7 @@ const PROVIDER_EXPORTS = [
 ] as const;
 
 const PROVIDER_RUNTIME_EXPORTS = [
+    ...PROVIDER_RUNTIME_ADDITIONS,
     'PROVIDER_REASONING_EFFORT_LEVELS_V1',
     'buildProviderReasoningModelOptions',
     'PROVIDER_REASONING_EFFORT_OPTION_ID',
