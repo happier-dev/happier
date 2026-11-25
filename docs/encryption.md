@@ -2132,6 +2132,12 @@ keeps the opened resource locally; opening it does not make that resource public
 owner matches the retained opaque lifecycle and custody, while ordinary full
 enrollment still requires its matching resource.
 
+In 0.3 development, the private acquire review can carry
+`preview.accountSignIn: 'requester_confirms'` for new Machine creation. The
+field describes the reviewed sign-in effect and carries no Account identifier,
+pairing material, or approval authority. Older reviews can omit it. The existing
+reviewed Action operands still identify the recorded approval.
+
 Signed enrollment children, finite wake and guest activity consume that same
 bound lifecycle without requiring Home to retain the native resource. Home
 still binds the active creation, revision, controller installation and exact

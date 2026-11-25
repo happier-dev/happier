@@ -435,6 +435,13 @@ export function resolveManagedAcquireReviewV1(input: ManagedAcquireInputV1) {
   return { homeId: input.selection.homeId, ...(input.selection.controller === undefined ? {} : { controller: input.selection.controller }),
     retention: input.selection.retention, wakeOnAcceptedMessage: input.selection.wakeOnAcceptedMessage };
 }
+
+/** Disclosure of the reviewed Account sign-in effect for a new machine. */
+export function readManagedAcquireAccountSignInReviewV1(selection: ManagedAcquireInputV1['selection']) {
+  if (selection.kind === 'one-off' && selection.attachWorkspace === true) return undefined;
+  return 'requester_confirms' as const;
+}
+
 export const ManagedAcceptedV1Schema = lazyZodSchema(() => z.strictObject({ managedId: id(), operation: z.optional(actionOperationSchema) }));
 export const ManagedListInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), archived: mini.optional(z.union([mini.boolean(), z.literal('all')])),
   presetId: mini.optional(id()), enrolledMachineId: mini.optional(id()),

@@ -35,7 +35,9 @@ import { projectPublicProfilePreparedReview } from '../specs/accountProfile.js';
 import { ProjectPrepareInputV1Schema, readProjectSetupTrustRequestOperationV1 } from '../projectActionFamily.js';
 import { ProjectDefinitionInspectOutputSchema } from '../projectDefinitionActionFamily.js';
 import { TeamInvitationAcceptApprovalPrepareResultV1Schema, TeamInvitationAcceptInputV1Schema } from '../../teams/invitation.js';
-import { MachineSetupApplyInputV1Schema } from '../../machines/managed/actionsV1.js';
+import { MachineSetupApplyInputV1Schema, ManagedAcquireInputV1Schema,
+  readManagedAcquireAccountSignInReviewV1 } from '../../machines/managed/actionsV1.js';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
 import { parseProviderActionRequestV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../../providers/providerActionsV1.js';
 import { DaemonProviderConnectionsDescribeResponseV1Schema } from '../../rpc/providers.js';
 import { prepareProviderEndpointPolicyReviewFromViewV1, summarizeProviderEndpointPolicyReviewV1 } from '../../providers/connections/endpointPolicyReviewV1.js';
@@ -605,6 +607,8 @@ export async function prepareApprovalRequest(params: Readonly<{
     ? appendTeamCredentialSourceSummary(customizedSummary, teamCredentialSources) : defaultPreview.summary;
   const teamCredentialDefaults = params.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && isSignedSessionSpawnWithoutRequesterTeam(params.context)
     ? 'unavailable_without_requester_team' as const : undefined;
+  const accountSignIn = params.actionId === MANAGED_ACQUIRE_ACTION_ID_V1
+    ? readManagedAcquireAccountSignInReviewV1(ManagedAcquireInputV1Schema.parse(params.input).selection) : undefined;
   const preview = {
     ...customizedRecord,
     actionId: params.actionId,
@@ -616,6 +620,7 @@ export async function prepareApprovalRequest(params: Readonly<{
     // whose raw operands stay with the originating waiter.
     actionArgs: projectApprovalReviewInput(spec, params.input),
     summary,
+    ...(accountSignIn ? { accountSignIn } : {}),
     ...(teamCredentialDefaults ? { teamCredentialDefaults } : {}),
     ...(teamCredentialSources.length ? { teamCredentialSources } : {}),
     // The host's scoped read owns these labels; custom previews cannot replace them.

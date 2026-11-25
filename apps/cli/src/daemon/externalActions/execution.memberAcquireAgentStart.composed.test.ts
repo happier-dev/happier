@@ -722,6 +722,9 @@ it("a member's Agent acquire through the owner's delegated Team preset asks the 
     result: { kind: 'action.execution', outcome: { ok: true, result: { kind: 'approval_request_created', artifactId: ask?.id } } } });
   expect(run.approvals('requester')).toHaveLength(1);
   expect(run.approvals('owner')).toEqual([]);
+  expect(await run.readApproval(ask?.id)).toMatchObject({
+    preview: { accountSignIn: 'requester_confirms' },
+  });
   // Nothing reached the controller before approval.
   expect(run.relayed).toEqual([]);
   expect(run.homeRelayed).toEqual([]);
