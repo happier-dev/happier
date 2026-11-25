@@ -2231,6 +2231,9 @@ read. The target checks that the admitted job remains active on each subsequent
 HTTP request. Direct delivery similarly finishes from its admitted
 material after disclosure; a new open requires fresh admission. Account/Home
 identity, exact destination and local cancellation remain enforced.
+In 0.3 development, a finite Action opens Direct material with the requester’s
+signed execution proof. Home checks the Action’s declared purpose and the
+member’s Direct grant before disclosing material to the requester.
 In 0.3 development, selected-resource revalidation passes the exact resource id
 through the existing Home entitlement read and shared CLI catalog transport;
 Team authorization, application compatibility and withdrawal checks still run.

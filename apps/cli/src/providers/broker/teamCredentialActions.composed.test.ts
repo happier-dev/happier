@@ -19,6 +19,7 @@ import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots'
 import { fixture as nativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime/invocation/services/production';
 import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
+import { createConnectedAccountPluginHttpPurposeHost } from '@/plugins/runtime/fetch/connectedAccountPurpose';
 import type { TargetActionInvocationRegistration } from '@/plugins/runtime/invocation/targetActionRegistry';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -118,12 +119,11 @@ describe('two-Account declared provisioner Action material admission', () => {
       getAccountEncryptionMode: async () => 'plain', configuration: persistence.configuration });
     let root: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
     let reviewedChild: ReviewedActionChildHttpProofV1 | undefined;
-    let effectActionId = 'action.invoke';
     const direct = createHttpTeamCredentialDirectMaterialClient({ token, teamId: selected.team.id, serverUrl,
       readRecipientEncryptionMaterial: async () => ({ mode: 'plain' }),
       resolvePlatformOperationRequestHeaders: async request => {
         if (!root) throw new Error('No HTTP-issued root');
-        return createExternalActionAuthorizedRequestHeaders({ authorization: root, effectActionId,
+        return createExternalActionAuthorizedRequestHeaders({ authorization: root, effectActionId: root.binding.actionId,
           target: root.binding.target, installationId, privateKey: signing.secretKey, ...request,
           ...(reviewedChild ? { reviewedChild } : {}) });
       } });
@@ -148,7 +148,9 @@ describe('two-Account declared provisioner Action material admission', () => {
     const providerRequests: Array<{ url: string; method?: string; headers?: Readonly<Record<string, string>> }> = [];
     // The provider's HTTP response is the sole substituted business boundary.
     const services = createProductionPluginInvocationServiceOwners({ connectedAccounts: purposeRuntime.owner, loggerSink: { write() {} },
-      http: createStablePluginHttpHost({ adapter: { openWebSocket: async () => { throw new Error('Unexpected provider WebSocket'); },
+      http: createStablePluginHttpHost({ purposeHost: createConnectedAccountPluginHttpPurposeHost(purposeRuntime.owner, {
+        registerRawForRedaction(seed, value): void { services.registerRawForRedaction(seed, value); },
+      }), adapter: { openWebSocket: async () => { throw new Error('Unexpected provider WebSocket'); },
         request: async request => {
           providerRequests.push(request);
           const path = new URL(request.url).pathname;
@@ -186,7 +188,6 @@ describe('two-Account declared provisioner Action material admission', () => {
       expect(issued.statusCode, issued.body).toBe(200);
       root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
       expect(root.binding.accountId).toBe(selected.recipient.id);
-      effectActionId = rootKind === 'native-options' ? rootActionId : qualifiedActionId;
       reviewedChild = { actionId: qualifiedActionId, role: rootKind === 'generic' ? 'action_invoke' : localId,
         inputDigest: computeActionInputApprovalDigestV1(qualifiedActionId as ActionId, actionInput) };
       const admissionInput = { subject: { kind: 'action_operation' as const, operationId: root.binding.requestId,
@@ -214,12 +215,15 @@ describe('two-Account declared provisioner Action material admission', () => {
           exactPurposeBindingSubjectId: admitted.lease.subjectId, signal: admissionInput.signal });
         const expectedHeaders = { [manifest.id === AGENT37.id ? 'authorization' : 'Authorization']: 'Bearer shared-token' };
         expect(await materialize()).toMatchObject({ kind: 'httpHeaders', headers: expectedHeaders });
+        const providerRequestsBefore = providerRequests.length;
         const outcome = await native.targetActionInvocations.invoke({ ...action, input: actionInput, surface: 'plugin', requestId,
           exactPurposeBindingSubjectId: admitted.lease.subjectId, signal: admissionInput.signal });
-        expect(outcome).toMatchObject({ status: 'executed', value: localId === 'options' ? { dimensions: expect.any(Object) }
-          : manifest.id === AGENT37.id ? { kind: 'bound' } : { kind: 'pending' } });
-        expect(providerRequests.length).toBeGreaterThan(0);
-        expect(providerRequests.every(request => Object.entries(request.headers ?? {}).some(([key, value]) =>
+        expect(outcome, 'code' in outcome ? outcome.code : undefined).toMatchObject({ status: 'executed',
+          value: localId === 'options' ? { dimensions: expect.any(Object) } : { kind: 'bound' } });
+        const actionRequests = providerRequests.slice(providerRequestsBefore);
+        if (manifest.id === AGENT37.id && localId === 'options') expect(actionRequests).toHaveLength(0);
+        else expect(actionRequests.length).toBeGreaterThan(0);
+        expect(actionRequests.every(request => Object.entries(request.headers ?? {}).some(([key, value]) =>
           key.toLowerCase() === 'authorization' && value === 'Bearer shared-token'))).toBe(true);
         expect(JSON.stringify(outcome)).not.toContain('shared-token');
         await db.teamCredentialResource.update({ where: { id: selected.resource.id }, data: { memberGrants: { deleteMany: {} } } });

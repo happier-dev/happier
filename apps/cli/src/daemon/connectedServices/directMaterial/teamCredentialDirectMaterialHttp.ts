@@ -1,4 +1,5 @@
 import axios from '@/api/client/credentialAxios';
+import type { ConnectedAccountActionOperationRequestHeaders } from '@happier-dev/protocol/connect/connectedAccountInvocationPurposeBinding';
 import { type AxiosResponse } from 'axios';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -39,10 +40,8 @@ function config(token: string, signal?: AbortSignal) {
   };
 }
 
-/** Existing requester HTTP projection; only finite platform consumers require it. */
-type TeamCredentialPlatformMaterialRequestHeaders = (request: Readonly<{
-  method: 'POST'; path: string; body: TeamCredentialDirectMaterialOpenRequestV1; signal?: AbortSignal;
-}>) => Promise<Readonly<Record<string, string>> | null>;
+/** Existing requester HTTP projection required by finite operation consumers. */
+export type TeamCredentialOperationRequestHeaders = ConnectedAccountActionOperationRequestHeaders;
 
 export async function fetchTeamCredentialDirectMaterial(params: Readonly<{
   token: string;
@@ -50,21 +49,24 @@ export async function fetchTeamCredentialDirectMaterial(params: Readonly<{
   teamId: string;
   resourceId: string;
   request: TeamCredentialDirectMaterialOpenRequestV1;
-  resolvePlatformOperationRequestHeaders?: TeamCredentialPlatformMaterialRequestHeaders;
+  resolvePlatformOperationRequestHeaders?: TeamCredentialOperationRequestHeaders;
   signal?: AbortSignal;
 }>) {
   const request = TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse(params.request);
   if (!request.success) throw new TeamCredentialDirectMaterialHttpContractError();
-  const platformHeaders = request.data.consumer.kind === 'platform_operation'
-    ? await params.resolvePlatformOperationRequestHeaders?.({ method: 'POST', path: new URL(route(params)).pathname,
+  const url = route(params);
+  const consumer = request.data.consumer;
+  const requiresSignedOperation = consumer.kind === 'platform_operation' || consumer.kind === 'action_operation';
+  const operationHeaders = requiresSignedOperation
+    ? await params.resolvePlatformOperationRequestHeaders?.({ method: 'POST', path: new URL(url).pathname,
       body: request.data, ...(params.signal ? { signal: params.signal } : {}) }) : undefined;
-  if (request.data.consumer.kind === 'platform_operation' && !platformHeaders)
+  if (requiresSignedOperation && !operationHeaders)
     return { status: 'unavailable' as const, reason: 'access_removed' as const };
   let response: AxiosResponse<unknown>;
   try {
-    response = await axios.post(route(params), request.data, {
+    response = await axios.post(url, request.data, {
       ...config(params.token, params.signal),
-      ...(platformHeaders ? { headers: platformHeaders } : {}),
+      ...(operationHeaders ? { headers: operationHeaders } : {}),
       validateStatus: () => true,
     });
   } catch (error) {
