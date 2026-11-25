@@ -10947,8 +10947,11 @@ arms, not generic plugin Events. Their private PR selection uses the existing
 revision-bound Automation definition envelope. Channels owns the Session↔PR link
 and the trigger-specific binding; list and attachment therefore need the Session's
 authorized Machine even when the Session is closed. An unavailable binding reader
-must not fabricate an empty link list. Removing a trigger retires its scoped binding
-without discarding the Session's PR link.
+must not fabricate an empty link list. Removing a trigger or its set disables
+scoped conversation ingress for bindings created automatically by Save while
+preserving the Session's PR link. Explicit attachments and older bindings
+without a recorded origin keep their existing state. A failed detach after
+deletion appears in the committed receipt's `postWriteFailure`.
 
 The GitHub checks source projects one rollup into `checksCompleted`, `checksFailed`
 and `checksPassed` events. The scoped `ciFailed` adapter consumes that same

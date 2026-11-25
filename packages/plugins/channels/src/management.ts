@@ -1286,6 +1286,7 @@ function assertPairingRouterBootstrapTarget(
 type ConversationBindingRowCreateInput = Readonly<{
   bindingId: string;
   parentBindingId?: string;
+  automaticTriggerId?: string;
   connectionId: string;
   endpoint: ConversationResolvedEndpointV1;
   target: ConversationBindingTargetV1;
@@ -1335,6 +1336,7 @@ function createConversationBindingRow(input: ConversationBindingRowCreateInput):
       [CHANNEL_STATE_FIELD.updatedAt]: binding.updatedAt,
       payload: {
         ...(binding.parentBindingId === undefined ? {} : { parentBindingId: binding.parentBindingId }),
+        ...(input.automaticTriggerId === undefined ? {} : { automaticTriggerId: input.automaticTriggerId }),
         endpoint: binding.endpoint,
         target: binding.target,
         allowedPrincipalIds: binding.allowedPrincipalIds,
@@ -3709,7 +3711,8 @@ export async function createConversationBindingForInvocation(
 
 /** Private continuation: the invoking journey already admitted this audience. */
 async function createConversationBindingWithAudience(
-  createInput: Omit<ConversationBindingCreateInputV1, 'endpointSelection' | 'principalSelection' | 'expectedConnectionRevision'>,
+  createInput: Omit<ConversationBindingCreateInputV1, 'endpointSelection' | 'principalSelection' | 'expectedConnectionRevision'>
+    & Readonly<{ automaticTriggerId?: string }>,
   expectedConnection: number | ConversationConnectionUpdateRow,
   audience: Extract<BindingAudienceResolution, { kind: 'ready' }>,
   context: PluginInvocationContext,
@@ -3785,6 +3788,7 @@ async function createConversationBindingWithAudience(
   });
   const createCandidate = (target: ConversationBindingTargetV1) => createConversationBindingRow({
     bindingId: newBindingId,
+    ...(createInput.automaticTriggerId === undefined ? {} : { automaticTriggerId: createInput.automaticTriggerId }),
     connectionId: createInput.connectionId,
     endpoint,
     target,
@@ -3988,10 +3992,19 @@ export async function refreshSessionPullRequestBindingsForInvocation(input: Read
   return { connectionRow, bindingRows: input.bindingRows.map(row => refreshedBindings.get(row.rowId) ?? row) };
 }
 
-async function disableSessionPullRequestTriggerBindings(input: Readonly<{ sessionId: string; triggerId: string; triggerRevision?: number; exceptBindingId?: string }>, context: PluginInvocationContext): Promise<void> {
+async function disableSessionPullRequestTriggerBindings(input: Readonly<{
+  sessionId: string; triggerId?: string; triggerRevision?: number; exceptBindingId?: string; automationId?: string;
+}>, context: PluginInvocationContext): Promise<void> {
   for (const { row, binding } of await readSessionPullRequestBindings(input.sessionId, context)) {
-    if (binding.id === input.exceptBindingId || binding.target.kind !== 'automation' || binding.target.scopedTrigger?.triggerId !== input.triggerId || !binding.enabled) continue;
-    if (input.triggerRevision !== undefined && binding.target.scopedTrigger.triggerRevision > input.triggerRevision) continue;
+    if (!binding.enabled || binding.id === input.exceptBindingId || binding.target.kind !== 'automation') continue;
+    const scope = binding.target.scopedTrigger;
+    if (scope === undefined || (input.triggerId !== undefined && scope.triggerId !== input.triggerId)) continue;
+    if (input.automationId !== undefined) {
+      const payload = own(row.value, 'payload');
+      if (binding.target.automationId !== input.automationId
+        || !isJsonRecord(payload) || own(payload, 'automaticTriggerId') !== scope.triggerId) continue;
+    }
+    if (input.triggerRevision !== undefined && scope.triggerRevision > input.triggerRevision) continue;
     await setConversationBindingEnabledForInvocation({ bindingId: binding.id, expectedRevision: row.revision, enabled: false }, context);
   }
 }
@@ -4223,7 +4236,11 @@ export async function manageSessionPullRequestBindingForInvocation(input: JsonVa
       kind: 'automation', automationId: request.target.automationId, policy: { resultDelivery: 'none' },
       scopedTrigger: { sessionId: request.sessionId, triggerId: request.target.triggerId, triggerRevision: request.target.triggerRevision, triggerKind: request.target.triggerKind, principalPolicy: 'repositoryWriters', pullRequest: endpoint.pullRequest },
     });
-    const binding = await createConversationBindingWithAudience({ connectionId, target, allowBotSenders: principal.kind === 'bot', inputMode: 'allAllowedMessages', inboundDebounceMs: 0, enabled: retained?.enabled ?? request.target !== undefined }, connection, {
+    const binding = await createConversationBindingWithAudience({
+      connectionId, target, allowBotSenders: principal.kind === 'bot',
+      inputMode: 'allAllowedMessages', inboundDebounceMs: 0, enabled: retained?.enabled ?? request.target !== undefined,
+      ...(request.target?.origin === 'automatic' ? { automaticTriggerId: request.target.triggerId } : {}),
+    }, connection, {
       kind: 'ready', endpoint, allowedPrincipalIds: [principal.id],
       ...(endpoints.sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes: endpoints.sharedEndpointInputModes }),
     }, context);

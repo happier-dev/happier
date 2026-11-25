@@ -400,7 +400,7 @@ export const WorkflowTriggerWriteResultV1Schema = lazyZodSchema(() => z.strictOb
 export const WorkflowTriggerRemoveResultV1Schema = lazyZodSchema(() => z.union([
   WorkflowTriggerWriteResultV1Schema,
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), deleted: z.literal(true),
-    removedRevision: z.optional(Revision) }),
+    removedRevision: z.optional(Revision), postWriteFailure: z.optional(ActionExecuteFailureSchema) }),
 ]));
 export type WorkflowTriggerListRequestV1 = z.infer<typeof WorkflowTriggerListRequestV1Schema>;
 export type WorkflowTriggerAddRequestV1 = z.infer<typeof WorkflowTriggerAddRequestV1Schema>;

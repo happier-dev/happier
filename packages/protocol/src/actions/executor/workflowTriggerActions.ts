@@ -2,7 +2,7 @@ import { isPluginAutomationActionSubjectV1, readPluginAutomationSubjectV1 } from
 import { encodeBase64 } from '../../crypto/base64.js';
 import { collectWorkflowTriggerEventReferencesV1, createWorkflowActionTriggerEventDeclarationV1, type WorkflowTriggerEventDeclarationV1 } from '../../workflows/workflowTriggerEventReferenceV1.js';
 import type {
-  AutomationDefinitionCreateRequest, AutomationDefinitionDetail, AutomationTriggerDetail, AutomationDefinitionListResponse,
+  AutomationDefinitionCreateRequest, AutomationDefinitionDetail, AutomationTriggerDetail, AutomationTriggerListItem, AutomationDefinitionListResponse,
   AutomationDefinitionDetailsResponse, AutomationTriggerEventDeclarationsRequest, AutomationTriggerEventDeclarationsResponse,
   AutomationDefinitionReconcileRequest, AutomationTriggerReconcileExistingItem, AutomationDefinitionListRequest, AutomationDeleteResponse,
 } from '../../automations/automationApiV3.js';
@@ -209,7 +209,9 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
     listLinks: (sessionId: string, caller?: Caller) => Promise<SessionPullRequestLinkV1[]>;
     attach: (input: Readonly<{ sessionId: string; automationId: string; triggerId: string; triggerRevision: number;
       triggerKind: 'prComment' | 'ciFailed'; pullRequest: AutomationPullRequestTrigger['pullRequest'] }>, caller?: Caller) => Promise<void>;
-    removeTrigger: (input: Readonly<{ sessionId: string; triggerId: string }>, caller?: Caller) => Promise<void>;
+    removeTrigger: (input: Readonly<{ sessionId: string } & (
+      { triggerId: string; automationId?: never } | { automationId: string; triggerId?: string }
+    )>, caller?: Caller) => Promise<void>;
   }>;
 }>;
 
@@ -240,7 +242,7 @@ export interface WorkflowTriggerActions {
   add: (raw: WorkflowTriggerAddRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
   update: (raw: WorkflowTriggerUpdateRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
   remove: (raw: WorkflowTriggerRemoveRequestV1, caller?: Caller) => Promise<ReturnType<typeof WorkflowTriggerRemoveResultV1Schema.parse>>;
-  removeForWorkflow: (workflow: string, signal?: AbortSignal) => Promise<void>;
+  removeForWorkflow: (workflow: string, caller?: Caller) => Promise<void>;
   prepareSessionInitialTriggers: (input: Readonly<{
     initialTriggers: readonly SessionInitialTriggerV1[]; project: WorkflowProjectTargetV1; preparedFinalSessionId: string; caller?: Caller;
   }>) => Promise<SessionInitialTriggerAdmissionV1[]>;
@@ -324,7 +326,7 @@ function unresolvedWriteReceipt(cause: unknown): never {
 }
 const PR_BINDING_FAILURE_PHASE = 'workflow.trigger.pr_binding';
 
-function withPostWriteFailure(receipt: WorkflowTriggerWriteResult, cause: unknown, phase: string): WorkflowTriggerWriteResult {
+function withPostWriteFailure<T extends object>(receipt: T, cause: unknown, phase: string) {
   const { automationNotices, ...failure } = parseActionExecuteFailure(cause)
     ?? (phase === PR_BINDING_FAILURE_PHASE
       ? projectPrBindingThrownError(cause)
@@ -432,6 +434,17 @@ export async function removeWorkflowTriggersForDefinition(
 
 /** Trigger semantics compose the one Automation owner; no trigger storage or claim policy lives here. */
 export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDependencies): WorkflowTriggerActions {
+  const detachPullRequests = async (
+    row: Pick<AutomationDefinitionListResponse['automations'][number], 'id' | 'scopeSessionId'> &
+      Readonly<{ triggers: readonly Pick<AutomationTriggerListItem, 'id' | 'kind'>[] }>,
+    caller?: Caller,
+    triggerId?: string,
+  ) => {
+    if (!row.scopeSessionId || !row.triggers.some(item => (triggerId === undefined || item.id === triggerId)
+      && (item.kind === 'prComment' || item.kind === 'ciFailed'))) return;
+    await deps.pullRequests?.removeTrigger({ sessionId: row.scopeSessionId, automationId: row.id,
+      ...(triggerId === undefined ? {} : { triggerId }) }, caller);
+  };
   type SessionAdmission = Readonly<{ authority?: AgentStartContextV1;
     firingTrigger?: NonNullable<Awaited<ReturnType<NonNullable<WorkflowTriggerActionsDependencies['resolveRunTrigger']>>>>;
   }>;
@@ -1618,7 +1631,14 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       }, row, undefined, caller?.signal);
       return writeResult(committed, input.triggerId, false, prepared);
     },
-    removeForWorkflow: (workflow: string, signal?: AbortSignal) => removeWorkflowTriggersForDefinition(deps.automations, workflow, signal),
+    removeForWorkflow: (workflow: string, caller?: Caller) => removeWorkflowTriggersForDefinition({
+      list: deps.automations.list,
+      delete: async (automationId, row, signal) => {
+        const deleted = await deps.automations.delete(automationId, row, signal);
+        if (row) await detachPullRequests(row, caller);
+        return deleted;
+      },
+    }, workflow, caller?.signal),
   };
   const findScoped = async (sessionId: string, triggerId: string) => {
     const row = (await scopedRows(deps.automations, sessionId)).find((row) => row.triggers.some((trigger) => trigger.id === triggerId));
@@ -1760,8 +1780,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (row.scopeSessionId) await assertSessionAdmission(row.scopeSessionId, caller, input.triggerId);
         const result = await actions.remove({ ...input, triggerId: input.triggerId }, row.scopeSessionId ?? undefined, caller);
         try {
-          if (row.scopeSessionId && row.triggers.some(item => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed')))
-            await deps.pullRequests?.removeTrigger({ sessionId: row.scopeSessionId, triggerId: input.triggerId }, caller);
+          await detachPullRequests(row, caller, input.triggerId);
         } catch (cause) { return withPostWriteFailure(result, cause, PR_BINDING_FAILURE_PHASE); }
         return result;
       }
@@ -1769,8 +1788,12 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const row = admission?.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID && admission.row.id === input.automationId
         ? admission.row : await readRemovalSet(input.automationId, caller);
       const deleted = await deps.automations.delete(row.id, row, caller?.signal);
-      return { automationId: row.id, deleted: true as const,
+      const result = { automationId: row.id, deleted: true as const,
         ...(deleted.removedRevision === undefined ? {} : { removedRevision: deleted.removedRevision }) };
+      try {
+        await detachPullRequests(row, caller);
+      } catch (cause) { return withPostWriteFailure(result, cause, PR_BINDING_FAILURE_PHASE); }
+      return result;
     },
     sessionList: async (raw: SessionTriggerListRequestV1, caller?: Caller) => {
       const input = SessionTriggerListRequestV1Schema.parse(raw);
@@ -1826,9 +1849,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         : await findScoped(input.sessionId, input.triggerId);
       const result = await actions.remove({ automationId: row.id, triggerId: input.triggerId }, input.sessionId, caller);
       try {
-        if (row.triggers.some((item) => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed'))) {
-          await deps.pullRequests?.removeTrigger({ sessionId: input.sessionId, triggerId: input.triggerId }, caller);
-        }
+        await detachPullRequests(row, caller, input.triggerId);
       } catch (cause) { return withPostWriteFailure(result, cause, PR_BINDING_FAILURE_PHASE); }
       return result;
     },

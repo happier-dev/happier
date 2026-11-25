@@ -773,6 +773,8 @@ function createChannelsPlugin(): ChannelsPlugin {
             { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'list' } },
             { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'readRelations' } },
             { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'unlink' } },
+            // Exact trigger-owner cleanup only affects automatically attached bindings.
+            { op: 'not', predicate: { op: 'truthy', path: 'automationId' } },
             // A plain attach only records a link; a target also enables an automation trigger.
             { op: 'or', any: [
               { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'attach' } },
@@ -785,6 +787,7 @@ function createChannelsPlugin(): ChannelsPlugin {
             { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'readRelations' } },
             { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'attach' } },
             { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'unlink' } },
+            { op: 'not', predicate: { op: 'truthy', path: 'automationId' } },
           ] },
         },
         sessionTarget: { field: 'sessionId', cardinality: 'one' },

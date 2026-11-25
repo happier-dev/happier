@@ -105,7 +105,7 @@ import { WorkflowTriggerBlock } from '@/components/workflows/triggers/WorkflowTr
 import { buildTriggerDefinition, buildTriggerTarget, createDefaultWhen } from '@/components/workflows/triggers/sessionTriggerForm';
 import { ConversationBindingV1Schema, SessionPullRequestBindingInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { clearPluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
-import { addWorkflowTrigger, listWorkflowTriggerPage } from '@/sync/domains/workflows/workflowTriggerActions';
+import { addWorkflowTrigger, listWorkflowTriggerPage, removeWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { useSessionWorkflowContext } from '@/components/workflows/triggers/useSessionWorkflowContext';
@@ -1935,6 +1935,7 @@ describe('UI Workflow Action front door', () => {
         const pullRequest = { repository: 'happier-dev/happier', number: 42 };
         const pullRequestLinks = kind === 'ciFailed' ? [{ provider: 'github' as const, ...pullRequest, url: 'https://github.com/happier-dev/happier/pull/42' }] : [];
         const attachments: ReturnType<typeof SessionPullRequestBindingInputV1Schema.parse>[] = [];
+        const removals: ReturnType<typeof SessionPullRequestBindingInputV1Schema.parse>[] = [];
         let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
         let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
         try {
@@ -1961,7 +1962,11 @@ describe('UI Workflow Action front door', () => {
                         attachments.push(SessionPullRequestBindingInputV1Schema.parse(input));
                         if (!connected) return credentialRefusal;
                         output = { kind: 'attached', bindingId: 'binding-pr-form' };
-                    } else if (input.kind === 'removeTrigger') output = { kind: 'removed' };
+                    } else if (input.kind === 'removeTrigger') {
+                        expect(h.automationRows.size).toBe(0);
+                        removals.push(SessionPullRequestBindingInputV1Schema.parse(input));
+                        output = { kind: 'removed' };
+                    }
                     else if (input.kind === 'get') output = { kind: 'ready', sessionId: input.sessionId, bindings: pullRequestLinks.map((link, index) => ({
                         bindingId: `binding-${index}`, revision: 1, link,
                         watch: { policy: { mode: 'off', archiveAfterMerge: false }, reason: null,
@@ -2033,7 +2038,12 @@ describe('UI Workflow Action front door', () => {
                 scopeSessionId: sessionId, triggers: [expect.objectContaining({ kind, sourceSessionId: sessionId, enabled: true })],
             })]);
             expect(attachments).toEqual([expect.objectContaining({ kind: 'attach', sessionId, pullRequest,
-                target: expect.objectContaining({ triggerKind: kind }) })]);
+                target: expect.objectContaining({ triggerKind: kind, origin: 'automatic' }) })]);
+            if (connected) {
+                const automationId = receipt.set.automationId;
+                expect(await removeWorkflowTrigger({ automationId }, options)).toEqual({ automationId, deleted: true });
+                expect(removals).toEqual([{ automationId, kind: 'removeTrigger', sessionId }]);
+            }
         } finally {
             await act(async () => { screen?.unmount(); h.account.dispose(); await connection?.dispose(); storage.setState(previousState); });
         }

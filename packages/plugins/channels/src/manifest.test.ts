@@ -359,6 +359,7 @@ describe('Channels core manifest', () => {
           { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'list' } },
           { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'readRelations' } },
           { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'unlink' } },
+          { op: 'not', predicate: { op: 'truthy', path: 'automationId' } },
           { op: 'or', any: [
             { op: 'not', predicate: { op: 'eq', path: 'kind', value: 'attach' } },
             { op: 'truthy', path: 'target' },

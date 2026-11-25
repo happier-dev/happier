@@ -427,6 +427,12 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     // The embedded configured-Fix failure cause gained optional launch-path identity.
     // Data can validate both retained v25 digests without changing custody.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v26-to-v27',
+    fromSchemaVersion: 26,
+    toSchemaVersion: 27,
+    // Retained bindings have no recorded attachment origin.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

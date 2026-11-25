@@ -3,7 +3,8 @@ import { createCliActionDeps } from './createCliActionDeps';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { AutomationConversationActionInputSchemasV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
-import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema,
+  AutomationDefinitionReconcileRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { getAutomationDefinition } from '@/api/automations';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { ScmPullRequestOpenOrReuseResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
@@ -184,10 +185,15 @@ describe('CLI session pull request binding', () => {
       effect: { kind: 'pull_request', number: 42, url: pullRequest.url }, message: expect.stringContaining('denied') } });
   });
 
-  it.each(['current', 'first poll settles', 'provider retired', 'connection changed', 'comments permission denied', 'connected workflow trigger', 'unconnected workflow trigger', 'workflow attachment transport exception'] as const)(
+  it.each(['current', 'first poll settles', 'provider retired', 'connection changed', 'comments permission denied',
+    'connected workflow trigger', 'unconnected workflow trigger', 'workflow attachment transport exception',
+    'remove a single workflow trigger', 'preserve an originless workflow trigger binding'] as const)(
     'composes PR attachment in a Team Session with a fresh repository (%s)', async (authority) => {
     const unexpectedAttachmentFailure = authority === 'workflow attachment transport exception';
-    const workflowTrigger = authority === 'connected workflow trigger' || authority === 'unconnected workflow trigger' || unexpectedAttachmentFailure;
+    const removeSingleTrigger = authority === 'remove a single workflow trigger';
+    const originless = authority === 'preserve an originless workflow trigger binding';
+    const workflowTrigger = authority === 'connected workflow trigger' || authority === 'unconnected workflow trigger'
+      || unexpectedAttachmentFailure || removeSingleTrigger || originless;
     const accountId = 'original-account';
     const token = workflowTrigger ? `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature` : 'token';
     const ordinaryRead = boundary.get.getMockImplementation()!;
@@ -398,9 +404,14 @@ describe('CLI session pull request binding', () => {
       },
     });
     const invokeCore = async (localId: string, input: JsonValue) => {
+      const exactDetach = localId === SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1
+        && input && typeof input === 'object' && 'kind' in input && input.kind === 'removeTrigger' && 'automationId' in input;
       const result = await registry.invoke({ pluginId: CHANNELS_MANIFEST.id, localId, input, surface: 'cli',
         invocationAuthority: 'present_user', signal: controller.signal, requestId: linkRequestId,
-        requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint }) });
+        requestCurrentIntent: async ({ fingerprint }) => {
+          if (exactDetach) throw new Error('A committed trigger deletion must not ask again to detach its own binding');
+          return { status: 'approved', fingerprint };
+        } });
       if (result.status === 'deferred') throw new Error(`deferred:${result.artifactId}`);
       if (result.status !== 'executed') return projectContributedActionFailure({
         errorCode: result.code, error: result.message, data: result.data,
@@ -433,13 +444,19 @@ describe('CLI session pull request binding', () => {
         expect(action).toEqual({ pluginId: CHANNELS_MANIFEST.id, localId: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 });
         expect(context).toMatchObject({ surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId, actionRequestId: linkRequestId });
         const binding = SessionPullRequestBindingInputV1Schema.parse(input);
-        expect(binding).toMatchObject({ kind: 'attach', target: {
-          automationId: savedRow?.id, triggerId: savedRow?.triggers[0]?.id, triggerRevision: 0, triggerKind: 'prComment',
-        } });
-        expect(savedRow).toBeDefined();
-        expect(binding).not.toHaveProperty('credentialRef');
-        if (unexpectedAttachmentFailure) throw new Error('Attachment transport failed with Bearer fixture-secret_123+/=');
-        attaches++;
+        if (binding.kind === 'attach') {
+          expect(binding).toMatchObject({ target: {
+            automationId: savedRow?.id, triggerId: savedRow?.triggers[0]?.id, triggerRevision: 0, triggerKind: 'prComment',
+          } });
+          expect(savedRow).toBeDefined();
+          expect(binding).not.toHaveProperty('credentialRef');
+          if (unexpectedAttachmentFailure) throw new Error('Attachment transport failed with Bearer fixture-secret_123+/=');
+          if (originless && 'target' in binding && binding.target) {
+            const { origin: _origin, ...target } = binding.target;
+            expect(await invokeCore(action.localId, { ...binding, target })).toMatchObject({ kind: 'attached' });
+          }
+          attaches++;
+        }
         const result = await invokeCore(action.localId, binding);
         return parseActionExecuteFailure(result) ?? { ok: true as const, result };
       },
@@ -453,10 +470,22 @@ describe('CLI session pull request binding', () => {
       if (workflowTrigger) {
         const qualified = { kind: 'attach', sessionId, pullRequest: { repository: 'acme/widgets', number: 42 },
           credentialRef, expectedRepositoryId: '77' } as const;
-        expect(await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, qualified)).toMatchObject({ kind: 'attached' });
+        const explicitlyAttached = await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, qualified);
+        expect(explicitlyAttached).toMatchObject({ kind: 'attached', bindingId: expect.any(String) });
 
         boundary.request.mockImplementation(async ({ url, method, data }: { url: string; method: string; data: unknown }) => {
           if (method === 'GET' && savedRow && url.endsWith(`/v3/automations/${savedRow.id}`)) {
+            return { status: 200, data: structuredClone(savedRow) };
+          }
+          if (method === 'DELETE' && savedRow && url.endsWith(`/v3/automations/${savedRow.id}`)) {
+            savedRow = undefined;
+            return { status: 200, data: { ok: true, removedRevision: 1 } };
+          }
+          if (method === 'PUT' && savedRow && url.endsWith(`/v3/automations/${savedRow.id}`)) {
+            const removal = AutomationDefinitionReconcileRequestSchema.parse(data);
+            expect(removal.removedTriggers).toEqual([{ triggerId: savedRow.triggers[0]?.id, expectedRevision: 0 }]);
+            expect(removal.triggers).toEqual([]);
+            savedRow = { ...savedRow, triggers: [], templateVersion: 2 };
             return { status: 200, data: structuredClone(savedRow) };
           }
           if (method !== 'POST' || !url.endsWith('/v3/automations') || savedRow) throw new Error('Unexpected Automation request');
@@ -497,12 +526,13 @@ describe('CLI session pull request binding', () => {
         expect(saved?.triggers).toHaveLength(1);
         expect(receipt).toMatchObject({ set: { automationId: savedRow.id, revision: 1 },
           triggerId: saved?.triggers[0]?.id, triggerRevision: 0 });
-        const scopedBindings = [...state.rows.values()].flatMap(row => {
+        const readBindings = () => [...state.rows.values()].flatMap(row => {
           const bindingId = row.value[CHANNEL_STATE_FIELD.bindingId];
           if (row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding || typeof bindingId !== 'string') return [];
           const { binding } = readConversationBindingUpdateRow({ row, bindingId });
-          return binding.target.kind === 'automation' ? [binding.target] : [];
+          return [binding];
         });
+        const scopedBindings = readBindings().flatMap(({ target }) => target.kind === 'automation' ? [target] : []);
         expect(scopedBindings).toEqual(credentialConnected && !unexpectedAttachmentFailure
           ? [expect.objectContaining({ automationId: savedRow.id, scopedTrigger: expect.objectContaining({
             sessionId, triggerId: saved?.triggers[0]?.id, triggerRevision: 0,
@@ -519,6 +549,29 @@ describe('CLI session pull request binding', () => {
         } else if (credentialConnected) {
           expect(receipt).not.toHaveProperty('postWriteFailure');
           expect(attaches).toBe(1);
+          const before = readBindings();
+          expect(before).toContainEqual(expect.objectContaining({ enabled: true, deletionState: 'none',
+            target: expect.objectContaining({ kind: 'automation', automationId: savedRow.id }) }));
+          const automationId = savedRow.id;
+          const removal = await deps.workflowAction!({
+            actionId: 'workflow.trigger.remove', input: { automationId, ...(removeSingleTrigger ? { triggerId: savedRow.triggers[0]!.id } : {}) },
+            context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: linkRequestId },
+          });
+          if (removeSingleTrigger) {
+            expect(savedRow?.triggers).toEqual([]);
+            expect(removal).toMatchObject({ set: { automationId, revision: 2, triggers: [] } });
+            expect(removal).not.toHaveProperty('postWriteFailure');
+          } else {
+            expect(savedRow).toBeUndefined();
+            expect(removal).toEqual({ automationId, deleted: true, removedRevision: 1 });
+          }
+          const after = readBindings();
+          expect(after.filter(binding => binding.target.kind === 'session'))
+            .toEqual(before.filter(binding => binding.target.kind === 'session'));
+          expect(after.filter(binding => binding.target.kind === 'automation')).toEqual([
+            expect.objectContaining({ enabled: originless, deletionState: 'none',
+              target: expect.objectContaining({ kind: 'automation', automationId }) }),
+          ]);
         } else {
           expect(receipt).toMatchObject({ postWriteFailure: { ok: false, errorCode: 'github_credential_unavailable' } });
           expect(providerRefusal).toMatchObject({ code: 'github_credential_unavailable',

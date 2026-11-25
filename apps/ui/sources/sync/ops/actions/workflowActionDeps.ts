@@ -311,7 +311,7 @@ export function createUiWorkflowAction(params: Readonly<{
                 workflow.pluginId ? [projectWorkflowPluginSourceV1({ pluginId: workflow.pluginId,
                     pluginVersion: workflow.pluginVersion, definition: workflow.definition })] : []);
         },
-        removeWorkflowTriggers: (definitionId) => triggers.removeForWorkflow(definitionId),
+        removeWorkflowTriggers: (definitionId, caller) => triggers.removeForWorkflow(definitionId, caller),
         assertDefinitionWriteAllowed: (_definition, _context, caller) => {
             // Other callers retain the canonical host authorization/materializer.
             if (caller?.authority !== 'present_user') {
@@ -489,11 +489,11 @@ export function createUiWorkflowAction(params: Readonly<{
             },
             attach: async ({ sessionId, pullRequest, automationId, triggerId, triggerRevision, triggerKind }, caller) => {
                 const result = await invokePullRequestBinding({ kind: 'attach', sessionId, pullRequest,
-                    target: { automationId, triggerId, triggerRevision, triggerKind } }, caller);
+                    target: { automationId, triggerId, triggerRevision, triggerKind, origin: 'automatic' } }, caller);
                 if (result.kind !== 'attached') targetUnavailable();
             },
-            removeTrigger: async ({ sessionId, triggerId }, caller) => {
-                const result = await invokePullRequestBinding({ kind: 'removeTrigger', sessionId, triggerId }, caller);
+            removeTrigger: async (input, caller) => {
+                const result = await invokePullRequestBinding({ kind: 'removeTrigger', ...input }, caller);
                 if (result.kind !== 'removed') targetUnavailable();
             },
         },

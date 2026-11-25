@@ -674,8 +674,10 @@ In current development source, the Session's Habits section offers PR comments
 and CI failures. Choose a pull request from the Session repository; a single
 existing link is preselected. Attaching either kind records that Session↔PR link.
 Opening or reusing a pull request through Happier also records the link when the
-operation has an origin Session. Removing a trigger retains the link but stops
-that trigger's conversation ingress.
+operation has an origin Session. Removing a trigger or its set stops conversation
+ingress for bindings that Save created automatically. The Session's PR link
+and explicit attachments are retained. Older bindings whose origin was never
+recorded can be managed from Channels.
 
 If the Session's pull request links cannot be read, ordinary scoped triggers
 remain available. The Habits section shows a separate link-read warning with

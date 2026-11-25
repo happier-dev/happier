@@ -140,7 +140,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
   /** Host-specific Account admission, in addition to the canonical Agent policy below. */
   assertDefinitionWriteAllowed?: (definition: WorkflowDefinitionV1, context?: WorkflowIngressContextV1, caller?: DefinitionCaller) => void | Promise<void>;
   resolveMaterializer?: (target: Readonly<{ machineId: string; directory: string; signal?: AbortSignal }>) => Promise<Pick<MaterializeWorkflowAcceptedSnapshotV1Input, 'effects' | 'roleSelection'>>;
-  removeWorkflowTriggers?: (definitionId: string, signal?: AbortSignal) => Promise<void>;
+  removeWorkflowTriggers?: (definitionId: string, caller?: DefinitionCaller) => Promise<void>;
   readPluginWorkflows?: WorkflowPluginSourceReaderV1;
   readWorkflowTriggerSummaries?: ReturnType<typeof createWorkflowTriggerActions>['readWorkflowSummaries'];
   readWorkflowTriggerEvents?: ReturnType<typeof createWorkflowTriggerActions>['readWorkflowTriggerEvents'];
@@ -523,7 +523,7 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       if (artifact.access !== 'owner') {
         throw Object.assign(new Error('workflow_definition_delete_forbidden'), { code: 'artifact_access_forbidden' });
       }
-      await params.removeWorkflowTriggers?.(definitionId, caller?.signal);
+      await params.removeWorkflowTriggers?.(definitionId, caller);
       const result = await params.artifactStore.delete(definitionId, {
         ...(caller?.signal ? { signal: caller.signal } : {}),
         ...(caller?.onTransportIssued ? { onTransportIssued: caller.onTransportIssued } : {}),

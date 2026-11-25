@@ -68,6 +68,7 @@ const sessionPullRequestAttachFieldsV1 = {
       automationId: AutomationIdV1Schema, triggerId: defineProtocolString({ minLength: 1 }),
       triggerRevision: defineProtocolNumber({ integer: true, minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
       triggerKind: defineProtocolUnion([defineProtocolLiteral('prComment'), defineProtocolLiteral('ciFailed')]),
+      origin: defineProtocolLiteral('automatic').optional(),
   }, { policy: 'closed' }).optional(),
 };
 const sessionPullRequestRelationFieldsV1 = {
@@ -117,6 +118,9 @@ export const SessionPullRequestBindingInputV1Schema = defineProtocolUnion([
     states: defineProtocolArray(ConversationPullRequestStateV1Fields.state, { minItems: 1 }),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('removeTrigger'), sessionId: SessionTargetV1Schema, triggerId: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('removeTrigger'), sessionId: SessionTargetV1Schema,
+    automationId: AutomationIdV1Schema, triggerId: defineProtocolString({ minLength: 1 }).optional(),
+  }, { policy: 'closed' }),
 ]);
 export type SessionPullRequestBindingInputV1 = ReturnType<typeof SessionPullRequestBindingInputV1Schema.parse>;
 export const SessionPullRequestBindingInputV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestBindingInputV1Schema.jsonSchema)();

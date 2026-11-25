@@ -195,9 +195,9 @@ export function createCliWorkflowFamily(
         if (!resolveWorkflowMaterializer) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
         return resolveWorkflowMaterializer(target);
       },
-      removeWorkflowTriggers: async (definitionId, signal) => {
+      removeWorkflowTriggers: async (definitionId, caller) => {
         if (!workflowTriggers) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
-        await workflowTriggers.removeForWorkflow(definitionId, signal);
+        await workflowTriggers.removeForWorkflow(definitionId, caller);
       } })
     : null;
 
@@ -234,7 +234,8 @@ export function createCliWorkflowFamily(
         },
         attach: async ({ sessionId, pullRequest, ...target }, caller) => {
           try {
-            const result = await invokeSessionPullRequestBinding({ kind: 'attach', sessionId, pullRequest, target }, caller);
+            const result = await invokeSessionPullRequestBinding({ kind: 'attach', sessionId, pullRequest,
+              target: { ...target, origin: 'automatic' } }, caller);
             if (result.kind !== 'attached') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_operation_mismatch') });
           } catch (error) {
             try {
