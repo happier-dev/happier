@@ -1150,9 +1150,9 @@ it('lists paged compact Sessions without offering hidden, archived, ineligible o
     expect(homes.requests.some(request => request.home === 'a' && request.path === '/v2/sessions')).toBe(false);
     await hook.rerender({ enabled: true });
     await waitForHomeGovernance(() => expect(hook.getCurrent().existingSessions.some(option => option.sessionId === c.id)).toBe(true));
-    // Cold compact rows need one document read to establish private eligibility.
+    // The compact inventory already rules out hidden and archived Sessions.
     expect(batch.componentRequests.filter(request => request.path === `/v2/sessions/${hidden.id}`
-        || archived.some(row => request.path === `/v2/sessions/${row.id}`))).toHaveLength(archived.length + 1);
+        || archived.some(row => request.path === `/v2/sessions/${row.id}`))).toEqual([]);
     expect(hook.getCurrent().existingSessions).toEqual([
         { sessionId: c.id, machineId: 'machine-a', label: 'Session C', agentId: 'claude', contextLabel: 'Claude · host-a' },
     ]);
