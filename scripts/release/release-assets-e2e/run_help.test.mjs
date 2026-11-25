@@ -332,3 +332,12 @@ test('release-assets-e2e run.sh surfaces npm pack output on failure', () => {
   assert.equal(res.status, 2, res.stderr || res.stdout);
   assert.match(`${res.stdout ?? ''}\n${res.stderr ?? ''}`, /npm shim: pack failed/);
 });
+
+test('release asset smoke images install published CLIs without the unavailable CUDA runtime download', () => {
+  // Release run 45621013081: onnxruntime-node's postinstall fetched a GPU archive that returns 404,
+  // failing every global CLI install in these images. CI installs already skip it the same way.
+  for (const name of ['Dockerfile', 'Dockerfile.remote-host', 'Dockerfile.remote-host-systemd']) {
+    const dockerfile = fs.readFileSync(join(here, name), 'utf8');
+    assert.match(dockerfile, /^ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip$/m, `${name} must skip the CUDA runtime download`);
+  }
+});
