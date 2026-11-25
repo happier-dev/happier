@@ -1,9 +1,11 @@
 import { AutomationReplyHandoffBlockedCodeV1Schema } from '@happier-dev/protocol/automations/event';
-import type {
-    WorkflowOperationErrorCodeV1,
-    WorkflowTargetUnavailableReasonV1,
-    WorkflowConversationUnavailableDetailsV1,
-    WorkflowRunSummaryV1,
+import {
+    readWorkflowOperationProblemCopyV1,
+    WORKFLOW_OPERATION_PROBLEM_COPY_V1,
+    type WorkflowOperationErrorCodeV1,
+    type WorkflowTargetUnavailableReasonV1,
+    type WorkflowConversationUnavailableDetailsV1,
+    type WorkflowRunSummaryV1,
 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowDefinitionContentUnavailableReasonV1, WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
@@ -77,59 +79,65 @@ type WorkflowProblemShape = Readonly<{
  * and one that cannot be continued both mean the same thing to the reader.
  */
 const WORKFLOW_PROBLEM_SHAPES = {
-    approval_required: { titleKey: 'notifications.activity.permissionFallbackBody', messageKey: 'workflows.run.approvalWantedBody', repair: 'none', accessibilitySemantics: 'alert' },
-    not_authenticated: { messageKey: 'errors.authenticationFailed', repair: 'none', accessibilitySemantics: 'alert' },
-    admission_unavailable: { messageKey: 'session.startFailure.cause.admission_unavailable', repair: 'none', accessibilitySemantics: 'alert' },
-    invalid_token: { messageKey: 'errors.authenticationFailed', repair: 'none', accessibilitySemantics: 'alert' },
-    subtree_denied: { messageKey: 'workflows.problem.subtreeDenied', repair: 'none', accessibilitySemantics: 'alert' },
-    role_target_unavailable: { messageKey: 'workflows.problem.roleTargetUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
-    role_policy_unenforceable: { messageKey: 'errors.rolePolicyUnenforceable', repair: 'none', accessibilitySemantics: 'alert' },
-    role_runs_as_mismatch: { messageKey: 'workflows.problem.roleRunsAsMismatch', repair: 'none', accessibilitySemantics: 'alert' },
-    policy_denied_field: { messageKey: 'workflows.problem.policyDeniedField', repair: 'none', accessibilitySemantics: 'alert' },
-    permission_exceeds_ceiling: { messageKey: 'workflows.problem.permissionExceedsCeiling', repair: 'none', accessibilitySemantics: 'alert' },
-    work_depth_exceeded: { messageKey: 'workflows.problem.workDepthExceeded', repair: 'none', accessibilitySemantics: 'alert' },
-    definition_exceeds_authority: { messageKey: 'workflows.problem.definitionExceedsAuthority', repair: 'none', accessibilitySemantics: 'alert' },
-    invalid_input: { messageKey: 'workflows.problem.needsRepair', repair: 'none', accessibilitySemantics: 'alert' },
-    missing_reference: { messageKey: 'workflows.problem.needsRepair', repair: 'none', accessibilitySemantics: 'alert' },
-    invalid_reference_scope: { messageKey: 'workflows.problem.needsRepair', repair: 'none', accessibilitySemantics: 'alert' },
-    target_unavailable: { messageKey: 'workflows.problem.targetUnavailable', repair: 'retry', accessibilitySemantics: 'alert' },
-    github_webhook_home_unreachable: { messageKey: 'workflows.problem.githubWebhookHomeUnreachable', repair: 'none', accessibilitySemantics: 'alert' },
-    run_not_found: { titleKey: 'workflows.problem.notFoundTitle', messageKey: 'workflows.problem.notFound', repair: 'none', accessibilitySemantics: 'alert' },
-    run_access_denied: { messageKey: 'workflows.problem.accessDenied', repair: 'none', accessibilitySemantics: 'alert' },
-    visible_team_not_granted: { messageKey: 'workflows.problem.accessDenied', repair: 'none', accessibilitySemantics: 'alert' },
-    currentness_conflict: { messageKey: 'workflows.problem.conflict', repair: 'refresh', accessibilitySemantics: 'alert' },
-    event_watcher_not_current: { messageKey: 'workflows.problem.targetUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
-    event_watcher_not_owned: { messageKey: 'workflows.problem.accessDenied', repair: 'none', accessibilitySemantics: 'alert' },
-    workflow_input_too_large: { messageKey: 'workflows.problem.inputTooLarge', repair: 'none', accessibilitySemantics: 'alert' },
+    approval_required: { titleKey: 'notifications.activity.permissionFallbackBody', repair: 'none', accessibilitySemantics: 'alert' },
+    not_authenticated: { repair: 'none', accessibilitySemantics: 'alert' },
+    admission_unavailable: { repair: 'none', accessibilitySemantics: 'alert' },
+    invalid_token: { repair: 'none', accessibilitySemantics: 'alert' },
+    subtree_denied: { repair: 'none', accessibilitySemantics: 'alert' },
+    role_target_unavailable: { repair: 'none', accessibilitySemantics: 'alert' },
+    role_policy_unenforceable: { repair: 'none', accessibilitySemantics: 'alert' },
+    role_runs_as_mismatch: { repair: 'none', accessibilitySemantics: 'alert' },
+    policy_denied_field: { repair: 'none', accessibilitySemantics: 'alert' },
+    permission_exceeds_ceiling: { repair: 'none', accessibilitySemantics: 'alert' },
+    work_depth_exceeded: { repair: 'none', accessibilitySemantics: 'alert' },
+    definition_exceeds_authority: { repair: 'none', accessibilitySemantics: 'alert' },
+    invalid_input: { repair: 'none', accessibilitySemantics: 'alert' },
+    missing_reference: { repair: 'none', accessibilitySemantics: 'alert' },
+    invalid_reference_scope: { repair: 'none', accessibilitySemantics: 'alert' },
+    target_unavailable: { repair: 'retry', accessibilitySemantics: 'alert' },
+    github_webhook_home_unreachable: { repair: 'none', accessibilitySemantics: 'alert' },
+    run_not_found: { titleKey: 'workflows.problem.notFoundTitle', repair: 'none', accessibilitySemantics: 'alert' },
+    run_access_denied: { repair: 'none', accessibilitySemantics: 'alert' },
+    visible_team_not_granted: { repair: 'none', accessibilitySemantics: 'alert' },
+    currentness_conflict: { repair: 'refresh', accessibilitySemantics: 'alert' },
+    event_watcher_not_current: { repair: 'none', accessibilitySemantics: 'alert' },
+    event_watcher_not_owned: { repair: 'none', accessibilitySemantics: 'alert' },
+    workflow_input_too_large: { repair: 'none', accessibilitySemantics: 'alert' },
     // A stop that cannot yet be proven is a wait, not a rejection — and no
     // acknowledgement anywhere may bypass it, so the copy has to say what is
     // being waited on rather than name the condition.
-    workflow_outcome_unresolved: { messageKey: 'workflows.problem.unresolvedOutcome', repair: 'refresh', accessibilitySemantics: 'status' },
-    workflow_http_error: { messageKey: 'workflows.problem.generic', repair: 'retry', accessibilitySemantics: 'alert' },
-    workflow_interaction_capacity_exceeded: { messageKey: 'workflows.problem.interactionCapacity', repair: 'retry', accessibilitySemantics: 'status' },
-    workflow_conversation_unavailable: { messageKey: 'workflows.problem.conversationUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
-    continuation_unavailable: { messageKey: 'workflows.problem.conversationUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
-    workflow_workspace_restore_unavailable: { messageKey: 'workflows.problem.workspaceRestore', repair: 'none', accessibilitySemantics: 'alert' },
-    workflow_workspace_restore_failed: { messageKey: 'workflows.problem.workspaceRestore', repair: 'retry', accessibilitySemantics: 'alert' },
-    workflow_step_preparation_failed: { messageKey: 'workflows.problem.stepPreparation', repair: 'none', accessibilitySemantics: 'alert' },
-    workflow_wait_self_dependency: { messageKey: 'workflows.problem.waitSelfDependency', repair: 'none', accessibilitySemantics: 'alert' },
-    ineligible_state: { messageKey: 'workflows.problem.ineligible', repair: 'refresh', accessibilitySemantics: 'status' },
-    custody_pending: { messageKey: 'workflows.problem.custodyPending', repair: 'refresh', accessibilitySemantics: 'status' },
-    requester_custody_unavailable: { messageKey: 'workflows.problem.requesterCustodyUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
+    workflow_outcome_unresolved: { repair: 'refresh', accessibilitySemantics: 'status' },
+    workflow_http_error: { repair: 'retry', accessibilitySemantics: 'alert' },
+    workflow_interaction_capacity_exceeded: { repair: 'retry', accessibilitySemantics: 'status' },
+    workflow_conversation_unavailable: { repair: 'none', accessibilitySemantics: 'alert' },
+    continuation_unavailable: { repair: 'none', accessibilitySemantics: 'alert' },
+    workflow_workspace_restore_unavailable: { repair: 'none', accessibilitySemantics: 'alert' },
+    workflow_workspace_restore_failed: { repair: 'retry', accessibilitySemantics: 'alert' },
+    workflow_step_preparation_failed: { repair: 'none', accessibilitySemantics: 'alert' },
+    workflow_wait_self_dependency: { repair: 'none', accessibilitySemantics: 'alert' },
+    ineligible_state: { repair: 'refresh', accessibilitySemantics: 'status' },
+    custody_pending: { repair: 'refresh', accessibilitySemantics: 'status' },
+    requester_custody_unavailable: { repair: 'none', accessibilitySemantics: 'alert' },
     // The Account-content owner already has this sentence; a second one here
     // would be the same concept said two ways.
-    content_unavailable: { messageKey: 'workflows.contentUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
-    history_not_readable: { titleKey: 'workflows.readState.historyTitle', messageKey: 'workflows.readState.historyBody', repair: 'none', accessibilitySemantics: 'alert' },
-    encryption_setup_required: { titleKey: 'workflows.readState.encryptionTitle', messageKey: 'workflows.readState.encryptionBody', repair: 'settings', accessibilitySemantics: 'alert' },
-    waiting_for_keys: { titleKey: 'workflows.readState.keysTitle', messageKey: 'workflows.readState.keysBody', repair: 'retry', accessibilitySemantics: 'status' },
-    storage_unavailable: { titleKey: 'workflows.readState.storageTitle', messageKey: 'workflows.readState.storageBody', repair: 'retry', accessibilitySemantics: 'alert' },
-    source_unavailable: { messageKey: 'workflows.problem.sourceUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
-    legacy_conversion_unsupported: { messageKey: 'workflows.triggers.legacy.changeUnavailable', repair: 'none', accessibilitySemantics: 'alert' },
-    native_goal_owner: { messageKey: 'workflows.problem.nativeGoalOwner', repair: 'none', accessibilitySemantics: 'alert' },
-    session_already_started: { messageKey: 'workflows.problem.sessionAlreadyStarted', repair: 'none', accessibilitySemantics: 'alert' },
-    pull_request_link_required: { messageKey: 'workflows.problem.needsRepair', repair: 'none', accessibilitySemantics: 'alert' },
-    present_user_required: { messageKey: 'settingsActions.reasons.presentUserRequired', repair: 'none', accessibilitySemantics: 'alert' },
-} as const satisfies Readonly<Record<WorkflowOperationErrorCodeV1, WorkflowProblemShape>>;
+    content_unavailable: { repair: 'none', accessibilitySemantics: 'alert' },
+    history_not_readable: { titleKey: 'workflows.readState.historyTitle', repair: 'none', accessibilitySemantics: 'alert' },
+    encryption_setup_required: { titleKey: 'workflows.readState.encryptionTitle', repair: 'settings', accessibilitySemantics: 'alert' },
+    waiting_for_keys: { titleKey: 'workflows.readState.keysTitle', repair: 'retry', accessibilitySemantics: 'status' },
+    storage_unavailable: { titleKey: 'workflows.readState.storageTitle', repair: 'retry', accessibilitySemantics: 'alert' },
+    source_unavailable: { repair: 'none', accessibilitySemantics: 'alert' },
+    legacy_conversion_unsupported: { repair: 'none', accessibilitySemantics: 'alert' },
+    native_goal_owner: { repair: 'none', accessibilitySemantics: 'alert' },
+    session_already_started: { repair: 'none', accessibilitySemantics: 'alert' },
+    pull_request_link_required: { repair: 'none', accessibilitySemantics: 'alert' },
+    present_user_required: { repair: 'none', accessibilitySemantics: 'alert' },
+} as const satisfies Readonly<Record<WorkflowOperationErrorCodeV1, Omit<WorkflowProblemShape, 'messageKey'>>>;
+
+function workflowProblemShape(code: WorkflowOperationErrorCodeV1): WorkflowProblemShape {
+    return { ...WORKFLOW_PROBLEM_SHAPES[code], messageKey: WORKFLOW_OPERATION_PROBLEM_COPY_V1[code].key };
+}
+
+const UNAVAILABLE_TARGET = workflowProblemShape('target_unavailable');
 
 const WORKFLOW_CONTENT_REASON_KEYS = {
     history_not_readable: 'workflows.readState.historyBody',
@@ -143,25 +151,25 @@ const WORKFLOW_CONTENT_REASON_KEYS = {
 const WORKFLOW_TARGET_REASON_SHAPES = {
     // Host diagnostics refine the formerly bare target refusal. Retain its
     // existing presentation while keeping the finite consumer exhaustive.
-    requester_projection_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    agent_start_context_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    caller_session_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    caller_run_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    caller_witness_invalid: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    caller_depth_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    caller_machine_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    caller_workspace_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    caller_agent_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    caller_permission_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    role_source_incomplete: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    role_overrides_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    spawn_policy_invalid: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+    requester_projection_unavailable: UNAVAILABLE_TARGET,
+    agent_start_context_unavailable: UNAVAILABLE_TARGET,
+    caller_session_unavailable: UNAVAILABLE_TARGET,
+    caller_run_unavailable: UNAVAILABLE_TARGET,
+    caller_witness_invalid: UNAVAILABLE_TARGET,
+    caller_depth_unavailable: UNAVAILABLE_TARGET,
+    caller_machine_unavailable: UNAVAILABLE_TARGET,
+    caller_workspace_unavailable: UNAVAILABLE_TARGET,
+    caller_agent_unavailable: UNAVAILABLE_TARGET,
+    caller_permission_unavailable: UNAVAILABLE_TARGET,
+    role_source_incomplete: UNAVAILABLE_TARGET,
+    role_overrides_unavailable: UNAVAILABLE_TARGET,
+    spawn_policy_invalid: UNAVAILABLE_TARGET,
     materialization_owner_unavailable: { messageKey: 'workflows.problem.preExecution.materializationUnavailable', repair: 'retry' },
-    run_admission_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    target_binding_mismatch: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    publisher_machine_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    requester_runtime_unavailable: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
-    credentialed_factory_failed: WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+    run_admission_unavailable: UNAVAILABLE_TARGET,
+    target_binding_mismatch: UNAVAILABLE_TARGET,
+    publisher_machine_unavailable: UNAVAILABLE_TARGET,
+    requester_runtime_unavailable: UNAVAILABLE_TARGET,
+    credentialed_factory_failed: UNAVAILABLE_TARGET,
     profile_unavailable: { messageKey: 'workflows.problem.preExecution.profileUnavailable', repair: 'none' },
     engine_unavailable: { messageKey: 'workflows.problem.preExecution.engineUnavailable', repair: 'none' },
     machine_check_failed: { messageKey: 'workflows.problem.preExecution.machineCheckFailed', repair: 'retry' },
@@ -284,33 +292,34 @@ function resolveWorkflowProblemCopy(
         };
     }
     const failure = error instanceof WorkflowActionError ? error.failure : null;
-    if (failure?.errorCode === 'currentness_conflict' && failure.details
-        && 'reason' in failure.details && failure.details.reason === 'event_contribution_not_current') {
-        return present(code, { ...WORKFLOW_PROBLEM_SHAPES.currentness_conflict,
-            messageKey: 'workflows.problem.eventDeclarationNotCurrent', repair: 'none' });
+    if (failure?.errorCode === 'currentness_conflict') {
+        const copy = readWorkflowOperationProblemCopyV1(failure.errorCode, failure.details);
+        if (copy.key !== WORKFLOW_OPERATION_PROBLEM_COPY_V1.currentness_conflict.key) {
+            return present(code, { ...workflowProblemShape('currentness_conflict'), messageKey: copy.key, repair: 'none' });
+        }
     }
     const exactTurn = formatExactTurnAutomationError(error);
-    if (exactTurn) return { ...present(code, WORKFLOW_PROBLEM_SHAPES.ineligible_state), message: exactTurn.message };
+    if (exactTurn) return { ...present(code, workflowProblemShape('ineligible_state')), message: exactTurn.message };
     if (scope === 'run' && code === 'currentness_conflict') {
-        return present(code, { ...WORKFLOW_PROBLEM_SHAPES.currentness_conflict, messageKey: 'workflows.problem.runMovedOn' });
+        return present(code, { ...workflowProblemShape('currentness_conflict'), messageKey: 'workflows.problem.runMovedOn' });
     }
     if (failure?.errorCode === 'workflow_conversation_unavailable' && failure.details) {
-        return { ...present(code, WORKFLOW_PROBLEM_SHAPES.workflow_conversation_unavailable),
+        return { ...present(code, workflowProblemShape('workflow_conversation_unavailable')),
             message: formatWorkflowConversationProblem(failure.details) };
     }
     if (failure?.errorCode === 'target_unavailable' && failure.details && 'reason' in failure.details
         && failure.details.reason !== undefined) {
         if (failure.details.reason === 'workspace_unavailable') {
             if (failure.details.errorCode === 'workspace_unavailable') return present(code, {
-                ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+                ...workflowProblemShape('target_unavailable'),
                 messageKey: 'workflows.problem.workspaceUnavailable', repair: 'none',
             });
             if (failure.details.errorCode === 'workspace_conflict') return present(code, {
-                ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+                ...workflowProblemShape('target_unavailable'),
                 messageKey: 'workflows.problem.workspaceConflict', repair: 'none',
             });
             if (failure.details.errorCode === 'committed_revision_unavailable') return present(code, {
-                ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+                ...workflowProblemShape('target_unavailable'),
                 messageKey: 'workflows.problem.committedRevisionUnavailable', repair: 'none',
             });
         }
@@ -318,15 +327,15 @@ function resolveWorkflowProblemCopy(
     }
     if (failure?.errorCode === 'content_unavailable' && failure.details !== undefined) {
         if (failure.details.reason === 'not_found') {
-            return { ...present(code, { ...WORKFLOW_PROBLEM_SHAPES.content_unavailable,
+            return { ...present(code, { ...workflowProblemShape('content_unavailable'),
                 messageKey: WORKFLOW_CONTENT_REASON_KEYS.not_found }), missingDefinition: true };
         }
         if (failure.details.reason === 'account_role_overrides_unavailable') {
-            return present(code, { ...WORKFLOW_PROBLEM_SHAPES.content_unavailable,
+            return present(code, { ...workflowProblemShape('content_unavailable'),
                 titleKey: 'workflows.problem.accountRolesUnavailableTitle',
                 messageKey: 'workflows.problem.accountRolesUnavailable', repair: 'retry' });
         }
-        return present(code, { ...WORKFLOW_PROBLEM_SHAPES.content_unavailable,
+        return present(code, { ...workflowProblemShape('content_unavailable'),
             messageKey: WORKFLOW_CONTENT_REASON_KEYS[failure.details.reason] });
     }
     return code === null ? present(null, GENERIC_SHAPE) : describeWorkflowOperationProblem(code);
@@ -334,7 +343,7 @@ function resolveWorkflowProblemCopy(
 
 /** A known private-read reason from the metadata owner uses the same presentation as an Action failure. */
 export function describeWorkflowOperationProblem(code: WorkflowOperationErrorCodeV1): WorkflowProblemPresentation {
-    return present(code, WORKFLOW_PROBLEM_SHAPES[code]);
+    return present(code, workflowProblemShape(code));
 }
 
 export function describeWorkflowTargetUnavailableProblem(diagnostic?: Readonly<{
@@ -342,7 +351,7 @@ export function describeWorkflowTargetUnavailableProblem(diagnostic?: Readonly<{
     platformReason?: 'os' | 'arch';
 }>): WorkflowProblemPresentation {
     const reason = diagnostic?.reason;
-    return present('target_unavailable', { ...WORKFLOW_PROBLEM_SHAPES.target_unavailable,
+    return present('target_unavailable', { ...UNAVAILABLE_TARGET,
         ...(reason === undefined ? {} : WORKFLOW_TARGET_REASON_SHAPES[reason]),
         ...(reason === 'platform_unsupported' && diagnostic?.platformReason === 'arch'
             ? { messageKey: 'machineAgents.unsupportedArch' } : {}) });

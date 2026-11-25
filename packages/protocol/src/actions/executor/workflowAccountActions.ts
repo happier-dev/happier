@@ -4,7 +4,7 @@ import { validateWorkflowDefinition } from '../../workflows/workflowValidationV1
 import type { ActionExecutorDeps, HostReviewedChildrenPreparationV1, WorkflowActionExecute, WorkflowActionExecuteArgs } from './types.js';
 import type { WorkflowActionIdV1, WorkflowIngressContextV1 } from '../../workflows/index.js';
 import type { WorkflowTriggerActions } from './workflowTriggerActions.js';
-import { WorkflowActionFailureV1Schema, type WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
+import { readWorkflowOperationProblemCopyV1, WORKFLOW_OPERATION_PROBLEM_COPY_V1, WorkflowActionFailureV1Schema, type WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } from '../workflowTriggerActionIds.js';
 import { AutomationSessionLifecycleRegistrationErrorCodeSchema } from '../../automations/automationTriggerDefinition.js';
@@ -40,7 +40,7 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   emit: (diagnostic: WorkflowActionFailureDiagnosticV1) => void;
 }>, preEffect = false, phase = diagnostic?.operation ?? 'dispatch'): WorkflowActionFailureV1 {
   if (phase === 'workflow.run.start' && error instanceof z.core.$ZodError) {
-    return { ok: false, errorCode: 'invalid_input', error: 'invalid_input', details: {
+    return { ok: false, errorCode: 'invalid_input', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.invalid_input.text, details: {
       issues: workflowInputIssues(projectActionInputIssues(error)),
     } };
   }
@@ -117,15 +117,17 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
     ...(thrown && 'effectAttempted' in thrown && typeof thrown.effectAttempted === 'boolean'
       ? { effectAttempted: thrown.effectAttempted } : {}),
     errorCode: code,
-    error: code === 'github_webhook_home_unreachable'
-      ? 'GitHub cannot reach this Home. Make the Home reachable, deploy manually, or ask an agent to deploy.'
-      : error instanceof Error ? error.message : code,
+    error: error instanceof Error ? error.message : code,
     ...causeFields,
     ...(details !== undefined ? { details } : code === 'target_unavailable'
       ? { details: { code: 'target_unavailable', reason: 'selection_unavailable' } } : {}),
   });
   const result: WorkflowActionFailureV1 = failure.success ? failure.data
-    : { ok: false, errorCode: 'storage_unavailable', error: 'storage_unavailable', ...causeFields };
+    : { ok: false, errorCode: 'storage_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.storage_unavailable.text, ...causeFields };
+  if (result.errorCode === 'github_webhook_home_unreachable' || result.error === result.errorCode || result.error === rawCode) {
+    result.error = result.errorCode === 'cancelled' ? 'The Workflow request was cancelled.'
+      : readWorkflowOperationProblemCopyV1(result.errorCode, 'details' in result ? result.details : undefined).text;
+  }
   if ((result.errorCode === 'storage_unavailable' || result.errorCode === 'run_access_denied'
     || (rawCode === 'account_role_overrides_unavailable' && result.errorCode === 'content_unavailable')) && diagnostic) {
     let originalCode: string | null = null;
@@ -265,7 +267,7 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       const actionId = rawArgs.actionId;
       preparing = false;
       if (rawArgs.actionId === 'workflow.definition.capture') {
-        if (!rawArgs.captureDefinition) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+        if (!rawArgs.captureDefinition) return { ok: false, errorCode: 'content_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.content_unavailable.text };
         const captured = await rawArgs.captureDefinition(rawArgs.context);
         const failure = readActionFailureEnvelope(captured);
         if (failure) return normalizeWorkflowActionThrownError(failure, undefined, true);
@@ -308,27 +310,27 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       }
       if (actionId === WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1) {
         return deps.triggers ? await deps.triggers.listSubjects(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input))
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+          : { ok: false, errorCode: 'content_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.content_unavailable.text };
       }
       if (actionId === 'workflow.trigger.list') {
         return deps.triggers ? await deps.triggers.list(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+          : { ok: false, errorCode: 'content_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.content_unavailable.text };
       }
       if (actionId === 'workflow.trigger.run_now') {
         return deps.triggers ? await deps.triggers.runNow(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+          : { ok: false, errorCode: 'content_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.content_unavailable.text };
       }
       if (actionId === 'workflow.trigger.add') {
         return deps.triggers ? await deps.triggers.add(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+          : { ok: false, errorCode: 'content_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.content_unavailable.text };
       }
       if (actionId === 'workflow.trigger.update') {
         return deps.triggers ? await deps.triggers.update(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+          : { ok: false, errorCode: 'content_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.content_unavailable.text };
       }
       if (actionId === 'workflow.trigger.remove') {
         return deps.triggers ? await deps.triggers.remove(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+          : { ok: false, errorCode: 'content_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.content_unavailable.text };
       }
       if (actionId === WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1) {
         const input = parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input);
@@ -343,7 +345,7 @@ export function createWorkflowActionExecutor(deps: Readonly<{
         return { retained: listed, live: { kind: 'unavailable', reason: 'ui_local_only' } };
       }
       if (!isWorkflowRunActionArgs(rawArgs)) {
-        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+        return { ok: false, errorCode: 'content_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.content_unavailable.text };
       }
       switch (rawArgs.actionId) {
         case 'workflow.run.start':

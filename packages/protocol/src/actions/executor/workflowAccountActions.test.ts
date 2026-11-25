@@ -80,7 +80,7 @@ describe('workflow Action refusal classification', () => {
 
   it('preserves renewed approval required by the Run owner through the strict Workflow failure consumer', () => {
     const result = normalizeWorkflowActionThrownError(Object.assign(new Error('approval_required'), { code: 'approval_required' }));
-    expect(WorkflowActionFailureV1Schema.parse(result)).toEqual({ ok: false, errorCode: 'approval_required', error: 'approval_required',
+    expect(WorkflowActionFailureV1Schema.parse(result)).toEqual({ ok: false, errorCode: 'approval_required', error: expect.stringMatching(/needs approval/i),
       failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: null, httpStatus: null } });
     expect(WorkflowOperationErrorCodeV1Schema.parse(result.errorCode)).toBe('approval_required');
   });
@@ -197,7 +197,7 @@ describe('workflow Action refusal classification', () => {
     const actions = createActionExecutor({ workflowAction: executor(false,
       Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details })) } as unknown as ActionExecutorDeps);
     await expect(actions.execute('workflow.definition.get', { definitionId }, { surface: 'ui' }))
-      .resolves.toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details,
+      .resolves.toEqual({ ok: false, errorCode: 'target_unavailable', error: expect.stringMatching(/machine or agent.*available/i), details,
         failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: null, httpStatus: null } });
     expect(normalizeWorkflowActionThrownError(Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' })))
       .toMatchObject({ errorCode: 'target_unavailable', details: { code: 'target_unavailable', reason: 'selection_unavailable' } });
@@ -302,6 +302,17 @@ describe('workflow Action refusal classification', () => {
     expect(WorkflowActionFailureV1Schema.parse(result)).toMatchObject({ ok: false, errorCode: 'storage_unavailable' });
     expect(events).toEqual([{ event: 'workflow_action_failure', errorCode: 'storage_unavailable',
       originalCode: null, httpStatus: null, operation: 'workflow.trigger.add', durationMs: 1 }]);
+  });
+
+  it('explains a stale Event declaration in the Workflow Action result', () => {
+    const failure = normalizeWorkflowActionThrownError(Object.assign(new Error('event_contribution_not_current'), {
+      code: 'event_contribution_not_current',
+    }));
+    expect(failure).toMatchObject({
+      errorCode: 'currentness_conflict',
+      error: expect.stringMatching(/declaration.*changed/i),
+      details: { reason: 'event_contribution_not_current' },
+    });
   });
 
   it('preserves the Account role preparation cause in the content-free diagnostic', () => {

@@ -912,6 +912,111 @@ export const WORKFLOW_OPERATION_ERROR_CODES_V1 = [
 export const WorkflowOperationErrorCodeV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_OPERATION_ERROR_CODES_V1));
 export type WorkflowOperationErrorCodeV1 = z.infer<typeof WorkflowOperationErrorCodeV1Schema>;
 
+// The same closed meaning selects localized app copy and the Action's plain-text explanation.
+const workflowProblemCopy = {
+  approvalWantedBody: { key: 'workflows.run.approvalWantedBody', text: "This Action needs approval before it can continue." },
+  authenticationFailed: { key: 'errors.authenticationFailed', text: "Authentication failed. Sign in to the Home again." },
+  admission_unavailable: { key: 'session.startFailure.cause.admission_unavailable', text: "The requested work cannot be admitted right now." },
+  subtreeDenied: { key: 'workflows.problem.subtreeDenied', text: "An agent can only start work in its own session or in sessions it leads." },
+  roleTargetUnavailable: { key: 'workflows.problem.roleTargetUnavailable', text: "This role cannot be used here." },
+  rolePolicyUnenforceable: { key: 'errors.rolePolicyUnenforceable', text: "The selected runtime cannot enforce this role’s policy." },
+  roleRunsAsMismatch: { key: 'workflows.problem.roleRunsAsMismatch', text: "This role runs in a way this step cannot use. Choose another role or change how the step runs." },
+  policyDeniedField: { key: 'workflows.problem.policyDeniedField', text: "Your agent settings do not allow the requested setting for work an agent starts." },
+  permissionExceedsCeiling: { key: 'workflows.problem.permissionExceedsCeiling', text: "This needs more permission than the agent that started it has." },
+  workDepthExceeded: { key: 'workflows.problem.workDepthExceeded', text: "This would go deeper than your delegation limit. Do it in this session, or raise the limit in Settings › Delegation." },
+  definitionExceedsAuthority: { key: 'workflows.problem.definitionExceedsAuthority', text: "The agent cannot save a workflow that could do more than the agent itself can start." },
+  needsRepair: { key: 'workflows.problem.needsRepair', text: "This workflow has settings that need repairing before it can run." },
+  targetUnavailable: { key: 'workflows.problem.targetUnavailable', text: "The machine or agent this workflow needs is not available right now." },
+  githubWebhookHomeUnreachable: { key: 'workflows.problem.githubWebhookHomeUnreachable', text: "GitHub can’t reach this Home. Make the Home reachable, deploy manually, or ask an agent to deploy." },
+  notFound: { key: 'workflows.problem.notFound', text: "This run no longer exists." },
+  accessDenied: { key: 'workflows.problem.accessDenied', text: "You don’t have access to this." },
+  conflict: { key: 'workflows.problem.conflict', text: "This changed somewhere else. Refresh to see the current version; your local work is kept." },
+  inputTooLarge: { key: 'workflows.problem.inputTooLarge', text: "That input is too large to send. Nothing was changed." },
+  unresolvedOutcome: { key: 'workflows.problem.unresolvedOutcome', text: "Happier cannot confirm yet that the previous work stopped, so it cannot be replaced." },
+  generic: { key: 'workflows.problem.generic', text: "Happier could not finish that workflow request. Your work is unaffected." },
+  interactionCapacity: { key: 'workflows.problem.interactionCapacity', text: "This conversation has too much waiting on it to accept more right now." },
+  conversationUnavailable: { key: 'workflows.problem.conversationUnavailable', text: "That conversation cannot be continued." },
+  workspaceRestore: { key: 'workflows.problem.workspaceRestore', text: "The workspace could not be restored. Nothing was changed." },
+  stepPreparation: { key: 'workflows.problem.stepPreparation', text: "Happier couldn’t prepare this step. No input was sent to the agent." },
+  waitSelfDependency: { key: 'workflows.problem.waitSelfDependency', text: "This would leave the workflow waiting on the conversation that started it." },
+  ineligible: { key: 'workflows.problem.ineligible', text: "This run has moved on, so that is no longer possible." },
+  custodyPending: { key: 'workflows.problem.custodyPending', text: "Happier is still waiting for the machine to confirm." },
+  requesterCustodyUnavailable: { key: 'workflows.problem.requesterCustodyUnavailable', text: "Re-save the schedule, or start again, on this Machine." },
+  contentUnavailable: { key: 'workflows.contentUnavailable', text: "The saved Workflow content is unavailable." },
+  historyBody: { key: 'workflows.readState.historyBody', text: "The Workflow history cannot be read on this device." },
+  encryptionBody: { key: 'workflows.readState.encryptionBody', text: "Set up Account encryption before reading this Workflow." },
+  keysBody: { key: 'workflows.readState.keysBody', text: "This device is waiting for the keys to open this Workflow." },
+  storageBody: { key: 'workflows.readState.storageBody', text: "Happier could not reach Workflow storage." },
+  sourceUnavailable: { key: 'workflows.problem.sourceUnavailable', text: "This workflow is unavailable, so its triggers cannot run." },
+  changeUnavailable: { key: 'workflows.triggers.legacy.changeUnavailable', text: "This saved Workflow must be converted before it can be changed." },
+  nativeGoalOwner: { key: 'workflows.problem.nativeGoalOwner', text: "The agent already keeps going toward goals on its own in this session." },
+  sessionAlreadyStarted: { key: 'workflows.problem.sessionAlreadyStarted', text: "This session has already started. Session-start triggers can only be added when a session is created." },
+  presentUserRequired: { key: 'settingsActions.reasons.presentUserRequired', text: "Review and approve this Action in the Happier app." },
+  eventDeclarationNotCurrent: {
+    key: 'workflows.problem.eventDeclarationNotCurrent',
+    text: 'The plugin declaration for this Event has changed. Update Happier and the plugin on the watcher Machine, then choose the Event again.',
+  },
+} as const;
+
+export const WORKFLOW_OPERATION_PROBLEM_COPY_V1 = {
+  approval_required: workflowProblemCopy.approvalWantedBody,
+  not_authenticated: workflowProblemCopy.authenticationFailed,
+  admission_unavailable: workflowProblemCopy.admission_unavailable,
+  invalid_token: workflowProblemCopy.authenticationFailed,
+  subtree_denied: workflowProblemCopy.subtreeDenied,
+  role_target_unavailable: workflowProblemCopy.roleTargetUnavailable,
+  role_policy_unenforceable: workflowProblemCopy.rolePolicyUnenforceable,
+  role_runs_as_mismatch: workflowProblemCopy.roleRunsAsMismatch,
+  policy_denied_field: workflowProblemCopy.policyDeniedField,
+  permission_exceeds_ceiling: workflowProblemCopy.permissionExceedsCeiling,
+  work_depth_exceeded: workflowProblemCopy.workDepthExceeded,
+  definition_exceeds_authority: workflowProblemCopy.definitionExceedsAuthority,
+  invalid_input: workflowProblemCopy.needsRepair,
+  missing_reference: workflowProblemCopy.needsRepair,
+  invalid_reference_scope: workflowProblemCopy.needsRepair,
+  target_unavailable: workflowProblemCopy.targetUnavailable,
+  github_webhook_home_unreachable: workflowProblemCopy.githubWebhookHomeUnreachable,
+  run_not_found: workflowProblemCopy.notFound,
+  run_access_denied: workflowProblemCopy.accessDenied,
+  visible_team_not_granted: workflowProblemCopy.accessDenied,
+  currentness_conflict: workflowProblemCopy.conflict,
+  event_watcher_not_current: workflowProblemCopy.targetUnavailable,
+  event_watcher_not_owned: workflowProblemCopy.accessDenied,
+  workflow_input_too_large: workflowProblemCopy.inputTooLarge,
+  workflow_outcome_unresolved: workflowProblemCopy.unresolvedOutcome,
+  workflow_http_error: workflowProblemCopy.generic,
+  workflow_interaction_capacity_exceeded: workflowProblemCopy.interactionCapacity,
+  workflow_conversation_unavailable: workflowProblemCopy.conversationUnavailable,
+  continuation_unavailable: workflowProblemCopy.conversationUnavailable,
+  workflow_workspace_restore_unavailable: workflowProblemCopy.workspaceRestore,
+  workflow_workspace_restore_failed: workflowProblemCopy.workspaceRestore,
+  workflow_step_preparation_failed: workflowProblemCopy.stepPreparation,
+  workflow_wait_self_dependency: workflowProblemCopy.waitSelfDependency,
+  ineligible_state: workflowProblemCopy.ineligible,
+  custody_pending: workflowProblemCopy.custodyPending,
+  requester_custody_unavailable: workflowProblemCopy.requesterCustodyUnavailable,
+  content_unavailable: workflowProblemCopy.contentUnavailable,
+  history_not_readable: workflowProblemCopy.historyBody,
+  encryption_setup_required: workflowProblemCopy.encryptionBody,
+  waiting_for_keys: workflowProblemCopy.keysBody,
+  storage_unavailable: workflowProblemCopy.storageBody,
+  source_unavailable: workflowProblemCopy.sourceUnavailable,
+  legacy_conversion_unsupported: workflowProblemCopy.changeUnavailable,
+  native_goal_owner: workflowProblemCopy.nativeGoalOwner,
+  session_already_started: workflowProblemCopy.sessionAlreadyStarted,
+  pull_request_link_required: workflowProblemCopy.needsRepair,
+  present_user_required: workflowProblemCopy.presentUserRequired,
+} as const satisfies Record<WorkflowOperationErrorCodeV1, { key: string; text: string }>;
+
+export function readWorkflowOperationProblemCopyV1(code: WorkflowOperationErrorCodeV1, details?: unknown) {
+  if (code === 'currentness_conflict' && details && typeof details === 'object' && 'reason' in details
+    && details.reason === 'event_contribution_not_current') {
+    return workflowProblemCopy.eventDeclarationNotCurrent;
+  }
+  return WORKFLOW_OPERATION_PROBLEM_COPY_V1[code];
+}
+
+
 /** Content-free HTTP cause only. Free-text response errors and messages are never diagnostics. */
 export const WorkflowHttpErrorDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   status: z.number().check(z.int(), z.minimum(100), z.maximum(599)),
