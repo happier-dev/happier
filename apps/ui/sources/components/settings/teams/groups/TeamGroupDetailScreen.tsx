@@ -888,7 +888,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
                 ));
             }
 
-            if (!nativeRosterReady
+            if ((!nativeRosterReady && !members.error)
                 || (candidates.status === 'loading' && candidates.rows.length === 0)) {
                 add('candidates-loading', () => (
                     <ItemGroup title={eligibleCandidates.length === 0 ? t('teams.members.personLabel') : undefined}>
@@ -904,23 +904,21 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
 
             const candidatesError = candidates.error;
             if (candidatesError) {
+                const label = teamReadFailureLabel(candidatesError);
+                const recovery = readFailureAction(candidatesError, {
+                    onPress: () => void candidates.reload(),
+                    testIDPrefix: 'team-group-candidates',
+                    reloadsFirstPage: true,
+                });
                 add('candidates-error', () => (
                     <ItemGroup title={eligibleCandidates.length === 0 ? t('teams.members.personLabel') : undefined}>
-                        {candidatesError.retryable ? (
-                                <Item
-                                    testID="team-group-candidates-retry"
-                                    title={t('teams.unavailable.retry')}
-                                    subtitle={teamReadFailureLabel(candidatesError)}
-                                    onPress={() => void candidates.reload()}
-                                    showChevron={false}
-                                />
-                            ) : (
-                                <Item
-                                    testID="team-group-candidates-unavailable"
-                                    title={teamReadFailureLabel(candidatesError)}
-                                    showChevron={false}
-                                />
-                            )}
+                        <Item
+                            testID={recovery?.testID ?? 'team-group-candidates-unavailable'}
+                            title={recovery?.label ?? label}
+                            subtitle={recovery ? label : undefined}
+                            onPress={recovery?.onPress}
+                            showChevron={false}
+                        />
                     </ItemGroup>
                 ));
             }
@@ -941,7 +939,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
 
             // The Team roster is paged; a Group add must be able to reach a
             // member who is not on its first page.
-            if (candidates.status !== 'loading' && candidates.hasMore) {
+            if (!candidatesError && candidates.status !== 'loading' && candidates.hasMore) {
                 add('candidates-load-more', () => (
                         <ItemGroup>
                             <Item
@@ -1089,6 +1087,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         members,
         notice,
         picking,
+        readFailureAction,
         rosterAddSettled,
         rosterEditable,
         rosterNotice,

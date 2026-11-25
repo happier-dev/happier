@@ -27,6 +27,7 @@ export function teamReadFailureLabel(failure: HomeDomainFailure<string> | Scoped
     if (isActionTurnedOffErrorCode(failure.code)) return t('actionConfirmations.turnedOffReadMessage');
     if (failure.kind === 'unreachable') return t('teams.unavailable.offline');
     if (failure.code === 'team_authentication_required') return t('session.access.authenticationRequired');
+    if (failure.code === 'invalid_team_input') return t('homeGovernance.invalidRead');
     if (failure.code === 'invalid_team_cursor') return t('teams.errors.listCursorExpired');
     const refusal = teamRefusalLabel({ ...failure, code: failure.code ?? null });
     if (refusal) return refusal;

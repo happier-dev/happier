@@ -802,6 +802,64 @@ describe('TeamGroupDetailScreen', () => {
         expect(screen.getTextContent()).toContain('teams.errors.loadFailed');
     });
 
+    describe('Team roster refusals in the Group add picker', () => {
+        it.each([
+            { code: 'invalid_team_input', status: 400, label: 'homeGovernance.invalidRead' },
+            { code: 'team_not_found', status: 404, label: 'teams.errors.notFound' },
+            { code: 'teams_unavailable', status: 404, label: 'teams.unavailable.disabled' },
+            { code: 'team_authentication_unavailable', status: 503, label: 'teams.credentials.externalApi.authenticationUnavailable' },
+            { code: 'team_authentication_required', status: 403, label: 'session.access.authenticationRequired', recovery: '/teams/team-1/sign-in' },
+            { code: 'team_forbidden', status: 403, label: 'teams.errors.signInOutdated', details: { reason: 'legacy_home_credential' }, recovery: '/settings/account' },
+            { code: 'team_forbidden', status: 403, label: 'teams.errors.forbidden' },
+        ] as const)('presents $code once without a futile retry', async (refusal) => {
+            const serverId = await addManagedHome();
+            harness.answer(serverId, GROUP_GET_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, memberCount: 0 }) });
+            harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+            harness.answer(serverId, TEAM_MEMBERS_LIST_PATH, { status: refusal.status, body: { error: refusal.code, ...('details' in refusal ? { details: refusal.details } : {}) } });
+
+            const screen = await renderGroupDetail(serverId);
+            await screen.pressByTestIdAsync('team-group-add-member');
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(refusal.label));
+            expect(screen.getTextContent().split(refusal.label)).toHaveLength(2);
+            expect(screen.findByTestId('team-group-candidates-retry')).toBeNull();
+            expect(screen.findByTestId('team-group-candidates-empty')).toBeNull();
+            if ('recovery' in refusal) {
+                await screen.pressByTestIdAsync('team-group-candidates-sign-in');
+                const destination = new URL(groupRouterPush.mock.lastCall?.[0] ?? '', 'https://app.example');
+                expect(destination.pathname).toBe(refusal.recovery);
+            } else {
+                expect(screen.findByTestId('team-group-candidates-sign-in')).toBeNull();
+            }
+        });
+
+        it('refreshes the first Team roster page after its next-page cursor is refused', async () => {
+            const serverId = await addManagedHome();
+            harness.answer(serverId, GROUP_GET_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, memberCount: 0 }) });
+            harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+            harness.answer(serverId, TEAM_MEMBERS_LIST_PATH, {
+                body: { items: [teamMembershipFixture({ accountId: 'account-old' })], nextCursor: 'stale-cursor' },
+            });
+
+            const screen = await renderGroupDetail(serverId);
+            await screen.pressByTestIdAsync('team-group-add-member');
+            await waitForTestId(screen, 'team-group-candidates-load-more');
+            harness.answer(serverId, TEAM_MEMBERS_LIST_PATH, { status: 400, body: { error: 'invalid_team_cursor' } });
+            await screen.pressByTestIdAsync('team-group-candidates-load-more');
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('teams.errors.listCursorExpired'));
+            expect(screen.findByTestId('team-group-candidates-retry')).toBeNull();
+            expect(screen.findByTestId('team-group-candidates-load-more')).toBeNull();
+
+            harness.answer(serverId, TEAM_MEMBERS_LIST_PATH, {
+                body: { items: [teamMembershipFixture({ accountId: 'account-new' })], nextCursor: null },
+            });
+            await screen.pressByTestIdAsync('team-group-candidates-reload');
+            await waitForTestId(screen, 'team-group-candidate:account-new');
+            expect(screen.findByTestId('team-group-candidate:account-old')).toBeNull();
+            expect(harness.requestsFor(TEAM_MEMBERS_LIST_PATH).map((call) => (call.input as { cursor?: string }).cursor ?? null))
+                .toEqual([null, 'stale-cursor', null]);
+        });
+    });
+
     describe('Group roster add', () => {
         it.each([
             { code: 'invalid_team_input', details: undefined, label: 'teams.groups.invalidLifecycleRequest', recovery: 'groups' },
