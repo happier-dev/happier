@@ -55,7 +55,8 @@ import { readRunnerConnectedAccountBinding } from './runnerConnectedAccountBindi
 import { isCurrentTrackedSession, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 type OpenAccountConnectionProviderBrokerAccess = import('@/providers/broker/accountConnectionClient').OpenAccountConnectionProviderBrokerAccess;
-type ManagedProviderRequesterBrokerContext = Pick<RequesterSessionRuntimeContext, 'api' | 'bootstrap'>;
+type ManagedProviderRequesterBrokerContext = Pick<RequesterSessionRuntimeContext, 'api' | 'bootstrap'>
+  & Readonly<{ homeId: string }>;
 export type OpenRunnerAccountConnectionProviderBrokerAccess = (
   input: Parameters<OpenAccountConnectionProviderBrokerAccess>[0],
   requester?: ManagedProviderRequesterBrokerContext,
@@ -300,6 +301,19 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             || tracked.spawnOptions?.providerBindingMetadataV1?.runtimeBindingBasis?.deployment.kind === 'managedLocal')) {
             providerRequester = await resolveSessionAccountContext(sessionId, undefined, signal);
           }
+          const requesterOrigin = providerRequester
+            ? await params.resolveCurrentMachineExecutionOriginContext?.(signal) : undefined;
+          let brokerRequester: ManagedProviderRequesterBrokerContext | undefined;
+          if (providerRequester) {
+            if (!requesterOrigin || providerRequester.bootstrap.homeServerIdentityId !== requesterOrigin.serverIdentityId) {
+              throw new PluginError({ code: 'requester_session_not_current' });
+            }
+            brokerRequester = {
+              homeId: requesterOrigin.serverIdentityId,
+              api: providerRequester.api,
+              bootstrap: providerRequester.bootstrap,
+            };
+          }
           const savedSecretOperationContext = providerRequester?.bootstrap.savedSecretOperationContext;
           const requireRequesterProviderAuthority = () => {
             if (!providerRequester) return undefined;
@@ -351,10 +365,9 @@ getApiMachineForSessions: () => ApiMachineClient | null;
           const resolveSharedGatewayBinding = async (
             basis: ProviderRuntimeBindingBasisV1,
           ) => {
-            const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
+            const origin = requesterOrigin ?? await params.resolveCurrentMachineExecutionOriginContext?.(signal);
             const accountId = providerRequester ? providerRequester.bootstrap.attribution.accountId : params.externalActionAccountId;
-            if (!origin || origin.machineId !== params.machineId || !accountId
-              || (providerRequester && providerRequester.bootstrap.homeServerIdentityId !== origin.serverIdentityId)) {
+            if (!origin || origin.machineId !== params.machineId || !accountId) {
               throw createManagedProviderAuthorityError('gateway_execution_identity');
             }
             return Object.freeze({
@@ -458,7 +471,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 pluginId: scope.pluginId, immutableGenerationId: scope.sourceCustody.immutableGenerationId,
               })),
             openBroker: params.openAccountConnectionProviderBrokerAccess
-              ? request => params.openAccountConnectionProviderBrokerAccess!(request, providerRequester ?? undefined)
+              ? request => params.openAccountConnectionProviderBrokerAccess!(request, brokerRequester)
               : undefined,
             installConsumerCleanup: cleanup => { managedProviderCleanup.current = cleanup; },
             cleanup: cleanupManagedProvider, readSupervisionLaunchAuthority,

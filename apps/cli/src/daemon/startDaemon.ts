@@ -2778,15 +2778,13 @@ export async function startDaemon(
           const runtime = machineIrohRuntime;
           if (!runtime) throw createNativeRuntimeAbsentProviderBrokerError(request);
           const accountId = requester ? requester.bootstrap.attribution.accountId : externalActionAccountId;
-          if (requester && requester.bootstrap.homeServerIdentityId !== managedPolicyHomeId) {
-            throw new PluginError({ code: 'requester_session_not_current' });
-          }
+          const homeId = requester ? requester.homeId : managedPolicyHomeId;
           const openTunnel = createProviderBrokerMachineCarrierTunnelOpen({
-            homeId: managedPolicyHomeId, accountId, localMachineId: machineId,
+            homeId, accountId, localMachineId: machineId,
             runtime, resolveTrustRoots: resolvePeerMediationTrustRoots,
           });
           return await openAccountConnectionProviderBrokerAccess({
-            ...request, homeId: managedPolicyHomeId, accountId, initiatorMachineId: machineId,
+            ...request, homeId, accountId, initiatorMachineId: machineId,
             openBroker: (openRequest, signal) => requester
               ? runWithServerHttpBaseUrl(requester.bootstrap.serverHttpBaseUrl,
                 () => requester.api.openAccountConnectionProviderBroker(openRequest, { signal }))

@@ -72,7 +72,8 @@ it.each([
     let requester: RequesterSessionRuntimeContext | null = null;
     const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
     let brokerAttempted = false;
-    let brokerRequesterSource: { accountId?: string; connectionId: string } | undefined;
+    let brokerRequesterSource: { homeId?: string; accountId?: string; connectionId: string } | undefined;
+    let machineHomeId = 'home';
     const warning = vi.spyOn(logger, 'warnLocalFile');
     try {
       const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.fixture`;
@@ -233,9 +234,9 @@ it.each([
         spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
         spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), connectedServicesRestartRequestedSessions: new Set(),
         beforeShutdown: () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
-        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'home', machineId: fixture.machineId }),
+        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: machineHomeId, machineId }),
         ...(placement === 'peer' ? { openAccountConnectionProviderBrokerAccess: async (request, brokerRequester) => {
-          brokerRequesterSource = { accountId: brokerRequester?.bootstrap.attribution.accountId, connectionId: request.connectionId };
+          brokerRequesterSource = { homeId: brokerRequester?.homeId, accountId: brokerRequester?.bootstrap.attribution.accountId, connectionId: request.connectionId };
           brokerAttempted = true;
           if (failureReason) return await openRefusedAccountConnectionBroker(request, failureReason);
           throw new Error('No broker effect during preparation');
@@ -299,7 +300,7 @@ it.each([
         }), { sessionId, runner, retainedAgent, invocationContext: tracked.runnerAgentInvocationContext!,
           trackedSession: tracked, isCurrent: async () => true });
         expect(refused).toMatchObject({ ok: false });
-        if (requesterAccountId) expect(brokerRequesterSource).toEqual({ accountId: requesterAccountId, connectionId: 'run-gateway' });
+        if (requesterAccountId) expect(brokerRequesterSource).toEqual({ homeId: 'home', accountId: requesterAccountId, connectionId: 'run-gateway' });
         expect(AgentRuntimeDaemonServiceResponseV1Schema.parse(refused)).toEqual(refused);
         if (failureReason === 'admission_refused') {
           expect(refused).toMatchObject({ error: { cause: { code: 'session_not_active' } } });
@@ -388,6 +389,14 @@ it.each([
         // A similarly named connection in the custodian's catalog cannot
         // supply a missing requester connection or grant.
         setActiveAccountSettingsSnapshot(snapshot);
+        machineHomeId = 'different-home';
+        const wrongHome = await services.dispatch(AgentRuntimeDaemonServiceRequestV1Schema.parse({
+          ...request, operation: { ...request.operation, requestId: 'gateway-wrong-home', invocationId: 'gateway-wrong-home' },
+        }), { sessionId, runner, retainedAgent, invocationContext: tracked.runnerAgentInvocationContext!,
+          trackedSession: tracked, isCurrent: async () => true });
+        expect(wrongHome).toMatchObject({ ok: false, error: { cause: { code: 'requester_session_not_current' } } });
+        machineHomeId = 'home';
+
         const context = requesterBootstrap.savedSecretOperationContext;
         expect(await context.commitProviderConnectionsCatalog({ expectedSettingsVersion: context.readSnapshot()!.settingsVersion,
           catalog: { ...emptyCatalog, revision: 3 } })).toBe(true);
