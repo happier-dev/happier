@@ -156,12 +156,6 @@ export interface Settings {
     /** Whether the descriptor is exact or advisory; written by the server profile owner. */
     homeConnectionDescriptorAuthority?: import('@/server/serverProfiles').ServerProfile['homeConnectionDescriptorAuthority']
   }>
-  daemonAutoStartWhenRunningHappy?: boolean
-  /**
-   * Last applied Machine role set per server and Machine (stored `rolesV1.active`; absent = every core role).
-   * The daemon boots from it so roles that are off never start, even offline; metadata stays the desired value.
-   */
-  machineRolesByServerIdByMachineId?: Record<string, Record<string, readonly string[] | undefined> | undefined>
   /** Opt-in startup refresh of stale runners; known active turns are skipped. */
   restartSessionRunnersOnUpdate?: boolean
   chromeMode?: boolean
@@ -437,9 +431,13 @@ export async function readSettings(): Promise<Settings> {
 
 function serializeSettingsForDisk(settings: Settings): Settings {
   const { lastChangesCursorByAccountId: _legacyCursor,
-    lastChangesCursorByServerIdByAccountId: _legacyScopedCursors, ...rest } = omitReleasedMachineRegistrationKeys(settings) as Settings & {
+    lastChangesCursorByServerIdByAccountId: _legacyScopedCursors,
+    machineRolesByServerIdByMachineId: _retiredRoles,
+    daemonAutoStartWhenRunningHappy: _retiredAutoStart, ...rest } = omitReleasedMachineRegistrationKeys(settings) as Settings & {
       lastChangesCursorByAccountId?: unknown;
       lastChangesCursorByServerIdByAccountId?: unknown;
+      machineRolesByServerIdByMachineId?: unknown;
+      daemonAutoStartWhenRunningHappy?: unknown;
     };
   return {
     ...rest,

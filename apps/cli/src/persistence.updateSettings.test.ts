@@ -72,7 +72,7 @@ describe('updateSettings', () => {
     let updaterRan = false;
     await expect(updateSettings((current) => {
       updaterRan = true;
-      return { ...current, daemonAutoStartWhenRunningHappy: true };
+      return { ...current, restartSessionRunnersOnUpdate: true };
     })).rejects.toThrow();
 
     expect(updaterRan).toBe(false);
@@ -84,8 +84,8 @@ describe('updateSettings', () => {
 
     // Once the user repairs the file, a fresh update can proceed.
     await writeFile(configuration.settingsFile, JSON.stringify({ schemaVersion: 6, onboardingCompleted: true }));
-    await updateSettings((current) => ({ ...current, daemonAutoStartWhenRunningHappy: true }));
-    expect(await readSettings()).toMatchObject({ onboardingCompleted: true, daemonAutoStartWhenRunningHappy: true });
+    await updateSettings((current) => ({ ...current, restartSessionRunnersOnUpdate: true }));
+    expect(await readSettings()).toMatchObject({ onboardingCompleted: true, restartSessionRunnersOnUpdate: true });
   });
 
   it.each(['EBUSY', 'EPERM', 'EACCES'])('preserves settings when reading fails with %s', async (code) => {
@@ -121,7 +121,7 @@ describe('updateSettings', () => {
 
     await expect(updateSettings((current) => {
       updaterRan = true;
-      return { ...current, daemonAutoStartWhenRunningHappy: true };
+      return { ...current, restartSessionRunnersOnUpdate: true };
     })).rejects.toMatchObject({ code });
 
     expect(updaterRan).toBe(false);
@@ -130,10 +130,10 @@ describe('updateSettings', () => {
     expect(existsSync(`${configuration.settingsFile}.tmp`)).toBe(false);
     expect(await readFile(cursorPath, 'utf8')).toBe(cursorContent);
     failRead = false;
-    await updateSettings((current) => ({ ...current, daemonAutoStartWhenRunningHappy: true }));
+    await updateSettings((current) => ({ ...current, restartSessionRunnersOnUpdate: true }));
     const { lastUsedAt, ...profilePreferences } = saved.servers.selfhost;
     expect(await readSettings()).toMatchObject({ schemaVersion: 6, onboardingCompleted: true, activeServerId: 'selfhost',
-      servers: { selfhost: profilePreferences }, daemonAutoStartWhenRunningHappy: true });
+      servers: { selfhost: profilePreferences }, restartSessionRunnersOnUpdate: true });
     expect(await readServerProfileObservations()).toEqual({ selfhost: lastUsedAt });
     expect(await readFile(cursorPath, 'utf8')).toBe(cursorContent);
   });

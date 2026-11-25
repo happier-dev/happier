@@ -1,19 +1,40 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 import {
   getMachineRolesV1, mutateMachineRolesV1, readMachineRolesSnapshotFromMetadataV1, resolveActiveMachineRolesV1,
+  MachineRolesPolicyV1StoredSchema,
   type MachineRoleCatalogEntryV1, type MachineRolesGetResultV1, type MachineRolesMutationResultV1,
 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import type { MachineMetadataFieldPortV1, MachineMetadataFieldReadV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 
-import { updateSettings } from '@/persistence';
+import { configuration } from '@/configuration';
+import { isServerIdFilesystemSafe } from '@/server/serverId';
 import { logger } from '@/ui/logger';
+import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
+
+function appliedMachineRolesPath(serverId: string, machineId: string): string {
+  if (!isServerIdFilesystemSafe(serverId)) throw new Error('Invalid Machine roles Home');
+  const machineKey = createHash('sha256').update(machineId).digest('hex');
+  return join(configuration.serversDir, serverId.trim(), 'machine-roles', `${machineKey}.json`);
+}
+
+async function readAppliedMachineRoles(serverId: string, machineId: string): Promise<readonly string[] | null> {
+  try {
+    const policy: unknown = JSON.parse(await readFile(appliedMachineRolesPath(serverId, machineId), 'utf8'));
+    return policy === null ? null : MachineRolesPolicyV1StoredSchema.parse(policy).active;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.warn('[DAEMON RUN] Machine roles: failed to read the applied role set', error);
+    }
+    return null;
+  }
+}
 
 export async function writeAppliedMachineRoles(serverId: string, machineId: string, active: readonly string[] | null): Promise<void> {
-  await updateSettings(current => {
-    const byMachine = { ...current.machineRolesByServerIdByMachineId?.[serverId] };
-    if (active) byMachine[machineId] = [...active];
-    else delete byMachine[machineId];
-    return { ...current, machineRolesByServerIdByMachineId: { ...current.machineRolesByServerIdByMachineId, [serverId]: byMachine } };
-  });
+  // Publish in observation order. Each write replaces only this Machine's record.
+  writeJsonAtomicSync(appliedMachineRolesPath(serverId, machineId), active === null ? null : { active });
 }
 
 /**
@@ -39,18 +60,38 @@ export type MachineRolesRuntime = Readonly<{
   stop: () => void;
 }>;
 
-export function createMachineRolesRuntime(dependencies: Readonly<{
+type MachineRolesRuntimeDependencies = Readonly<{
   port: MachineMetadataFieldPortV1;
   /** Admitted plugin `machineRoles`, qualified; core roles are always in the catalog. */
   readPluginCatalog?: () => readonly MachineRoleCatalogEntryV1[];
-  /** Last applied stored set from local settings: a Machine with roles off boots with them off, even offline. */
+  /** A Machine with roles off boots with them off, even offline. */
   initialStoredRoles?: readonly string[] | null;
   /** Records the applied stored set (null = missing field) when it really changes. */
   persistApplied?: (active: readonly string[] | null) => void | Promise<void>;
-}>): MachineRolesRuntime {
+}>;
+
+export async function createDaemonMachineRolesRuntime(dependencies: Readonly<
+  Pick<MachineRolesRuntimeDependencies, 'port' | 'readPluginCatalog'> & {
+    serverId: string;
+    resolveMachineId: () => string | null | undefined;
+  }
+>): Promise<MachineRolesRuntime> {
+  const { serverId, resolveMachineId, ...runtime } = dependencies;
+  const machineId = resolveMachineId();
+  return createMachineRolesRuntime({
+    ...runtime,
+    initialStoredRoles: machineId ? await readAppliedMachineRoles(serverId, machineId) : null,
+    async persistApplied(active) {
+      const currentMachineId = resolveMachineId();
+      if (currentMachineId) await writeAppliedMachineRoles(serverId, currentMachineId, active);
+    },
+  });
+}
+
+export function createMachineRolesRuntime(dependencies: MachineRolesRuntimeDependencies): MachineRolesRuntime {
   let snapshot: MachineRolesGetResultV1 = { status: 'unavailable' };
   // Until the first readable snapshot, and while metadata is unreadable, the
-  // last applied set stands; at start that is every core role (today).
+  // last applied set stands. With no stored policy the core roles default on.
   let applied: Readonly<{ rolesV1?: unknown }> = dependencies.initialStoredRoles
     ? { rolesV1: { active: [...dependencies.initialStoredRoles] } } : {};
   let persistedKey = JSON.stringify(dependencies.initialStoredRoles ? [...dependencies.initialStoredRoles].sort() : null);

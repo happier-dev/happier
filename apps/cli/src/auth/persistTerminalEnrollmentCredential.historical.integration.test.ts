@@ -25,7 +25,7 @@ describe('managed enrollment historical custody', () => {
       const persistence = await import('@/persistence');
       const { configuration } = await import('@/configuration');
       const { registerAndPersistManagedTerminalEnrollmentCredential } = await import('./persistTerminalEnrollmentCredential');
-      const { createMachineRolesRuntime } = await import('@/daemon/roles/machineRolesRuntime');
+      const { createDaemonMachineRolesRuntime } = await import('@/daemon/roles/machineRolesRuntime');
       const { createMachineRoleActivationRuntime } = await import('@/daemon/roles/machineRoleActivation');
       const { decodePlainMachineStoredContent, encodePlainMachineStoredContent } = await import('@happier-dev/protocol/machines/machineStoredContent');
       const initialMachineRoles = { active: CORE_MACHINE_ROLE_IDS_V1.filter(role => role !== 'broker') };
@@ -53,8 +53,7 @@ describe('managed enrollment historical custody', () => {
         homeRetry: { deadlineMs: Date.now() + 5_000, pollIntervalMs: 1 }, assertCurrent() {} };
       const { machineId } = await registerAndPersistManagedTerminalEnrollmentCredential(params);
       expect((await persistence.readStoredCredentialsForServerId(configuration.activeServerId))?.token).toBe(params.token);
-      const initialStoredRoles = (await persistence.readSettings()).machineRolesByServerIdByMachineId?.[configuration.activeServerId]?.[machineId];
-      const roles = createMachineRolesRuntime({ initialStoredRoles, port: {
+      const roles = await createDaemonMachineRolesRuntime({ serverId: configuration.activeServerId, resolveMachineId: () => machineId, port: {
         read: async () => ({ status: 'unavailable' }), compareAndSwap: async () => ({ status: 'unavailable' }),
       } });
       const ingress: boolean[] = [];

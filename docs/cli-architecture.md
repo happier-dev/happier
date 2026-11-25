@@ -9686,6 +9686,13 @@ follows later changes to the set. Code inside a role loads eagerly. The entry
 starts the role's runtime and registers its Machine RPC family as one owned
 handler set (`RpcHandlerManager.replaceOwnedHandlers('machine-role:<role>')`).
 
+The role runtime stores the last applied policy in a daemon-owned record scoped
+to the Home and Machine. It loads that record before role activation, so a
+disabled role stays off when Home is unreachable during startup. Managed
+enrollment records the policy returned by Home before publishing credentials.
+When Home is reachable, its Machine metadata supplies the desired policy.
+Older 0.3 development settings entries are discarded on settings publication.
+
 Machine core registers no method in a split role's RPC namespaces
 (`daemon/roles/machineRoleRpcNamespaces.ts`). While a role is inactive its
 handlers are not registered, and a local, direct-peer or in-process call into

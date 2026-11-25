@@ -224,7 +224,7 @@ import { createMachineVitalsReader } from './vitals/createMachineVitalsReader';
 import { createMinuteHistoryStore } from './vitals/history/minuteHistoryStore';
 import { createMachineResourceSummary, type MachineResourceSummary } from './resources/machineResourceSummary';
 import { createMachineResourcesPolicyRuntime, type MachineResourcesPolicyRuntime } from './resources/machineResourcesPolicy';
-import { createMachineRolesRuntime, writeAppliedMachineRoles, type MachineRolesRuntime } from './roles/machineRolesRuntime';
+import { createDaemonMachineRolesRuntime, type MachineRolesRuntime } from './roles/machineRolesRuntime';
 import { machineRoleCatalogFromPluginsV1, projectPublishedMachineRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { bindMachineRoleAdmission } from '@/plugins/projection/registry/builtIn/machineRoles';
 import { createPersistedTakeoverAdmissionWaiter } from './spawn/persistedTakeoverAdmission';
@@ -739,27 +739,17 @@ export async function startDaemon(
       : null;
     let preflightMachineRegistration = bootstrapContext.preflightMachineRegistration;
     let machineId = bootstrapContext.machineId;
-    // Machine roles apply first (OWNER-RULINGS 2026-11-12): boot from the last applied set in local
-    // settings so roles that are off never start, even offline; metadata then revalidates it.
-    const machineRolesScope: { serverId: string; machineId: string | null | undefined } = { serverId: configuration.activeServerId, machineId };
-    const bootMachineRoles = await (async () => {
-      const roleScope = machineRolesScope;
-      const { readSettings } = await import('@/persistence');
-      const initialStoredRoles = machineId
-        ? (await readSettings()).machineRolesByServerIdByMachineId?.[roleScope.serverId]?.[machineId] ?? null : null;
-      return createMachineRolesRuntime({ initialStoredRoles,
-        // Admitted plugin `machineRoles` from the active registry; refreshed on every registry publication below.
-        readPluginCatalog: () => machineRoleCatalogFromPluginsV1((pluginReloadController.getState().activeRegistry?.contributes.machineRoles ?? [])
-          .map(entry => ({ pluginId: entry.pluginId, declaration: entry.definition }))),
-        port: {
-          read: async () => apiMachine?.getMachineMetadataSnapshot() ?? { status: 'unavailable' },
-          compareAndSwap: async input => apiMachine ? apiMachine.compareAndSwapMachineMetadata(input) : { status: 'unavailable' },
-        },
-        persistApplied: async active => {
-          if (!roleScope.machineId) return;
-          await writeAppliedMachineRoles(roleScope.serverId, roleScope.machineId, active);
-        } });
-    })();
+    const bootMachineRoles = await createDaemonMachineRolesRuntime({
+      serverId: configuration.activeServerId,
+      resolveMachineId: () => machineId,
+      // Registry publications refresh admitted plugin roles.
+      readPluginCatalog: () => machineRoleCatalogFromPluginsV1((pluginReloadController.getState().activeRegistry?.contributes.machineRoles ?? [])
+        .map(entry => ({ pluginId: entry.pluginId, declaration: entry.definition }))),
+      port: {
+        read: async () => apiMachine?.getMachineMetadataSnapshot() ?? { status: 'unavailable' },
+        compareAndSwap: async input => apiMachine ? apiMachine.compareAndSwapMachineMetadata(input) : { status: 'unavailable' },
+      },
+    });
     machineRoles = bootMachineRoles;
     // Plugin `machineRoles` resolve against this applied set at the bundled admission owner.
     releaseMachineRoleAdmission = bindMachineRoleAdmission(() => bootMachineRoles.appliedMetadata());
@@ -3821,7 +3811,6 @@ export async function startDaemon(
         if (admissionDrain.isPublicationQuiescing()) return;
         if (fileState.machineId === resolvedMachineId) {
           machineId = resolvedMachineId;
-          machineRolesScope.machineId = resolvedMachineId;
           return;
         }
         const nextFileState = {
@@ -3837,7 +3826,6 @@ export async function startDaemon(
         }
         fileState.machineId = resolvedMachineId;
         machineId = resolvedMachineId;
-        machineRolesScope.machineId = resolvedMachineId;
       },
       isShuttingDown: admissionDrain.isFinalShutdown,
       isQuiescing: admissionDrain.isPublicationQuiescing,

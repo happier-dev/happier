@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { readFile, writeFile } from 'node:fs/promises';
 import { CORE_MACHINE_ROLE_IDS_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import { createMachineRolesRuntime } from './machineRolesRuntime';
 
 function machine(initial: Record<string, unknown> = {}) {
@@ -78,6 +81,50 @@ describe('daemon machine roles runtime', () => {
 });
 
 describe('daemon machine roles boot from the last applied set', () => {
+  it('restores the Home-confirmed set offline from role storage and ignores the former settings copy', async () => {
+    await withTempDir('daemon-applied-machine-roles-', async home => {
+      const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+      env.patch({ HAPPIER_HOME_DIR: home });
+      vi.resetModules();
+      try {
+        const { configuration } = await import('@/configuration');
+        const { createDaemonMachineRolesRuntime, writeAppliedMachineRoles } = await import('./machineRolesRuntime');
+        const serverId = configuration.activeServerId;
+        const machineId = 'machine-a';
+        const settings = JSON.stringify({ schemaVersion: 6, machineRolesByServerIdByMachineId: {
+          [serverId]: { [machineId]: ['sessions'], 'machine-b': [] },
+        } });
+        await writeFile(configuration.settingsFile, settings);
+        await writeAppliedMachineRoles(serverId, machineId, []);
+        expect(await readFile(configuration.settingsFile, 'utf8')).toBe(settings);
+
+        const m = machine();
+        m.setAvailable(false);
+        const boot = (homeId: string, id: string) =>
+          createDaemonMachineRolesRuntime({ port: m.port, serverId: homeId, resolveMachineId: () => id });
+        const runtime = await boot(serverId, machineId);
+        try {
+          expect([...runtime.activeRoles()]).toEqual([]);
+          await runtime.reload();
+          expect([...runtime.activeRoles()]).toEqual([]);
+          m.setAvailable(true);
+          m.edit({ rolesV1: { active: ['broker'] } });
+          await runtime.reload();
+        } finally { runtime.stop(); }
+
+        m.setAvailable(false);
+        const restarted = await boot(serverId, machineId);
+        const otherMachine = await boot(serverId, 'machine-b');
+        const otherHome = await boot('other-home', machineId);
+        try {
+          expect([...restarted.activeRoles()]).toEqual(['broker']);
+          expect(otherMachine.isActive('sessions')).toBe(true);
+          expect(otherHome.isActive('sessions')).toBe(true);
+        } finally { restarted.stop(); otherMachine.stop(); otherHome.stop(); }
+      } finally { env.restore(); vi.resetModules(); }
+    });
+  });
+
   it('starts with the persisted set before any metadata read, revalidates, and persists only real changes', async () => {
     const m = machine({ rolesV1: { active: ['broker'] } });
     m.setAvailable(false);
