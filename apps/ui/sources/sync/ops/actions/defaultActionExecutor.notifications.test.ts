@@ -137,6 +137,29 @@ describe('default Action notification daemon transport', () => {
         } });
     });
 
+    it('reads a Use guest\'s channels on their own daemon when the field targets another person\'s Machine', async () => {
+        const serverId = await addHome();
+        const own = createMachineFixture({ id: 'machine-one', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            access: { custodian: { accountId: 'account-a', displayName: 'Account A' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
+        const shared = createMachineFixture({ id: 'machine-owner', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            access: { custodian: { accountId: 'account-owner', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } });
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        await publishMachineInventoryForTest({ serverId, accountId: 'account-a' }, [own, shared]);
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const options = [{ value: 'builtin:expo_push', label: 'Push notifications' }];
+        daemonResult = { actionId: null, fieldPath: null, optionsSourceId: 'notifications.channels.available', options };
+
+        // The workflow editor's Where Machine pins every field read; the channel
+        // catalog is the guest's Account data, which the owner's daemon must not serve.
+        const result = await createDefaultActionExecutor().execute('action.options.resolve', {
+            actionId: 'notifications.notify_me', fieldPath: 'channels',
+        }, { surface: 'ui', serverId, externalActionTarget: { kind: 'machine', machineId: 'machine-owner' } });
+        expect(result).toEqual({ ok: true, result: { actionId: 'notifications.notify_me', fieldPath: 'channels',
+            optionsSourceId: 'notifications.channels.available', options } });
+        expect(harness.requestsFor('/v1/actions/action.options.resolve/execution-authorization').map(request =>
+            ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.input).machineId)).toEqual(['machine-one']);
+    });
+
     it('does not borrow the focused Home daemon for a notification Account on another Home', async () => {
         const serverId = await addHome();
         const otherServerId = await harness.addHome({
