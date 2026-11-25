@@ -4,10 +4,11 @@ import { MachineAgentIsolationPreviewResultV1Schema } from '@happier-dev/protoco
 import isolationPreviews from '../../../../../../packages/tests/fixtures/machines/agentIsolationRecoveryPreviews.json';
 
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 
-import { projectActionOperationDetail, projectAgentIsolationRecovery, projectMachineSetupStepChecklist, readMachineSetupRunFailure } from './actionOperationDetailPresentation';
+import { presentFailure, projectActionOperationDetail, projectAgentIsolationRecovery, projectMachineSetupStepChecklist, readMachineSetupRunFailure } from './actionOperationDetailPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 
@@ -28,6 +29,40 @@ function operation(overrides: Partial<ActionOperationSnapshot> = {}): ActionOper
 }
 
 describe('action operation detail presentation', () => {
+    it('shows the typed recovery for a settled deployment activation failure', () => {
+        // Round 17's failed staging activation, with fixture identities and no raw Compose output.
+        const failureCause = {
+            phase: 'deployment.native.compose.native_compose_command_failed',
+            errorClass: 'Error', errorCode: null, httpStatus: null,
+        };
+        const reason = 'Service web exited with code 78. Check the service definition in the Compose file.';
+        const snapshot = ActionOperationSnapshotV1Schema.parse(operation({
+            actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, state: 'failed', settledAt: 2_000,
+            domainRef: { kind: 'deployment', serverId: 'home', environmentId: 'staging', deploymentId: 'deployment-1' },
+            error: {
+                errorCode: 'native_failed', error: 'native_failed (activate)', effectAttempted: true, failureCause,
+                details: {
+                    serverId: 'home', environmentId: 'staging', deploymentId: 'deployment-1', targetLinkId: 'target-1',
+                    logsAvailable: true,
+                    failure: {
+                        code: 'native_failed', phase: 'activate', effectAttempted: true, failureCause,
+                        requiredFact: 'deploymentActionResult', remedy: reason,
+                        nativeCompose: { subcommand: 'up', exitStatus: 1 },
+                        nativeActivation: { service: 'web', exitStatus: 78 },
+                    },
+                },
+            },
+        }));
+
+        const failure = presentFailure(snapshot);
+        expect(failure?.reason).toBe(reason);
+        expect(failure?.technicalLines).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'failure-code', value: 'native_failed' }),
+            expect.objectContaining({ key: 'failure-message', value: 'native_failed (activate)' }),
+            expect.objectContaining({ key: 'failure-cause-phase', value: failureCause.phase }),
+        ]));
+    });
+
     it('shows an opaque child policy refusal with the required and requested surfaces', () => {
         const reason = 'Approval required by happier.machine.lima/actions/acquire; required surface: ui; requested surface: ui.';
         const detail = projectActionOperationDetail(operation({ actionId: 'machines.managed.bootstrap.retry',
@@ -67,7 +102,9 @@ describe('action operation detail presentation', () => {
             error: { errorCode: 'machine_setup_setup_failed', error: 'machine_setup_setup_failed',
                 details: { kind: 'finiteCommand', phase: 'setup', step: 1, exitCode: 23, signal: 0 } },
         }), 'available');
-        expect(detail.failure?.reason).toBe(t('localServices.actions.failure.exitCode', { code: '23' }));
+        expect(detail.failure?.reason).toBe(t('machinePresets.setup.commandStoppedWithExit', {
+            step: t('projects.scripts.setup.step', { n: 2 }), code: 23,
+        }));
         expect(detail.failure?.technicalLines).toEqual(expect.arrayContaining([
             expect.objectContaining({ key: 'failure-phase', value: 'setup' }),
             expect.objectContaining({ key: 'failure-step', value: '2' }),
@@ -86,17 +123,15 @@ describe('action operation detail presentation', () => {
     });
 
     it.each([
-        ['machine_admin_access_required', 'errors.machineAdminAccessRequired'],
-        ['machine_network_review_required', 'errors.machineNetworkReviewRequired'],
-        ['managed_cli_unavailable', 'errors.machineManagedCliUnavailable'],
-    ] as const)('explains refused Domain setup %s while keeping its typed code in Technical details', (errorCode, messageKey) => {
-        const detail = projectActionOperationDetail(operation({ actionId: 'deployments.domains.add', state: 'failed',
+        ['machine_admin_access_required', 'This address change needs administrator permission on the machine. Review its administrator access before adding the address.'],
+        ['machine_network_review_required', 'The machine network needs review before this address can be added. Review its network access and how the address reaches the app.'],
+        ['managed_cli_unavailable', t('errors.machineManagedCliUnavailable')],
+    ] as const)('explains refused Domain setup %s while keeping its typed code in Technical details', (errorCode, reason) => {
+        const detail = projectActionOperationDetail(operation({ actionId: DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, state: 'failed',
             settledAt: 2_000, error: { errorCode, error: errorCode },
         }), 'available');
-        expect(detail.failure).toEqual({
-            reason: t(messageKey),
-            technicalLines: [{ key: 'failure-code', label: t('common.error'), value: errorCode }],
-        });
+        expect(detail.failure?.reason).toBe(reason);
+        expect(detail.failure?.technicalLines).toContainEqual({ key: 'failure-code', label: t('common.error'), value: errorCode });
     });
 
     it.each([

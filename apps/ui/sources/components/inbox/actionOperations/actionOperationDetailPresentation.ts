@@ -1,5 +1,5 @@
 import type { ActionOperationProjection, ActionOperationSudoPrompt } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema, type FiniteCommandFailureDetailsV1, type ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema, readActionOperationTerminalResultV1, type FiniteCommandFailureDetailsV1, type ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
@@ -16,7 +16,7 @@ import type { PlanChecklistExecutionState, PlanChecklistItem, PlanChecklistItemS
 import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityConfigureFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
-import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBackupRunResultV1Schema, type DeploymentBackupSourceV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { describeProjectCommandSource } from '@/components/projects/projectSetup/projectScriptPresentation';
@@ -219,16 +219,20 @@ function projectDeploymentBackupRun(snapshot: ActionOperationSnapshot): Omit<Act
 /** The shared failure presenter reads the operation's failure: readable words first, the code only as a detail. */
 export function presentFailure(snapshot: ActionOperationSnapshot): ActionOperationDetailFailure | null {
     if (!snapshot.error) return null;
-    const { errorCode, error } = snapshot.error;
+    const scope = isDeploymentActionIdV1(snapshot.actionId) ? 'deployment' : undefined;
+    const settlement = scope ? readActionOperationTerminalResultV1(snapshot) : null;
+    const failure = settlement?.ok === false ? settlement : snapshot.error;
+    const genericReason = t('inbox.actionOperations.failureGeneric');
+    const { errorCode, error } = failure;
     const observedStepExit = readProjectCommandStepExitCode(snapshot);
     const sentence = observedStepExit !== null
         ? t('localServices.actions.failure.exitCode', { code: String(observedStepExit) })
-        : resolveSystemTaskFailureMessage({ code: errorCode, message: error }) ?? error;
-    const presented = presentActionFailureOutcome({ ...snapshot.error, requestId: snapshot.requestId }, undefined, sentence);
-    const fallback = presented.reason || t('inbox.actionOperations.failureGeneric');
+        : scope ? genericReason : resolveSystemTaskFailureMessage({ code: errorCode, message: error }) ?? error;
+    const presented = presentActionFailureOutcome({ ...failure, requestId: failure.requestId ?? snapshot.requestId }, scope, sentence);
+    const reason = presented.reason || genericReason;
     return {
-        // Domain refusals retain their full cause in result; error may only summarize the settlement.
-        reason: resolveActionExecutionFailureMessage({ ok: true, result: snapshot.result }, fallback) ?? fallback,
+        // Unscoped Actions can retain a richer result, such as a session launch failure.
+        reason: scope ? reason : resolveActionExecutionFailureMessage({ ok: true, result: snapshot.result }, reason) ?? reason,
         technicalLines: presented.technicalDetails,
     };
 }

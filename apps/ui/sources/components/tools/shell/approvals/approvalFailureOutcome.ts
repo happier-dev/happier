@@ -179,13 +179,16 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     const stoppedSetupStep = failure.errorCode === 'machine_setup_setup_failed' && finiteCommand.success && finiteCommand.data.step !== undefined
         ? describeMachineSetupStoppedCommand(t('projects.scripts.setup.step', { n: finiteCommand.data.step + 1 }), finiteCommand.data)
         : null;
+    // With only a code, retain its shared Action copy ahead of the generic deployment remedy.
+    const fallback = scope === 'deployment' && failure.details != null
+        ? remedy || presented.reason : presented.reason || remedy;
     const reason = targetReason ?? stoppedSetupStep ?? (finiteCommand.success && finiteCommand.data.exitCode !== null
             ? t('localServices.actions.failure.exitCode', { code: String(finiteCommand.data.exitCode) })
             : machineSetup.success && remedy ? remedy
             : missingSecrets?.success
             ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
             : retiredDomain ? `${retiredDomain} · ${remedy}`
-            : deploymentRecovery?.remedy || (scope === 'deployment' ? remedy || presented.reason : presented.reason || remedy) || null);
+            : deploymentRecovery?.remedy || fallback || null);
     return {
         reason: scope === 'deployment' ? readDeploymentConnectionPermissionRemedy(failure.errorCode, failure.details) ?? reason : reason,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,
