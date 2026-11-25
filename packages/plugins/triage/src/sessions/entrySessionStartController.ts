@@ -580,7 +580,7 @@ export function createTriageEntrySessionStartController(
         request: TriageEntrySessionStartRequestV1,
         preferences: Parameters<typeof resolveTriageActionPlacementV1>[0]['profile'],
     ) => {
-        return readTriageActionPlacementV1(host, request.action, preferences, request.repository);
+        return readTriageActionPlacementV1(host, request.action, preferences, request.repository, { includeManualChoices: true });
     };
 
     /**

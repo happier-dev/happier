@@ -6,6 +6,7 @@ import {
     TRIAGE_PROMPT_INVOCATIONS_LIST_ACTION_ID_V1,
     TRIAGE_SPAWN_PROFILES_LIST_ACTION_ID_V1,
     readTriageLaunchProfilesV1,
+    readTriageActionPlacementV1,
     readTriageActionProfileV1,
     readTriagePromptInvocationsV1,
     resolveTriageActionInstructionV1,
@@ -63,6 +64,28 @@ const PROFILES = {
     ],
     coverage: 'complete',
 };
+
+describe('entry placement project reads', () => {
+    it.each([19, 200])('skips all %i unrelated projects for an entry without repository identity', async (count) => {
+        const forge = { kind: 'github', deployment: 'https://github.com', repository: 'example/target' } as const;
+        const unrelated = Array.from({ length: count }, (_, index) => ({
+            projectKey: { id: `other-${index}` }, serverId: 'home', machineId: 'machine',
+            rootPath: `/work/other-${index}`, reachable: true,
+            forge: { ...forge, repository: `example/other-${index}` },
+        }));
+        const target = { ...unrelated[0]!, rootPath: '/work/target', forge };
+        const { host, asked } = createHost({ 'projects.list': { items: [...unrelated, target], truncated: false } });
+        const action = { workspaceMode: 'reference_only' } as const;
+        expect(await readTriageActionPlacementV1(host, action, undefined, undefined)).toMatchObject({
+            kind: 'prefill', reason: 'noForgeIdentity', candidates: [],
+        });
+        expect(asked).toEqual([]);
+        expect(await readTriageActionPlacementV1(host, action, undefined, forge)).toMatchObject({
+            kind: 'launch', candidate: { rootPath: '/work/target' },
+        });
+        expect(asked).toEqual(['projects.list']);
+    });
+});
 
 describe('resolveTriageActionReferencesV1', () => {
     it('retains managed directory intent from the Profile catalog boundary', async () => {

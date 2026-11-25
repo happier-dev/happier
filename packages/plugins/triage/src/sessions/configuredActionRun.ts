@@ -323,7 +323,9 @@ export async function runTriageConfiguredHandoffV1(
         // an unrelated project census just to deliver reference-only input.
         const placement = healthPlacement ?? (existing === undefined
             ? registry === undefined
-                ? await readTriageActionPlacementV1(host, action, references.profile?.preferences, repository, cancellation)
+                ? await readTriageActionPlacementV1(host, action, references.profile?.preferences, repository, {
+                    ...cancellation, includeManualChoices: true,
+                })
                 : resolveTriageActionPlacementV1({ workspaceMode: action.workspaceMode, profile: references.profile?.preferences,
                     forge: repository, projects: registry.status === 'read' ? registry.projects : [],
                     registryComplete: registry.status === 'read' && registry.complete })

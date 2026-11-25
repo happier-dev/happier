@@ -16,14 +16,18 @@ export async function readTriageActionPlacementV1(
     action: Pick<TriageActionV1, 'workspaceMode'>,
     profile: TriageActionProfilePreferencesV1 | undefined,
     repository: TriageForgeIdentityV1 | undefined,
-    options?: PluginCancellationOptions,
+    options?: PluginCancellationOptions & Readonly<{ includeManualChoices?: boolean }>,
 ) {
-    const registry = await readTriageProjectRegistryV1(host, options);
+    // Automatic placement needs a repository identity. Authoring can still offer manual project choices.
+    const registry = repository === undefined && options?.includeManualChoices !== true
+        ? undefined
+        : await readTriageProjectRegistryV1(host, options);
+    const projects = registry?.status === 'read' ? registry.projects : [];
     return { ...resolveTriageActionPlacementV1({
         workspaceMode: action.workspaceMode, profile, forge: repository,
-        projects: registry.status === 'read' ? registry.projects : [],
-        registryComplete: registry.status === 'read' && registry.complete,
-    }), availableCandidates: registry.status === 'read' ? registry.projects : [] };
+        projects,
+        registryComplete: registry?.status === 'read' && registry.complete,
+    }), availableCandidates: projects };
 }
 
 /**
