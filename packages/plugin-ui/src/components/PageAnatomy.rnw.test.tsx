@@ -522,6 +522,28 @@ describe('plugin page anatomy through the shared page owners', () => {
     mount.unmount();
   });
 
+  it('moves a short page operation beneath a row body on a narrow row, so the body takes the row', () => {
+    const mount = mountPage(
+      <ItemGroup title="invoices">
+        <Item testID="change-row" title="id 1" accessory={<View testID="take-back" />} accessoryOutsidePressable>
+          <View testID="change-diff" />
+        </Item>
+      </ItemGroup>,
+    );
+    const row = mount.container.querySelector<HTMLElement>('[data-testid="change-row"]')!;
+    const container = () => mount.container.querySelector<HTMLElement>('[data-testid="take-back"]')!.parentElement!;
+    const handler = (node: Element) => (node as unknown as { __reactLayoutHandler?: (event: HappierLayoutChangeEvent) => void }).__reactLayoutHandler;
+    const layout = (node: Element, width: number) => act(() => handler(node)!({ nativeEvent: { layout: { x: 0, y: 0, width, height: 52 } } }));
+    // A wide row keeps the operation beside the body.
+    layout(row, 900);
+    layout(container(), 90 + HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx);
+    expect(container().style.alignSelf).not.toBe('stretch');
+    // A phone row: the label alone would keep its column, but the body would be squeezed, so the operation moves beneath.
+    layout(row, 358);
+    expect(container().style.alignSelf).toBe('stretch');
+    mount.unmount();
+  });
+
   it.each([
     { rowWidth: 481, trailing: true },
     { rowWidth: 398, trailing: true },

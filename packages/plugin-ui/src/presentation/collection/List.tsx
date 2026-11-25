@@ -829,6 +829,7 @@ export function HappierListItem({
       kind: accessoryWraps === true ? 'adaptive' : 'operation',
       rowWidthPx: pageRowWidthPx,
       accessoryWidthPx: pageAccessoryWidthPx,
+      body: children != null && children !== false && (Boolean(title) || Boolean(subtitle)),
     }))
     || (pageSection === null && measuresPageRow && fieldMaxWidthPx === null && isHappierPageRowNarrow(pageRowWidthPx));
   // Only the inline position reports the control's natural width; a stacked control spans the row.

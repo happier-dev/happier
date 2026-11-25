@@ -148,7 +148,7 @@ it.each(['single link', 'multiple links', 'retired mount'] as const)('sets up a 
           environmentId: environment.id, projectSourceId: environment.projectSourceId },
         targetLinkId: targetLink.id, contribution: { pluginId: 'happier.deploy.neon', contributionId: 'database' },
         platformProjectId: 'project', branchId: 'main', database: 'shop',
-      },
+      }, onConfigured: () => {},
     });
     const screen = await renderScreen(<ModalProvider><PluginUiHostPresentationScope
       environment={projectHappierUiEnvironment(createSurfaceContextFixture())} presentationHost={presentationHost}>
@@ -219,7 +219,7 @@ it('creates and binds an own-server writer from staged review', async () => {
       kind: 'deployment_service', environment: { serverId: environment.serverId,
         environmentId: environment.id, projectSourceId: environment.projectSourceId },
       targetLinkId: targetLink.id, deploymentId: 'deployment', serviceId: 'database', database: 'shop',
-    } });
+    }, onConfigured: () => {} });
     const screen = await renderScreen(<PluginUiHostPresentationScope
       environment={projectHappierUiEnvironment(createSurfaceContextFixture())} presentationHost={presentationHost}>
       {setup}

@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { Button, ErrorState, Row, Stack, Text } from '@happier-dev/plugin-ui';
+import { Button, ErrorState, Item, ItemGroup, Row, Stack, Text } from '@happier-dev/plugin-ui';
 import type { HostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { t } from '@/text';
-import { deploymentDatabaseAgentLevelLabel } from './DeploymentDatabaseAccessSettings';
+import { deploymentDatabaseAgentLevelLabel, deploymentDatabaseEditorsLabel } from './DeploymentDatabaseAccessSettings';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { readDeploymentHomeWake, useDeploymentProject } from './useDeploymentProject';
 import { useDeploymentPresentationDemand } from './useDeploymentPresentationDemand';
@@ -47,7 +47,11 @@ export function DeploymentWorkbenchAccessObserver({ target, environment, policyE
     return null;
 }
 
-/** Access Read supplied the policy owner address, including the template when a Preview is selected. */
+/**
+ * The loaded access sheet, and a policy refusal's recovery in Review: the Environment's choices, read-only, then who you
+ * are. A manager's way forward opens the Environment's settings; anyone else learns whom to ask.
+ * Access Read supplied the policy owner address, including the template when a Preview is selected.
+ */
 export function DeploymentWorkbenchAccessSettings({ target, policy, scope }:
     AccessSettingsInput & Readonly<{ scope: DeploymentWorkbenchPresentationScope }>) {
     const router = useRouter();
@@ -58,22 +62,27 @@ export function DeploymentWorkbenchAccessSettings({ target, policy, scope }:
     const { controller } = useDeploymentProject(lifetime, projectSourceId, presented);
     const record = useDeploymentEnvironmentRecord(controller, environmentId, presented);
     const environment = record.snapshot.value?.environment;
-    return <Stack gap="small">
-        {environment ? <>
-            <Text tone="secondary" variant="meta" value={deploymentDatabaseAgentLevelLabel(environment.dataAgentAccess ?? 'read')} />
-            {environment.capabilities.role !== 'manager' ? <Text tone="secondary" variant="meta"
-                value={t('projects.deployments.settingsSections.databaseAccess.askManager')} /> : null}
-        </> : record.snapshot.status === 'unavailable' ? <ErrorState layout="line" kind="unavailable"
+    const copy = 'projects.deployments.settingsSections.databaseAccess';
+    if (!environment) {
+        return record.snapshot.status === 'unavailable' ? <ErrorState layout="line" kind="unavailable"
             title={t('common.unavailable')} details={record.snapshot.failure?.code}
-            onRetry={record.refresh} retryLabel={t('common.retry')} /> : null}
-        <Row>
-            <Button variant="secondary" size="small" title={t('projects.deployments.settingsSections.databaseAccess.openSettings')}
+            onRetry={record.refresh} retryLabel={t('common.retry')} /> : null;
+    }
+    const manager = environment.capabilities.role === 'manager';
+    return <Stack gap="small">
+        <ItemGroup>
+            <Item title={t(`${copy}.editors`)} detail={deploymentDatabaseEditorsLabel(environment.dataEditorMode ?? 'off')} />
+            <Item title={t(`${copy}.agents`)} detail={deploymentDatabaseAgentLevelLabel(environment.dataAgentAccess ?? 'read')} />
+        </ItemGroup>
+        <Text tone="secondary" variant="meta" value={t(`${copy}.${manager ? 'youManage' : 'askManager'}`)} />
+        {manager ? <Row>
+            <Button variant="primary" size="small" title={t(`${copy}.openSettings`)}
                 disabled={!lifetime} onPress={() => {
                     if (!readDeploymentWorkbenchLifetime(scope, serverId)) return;
                     router.pushRetainingCurrent(deploymentEnvironmentRoute({
                         serverId, environmentId, projectSourceId, tab: 'settings', section: 'database-access',
                     }));
                 }} />
-        </Row>
+        </Row> : null}
     </Stack>;
 }

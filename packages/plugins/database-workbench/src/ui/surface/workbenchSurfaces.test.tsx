@@ -995,9 +995,9 @@ describe('Database workbench surfaces', () => {
       activityResource: () => { throw new Error('Unexpected Activity demand'); },
       lastLook: () => { throw new Error('Unexpected Last Look demand'); },
       renderProductionBackup: () => <Button title="Back up now" onPress={() => {}} />,
-      renderWriteSetup: (input: unknown) => {
-        expect(input).toEqual({ target, code });
-        return hasSetup ? <Button title="Set up database writes" onPress={() => { configured = true; }} /> : null;
+      renderWriteSetup: (input: { onConfigured(): void }) => {
+        expect(input).toEqual({ target, code, onConfigured: expect.any(Function) });
+        return hasSetup ? <Button title="Set up database writes" onPress={() => { configured = true; input.onConfigured(); }} /> : null;
       },
     };
     const fixture = await createPluginUiTestkit({
@@ -1043,11 +1043,78 @@ describe('Database workbench surfaces', () => {
       }
       const setup = await fixture.getByRole('button', { name: 'Set up database writes' });
       expect(document.body.textContent).not.toContain('Something went wrong');
+      // While the setup stands, it is the way forward: Apply would refuse again, so it is not the filled control.
+      expect(control.presentation('Apply to Production')?.variant).toBe('secondary');
       await fixture.press(setup);
+      await settle(5);
+      expect(control.presentation('Apply to Production')?.variant).toBe('destructive');
       expect(write).toHaveBeenCalledTimes(1);
       await act(async () => control.press('Apply to Production'));
       expect(write).toHaveBeenCalledTimes(2);
       expect(write.mock.calls[1]?.[0].input).toEqual(write.mock.calls[0]?.[0].input);
+    } finally { await fixture.dispose(); }
+  });
+
+  it.each(['database_editing_off', 'database_not_an_editor'] as const)('leads a %s Review refusal with its access recovery until the Environment access update lets the person edit', async code => {
+    const environment = { serverId: 'home', environmentId: 'env', projectSourceId: 'source' } as const;
+    const target = { kind: 'deployment_service', environment, targetLinkId: 'link', database: 'billing_dev', deploymentId: 'deployment', serviceId: 'postgres' } as const;
+    const connected = { ...descriptor, target, origin: { label: 'Staging' }, access: { canRead: true, canWrite: true } };
+    const body = JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] });
+    const digest = `sha256:${computeSha256HexDigest(body)}`;
+    const readAccess = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
+    let canWrite = false;
+    const daemon = daemonAnswers([connected], true);
+    const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => request.action !== readAccess ? daemon(request)
+      : projectNativeJsonValueForTransport({ setBy: 'environment', serverId: 'home', environmentId: 'env', expectedRevision: 2,
+        access: { canRead: true, canWrite, ...(canWrite ? {} : { reason: code }) } }));
+    const write = vi.fn(async () => ({ ok: false as const, errorCode: code, error: code }));
+    const control = createPluginUiActionControlTestHost(write);
+    let publish: (() => void) | undefined;
+    const settingsFor = vi.fn();
+    const databaseWorkbench = {
+      activityResource: () => { throw new Error('Unexpected Activity demand'); },
+      lastLook: () => { throw new Error('Unexpected Last Look demand'); },
+      renderEnvironmentAccessObserver: ({ onChanged }: { onChanged: () => void }) => { publish = onChanged; return null; },
+      renderEnvironmentAccessSettings: (input: unknown) => { settingsFor(input); return <Button title="Open Environment settings" onPress={() => {}} />; },
+    };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `refusal-${code}`, mountNonce: `refusal-${code}` },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope
+        environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={{ renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, databaseWorkbench,
+          renderPopover: input => input.open ? input.content({ presentation: 'sheet', maxHeight: 10_000, requestClose: input.onRequestClose }) : null }}>
+        {renderPage(context)}
+      </PluginUiHostPresentationScope>,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor: connected }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      handlers: { ...connectionResourceHandlers(), executeAction, actionControl: control.handler,
+        async presentActionFailure() { return { reason: 'Database editing is off for this Environment.', nextStep: null, technicalDetails: [] }; },
+        async watchResource() { return { digest }; },
+        async readResource() { return { contentType: 'application/json', digest, bytes: new TextEncoder().encode(body) }; },
+      },
+    });
+    try {
+      await settle(20);
+      await fixture.press(await fixture.getByRole('button', { name: 'New row' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Stage row' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
+      expect(control.presentation('Apply 1 change')?.variant).toBe('primary');
+      await act(async () => control.press('Apply 1 change'));
+      await settle(20);
+      // The refusal's recovery is the way forward; Apply would refuse again, so it steps back.
+      expect(await fixture.getByRole('button', { name: 'Open Environment settings' })).toBeTruthy();
+      expect(settingsFor).toHaveBeenLastCalledWith({ target, policy: expect.objectContaining({ setBy: 'environment', environmentId: 'env' }) });
+      expect(control.presentation('Apply 1 change')?.variant).toBe('secondary');
+      // The manager's change arrives through the existing Environment access update; nothing polls.
+      canWrite = true;
+      await act(async () => { publish?.(); });
+      await settle(20);
+      expect(control.presentation('Apply 1 change')?.variant).toBe('primary');
+      expect(await fixture.queryByRole('button', { name: 'Open Environment settings' })).toBeUndefined();
+      expect(write).toHaveBeenCalledTimes(1);
     } finally { await fixture.dispose(); }
   });
 

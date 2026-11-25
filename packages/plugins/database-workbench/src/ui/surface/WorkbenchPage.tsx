@@ -9,7 +9,6 @@ import {
   LoadingState,
   PageHeader,
   Stack,
-  Text,
   defineUiSurface,
   useHappierPageChrome,
   usePluginTranslation,
@@ -147,20 +146,19 @@ function LinkedWorkbenchPage({ context, target, display, place, root }: Readonly
       retryLabel={translate('plugins.database.retry', 'Try again')}
     />
   );
+  // Reading through the Account relay without a held connection changes nothing the person can act on, so the page
+  // says nothing about it.
   return <MountedWorkbenchPage context={context} place={place} root={root}
-    launch={readWorkbenchLaunchInput(context, linked.descriptor)} client={linked.client}
-    connectionNotice={linked.connection === 'standalone'
-      ? translate('plugins.database.connectionReuseUnavailable', 'Connection reuse is unavailable') : undefined} />;
+    launch={readWorkbenchLaunchInput(context, linked.descriptor)} client={linked.client} />;
 }
 
-function MountedWorkbenchPage({ context, launch, place, root, client, connectionNotice }: Readonly<{
+function MountedWorkbenchPage({ context, launch, place, root, client }: Readonly<{
   context: RenderContext;
   launch: WorkbenchLaunchInput | null;
   place: WorkbenchPlace;
   /** No place in the address: the database's root, which a phone shows as the rail. */
   root: boolean;
   client?: WorkbenchClient;
-  connectionNotice?: string;
 }>) {
   const translate = usePluginTranslation();
   const descriptor = launch?.descriptor;
@@ -223,7 +221,6 @@ function MountedWorkbenchPage({ context, launch, place, root, client, connection
   }
   return (
     <WorkbenchProvider instance={instance}>
-      {connectionNotice ? <Text tone="secondary" value={connectionNotice} /> : null}
       <WorkbenchLayout targetKey={targetKey} scope={launch.scope} root={root} />
     </WorkbenchProvider>
   );

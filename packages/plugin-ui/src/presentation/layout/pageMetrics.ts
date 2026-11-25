@@ -383,17 +383,22 @@ export const HAPPIER_PAGE_ADAPTIVE_ACCESSORY_MAX_ROW_SHARE = 0.5;
  *
  * Either moves beneath when it is wider than its share of a wide row. Unmeasured, a control stays inline,
  * because only the inline position reports its natural width.
+ *
+ * A row with a body (content under its title, such as a change's diff) gives that body the row on a narrow row:
+ * its operation moves beneath, since the label column test cannot see the body it would squeeze.
  */
 export function isHappierPageRowAccessoryStacked(input: Readonly<{
   kind: 'operation' | 'adaptive';
   rowWidthPx: number | null;
   accessoryWidthPx: number | null;
   menuRow?: boolean;
+  body?: boolean;
 }>): boolean {
   const { rowWidthPx, accessoryWidthPx } = input;
   const measured = rowWidthPx !== null && accessoryWidthPx !== null;
   const overflows = measured && accessoryWidthPx > rowWidthPx * HAPPIER_PAGE_ADAPTIVE_ACCESSORY_MAX_ROW_SHARE;
   if (input.kind === 'operation') {
+    if (input.body === true && isHappierPageRowNarrow(rowWidthPx)) return true;
     return overflows || (measured
       && rowWidthPx - accessoryWidthPx - HAPPIER_PAGE_METRICS.rowLeadingGapPx < HAPPIER_PAGE_METRICS.sectionTextMinWidthPx);
   }

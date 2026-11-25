@@ -80,6 +80,8 @@ export function AccessWord(
       triggerAppearance="text"
       triggerSize="small"
       triggerDisclosure
+      // On a phone the loaded choices need the width: the host's sheet, not a popover over the rail.
+      sheet={{ title: translate('plugins.database.access.title', 'Database access') }}
     >
       <Stack gap="small">
         {unavailable ? <ErrorState layout="line" kind="unavailable"

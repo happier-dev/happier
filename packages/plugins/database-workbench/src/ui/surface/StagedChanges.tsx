@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseAccessSummaryV1, DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
 import {
   Action,
   Button,
@@ -9,7 +9,7 @@ import {
   Item,
   ItemGroup,
   ModalCardFooterActions,
-  ModalHeader,
+  PageHeader,
   Row,
   Stack,
   Surface,
@@ -18,7 +18,7 @@ import {
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
 import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
-import { useWorkbenchDraft, useWorkbenchInstance } from '../hooks.js';
+import { useDatabaseAccess, useWorkbenchDraft, useWorkbenchInstance } from '../hooks.js';
 import type { WorkbenchApplyOutcome, WorkbenchReview } from '../models.js';
 import { presentCell } from './cells.js';
 import { translateUnverifiedServerNotice } from './connectionCopy.js';
@@ -240,6 +240,14 @@ function ReviewGroup(
 }
 
 /**
+ * The access decider's person refusals: they stand until the Environment's manager changes its database access. While
+ * a refusal stands its recovery is the way forward and Apply, which would refuse again, steps back.
+ */
+const POLICY_REFUSALS: ReadonlySet<string> = new Set<NonNullable<DatabaseAccessSummaryV1['reason']>>([
+  'database_editing_off', 'database_not_an_editor',
+]);
+
+/**
  * Review old → new before anything is written. Apply is the single committing control; on Production it says so.
  * Changes stay staged through a conflict or refusal, so nothing typed is lost.
  */
@@ -267,8 +275,31 @@ export function StagedReview(
   const refusal = draft.outcome?.kind === 'refused' ? draft.outcome : undefined;
   const execution = refusal && 'execution' in refusal ? refusal.execution : undefined;
   const refusalCode = refusal && 'failure' in refusal ? refusal.failure.code : execution?.code;
+  // A setup refusal stands until the host says its setup settled.
+  const [configuredFor, setConfiguredFor] = React.useState<typeof refusal>(undefined);
+  const refusalRef = React.useRef(refusal);
+  refusalRef.current = refusal;
+  const onConfigured = React.useCallback(() => setConfiguredFor(refusalRef.current), []);
   const writeSetup = target && (refusalCode === 'write_role_setup_required' || refusalCode === 'write_connection_setup_required')
-    ? host?.renderWriteSetup?.({ target, code: refusalCode }) : null;
+    ? host?.renderWriteSetup?.({ target, code: refusalCode, onConfigured }) : null;
+  // A policy refusal stands until an access read after it says the person can edit. That read follows the existing
+  // Environment access update (the host's observer), as the rail's access word does; nothing polls.
+  const policyRefusal = refusalCode !== undefined && POLICY_REFUSALS.has(refusalCode);
+  const access = useDatabaseAccess(props.targetKey, policyRefusal);
+  const [accessAtRefusal, setAccessAtRefusal] = React.useState<Readonly<{ refusal: typeof refusal; value: typeof access.value }> | null>(null);
+  const { refresh: refreshAccess } = access;
+  // Only a new refusal takes a new basis; later access values are compared with it.
+  const accessValueRef = React.useRef(access.value);
+  accessValueRef.current = access.value;
+  React.useEffect(() => {
+    if (!refusal || !policyRefusal) return;
+    setAccessAtRefusal({ refusal, value: accessValueRef.current });
+    refreshAccess();
+  }, [refusal, policyRefusal, refreshAccess]);
+  const policyLifted = policyRefusal && accessAtRefusal !== null && accessAtRefusal.refusal === refusal
+    && access.value !== accessAtRefusal.value && access.value?.access.canWrite === true;
+  const refusalStands = refusal !== undefined && (writeSetup != null ? configuredFor !== refusal : policyRefusal && !policyLifted);
+  const policy = access.value?.setBy === 'environment' ? access.value : null;
   const engineIsMysql = descriptor.engine === 'mysql';
   // Close on this review's own Apply, never on an earlier receipt still held for the relation.
   const openedWith = React.useRef(draft.outcome);
@@ -278,28 +309,36 @@ export function StagedReview(
   }, [draft.outcome, onClose]);
   const total = draft.counts.edits + draft.counts.inserts + draft.counts.removals;
   const count = String(total);
+  // A deployment's origin is its Environment: the Review says where the changes go (plan F3).
+  const environmentName = target?.kind === 'deployment_service' ? descriptor.origin.label : undefined;
   return (
     <Stack gap="large">
-      <ModalHeader
+      {/* The Review stands in the page's column, so its title is a page title on the content edge; Cancel ends it. */}
+      <PageHeader
         title={
           total === 1
             ? translate('plugins.database.review.titleOne', 'Review 1 change')
             : translate('plugins.database.review.titleCount', 'Review {count} changes', { count })
         }
-        subtitle={
+        description={
           production
             ? translate(
                 'plugins.database.review.production',
                 'These changes go to {name} on Production.',
                 { name: descriptor.label },
               )
-            : translate(
-                'plugins.database.review.together',
-                '{name}. Applied together, or not at all.',
-                { name: descriptor.label },
-              )
+            : environmentName
+              ? translate(
+                  'plugins.database.review.togetherIn',
+                  'Changes to {name} in {environment} apply together, or not at all.',
+                  { name: descriptor.label, environment: environmentName },
+                )
+              : translate(
+                  'plugins.database.review.togetherTo',
+                  'Changes to {name} apply together, or not at all.',
+                  { name: descriptor.label },
+                )
         }
-        onClose={props.onClose}
       />
       {production && target ? host?.renderProductionBackup?.(target) : null}
       {review.map((group) => (
@@ -327,10 +366,14 @@ export function StagedReview(
           )}
         />
       ) : null}
-      {writeSetup || (execution ? <Action.Failure execution={execution} />
+      {writeSetup || (policyLifted ? null : execution ? <Action.Failure execution={execution} />
         : outcome && outcome.tone !== 'success'
           ? <ErrorState layout="line" kind="error" title={outcome.text} details={refusalCode} />
           : null)}
+      {refusalStands && policyRefusal && policy && target ? host?.renderEnvironmentAccessObserver?.({
+        target, environment: descriptor.origin.environment, policyEnvironmentId: policy.environmentId, onChanged: refreshAccess,
+      }) : null}
+      {refusalStands && policyRefusal && policy && target ? host?.renderEnvironmentAccessSettings?.({ target, policy }) : null}
       {descriptor.endpointTrust === 'encrypted_unverified'
         ? <Text tone="secondary" value={translateUnverifiedServerNotice(translate)} />
         : null}
@@ -338,7 +381,7 @@ export function StagedReview(
         <Action.Control
           {...apply}
           reviewedInput={reviewedInput}
-          variant={production ? 'destructive' : 'primary'}
+          variant={refusalStands ? 'secondary' : production ? 'destructive' : 'primary'}
           title={
             production
               ? translate('plugins.database.review.applyProduction', 'Apply to Production')

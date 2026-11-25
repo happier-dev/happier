@@ -86,9 +86,10 @@ export function DeploymentWorkbenchProductionBackup({ target, scope }: Readonly<
 }
 
 /** Credentials stay inside Saved Secrets and the selected Environment's reviewed binding writer. */
-export function DeploymentWorkbenchWriteSetup({ target, code, scope }:
+export function DeploymentWorkbenchWriteSetup({ target, code, onConfigured, scope }:
     WriteSetup & Readonly<{ scope: DeploymentWorkbenchPresentationScope }>) {
-    const [configured, setConfigured] = React.useState(false);
+    const [configured, setConfiguredState] = React.useState(false);
+    const setConfigured = (value: true) => { setConfiguredState(value); onConfigured(); };
     const bindingReviewed = React.useRef(false);
     const { actions, detail, lifetime, record, review } = useReviewEnvironment(target, scope, () => {
         if (bindingReviewed.current) setConfigured(true);
@@ -159,11 +160,13 @@ export function DeploymentWorkbenchWriteSetup({ target, code, scope }:
         title={t(`${setupCopy}.unavailable`)} details={record.snapshot.failure?.code} onRetry={record.refresh} retryLabel={t('common.retry')} />
         : <Text tone="secondary" value={t('common.loading')} />;
     if (!manager) return <Text tone="secondary" value={t(`${setupCopy}.manager`)} />;
+    // The setup is the Review's way forward while it stands: its next step is the filled control.
+    const choosing = !ownServer && !source;
     return <Stack gap="small">
         <Text value={t(`${setupCopy}.${ownServer ? 'ownBody' : source ? 'managedSelected' : 'managedBody'}`)} />
         {!ownServer ? <Row><Button title={source ? t(`${setupCopy}.changeSecret`) : t(`${setupCopy}.chooseSecret`)}
-            testID="database-workbench.write-setup.secret" variant="secondary" disabled={busy} onPress={choose} /></Row> : null}
-        <Row><Button title={ownServer ? t(`${setupCopy}.createRole`) : t(`${setupCopy}.bindConnection`)} variant="secondary"
+            testID="database-workbench.write-setup.secret" variant={choosing ? 'primary' : 'secondary'} disabled={busy} onPress={choose} /></Row> : null}
+        <Row><Button title={ownServer ? t(`${setupCopy}.createRole`) : t(`${setupCopy}.bindConnection`)} variant={choosing ? 'secondary' : 'primary'}
             testID="database-workbench.write-setup.save"
             disabled={busy || !actions || !lifetime || (ownServer ? !source && !catalog.personalMutationsAvailable : !source)}
             onPress={save} /></Row>

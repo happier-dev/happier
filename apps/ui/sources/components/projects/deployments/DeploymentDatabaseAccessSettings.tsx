@@ -61,7 +61,7 @@ function DatabaseAccessForm({ environment, lifetime, editing, change, outcome }:
     const editable = editing !== null;
     const choosePeople = editable && mode === 'chosen';
     const source = useProjectSource(choosePeople ? lifetime : null, choosePeople ? environment.projectSourceId : null).source?.source ?? null;
-    const editorLabel = (value: typeof mode) => value === 'off' ? t(`${copy}.off`) : deployersLabel(value);
+    const editorLabel = deploymentDatabaseEditorsLabel;
     const modeOptions = DeploymentEnvironmentDataEditorModeV1Schema.options.map(id => ({ id, label: editorLabel(id) }));
     const agentOptions = DatabaseAgentLevelV1Schema.options.map(id => ({ id, label: deploymentDatabaseAgentLevelLabel(id) }));
     const disabled = change.running || change.banner.pending;
@@ -93,6 +93,10 @@ function DatabaseAccessForm({ environment, lifetime, editing, change, outcome }:
             onChange={dataAgentAccess => setDraft(previous => ({ ...previous, dataAgentAccess }))} /> :
             <Item title={t(`${copy}.agents`)} detail={deploymentDatabaseAgentLevelLabel(level)} mode="info" />}
     </ItemGroup>;
+}
+
+export function deploymentDatabaseEditorsLabel(mode: NonNullable<Environment['dataEditorMode']>) {
+    return mode === 'off' ? t(`${copy}.off`) : deployersLabel(mode);
 }
 
 export function deploymentDatabaseAgentLevelLabel(level: DatabaseAgentLevelV1) {

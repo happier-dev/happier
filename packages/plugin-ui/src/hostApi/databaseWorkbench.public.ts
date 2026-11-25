@@ -49,6 +49,8 @@ export type HostDatabaseWorkbench = Readonly<{
   renderWriteSetup?(input: Readonly<{
     target: DeploymentDatabaseTarget;
     code: 'write_role_setup_required' | 'write_connection_setup_required';
+    /** The setup settled: the refusal no longer stands, so Apply is the way forward again. */
+    onConfigured(): void;
   }>): ReactNode;
 }>;
 

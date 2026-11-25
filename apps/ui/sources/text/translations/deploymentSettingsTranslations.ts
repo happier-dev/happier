@@ -8,6 +8,7 @@ const databaseAccessCopy = {
   agents: 'Agent access',
   openSettings: 'Open Environment settings',
   askManager: 'Only an Environment manager can change access.',
+  youManage: 'You manage this Environment, so you can change who edits.',
   backup: {
     action: 'Last successful backup',
     empty: 'No successful backup yet.',
