@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { auth } from '@/app/auth/auth';
+import { eventRouter } from '@/app/events/eventRouter';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 
@@ -10,11 +11,7 @@ vi.mock('socket.io', () => ({
   },
 }));
 
-vi.mock('@/utils/process/shutdown', () => ({ onShutdown: vi.fn() }));
-vi.mock('@/app/events/eventRouter', () => ({
-  buildMachineActivityEphemeral: vi.fn(),
-  eventRouter: { setIo: vi.fn(), addConnection: vi.fn(), emitEphemeral: vi.fn() },
-}));
+vi.mock('@/utils/process/shutdown', () => ({ onShutdown: vi.fn(() => () => {}) }));
 vi.mock('./socket/rpcHandler', () => ({ rpcHandler: vi.fn() }));
 vi.mock('./socket/usageHandler', () => ({ usageHandler: vi.fn() }));
 vi.mock('./socket/sessionUpdateHandler', () => ({ sessionUpdateHandler: vi.fn() }));
@@ -31,6 +28,7 @@ describe('startSocket transfer relay v2 registration', () => {
   let harness: LightSqliteHarness;
   let accountId: string;
   let token: string;
+  let closeSocket: (() => Promise<void>) | undefined;
 
   beforeAll(async () => {
     harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-transfer-relay-registration-', initAuth: true });
@@ -48,19 +46,27 @@ describe('startSocket transfer relay v2 registration', () => {
   });
 
   afterEach(async () => {
-    await db.account.deleteMany();
-    vi.unstubAllEnvs();
+    try {
+      await closeSocket?.();
+    } finally {
+      closeSocket = undefined;
+      eventRouter.clearIo();
+      await db.account.deleteMany();
+      vi.unstubAllEnvs();
+    }
   });
 
   function makeServer() {
     let middleware: ((socket: any, next: (error?: unknown) => void) => Promise<void>) | undefined;
     const server = {
       on: vi.fn(),
+      off: vi.fn(),
+      local: { emit: vi.fn() },
       use: vi.fn((handler: any) => { middleware = handler; }),
       close: vi.fn(),
       to: vi.fn(() => ({ emit: vi.fn() })),
       serverSideEmit: vi.fn(),
-      sockets: { adapter: { on: vi.fn(), rooms: new Map() }, sockets: new Map() },
+      sockets: { adapter: { on: vi.fn(), off: vi.fn(), rooms: new Map() }, sockets: new Map() },
     };
     serverCtor.mockReturnValue(server);
     return { server, getMiddleware: () => middleware };
@@ -89,7 +95,7 @@ describe('startSocket transfer relay v2 registration', () => {
   it('uses the real verifier for a test-issued token and registers the relay connection hook', async () => {
     const { server, getMiddleware } = makeServer();
     const { startSocket } = await import('./socket');
-    startSocket({ server: { on: vi.fn() } } as any);
+    closeSocket = startSocket({ server: { on: vi.fn() } } as any);
 
     const middleware = getMiddleware();
     expect(middleware).toBeTypeOf('function');
@@ -102,7 +108,7 @@ describe('startSocket transfer relay v2 registration', () => {
   it('refuses an invalid handshake token at the auth boundary', async () => {
     makeServer();
     const { startSocket } = await import('./socket');
-    startSocket({ server: { on: vi.fn() } } as any);
+    closeSocket = startSocket({ server: { on: vi.fn() } } as any);
     // Read the middleware from the server mock without introducing an auth mock.
     const io = serverCtor.mock.results.at(-1)?.value as { use: ReturnType<typeof vi.fn> };
     const handler = io.use.mock.calls.length > 0 ? io.use.mock.calls[0][0] as (socket: any, next: (error?: unknown) => void) => Promise<void> : undefined;
