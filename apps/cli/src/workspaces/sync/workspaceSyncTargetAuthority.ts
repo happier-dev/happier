@@ -1500,12 +1500,34 @@ export function createWorkspaceSyncTargetAuthority(
       && relationship.contentPolicy.policyDigest === entry.result.policyDigest;
   };
 
+  type InstalledWriterLoan = Pick<RetainedBootstrap, 'relationshipId' | 'sourceWriterTargetRouting' | 'targetRouting'>;
+  const installedWriterRelationshipId = (loan: InstalledWriterLoan): string | null => (
+    loan.relationshipId && loan.sourceWriterTargetRouting && dependencies.localAccountId !== undefined
+      && loan.targetRouting?.targetContext.machineAdmission.actorAccountId === dependencies.localAccountId
+      ? loan.relationshipId : null);
+  const includesRelationship = (snapshot: ActiveProjectAccountRowsSnapshot | null, relationshipId: string) => (
+    (snapshot?.relationships ?? []).some(relationship => relationship.relationshipId === relationshipId));
+
   const observeInstalledWriterLoan = (entry: RetainedBootstrap, snapshot: ActiveProjectAccountRowsSnapshot | null) => {
-    if (!entry.relationshipId || !entry.sourceWriterTargetRouting || dependencies.localAccountId === undefined
-      || entry.targetRouting?.targetContext.machineAdmission.actorAccountId !== dependencies.localAccountId) return;
-    const published = (snapshot?.relationships ?? []).some(relationship => relationship.relationshipId === entry.relationshipId);
+    const relationshipId = installedWriterRelationshipId(entry);
+    if (!relationshipId) return;
+    const published = includesRelationship(snapshot, relationshipId);
     if (published) entry.observedInInstalledAccount = true;
     return published;
+  };
+
+  /**
+   * The SOURCE owner stages a same-Account writer loan's row at Home before
+   * prepare. A lagging installed projection gets one refresh; a row still
+   * absent was never staged, and the person would have no link to Stop.
+   */
+  const admitInstalledWriterLoan = async (loan: InstalledWriterLoan, signal?: AbortSignal): Promise<void> => {
+    const relationshipId = installedWriterRelationshipId(loan);
+    if (!relationshipId || includesRelationship(readSnapshot(), relationshipId)) return;
+    const refreshed = dependencies.refreshProjectSnapshot ? await dependencies.refreshProjectSnapshot(signal) : null;
+    if (!includesRelationship(refreshed, relationshipId)) {
+      throw authorityError('relationship_not_ready', 'The SOURCE has not staged this Workspace Sync relationship');
+    }
   };
 
   /** A retained relationship fence must survive only while its durable relationship owns the endpoint. */
@@ -3379,6 +3401,10 @@ export function createWorkspaceSyncTargetAuthority(
       const admittedCopy = sourceWriterTargetRouting && admittedTarget?.endpoint && request.owner.kind === 'copy_once'
         ? { target: admittedTarget.endpoint, sourceWriterMachineId: sourceWriterTargetRouting.sourceWriter.machineId } : undefined;
       const installedWriterTarget = sourceWriterTargetRouting && admittedTarget?.endpoint;
+      if (!admitted) {
+        await admitInstalledWriterLoan({ relationshipId: request.owner.kind === 'relationship' ? request.owner.relationshipId : null,
+          ...(sourceWriterTargetRouting ? { sourceWriterTargetRouting } : {}), ...(targetRouting ? { targetRouting } : {}) }, signal);
+      }
       const invocationSnapshot = sourceInvocation ?? (installedWriterTarget ? getSnapshot() : await readInvocationSnapshot(signal, context, request.bootstrapOperationId));
       const owner = resolveBootstrapOwner(invocationSnapshot, request, localServerId, admittedCopy);
       const nativeExecution = await nativeExecutionFor(owner.targetWorkspace, context);

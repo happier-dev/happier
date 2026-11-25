@@ -164,9 +164,10 @@ it.each([false, true])('retains signed native target admission at the carrier wh
 });
 
 it.each([
-  { actorAccountId: 'target-owner', restart: false },
-  { actorAccountId: 'requester', restart: true },
-])('retains a committed Fresh copy under signed authority (actor: $actorAccountId, restart: $restart)', async ({ actorAccountId, restart }) => {
+  { actorAccountId: 'target-owner', restart: false, sourceStaged: true },
+  { actorAccountId: 'target-owner', restart: false, sourceStaged: false },
+  { actorAccountId: 'requester', restart: true, sourceStaged: true },
+])('retains a committed Fresh copy under signed authority (actor: $actorAccountId, restart: $restart, staged: $sourceStaged)', async ({ actorAccountId, restart, sourceStaged }) => {
   await withTempDir('workspace-sync-requester-restart-', async fixture => {
     const root = join(fixture, 'copy');
     await mkdir(root);
@@ -206,8 +207,17 @@ it.each([
     };
     let targetRows: ActiveProjectAccountRowsSnapshot = { source: 'network', accountMode: 'plain', workspaceRefs: [], relationships: [],
       organizations: [], rows: [], graphRevision: 'absent', loadedAtMs: 0, scopeKey: 'target-owner' };
+    // The honest SOURCE stages its disabled row at Home before prepare; the
+    // target's installed projection has not received it yet.
+    const homeRows: ActiveProjectAccountRowsSnapshot = { ...targetRows,
+      relationships: sourceStaged ? [{ ...staged, enabled: false }] : [] };
+    let refreshes = 0;
     const createTarget = () => createWorkspaceSyncTargetAuthority({ localServerId: 'home', localMachineId: target.machineId,
-      localAccountId: 'target-owner', getProjectSnapshot: () => targetRows, callMachineRpc: async () => {
+      localAccountId: 'target-owner', getProjectSnapshot: () => targetRows, refreshProjectSnapshot: async () => {
+        refreshes += 1;
+        targetRows = homeRows;
+        return targetRows;
+      }, callMachineRpc: async () => {
         throw new Error('The admitted SOURCE already qualified its workspace');
       }, resolutionMaterialDirectory: join(fixture, 'resolution'), bootstrap: {
         materializationDirectory: join(fixture, 'materialization'),
@@ -220,6 +230,19 @@ it.each([
     const restarted = createTarget();
     const context = contextFor(actorAccountId);
     try {
+      const ingress = {
+        operationId: relationshipId, sourceMachineId: source.machineId, targetMachineId: target.machineId, actorAccountId,
+      };
+      if (!sourceStaged) {
+        // A SOURCE that never stages its row cannot borrow the installed Account's TARGET.
+        await expect(first.prepareBootstrapHere({
+          ...prepare, transientRelationship: staged, targetBootstrap: 'use_existing',
+        }, undefined, context)).rejects.toMatchObject({ code: 'relationship_not_ready' });
+        expect(refreshes).toBe(1);
+        await expect(first.getPreparedBootstrapOwnership(prepare)).rejects.toMatchObject({ code: 'workspace_root_ownership_lost' });
+        await expect(first.authorizeWorkspaceSyncMachineAgent(ingress)).rejects.toMatchObject({ code: 'peer_unavailable' });
+        return;
+      }
       const original = await first.prepareBootstrapHere({
         ...prepare, transientRelationship: staged, targetBootstrap: 'use_existing',
       }, undefined, context);
@@ -239,9 +262,6 @@ it.each([
         await expect(first.getPreparedBootstrapOwnership(prepare)).resolves.toMatchObject({
           owner: { rootFingerprint: original.rootFingerprint },
         });
-        const ingress = {
-          operationId: relationshipId, sourceMachineId: source.machineId, targetMachineId: target.machineId, actorAccountId,
-        };
         await expect(first.authorizeWorkspaceSyncMachineAgent(ingress)).resolves.toMatchObject({ workspaceRefId: 'fresh' });
 
         targetRows = { ...targetRows, relationships: [committed.transientRelationship], workspaceRefs: [
