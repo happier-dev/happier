@@ -1,4 +1,4 @@
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveSessionHandoffLocalDirectory } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -356,21 +356,20 @@ export function createSessionHandoffStartActionHandler(
       const failureCause = projectActionFailureCauseV1(error, 'session_handoff.source_export', { allowUnknownErrorCode: true });
       const errorCode = error !== null && typeof error === 'object' && 'code' in error
         && error.code === 'SESSION_DIRECTORY_MISSING' ? error.code : 'source_export_failed';
-      if (!exportAfterStop) {
-        await releaseSessionOperationClaim(handoffId);
-        return {
-          ok: false,
-          errorCode,
-          error: errorMessage,
-          failureCause,
-        } as const;
-      }
-      const status = buildStartRecoveryStatus(handoffId);
-      return {
+      const failure = {
         ok: false,
         errorCode,
         error: errorMessage,
         failureCause,
+        ...(isActionExecuteFailure(error) && error.details !== undefined ? { details: error.details } : {}),
+      } as const;
+      if (!exportAfterStop) {
+        await releaseSessionOperationClaim(handoffId);
+        return failure;
+      }
+      const status = buildStartRecoveryStatus(handoffId);
+      return {
+        ...failure,
         handoffId,
         status,
       } as const;

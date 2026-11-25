@@ -3732,6 +3732,16 @@ historical attribution of every retained exit journal.
 
 Tracked handoff accepts cancellation during preparation, then closes cancellation immediately before target launch begins publishing canonical Session metadata. Confirmation, commit and source cleanup use the completion signal after that point; a late cancel request cannot abandon the accepted target launch.
 
+In 0.3 development, a Claude handoff source-export refusal keeps the existing
+`source_export_failed` code and `session_handoff.source_export` phase. The
+failure's `details.diagnostics` entries report the native lookup cause and a
+path kind. `transcript_missing` means the lookup could not find an expected
+entry, `root_mismatch` means the location failed Claude's physical source
+checks, and `permission_denied` means the filesystem refused access. A path kind
+identifies the linked source root, Claude projects directory, Session directory,
+or transcript file. These diagnostics contain fixed codes and omit paths,
+Session identifiers, and transcript content. A linked source remains exclusive.
+
 `SessionHandle.watch` follows committed retained transcript rows through the shared socket source and delivers complete text before advancing its reconnect frontier. Provisional stream deltas do not become retained message events. Cancellation ends the watcher; credential and plugin-occurrence checks prevent further delivery after retirement.
 
 In 0.3 development, bounded server transcript pages, exact-message/action-reference

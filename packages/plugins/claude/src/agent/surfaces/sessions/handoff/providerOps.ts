@@ -5,6 +5,7 @@ import type {
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import {
+    ClaudeTranscriptExportRefusal,
     exportClaudeSessionBundle,
     importClaudeSessionBundle,
 } from './bundle.js';
@@ -105,6 +106,9 @@ export const claudeHandoffSurface = {
                 ok: false,
                 code: 'handoff_failed',
                 message: error instanceof Error ? error.message : 'Claude handoff export failed',
+                ...(error instanceof ClaudeTranscriptExportRefusal ? {
+                    diagnostics: [{ code: error.code, details: { pathKind: error.pathKind } }],
+                } : {}),
             };
         }
     },

@@ -8,7 +8,11 @@ import type { HandoffExportSessionMetadata } from '@happier-dev/plugin-sdk/agent
 
 import { resolveClaudeConfigDir, resolveClaudeConfigDirEnvOverlay } from '../../../environment.js';
 import { hasClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
-import { resolveClaudeJsonlSessionFile } from '../external/files.js';
+import {
+    classifyClaudeTranscriptLookupError,
+    lookupClaudeJsonlSessionFile,
+    type ClaudeTranscriptLookupFailure,
+} from '../external/files.js';
 import type { ClaudeExternalSessionSource } from '../external/source.js';
 import { getClaudeProjectPath, resolveClaudeProjectId } from './path.js';
 import {
@@ -130,13 +134,35 @@ async function fileExists(path: string): Promise<boolean> {
     }
 }
 
+type ClaudeTranscriptExportRefusalCode = ClaudeTranscriptLookupFailure['code'] | 'working_directory_missing';
+type ClaudeTranscriptExportPathKind = ClaudeTranscriptLookupFailure['pathKind'] | 'linked_source_root';
+
+const transcriptRefusalMessages: Record<ClaudeTranscriptExportRefusalCode, string> = {
+    transcript_missing: 'Claude could not find the handoff transcript in the selected source',
+    root_mismatch: 'Claude refused the handoff transcript location',
+    permission_denied: 'Claude handoff could not access the transcript source',
+    not_directory: 'Claude handoff expected a transcript directory',
+    not_regular_file: 'Claude handoff expected a regular transcript file',
+    invalid_session_id: 'Invalid vendor session id for Claude handoff',
+    lookup_failed: 'Claude handoff could not inspect the transcript source',
+    working_directory_missing: 'Missing Claude working directory for handoff export',
+};
+
+export class ClaudeTranscriptExportRefusal extends Error {
+    constructor(readonly code: ClaudeTranscriptExportRefusalCode, readonly pathKind: ClaudeTranscriptExportPathKind) {
+        super(transcriptRefusalMessages[code]);
+    }
+}
+
 async function resolveReadableTranscriptPath(params: Readonly<{
     metadata: HandoffExportSessionMetadata;
     remoteSessionId: string;
     env: NodeJS.ProcessEnv;
     signal?: AbortSignal;
 }>): Promise<string> {
-    assertSafeClaudeHandoffRemoteSessionId(params.remoteSessionId);
+    if (!isSafeClaudeHandoffRemoteSessionId(params.remoteSessionId)) {
+        throw new ClaudeTranscriptExportRefusal('invalid_session_id', 'transcript_file');
+    }
 
     // An explicit linked source is EXCLUSIVE custody, not a ranked preference.
     // The session id alone does not identify bytes: the same id can exist under
@@ -148,15 +174,15 @@ async function resolveReadableTranscriptPath(params: Readonly<{
     // is the authority only when the session carries no linked source at all.
     const linkedSource = resolveExternalSessionSource(params);
     if (linkedSource) {
-        const linked = await resolveClaudeJsonlSessionFile({
+        const linked = await lookupClaudeJsonlSessionFile({
             source: linkedSource,
             env: params.env,
             remoteSessionId: params.remoteSessionId,
             ...(params.signal ? { signal: params.signal } : {}),
         });
-        if (linked) return linked.filePath;
-        throw new Error(
-            `Claude handoff transcript for ${params.remoteSessionId} is unavailable or unauthorized in its linked source`,
+        if ('filePath' in linked) return linked.filePath;
+        throw new ClaudeTranscriptExportRefusal(
+            linked.code, linked.pathKind === 'claude_projects_dir' ? 'linked_source_root' : linked.pathKind,
         );
     }
 
@@ -170,9 +196,9 @@ async function resolveReadableTranscriptPath(params: Readonly<{
 
     const workingDirectory = typeof params.metadata.path === 'string' ? params.metadata.path.trim() : '';
     if (!workingDirectory) {
-        throw new Error('Missing Claude working directory for handoff export');
+        throw new ClaudeTranscriptExportRefusal('working_directory_missing', 'session_dir');
     }
-    const derived = await resolveClaudeJsonlSessionFile({
+    const derived = await lookupClaudeJsonlSessionFile({
         source: {
             kind: 'claudeConfig',
             configDir: resolveClaudeConfigDir(params.env),
@@ -182,26 +208,22 @@ async function resolveReadableTranscriptPath(params: Readonly<{
         remoteSessionId: params.remoteSessionId,
         ...(params.signal ? { signal: params.signal } : {}),
     });
-    if (derived) return derived.filePath;
-
-    throw new Error(
-        `Claude handoff transcript for ${params.remoteSessionId} is unavailable or unauthorized`,
-    );
+    if ('filePath' in derived) return derived.filePath;
+    throw new ClaudeTranscriptExportRefusal(derived.code, derived.pathKind);
 }
 
-function assertSafeClaudeHandoffRemoteSessionId(remoteSessionId: string): void {
-    if (!hasClaudeProviderIdentityValue(remoteSessionId)) {
-        throw new Error(`Invalid remoteSessionId for Claude handoff: ${remoteSessionId}`);
-    }
+function isSafeClaudeHandoffRemoteSessionId(remoteSessionId: string): boolean {
     // This protects the transcript filename boundary only. It is not identity
     // normalization: every accepted byte is still persisted and resumed exactly.
-    if (remoteSessionId.includes('/') || remoteSessionId.includes('\\')) {
-        throw new Error(`Invalid remoteSessionId for Claude handoff: ${remoteSessionId}`);
-    }
+    return hasClaudeProviderIdentityValue(remoteSessionId)
+        && !remoteSessionId.includes('/')
+        && !remoteSessionId.includes('\\');
 }
 
 function resolveClaudeTranscriptPath(projectDir: string, remoteSessionId: string): string {
-    assertSafeClaudeHandoffRemoteSessionId(remoteSessionId);
+    if (!isSafeClaudeHandoffRemoteSessionId(remoteSessionId)) {
+        throw new Error(`Invalid remoteSessionId for Claude handoff: ${remoteSessionId}`);
+    }
     return join(projectDir, `${remoteSessionId}.jsonl`);
 }
 
@@ -373,7 +395,11 @@ export async function exportClaudeSessionBundle(params: Readonly<{
     throwIfAborted(params.signal);
     const transcriptPath = await resolveReadableTranscriptPath(params);
     throwIfAborted(params.signal);
-    const transcriptStats = await stat(transcriptPath);
+    const transcriptStats = await stat(transcriptPath).catch((error: unknown) => {
+        throwIfAborted(params.signal);
+        const { code, pathKind } = classifyClaudeTranscriptLookupError(error, 'transcript_file');
+        throw new ClaudeTranscriptExportRefusal(code, pathKind);
+    });
     throwIfAborted(params.signal);
     return {
         agentId: 'claude',

@@ -144,8 +144,10 @@ describe('session handoff start — source-derived transcript-storage authority'
       if (missingTranscript) {
         expect(result).toMatchObject({ ok: false, errorCode: 'source_export_failed',
           failureCause: { phase: 'session_handoff.source_export', errorClass: 'Error', errorCode: 'handoff_failed', httpStatus: null },
+          details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }] },
           status: { status: 'awaiting_recovery', recoveryActions: ['restart_on_source', 'keep_stopped'] } });
-        expect(JSON.stringify(Reflect.get(result as object, 'failureCause'))).not.toContain(configDir);
+        expect(JSON.stringify(result)).not.toContain(configDir);
+        expect(JSON.stringify(result)).not.toContain('native-claude');
         expect(stop).toHaveBeenCalledTimes(1);
         return;
       }

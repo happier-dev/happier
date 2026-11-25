@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from 'node:fs';
-import { access, lstat, mkdir, mkdtemp, readFile, realpath, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,20 @@ import { exportClaudeSessionBundle, importClaudeSessionBundle } from './bundle.j
 import { getClaudeProjectPath, resolveClaudeProjectId } from './path.js';
 import { claudeHandoffSurface } from './providerOps.js';
 import { validateClaudeExternalSessionSource } from '../external/source.js';
+
+const fsBoundary = vi.hoisted(() => ({ path: '', code: 'EACCES' }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+    const fs = await importOriginal<typeof import('node:fs/promises')>();
+    return {
+        ...fs,
+        lstat: (path: Parameters<typeof fs.lstat>[0], options?: Parameters<typeof fs.lstat>[1]) => {
+            if (path === fsBoundary.path) {
+                throw Object.assign(new Error(`${fsBoundary.code}: ${path}`), { code: fsBoundary.code });
+            }
+            return fs.lstat(path, options);
+        },
+    };
+});
 
 function handoffContext(): import('@happier-dev/plugin-sdk').PluginInvocationContext {
     return { signal: new AbortController().signal } as import('@happier-dev/plugin-sdk').PluginInvocationContext;
@@ -24,7 +38,55 @@ async function readExportedClaudeTranscript(
 
 describe('Claude handoff bundle leaf', () => {
     afterEach(() => {
+        fsBoundary.path = '';
         vi.unstubAllEnvs();
+    });
+
+    it.each([
+        { fixture: 'missing transcript', linked: true, code: 'transcript_missing', pathKind: 'transcript_file' },
+        { fixture: 'missing project', linked: false, code: 'transcript_missing', pathKind: 'session_dir' },
+        { fixture: 'missing root', linked: false, code: 'transcript_missing', pathKind: 'claude_projects_dir' },
+        { fixture: 'missing root', linked: true, code: 'transcript_missing', pathKind: 'linked_source_root' },
+        { fixture: 'denied lookup', linked: false, code: 'permission_denied', pathKind: 'transcript_file' },
+        { fixture: 'failed I/O', linked: false, code: 'lookup_failed', pathKind: 'transcript_file' },
+        { fixture: 'non-directory project', linked: true, code: 'not_directory', pathKind: 'session_dir' },
+        { fixture: 'non-regular transcript', linked: true, code: 'not_regular_file', pathKind: 'transcript_file' },
+        { fixture: 'missing working directory', linked: false, code: 'working_directory_missing', pathKind: 'session_dir' },
+    ])('reports $fixture at $pathKind through the Claude export surface', async ({ fixture, linked, code, pathKind }) => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-export-refusal-'));
+        try {
+            const configDir = join(await realpath(root), '.claude');
+            const workspace = join(root, 'workspace');
+            const projectId = resolveClaudeProjectId(workspace);
+            const projectDir = join(configDir, 'projects', projectId);
+            const transcriptPath = join(projectDir, 'private-session.jsonl');
+            if (fixture !== 'missing root') {
+                const projectsDir = join(configDir, 'projects');
+                await mkdir(fixture === 'missing project' || fixture === 'non-directory project' ? projectsDir : projectDir, { recursive: true });
+            }
+            if (fixture === 'denied lookup' || fixture === 'failed I/O') {
+                await writeFile(transcriptPath, '{}\n');
+                fsBoundary.path = transcriptPath;
+                fsBoundary.code = fixture === 'denied lookup' ? 'EACCES' : 'EIO';
+            }
+            if (fixture === 'non-directory project') await writeFile(projectDir, '');
+            if (fixture === 'non-regular transcript') await mkdir(transcriptPath);
+            vi.stubEnv('CLAUDE_CONFIG_DIR', configDir);
+            const result = await claudeHandoffSurface.exportBundle({
+                sessionId: 'private-session',
+                metadata: {
+                    ...(fixture === 'missing working directory' ? {} : { path: workspace }),
+                    ...(linked ? { externalSessionSource: { kind: 'claudeConfig', configDir, projectId } } : {}),
+                },
+                directory: root,
+            }, handoffContext());
+
+            expect(result).toMatchObject({ ok: false, code: 'handoff_failed', diagnostics: [{ code, details: { pathKind } }] });
+            expect(JSON.stringify(result)).not.toContain(configDir);
+            expect(JSON.stringify(result)).not.toContain('private-session');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
     });
 
     it('derives project paths from the Happier config root when it is the only override', () => {
@@ -173,7 +235,8 @@ describe('Claude handoff bundle leaf', () => {
             await writeFile(sentinelPath, sentinel, 'utf8');
             await symlink(sentinelPath, transcriptPath, 'file');
 
-            await expect(exportClaudeSessionBundle({
+            vi.stubEnv('CLAUDE_CONFIG_DIR', configDir);
+            await expect(claudeHandoffSurface.exportBundle({
                 metadata: {
                     path: workspace,
                     ...(sourceKind === 'linked source'
@@ -186,9 +249,13 @@ describe('Claude handoff bundle leaf', () => {
                         }
                         : {}),
                 },
-                remoteSessionId,
-                env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
-            })).rejects.toThrow();
+                sessionId: remoteSessionId,
+                directory: root,
+            }, handoffContext())).resolves.toMatchObject({
+                ok: false,
+                code: 'handoff_failed',
+                diagnostics: [{ code: 'root_mismatch', details: { pathKind: 'transcript_file' } }],
+            });
         },
     );
 
@@ -740,7 +807,7 @@ describe('Claude handoff bundle leaf', () => {
             metadata: { path: '/tmp/workspace' },
             remoteSessionId: '../escape',
             env: {},
-        })).rejects.toThrow(/Invalid remoteSessionId/);
+        })).rejects.toMatchObject({ code: 'invalid_session_id', pathKind: 'transcript_file' });
 
         await expect(importClaudeSessionBundle({
             bundle: {
@@ -798,7 +865,7 @@ describe('Claude handoff bundle leaf', () => {
             },
             remoteSessionId: 'session-shared-id',
             env: { HAPPIER_CLAUDE_CONFIG_DIR: environmentConfigDir },
-        })).rejects.toThrow(/session-shared-id/);
+        })).rejects.toMatchObject({ code: 'transcript_missing', pathKind: 'transcript_file' });
     });
 
     it('treats a linked source that names only a config root as exclusive custody', async () => {
@@ -823,7 +890,7 @@ describe('Claude handoff bundle leaf', () => {
             },
             remoteSessionId: 'session-config-only',
             env: { HAPPIER_CLAUDE_CONFIG_DIR: environmentConfigDir },
-        })).rejects.toThrow(/session-config-only/);
+        })).rejects.toMatchObject({ code: 'transcript_missing', pathKind: 'transcript_file' });
     });
 
     it('exports from a linked source that names only a config root when that root holds the transcript', async () => {

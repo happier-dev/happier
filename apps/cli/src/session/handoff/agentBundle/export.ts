@@ -73,6 +73,7 @@ export async function prepareSessionHandoffAgentBundleExport(params: Readonly<{
         ok: false,
         errorCode: agentBundle.code,
         error: agentBundle.message ?? `Session handoff export failed: ${agentBundle.code}`,
+        ...(agentBundle.diagnostics?.length ? { details: { diagnostics: agentBundle.diagnostics } } : {}),
         failureCause: { phase: 'session_handoff.source_export', errorClass: 'Error',
           errorCode: agentBundle.code, httpStatus: null },
       });

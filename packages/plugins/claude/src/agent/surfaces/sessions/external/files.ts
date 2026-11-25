@@ -53,6 +53,25 @@ type AuthorizedClaudeProjectsRoot = Readonly<{
     projectsRoot: string;
 }>;
 
+type ClaudeTranscriptPathKind = 'claude_projects_dir' | 'session_dir' | 'transcript_file';
+
+export type ClaudeTranscriptLookupFailure = Readonly<{
+    code: 'transcript_missing' | 'root_mismatch' | 'permission_denied' | 'not_directory'
+        | 'not_regular_file' | 'invalid_session_id' | 'lookup_failed';
+    pathKind: ClaudeTranscriptPathKind;
+}>;
+
+export function classifyClaudeTranscriptLookupError(error: unknown, pathKind: ClaudeTranscriptPathKind): ClaudeTranscriptLookupFailure {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+    switch (code) {
+        case 'ENOENT': return { code: 'transcript_missing', pathKind };
+        case 'EACCES':
+        case 'EPERM': return { code: 'permission_denied', pathKind };
+        case 'ENOTDIR': return { code: 'not_directory', pathKind };
+        default: return { code: 'lookup_failed', pathKind };
+    }
+}
+
 export async function readClaudeJsonlFileSize(
     filePath: string,
     signal?: AbortSignal,
@@ -387,21 +406,28 @@ async function resolveAuthorizedClaudeProjectsRoot(params: Readonly<{
     configDir: string;
     signal?: AbortSignal;
 }>): Promise<AuthorizedClaudeProjectsRoot | null> {
-    const configRoot = await realpath(params.configDir).catch(() => null);
-    throwIfAborted(params.signal);
-    if (!configRoot) return null;
+    const result = await inspectClaudeProjectsRoot(params);
+    return 'projectsRoot' in result ? result : null;
+}
 
-    const projectsRoot = await realpath(join(configRoot, 'projects')).catch(() => null);
-    throwIfAborted(params.signal);
-    if (
-        !projectsRoot
-        || projectsRoot === configRoot
-    ) {
-        return null;
+async function inspectClaudeProjectsRoot(params: Readonly<{
+    configDir: string;
+    signal?: AbortSignal;
+}>): Promise<AuthorizedClaudeProjectsRoot | ClaudeTranscriptLookupFailure> {
+    const pathKind = 'claude_projects_dir';
+    try {
+        const configRoot = await realpath(params.configDir);
+        throwIfAborted(params.signal);
+        const projectsRoot = await realpath(join(configRoot, 'projects'));
+        throwIfAborted(params.signal);
+        if (projectsRoot === configRoot) return { code: 'root_mismatch', pathKind };
+        const directory = await stat(projectsRoot);
+        throwIfAborted(params.signal);
+        return directory.isDirectory() ? { projectsRoot } : { code: 'not_directory', pathKind };
+    } catch (error) {
+        throwIfAborted(params.signal);
+        return classifyClaudeTranscriptLookupError(error, pathKind);
     }
-    const directory = await stat(projectsRoot).catch(() => null);
-    throwIfAborted(params.signal);
-    return directory?.isDirectory() ? { projectsRoot } : null;
 }
 
 /**
@@ -412,54 +438,76 @@ async function resolveAuthorizedClaudeProjectsRoot(params: Readonly<{
  * ancestor; containment is then decided against the already-admitted physical
  * projects root.
  */
-export async function authorizeClaudeFilePath(params: Readonly<{
+type ClaudeFilePathAuthorization = Readonly<{
     projectsRoot: string;
     filePath: string;
     signal?: AbortSignal;
-}>): Promise<string | null> {
+}>;
+
+async function inspectClaudeFilePath(params: ClaudeFilePathAuthorization): Promise<string | ClaudeTranscriptLookupFailure> {
     // Exact lookup and directory enumeration must agree: a project alias is
     // never a second native identity, even when its target stays in this root.
-    const project = await lstat(dirname(params.filePath)).catch(() => null);
-    throwIfAborted(params.signal);
-    if (!project?.isDirectory() || project.isSymbolicLink()) return null;
-    const link = await lstat(params.filePath).catch(() => null);
-    throwIfAborted(params.signal);
-    if (!link?.isFile()) return null;
-    const physicalPath = await realpath(params.filePath).catch(() => null);
-    throwIfAborted(params.signal);
-    if (!physicalPath) return null;
-    return isCanonicalAbsolutePathInsideRoot(params.projectsRoot, physicalPath)
-        ? physicalPath
-        : null;
+    let pathKind: ClaudeTranscriptPathKind = 'session_dir';
+    try {
+        const project = await lstat(dirname(params.filePath));
+        throwIfAborted(params.signal);
+        if (project.isSymbolicLink()) return { code: 'root_mismatch', pathKind };
+        if (!project.isDirectory()) return { code: 'not_directory', pathKind };
+
+        pathKind = 'transcript_file';
+        const file = await lstat(params.filePath);
+        throwIfAborted(params.signal);
+        if (file.isSymbolicLink()) return { code: 'root_mismatch', pathKind };
+        if (!file.isFile()) return { code: 'not_regular_file', pathKind };
+        const physicalPath = await realpath(params.filePath);
+        throwIfAborted(params.signal);
+        return isCanonicalAbsolutePathInsideRoot(params.projectsRoot, physicalPath)
+            ? physicalPath
+            : { code: 'root_mismatch', pathKind };
+    } catch (error) {
+        throwIfAborted(params.signal);
+        return classifyClaudeTranscriptLookupError(error, pathKind);
+    }
 }
 
-export async function resolveClaudeJsonlSessionFile(params: Readonly<{
+export async function authorizeClaudeFilePath(params: ClaudeFilePathAuthorization): Promise<string | null> {
+    const result = await inspectClaudeFilePath(params);
+    return typeof result === 'string' ? result : null;
+}
+
+type ClaudeSessionFileLookup = Readonly<{
     source: ClaudeExternalSessionSource;
     env: NodeJS.ProcessEnv;
     remoteSessionId: string;
     signal?: AbortSignal;
-}>): Promise<ResolvedClaudeJsonlSessionFile | null> {
+}>;
+
+export async function resolveClaudeJsonlSessionFile(params: ClaudeSessionFileLookup): Promise<ResolvedClaudeJsonlSessionFile | null> {
+    const result = await lookupClaudeJsonlSessionFile(params);
+    return 'filePath' in result ? result : null;
+}
+
+export async function lookupClaudeJsonlSessionFile(params: ClaudeSessionFileLookup): Promise<ResolvedClaudeJsonlSessionFile | ClaudeTranscriptLookupFailure> {
     throwIfAborted(params.signal);
     const remoteSessionId = readClaudeProviderIdentityValue(params.remoteSessionId) ?? '';
-    if (!isSafeClaudeJsonlPathSegment(remoteSessionId)) return null;
+    if (!isSafeClaudeJsonlPathSegment(remoteSessionId)) return { code: 'invalid_session_id', pathKind: 'transcript_file' };
 
     const configDir = resolveClaudeConfigDir({ source: params.source, env: params.env });
-    const authorizedProjectsRoot = await resolveAuthorizedClaudeProjectsRoot({
+    const authorizedProjectsRoot = await inspectClaudeProjectsRoot({
         configDir,
         ...(params.signal ? { signal: params.signal } : {}),
     });
-    if (!authorizedProjectsRoot) return null;
+    if ('code' in authorizedProjectsRoot) return authorizedProjectsRoot;
     const projectsDir = authorizedProjectsRoot.projectsRoot;
     const preferredProjectId = resolvePreferredProjectId(params.source);
 
-    const resolveInProject = async (projectId: string): Promise<ResolvedClaudeJsonlSessionFile | null> => {
-        if (!isSafeClaudeJsonlPathSegment(projectId)) return null;
-        const authorizedPath = await authorizeClaudeFilePath({
-            projectsRoot: authorizedProjectsRoot.projectsRoot,
+    const resolveInProject = async (projectId: string): Promise<ResolvedClaudeJsonlSessionFile | ClaudeTranscriptLookupFailure> => {
+        const authorizedPath = await inspectClaudeFilePath({
+            projectsRoot: projectsDir,
             filePath: join(projectsDir, projectId, `${remoteSessionId}.jsonl`),
             ...(params.signal ? { signal: params.signal } : {}),
         });
-        if (!authorizedPath) return null;
+        if (typeof authorizedPath !== 'string') return authorizedPath;
         return {
             filePath: authorizedPath,
             fileRelPath: join('projects', projectId, `${remoteSessionId}.jsonl`).replace(/\\/g, '/'),
@@ -471,7 +519,14 @@ export async function resolveClaudeJsonlSessionFile(params: Readonly<{
         return await resolveInProject(preferredProjectId);
     }
 
-    const projectEntries = await readdir(projectsDir, { withFileTypes: true }).catch(() => []);
+    let projectEntries;
+    try {
+        projectEntries = await readdir(projectsDir, { withFileTypes: true });
+    } catch (error) {
+        throwIfAborted(params.signal);
+        return classifyClaudeTranscriptLookupError(error, 'claude_projects_dir');
+    }
+    let failure: ClaudeTranscriptLookupFailure | undefined;
     let newest: Readonly<{
         resolved: ResolvedClaudeJsonlSessionFile;
         candidate: DiscoveredClaudeJsonlSession;
@@ -480,8 +535,12 @@ export async function resolveClaudeJsonlSessionFile(params: Readonly<{
         throwIfAborted(params.signal);
         if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
         const projectId = typeof entry.name === 'string' ? entry.name : String(entry.name);
+        if (!isSafeClaudeJsonlPathSegment(projectId)) continue;
         const resolved = await resolveInProject(projectId);
-        if (!resolved) continue;
+        if ('code' in resolved) {
+            if (resolved.code !== 'transcript_missing') failure ??= resolved;
+            continue;
+        }
         try {
             const file = await stat(resolved.filePath);
             throwIfAborted(params.signal);
@@ -494,12 +553,13 @@ export async function resolveClaudeJsonlSessionFile(params: Readonly<{
             if (!newest || compareClaudeJsonlSessionPrecedence(candidate, newest.candidate) < 0) {
                 newest = { resolved, candidate };
             }
-        } catch {
+        } catch (error) {
             throwIfAborted(params.signal);
-            continue;
+            const candidateFailure = classifyClaudeTranscriptLookupError(error, 'transcript_file');
+            if (candidateFailure.code !== 'transcript_missing') failure ??= candidateFailure;
         }
     }
-    return newest?.resolved ?? null;
+    return newest?.resolved ?? failure ?? { code: 'transcript_missing', pathKind: 'transcript_file' };
 }
 
 export async function findClaudeJsonlSessionsById(params: Readonly<{
