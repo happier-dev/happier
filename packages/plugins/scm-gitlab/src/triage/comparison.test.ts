@@ -15,7 +15,7 @@ const localRef = { kindId: 'merge-request', collisionScope: GITLAB_TEST_COLLISIO
 const input = { v: 1, instance: gitlabTestConfiguredInstance(), localRef, routingToken: repository, limit: 1, comparison: true };
 const beforeOid = 'a'.repeat(40), baseOid = 'b'.repeat(40), headOid = 'c'.repeat(40);
 const metadata = { id: 700, project_id: 3, iid: 7, references: { full: `${repository}!7` },
-  title: 'Change behavior', state: 'opened', sha: headOid, changes_count: '2',
+  web_url: `${GITLAB_TEST_ORIGIN}/${repository}/-/merge_requests/7`, title: 'Change behavior', state: 'opened', sha: headOid, changes_count: '2',
   diff_refs: { base_sha: beforeOid, start_sha: baseOid, head_sha: headOid } };
 const patch = '@@ -1 +1 @@\n-old\n+new\n';
 const file = (path: string, overrides: Record<string, unknown> = {}) => ({ old_path: path, new_path: path,
@@ -65,7 +65,8 @@ describe('merge request comparison evidence', () => {
       const result = await listGitlabChanges({ ...sourceAction.input, limit: 1, ...(continuation ? { continuation } : {}) }, stub.context);
       return GitlabChangesResultV1Schema.parse(result);
     } });
-    expect(captured).toMatchObject({ state: 'complete', freshness: 'current', before: beforeOid, after: headOid });
+    expect(captured).toMatchObject({ state: 'complete', freshness: 'current', before: beforeOid, after: headOid,
+      pullRequest: { url: metadata.web_url } });
     expect(captured.files.map(row => row.path)).toEqual(['first.ts', 'second.ts']);
     expect(captured.files[1]?.unifiedDiff).toContain(patch);
     const withoutEvidenceMode = await readPullRequestComparison({ source, readPage: ({ sourceAction }) => {

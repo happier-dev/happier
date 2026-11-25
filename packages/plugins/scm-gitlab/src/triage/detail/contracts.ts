@@ -417,6 +417,7 @@ export const GitlabComparisonContinuationV1Schema = defineProtocolObject({
 export type GitlabComparisonContinuationV1 = ReturnType<typeof GitlabComparisonContinuationV1Schema.parse>;
 
 const GitlabComparisonEvidenceV1Schema = defineProtocolObject({
+  url: PathSchema.optional(),
   ...comparisonEndpointFields,
   locator: defineProtocolObject({ providerId: defineProtocolLiteral('gitlab'), repository: PathSchema,
     number: defineProtocolNumber({ integer: true, minimum: 1 }) }, { policy: 'closed' }),

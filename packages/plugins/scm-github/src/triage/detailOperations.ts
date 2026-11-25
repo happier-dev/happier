@@ -458,7 +458,8 @@ export async function listGithubChangedFiles(
     });
     const continuation = freshness === 'current' && page.value.nextPage !== null
       ? encodeGithubDetailContinuation({ v: 1, page: page.value.nextPage, perPage: request.limit, comparison: {
-        binding, ...endpoints, enumeratedFileCount,
+        binding, beforeOid: endpoints.beforeOid, baseOid: endpoints.baseOid, headOid: endpoints.headOid,
+        totalFileCount: endpoints.totalFileCount, enumeratedFileCount,
         inventoryIncomplete: page.value.omittedRowCount > 0 || page.value.projectionTruncated || previous?.inventoryIncomplete === true,
         contentIncomplete,
       } }) : null;

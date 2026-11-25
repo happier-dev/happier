@@ -393,6 +393,7 @@ const GithubPatchEvidenceV1Schema = defineProtocolUnion([
 export type GithubPatchEvidenceV1 = ReturnType<typeof GithubPatchEvidenceV1Schema.parse>;
 
 export const GithubComparisonEvidenceV1Schema = defineProtocolObject({
+  url: LocationSchema.optional(),
   locator: defineProtocolObject({
     providerId: defineProtocolLiteral('github'),
     repository: defineProtocolString({ minLength: 1 }),

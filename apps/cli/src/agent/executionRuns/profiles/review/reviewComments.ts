@@ -195,7 +195,8 @@ export function createReviewRunCommentService(deps: Readonly<{
               ...(producingSessionId ? { sessionId: producingSessionId } : {}) } } : {}),
             anchor, snapshot, body: [finding.title, finding.summary, finding.whyItMatters, finding.evidence, finding.suggestion].filter(Boolean).join('\n\n'),
             authorIntent: record(intentInput)?.reviewCommentAuthorIntent === 'open' ? 'open' : 'propose', fingerprint,
-            linkedRefs: [...(params.run ? [{ kind: 'executionRun' as const, id: producingRunId }] : []), ...(producingSessionId ? [{ kind: 'session' as const, id: producingSessionId }] : [])],
+            linkedRefs: [...(comparison?.source.kind === 'pullRequest' && comparison.pullRequest?.url
+              ? [{ kind: 'pullRequest' as const, url: comparison.pullRequest.url }] : []), ...(params.run ? [{ kind: 'executionRun' as const, id: producingRunId }] : []), ...(producingSessionId ? [{ kind: 'session' as const, id: producingSessionId }] : [])],
             clientMutationId: `review-finding:${createHash('sha256').update(mutationSource).digest('hex')}`,
           };
           const comment = resultComment(await deps.execute('reviews.comments.create', input, {

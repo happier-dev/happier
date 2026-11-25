@@ -151,7 +151,8 @@ export const ReviewCommentSnapshotV1Schema = lazyZodSchema(() => z.union([
     selectedLinesHash: z.string().check(z.minLength(1)),
     contextWindowHash: z.string().check(z.minLength(1)),
     capturedAt: z.number().check(z.int(), z.nonnegative()),
-    fileLength: z.number().check(z.int(), z.nonnegative()),
+    // Hosted patch excerpts do not establish the complete file length.
+    fileLength: z.optional(z.number().check(z.int(), z.nonnegative())),
     source: ReviewCommentSnapshotSourceV1Schema,
     commitSha: z.optional(z.string().check(z.minLength(1))),
     isUncommitted: z.boolean(),

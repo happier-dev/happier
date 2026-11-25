@@ -253,6 +253,7 @@ export async function readGithubChangedFilesPage(
 }
 
 export type GithubPullRequestComparisonEndpointsV1 = Readonly<{
+  url?: string;
   baseOid: string;
   headOid: string;
   totalFileCount: number;
@@ -278,7 +279,7 @@ export async function readGithubPullRequestComparisonEndpoints(
   if (typeof baseOid !== 'string' || !/^[a-f0-9]{40}$/u.test(baseOid)
     || typeof headOid !== 'string' || !/^[a-f0-9]{40}$/u.test(headOid)
     || typeof totalFileCount !== 'number' || !Number.isSafeInteger(totalFileCount) || totalFileCount < 0) return failed(RESPONSE_SHAPE_INVALID);
-  return succeeded(Object.freeze({ baseOid, headOid, totalFileCount }));
+  return succeeded(Object.freeze({ baseOid, headOid, totalFileCount, ...(view.htmlUrl ? { url: view.htmlUrl } : {}) }));
 }
 
 /** GitHub PR patches start at the merge base, not the base branch's current tip. */

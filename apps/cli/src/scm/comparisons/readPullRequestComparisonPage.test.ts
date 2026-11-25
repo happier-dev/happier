@@ -15,12 +15,12 @@ describe('hosted comparison unified evidence', () => {
     const rows = Array.from({ length: 4 }, (_, index) => ({ path: `pr-${index}.ts`, status: 'modified',
       diffAvailable: true, evidence: { state: 'available', patch: '@@ -1 +1 @@\n-old\n+new\n' } }));
     const page = { kind: 'changedFiles', omittedRowCount: 0, projectionTruncated: false, rows,
-      comparison: { beforeOid: 'c'.repeat(40), baseOid: source.locator.baseOid, headOid: source.locator.headOid,
+      comparison: { url: 'https://github.com/upstream/repo/pull/17', beforeOid: 'c'.repeat(40), baseOid: source.locator.baseOid, headOid: source.locator.headOid,
         locator: { providerId: 'github', repository: 'upstream/repo', number: 17 }, totalFileCount: 4,
         enumeratedFileCount: 4, freshness: 'current', inventory: 'complete', content: 'complete', reasons: [] } };
     const captured = await readPullRequestComparison({ source, readPage: async () => page });
     expect(captured).toMatchObject({ state: 'complete', before: 'c'.repeat(40), after: 'b'.repeat(40),
-      pullRequest: { baseOid: 'a'.repeat(40) } });
+      pullRequest: { baseOid: 'a'.repeat(40), url: 'https://github.com/upstream/repo/pull/17' } });
     expect(captured.files.map(file => file.path)).toEqual(rows.map(row => row.path));
     // The source Action transport is the trust boundary. Reject a stale fork's
     // repository or either pinned endpoint before admitting its unrelated files.

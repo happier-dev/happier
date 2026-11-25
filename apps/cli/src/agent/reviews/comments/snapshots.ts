@@ -13,6 +13,7 @@ import {
     reviewCommentTextSnapshotHasBidiControlsV1,
     reviewCommentTextSnapshotIsLikelyMinifiedV1,
 } from '@happier-dev/protocol/reviews/comments/snapshots';
+import { parseUnifiedDiffHunks } from '@happier-dev/protocol';
 import { runGitCheckpointCommand } from '@/scm/checkpoints/gitCheckpointCommands';
 
 const DEFAULT_CONTEXT_LINE_COUNT = 5;
@@ -135,6 +136,27 @@ async function resolveComparisonSnapshot(params: Readonly<{
     const side = 'side' in anchor && anchor.side ? anchor.side
         : file.previousPath === filePath || !file.afterBlobId ? 'before' : 'after';
     const blobId = side === 'before' ? file.beforeBlobId : file.afterBlobId;
+    if (!blobId && comparison.source.kind === 'pullRequest' && file.evidence.state === 'available'
+        && (anchor.kind === 'line' || anchor.kind === 'range')) {
+        // Hosted comparisons retain immutable patch lines rather than local Git objects.
+        const patchSide = 'side' in anchor && anchor.side ? anchor.side
+            : file.changeKind === 'deleted' || file.previousPath === filePath ? 'before' : 'after';
+        const start = anchor.kind === 'line' ? anchor.line : anchor.startLine;
+        const end = anchor.kind === 'line' ? anchor.line : anchor.endLine;
+        for (const hunk of parseUnifiedDiffHunks(file.evidence.unifiedDiff)) {
+            const firstLine = patchSide === 'before' ? hunk.oldStart : hunk.newStart;
+            const lines = hunk.lines.filter(line => line.kind !== (patchSide === 'before' ? 'add' : 'remove')).map(line => line.text);
+            if (start < firstLine || end >= firstLine + lines.length) continue;
+            const snapshot = createTextSnapshot({ lines, capturedAt, anchor: { kind: 'range', filePath,
+                startLine: start - firstLine + 1, endLine: end - firstLine + 1 } });
+            if (snapshot?.kind !== 'text') return null;
+            const { fileLength, ...excerpt } = snapshot;
+            return { ...excerpt, source: 'diffSide', isUncommitted: false, isUntracked: file.changeKind === 'added',
+                diffContext: { side: patchSide, ...(comparison.endpoints.before ? { baseSha: comparison.endpoints.before } : {}),
+                    ...(comparison.endpoints.after ? { headSha: comparison.endpoints.after } : {}) } };
+        }
+        return null;
+    }
     if (!blobId || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(blobId)) return null;
     const directory = await mkdtemp(join(tmpdir(), 'happier-review-blob-'));
     try {

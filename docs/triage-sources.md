@@ -2908,3 +2908,17 @@ its existing behavior; a missing Settings page alone never opts a source in.
 ## Related
 
 [Plugin platform](plugin-platform.md), [Actions](actions.md), [Collection presentation](collection-presentation.md), [encryption](encryption.md), [compatibility](compatibility.md).
+
+## PR Review finding evidence (unreleased 0.3)
+
+GitHub and GitLab comparison sources retain the provider-reported PR URL with
+the captured base/head evidence. Review finding materialization attaches that
+URL as a `pullRequest` linked reference, including for locationless findings.
+Reported lines covered by a retained hosted patch receive a diff-side snapshot
+from that patch; no local Git blob or current worktree substitution is needed.
+The snapshot omits file length when the patch cannot establish it. Unverifiable
+locations retain the existing locationless fallback. Publication controls consume
+these references and snapshots without reconstructing PR identity. Existing
+captures without the optional URL remain readable; recapture and rerun the
+Review to obtain publication references. Matching 0.3 plugins, Protocol and daemon
+are required for the extended closed comparison and snapshot shapes.

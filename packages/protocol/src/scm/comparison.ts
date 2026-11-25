@@ -117,7 +117,7 @@ export const ScmComparisonSchema = lazyZodSchema(() => z.strictObject({
   /** Pending mutation authority is distinct from the empty tree used to display a root diff. */
   commitTarget: z.optional(z.strictObject({ headOid: z.nullable(identity), ref: z.nullable(identity) })),
   /** Source-attested base tip used for PR freshness, never as the diff-before endpoint. */
-  pullRequest: z.optional(z.strictObject({ baseOid: identity })),
+  pullRequest: z.optional(z.strictObject({ baseOid: identity, url: z.optional(z.string().check(z.url())) })),
   inventory: z.strictObject({
     state: z.enum(['complete', 'incomplete', 'unavailable']),
     files: z.array(ScmComparisonFileSchema), reasons: z.array(identity),

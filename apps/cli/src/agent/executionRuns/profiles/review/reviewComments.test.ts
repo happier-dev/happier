@@ -135,6 +135,30 @@ afterEach(async () => {
 });
 
 describe('canonical review Run comments', () => {
+  it('links every PR finding and snapshots reported lines from retained hosted patches without local blobs', async () => {
+    const comparison = ScmComparisonSchema.parse({ id: 'hosted-pr',
+      source: { kind: 'pullRequest', locator: { providerId: 'github', repository: 'hapier-qa/reviews-fixture-1125', number: 1 } },
+      repository: { rootPath: root }, endpoints: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+      inventory: { state: 'complete', reasons: [], files: [{ path: 'a.ts', changeKind: 'modified', binary: false,
+        generated: false, lockfile: false, evidence: { state: 'available', unifiedDiff: '@@ -1 +1 @@\n-old input();\n+reviewed input();' }, occurrences: [] }] } });
+    const url = 'https://github.com/hapier-qa/reviews-fixture-1125/pull/1';
+    const requests: unknown[] = [];
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => {
+      requests.push(body);
+      return { status: 200, data: { comment: commentForCreate(body), replayed: false } };
+    });
+    const result = await service().materialize({ run: run(), findings, reviewedFingerprint: null,
+      comparison: { ...comparison, pullRequest: { baseOid: 'a'.repeat(40), url } } });
+    expect(result).toMatchObject({ status: 'materialized', failures: [] });
+    expect(requests).toMatchObject([
+      { linkedRefs: expect.arrayContaining([{ kind: 'pullRequest', url }]),
+        anchor: { kind: 'line', filePath: 'a.ts', line: 1, side: 'after' },
+        snapshot: { kind: 'text', selectedLines: ['reviewed input();'], source: 'diffSide',
+          diffContext: { baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), side: 'after' } } },
+      { linkedRefs: expect.arrayContaining([{ kind: 'pullRequest', url }]), anchor: { kind: 'finding' } },
+    ]);
+  });
+
   it.each(['ephemeral', 'resumable', 'fresh', 'launch-failed', 'paid-unconfirmed', 'paid-consented', 'paid-alias-unconfirmed'] as const)('starts a new native round from the retained requester and launch selection (%s)', async mode => runWithScmAccountScope('new-native-round', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-new-round-' });
     repositories.push(fixture.rootPath);
