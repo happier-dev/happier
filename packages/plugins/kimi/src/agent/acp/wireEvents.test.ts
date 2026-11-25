@@ -90,7 +90,8 @@ describe('decodeKimiWireRecord', () => {
     ['completed', undefined, { kind: 'completed' }],
     ['cancelled', undefined, { kind: 'cancelled' }],
     ['blocked', undefined, { kind: 'failed', message: 'Kimi background turn refused' }],
-    ['failed', { code: 'provider.filtered', message: 'filtered' }, { kind: 'failed', message: 'Kimi background turn refused' }],
+    ['failed', { code: 'provider.filtered', message: 'filtered' }, { kind: 'failed', message: 'Kimi background turn refused',
+      diagnostic: { code: 'provider.filtered', severity: 'error', message: 'Kimi background turn refused' } }],
   ])('maps native terminal reason %s to the shared turn outcome', (reason, error, outcome) => {
     expect(decodeKimiWireRecord({ type: 'turn.ended', agentId: 'main', turnId: 1, reason, error }))
       .toEqual({ kind: 'turn-end', turnId: '1', outcome });

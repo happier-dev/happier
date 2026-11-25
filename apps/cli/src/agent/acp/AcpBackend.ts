@@ -265,6 +265,15 @@ function truncateStartupDiagnostic(value: string): string {
   return `${trimmed.slice(0, MAX_STARTUP_DIAGNOSTIC_CHARS)}...`;
 }
 
+function createCompletionEvidenceError(
+  outcome: Extract<AgentAcpCompletionEvidenceOutcome, { kind: 'failed' }>,
+  fallbackMessage: string,
+): Error {
+  const message = redactBugReportSensitiveText(outcome.message ?? fallbackMessage).trim().slice(0, 1_024);
+  return Object.assign(new Error(message || fallbackMessage),
+    outcome.diagnostic ? { diagnostic: outcome.diagnostic } : {});
+}
+
 export type { AcpAuthenticationSelection, AcpAuthenticationSelector } from './AcpAuthentication';
 
 export type AcpSetModelResponseProjector = (input: Readonly<{
@@ -569,17 +578,13 @@ export class AcpBackend implements CatalogAcpBackend {
     if (this.disposed || !this.waitingForResponse || this.isCurrentTurnGenerationClosed()) {
       return false;
     }
-    const failureMessage = outcome.kind === 'failed'
-      ? redactBugReportSensitiveText(outcome.message ?? 'Provider reported prompt failure').trim().slice(0, 1_024)
-      : '';
     this.settlePendingPromptSubmissionEffect(this.turnGeneration, 'completion');
     this.finalizeTurnOutcome(
       outcome.kind === 'completed'
         ? { kind: 'completed', stopReason: 'end_turn' }
         : outcome.kind === 'cancelled'
           ? { kind: 'aborted', stopReason: 'cancelled' }
-          : { kind: 'failed', error: Object.assign(new Error(failureMessage || 'Provider reported prompt failure'),
-              outcome.diagnostic ? { diagnostic: outcome.diagnostic } : {}) },
+          : { kind: 'failed', error: createCompletionEvidenceError(outcome, 'Provider reported prompt failure') },
     );
     return true;
   }
@@ -643,7 +648,7 @@ export class AcpBackend implements CatalogAcpBackend {
           await this.handleSessionUpdate({ sessionId: this.acpSessionId!, update } as SessionNotification, true);
         },
         finish: async outcome => {
-          if (outcome.kind === 'failed') this.failPendingResponseWait(new Error(outcome.message ?? 'Provider continuation failed'));
+          if (outcome.kind === 'failed') this.failPendingResponseWait(createCompletionEvidenceError(outcome, 'Provider continuation failed'));
           else this.finalizeTurnOutcome(outcome.kind === 'cancelled'
             ? { kind: 'aborted', stopReason: 'cancelled' }
             : { kind: 'completed', stopReason: 'end_turn' });

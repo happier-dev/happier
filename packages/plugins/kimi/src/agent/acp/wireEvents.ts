@@ -138,7 +138,11 @@ export function decodeKimiWireRecord(value: unknown): KimiWireEvent | null {
     let outcome: AcpTurnOutcome;
     if (reason === 'completed') outcome = { kind: 'completed' };
     else if (reason === 'cancelled') outcome = { kind: 'cancelled' };
-    else if (reason === 'blocked' || error?.code === 'provider.filtered') outcome = { kind: 'failed', message: 'Kimi background turn refused' };
+    else if (reason === 'blocked' || error?.code === 'provider.filtered') {
+      const message = 'Kimi background turn refused';
+      outcome = { kind: 'failed', message, ...(error?.code === 'provider.filtered'
+        ? { diagnostic: { code: error.code, severity: 'error' as const, message } } : {}) };
+    }
     else outcome = { kind: 'failed', message: error?.message ?? 'Kimi background turn failed' };
     return { kind: 'turn-end', turnId, outcome };
   }

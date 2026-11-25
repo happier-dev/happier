@@ -8,11 +8,12 @@ import { createDeferred } from '@/testkit/async/deferred';
 import { isPidAlive } from '@/testkit/process/spawn';
 import type { AcpBackend } from '../AcpBackend';
 import type { AgentAcpProviderTurnSource, AgentAcpProviderTurnSourceHost } from '@happier-dev/plugin-sdk/agents/runtime';
+import { decodeKimiWireRecord } from '../../../../../../packages/plugins/kimi/src/agent/acp/wireEvents';
 
 
 
 describe('ACP provider continuation source', () => {
-  it('opens with the session and routes authorized continuation output through the real ACP owner', async () => {
+  it.each(['completed', 'filtered'] as const)('settles an authorized continuation with a %s native outcome', async (terminal) => {
     await withTempDir('provider-turns-', async directory => {
       let host: AgentAcpProviderTurnSourceHost | undefined;
       const tasks = new Set<string>();
@@ -41,9 +42,22 @@ describe('ACP provider continuation source', () => {
         expect(events.some(event => event.type === 'model-output' && event.textDelta === 'LATE_FOREGROUND')).toBe(false);
         await sink!.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'CONTINUATION' } });
         expect(events.some(event => event.type === 'model-output' && event.textDelta === 'CONTINUATION')).toBe(true);
-        await sink!.finish({ kind: 'completed' });
-        await backend.waitForResponseComplete();
-        expect(backend.getLastTurnOutcome()).toMatchObject({ kind: 'completed' });
+        const event = decodeKimiWireRecord({ type: 'turn.ended', agentId: 'main', turnId: 1,
+          ...(terminal === 'completed' ? { reason: 'completed' } : {
+            reason: 'failed', error: { code: 'provider.filtered', message: 'Private provider text' },
+          }),
+        });
+        if (event?.kind !== 'turn-end') throw new Error('Expected a native turn settlement');
+        await sink!.finish(event.outcome);
+        if (terminal === 'filtered') {
+          await expect(backend.waitForResponseComplete()).rejects.toMatchObject({
+            message: 'Kimi background turn refused',
+            diagnostic: { code: 'provider.filtered', severity: 'error' },
+          });
+        } else {
+          await backend.waitForResponseComplete();
+          expect(backend.getLastTurnOutcome()).toMatchObject({ kind: 'completed' });
+        }
         expect(host!.beginContinuation({ id: 'task', turnId: '2' })).toBeNull();
       } finally { await backend.dispose(); }
     });
