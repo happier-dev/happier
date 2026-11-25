@@ -2475,7 +2475,7 @@ describe('own-server target at the Action host boundary', () => {
                                 });
                             }
                             async function closePreviewChildren(page: ReturnType<typeof WorkflowInvocationListResultV1Schema.parse>,
-                                nativeReceipts: readonly OwnServerDeploymentReceipt[]) {
+                                nativeReceipts: readonly OwnServerDeploymentReceipt[], onlyEnvironmentId?: string) {
                                 phase('preview-close-source');
                                 const closing = await readPreviewSource('closed', page);
                                 expect(closing, JSON.stringify(closing)).toMatchObject({ kind: 'available' });
@@ -2486,6 +2486,7 @@ describe('own-server target at the Action host boundary', () => {
                                     if (closeAction.kind !== 'action' || closeAction.actionId !== 'deployments.teardown')
                                         throw new Error('Expected ordinary native close Actions');
                                     const closeInput = DeploymentTeardownRequestInputV1Schema.parse(await operands(closeAction));
+                                    if (onlyEnvironmentId !== undefined && closeInput.environmentId !== onlyEnvironmentId) continue;
                                     phase(`preview-close-${closeInput.environmentId}-prepare`);
                                     selectChild(closeInput.environmentId);
                                     const deployed = nativeReceipts.find(saved => saved.deployment.environmentId === environment.environment.id
@@ -3039,11 +3040,13 @@ describe('own-server target at the Action host boundary', () => {
                             if (!cleanup || cleanup.volumes.length !== 1) throw new Error('Expected exact provisioned PostgreSQL volume');
                             const pgVolume = cleanup.volumes[0]!.name;
                             await docker.seedVolume('template-postgres-data', 'template-project');
-                            if (scenario === 'public_preview_companion_main_deleted')
+                            if (scenario === 'public_preview_companion_main_deleted') {
+                                expect(await closePreviewChildren(page, nativeReceipts, mainEnvironmentId)).toEqual([mainEnvironmentId]);
                                 previewEnvironments.get(mainEnvironmentId)!.environment.deletedAtMs = Date.now();
+                            }
                             expect(await closePreviewChildren(page, nativeReceipts)).toEqual(
                                 scenario === 'public_preview_companion_main_deleted' ? ['preview-companion-environment']
-                                    : previewCompanion ? ['preview-companion-environment', mainEnvironmentId] : [mainEnvironmentId]);
+                                    : previewCompanion ? [mainEnvironmentId, 'preview-companion-environment'] : [mainEnvironmentId]);
                             expect(await docker.readVolumeNames()).not.toContain(pgVolume);
                             expect(await docker.readVolumeNames()).toContain('template-postgres-data');
                             expect(promotionSource.targetLinks[0]!.targetLink.activeDeploymentId).toBe('source-current-release');

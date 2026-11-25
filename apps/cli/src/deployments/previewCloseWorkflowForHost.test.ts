@@ -9,7 +9,7 @@ import { resolveWorkflowActionFieldBinding } from '@/daemon/workflows/input';
 import { createOwnServerTeardownForHost } from './targets/ownServer/teardown';
 import { settleOwnServerTeardownVolumes } from './targets/ownServer/teardownVolumes';
 
-it.each([false, true])('closes the named catalog companion and its captured volume (main already removed: %s)', async alreadyRemoved => {
+it.each([false, true])('closes the main preview before removing its catalog companion and exact volume (main already removed: %s)', async alreadyRemoved => {
     const main = createDeploymentEnvironmentDetailV1();
     main.environment.id = 'main-preview';
     main.environment.purpose = 'preview';
@@ -36,10 +36,10 @@ it.each([false, true])('closes the named catalog companion and its captured volu
         readEnvironment: async id => id === companion.environment.id ? companion : main, readInvocations: async () => page });
     const actions = definition?.blocks.filter(block => block.kind === 'action');
     expect(actions).toMatchObject([
-        { actionId: 'deployments.teardown', input: { environmentId: { kind: 'literal', value: companion.environment.id },
-            volumes: { kind: 'literal', value: cleanup.volumes }, removeEnvironment: { kind: 'literal', value: true } } },
         ...(!alreadyRemoved ? [{ actionId: 'deployments.teardown', input: { environmentId: { kind: 'literal', value: main.environment.id },
             removeEnvironment: { kind: 'literal', value: true } } }] : []),
+        { actionId: 'deployments.teardown', input: { environmentId: { kind: 'literal', value: companion.environment.id },
+            volumes: { kind: 'literal', value: cleanup.volumes }, removeEnvironment: { kind: 'literal', value: true } } },
     ]);
     expect(actions).toHaveLength(alreadyRemoved ? 1 : 2);
 });

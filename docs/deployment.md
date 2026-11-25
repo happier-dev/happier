@@ -2883,7 +2883,8 @@ teardown before removing the runtime and Environment. Disabling new previews
 keeps an existing lifecycle listener available for this cleanup. Native database
 provision retains the exact observed PostgreSQL volume deletion operands in the
 same Run. Close discovers the companion through its persisted relation and removes
-it before the main preview, including when the main preview was already removed.
+it after removing the main preview so the app releases the companion's network.
+The relation also makes the companion discoverable after manual preview removal.
 It passes the captured operands to ordinary teardown; other volumes retain
 their existing default. This is
 development source behavior; real GitHub delivery and managed-provider effects

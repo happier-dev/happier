@@ -25,9 +25,10 @@ export async function readPreviewCloseWorkflowForHost(host: PreviewCloseWorkflow
     const key = (...parts: string[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
     const candidates: DeploymentEnvironmentHeaderV1[] = [];
     for (const preview of await host.readEnvironments()) {
+        // The app may still use the companion's native network.
+        if (preview.deletedAtMs === undefined) candidates.push(preview);
         // Relation lookup keeps failed or partially provisioned companions reachable on close.
         candidates.push(...(await host.readCompanions?.(preview.id) ?? []));
-        if (preview.deletedAtMs === undefined) candidates.push(preview);
     }
     for (const candidate of candidates) {
         const child = await host.readEnvironment(candidate.id);
