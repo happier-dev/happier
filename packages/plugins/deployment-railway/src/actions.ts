@@ -41,10 +41,10 @@ type ServiceInput = SelectionInput & { serviceId: string };
 type Runner<T> = (input: T, context: PluginAccountActionContext) => Promise<JsonValue>;
 type AccountAction = PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>;
 
-function action<T>(title: string, fields: Record<string, PluginJsonSchema>, resultSchema: PluginJsonSchema,
+function action<T>(title: string, description: string, fields: Record<string, PluginJsonSchema>, resultSchema: PluginJsonSchema,
   run: Runner<T>, options: { fields?: ActionInputHints['fields']; write?: true; optional?: string[] } = {}): AccountAction {
   return {
-    ...common, title, resultSchema, readOnly: !options.write,
+    ...common, title, description, resultSchema, readOnly: !options.write,
     dangerLevel: options.write ? 'writesRemote' as const : 'safe' as const,
     ...(options.write ? { confirmation: { title } } : {}),
     ...(options.fields ? { inputHints: { fields: options.fields } } : {}),
@@ -70,7 +70,10 @@ function removalAction(observeOnly: boolean): AccountAction {
   const title = observeOnly ? 'Check Railway database removal' : 'Delete the selected Railway database service';
   const role = observeOnly ? 'projects.observe' : 'projects.delete';
   return {
-    ...common, title, readOnly: observeOnly, dangerLevel: observeOnly ? 'safe' as const : 'destructive' as const,
+    ...common, title,
+    description: observeOnly ? 'Confirm whether the recorded Railway database service still exists after removal.'
+      : 'Delete the reviewed database service in the linked Railway project and environment, including its data.',
+    readOnly: observeOnly, dangerLevel: observeOnly ? 'safe' as const : 'destructive' as const,
     ...(!observeOnly ? { confirmation: { title: 'Delete this Railway database and its data?' } } : {}),
     inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema, nativeSelectorSchema),
     resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
@@ -98,15 +101,18 @@ export function engineActions(engine: Engine): Record<string, AccountAction> {
       visibleWhen: { op: 'truthy', path: 'railwayEnvironmentId' } },
   ] as const;
   return {
-    [ids.list]: action<SelectionInput & { cursor?: string }>(`Find Railway ${label} databases`, { ...scope, cursor: text }, listResult,
+    [ids.list]: action<SelectionInput & { cursor?: string }>(`Find Railway ${label} databases`,
+      `List ${label} services in the selected Railway project and environment, using the cursor to continue a previous page.`, { ...scope, cursor: text }, listResult,
       async (input, context) => {
         const page = await railway(context).project.readEnvironmentServicesPage(input.providerAccountId, input.railwayEnvironmentId,
           input.cursor ?? null, engines[engine].template).catch(readFailure);
         return { databases: page.choices, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
       }, { fields: fields.slice(0, 3), optional: ['cursor'] }),
-    [ids.provision]: action<SelectionInput>(`Create Railway ${label} database`, scope, provisionResult,
+    [ids.provision]: action<SelectionInput>(`Create Railway ${label} database`,
+      `Provision a ${label} database service in the reviewed Railway project and environment.`, scope, provisionResult,
       (input, context) => provision(engine, coordinates(input), context), { write: true, fields: fields.slice(0, 3) }),
-    [ids.link]: action<ServiceInput>(`Inspect Railway ${label} database for adoption`, selection, linkResult, async (input, context) => {
+    [ids.link]: action<ServiceInput>(`Inspect Railway ${label} database for adoption`,
+      `Verify the selected ${label} service and return the identity required to link it to an Environment.`, selection, linkResult, async (input, context) => {
       const service = await inspect(engine, serviceCoordinates(input), context);
       const project = encodeURIComponent(input.providerAccountId);
       const serviceId = encodeURIComponent(service.id);
@@ -121,12 +127,14 @@ export function engineActions(engine: Engine): Record<string, AccountAction> {
     [ids.reference]: action<Scope & { runtimeProviderIdentity: NonNullable<Scope['providerIdentity']>;
       runtimeProviderEnvironment: Scope['providerEnvironment'] }>(
       `Read a Railway app variable reference for ${label}`,
+      `Read the provider reference a linked Railway application uses to reach the ${label} service.`,
       { runtimeProviderIdentity: providerIdentity, runtimeProviderEnvironment: nativeEnvironment }, closed({ reference: text }),
       (input, context) => connectionReference(engine, selectedService(input), selectedService({
         providerIdentity: input.runtimeProviderIdentity, providerEnvironment: input.runtimeProviderEnvironment,
       }), context)),
     [ids.options]: {
-      ...common, title: `List Railway ${label} picker options`, readOnly: true, dangerLevel: 'safe' as const,
+      ...common, title: `List Railway ${label} picker options`,
+      description: `List choices for one ${label} setup field within the selected Railway workspace, project or environment.`, readOnly: true, dangerLevel: 'safe' as const,
       inputSchema: closed({ credentialRef: base.properties!.credentialRef!, credentialPrincipal: base.properties!.credentialPrincipal!,
         fieldPath: status('workspaceId', 'providerAccountId', 'railwayEnvironmentId', 'serviceId'), ...scope, cursor: text, query: { type: 'string' } },
       ['credentialRef', 'credentialPrincipal', 'fieldPath']),
@@ -174,5 +182,6 @@ async function options(engine: Engine, input: OptionsInput, context: PluginAccou
 }
 
 export const workflowAction: AccountAction = action<{ workflowId: string }>('Read Railway database creation progress',
+  'Read the status of an already submitted Railway database creation operation.',
   { workflowId: text }, closed({ status: status('Running', 'Complete', 'Error', 'NotFound') }),
   (input, context) => workflow(input.workflowId, context));

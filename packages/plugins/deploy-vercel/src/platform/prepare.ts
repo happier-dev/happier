@@ -29,6 +29,7 @@ type ProjectAccountAction = Extract<PluginActionDeclaration, { execution: { targ
 /** Connect and Check again consume this same finite provider preparation. */
 export const projectPrepareAction: ProjectAccountAction = {
   title: 'Prepare the selected Vercel project',
+  description: "Verify the selected Vercel project and environment and prepare their link to this Happier Environment.",
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'], placementBindings: [],
   hostAccess: ['vercel-api', 'deploy.manage'],

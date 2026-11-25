@@ -29,6 +29,7 @@ function unknownOutcome(): never {
  */
 export const projectCreateAction: AccountAction = {
   title: 'Create a Vercel project',
+  description: "Create a project in the selected Vercel account or Team with the reviewed source method and branch.",
   execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
   scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'], placementBindings: [],
   hostAccess: ['vercel-api', 'deploy.manage'],

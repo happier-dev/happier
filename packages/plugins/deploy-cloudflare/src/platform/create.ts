@@ -143,6 +143,7 @@ const sourceMethodHint = { path: 'sourceMethod', title: 'Source method', widget:
   options: [{ value: 'upload', label: 'Upload' }, { value: 'gitIntegration', label: 'Git integration' }] } as const;
 const gitOnly = { op: 'eq', path: 'sourceMethod', value: 'gitIntegration' } as const;
 export const pagesCreate: AccountAction = { ...common, title: 'Create a Cloudflare Pages project',
+  description: "Create a Pages project in the selected Cloudflare account with the reviewed source method and production branch.",
   hostAccess: ['cloudflare-pages', 'deploy.manage'],
   inputSchema: cloudflareRoleSchema(inputs.create.jsonSchema, 'pages'), resultSchema: cloudflareRoleSchema(output.jsonSchema, 'pages'),
   confirmation: { title: 'Create this Cloudflare Pages project? Provider billing may apply.' },
@@ -163,6 +164,7 @@ function nativeDiscriminator(path: string, title: string, value: string) {
 }
 
 export const workersCreate: AccountAction = { ...common, title: 'Create a Cloudflare Worker',
+  description: "Create a Worker in the selected Cloudflare account and configure Git builds if the reviewed source method uses them.",
   hostAccess: ['cloudflare-workers', 'deploy.manage'],
   inputSchema: cloudflareRoleSchema(inputs.create.jsonSchema, 'workers'), resultSchema: cloudflareRoleSchema(output.jsonSchema, 'workers'),
   confirmation: { title: 'Create this Cloudflare Worker? Provider billing may apply.' },

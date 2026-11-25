@@ -57,6 +57,7 @@ function withPreCreateNotice(action: typeof workersPrepare & { inputSchema: Plug
 export const inspect = withPreCreateNotice({
   ...workersPrepare,
   title: 'Inspect the selected Cloudflare target',
+  description: "Read the selected Worker or Pages project and prepare its deployment link, or return review facts for a new target.",
   surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'],
   hostAccess: ['cloudflare-workers', 'cloudflare-pages', 'deploy.manage'],
   inputSchema: {
@@ -80,9 +81,11 @@ export const inspect = withPreCreateNotice({
 export const productInspectActions: Readonly<Record<'workers-inspect' | 'pages-inspect',
   PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>>> = {
   'workers-inspect': withPreCreateNotice({ ...workersPrepare, title: 'Inspect the selected Cloudflare Worker',
+  description: "Check the selected script and source method before linking it, or describe what creating the Worker will configure.",
     inputSchema: workerPrepareInput, resultSchema: workerLinkSchema,
     surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'], inputHints: targetProductInputHints('workers') }, 'workers'),
   'pages-inspect': withPreCreateNotice({ ...pagesPrepare, title: 'Inspect the selected Cloudflare Pages project',
+  description: "Check the selected project and source method before linking it, or describe what creating the project will configure.",
     inputSchema: pagesPrepareInput, resultSchema: pagesLinkSchema,
     surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'], inputHints: targetProductInputHints('pages') }, 'pages'),
 };

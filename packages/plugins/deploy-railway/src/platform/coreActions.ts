@@ -259,7 +259,8 @@ export const coreActions: Readonly<Record<
   'service-create' | 'targets-inspect-v1' | 'service-link' | 'deploy' | 'observe' | 'cancel' | 'teardown',
   PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>
 >> = {
-  'service-create': { ...railwayAccountAction, title: 'Create a Railway service', surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'],
+  'service-create': { ...railwayAccountAction, title: 'Create a Railway service',
+  description: "Create a Git-connected service for the reviewed repository in the selected Railway project and environment.", surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'],
     dangerLevel: 'writesRemote', readOnly: false, confirmation: {
       title: 'Create this Git-connected Railway service?',
       body: 'Railway creates this service in every non-fork environment if the selected environment is a non-fork. Selecting a fork keeps the service in that fork.',
@@ -268,6 +269,7 @@ export const coreActions: Readonly<Record<
     inputHints: createOptionsInputHints,
     run: (value: JsonValue, context: PluginAccountActionContext) => create(value as unknown as CreateInput, context) },
   'targets-inspect-v1': { ...railwayAccountAction, title: 'Check the selected Railway service',
+  description: "Read the selected Railway service and verify its repository and environment before linking it for deploys.",
     surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'],
     dangerLevel: 'safe', readOnly: true, inputSchema: { ...preparation, properties: {
       ...preparation.properties, repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema,
