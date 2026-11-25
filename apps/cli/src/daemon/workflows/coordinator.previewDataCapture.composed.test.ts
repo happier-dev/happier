@@ -117,7 +117,7 @@ describe('Workflow preview data creation capture composition', () => {
         const provider = DeploymentTargetLinkProviderContentV1Schema.parse({ credentialPrincipal: { kind: 'account', accountId,
             purpose: { consumer: action, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
             providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'root-project-A', providerEnvironment: 'parent-project-A' },
-            providerEnvironment: { kind: 'custom', id: 'parent-project-A' } });
+            providerEnvironment: { kind: 'native', selection: { branchId: 'parent-project-A' } } });
         const repository = { kind: 'github' as const, deployment: 'https://forge.example/enterprise', repository: 'owner/app' };
         const event = { id: '17', number: 17, action: 'opened' as const, headSha: 'a'.repeat(40), headRef: 'feature/data', baseRef: 'main',
             baseRepository: repository, headRepository: repository, author: { id: 'contributor', login: 'contributor', kind: 'human' as const } };
@@ -152,6 +152,10 @@ describe('Workflow preview data creation capture composition', () => {
         app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
         app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
         app.get('/v1/account/profile', async () => ({ id: accountId }));
+        app.get(`/v1/machines/${machineId}`, async () => ({ machine: {
+            id: machineId, kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+            installationId: 'installation-host',
+        } }));
         app.post(managedMachineActionEndpointPathV1('machines.managed.list'), async request => {
             expect(request.body).toEqual({ homeId: 'home', enrolledMachineId: machineId });
             return { machines: [] };
@@ -330,14 +334,14 @@ describe('Workflow preview data creation capture composition', () => {
                 output: { kind: 'deployment_data_created', source: { pluginId: supabase.manifest.id, localId: 'database' },
                     deleteAction: { pluginId: supabase.manifest.id, localId: 'branches-delete' },
                     providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'parent-project-A', providerEnvironment: 'child-project-A' },
-                    providerEnvironment: { kind: 'custom', id: 'child-project-A' }, operands: {} } });
+                    providerEnvironment: { kind: 'native', selection: { branchId: 'child-project-A' } }, operands: {} } });
             expect(JSON.stringify(captured)).not.toContain('provider-private-echo');
             const child = environments.get('environment-A')!;
             const linked = child.targetLinks.find(link => link.id === 'preview-data')!;
             const actualProvider = readDeploymentTargetLinkArtifactV1(linked, await open(linked.contentArtifactId));
             expect(actualProvider).toMatchObject({ ok: true, content: { credentialPrincipal: provider.credentialPrincipal,
                 providerIdentity: { providerAccountId: 'organization-A', providerResourceId: 'parent-project-A', providerEnvironment: 'child-project-A' },
-                providerEnvironment: { kind: 'custom', id: 'child-project-A' } } });
+                providerEnvironment: { kind: 'native', selection: { branchId: 'child-project-A' } } } });
             const workflowReads = createWorkflowRunActionOwner({ storage: stored, resolveAccountId: async () => accountId,
                 definitions: { get: async () => { throw new Error('No saved Workflow definition is read'); } },
                 resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }) });

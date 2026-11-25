@@ -1617,6 +1617,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 } catch (error) { logger.infoFile('[Deployment] Source retention did not complete', { code: codeOf(error) }); }
             }
             await publishSettlementNotice(request, snapshot, settled, alertDelivery);
+            // The native refusal links the incumbent operation. The stored
+            // receipt projects failure facts but cannot replace that link.
+            if (!result.ok && result.errorCode === 'effect_in_progress') return result;
             const knownFailure = settled?.receipt.deployment.state === 'failed' ? settled.receipt.content.failure : undefined;
             if (knownFailure && settled) {
                 const cleanupFailed = settled.receipt.content.machineResults.some(row => row.steps.some(step =>

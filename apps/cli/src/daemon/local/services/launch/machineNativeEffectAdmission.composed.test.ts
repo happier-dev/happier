@@ -5,11 +5,10 @@ import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyExitEvent, PtyProcess, PtyProvider } from '@/terminal/pty/provider';
 import { assertNativeComposeAvailable } from './nativeComposeLifecycle';
 import { MachineSetupV1Schema } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { create as createTar } from 'tar';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { OwnServerDeploymentRequest, OwnServerDeploymentResult } from '@/deployments/targets/ownServer/ownServerDeploymentTarget';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
@@ -18,6 +17,10 @@ import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/inv
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
+import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from '@/deployments/targets/ownServer/paths';
 
 function deferred() {
     let resolve!: () => void;
@@ -299,10 +302,10 @@ describe('Machine native effect admission', () => {
             .rejects.toMatchObject({ code: 'effect_in_progress', actionOperationId: 'unknown-native' });
         expect(rebootEffects).toBe(0);
     });
-    it('links the actual deployment executor to an incumbent setup before any competing Docker effect', async () => {
+    it('links the actual deployment executor to an incumbent setup before any competing Docker effect', () => withConfiguredDaemonTestHome(
+        { prefix: 'happier-admission-deploy-' }, async ({ homeDir: root }) => {
         const { DeploymentEnvironmentDetailV1Schema, DeploymentReceiptDetailV1Schema } = await import('@happier-dev/deployments/contracts/v1');
         const { createOwnServerDeploymentTargetForHost } = await import('@/deployments/targets/ownServer/ownServerDeploymentTarget');
-        const root = await mkdtemp(join(tmpdir(), 'happier-admission-deploy-'));
         const setup = setupFixture();
         const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
             runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
@@ -318,6 +321,13 @@ describe('Machine native effect admission', () => {
         let first: Promise<unknown> | undefined;
         let deploying: Promise<OwnServerDeploymentResult> | undefined;
         try {
+            const serverUrl = 'https://home.example.test';
+            const homeServerIdentityId = 'srv_native_admission';
+            const profile = await addServerProfile({ name: 'Home', serverUrl, webappUrl: serverUrl });
+            await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact', descriptor: {
+                v: 1, homeServerIdentityId, canonicalServerUrl: serverUrl, revision: 1,
+                endpoints: [{ kind: 'https', url: serverUrl }],
+            } });
             const repository = join(root, 'repository');
             await mkdir(repository);
             const git = (args: string[]) => execFileSync('git', args, { cwd: repository, encoding: 'utf8' }).trim();
@@ -330,12 +340,12 @@ describe('Machine native effect admission', () => {
             const imageConfig = JSON.stringify({ os: 'linux', architecture: 'amd64', config: {} });
             const configHash = createHash('sha256').update(imageConfig).digest('hex');
             const artifact = { contentArtifactId: 'artifact', contentHeaderVersion: 1, contentBodyVersion: 1 };
-            const environment = DeploymentEnvironmentDetailV1Schema.parse({ environment: {
-                v: 1, id: 'environment', serverId: 'home', projectSourceId: 'source', revision: 1,
-                owner: { kind: 'account', accountId: 'person' }, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
-                controllerMachineId: 'machine', ...artifact, createdByAccountId: 'person', createdAtMs: 0, updatedAtMs: 0,
-                capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true },
-            }, content: { name: 'Production', retainPreviousDeployments: 0, bindings: [],
+            const environment = DeploymentEnvironmentDetailV1Schema.parse({ environment: createDeploymentEnvironmentHeaderV1({
+                id: 'environment', serverId: homeServerIdentityId, projectSourceId: 'source', revision: 1,
+                owner: { kind: 'account', accountId: 'person' }, dataAgentAccess: 'none',
+                controllerMachineId: 'machine', runtimeTargetLinkId: undefined, buildMachineId: undefined,
+                ...artifact, createdByAccountId: 'person', createdAtMs: 0, updatedAtMs: 0,
+            }), content: { name: 'Production', retainPreviousDeployments: 0, bindings: [],
                 definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: ['web'] } } },
             targetLinks: [{ targetLink: { v: 1, id: 'target', environmentId: 'environment', revision: 1, role: 'runtime',
                 source: { kind: 'host', id: 'own-server' }, targetKind: 'ownServer', state: 'configured', machines: ['machine'],
@@ -352,7 +362,7 @@ describe('Machine native effect admission', () => {
                 onFailure: 'keepPartial', images: [{ service: 'web', platform: 'linux/amd64', configDigest: `sha256:${configHash}`,
                     manifestDigest: `sha256:${'b'.repeat(64)}` }], machineResults: [], steps: [] } });
             let receiptStateAtNativeStart: typeof receipt.deployment.state | undefined;
-            const request: OwnServerDeploymentRequest = { actionId: 'deployments.deploy', input: { serverId: 'home', environmentId: 'environment',
+            const request: OwnServerDeploymentRequest = { actionId: 'deployments.deploy', input: { serverId: homeServerIdentityId, environmentId: 'environment',
                 expectedRevision: 1, targetLinkId: 'target', expectedTargetLinkRevision: 1, requestKey: 'request', ...artifact },
                 receipt: { ok: true, environmentId: 'environment', revision: 1, deploymentId: 'deployment', deploymentRevision: 1, state: 'queued' },
                 context: { signal: deploymentController.signal, operationAcceptance: { operationId: 'deployment-operation', accept() {} } } };
@@ -360,9 +370,10 @@ describe('Machine native effect admission', () => {
                 signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 resolveExecutable: async () => ({ command: '/docker' }), resolvePath: async () => repository,
                 systemTools: { async resolve() { return { executablePath: '/docker', launch: { executablePath: '/docker' } }; } } });
-            const target = createOwnServerDeploymentTargetForHost({ credentials: { token: 'token', encryption: null }, serverId: 'home',
-                serverHttpBaseUrl: 'https://home.example.test', machineId: 'machine',
+            const target = createOwnServerDeploymentTargetForHost({ credentials: { token: 'token', encryption: null }, serverId: homeServerIdentityId,
+                serverHttpBaseUrl: serverUrl, machineId: 'machine',
                 readEnvironment: async () => environment, readReceipt: async () => receipt,
+                async *readBuildHistory() { /* The fixture starts with no previous deployment. */ },
                 writeTransition: async transition => {
                     if (transition.state !== 'running' && deploymentController.signal.aborted)
                         throw Object.assign(new Error('Lost receipt acknowledgement'), { code: 'outcome_unknown' });
@@ -373,7 +384,8 @@ describe('Machine native effect admission', () => {
                         deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
                 },
                 runtime: { async acquire(runtimeRequest) { return { exec, projectManagedServices: services,
-                    source: { environmentId: 'environment', environmentInstanceId: 'environment', deploymentId: runtimeRequest.materialization.kind === 'review'
+                    source: { environmentId: 'environment',
+                        environmentInstanceId: resolveOwnServerDeploymentEnvironmentInstanceIdForHost(homeServerIdentityId, 'environment'), deploymentId: runtimeRequest.materialization.kind === 'review'
                         ? runtimeRequest.materialization.contentArtifactId : runtimeRequest.materialization.deploymentId, machineId: 'machine',
                         installationId: 'installation', sourcePath: repository, commitSha: sha, deploymentRoot: join(root, 'deployments'), artifactDirectory: join(root, 'artifacts') },
                     secrets: { installationPrivateSeed: new Uint8Array(32), grants: [] },
@@ -471,9 +483,8 @@ describe('Machine native effect admission', () => {
             deploymentExited.resolve(); nativeSettled.resolve();
             for (const process of setup.processes) process.exit();
             await first; await deploying; setup.terminalSessions.dispose(); await services.dispose(); await runtime.dispose();
-            await rm(root, { recursive: true, force: true });
         }
-    });
+    }));
 
     it('preserves the script string and its explicit native-impact sibling at the setup ingress', () => {
         expect(MachineSetupV1Schema.parse({ scripts: [{ body: 'portable-setup', affects: 'none' }],  }))
