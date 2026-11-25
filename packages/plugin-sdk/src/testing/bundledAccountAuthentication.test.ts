@@ -77,7 +77,10 @@ describe.each(providers)('$name public Account authentication artifact', ({ name
                 requests.push({ url: input.url, body: input.headers?.['Content-Type'] === 'application/json'
                     ? JSON.parse(text) : Object.fromEntries(new URLSearchParams(text)) });
                 if (abortExchange) { controller.abort(); controller.signal.throwIfAborted(); }
-                const body = input.method === 'GET'
+                const discoversProject = name === 'antigravity' && new URL(input.url).pathname.endsWith(':loadCodeAssist');
+                const body = discoversProject
+                    ? { currentTier: { id: 'free-tier' }, cloudaicompanionProject: 'fixture-project' }
+                    : input.method === 'GET'
                     ? { sub: 'fixture-account', email: 'fixture@example.test' }
                     : { access_token: 'fixture-access', refresh_token: 'fixture-refresh', expires_in: 3600,
                         scope: mode.kind === 'oauthAuthorizationCode' ? mode.scopes?.join(' ') : '',
@@ -126,6 +129,7 @@ describe.each(providers)('$name public Account authentication artifact', ({ name
         expect(await f.invoke(completion())).toMatchObject({ status: 'connected' });
         expect(f.values.get('accessToken')).toBe('fixture-access');
         expect(f.values.get('refreshToken')).toBe('fixture-refresh');
+        if (name === 'antigravity') expect(f.values.get('projectId')).toBe('fixture-project');
         expect(f.requests.filter(request => new URL(request.url).pathname.endsWith('/token'))).toHaveLength(1);
         expect(f.requests[0]?.body).toMatchObject({ code: 'fixture-code', redirect_uri: completion().completion.callbackUrl,
             code_verifier: 'v'.repeat(43) });
