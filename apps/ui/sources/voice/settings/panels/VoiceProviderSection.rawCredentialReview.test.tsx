@@ -283,7 +283,6 @@ describe('VoiceProviderSection raw credential review reachability', () => {
     if (!('ref' in retainedEntry)) throw new Error('Expected acknowledged SavedSecret Resource');
     const retainedRef = retainedEntry.ref;
     expect(account.settings.voiceSettingsV1.credentialBindings).toHaveLength(1);
-    expect(account.settings.voiceSettingsV1.credentialBindings[0]!.approvedRecipientContractDigest).toBeUndefined();
     await act(async () => original.cleanup());
     const changed = await activateRawCredentialOnlyProvider(pluginId, sources, 'acme-review-voice@2.0.0');
     onTestFinished(changed.cleanup);

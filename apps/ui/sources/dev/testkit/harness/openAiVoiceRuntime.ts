@@ -78,7 +78,6 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
   const networkEvents = new EventTarget();
   const notifyNetwork = () => networkEvents.dispatchEvent(new Event('network'));
   await import('@/sync/syncEngine');
-  const { createRecipientContractDigestV1} = await import('@happier-dev/protocol/plugins/recipientContractV1');
   const { DaemonVoiceClientAccountOperationRequestV1Schema, DaemonVoiceClientAccountOperationResponseV1Schema } = await import('@happier-dev/protocol/daemon/voiceCredentials');
   const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
   const { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema,
@@ -248,8 +247,6 @@ export async function createOpenAiVoiceRuntimeEnvironment(options: Readonly<{
       now: 1,
       expectedSecretId: null,
       expectedSecretUpdatedAt: null,
-      approvedRecipientContractDigest:
-        createRecipientContractDigestV1(recipientContract),
     };
     const selected = applyAccountVoiceCredentialSourceSelection({
       settings: saveAndUseAccountVoiceCredential(credentialInput).settings,

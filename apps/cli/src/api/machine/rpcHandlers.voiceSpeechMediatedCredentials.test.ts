@@ -4,11 +4,9 @@ import * as undici from 'undici';
 import {
   accountSettingsParse,
   SavedSecretSchema,
-  createRecipientContractDigestV1,
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { VoiceCredentialBindingV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
 import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
@@ -16,7 +14,6 @@ import type { SpeechProviderRuntime } from '@happier-dev/plugin-sdk/voice/speech
 
 import { readCanonicalPluginManifest } from '../../plugins/manifest/normalize';
 import { createPluginManifestV2Fixture } from '../../plugins/testkit/manifestV2Fixture';
-import { createVoiceProviderRecipientContract } from '@/plugins/voiceProviderRecipientContract';
 import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurposeBindingOwnerDependencies } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -179,7 +176,6 @@ function mediatedOnlySpeechManifest(options: Readonly<{
 
 function accountSnapshot(options: Readonly<{
   contribution: SpeechContribution;
-  approvedRecipientContractDigest?: string;
   credentialSource?: 'savedSecret' | 'connectedAccount' | 'none';
   settingsVersion?: number;
   includeUnrelatedProvider?: boolean;
@@ -219,7 +215,6 @@ function accountSnapshot(options: Readonly<{
           contribution: { ...target },
           credentialSlotId: 'api_key',
           credentialSource: { kind: options.credentialSource ?? 'savedSecret' },
-          ...(options.approvedRecipientContractDigest ? { approvedRecipientContractDigest: options.approvedRecipientContractDigest } : {}),
           credentialBindings: { account: { api_key: 'external-speech-key' } },
         }],
       },
@@ -275,21 +270,9 @@ async function registerCatalog(options: Readonly<{
     throw new Error('mediated speech fixture must include its speech contribution');
   }
   const snapshot = options.snapshot ?? accountSnapshot({ contribution });
-  const readUnapprovedSnapshot = options.readSnapshot ?? (() => snapshot);
-  let approvedRecipientContractDigest: string;
+  const readSettingsSnapshot = options.readSnapshot ?? (() => snapshot);
   const readSnapshot = () => {
-    const current = readUnapprovedSnapshot();
-    const voice = current.settings.voiceSettingsV1;
-    if (!voice || typeof voice !== 'object' || Array.isArray(voice) || !('credentialBindings' in voice)
-      || !Array.isArray(voice.credentialBindings)) throw new Error('Expected fixture Voice credential bindings');
-    setActiveAccountSettingsSnapshot({ ...current, settings: accountSettingsParse({ ...current.settings,
-      voiceSettingsV1: { ...voice,
-        credentialBindings: voice.credentialBindings.map((rawBinding) => {
-          const binding = VoiceCredentialBindingV1Schema.parse(rawBinding);
-          return { ...binding, approvedRecipientContractDigest: binding.approvedRecipientContractDigest ?? approvedRecipientContractDigest };
-        }),
-      },
-    }) });
+    setActiveAccountSettingsSnapshot(readSettingsSnapshot());
     const admitted = getActiveAccountSettingsSnapshot();
     if (!admitted) throw new Error('Expected admitted Account snapshot');
     return admitted;
@@ -328,11 +311,6 @@ async function registerCatalog(options: Readonly<{
     }],
   });
   admittedFixtures.push(fixture);
-  const admittedProvider = fixture.registry.contributes.voiceProviders?.find((provider) => provider.pluginId === target.pluginId && provider.identity.localId === target.localId);
-  if (!admittedProvider) throw new Error('Expected admitted speech declaration');
-  const contract = createVoiceProviderRecipientContract(admittedProvider);
-  if (!contract) throw new Error('Expected declared recipient contract');
-  approvedRecipientContractDigest = createRecipientContractDigestV1(contract);
   readSnapshot();
   const registration = registerMachineVoiceSpeechRpcHandlers({
     rpcHandlerManager: registrar,
@@ -767,7 +745,6 @@ describe('daemon speech host-mediated Voice Account operations', () => {
       manifest,
       snapshot: accountSnapshot({
         contribution,
-        approvedRecipientContractDigest: `sha256:${'0'.repeat(64)}`,
       }),
       list: async (_request, context) => {
         try {

@@ -879,7 +879,6 @@ export type SettingsDeclarationsActionInputById = {
             } | {
                 kind: 'savedSecret';
             };
-            expectedContractDigest?: string | undefined;
         } | {
             kind: 'voice_preview';
             voiceId: string;

@@ -699,10 +699,9 @@ describe('classified legacy credential import', () => {
 
   it('prepares the named legacy Voice transfer final candidate from its actual bound personal identity', () => {
     const retained = SavedSecretSchema.parse({ ...secret, id: 'actual-bound-eleven-key' });
-    const approvedRecipientContractDigest = `sha256:${'a'.repeat(64)}`;
     const raw = { preferredLanguage: 'de', secrets: [retained, unrelatedSecret], voice: {
       providerId: 'realtime_elevenlabs', credentialBindings: [{ providerId: 'realtime_elevenlabs',
-        approvedRecipientContractDigest, credentialBindings: { account: { api_key: retained.id },
+        credentialBindings: { account: { api_key: retained.id },
           byMachineId: { machine_a: { api_key: unrelatedSecret.id } } } }],
       adapters: { realtime_elevenlabs: { billingMode: 'byo', byo: { apiKey: retained.encryptedValue, agentId: 'agent-eleven' } } },
     } };
@@ -715,7 +714,7 @@ describe('classified legacy credential import', () => {
     }, sharedSecretRef }, { profileRecords: [] });
     expect(result.settings.voiceSettingsV1).toMatchObject({ credentialBindings: [{
       contribution: { pluginId: 'happier.voice.elevenlabs', localId: 'realtime-elevenlabs' },
-      credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' }, approvedRecipientContractDigest,
+      credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' },
       credentialBindings: { account: { api_key: sharedSecretRef }, byMachineId: { machine_a: { api_key: unrelatedSecret.id } } },
     }] });
     expect(result.settings.voice).toMatchObject({ adapters: { realtime_elevenlabs: {
@@ -1992,7 +1991,6 @@ describe('Account Settings SavedSecret mutation owner', () => {
         createdAt: 2,
         updatedAt: 2,
       },
-      approvedRecipientContractDigest: `sha256:${'b'.repeat(64)}`,
     });
 
     expect((result.settings.secrets as Array<{ id: string }>).map(({ id }) => id))
@@ -2000,8 +1998,7 @@ describe('Account Settings SavedSecret mutation owner', () => {
     expect(result.settings.voiceSettingsV1).toMatchObject({
       credentialBindings: [{
         contribution: voiceContribution,
-        approvedRecipientContractDigest: `sha256:${'b'.repeat(64)}`,
-        credentialBindings: {
+          credentialBindings: {
           account: { api_key: 'secret-voice-target-local' },
         },
       }],
@@ -2408,7 +2405,6 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'connectedAccount', target: selectedTarget },
       binding: { purpose: voicePurpose, target: selectedTarget },
       savedSecret: null,
-      approvedRecipientContractDigest: null,
     });
 
     const result = applyVoiceCredentialSourceMutation(settings, {
@@ -2426,7 +2422,6 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: secret.id, source: 'account' },
-      approvedRecipientContractDigest: null,
     });
   });
 
@@ -2481,7 +2476,6 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: secret.id, source: 'account' },
-      approvedRecipientContractDigest: null,
     });
   });
 
@@ -2517,7 +2511,6 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: other.id, source: 'account' },
-      approvedRecipientContractDigest: null,
     });
   });
 
@@ -2555,7 +2548,6 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: secret.id, source: 'account' },
-      approvedRecipientContractDigest: null,
     });
 
     // The assertion is checked, not waived: the same call conflicts once the
@@ -2608,7 +2600,6 @@ describe('Account Settings SavedSecret mutation owner', () => {
       selection: { kind: 'savedSecret' },
       binding: null,
       savedSecret: { secretId: 'secret-reentered', source: 'account' },
-      approvedRecipientContractDigest: null,
     });
   });
 
@@ -2763,16 +2754,6 @@ describe('Account Settings SavedSecret mutation owner', () => {
         },
       },
     },
-    {
-      name: 'a noncanonical recipient-contract digest',
-      binding: {
-        contribution: voiceContribution,
-        credentialSlotId: 'api_key',
-        credentialSource: { kind: 'savedSecret' },
-        credentialBindings: { account: { api_key: secret.id } },
-        approvedRecipientContractDigest: 'recipient-contract-not-canonical',
-      },
-    },
   ])('rejects $name at both current qualified owner boundaries', ({ binding }) => {
     const settings = {
       secrets: [secret],
@@ -2792,51 +2773,15 @@ describe('Account Settings SavedSecret mutation owner', () => {
     expect(settings).toEqual(before);
   });
 
-  it('rejects a noncanonical recipient-contract digest on a current qualified approval mutation', () => {
-    expect(() => applyAccountSettingsSavedSecretMutation(referencedSettings(), {
-      kind: 'approveVoiceCredentialRecipientContract',
-      target: {
-        contribution: voiceContribution,
-        credentialSlotId: 'api_key',
-        machineId: null,
-      },
-      expectedSecretId: secret.id,
-      expectedSecretUpdatedAt: 1,
-      approvedRecipientContractDigest: 'recipient-contract-not-canonical',
-    })).toThrowError(expect.objectContaining({ code: 'saved_secret_invalid' }));
-  });
-
-  it('renews one Voice recipient approval without replacing or exposing its SavedSecret', () => {
-    const before = referencedSettings();
-    const renewedDigest = `sha256:${'c'.repeat(64)}`;
-    const result = applyAccountSettingsSavedSecretMutation(before, {
-      kind: 'approveVoiceCredentialRecipientContract',
-      target: {
-        contribution: voiceContribution,
-        credentialSlotId: 'api_key',
-        machineId: null,
-      },
-      expectedSecretId: secret.id,
-      expectedSecretUpdatedAt: 1,
-      approvedRecipientContractDigest: renewedDigest,
-    });
-
-    expect(result.settings.secrets).toEqual(before.secrets);
-    expect(result.settings.voiceSettingsV1).toMatchObject({
-      credentialBindings: [{
-        contribution: voiceContribution,
-        approvedRecipientContractDigest: renewedDigest,
-        credentialBindings: {
-          account: { api_key: secret.id },
-        },
-      }],
-    });
-  });
-
-  it('persists, approves, and unbinds a strict shared Voice ref without inventing a personal record', () => {
+  it('persists and unbinds a strict shared Voice ref without inventing a personal record', () => {
     const sharedRef = formatSharedSavedSecretRefV1('resource-voice');
     const before = referencedSettings();
-    const bound = applyAccountSettingsSavedSecretMutation(before, {
+    const stored = { ...before, voiceSettingsV1: { ...before.voiceSettingsV1,
+      credentialBindings: before.voiceSettingsV1.credentialBindings.map(binding => ({
+        ...binding, approvedRecipientContractDigest: `sha256:${'e'.repeat(64)}`,
+      })),
+    } };
+    const bound = applyAccountSettingsSavedSecretMutation(stored, {
       kind: 'bindVoiceCredentialSavedSecret',
       target: {
         contribution: voiceContribution,
@@ -2847,18 +2792,7 @@ describe('Account Settings SavedSecret mutation owner', () => {
       expectedSecretUpdatedAt: 1,
       secretId: sharedRef,
     });
-    const approved = applyAccountSettingsSavedSecretMutation(bound.settings, {
-      kind: 'approveVoiceCredentialRecipientContract',
-      target: {
-        contribution: voiceContribution,
-        credentialSlotId: 'api_key',
-        machineId: null,
-      },
-      expectedSecretId: sharedRef,
-      expectedSecretUpdatedAt: 7,
-      approvedRecipientContractDigest: `sha256:${'e'.repeat(64)}`,
-    });
-    const removed = applyAccountSettingsSavedSecretMutation(approved.settings, {
+    const removed = applyAccountSettingsSavedSecretMutation(bound.settings, {
       kind: 'removeVoiceCredentialSecret',
       target: {
         contribution: voiceContribution,
@@ -2870,9 +2804,11 @@ describe('Account Settings SavedSecret mutation owner', () => {
     });
 
     expect(bound.settings.secrets).toEqual(before.secrets);
-    expect(approved.settings.voiceSettingsV1).toMatchObject({
+    expect(bound.settings.voiceSettingsV1).toEqual({
       credentialBindings: [{
-        approvedRecipientContractDigest: `sha256:${'e'.repeat(64)}`,
+        contribution: voiceContribution,
+        credentialSlotId: 'api_key',
+        credentialSource: { kind: 'savedSecret' },
         credentialBindings: { account: { api_key: sharedRef } },
       }],
     });
@@ -2915,22 +2851,6 @@ describe('Account Settings SavedSecret mutation owner', () => {
     });
     expect(resolveAccountSettingsPluginSecretBinding(unbound.settings, target)).toBeNull();
     expect(unbound.settings.secrets).toEqual(before.secrets);
-  });
-
-  it('rejects Voice recipient approval when the bound SavedSecret changed concurrently', () => {
-    expect(() => applyAccountSettingsSavedSecretMutation(referencedSettings(), {
-      kind: 'approveVoiceCredentialRecipientContract',
-      target: {
-        contribution: voiceContribution,
-        credentialSlotId: 'api_key',
-        machineId: null,
-      },
-      expectedSecretId: secret.id,
-      expectedSecretUpdatedAt: 0,
-      approvedRecipientContractDigest: `sha256:${'d'.repeat(64)}`,
-    })).toThrow(expect.objectContaining({
-      code: 'saved_secret_conflict',
-    }));
   });
 
   it('atomically removes one Voice binding and deletes its secret only when no sibling still references it', () => {

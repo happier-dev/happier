@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import { createRecipientContractDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { reconcileAppShellProjectedClientExecutables, unloadAppShellProjectedClientExecutables } from '@/components/appShell/plugins/appShellClientExecutableActivation';
@@ -15,7 +14,6 @@ import '@/sync/syncEngine';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { answerVoiceRealtimePreparationHttpRequest } from '@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary';
-import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import {
   createBundledConversationRuntimeHostLease,
   type BundledConversationRuntimeHost,
@@ -96,9 +94,7 @@ function createCredentialSettingsEntry(): BundledConversationRuntimeEntry {
   return xaiEntry;
 }
 
-function installCredentialSettings(
-  approvedRecipientContractDigest: string | undefined,
-): Readonly<{ restore(): void }> {
+function installCredentialSettings(): Readonly<{ restore(): void }> {
   const previousVoiceSettings = storage.getState().settings.voiceSettingsV1;
   const previousSecrets = storage.getState().settings.secrets;
   const xaiDeclaration = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(
@@ -133,9 +129,6 @@ function installCredentialSettings(
           credentialBindings: Object.freeze({
             account: Object.freeze({ api_key: 'bundled-approval-secret' }),
           }),
-          ...(approvedRecipientContractDigest
-            ? { approvedRecipientContractDigest }
-            : {}),
         })],
       },
       secrets: [Object.freeze({
@@ -228,67 +221,9 @@ describe('createBundledConversationRuntimes', () => {
     }
   });
 
-  /**
-   * The re-approval fence is scoped to publishers Happier does not author:
-   * `resolveRequiredRecipientContractApprovalDigestV1` returns `null` for a
-   * `bundled` publisher, so a first-party release that changes its mediated
-   * operations must not revoke an approval Happier itself wrote. This proves
-   * the bundled COMPOSITION reaches the credential with that trust: it goes red
-   * if the fence is reinstated for bundled, and red if the composition ever
-   * stamps a non-bundled publisher on a first-party recipient contract. The
-   * external-publisher fence stays proven at the account operation owner.
-   */
-  it.each([
-    ['no stored', undefined],
-    ['superseded', `sha256:${'0'.repeat(64)}`],
-  ])(
-    'keeps a bundled SavedSecret operation usable with a %s recipient approval',
-    async (_approvalState, approvedRecipientContractDigest) => {
-      const entry = createCredentialSettingsEntry();
-      const settings = installCredentialSettings(approvedRecipientContractDigest);
-      const fetch = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
-        expect(new Headers(init?.headers).get('authorization'))
-          .toBe('Bearer bundled-account-secret');
-        return new Response(JSON.stringify({
-          voices: [{ id: 'first-party-voice', name: 'First party voice' }],
-        }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      });
-      vendorFetch = fetch;
-      const hostLease = createBundledConversationRuntimeHostLease();
-      const runtimes = (await createBundledConversationRuntimes({
-        bundledEntries: [entry],
-        host: hostLease.host,
-      }));
-
-      try {
-        const registration = getExternalVoiceProviderRegistration('happier.voice.xai/realtime-grok');
-        await expect(registration?.settingsOperations?.listCatalog?.({
-          catalog: 'voices',
-          providerConfig: {},
-          signal: new AbortController().signal,
-        })).resolves.toEqual([{ id: 'first-party-voice', name: 'First party voice', metadata: {} }]);
-        expect(fetch).toHaveBeenCalledTimes(1);
-      } finally {
-        await Promise.all(runtimes.map((runtime) => runtime.dispose()));
-        hostLease.revoke();
-        settings.restore();
-      }
-    },
-  );
-
-  it('allows a bundled SavedSecret operation with the exact approved recipient digest', async () => {
+  it('uses a linked Saved Secret for a bundled provider catalog operation', async () => {
     const entry = createCredentialSettingsEntry();
-    const recipientContract = createBundledVoiceRecipientContract({
-      pluginId: entry.pluginId,
-      declaration: entry.declaration,
-    });
-    if (!recipientContract) throw new Error('realtime_grok recipient contract missing');
-    const settings = installCredentialSettings(
-      createRecipientContractDigestV1(recipientContract),
-    );
+    const settings = installCredentialSettings();
     const fetch = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('authorization'))
         .toBe('Bearer bundled-account-secret');

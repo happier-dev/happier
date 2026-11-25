@@ -346,7 +346,6 @@ let locks: ReturnType<typeof installWebLockManagerMock> | undefined;
 let purposes: ConnectedPurposeCatalogV1;
 let revision: number;
 let writes: Array<ReturnType<typeof ConnectedAccountCatalogRowMutationV1Schema.parse>>;
-let beforePurposeRead: (() => void) | undefined;
 let afterAcknowledgement: (() => void) | undefined;
 let omitSettingsReceipt: boolean;
 // Observation only: the real dispatcher still attaches its genuine error sink.
@@ -456,7 +455,6 @@ beforeEach(async () => {
   purposes = { v: 1, bindings: [] };
   revision = 9;
   writes = [];
-  beforePurposeRead = undefined;
   afterAcknowledgement = undefined;
   omitSettingsReceipt = false;
   const serverIdentityId = `srv_voice_credential_${crypto.randomUUID()}`;
@@ -489,9 +487,6 @@ beforeEach(async () => {
     });
     if (path !== PURPOSES_PATH) return account!.request(url, init);
     if (init?.method !== 'POST') {
-      const callback = beforePurposeRead;
-      beforePurposeRead = undefined;
-      callback?.();
       return Response.json({ status: 'present', revision, content: { t: 'plain', v: { key: 'purposes', value: purposes } } });
     }
     const input = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
@@ -706,7 +701,6 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
     const readsBeforeInspect = materialInventoryReads();
     expect(await invoke('inspect', secretId)).toMatchObject({ status: 'completed', value: { secretId } });
     expect(materialInventoryReads()).toBe(readsBeforeInspect);
-    expect(binding()?.approvedRecipientContractDigest).toBeUndefined();
     expect(await invoke('bind', null, undefined, undefined, 'machine-a')).toMatchObject({ value: { status: 'applied' } });
     expect(binding()?.credentialBindings).toMatchObject({ account: { api_key: secretId }, byMachineId: {
       'machine-a': { api_key: secretId },
@@ -986,68 +980,6 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
     await renderField();
     await choose(optionId(codexTarget));
     assertAccountSelection();
-  });
-  it('admits reordered raw grants and header-name sets', async () => {
-    const expected = VoiceProviderContributionSchema.parse({
-      ...declaration, credentials: { ...credentials, sources: credentials.sources.map(source =>
-        source.kind === 'connectedAccount' && typeof source.service !== 'string'
-          && source.service.localId === 'openai-codex' ? { ...source, rawGrants: [
-            { realm: 'web', phase: 'prepare', request: { kind: 'httpHeaders', origin: 'https://api.openai.com', headerNames: ['authorization', 'openai-organization'] } },
-            { realm: 'web', phase: 'connection', request: { kind: 'httpHeaders', origin: 'https://api.openai.com', headerNames: ['authorization'] } },
-          ] } : source) },
-    });
-    installCurrentDeclaration(VoiceProviderContributionSchema.parse({
-      ...expected, credentials: { ...expected.credentials!, sources: expected.credentials!.sources.map(source =>
-        source.kind === 'connectedAccount' && typeof source.service !== 'string'
-          && source.service.localId === 'openai-codex' ? { ...source, rawGrants: [...source.rawGrants!].reverse().map(grant =>
-            grant.request.kind === 'httpHeaders' ? { ...grant, request: { ...grant.request, headerNames: [...grant.request.headerNames].reverse() } } : grant) } : source) },
-    }));
-    await renderField(expected);
-    await choose(optionId(codexTarget));
-    assertAccountSelection();
-  });
-  it.each([
-    ['slot', { credentials: { ...credentials, slot: { ...credentials.slot, id: 'replacement_key' },
-      hostMediated: { operations: credentials.hostMediated!.operations.map(operation => ({ ...operation, credentialSlotId: 'replacement_key' })) } } }],
-    ['purpose', { credentials: { ...credentials, slot: { ...credentials.slot, purpose: 'voice.replacement' } } }],
-    ['service', { credentials: { ...credentials, sources: credentials.sources.map(source =>
-      source.kind === 'connectedAccount' && typeof source.service !== 'string' && source.service.localId === 'openai-codex'
-        ? { ...source, service: { pluginId: 'replacement.plugin', localId: 'replacement' } } : source) } }],
-    ['access contract', { credentials: { ...credentials, sources: credentials.sources.map(source =>
-      source.kind === 'connectedAccount' && typeof source.service !== 'string' && source.service.localId === 'openai-codex'
-        ? { ...source, rawGrants: [{ realm: 'web', phase: 'prepare', request: { kind: 'httpHeaders',
-          origin: 'https://replacement.example.com', headerNames: ['authorization'] } }] } : source) } }],
-  ])('refuses manifest %s drift after the gesture before admission', async (_kind, patch) => {
-    const drifted = VoiceProviderContributionSchema.parse({ ...declaration, ...patch });
-    await renderField();
-    beforePurposeRead = () => installCurrentDeclaration(drifted);
-    expect(await choose(optionId(codexTarget))).toMatchObject({ status: 'conflict' });
-    expect(beforePurposeRead).toBeUndefined();
-    await flush();
-    expect(binding()).toBeUndefined();
-    expect(purposes.bindings).toEqual([]);
-    expect(revision).toBe(9);
-  });
-  it.each([
-    ['path', { request: { pathTemplate: '/v1/realtime/replacement' } }],
-    ['method', { request: { method: 'PATCH' } }],
-    ['purpose', { purpose: 'voice.client-auth.revised' }],
-    ['bounds', { request: { maxBodyBytes: 32_768 }, response: { maxBytes: 32_768 } }],
-  ])('refuses host-mediated %s drift at admission', async (_kind, patch) => {
-    const operation = credentials.hostMediated!.operations[0]!;
-    const operationPatch = patch as Readonly<{ purpose?: string; request?: Partial<typeof operation.request>; response?: Partial<typeof operation.response> }>;
-    installCurrentDeclaration(VoiceProviderContributionSchema.parse({
-      ...declaration, credentials: { ...credentials, hostMediated: { operations: [{
-        ...operation, ...operationPatch, request: { ...operation.request, ...operationPatch.request },
-        response: { ...operation.response, ...operationPatch.response },
-      }] } },
-    }));
-    await renderField();
-    expect(await choose(optionId(codexTarget))).toMatchObject({ status: 'conflict' });
-    await flush();
-    expect(binding()).toBeUndefined();
-    expect(purposes.bindings).toEqual([]);
-    expect(revision).toBe(9);
   });
   it('keeps the applied receipt when the operation changes after acknowledged commit', async () => {
     const operation = credentials.hostMediated!.operations[0]!;

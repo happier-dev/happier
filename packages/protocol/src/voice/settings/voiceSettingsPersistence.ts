@@ -230,9 +230,6 @@ function normalizeQualifiedCredentialBindings(value: unknown): readonly VoiceCre
                         }
                         : {}),
                 },
-                ...(binding.approvedRecipientContractDigest
-                    ? { approvedRecipientContractDigest: binding.approvedRecipientContractDigest }
-                    : {}),
             });
             return parsed.success ? [parsed.data] : [];
         });

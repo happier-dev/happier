@@ -620,7 +620,6 @@ describe('Voice credential row → Connect → account-settings write', () => {
         });
         expect(account!.settingsWrites).toHaveLength(1);
         expect(credentialDetail()).toContain(t('settingsVoice.local.voiceCredential.setOnAccount'));
-        expect(appliedVoiceBinding()?.approvedRecipientContractDigest).toBeUndefined();
     }, CASE_TIMEOUT_MS);
 
     it('records one bounded failure when the Home refuses the settings compare-and-set', async () => {

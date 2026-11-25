@@ -6,7 +6,7 @@ import {
 } from './voiceCredentialBindingCompatibility';
 
 describe('predecessor Voice credential binding ingress', () => {
-    it('preserves a valid account binding, every machine override, and approval metadata', () => {
+    it('preserves the account binding and every machine override', () => {
         const binding = {
             providerId: 'realtime_elevenlabs',
             credentialBindings: {
@@ -16,7 +16,6 @@ describe('predecessor Voice credential binding ingress', () => {
                     machine_b: { api_key: 'secret-machine-b' },
                 },
             },
-            approvedRecipientContractDigest: `sha256:${'a'.repeat(64)}`,
         };
 
         expect(parsePredecessorVoiceCredentialBindings({

@@ -10,7 +10,6 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import {
-  createRecipientContractDigestV1,
   normalizeRecipientContractV1,
 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import {
@@ -175,7 +174,6 @@ let accountRowBoundary: ((path: string, init?: RequestInit) => Response | null) 
 function createSettings(
   secretId: string,
   updatedAt: number,
-  approvedRecipientContractDigest: string | null = recipientContractDigest,
 ) {
   return {
     voiceSettingsV1: {
@@ -193,9 +191,6 @@ function createSettings(
         credentialSlotId: 'api_key',
         credentialSource: { kind: 'savedSecret' as 'savedSecret' | 'connectedAccount' | 'none' },
         credentialBindings: { account: { api_key: secretId } },
-        ...(approvedRecipientContractDigest
-          ? { approvedRecipientContractDigest }
-          : {}),
       }],
     },
     secrets: [{
@@ -294,7 +289,6 @@ const recipientContract = normalizeRecipientContractV1({
     }),
   })]),
 });
-const recipientContractDigest = createRecipientContractDigestV1(recipientContract);
 
 const phaseSeparatedCredentialDeclaration = VoiceProviderContributionSchema.parse({
   id: contribution.localId,
@@ -758,7 +752,7 @@ describe('account Voice operation service', () => {
     accountFixture.state = {
       ...accountFixture.state,
       settings: {
-        ...createSettings(ref, 7, null),
+        ...createSettings(ref, 7),
         secrets: [],
       },
     };
@@ -811,7 +805,7 @@ describe('account Voice operation service', () => {
     });
     accountFixture.state = {
       ...accountFixture.state,
-      settings: { ...createSettings(ref, 3, null), secrets: [] },
+      settings: { ...createSettings(ref, 3), secrets: [] },
     };
     // The owner removed the grant; the AccountChange that would have said so
     // never arrived, so the local catalog still holds a ready row.
@@ -1245,7 +1239,7 @@ describe('account Voice operation service', () => {
     accountFixture.state = {
       ...accountFixture.state,
       settings: {
-        ...createSettings('secret-1', 1, null),
+        ...createSettings('secret-1', 1),
         secrets: [],
       },
     };
@@ -1627,7 +1621,7 @@ describe('account Voice operation service', () => {
   it('uses the selected own secret without a Voice recipient approval record', async () => {
     accountFixture.state = {
       ...accountFixture.state,
-      settings: createSettings('secret-1', 1, null),
+      settings: createSettings('secret-1', 1),
     };
     const materializeSecret = vi.fn(async () => 'account-secret');
     const fetch = vi.fn(async () => new Response('{"value":"ephemeral"}',
@@ -1650,13 +1644,10 @@ describe('account Voice operation service', () => {
       .toBe('secret-1');
   });
 
-  it('keeps a first-party bundled recipient usable after an update changed its operations', async () => {
-    // The stored approval was collected for the operations Happier shipped
-    // before the update; a contract Happier itself authored must not revoke
-    // itself, so the credential still reaches the declared origin.
+  it('uses the current bundled recipient endpoint for the selected own secret', async () => {
     accountFixture.state = {
       ...accountFixture.state,
-      settings: createSettings('secret-1', 1, 'sha256:' + 'f'.repeat(64)),
+      settings: createSettings('secret-1', 1),
     };
     const materializeSecret = vi.fn(async () => 'account-secret');
     const fetch = vi.fn(async () => new Response(

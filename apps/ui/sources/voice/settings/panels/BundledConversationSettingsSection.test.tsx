@@ -23,11 +23,9 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 import { getSavedSecretCatalogSnapshot, resolveSavedSecretReference, subscribeSavedSecretCatalogSnapshots } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
-import { createRecipientContractDigestV1} from '@happier-dev/protocol/plugins/recipientContractV1';
 import { deriveVoiceCredentialBindingIdentityV1} from '@happier-dev/protocol/plugins/contributions/voice';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { resolveAccountVoiceCredential, resolveAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
-import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { OverlayPortalHost } from '@/components/ui/popover';
@@ -189,12 +187,9 @@ describe('BundledConversationSettingsSection', () => {
     storage.setState(initialStorage, true);
   });
   async function saveCredential() {
-    const recipient = createBundledVoiceRecipientContract({ pluginId: provider.entry.pluginId,
-      declaration: provider.entry.declaration });
-    if (!recipient) throw new Error('Expected ElevenLabs recipient contract');
     account.replaceSettings(await withVoiceSettingsCredentialResource(account, {
       settings: account.settings, declaration: provider.entry.declaration, pluginId: provider.entry.pluginId,
-      resourceId: 'voice-test-secret', approvedRecipientContractDigest: createRecipientContractDigestV1(recipient),
+      resourceId: 'voice-test-secret',
     }));
     await refreshSavedSecretCatalog(account.scope);
     // Capture action authority from the real current material catalog.

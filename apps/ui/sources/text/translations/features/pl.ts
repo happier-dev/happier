@@ -18246,23 +18246,10 @@ const defineVoiceExternalCredentialApproval = Shared_voiceExternalCredentialAppr
 const voiceExternalCredentialApprovalTranslations = { pl: defineVoiceExternalCredentialApproval({
     reviewRequired: 'Sprawdź dostęp do poświadczeń',
     recipientApprovalTitle: 'Zezwolić temu dostawcy na użycie Twojego poświadczenia?',
-    recipientApprovalBody: 'Sprawdź i zatwierdź zadeklarowane punkty końcowe oraz operacje dostawcy. Jeśli ten kontrakt odbiorcy się zmieni, Happier zachowa Twój wybór, ale zablokuje użycie poświadczenia do czasu ponownego zatwierdzenia.',
     recipientApprovalPackage: ({ title, pluginId, sourceKind, sourceLocator }) =>
       `Pakiet: ${title} (${pluginId}); źródło: ${sourceKind} ${sourceLocator}`,
     recipientApprovalPublisher: ({ trust, identity }) => `Wydawca: ${identity} (${trust})`,
-    recipientApprovalPackageSignature: ({ status, keyId }) => `Podpis pakietu: ${keyId} (${status})`,
     recipientApprovalContribution: ({ pluginId, localId }) => `Wkład: ${pluginId}/${localId}`,
-    recipientApprovalOperations: 'Zadeklarowane operacje:',
-    recipientApprovalOperation: ({ id, purpose, effect }) =>
-      `Operacja ${id}: cel ${purpose}; skutek ${effect}`,
-    recipientApprovalRequest: ({ method, origin, pathTemplate }) => `Żądanie: ${method} ${origin}${pathTemplate}`,
-    recipientApprovalCredential: ({ headerName, format }) =>
-      `Nagłówek poświadczenia: ${headerName}; format: ${format}`,
-    recipientApprovalBounds: ({ requestMaxBytes, responseMaxBytes }) =>
-      `Limity bajtów: żądanie ${requestMaxBytes}; odpowiedź ${responseMaxBytes}`,
-    recipientApprovalTrust: { bundled: 'wbudowany', verified: 'zweryfikowany' },
-    recipientApprovalEffect: { read: 'odczyt', mutation: 'modyfikacja' },
-    recipientApprovalCredentialFormat: { raw: 'surowy', bearer: 'bearer' },
     recipientApprovalConfirm: 'Zatwierdź i zapisz',
   }) } as const;
 

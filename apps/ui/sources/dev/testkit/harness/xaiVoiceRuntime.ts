@@ -103,7 +103,10 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
     const { installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } = await import('@/dev/testkit/harness/voiceWebRtcHarness');
     const { createLiveMicSession } = await import('@/voice/runtime/mic/createLiveMicSession.web');
     const { installWebLockManagerMock, installLocalStorageMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
-    const [{ buildQualifiedPluginContributionKey}, { createPluginContributionIdentity}, { createRecipientContractDigestV1}] = await Promise.all([import('@happier-dev/protocol/plugins/contribution-key'), import('@happier-dev/protocol/plugins/contribution-identity'), import('@happier-dev/protocol/plugins/recipientContractV1')]);
+    const [{ buildQualifiedPluginContributionKey }, { createPluginContributionIdentity }] = await Promise.all([
+        import('@happier-dev/protocol/plugins/contribution-key'),
+        import('@happier-dev/protocol/plugins/contribution-identity'),
+    ]);
     const { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { settingsDefaults, settingsParse } = await import('@/sync/domains/settings/settings');
@@ -218,7 +221,6 @@ export async function createXaiVoiceRuntimeEnvironment(options: Readonly<{
             now: 1,
             expectedSecretId: null,
             expectedSecretUpdatedAt: null,
-            approvedRecipientContractDigest: createRecipientContractDigestV1(recipientContract),
         };
         const selected = applyAccountVoiceCredentialSourceSelection({
             settings: saveAndUseAccountVoiceCredential(credentialInput).settings, connectedPurposes: { v: 1, bindings: [] }, currentDeclaration: entry.declaration,

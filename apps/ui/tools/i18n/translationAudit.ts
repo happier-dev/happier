@@ -248,7 +248,6 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     'sessionsList.moveSheetDestinationLabel': new Set(['fr']),
     'sessionsList.moveSheetDestinations': new Set(['fr']),
     // French: the credential effect "mutation" is the same word in French.
-    'settingsVoice.externalCredentials.recipientApprovalEffect.mutation': new Set(['fr']),
     // Spanish/Portuguese/Catalan: "experimental" and "Manual" are the same words, as already
     // ratified for the provider-settings namespace.
     'settingsVoice.realtimeProviders.authentication.openAiCodex.title': new Set(['es', 'pt', 'ca']),

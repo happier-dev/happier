@@ -4,8 +4,6 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as protocol from '@happier-dev/protocol';
 import {
-    createRecipientContractDigestV1,
-    createVoiceProviderRecipientContractFromCredentialsV1,
     materializeRecipientOperationRequestV1FromOperation,
     PluginContributesV2Schema,
     type PluginRequestInterceptorContributionV1,
@@ -205,51 +203,17 @@ function response(
     });
 }
 
-/** Mirrors the daemon's path-sourced recipient contract digest for a fixture binding. */
-function pathSourcedRecipientContractDigest(
-    contribution: Readonly<{ pluginId: string; localId: string }>,
-    definitionForContract: typeof definition,
-): string {
-    return createRecipientContractDigestV1(
-        createVoiceProviderRecipientContractFromCredentialsV1({
-            package: {
-                pluginId: contribution.pluginId,
-                source: { kind: 'path', locator: contribution.pluginId },
-            },
-            publisher: {
-                trust: 'verified',
-                identity: `path:${contribution.pluginId}:committed-registry`,
-            },
-            contribution,
-            credentials: {
-                slot: definitionForContract.credentials!.slot,
-                hostMediated: definitionForContract.credentials!.hostMediated!,
-            },
-            presentation: { title: definitionForContract.title },
-        }),
-    );
-}
-
-function publishCredential(
-    providerId = 'acme.voice/conversation',
-    settingsVersion = 1,
-    approvedRecipientContractDigest?: string,
-    definitionForContract = definition,
-): void {
+function publishCredential(providerId = 'acme.voice/conversation'): void {
     const separator = providerId.lastIndexOf('/');
     if (separator <= 0 || separator === providerId.length - 1) throw new Error('qualified provider identity required');
     const contribution = {
         pluginId: providerId.slice(0, separator),
         localId: providerId.slice(separator + 1),
     };
-    const defaultRecipientContractDigest = pathSourcedRecipientContractDigest(
-        contribution,
-        definitionForContract,
-    );
     setActiveAccountSettingsSnapshot({
         source: 'network',
         scopeKey: 'account-scope',
-        settingsVersion,
+        settingsVersion: 1,
         loadedAtMs: 1,
         settingsSecretsReadKeys: [],
         connectedPurposeCatalog: { status: 'ready', revision: 1,
@@ -268,8 +232,6 @@ function publishCredential(
                     contribution,
                     credentialSlotId: 'api_key',
                     credentialSource: { kind: 'savedSecret' },
-                    approvedRecipientContractDigest:
-                        approvedRecipientContractDigest ?? defaultRecipientContractDigest,
                     credentialBindings: {
                         account: { api_key: 'account-voice-key' },
                         byMachineId: {
@@ -313,12 +275,6 @@ function publishDormantCredentialSelection(
                     contribution,
                     credentialSlotId: 'api_key',
                     credentialSource: { kind: selection },
-                    // A valid approved digest keeps the deselected-source
-                    // assertion from passing on a recipient-contract mismatch.
-                    approvedRecipientContractDigest: pathSourcedRecipientContractDigest(
-                        contribution,
-                        definitionWithConnectedAccountSource(),
-                    ),
                     credentialBindings: {
                         account: { api_key: 'account-voice-key' },
                     },
@@ -456,7 +412,7 @@ describe('Voice account Plugin fetch credential binding', () => {
     ] as const)(
         'uses shared custody admission for mediated Saved Secrets: $relationship grant=$grantPresent declaration=$declaration',
         async ({ relationship, grantPresent, declaration, admitted }) => {
-            publishCredential('acme.voice/conversation', 1, `sha256:${'0'.repeat(64)}`);
+            publishCredential();
             const snapshot = getActiveAccountSettingsSnapshot();
             if (!snapshot) throw new Error('Expected Voice credential fixture');
             const voiceSettings = snapshot.settings.voiceSettingsV1;
@@ -484,7 +440,6 @@ describe('Voice account Plugin fetch credential binding', () => {
                         ...voiceSettings,
                         credentialBindings: [{ contribution: { pluginId: 'acme.voice', localId: 'conversation' },
                             credentialSlotId: 'api_key', credentialSource: { kind: 'savedSecret' },
-                            approvedRecipientContractDigest: `sha256:${'0'.repeat(64)}`,
                             credentialBindings: { account: { api_key: ref }, byMachineId: {} } }],
                     },
                 }),
@@ -653,29 +608,7 @@ describe('Voice account Plugin fetch credential binding', () => {
             id: identity.localId,
             title: 'ElevenLabs Voice',
         };
-        const recipientContract = createVoiceProviderRecipientContractFromCredentialsV1({
-            package: {
-                pluginId: identity.pluginId,
-                source: { kind: 'bundled', locator: identity.pluginId },
-            },
-            publisher: {
-                trust: 'bundled',
-                identity: 'happier.dev:first-party-bundle',
-            },
-            contribution: identity,
-            credentials: {
-                slot: elevenLabsDefinition.credentials!.slot,
-                hostMediated: elevenLabsDefinition.credentials!.hostMediated!,
-            },
-            presentation: { title: elevenLabsDefinition.title },
-        });
-        const recipientContractDigest =
-            createRecipientContractDigestV1(recipientContract);
-        publishCredential(
-            'happier.voice.elevenlabs/realtime-elevenlabs',
-            1,
-            recipientContractDigest,
-        );
+        publishCredential('happier.voice.elevenlabs/realtime-elevenlabs');
         const adapter = vi.fn(async (request: TestFetchRequest) =>
             response(request, { voices: [] }));
         const service = createCatalogService(adapter, {
@@ -1030,7 +963,7 @@ describe('Voice account Plugin fetch credential binding', () => {
 
     it('lets trusted interceptors inspect and replace a host-materialized credential header', async () => {
         const dynamicDefinition = definitionWithClientAuthCredentialHeaderName('x-license-key');
-        publishCredential('acme.voice/conversation', 1, undefined, dynamicDefinition);
+        publishCredential();
         const declaration: Readonly<{
             pluginId: string;
             contribution: PluginRequestInterceptorContributionV1;
@@ -1219,7 +1152,7 @@ describe('Voice account Plugin fetch credential binding', () => {
                 },
             },
         };
-        publishCredential('acme.voice/conversation', 1, undefined, currentDefinition);
+        publishCredential();
         const service = createCatalogService(async () => ({
             status,
             finalUrl: 'https://voice.example.test/v1/voices',
@@ -1449,32 +1382,7 @@ describe('Voice account Plugin fetch credential binding', () => {
         if (packedDefinition?.kind !== 'conversation') {
             throw new Error('packed_voice_conversation_declaration_required');
         }
-        const packedIdentity = {
-            pluginId: 'acme.packed-voice',
-            localId: packedDefinition.id,
-        } as const;
-        publishCredential(
-            `acme.packed-voice/${packedDefinition.id}`,
-            1,
-            createRecipientContractDigestV1(
-                createVoiceProviderRecipientContractFromCredentialsV1({
-                    package: {
-                        pluginId: packedIdentity.pluginId,
-                        source: { kind: 'path', locator: packedIdentity.pluginId },
-                    },
-                    publisher: {
-                        trust: 'verified',
-                        identity: `path:${packedIdentity.pluginId}:committed-registry`,
-                    },
-                    contribution: packedIdentity,
-                    credentials: {
-                        slot: packedDefinition.credentials!.slot,
-                        hostMediated: packedDefinition.credentials!.hostMediated!,
-                    },
-                    presentation: { title: packedDefinition.title },
-                }),
-            ),
-        );
+        publishCredential(`acme.packed-voice/${packedDefinition.id}`);
         const adapter = vi.fn(async (request: TestFetchRequest) => (
             request.method === 'GET'
                 ? response(request, {

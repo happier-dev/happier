@@ -17026,8 +17026,6 @@ const enSettingsVoice = {
     unavailable: 'Credential setup unavailable',
     reviewRequired: 'Review credential access',
     recipientApprovalTitle: 'Allow this provider to use your credential?',
-    recipientApprovalBody:
-      'Review and approve the declared provider endpoints and operations. If that recipient contract changes, Happier keeps your selection but blocks credential use until you approve it again.',
     recipientApprovalPackage: ({
       title,
       pluginId,
@@ -17047,13 +17045,6 @@ const enSettingsVoice = {
       trust: string;
       identity: string;
     }) => `Publisher: ${identity} (${trust})`,
-    recipientApprovalPackageSignature: ({
-      status,
-      keyId,
-    }: {
-      status: string;
-      keyId: string;
-    }) => `Package signature: ${keyId} (${status})`,
     recipientApprovalContribution: ({
       pluginId,
       localId,
@@ -17061,52 +17052,6 @@ const enSettingsVoice = {
       pluginId: string;
       localId: string;
     }) => `Contribution: ${pluginId}/${localId}`,
-    recipientApprovalOperations: 'Declared operations:',
-    recipientApprovalOperation: ({
-      id,
-      purpose,
-      effect,
-    }: {
-      id: string;
-      purpose: string;
-      effect: string;
-    }) => `Operation ${id}: purpose ${purpose}; effect ${effect}`,
-    recipientApprovalRequest: ({
-      method,
-      origin,
-      pathTemplate,
-    }: {
-      method: string;
-      origin: string;
-      pathTemplate: string;
-    }) => `Request: ${method} ${origin}${pathTemplate}`,
-    recipientApprovalCredential: ({
-      headerName,
-      format,
-    }: {
-      headerName: string;
-      format: string;
-    }) => `Credential header: ${headerName}; format: ${format}`,
-    recipientApprovalBounds: ({
-      requestMaxBytes,
-      responseMaxBytes,
-    }: {
-      requestMaxBytes: number;
-      responseMaxBytes: number;
-    }) =>
-      `Byte limits: request ${requestMaxBytes}; response ${responseMaxBytes}`,
-    recipientApprovalTrust: {
-      bundled: 'bundled',
-      verified: 'verified',
-    },
-    recipientApprovalEffect: {
-      read: 'read',
-      mutation: 'mutation',
-    },
-    recipientApprovalCredentialFormat: {
-      raw: 'raw',
-      bearer: 'bearer',
-    },
     recipientApprovalConfirm: 'Approve and save',
   },
   local: {

@@ -725,7 +725,6 @@ describe('account Voice credential ownership', () => {
       revision,
       fingerprint: `shared:${ref}:${revision}`,
     });
-    const approvedDigest = `sha256:${'a'.repeat(64)}`;
     const settings = settingsParse({
       voiceSettingsV1: {
         credentialBindings: [{
@@ -733,7 +732,6 @@ describe('account Voice credential ownership', () => {
           credentialSlotId: 'api_key',
           credentialSource: { kind: 'savedSecret' },
           credentialBindings: { account: { api_key: ref }, byMachineId: {} },
-          approvedRecipientContractDigest: approvedDigest,
         }],
       },
     });

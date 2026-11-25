@@ -176,14 +176,13 @@ function register(declaration: typeof credentialSourceDeclaration | null = crede
     descriptor: contract ? { ...descriptor, accountCredentialSlot: projectVoiceProviderAccountCredentialSlot(declaration, contract) ?? undefined } : descriptor, adapter: null });
 }
 
-function secretSettings(source: 'none' | 'savedSecret' = 'none', reference: string | null = null, approvedDigest?: string) {
+function secretSettings(source: 'none' | 'savedSecret' = 'none', reference: string | null = null) {
   return settingsParse({
     secrets: [{ id: 'stored-secret', name: 'Acme key', kind: 'apiKey',
       encryptedValue: { _isSecretValue: true, value: 'retained-secret' }, createdAt: 1, updatedAt: 1 }],
     voiceSettingsV1: { credentialBindings: reference === null ? [] : [{
       contribution, credentialSlotId: 'api-key', credentialSource: { kind: source },
       credentialBindings: { account: { 'api-key': reference } },
-      ...(approvedDigest ? { approvedRecipientContractDigest: approvedDigest } : {}),
     }] },
   });
 }
@@ -454,7 +453,6 @@ describe('VoiceCredentialItem', () => {
     await credentialChanged.promise;
     expect(boundary.confirm).not.toHaveBeenCalled();
     expect(binding()?.credentialSource).toEqual({ kind: 'savedSecret' });
-    expect(binding()?.approvedRecipientContractDigest).toBeUndefined();
     expect(failures()).toEqual([]);
   });
 
@@ -536,15 +534,16 @@ describe('VoiceCredentialItem', () => {
     const screen = await render({ recipientContract });
     await gesture(screen);
     await credentialChanged.promise;
-    // Creation follows the canonical personal editor; linking an owned reference needs no recipient approval.
-    expect(boundary.confirm).not.toHaveBeenCalled();
+    expect(boundary.confirm).toHaveBeenCalledExactlyOnceWith(
+      t('settingsVoice.local.voiceCredential.plainStorageTitle'),
+      t('settingsVoice.local.voiceCredential.plainStorageBody'),
+    );
     expect(account!.resources).toHaveLength(1);
-    expect(binding()?.approvedRecipientContractDigest).toBeUndefined();
     expect(JSON.stringify(boundary.confirm.mock.calls)).not.toContain('new-secret');
   });
 
-  it('uses a retained linked credential despite legacy approval metadata without rewriting its material', async () => {
-    await setup(secretSettings('savedSecret', 'stored-secret', `sha256:${'0'.repeat(64)}`));
+  it('uses a retained linked credential without rewriting its material', async () => {
+    await setup(secretSettings('savedSecret', 'stored-secret'));
     const before = structuredClone(account!.resources);
     const ready = createDeferred<void>();
     const onStatusChanged = vi.fn((status: { status: string }) => {

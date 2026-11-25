@@ -14,8 +14,6 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
-  createRecipientContractDigestV1} from '@happier-dev/protocol/plugins/recipientContractV1';
-import {
   VoiceProviderContributionSchema,
 } from '@happier-dev/protocol/plugins/contributions/voice';
 import type {
@@ -26,7 +24,6 @@ import type {
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-elevenlabs/manifest';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '@happier-dev/plugins-elevenlabs/protocol/voice';
 
-import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import { storage } from '@/sync/domains/state/storageStore';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
@@ -81,11 +78,9 @@ function hasConfirmation() {
 }
 async function saveCredential() {
   const declaration = VoiceProviderContributionSchema.parse(PLUGIN_MANIFEST.contributes.voiceProviders?.[0]);
-  const recipient = createBundledVoiceRecipientContract({ pluginId: PLUGIN_MANIFEST.id, declaration });
-  if (!recipient) throw new Error('Expected ElevenLabs recipient contract');
   accountFixture.replaceSettings(await withVoiceSettingsCredentialResource(accountFixture, {
     settings: accountFixture.settings, declaration, pluginId: PLUGIN_MANIFEST.id,
-    resourceId: 'elevenlabs-secret', approvedRecipientContractDigest: createRecipientContractDigestV1(recipient),
+    resourceId: 'elevenlabs-secret',
   }));
   await refreshSavedSecretCatalog(accountFixture.scope);
   // Admit the operation only after the real material catalog is current.

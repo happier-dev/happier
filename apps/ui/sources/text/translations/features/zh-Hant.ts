@@ -18098,22 +18098,10 @@ const defineVoiceExternalCredentialApproval = Shared_voiceExternalCredentialAppr
 const voiceExternalCredentialApprovalTranslations = { 'zh-Hant': defineVoiceExternalCredentialApproval({
     reviewRequired: '檢查憑證存取權',
     recipientApprovalTitle: '允許此供應商使用你的憑證？',
-    recipientApprovalBody: '請檢查並核准宣告的供應商端點與操作。如果該接收方約定變更，Happier 會保留你的選擇，但會阻擋憑證使用，直到你再次核准。',
     recipientApprovalPackage: ({ title, pluginId, sourceKind, sourceLocator }) =>
       `套件：${title}（${pluginId}）；來源：${sourceKind} ${sourceLocator}`,
     recipientApprovalPublisher: ({ trust, identity }) => `發布者：${identity}（${trust}）`,
-    recipientApprovalPackageSignature: ({ status, keyId }) => `套件簽章：${keyId}（${status}）`,
     recipientApprovalContribution: ({ pluginId, localId }) => `貢獻：${pluginId}/${localId}`,
-    recipientApprovalOperations: '已宣告的操作：',
-    recipientApprovalOperation: ({ id, purpose, effect }) =>
-      `操作 ${id}：用途 ${purpose}；影響 ${effect}`,
-    recipientApprovalRequest: ({ method, origin, pathTemplate }) => `請求：${method} ${origin}${pathTemplate}`,
-    recipientApprovalCredential: ({ headerName, format }) => `憑證標頭：${headerName}；格式：${format}`,
-    recipientApprovalBounds: ({ requestMaxBytes, responseMaxBytes }) =>
-      `位元組上限：請求 ${requestMaxBytes}；回應 ${responseMaxBytes}`,
-    recipientApprovalTrust: { bundled: '內建', verified: '已驗證' },
-    recipientApprovalEffect: { read: '讀取', mutation: '變更' },
-    recipientApprovalCredentialFormat: { raw: '原始', bearer: 'bearer' },
     recipientApprovalConfirm: '核准並儲存',
   }) } as const;
 

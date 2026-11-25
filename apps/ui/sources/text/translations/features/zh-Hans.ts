@@ -18098,22 +18098,10 @@ const defineVoiceExternalCredentialApproval = Shared_voiceExternalCredentialAppr
 const voiceExternalCredentialApprovalTranslations = { 'zh-Hans': defineVoiceExternalCredentialApproval({
     reviewRequired: '检查凭据访问权限',
     recipientApprovalTitle: '允许此提供商使用你的凭据？',
-    recipientApprovalBody: '请检查并批准声明的提供商端点和操作。如果该接收方约定发生变化，Happier 会保留你的选择，但会阻止使用凭据，直到你再次批准。',
     recipientApprovalPackage: ({ title, pluginId, sourceKind, sourceLocator }) =>
       `包：${title}（${pluginId}）；来源：${sourceKind} ${sourceLocator}`,
     recipientApprovalPublisher: ({ trust, identity }) => `发布者：${identity}（${trust}）`,
-    recipientApprovalPackageSignature: ({ status, keyId }) => `包签名：${keyId}（${status}）`,
     recipientApprovalContribution: ({ pluginId, localId }) => `贡献：${pluginId}/${localId}`,
-    recipientApprovalOperations: '已声明的操作：',
-    recipientApprovalOperation: ({ id, purpose, effect }) =>
-      `操作 ${id}：用途 ${purpose}；影响 ${effect}`,
-    recipientApprovalRequest: ({ method, origin, pathTemplate }) => `请求：${method} ${origin}${pathTemplate}`,
-    recipientApprovalCredential: ({ headerName, format }) => `凭据请求头：${headerName}；格式：${format}`,
-    recipientApprovalBounds: ({ requestMaxBytes, responseMaxBytes }) =>
-      `字节上限：请求 ${requestMaxBytes}；响应 ${responseMaxBytes}`,
-    recipientApprovalTrust: { bundled: '内置', verified: '已验证' },
-    recipientApprovalEffect: { read: '读取', mutation: '变更' },
-    recipientApprovalCredentialFormat: { raw: '原始', bearer: 'bearer' },
     recipientApprovalConfirm: '批准并保存',
   }) } as const;
 

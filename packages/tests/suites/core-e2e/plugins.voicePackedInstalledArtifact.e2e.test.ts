@@ -70,9 +70,6 @@ import type {
   PluginAccountAvailabilitySnapshot,
 } from '../../../../apps/ui/sources/sync/domains/plugins/availability/reader';
 import type { PluginUiActionProjection } from '../../../../apps/ui/sources/sync/domains/plugins/ui/projection';
-import {
-  isAccountVoiceCredentialRecipientApprovalRequired,
-} from '../../../../apps/ui/sources/voice/credentials/accountVoiceCredential';
 import { BundledSpeechDaemonClient } from '../../../../apps/ui/sources/voice/credentials/bundledSpeechClient';
 import { createDefaultVoiceProviderRegistry } from '../../../../apps/ui/sources/voice/registry/defaultRegistry';
 import { getExternalVoiceProviderRegistration } from '../../../../apps/ui/sources/voice/registry/externalVoiceProviderRegistrations';
@@ -1006,7 +1003,6 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
               contribution: FIXTURE_PROVIDER_CONTRIBUTION,
               credentialSlotId: 'api_key',
               credentialSource: { kind: 'savedSecret' },
-              approvedRecipientContractDigest: recipientContractDigest,
               credentialBindings: { account: { api_key: 'packed-voice-mediated-secret' } },
             },
             {
@@ -1412,12 +1408,6 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
       const replacementMediated = getExternalVoiceProviderRegistration(FIXTURE_PROVIDER_ID);
       expect(replacementMediated?.descriptor?.accountCredentialSlot?.recipientContractDigest)
         .toBe(recipientContractDigest);
-      expect(isAccountVoiceCredentialRecipientApprovalRequired({
-        settings: composedBoundary.settings!,
-        contribution: FIXTURE_PROVIDER_CONTRIBUTION,
-        credentialSlotId: 'api_key',
-        requiredRecipientContractDigest: recipientContractDigest,
-      })).toBe(false);
 
       const replacementRawInspection = await authorizationService.inspect({
         contribution: FIXTURE_RAW_PROVIDER_CONTRIBUTION,

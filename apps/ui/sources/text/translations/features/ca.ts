@@ -18236,23 +18236,10 @@ const defineVoiceExternalCredentialApproval = Shared_voiceExternalCredentialAppr
 const voiceExternalCredentialApprovalTranslations = { ca: defineVoiceExternalCredentialApproval({
     reviewRequired: 'Revisa l’accés a les credencials',
     recipientApprovalTitle: 'Vols permetre que aquest proveïdor utilitzi la teva credencial?',
-    recipientApprovalBody: 'Revisa i aprova els punts finals i les operacions declarats del proveïdor. Si aquest contracte del destinatari canvia, Happier manté la teva selecció però bloqueja l’ús de la credencial fins que la tornis a aprovar.',
     recipientApprovalPackage: ({ title, pluginId, sourceKind, sourceLocator }) =>
       `Paquet: ${title} (${pluginId}); font: ${sourceKind} ${sourceLocator}`,
     recipientApprovalPublisher: ({ trust, identity }) => `Editor: ${identity} (${trust})`,
-    recipientApprovalPackageSignature: ({ status, keyId }) => `Signatura del paquet: ${keyId} (${status})`,
     recipientApprovalContribution: ({ pluginId, localId }) => `Contribució: ${pluginId}/${localId}`,
-    recipientApprovalOperations: 'Operacions declarades:',
-    recipientApprovalOperation: ({ id, purpose, effect }) =>
-      `Operació ${id}: finalitat ${purpose}; efecte ${effect}`,
-    recipientApprovalRequest: ({ method, origin, pathTemplate }) => `Sol·licitud: ${method} ${origin}${pathTemplate}`,
-    recipientApprovalCredential: ({ headerName, format }) =>
-      `Capçalera de la credencial: ${headerName}; format: ${format}`,
-    recipientApprovalBounds: ({ requestMaxBytes, responseMaxBytes }) =>
-      `Límits de bytes: sol·licitud ${requestMaxBytes}; resposta ${responseMaxBytes}`,
-    recipientApprovalTrust: { bundled: 'integrat', verified: 'verificat' },
-    recipientApprovalEffect: { read: 'lectura', mutation: 'mutació' },
-    recipientApprovalCredentialFormat: { raw: 'en brut', bearer: 'bearer' },
     recipientApprovalConfirm: 'Aprova i desa',
   }) } as const;
 

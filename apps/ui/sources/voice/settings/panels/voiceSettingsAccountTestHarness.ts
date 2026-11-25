@@ -75,7 +75,6 @@ export async function withVoiceSettingsCredentialResource(account: VoiceSettings
     resourceId: string;
     machineId?: string;
     recipientContractDigest?: string;
-    approvedRecipientContractDigest?: string;
 }>): Promise<Settings> {
     const { applyAccountVoiceCredentialSourceSelection, createAccountVoiceCredentialBindingMutation,
         resolveExactAccountVoiceCredentialSecretId } = await import('@/voice/credentials/accountVoiceCredential');
@@ -96,14 +95,13 @@ export async function withVoiceSettingsCredentialResource(account: VoiceSettings
             name: content.name, kind: content.kind, encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
             capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
     }));
-    const approvedRecipientContractDigest = params.approvedRecipientContractDigest;
     return applyAccountVoiceCredentialSourceSelection({
         settings: params.settings, connectedPurposes: account.purposes.value, currentDeclaration: params.declaration,
         mutation: { contribution, credentialSlotId: slot.id, expectedSettingsVersion,
             selection: { kind: 'savedSecret' }, savedSecretMutation: { ...createAccountVoiceCredentialBindingMutation({
                 contribution, credentialSlotId: slot.id, machineId: params.machineId, secretId: ref,
                 expectedSecretId, expectedSecretUpdatedAt: existing?.updatedAt ?? null,
-            }), ...(approvedRecipientContractDigest ? { approvedRecipientContractDigest } : {}) } },
+            }) } },
     }).settings;
 }
 

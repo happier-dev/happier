@@ -18222,23 +18222,10 @@ const defineVoiceExternalCredentialApproval = Shared_voiceExternalCredentialAppr
 const voiceExternalCredentialApprovalTranslations = { it: defineVoiceExternalCredentialApproval({
     reviewRequired: 'Verifica l’accesso alle credenziali',
     recipientApprovalTitle: 'Consentire a questo provider di usare la tua credenziale?',
-    recipientApprovalBody: 'Verifica e approva gli endpoint e le operazioni dichiarati dal provider. Se quel contratto del destinatario cambia, Happier mantiene la tua selezione ma blocca l’uso della credenziale finché non la approvi di nuovo.',
     recipientApprovalPackage: ({ title, pluginId, sourceKind, sourceLocator }) =>
       `Pacchetto: ${title} (${pluginId}); origine: ${sourceKind} ${sourceLocator}`,
     recipientApprovalPublisher: ({ trust, identity }) => `Editore: ${identity} (${trust})`,
-    recipientApprovalPackageSignature: ({ status, keyId }) => `Firma del pacchetto: ${keyId} (${status})`,
     recipientApprovalContribution: ({ pluginId, localId }) => `Contributo: ${pluginId}/${localId}`,
-    recipientApprovalOperations: 'Operazioni dichiarate:',
-    recipientApprovalOperation: ({ id, purpose, effect }) =>
-      `Operazione ${id}: finalità ${purpose}; effetto ${effect}`,
-    recipientApprovalRequest: ({ method, origin, pathTemplate }) => `Richiesta: ${method} ${origin}${pathTemplate}`,
-    recipientApprovalCredential: ({ headerName, format }) =>
-      `Intestazione della credenziale: ${headerName}; formato: ${format}`,
-    recipientApprovalBounds: ({ requestMaxBytes, responseMaxBytes }) =>
-      `Limiti di byte: richiesta ${requestMaxBytes}; risposta ${responseMaxBytes}`,
-    recipientApprovalTrust: { bundled: 'integrato', verified: 'verificato' },
-    recipientApprovalEffect: { read: 'lettura', mutation: 'modifica' },
-    recipientApprovalCredentialFormat: { raw: 'grezzo', bearer: 'bearer' },
     recipientApprovalConfirm: 'Approva e salva',
   }) } as const;
 

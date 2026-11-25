@@ -18158,22 +18158,10 @@ const defineVoiceExternalCredentialApproval = Shared_voiceExternalCredentialAppr
 const voiceExternalCredentialApprovalTranslations = { ja: defineVoiceExternalCredentialApproval({
     reviewRequired: '認証情報へのアクセスを確認',
     recipientApprovalTitle: 'このプロバイダーに認証情報の使用を許可しますか？',
-    recipientApprovalBody: '宣言されたプロバイダーのエンドポイントと操作を確認して承認してください。受信側の契約が変わった場合、Happier は選択を保持したまま、再度承認するまで認証情報の使用をブロックします。',
     recipientApprovalPackage: ({ title, pluginId, sourceKind, sourceLocator }) =>
       `パッケージ: ${title}（${pluginId}）; ソース: ${sourceKind} ${sourceLocator}`,
     recipientApprovalPublisher: ({ trust, identity }) => `発行者: ${identity}（${trust}）`,
-    recipientApprovalPackageSignature: ({ status, keyId }) => `パッケージ署名: ${keyId}（${status}）`,
     recipientApprovalContribution: ({ pluginId, localId }) => `コントリビューション: ${pluginId}/${localId}`,
-    recipientApprovalOperations: '宣言された操作:',
-    recipientApprovalOperation: ({ id, purpose, effect }) =>
-      `操作 ${id}: 目的 ${purpose}; 影響 ${effect}`,
-    recipientApprovalRequest: ({ method, origin, pathTemplate }) => `リクエスト: ${method} ${origin}${pathTemplate}`,
-    recipientApprovalCredential: ({ headerName, format }) => `認証情報ヘッダー: ${headerName}; 形式: ${format}`,
-    recipientApprovalBounds: ({ requestMaxBytes, responseMaxBytes }) =>
-      `バイト上限: リクエスト ${requestMaxBytes}; レスポンス ${responseMaxBytes}`,
-    recipientApprovalTrust: { bundled: 'バンドル', verified: '検証済み' },
-    recipientApprovalEffect: { read: '読み取り', mutation: '変更' },
-    recipientApprovalCredentialFormat: { raw: '生', bearer: 'bearer' },
     recipientApprovalConfirm: '承認して保存',
   }) } as const;
 

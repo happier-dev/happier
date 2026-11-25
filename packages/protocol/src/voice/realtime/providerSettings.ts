@@ -35,7 +35,6 @@ export type VoiceProviderId = z.infer<typeof VoiceProviderIdSchema>;
 
 const LegacyVoiceCredentialBindingBaseV1Schema = lazyZodSchema(() => z.strictObject({
   credentialBindings: SavedSecretSlotBindingsV1Schema,
-  approvedRecipientContractDigest: z.optional(z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/u))),
 }));
 
 export const LegacyVoiceCredentialBindingV1Schema = lazyZodSchema(() => z.extend(LegacyVoiceCredentialBindingBaseV1Schema, {
@@ -138,7 +137,6 @@ export const VoiceCredentialBindingV1Schema = lazyZodSchema(() => z.strictObject
     kind: z.enum(['none', 'savedSecret', 'connectedAccount']),
   }),
   credentialBindings: SavedSecretSlotBindingsV1Schema,
-  approvedRecipientContractDigest: z.optional(z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/u))),
 }).check(z.superRefine((value, context) => {
   const accountSlotIds = Object.keys(value.credentialBindings.account ?? {});
   const machineSlotIds = Object.entries(value.credentialBindings.byMachineId ?? {})

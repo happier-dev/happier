@@ -2021,7 +2021,7 @@ describe('VoiceProviderSection', () => {
         };
         const settings = await withVoiceSettingsCredentialResource(accountFixture, {
             settings: settingsParse({ voice }), declaration: entry.declaration, pluginId: entry.pluginId,
-            resourceId: 'grok-secret', approvedRecipientContractDigest: `sha256:${'0'.repeat(64)}`,
+            resourceId: 'grok-secret',
         });
         storageBoundary.settings = settings;
         onTestFinished(() => {

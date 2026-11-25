@@ -18247,23 +18247,10 @@ const defineVoiceExternalCredentialApproval = Shared_voiceExternalCredentialAppr
 const voiceExternalCredentialApprovalTranslations = { ru: defineVoiceExternalCredentialApproval({
     reviewRequired: 'Проверьте доступ к учётным данным',
     recipientApprovalTitle: 'Разрешить этому провайдеру использовать ваши учётные данные?',
-    recipientApprovalBody: 'Проверьте и одобрите объявленные адреса и операции провайдера. Если этот контракт получателя изменится, Happier сохранит ваш выбор, но заблокирует использование учётных данных до повторного одобрения.',
     recipientApprovalPackage: ({ title, pluginId, sourceKind, sourceLocator }) =>
       `Пакет: ${title} (${pluginId}); источник: ${sourceKind} ${sourceLocator}`,
     recipientApprovalPublisher: ({ trust, identity }) => `Издатель: ${identity} (${trust})`,
-    recipientApprovalPackageSignature: ({ status, keyId }) => `Подпись пакета: ${keyId} (${status})`,
     recipientApprovalContribution: ({ pluginId, localId }) => `Вклад: ${pluginId}/${localId}`,
-    recipientApprovalOperations: 'Объявленные операции:',
-    recipientApprovalOperation: ({ id, purpose, effect }) =>
-      `Операция ${id}: назначение ${purpose}; эффект ${effect}`,
-    recipientApprovalRequest: ({ method, origin, pathTemplate }) => `Запрос: ${method} ${origin}${pathTemplate}`,
-    recipientApprovalCredential: ({ headerName, format }) =>
-      `Заголовок с учётными данными: ${headerName}; формат: ${format}`,
-    recipientApprovalBounds: ({ requestMaxBytes, responseMaxBytes }) =>
-      `Ограничения в байтах: запрос ${requestMaxBytes}; ответ ${responseMaxBytes}`,
-    recipientApprovalTrust: { bundled: 'встроенный', verified: 'проверенный' },
-    recipientApprovalEffect: { read: 'чтение', mutation: 'изменение' },
-    recipientApprovalCredentialFormat: { raw: 'необработанный', bearer: 'bearer' },
     recipientApprovalConfirm: 'Одобрить и сохранить',
   }) } as const;
 

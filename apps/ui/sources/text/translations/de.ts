@@ -14432,36 +14432,12 @@ settingsSession: {
             unavailable: 'Einrichtung der Zugangsdaten nicht verfügbar',
             reviewRequired: 'Zugriff auf Zugangsdaten prüfen',
             recipientApprovalTitle: 'Diesem Provider erlauben, deine Zugangsdaten zu nutzen?',
-            recipientApprovalBody: 'Prüf die angegebenen Provider-Endpunkte und Operationen und gib sie frei. Wenn sich dieser Empfänger-Vertrag ändert, behält Happier deine Auswahl, blockiert die Nutzung der Zugangsdaten aber, bis du erneut freigibst.',
             recipientApprovalPackage: ({ title, pluginId, sourceKind, sourceLocator }: { title: string; pluginId: string; sourceKind: string; sourceLocator: string }) =>
                 `Paket: ${title} (${pluginId}); Quelle: ${sourceKind} ${sourceLocator}`,
             recipientApprovalPublisher: ({ trust, identity }: { trust: string; identity: string }) =>
                 `Herausgeber: ${identity} (${trust})`,
-            recipientApprovalPackageSignature: ({ status, keyId }: { status: string; keyId: string }) =>
-                `Paketsignatur: ${keyId} (${status})`,
             recipientApprovalContribution: ({ pluginId, localId }: { pluginId: string; localId: string }) =>
                 `Beitrag: ${pluginId}/${localId}`,
-            recipientApprovalOperations: 'Angegebene Operationen:',
-            recipientApprovalOperation: ({ id, purpose, effect }: { id: string; purpose: string; effect: string }) =>
-                `Operation ${id}: Zweck ${purpose}; Wirkung ${effect}`,
-            recipientApprovalRequest: ({ method, origin, pathTemplate }: { method: string; origin: string; pathTemplate: string }) =>
-                `Anfrage: ${method} ${origin}${pathTemplate}`,
-            recipientApprovalCredential: ({ headerName, format }: { headerName: string; format: string }) =>
-                `Header für Zugangsdaten: ${headerName}; Format: ${format}`,
-            recipientApprovalBounds: ({ requestMaxBytes, responseMaxBytes }: { requestMaxBytes: number; responseMaxBytes: number }) =>
-                `Byte-Grenzen: Anfrage ${requestMaxBytes}; Antwort ${responseMaxBytes}`,
-            recipientApprovalTrust: {
-                bundled: 'mitgeliefert',
-                verified: 'verifiziert',
-            },
-            recipientApprovalEffect: {
-                read: 'lesend',
-                mutation: 'verändernd',
-            },
-            recipientApprovalCredentialFormat: {
-                raw: 'roh',
-                bearer: 'bearer',
-            },
             recipientApprovalConfirm: 'Freigeben und speichern',
         },
         local: {

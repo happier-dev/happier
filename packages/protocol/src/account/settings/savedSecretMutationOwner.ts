@@ -333,9 +333,7 @@ export function promoteLegacyVoiceSavedSecretReferenceV1(
       const binding = VoiceCredentialBindingV1Schema.parse({ contribution, credentialSlotId: origin.candidate.slotId,
         credentialSource: { kind: 'savedSecret' }, credentialBindings: {
           ...(Object.keys(byMachineId).length > 0 ? { byMachineId } : {}),
-        }, ...(origin.binding?.approvedRecipientContractDigest === undefined ? {} : {
-          approvedRecipientContractDigest: origin.binding.approvedRecipientContractDigest,
-        }) });
+        } });
       nextSettings = { ...nextSettings, voiceSettingsV1: { ...state.root,
         credentialBindings: [...state.credentialBindings, binding] } };
       state = readVoiceCredentialTarget(nextSettings, target);
@@ -479,7 +477,6 @@ export type AccountSettingsSavedSecretMutation =
       expectedSecretId: string | null;
       expectedSecretUpdatedAt: number | null;
       secret: SavedSecret;
-      approvedRecipientContractDigest?: string;
     }>
   | Readonly<{
       /**
@@ -492,14 +489,6 @@ export type AccountSettingsSavedSecretMutation =
       expectedSecretId: string | null;
       expectedSecretUpdatedAt: number | null;
       secretId: string;
-      approvedRecipientContractDigest?: string;
-    }>
-  | Readonly<{
-      kind: 'approveVoiceCredentialRecipientContract';
-      target: VoiceCredentialSecretTarget;
-      expectedSecretId: string;
-      expectedSecretUpdatedAt: number;
-      approvedRecipientContractDigest: string;
     }>
   | Readonly<{
       kind: 'removeVoiceCredentialSecret';
@@ -566,7 +555,6 @@ export type AccountSettingsVoiceCredentialSecretResolution = Readonly<{
     secretId: string;
     source: 'account' | 'machine_override';
   }> | null;
-  approvedRecipientContractDigest: string | null;
 }>;
 
 export type VoiceCredentialSourceSelection =
@@ -617,8 +605,6 @@ export type AccountSettingsVoiceCredentialSourceResolution = Readonly<{
     secretId: string;
     source: 'account' | 'machine_override';
   }> | null;
-  /** The recipient contract the user approved for this target, when recorded. */
-  approvedRecipientContractDigest: string | null;
 }>;
 
 export class AccountSettingsSavedSecretMutationError extends Error {
@@ -1346,10 +1332,19 @@ function parseQualifiedVoiceCredentialTarget(
   });
 }
 
+// Earlier development Settings can still carry this retired field. Keep the
+// remaining fields subject to the strict reference parser.
+function omitRetiredVoiceCredentialApproval(candidate: unknown): unknown {
+  const record = ownRecord(candidate);
+  if (!record || !Object.hasOwn(record, 'approvedRecipientContractDigest')) return candidate;
+  const { approvedRecipientContractDigest: _retired, ...binding } = record;
+  return binding;
+}
+
 function parseCanonicalVoiceCredentialBinding(
   candidate: unknown,
 ): VoiceCredentialBindingV1 {
-  const parsed = VoiceCredentialBindingV1Schema.safeParse(candidate);
+  const parsed = VoiceCredentialBindingV1Schema.safeParse(omitRetiredVoiceCredentialApproval(candidate));
   if (!parsed.success) {
     throw new AccountSettingsSavedSecretMutationError(
       'saved_secret_reference_invalid',
@@ -1362,7 +1357,7 @@ function parseCanonicalVoiceCredentialBinding(
 function parseVoiceCredentialBindingForReferenceEnumeration(
   candidate: unknown,
 ): Readonly<Record<string, unknown>> {
-  const legacy = LegacyVoiceCredentialBindingV1Schema.safeParse(candidate);
+  const legacy = LegacyVoiceCredentialBindingV1Schema.safeParse(omitRetiredVoiceCredentialApproval(candidate));
   return legacy.success
     ? legacy.data
     : parseCanonicalVoiceCredentialBinding(candidate);
@@ -1482,13 +1477,7 @@ export function resolveAccountSettingsVoiceCredentialSecret(
     )
     ? candidate
     : null;
-  const digest = state.binding?.approvedRecipientContractDigest;
-  return Object.freeze({
-    exactSecretId: state.exactSecretId,
-    reference,
-    approvedRecipientContractDigest:
-      typeof digest === 'string' ? digest : null,
-  });
+  return Object.freeze({ exactSecretId: state.exactSecretId, reference });
 }
 
 function writeVoiceCredentialTarget(input: Readonly<{
@@ -1496,17 +1485,7 @@ function writeVoiceCredentialTarget(input: Readonly<{
   target: VoiceCredentialTarget;
   state: VoiceCredentialTargetState;
   secretId: string | null;
-  approvedRecipientContractDigest?: string;
 }>): Readonly<Record<string, unknown>> {
-  if (
-    !VoiceCredentialBindingV1Schema.shape.approvedRecipientContractDigest
-      .safeParse(input.approvedRecipientContractDigest).success
-  ) {
-    throw new AccountSettingsSavedSecretMutationError(
-      'saved_secret_invalid',
-      'Voice credential recipient contract digest is invalid',
-    );
-  }
   const existingSlotBindings = ownRecord(input.state.binding?.credentialBindings) ?? {};
   const account = { ...(ownRecord(existingSlotBindings.account) ?? {}) };
   const byMachineId = { ...(ownRecord(existingSlotBindings.byMachineId) ?? {}) };
@@ -1546,12 +1525,6 @@ function writeVoiceCredentialTarget(input: Readonly<{
     credentialSource: input.state.binding?.credentialSource
       ?? { kind: 'none' },
     credentialBindings: nextSlotBindings,
-    ...(input.approvedRecipientContractDigest === undefined
-      ? {}
-      : {
-          approvedRecipientContractDigest:
-            input.approvedRecipientContractDigest,
-        }),
   };
   if (input.state.bindingIndex >= 0) {
     credentialBindings[input.state.bindingIndex] = nextBinding;
@@ -1951,8 +1924,6 @@ export function resolveAccountSettingsVoiceCredentialSource(
     readQualifiedPurposeBindings(settings, catalogs),
     identity.purpose,
   );
-  const rawDigest = state.binding?.approvedRecipientContractDigest;
-  const approvedRecipientContractDigest = typeof rawDigest === 'string' ? rawDigest : null;
   if (source.kind === 'connectedAccount') {
     if (!purposeBinding) {
       throw new AccountSettingsSavedSecretMutationError(
@@ -1967,7 +1938,6 @@ export function resolveAccountSettingsVoiceCredentialSource(
       }),
       binding: purposeBinding,
       savedSecret: null,
-      approvedRecipientContractDigest,
     });
   }
   if (purposeBinding) {
@@ -1981,7 +1951,6 @@ export function resolveAccountSettingsVoiceCredentialSource(
       selection: Object.freeze({ kind: 'none' }),
       binding: null,
       savedSecret: null,
-      approvedRecipientContractDigest,
     });
   }
   if (source.kind !== 'savedSecret') {
@@ -2006,7 +1975,6 @@ export function resolveAccountSettingsVoiceCredentialSource(
     selection: Object.freeze({ kind: 'savedSecret' }),
     binding: null,
     savedSecret,
-    approvedRecipientContractDigest,
   });
 }
 
@@ -3143,7 +3111,6 @@ function applySavedSecretMutation(
     && mutationKind !== 'delete'
     && mutationKind !== 'replaceVoiceCredentialSecret'
     && mutationKind !== 'bindVoiceCredentialSavedSecret'
-    && mutationKind !== 'approveVoiceCredentialRecipientContract'
     && mutationKind !== 'removeVoiceCredentialSecret'
     && mutationKind !== 'replacePluginSecret'
     && mutationKind !== 'bindPluginSecret'
@@ -3337,12 +3304,6 @@ function applySavedSecretMutation(
       target: mutation.target,
       state: targetState,
       secretId: replacementSecret.data.id,
-      ...(mutation.approvedRecipientContractDigest === undefined
-        ? {}
-        : {
-            approvedRecipientContractDigest:
-              mutation.approvedRecipientContractDigest,
-          }),
     });
     const keepPrevious = mutation.expectedSecretId !== null
       && listAccountSettingsSavedSecretReferences(
@@ -3389,12 +3350,6 @@ function applySavedSecretMutation(
       target: mutation.target,
       state: targetState,
       secretId: mutation.secretId,
-      ...(mutation.approvedRecipientContractDigest === undefined
-        ? {}
-        : {
-            approvedRecipientContractDigest:
-              mutation.approvedRecipientContractDigest,
-          }),
     });
     // The previously bound record is left in place: it is a user-curated
     // SavedSecret the account still owns, not a slot-local value this binding
@@ -3403,45 +3358,6 @@ function applySavedSecretMutation(
     return Object.freeze({
       settings: Object.freeze({
         ...bound,
-        secrets: Object.freeze([...secrets]),
-      }),
-    });
-  }
-  if (mutation.kind === 'approveVoiceCredentialRecipientContract') {
-    if (
-      !VoiceCredentialBindingV1Schema.shape.approvedRecipientContractDigest
-        .safeParse(mutation.approvedRecipientContractDigest).success
-    ) {
-      throw new AccountSettingsSavedSecretMutationError(
-        'saved_secret_invalid',
-        'Voice credential recipient contract digest is invalid',
-      );
-    }
-    const targetState = readVoiceCredentialTarget(settings, mutation.target);
-    if (targetState.exactSecretId !== mutation.expectedSecretId) {
-      throw new AccountSettingsSavedSecretMutationError(
-        'saved_secret_conflict',
-        'Target-local Voice credential changed',
-      );
-    }
-    if (!isStrictSharedSavedSecretRefV1(mutation.expectedSecretId)) {
-      findSecret(
-        secrets,
-        mutation.expectedSecretId,
-        mutation.expectedSecretUpdatedAt,
-      );
-    }
-    const approved = writeVoiceCredentialTarget({
-      settings,
-      target: mutation.target,
-      state: targetState,
-      secretId: mutation.expectedSecretId,
-      approvedRecipientContractDigest:
-        mutation.approvedRecipientContractDigest,
-    });
-    return Object.freeze({
-      settings: Object.freeze({
-        ...approved,
         secrets: Object.freeze([...secrets]),
       }),
     });

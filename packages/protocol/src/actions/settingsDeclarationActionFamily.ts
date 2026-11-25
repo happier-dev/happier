@@ -63,8 +63,6 @@ export const SettingsDeclarationOperationInputV1Schema = lazyZodSchema(() => z.u
   z.extend(VoiceSavedSecretOperationBasisSchema, { operation: z.enum(['inspect', 'remove', 'review']) }),
   z.strictObject({ kind: z.literal('voice_credential_source'), credentialSlotId: VoiceCredentialSlotIdSchema,
     expectedSettingsVersion: z.number().check(z.int(), z.nonnegative()),
-    // A displayed declaration may fence its gesture; automated callers use the declaration captured at admission.
-    expectedContractDigest: z.optional(z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/))),
     selection: z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('none') }),
       z.strictObject({ kind: z.literal('savedSecret') }),

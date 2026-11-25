@@ -7,7 +7,7 @@ import { createVoiceSettingsOwner } from './voiceSettings.js';
 import { createVoiceSettingsPersistenceOwner } from './voiceSettingsPersistence.js';
 
 describe('Voice settings persistence', () => {
-  it('fans out all 65 legacy slots while retaining the first canonical binding for a duplicate identity', () => {
+  it('keeps saved references and discards retired recipient approval data from stored bindings', () => {
     const owner = createVoiceSettingsPersistenceOwner({
       voiceOwner: createVoiceSettingsOwner({ bundledContributions: [] }),
     });
@@ -17,7 +17,8 @@ describe('Voice settings persistence', () => {
       credentialSource: { kind: 'savedSecret' },
       credentialBindings: { account: { slot_0: 'canonical-secret' } },
     });
-    const raw = { voiceSettingsV1: { credentialBindings: [canonical, {
+    const raw = { voiceSettingsV1: { credentialBindings: [{ ...canonical, approvedRecipientContractDigest: `sha256:${'a'.repeat(64)}` }, {
+      approvedRecipientContractDigest: `sha256:${'b'.repeat(64)}`,
       providerId: 'happier.voice.xai/realtime-grok',
       credentialBindings: { account: Object.fromEntries(
         Array.from({ length: 65 }, (_, index) => [`slot_${index}`, `legacy-secret-${index}`]),
@@ -27,7 +28,9 @@ describe('Voice settings persistence', () => {
 
     expect(runtime.voiceSettingsV1.credentialBindings).toHaveLength(65);
     expect(runtime.voiceSettingsV1.credentialBindings[0]).toEqual(canonical);
-    expect(runtime.voiceSettingsV1.credentialBindings[64]).toMatchObject({
+    expect(runtime.voiceSettingsV1.credentialBindings[64]).toEqual({
+      contribution: canonical.contribution,
+      credentialSource: { kind: 'savedSecret' },
       credentialSlotId: 'slot_64', credentialBindings: { account: { slot_64: 'legacy-secret-64' } },
     });
   });

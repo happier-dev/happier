@@ -60,7 +60,8 @@ describe('Voice credential source operation admission', () => {
       } } } };
     expect(schema.safeParse({ anchor: 'voiceConversations.provider.acme.voice/realtime.credentialSource', input }).success).toBe(true);
     for (const patch of [{ selection: { kind: 'savedSecret', value: 'secret' } }, { secret: 'secret' },
-      { confirmed: true }, { accountId: 'other' }, { expectedSettingsVersion: -1 }]) {
+      { confirmed: true }, { accountId: 'other' }, { expectedSettingsVersion: -1 },
+      { expectedContractDigest: `sha256:${'a'.repeat(64)}` }]) {
       expect(schema.safeParse({ anchor: 'voiceConversations.provider.acme.voice/realtime.credentialSource', input: { ...input, ...patch } }).success).toBe(false);
     }
   });

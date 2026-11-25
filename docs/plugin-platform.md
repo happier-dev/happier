@@ -11013,10 +11013,10 @@ selects an existing reference, inspects its recipient disclosure, reviews that
 exact binding, or removes it, including for API-key-only services and machine
 overrides. Pickers use these same operations. Inputs carry references and the
 captured Settings version, never credential values or caller-created trust
-approval. The host resolves the current recipient contract, presents the
-existing confirmation, and rechecks reference and contribution currentness
-before the canonical mutation. Creation and rotation remain with the Saved
-Secret resource Actions and their existing plain/encrypted custody rules.
+approval. Selecting your own Saved Secret grants the provider use of that
+reference. For a shared key, the custodian must approve a change of destination
+before the key is released. Creation and rotation remain with the Saved Secret
+resource Actions and their existing plain/encrypted custody rules.
 
 Development Session voice preferences use that same declared field and provider
 schema. The qualified contribution and exact setting path identify one voice
