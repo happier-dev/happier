@@ -20,6 +20,7 @@ import Fastify from 'fastify';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
 import tweetnacl from 'tweetnacl';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, createActionExecutor, encodePlainArtifactStoredContent, ExecutionRunGetResponseSchema, materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1, validateWorkflowDefinition, WorkflowActionFailureV1Schema, WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunSummaryV1Schema, type ActionId } from '@happier-dev/protocol';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
@@ -837,12 +838,14 @@ describe('createCliActionDeps workflow boundary', () => {
       { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
     ];
     const previousRoundContext = { document: 'Previous round evidence' };
-    const result = await executor.execute('workflow.run.start', {
+    const input = {
       runId: '77777777-7777-4777-8777-777777777778', source: { kind: 'catalog', workflow: 'builtin:plan-with-a-panel' },
       inputs: { request: 'Plan the change', engines, previousRoundContext },
       roleOverrides: originless ? [{ roleId: 'planner', engine: { agentTargetKey: 'agent:happier.agent.opencode/opencode' } }] : [],
-    }, { surface, authority, serverId: 'profile', ...(originless ? {} : { defaultSessionId: sessionId }),
-      externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: tmpdir() } } });
+    } satisfies Parameters<NonNullable<typeof deps.workflowAction>>[0]['input'];
+    const context: ActionExecutorContext = { surface, authority, serverId: 'profile', ...(originless ? {} : { defaultSessionId: sessionId }),
+      externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: tmpdir() } } };
+    const result = await executor.execute('workflow.run.start', input, context);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { admission: 'created' } });
     const admission = http.post.mock.calls.find(([, body]) => body.operation === 'admit')?.[1];
     expect(admission).toBeDefined();
@@ -873,6 +876,46 @@ describe('createCliActionDeps workflow boundary', () => {
       modelSelection: { ref: { modelId: 'parent-model' } }, connectedServices,
     });
     if (!originless) return;
+    const pluginWaiver = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.run.start': ['plugin'] } });
+    const pluginActions = (boundSession?: string, actionsSettings = pluginWaiver) => createPluginInvocationActionsService({
+      seed: {
+        plugin: { id: 'qa.coord-live4-public', version: '0.0.1' },
+        contribution: { id: 'invoke', qualifiedId: 'qa.coord-live4-public/invoke' },
+        occurrenceId: 'public-driver', sourceCustody: { kind: 'development', registeredRootId: 'public-driver' },
+        surface: 'cli', approvalContext: context,
+        ...(boundSession ? { session: { id: boundSession } } : {}),
+        signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+      },
+      actionExecutor: createActionExecutor({ ...deps, readActionsSettings: () => actionsSettings }),
+      invokeContributedAction: async () => { throw new Error('unexpected_contributed_action'); },
+    });
+    const pluginRunId = '77777777-7777-4777-8777-777777777779';
+    await expect(pluginActions().execute('workflow.run.start', { ...input, runId: pluginRunId }))
+      .resolves.toMatchObject({ admission: 'created' });
+    const pluginAdmission = http.post.mock.calls.find(([, body]) => body.operation === 'admit' && body.runId === pluginRunId)?.[1];
+    const pluginAccepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: pluginRunId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(pluginAdmission.acceptedEnvelope),
+    });
+    expect(pluginAccepted).toMatchObject({ kind: 'available', content: {
+      authorization: { principal: { kind: 'plugin', pluginId: 'qa.coord-live4-public', contributionLocalId: 'invoke' } },
+      workspaceTarget: accepted.content.workspaceTarget,
+      materializedLeaves: accepted.content.materializedLeaves,
+    } });
+    const boundRunId = '77777777-7777-4777-8777-777777777780';
+    await expect(pluginActions(sessionId).execute('workflow.run.start', { ...input, runId: boundRunId }))
+      .rejects.toMatchObject({ code: 'target_unavailable', data: { failureCause: {
+        phase: 'workflow.run.start', errorCode: 'target_unavailable', nativeErrorReason: 'caller_session_unavailable',
+      } } });
+    expect(http.post.mock.calls.some(([, body]) => body.operation === 'admit' && body.runId === boundRunId)).toBe(false);
+    // The person's Require for plugin Starts still applies to an originless plugin Start before admission.
+    const unwaivedRunId = '77777777-7777-4777-8777-777777777781';
+    // This fixture has no approval origin, so the required Ask settles as a typed refusal instead of running.
+    await expect(pluginActions(undefined, ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { 'workflow.run.start': { approvalRequiredSurfaces: ['plugin'] } } }))
+      .execute('workflow.run.start', { ...input, runId: unwaivedRunId }))
+      .rejects.toMatchObject({ code: 'approval_origin_unavailable' });
+    expect(http.post.mock.calls.some(([, body]) => body.operation === 'admit' && body.runId === unwaivedRunId)).toBe(false);
     expect(accepted.content.origin).toEqual({ kind: 'direct', actionPolicy: { surface, authority } });
     expect(synthesis.selection).toMatchObject({
       agentTarget: plannerTargets[1],

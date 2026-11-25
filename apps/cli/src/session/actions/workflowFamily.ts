@@ -1,4 +1,4 @@
-import { readActionFailureCauseV1, createActionRefusalDetailsV1, projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, readActionFailureCauseV1, createActionRefusalDetailsV1, projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { CliActionDepsParams, ResolvedSessionTransport } from './cliActionDeps/types';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
@@ -582,8 +582,10 @@ export function createCliWorkflowFamily(
           inputTypeDeps: createCommittedInputTypeDeps(),
           resolveMaterializationContext: async (args, target, readAgentStartContext) => {
             if (!resolveWorkflowMaterializer) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
+            // A global plugin Action has a selected workspace but no Session whose role defaults it can inherit.
             if (args.context.surface !== 'agent'
-              && (!args.context.actionCaller || args.context.actionCaller.kind === 'host')) {
+              && (!args.context.actionCaller || args.context.actionCaller.kind === 'host'
+                || (args.context.actionCaller.kind === 'plugin' && !args.context.defaultSessionId))) {
               if (!args.context.defaultSessionId) return await resolveWorkflowMaterializer({ ...target, signal: args.context.signal });
               const sessionId = args.context.defaultSessionId;
               const [{ readRequesterAccountActionContext }, { resolveWorkflowSessionConversation }] = await Promise.all([import("@/daemon/sessionEncryption/requesterAccountActionContext"), import("@/daemon/workflows/invocationRecoveryObserver")]);
@@ -606,8 +608,11 @@ export function createCliWorkflowFamily(
               roleSelection: async () => {
                 const metadata = await readCurrentSessionMetadata();
                 const startContext = await readAgentStartContext();
-                if (startContext && 'ok' in startContext) throw Object.assign(new Error(startContext.error), {
-                  code: startContext.errorCode, details: startContext.details,
+                if (startContext && 'ok' in startContext) throw createActionExecuteFailureError({
+                  ...startContext,
+                  effectAttempted: false,
+                  failureCause: { phase: args.actionId, errorClass: 'Error', errorCode: startContext.errorCode,
+                    nativeErrorReason: startContext.details.reason, httpStatus: null },
                 });
                 const baseline = startContext?.baseline.configuration;
                 const sameMachine = startContext?.baseline.machineId === target.machineId;
