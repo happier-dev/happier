@@ -23,25 +23,16 @@ describe('Session defaults loading shape', () => {
         row,
       ).not.toBeNull();
     }
-    // The default Agent's open group (its choices under it), then the next Agent row (lab L11).
-    expect(
-      screen.findByTestId(`${SPECIMEN}.loading-pending-agent:lead:permission`),
-    ).not.toBeNull();
-    expect(
-      screen.findByTestId(`${SPECIMEN}.loading-pending-agent:lead:model`),
-    ).not.toBeNull();
-    expect(
-      screen.findByTestId(`${SPECIMEN}.loading-pending-agent:next`),
-    ).not.toBeNull();
-    // For me is editable once read, so the unset Agents' row is held too.
-    expect(screen.findByTestId(`${SPECIMEN}.loading-otherAgents`)).not.toBeNull();
+    // Only the rows every loaded editor shows are held: which Agents lead, their service rows and "Other agents"
+    // come from the read and add below these, so nothing held moves whatever the read returns.
+    for (const speculative of ['pending-agent:lead', 'pending-agent:lead:permission', 'pending-agent:next', 'otherAgents']) {
+      expect(screen.findByTestId(`${SPECIMEN}.loading-${speculative}`), speculative).toBeNull();
+    }
     const text = screen.getTextContent();
     for (const title of [
       t('teams.settings.memberDefaults.machine'),
       t('projects.sessionDefaults.agent'),
       t('teams.settings.memberDefaults.approvalProfile'),
-      t('teams.settings.memberDefaults.permissionMode'),
-      t('teams.settings.memberDefaults.model'),
     ])
       expect(text).toContain(title);
     expect(screen.findByTestId(`${SPECIMEN}.loading-skeleton:0`)).toBeNull();

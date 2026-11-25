@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
-import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import type { ManagedSessionDefaultsV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
@@ -29,7 +28,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useProjectSessionDefaultsSectionAdapter, type ProjectSessionDefaultsInheritance, type ProjectSessionDefaultsSectionInput } from '@/hooks/projects/useProjectSessionDefaultsSectionAdapter';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
@@ -915,24 +913,20 @@ export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionD
   );
 });
 
-const noExpand = () => {};
-
 /**
- * The project editor while its read is in flight (lab L11 loading, "as populated"): the same section and rows, so the
- * rows stay put when their values land. Machine, Agent and Approval profile always show, by name, each with its field
- * holding a quiet bar; then the default Agent's open group and the next Agent row, whose names and lines are bars.
- * "For me" is always editable once read, so its "Other agents" row is held too. Which Agents lead, how many
- * connected-service rows the leading one opens with, and whether a shared scope is editable come from the read, so
- * those rows are the editor's usual shape, not a promise.
+ * The project editor while its read is in flight: the same section with the rows every loaded editor shows (Machine,
+ * Agent and Approval profile), by name, each field holding a quiet bar. Which Agents lead, how many connected-service
+ * rows they open with and whether "Other agents" shows all come from the read, so those rows add below these when it
+ * lands; nothing held moves whatever the read returns (TS-UI-ACCEPT-FINAL-1124: a held Agent group collapsed by
+ * 342 px for a Project with no Agent set).
  */
 export const ProjectSessionDefaultsLoadingSection = React.memo(function ProjectSessionDefaultsLoadingSection(props: Readonly<{
-  /** The shared scope: the Approval profile row carries its standing description; editability waits for the read. */
+  /** The shared scope: the Approval profile row carries its standing description. */
   shared: boolean;
   testID: string;
 }>) {
   const { theme } = useUnistyles();
   const rowMetrics = usePageRowMetrics();
-  const reducedMotion = useReducedMotionPreference();
   // A row's facts arrive on its description line: the bar holds that line, as the account security rows do.
   const line = <SkeletonTitle lineHeight={rowMetrics.subtitle.lineHeight} />;
   const field = renderDropdownItemTriggerRightElement({
@@ -944,39 +938,16 @@ export const ProjectSessionDefaultsLoadingSection = React.memo(function ProjectS
     fieldSpan: 'column',
     loading: true,
   });
-  // An open Agent's choices draw no hairlines between them (their menus wrap the rows), so the held ones draw none.
-  const fieldRow = (testID: string, title: React.ReactNode, subtitle?: React.ReactNode, inGroup = false) => (
+  const fieldRow = (testID: string, title: React.ReactNode, subtitle: React.ReactNode) => (
     <Item testID={testID} title={title} subtitle={subtitle} subtitleLines={0} accessoryLayout="adaptive" fieldAccessory
-      rightElementPassive showChevron={false} rightElement={field} {...(inGroup ? { showDivider: false } : {})} />
+      rightElementPassive showChevron={false} rightElement={field} />
   );
-  // Not pressable: there is nothing to open until the read names the Agent.
-  const agentHeader = (testID: string) => (
-    <Item testID={testID} title={<SkeletonTitle lineHeight={rowMetrics.title.lineHeight} />} subtitle={line}
-      icon={<HappierSkeletonBlock color={theme.colors.surface.skeleton} reducedMotion={reducedMotion}
-        width={AGENT_MARK_SIZE} height={AGENT_MARK_SIZE} radius={theme.space.s4} />} />
-  );
-  const agent = `${props.testID}-pending-agent`;
   return (
     <ItemGroup testID={props.testID} accessibilityLabel={t('common.loading')}>
       {fieldRow(`${props.testID}-machine`, t('teams.settings.memberDefaults.machine'), line)}
       {fieldRow(`${props.testID}-agent`, t('projects.sessionDefaults.agent'), line)}
       {fieldRow(`${props.testID}-approvalProfile`, t('teams.settings.memberDefaults.approvalProfile'),
         props.shared ? t('teams.settings.memberDefaults.approvalProfileProject') : line)}
-      <ExpandableItem testID={`${agent}:lead`} expanded onExpandedChange={noExpand}
-        header={agentHeader(`${agent}:lead:header`)}>
-        {fieldRow(`${agent}:lead:permission`, t('teams.settings.memberDefaults.permissionMode'), line, true)}
-        {fieldRow(`${agent}:lead:model`, t('teams.settings.memberDefaults.model'), undefined, true)}
-        {/* A connected service row: its name comes from the Agent's declaration. */}
-        {fieldRow(`${agent}:lead:service`, <SkeletonTitle lineHeight={rowMetrics.title.lineHeight} />, line, true)}
-      </ExpandableItem>
-      {agentHeader(`${agent}:next`)}
-      {props.shared ? null : (
-        <Item testID={`${props.testID}-otherAgents`} icon={<Icon name="stack" />}
-          title={t('teams.settings.memberDefaults.otherAgents')} />
-      )}
     </ItemGroup>
   );
 });
-
-/** The Agent mark's size in the defaults rows (`AgentDefaultsItem`). */
-const AGENT_MARK_SIZE = 24;
