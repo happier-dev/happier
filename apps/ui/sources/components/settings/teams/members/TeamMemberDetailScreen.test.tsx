@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { teamErrorHttpStatusV1 } from '@happier-dev/protocol/teams';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
@@ -726,5 +727,75 @@ describe('TeamMemberDetailScreen cold load onto a person', () => {
         expect(ids).toContain('team-member-identity-loading-avatar');
         expect(ids).not.toContain('team-page-header');
         expect(ids).not.toContain('team-member-header');
+    });
+});
+
+
+describe('Team member administration HTTP refusals', () => {
+    const ownerCases = [
+        { code: 'invalid_team_input', message: 'homeGovernance.invalidRead', destination: /\/team-1\/members$/u },
+        { code: 'teams_unavailable', message: 'teams.unavailable.disabled' },
+        { code: 'team_not_found', message: 'teams.errors.notFound', destination: '/settings/teams' },
+        { code: 'team_archived', message: 'teams.errors.archived', destination: /\/team-1\/settings$/u },
+        { code: 'team_forbidden', message: 'teams.errors.forbidden' },
+        { code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, message: 'teams.errors.signInOutdated', destination: '/settings/account' },
+        { code: 'team_authentication_required', message: 'teams.errors.authenticationRequired', destination: '/teams/team-1/sign-in' },
+        { code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable' },
+    ] as const;
+    const absentMember = {
+        code: 'membership_not_found', message: 'teams.members.memberUnavailable', destination: /\/team-1\/members$/u,
+    } as const;
+    const managedMember = { code: 'managed_by_directory', message: 'teams.members.managedReadOnly' } as const;
+    const lastOwner = {
+        code: 'team_owner_transfer_required', message: 'teams.members.lastOwnerBlocked', destination: /\/team-1\/members$/u,
+    } as const;
+    const operations = [
+        {
+            path: MEMBER_ROLE_SET_PATH, submit: 'team-member-role:member',
+            refusals: [...ownerCases, absentMember, lastOwner, { code: 'account_ineligible', message: 'teams.members.accountInactive' }],
+        },
+        { path: MEMBER_SUSPEND_PATH, submit: 'team-member-suspend', refusals: [...ownerCases, absentMember, managedMember, lastOwner] },
+        { path: '/v1/teams/members/reactivate', submit: 'team-member-reactivate', refusals: [...ownerCases, absentMember, managedMember] },
+        { path: MEMBER_REMOVE_PATH, submit: 'team-member-remove', refusals: [...ownerCases, managedMember, lastOwner] },
+    ] as const;
+
+    it.each(operations.flatMap(({ path, submit, refusals }) => refusals.map((refusal) => ({
+        path, submit, refusal, code: refusal.code,
+    }))))('presents $code once at $path', async ({ path, submit, refusal }) => {
+        const reactivating = path.endsWith('/reactivate');
+        const serverId = await addHome(teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({ manageMembers: true, manageOwners: true }),
+        }));
+        harness.answer(serverId, MEMBER_GET_PATH, {
+            body: teamMembershipFixture({
+                role: 'owner',
+                status: reactivating ? 'suspended' : 'active',
+                capabilities: {
+                    ...NO_MEMBER_CAPABILITIES, setRole: true, assignableRoles: ['owner', 'member'],
+                    suspend: !reactivating, reactivate: reactivating, remove: true,
+                },
+            }),
+        });
+        harness.answer(serverId, path, {
+            status: teamErrorHttpStatusV1(refusal.code),
+            body: { error: refusal.code, ...('details' in refusal ? { details: refusal.details } : {}) },
+        });
+        const screen = await renderDetail(serverId);
+        await waitForTestId(screen, submit);
+        await screen.pressByTestIdAsync(submit);
+        await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.getTextContent().split(refusal.message)).toHaveLength(2));
+
+        const action = screen.findByTestId('team-member-refusal-action');
+        if ('destination' in refusal) {
+            expect(action).not.toBeNull();
+            await screen.pressByTestIdAsync('team-member-refusal-action');
+            const pathname = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example').pathname;
+            expect(pathname).toMatch(refusal.destination);
+        } else {
+            expect(action).toBeNull();
+        }
+        expect(screen.getTextContent()).not.toContain('teams.unavailable.retry');
+        expect(harness.requestsFor(path)).toHaveLength(1);
     });
 });

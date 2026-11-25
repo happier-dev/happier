@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import {
+    type TeamActionIdV1,
     type TeamMembershipV1,
     type TeamRoleV1,
 } from '@happier-dev/protocol/teams';
@@ -23,6 +24,7 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { teamReadFailureLabel } from '@/components/settings/teams/teamMutationPresentation';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { useTeamReadFailureAction } from '@/components/settings/teams/useTeamReadFailureAction';
 import { useTeamMemberGroups, type TeamMemberGroups } from '@/hooks/teams/useTeamMemberGroups';
 import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
@@ -34,6 +36,7 @@ import {
     setTeamMemberManagement,
     setTeamMemberRole,
     suspendTeamMember,
+    type TeamMemberChangeContinuation,
 } from '@/sync/ops/teams/teamMemberOperations';
 import {
     isTeamActionApprovalPendingError,
@@ -53,13 +56,14 @@ import {
     teamRoleDescription,
     teamRoleLabel,
 } from '../teamLabels';
-import { teamMutationFailureLabel } from '../teamMutationPresentation';
 import { teamDirectorySourcePath, teamGroupDetailPath, teamIdentityConnectionPath } from '../teamsRoutes';
 import { useDirectoryAdministration } from '../identity/useDirectoryAdministration';
 import type { TeamMemberSectionRenderer } from './teamMemberSectionContext';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     resolveTeamMemberManagementChoices,
+    teamMemberRefusalAction,
+    teamMemberRefusalLabel,
     type TeamMemberManagementChoiceId,
 } from './teamMemberPresentation';
 
@@ -325,7 +329,11 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
     const [busy, setBusy] = React.useState(false);
     const transitionInFlightRef = React.useRef(false);
     /** The Home's own refusal, kept until the next attempt clears it. */
-    const [notice, setNotice] = React.useState<string | null>(null);
+    const [mutationFailure, setMutationFailure] = React.useState<HomeDomainFailure | null>(null);
+    const notice = mutationFailure ? teamMemberRefusalLabel(mutationFailure) : null;
+    const mutationRecovery = mutationFailure
+        ? teamMemberRefusalAction(mutationFailure, context.address, (href) => router.push(href))
+        : undefined;
     const generation = React.useRef(0);
     const readRequest = React.useRef<AbortController | null>(null);
 
@@ -399,7 +407,11 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
      * moved. The loaded member stays on screen throughout.
      */
     const run = React.useCallback(async (
-        operation: () => Promise<Readonly<{ kind: 'succeeded'; value?: unknown } | { kind: 'failed'; failure: HomeDomainFailure }>>,
+        actionId: TeamActionIdV1,
+        operation: (continuation: TeamMemberChangeContinuation) => Promise<
+            Readonly<{ kind: 'succeeded'; value?: unknown } | { kind: 'failed'; failure: HomeDomainFailure }>
+        >,
+        onSucceeded?: () => void,
     ) => {
         // The `busy` disabled state only takes effect on the next render, so the
         // ref is what actually closes the same-frame double-activation window on
@@ -407,14 +419,26 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
         // twice because a control had not repainted yet.
         if (transitionInFlightRef.current) return;
         transitionInFlightRef.current = true;
-        setNotice(null);
+        setMutationFailure(null);
         setBusy(true);
         try {
-            const outcome = await operation();
-            if (outcome.kind === 'failed') setNotice(teamMutationFailureLabel(outcome.failure));
+            const outcome = await operation({
+                onApprovalFailed: (code, refusal) => setMutationFailure(
+                    homeDomainFailureFromActionFailure(refusal ?? { errorCode: code }, actionId),
+                ),
+            });
+            if (outcome.kind === 'failed') setMutationFailure(outcome.failure);
+            else if (onSucceeded) {
+                context.refresh();
+                onSucceeded();
+                return;
+            }
         } catch (cause) {
-            if (isTeamActionApprovalPendingError(cause)) context.requestApproval(cause.artifactId);
-            else throw cause;
+            if (isTeamActionApprovalPendingError(cause)) {
+                context.requestApproval(cause.registration);
+                return;
+            }
+            throw cause;
         } finally {
             transitionInFlightRef.current = false;
             setBusy(false);
@@ -439,7 +463,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
     ) => {
         if (transitionInFlightRef.current) return;
         transitionInFlightRef.current = true;
-        setNotice(null);
+        setMutationFailure(null);
         setBusy(true);
         let outcome: Awaited<ReturnType<typeof setTeamMemberManagement>>;
         try {
@@ -453,16 +477,14 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
             transitionInFlightRef.current = false;
             setBusy(false);
             if (isTeamActionApprovalPendingError(cause)) {
-                context.requestApproval(cause.artifactId);
+                context.requestApproval(cause.registration);
                 return;
             }
             throw cause;
         }
         transitionInFlightRef.current = false;
         setBusy(false);
-        if (outcome.kind === 'failed') {
-            setNotice(teamMutationFailureLabel(outcome.failure));
-        }
+        if (outcome.kind === 'failed') setMutationFailure(outcome.failure);
         // The Home's answer is authoritative either way: a refusal usually means
         // this projection is already behind.
         reload();
@@ -512,7 +534,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
     const managedBy = membershipManagementLabel(membership);
     // Every control is gated by the host's readiness *and* the server's own
     // per-membership capability. Neither alone is sufficient.
-    const canAct = context.canMutate && !busy;
+    const canAct = context.canMutate && !busy && !context.approvalPending;
     const assignableRoles = membership.capabilities.assignableRoles;
     // Withheld rather than offered and refused; the section says why.
     const ownerWithheld = membership.capabilities.setRole
@@ -538,39 +560,12 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
         },
     };
 
-    const remove = async () => {
-        if (transitionInFlightRef.current) return;
-        transitionInFlightRef.current = true;
-        setNotice(null);
-        setBusy(true);
-        let outcome: Awaited<ReturnType<typeof removeTeamMember>>;
-        try {
-            outcome = await removeTeamMember({
-                scope: context.scope,
-                address: context.address,
-                membershipId: membership.id,
-            });
-        } catch (cause) {
-            transitionInFlightRef.current = false;
-            setBusy(false);
-            if (isTeamActionApprovalPendingError(cause)) {
-                context.requestApproval(cause.artifactId);
-                return;
-            }
-            throw cause;
-        }
-        transitionInFlightRef.current = false;
-        setBusy(false);
-        context.refresh();
-        // A removed lifetime no longer addresses anything,
-        // so success leaves. A refusal keeps the member
-        // on screen with the Home's own reason.
-        if (outcome.kind === 'succeeded') router.back();
-        else {
-            setNotice(teamMutationFailureLabel(outcome.failure));
-            reload();
-        }
-    };
+    const remove = () => run('teams.members.remove', (continuation) => removeTeamMember({
+        scope: context.scope,
+        address: context.address,
+        membershipId: membership.id,
+        ...continuation,
+    }), () => router.back());
 
     const management = membership.management;
     const canOpenSource = management.kind !== 'native' && context.team.capabilities.manageAuthentication;
@@ -616,12 +611,12 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
             {notice ? (
                 <AttentionBanner
                     testID="team-member-notice"
-                    title={t('homeGovernance.changeFailedTitle')}
-                    description={notice}
+                    title={notice}
+                    action={mutationRecovery ? { ...mutationRecovery, testID: 'team-member-refusal-action' } : undefined}
                     accessibilityLiveRegion="polite"
                 />
             ) : null}
-            {readFailure ? (
+            {readFailure && teamReadFailureLabel(readFailure) !== notice ? (
                 <AttentionBanner
                     testID="team-member-read-failure"
                     title={teamReadFailureLabel(readFailure)}
@@ -648,7 +643,8 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                         value={membership.role}
                         onChange={(role) => {
                             if (role === membership.role) return;
-                            void run(() => setTeamMemberRole({
+                            void run('teams.members.role.set', (continuation) => setTeamMemberRole({
+                                ...continuation,
                                 scope: context.scope,
                                 address: context.address,
                                 membershipId: membership.id,
@@ -746,7 +742,8 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                             title={t('teams.members.suspend')}
                             disabled={!canAct}
                             onPress={async () => {
-                                await run(() => suspendTeamMember({
+                                await run('teams.members.suspend', (continuation) => suspendTeamMember({
+                                    ...continuation,
                                     scope: context.scope,
                                     address: context.address,
                                     membershipId: membership.id,
@@ -762,7 +759,8 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
                             title={t('teams.members.reactivate')}
                             disabled={!canAct}
                             onPress={async () => {
-                                await run(() => reactivateTeamMember({
+                                await run('teams.members.reactivate', (continuation) => reactivateTeamMember({
+                                    ...continuation,
                                     scope: context.scope,
                                     address: context.address,
                                     membershipId: membership.id,

@@ -151,17 +151,22 @@ export async function addTeamMember(params: Readonly<{
     return succeeded(publish(outcome.value));
 }
 
+export type TeamMemberChangeContinuation = Readonly<{
+    onApprovalFailed?: (code: string, refusal?: ActionExecuteFailure) => void;
+}>;
+
 async function membershipTransition(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     actionId: TeamActionIdV1;
     input: unknown;
-}>): Promise<TeamMemberOutcome<TeamMembershipV1>> {
+}> & TeamMemberChangeContinuation): Promise<TeamMemberOutcome<TeamMembershipV1>> {
     const outcome = await runTeamAction({
         scope: params.scope,
         actionId: params.actionId,
         input: params.input,
         parse: (value) => TeamMembershipV1Schema.parse(value),
+        ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
     });
     if (outcome.kind === 'failed') return failed(outcome.failure);
     // A role or status change can move the viewer's own Team capabilities, so
@@ -175,10 +180,11 @@ export function setTeamMemberRole(params: Readonly<{
     address: TeamAddress;
     membershipId: string;
     role: TeamRoleV1;
-}>): Promise<TeamMemberOutcome<TeamMembershipV1>> {
+}> & TeamMemberChangeContinuation): Promise<TeamMemberOutcome<TeamMembershipV1>> {
     return membershipTransition({
         scope: params.scope,
         address: params.address,
+        ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
         actionId: 'teams.members.role.set',
         input: {
             v: 1,
@@ -220,10 +226,11 @@ export function suspendTeamMember(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     membershipId: string;
-}>): Promise<TeamMemberOutcome<TeamMembershipV1>> {
+}> & TeamMemberChangeContinuation): Promise<TeamMemberOutcome<TeamMembershipV1>> {
     return membershipTransition({
         scope: params.scope,
         address: params.address,
+        ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
         actionId: 'teams.members.suspend',
         input: { v: 1, teamId: params.address.teamId, membershipId: params.membershipId },
     });
@@ -233,10 +240,11 @@ export function reactivateTeamMember(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     membershipId: string;
-}>): Promise<TeamMemberOutcome<TeamMembershipV1>> {
+}> & TeamMemberChangeContinuation): Promise<TeamMemberOutcome<TeamMembershipV1>> {
     return membershipTransition({
         scope: params.scope,
         address: params.address,
+        ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
         actionId: 'teams.members.reactivate',
         input: { v: 1, teamId: params.address.teamId, membershipId: params.membershipId },
     });
@@ -251,12 +259,13 @@ export async function removeTeamMember(params: Readonly<{
     scope: ServerAccountScope;
     address: TeamAddress;
     membershipId: string;
-}>): Promise<TeamMemberOutcome<TeamMemberRemoveResultV1>> {
+}> & TeamMemberChangeContinuation): Promise<TeamMemberOutcome<TeamMemberRemoveResultV1>> {
     const outcome = await runTeamAction({
         scope: params.scope,
         actionId: 'teams.members.remove',
         input: { v: 1, teamId: params.address.teamId, membershipId: params.membershipId },
         parse: (value) => TeamMemberRemoveResultV1Schema.parse(value),
+        ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
     });
     if (outcome.kind === 'failed') return failed(outcome.failure);
     fireAndForget(invalidateTeam(params.scope, params.address), { tag: 'teamMemberOperations.revalidate' });

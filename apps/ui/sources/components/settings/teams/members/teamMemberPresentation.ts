@@ -3,7 +3,40 @@ import type { TeamMembershipV1 } from '@happier-dev/protocol/teams';
 import type { AccountDisplayPresentation } from '@/sync/domains/account/formatAccountDisplayName';
 import { t } from '@/text';
 
+import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
+import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+
 import { teamRoleLabel } from '../teamLabels';
+import { teamMutationFailureLabel } from '../teamMutationPresentation';
+import { teamMembersPath, teamSettingsPath, teamsDirectoryPath } from '../teamsRoutes';
+import { teamSignInFailureAction } from '../useTeamReadFailureAction';
+
+export function teamMemberRefusalLabel(failure: HomeDomainFailure): string | null {
+    switch (failure.code) {
+        case 'invalid_team_input': return t('homeGovernance.invalidRead');
+        case 'account_not_found': return t('homeGovernance.errorAccountNotFound');
+        case 'membership_not_found': return t('teams.members.memberUnavailable');
+        default: return teamMutationFailureLabel(failure);
+    }
+}
+
+export function teamMemberRefusalAction(
+    failure: HomeDomainFailure,
+    address: TeamAddress,
+    navigate: (href: string) => void,
+) {
+    if (failure.code === 'team_not_found') {
+        return { label: t('teams.title'), onPress: () => navigate(teamsDirectoryPath()) };
+    }
+    if (failure.code === 'team_archived') {
+        return { label: t('teams.tabs.settings'), onPress: () => navigate(teamSettingsPath(address)) };
+    }
+    if (failure.code === 'invalid_team_input' || failure.code === 'membership_not_found'
+        || failure.code === 'team_owner_transfer_required' || failure.kind === 'outcome_unknown') {
+        return { label: t('teams.tabs.members'), onPress: () => navigate(teamMembersPath(address)) };
+    }
+    return teamSignInFailureAction(failure, address, navigate);
+}
 
 /**
  * The one line under a member's name wherever the roster is listed — the Members page and the

@@ -25,7 +25,7 @@ import {
     type HomeDomainFailure,
 } from '@/sync/ops/teams/teamActionClient';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
-import { teamMemberDetailPath, teamMembersPath, teamSettingsPath, teamsDirectoryPath } from '@/components/settings/teams/teamsRoutes';
+import { teamMemberDetailPath } from '@/components/settings/teams/teamsRoutes';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { addTeamMember } from '@/sync/ops/teams/teamMemberOperations';
 import { t } from '@/text';
@@ -34,8 +34,8 @@ import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamRoleLabel } from '../teamLabels';
 import { sessionHistoryChoiceOptions } from '../teamPolicyPresentation';
-import { teamMutationFailureLabel, teamReadFailureLabel } from '../teamMutationPresentation';
-import { teamSignInFailureAction } from '../useTeamReadFailureAction';
+import { teamReadFailureLabel } from '../teamMutationPresentation';
+import { teamMemberRefusalAction, teamMemberRefusalLabel } from './teamMemberPresentation';
 
 const ADMISSIBLE_ROLES: readonly TeamAdmissibleRoleV1[] = Object.freeze(['admin', 'member', 'guest']);
 const SEARCH_DEBOUNCE_MS = 250;
@@ -57,32 +57,6 @@ function roleHelp(role: TeamAdmissibleRoleV1): string {
     }
 }
 
-function admissionRefusalLabel(failure: HomeDomainFailure): string | null {
-    switch (failure.code) {
-        case 'invalid_team_input': return t('homeGovernance.invalidRead');
-        case 'account_not_found': return t('homeGovernance.errorAccountNotFound');
-        case 'membership_not_found': return t('teams.members.memberUnavailable');
-        default: return teamMutationFailureLabel(failure);
-    }
-}
-
-function admissionRefusalAction(
-    failure: HomeDomainFailure,
-    address: TeamSectionContext['address'],
-    navigate: (href: string) => void,
-) {
-    if (failure.code === 'team_not_found') {
-        return { label: t('teams.title'), onPress: () => navigate(teamsDirectoryPath()) };
-    }
-    if (failure.code === 'team_archived') {
-        return { label: t('teams.tabs.settings'), onPress: () => navigate(teamSettingsPath(address)) };
-    }
-    if (failure.code === 'invalid_team_input' || failure.code === 'membership_not_found' || failure.kind === 'outcome_unknown') {
-        return { label: t('teams.tabs.members'), onPress: () => navigate(teamMembersPath(address)) };
-    }
-    return teamSignInFailureAction(failure, address, navigate);
-}
-
 const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ context: TeamSectionContext }>) {
     const router = useRouter();
     const { context } = props;
@@ -97,11 +71,11 @@ const AddMemberForm = React.memo(function AddMemberForm(props: Readonly<{ contex
     );
     const [submitting, setSubmitting] = React.useState(false);
     const [failure, setFailure] = React.useState<HomeDomainFailure | null>(null);
-    const error = failure ? admissionRefusalLabel(failure) : null;
+    const error = failure ? teamMemberRefusalLabel(failure) : null;
     const blocksAdmission = Boolean(error && failure && (
         !failure.retryable || failure.code === 'team_authentication_unavailable'
     ));
-    const recovery = failure ? admissionRefusalAction(failure, context.address, (href) => router.push(href)) : undefined;
+    const recovery = failure ? teamMemberRefusalAction(failure, context.address, (href) => router.push(href)) : undefined;
 
     const clearAccountRefusal = () => setFailure((current) => (
         current?.code === 'account_not_found' || current?.code === 'account_ineligible' ? null : current
