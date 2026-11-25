@@ -85,8 +85,8 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
     header?: React.ReactNode;
 }>) {
     const router = useRouter();
-    const readFailureAction = useTeamReadFailureAction();
     const { context } = props;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const openGroup = useEventCallback((groupId: string) => router.push(teamGroupDetailPath(context.address, groupId)));
     const [showArchived, setShowArchived] = React.useState(false);
     const [query, setQuery] = React.useState('');
@@ -230,7 +230,7 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
                 <AttentionBanner
                     testID="team-groups-unavailable"
                     title={teamReadFailureLabel(active.error!)}
-                    action={readFailureAction(active.error!, { onPress: () => void active.reload(), testIDPrefix: 'team-groups' })}
+                    action={readFailureAction(active.error!, { onPress: () => void active.reload(), testIDPrefix: 'team-groups', reloadsFirstPage: true })}
                 />
             ));
         } else if (active.hasMore && active.rows.length > 0) {
@@ -296,7 +296,7 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
                         <AttentionBanner
                             testID="team-groups-archived-unavailable"
                             title={teamReadFailureLabel(archived.error!)}
-                            action={readFailureAction(archived.error!, { onPress: () => void archived.reload(), testIDPrefix: 'team-groups-archived' })}
+                            action={readFailureAction(archived.error!, { onPress: () => void archived.reload(), testIDPrefix: 'team-groups-archived', reloadsFirstPage: true })}
                         />
                 ));
             } else if (archived.hasMore && archived.rows.length > 0) {

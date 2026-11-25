@@ -68,6 +68,7 @@ installHomeGovernanceBoundaries(harness);
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { TeamMembersScreen } = await import('./TeamMembersScreen');
+const { TeamMembersCollectionRail } = await import('./TeamMembersCollectionRail');
 const { NavigationContext, useNavigation } = await import('@react-navigation/native');
 const { SessionCockpitChromeRegistryProvider, useSessionCockpitBottomChromeHeightSetter } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
 const { HappierListDetailLayout } = await import('@happier-dev/plugin-ui/presentation');
@@ -507,6 +508,48 @@ describe('TeamMembersScreen', () => {
 
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-members-retry');
         expect(screen.getTextContent()).toContain('teams.errors.forbidden');
+    });
+
+    it('explains the invalid Members cursor and opens the roster again from its first page', async () => {
+        const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ viewRoster: true }) }));
+        harness.answer(serverId, MEMBERS_LIST_PATH, { body: { items: [teamMembershipFixture()], nextCursor: 'cursor-2' } });
+        const screen = await renderMembers(serverId);
+        await waitForTestId(screen, 'team-members-load-more');
+
+        harness.answer(serverId, MEMBERS_LIST_PATH, { status: 400, body: { error: 'invalid_team_cursor' } });
+        await screen.pressByTestIdAsync('team-members-load-more');
+        await waitForTestId(screen, 'team-members-unavailable');
+
+        expect(screen.getTextContent().split('teams.errors.listCursorExpired')).toHaveLength(2);
+        expect(screen.findByTestId('team-members-retry')).toBeNull();
+        expect(screen.findByTestId('team-members-load-more')).toBeNull();
+        harness.answer(serverId, MEMBERS_LIST_PATH, { body: { items: [teamMembershipFixture()], nextCursor: null } });
+        await screen.pressByTestIdAsync('team-members-reload');
+        await vi.waitFor(() => expect(screen.findByTestId('team-members-unavailable')).toBeNull());
+        expect(harness.requestsFor(MEMBERS_LIST_PATH).at(-1)?.input).not.toHaveProperty('cursor');
+    });
+
+    it.each([
+        { code: 'team_authentication_required', status: 403, label: 'session.access.authenticationRequired', signIn: true },
+        { code: 'team_authentication_unavailable', status: 503, label: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
+    ])('announces $code only once beside the wide Members rail', async ({ code, status, label, signIn }) => {
+        const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ viewRoster: true }) }));
+        harness.answer(serverId, MEMBERS_LIST_PATH, { status, body: { error: code } });
+        const address = { serverId, teamId: 'team-1' };
+        const screen = await renderScreen(<HappierListDetailLayout testID="members-test-layout"
+            list={<TeamMembersCollectionRail address={address} selectedMembershipId={null} />}
+            detail={<TeamMembersScreen {...address} />} minListWidth={264} minDetailWidth={480} preferredListRatio={0.3} />);
+        await act(async () => screen.findByTestId('members-test-layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200 } } }));
+        await waitForTestId(screen, 'team-members-rail-failed');
+
+        expect(screen.getTextContent().split(label)).toHaveLength(2);
+        expect(screen.findByTestId('team-members-rail-failed-retry')).toBeNull();
+        expect(screen.findByTestId('team-members-retry')).toBeNull();
+        expect(screen.findByTestId('team-members-rail-failed-sign-in') !== null).toBe(signIn);
+        if (signIn) {
+            await screen.pressByTestIdAsync('team-members-rail-failed-sign-in');
+            expect(routerPush).toHaveBeenCalledWith(expect.stringContaining(`/teams/team-1/sign-in?serverId=${encodeURIComponent(serverId)}`));
+        }
     });
 
     it('shows the owner-required notice from the Team condition, not from a local owner count', async () => {

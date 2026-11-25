@@ -592,7 +592,8 @@ export function applyTeamMembersFailure(params: Readonly<{
     const withdrawn = isAuthoritativeScopedSnapshotRefusalKind(params.error.kind);
     memberLists.set(teamMembersSnapshotKey(params.scope, params.address, params.queryKey), Object.freeze({
         scope: params.scope, address: params.address, queryKey: params.queryKey, status: 'error',
-        data: withdrawn ? null : previous?.data ?? null, nextCursor: withdrawn ? null : previous?.nextCursor ?? null,
+        data: withdrawn ? null : previous?.data ?? null,
+        nextCursor: withdrawn || params.error.code === 'invalid_team_cursor' ? null : previous?.nextCursor ?? null,
         stale: !withdrawn && Boolean(previous?.data), error: params.error,
     }));
     notify();
@@ -982,7 +983,7 @@ export function applyTeamGroupsFailure(params: Readonly<{
         // The pages already read stay visible and are marked stale rather than
         // blanking a Groups list because a later read failed.
         data: withdrawn ? null : current?.data ?? null,
-        nextCursor: withdrawn ? null : current?.nextCursor ?? null,
+        nextCursor: withdrawn || params.error.code === 'invalid_team_cursor' ? null : current?.nextCursor ?? null,
         lastObservedAt: withdrawn ? null : current?.lastObservedAt ?? null,
         stale: !withdrawn && Boolean(current?.data),
         reachability: reachabilityForScopedSnapshotError(params.error),

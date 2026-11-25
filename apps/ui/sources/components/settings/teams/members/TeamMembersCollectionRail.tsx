@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/lists/collection/CollectionList';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { StatusDot } from '@/components/ui/status/StatusDot';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
@@ -28,6 +29,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { teamReadFailureLabel } from '../teamMutationPresentation';
 import { teamMemberDetailPath } from '../teamsRoutes';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { TeamMemberAddAction } from './TeamMemberAddAction';
 import { teamMemberRowSubtitle } from './teamMemberPresentation';
 
@@ -78,6 +80,7 @@ export const TeamMembersCollectionRail = React.memo(
     }>,
   ) {
     const router = useRouter();
+    const readFailureAction = useTeamReadFailureAction(props.address);
     const { theme } = useUnistyles();
     const binding = useTeamBinding(props.address.serverId, props.address.teamId);
     // A return mounts the rail again while the Home's credential re-resolves: the projection this device already
@@ -163,13 +166,15 @@ export const TeamMembersCollectionRail = React.memo(
     if (roster.error) {
       const failure = roster.error;
       add('failed', () => (
-        <ItemLoadStateRows
+        <SurfaceStateCard
           testID="team-members-rail-failed"
-          state={{
-            kind: 'failed',
-            reason: teamReadFailureLabel(failure),
-            onRetry: failure.retryable ? roster.reload : undefined,
-          }}
+          kind="error"
+          size="line"
+          title={teamReadFailureLabel(failure)}
+          accessibilitySemantics="alert"
+          action={readFailureAction(failure, {
+            onPress: roster.reload, testIDPrefix: 'team-members-rail-failed', reloadsFirstPage: true,
+          })}
         />
       ));
     } else if (roster.hasMore && roster.rows.length > 0) {

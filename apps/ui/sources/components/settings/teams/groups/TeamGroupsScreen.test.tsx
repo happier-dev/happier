@@ -327,6 +327,37 @@ describe('TeamGroupsScreen', () => {
         expect(screen.getTextContent()).toContain('teams.errors.forbidden');
     });
 
+    it.each([
+        ['invalid_team_cursor', 400, 'teams.errors.listCursorExpired', 'reload'],
+        ['team_authentication_required', 403, 'session.access.authenticationRequired', 'sign-in'],
+        ['team_authentication_unavailable', 503, 'teams.credentials.externalApi.authenticationUnavailable', null],
+    ] as const)('shows %s once and offers the Groups recovery that can work', async (code, status, label, recovery) => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUPS_LIST_PATH, { body: { items: [teamGroupFixture()], nextCursor: 'cursor-2' } });
+        const screen = await renderGroups(serverId);
+        await waitForTestId(screen, 'team-groups-load-more');
+
+        harness.answer(serverId, GROUPS_LIST_PATH, { status, body: { error: code } });
+        await screen.pressByTestIdAsync('team-groups-load-more');
+        await waitForTestId(screen, 'team-groups-unavailable');
+
+        expect(screen.getTextContent().split(label)).toHaveLength(2);
+        expect(screen.findByTestId('team-groups-retry')).toBeNull();
+        expect(screen.findByTestId('team-groups-load-more')).toBeNull();
+        if (recovery === 'reload') {
+            harness.answer(serverId, GROUPS_LIST_PATH, { body: { items: [teamGroupFixture()], nextCursor: null } });
+            await screen.pressByTestIdAsync('team-groups-reload');
+            await vi.waitFor(() => expect(screen.findByTestId('team-groups-unavailable')).toBeNull());
+            expect(harness.requestsFor(GROUPS_LIST_PATH).at(-1)?.input).not.toHaveProperty('cursor');
+        } else if (recovery === 'sign-in') {
+            await screen.pressByTestIdAsync('team-groups-sign-in');
+            expect(routerPush).toHaveBeenCalledWith(expect.stringContaining(`/teams/team-1/sign-in?serverId=${encodeURIComponent(serverId)}`));
+        } else {
+            expect(screen.findByTestId('team-groups-reload')).toBeNull();
+            expect(screen.findByTestId('team-groups-sign-in')).toBeNull();
+        }
+    });
+
     it('says the Groups read is turned off in Settings and leads there, with no retry', async () => {
         const serverId = await addManagedHome();
         const { storage } = await import('@/sync/domains/state/storage');

@@ -101,9 +101,9 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const readFailureAction = useTeamReadFailureAction();
     const view = useHappierCollectionIndexView();
     const { context, roster, filter, setFilter, query, setQuery } = props;
+    const readFailureAction = useTeamReadFailureAction(context.address);
     const language = getPreferredLanguage();
     const addressServerId = context.address.serverId;
     const teamId = context.address.teamId;
@@ -242,7 +242,7 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
                 <AttentionBanner
                     testID="team-members-unavailable"
                     title={teamReadFailureLabel(roster.error!)}
-                    action={readFailureAction(roster.error!, { onPress: roster.reload, testIDPrefix: 'team-members' })}
+                    action={readFailureAction(roster.error!, { onPress: roster.reload, testIDPrefix: 'team-members', reloadsFirstPage: true })}
                 />
             ));
         } else if (roster.hasMore && roster.rows.length > 0) {
@@ -294,10 +294,6 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
                 {props.header}
                 {!canRead ? (
                     <SurfaceStateCard kind="denied" size="line" title={t('teams.denied.title')} />
-                ) : roster.error ? (
-                    <SurfaceStateCard kind={roster.error.retryable ? 'error' : 'denied'} size="line"
-                        title={teamReadFailureLabel(roster.error)}
-                        action={readFailureAction(roster.error, { onPress: roster.reload, testIDPrefix: 'team-members' })} />
                 ) : roster.status === 'ready' ? (
                     <SurfaceStateCard kind="empty" size="line" title={t('teams.members.emptyTitle')}
                         reason={t('teams.members.emptyBody')} />
