@@ -20,6 +20,7 @@ import { createMutableApiSessionClientFixture } from '@/testkit/backends/session
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { createExecutionRunRuntime } from './runtime/create';
+import { prepareCodexConnectedAccountLaunchEnvironment } from '../../../../../../../packages/plugins/codex/src/agent/runtime/connectedAccountKeys';
 // Resolve the real native owner during collection, as its existing owner tests
 // do, instead of charging its first source transform to the behavior deadline.
 import '@/agent/runtime/registry/engineRegistry/runtimeCore';
@@ -264,18 +265,20 @@ describe('connected execution-run resume custody', () => {
         read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
       } },
       plugins: [{ manifest: plugin.manifest, files: {
-        'agent-runtime.mjs': `let open, openSession, openConversation; export function configure(callback, sessionCallback, conversationCallback) { open = callback; openSession = sessionCallback; openConversation = conversationCallback; }
+        'agent-runtime.mjs': `let open, openSession, openConversation, prepare; export function configure(callback, sessionCallback, conversationCallback, prepareCallback) { open = callback; openSession = sessionCallback; openConversation = conversationCallback; prepare = prepareCallback; }
+          export function prepareEnvironment(input) { return prepare(input); }
           export function createRuntime() { return { sessions: {
             open: request => openSession(request),
             executionRunContextV1: { open: request => open(request), openConversation: request => openConversation(request) } } }; }`,
         'daemon.mjs': `import * as leaf from './agent-runtime.mjs';
           export function activate(api) { api.agents.register('agent', leaf.createRuntime, {
-            sessionRunnerFactory: { module: './agent-runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 } }); }
-          export function configureUnitLeaf(open, openSession, openConversation) { leaf.configure(open, openSession, openConversation); return { activate }; }`,
+            sessionRunnerFactory: { module: './agent-runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
+            connectedAccountLaunch: { prepareEnvironment: input => leaf.prepareEnvironment(input) } }); }
+          export function configureUnitLeaf(open, openSession, openConversation, prepare) { leaf.configure(open, openSession, openConversation, prepare); return { activate }; }`,
       }, instantiateCommittedModule(module) {
         const configure = module.configureUnitLeaf;
         if (typeof configure !== 'function') throw new Error('Missing provider boundary fixture');
-        const configured: unknown = configure(openProvider, openSession, openConversation);
+        const configured: unknown = configure(openProvider, openSession, openConversation, prepareCodexConnectedAccountLaunchEnvironment);
         if (!configured || typeof configured !== 'object' || !('activate' in configured)) throw new Error('Missing activation');
         return configured as PluginDaemonModuleNamespace;
       } }] });
@@ -306,7 +309,8 @@ describe('connected execution-run resume custody', () => {
       for (const connected of [true, false]) {
         transport.materialize.mockImplementation(async (request: { runId: string; connectedServices: unknown }) => {
           const activationId = randomUUID();
-          return { ok: true, result: { activationId, env: {},
+          return { ok: true, result: { activationId, env: { CODEX_HOME: `${fixture.happyHomeDir}/selected-codex` },
+            producedConnectedAccountPurposes: ['primary'],
             unsetEnvKeys: ['AGY_ACP_CCPA_BASE_URL', 'AGY_ACP_CCPA_PROJECT'],
             connectedServicesBindings: request.connectedServices,
             registration: { v: 1, activationId, runKey: request.runId, agentId,
@@ -317,6 +321,7 @@ describe('connected execution-run resume custody', () => {
         const run = createExecutionRunRuntime({
           engineRegistry, happyHomeDir: fixture.happyHomeDir, cwd: fixture.happyHomeDir,
           backendId: agentId, backendTarget: { kind: 'builtInAgent', agentId },
+          runnerAgentTarget: { kind: 'agent', identity: agent },
           scope: 'detached', permissionMode: 'read_only', runId: `environment-${connected}`,
           start: { intent: 'agent', profileId: 'agent' },
           secretReferenceEnvironment: { AGY_ACP_CCPA_BASE_URL: 'https://native.example',
@@ -328,7 +333,13 @@ describe('connected execution-run resume custody', () => {
         try {
           await expect(run.provisionRuntime({ initialPrompt: 'Check the selected launch environment.' }))
             .resolves.toMatchObject({ runtimeId: expect.any(String) });
-          const launch = providerRequests.at(-1)?.launchEnvironment;
+          const opened = providerRequests.at(-1);
+          if (!opened || !('runId' in opened)) throw new Error('Expected the real execution-run open');
+          expect(opened.runnerConnectedAccountPurposes).toEqual(connected ? ['primary'] : []);
+          expect(opened.runnerConnectedAccountMaterialization).toEqual(connected
+            ? { v: 1, kind: 'configFile', rootPath: `${fixture.happyHomeDir}/selected-codex`, relativePaths: ['auth.json'] }
+            : undefined);
+          const launch = opened.launchEnvironment;
           if (!launch) throw new Error('Actual external provider launch environment unavailable');
           if (connected) {
             expect(launch.values).not.toHaveProperty('AGY_ACP_CCPA_BASE_URL');

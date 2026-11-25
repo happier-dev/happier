@@ -1244,6 +1244,7 @@ export function createExecutionRunConnectedServicesBridge(
                         ok: true,
                         activationId,
                         env,
+                        producedConnectedAccountPurposes: resolved.producedConnectedAccountPurposes,
                         ...(resolved.unsetEnvKeys?.length ? { unsetEnvKeys: resolved.unsetEnvKeys } : {}),
                         connectedServicesBindings,
                         registration,

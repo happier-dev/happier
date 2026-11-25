@@ -35,6 +35,10 @@ export type AgentExecutionRunOpenRequest =
     profile: PluginContributionRef;
     /** Admitted Agent whose existing credential binding this engine drives. */
     runnerAgentTarget?: AgentExecutionTargetV1;
+    /** Host-produced model-source purposes, independent of inherited environment contents. */
+    runnerConnectedAccountPurposes?: readonly string[];
+    /** Runner Agent-owned translation of those selected credentials for the engine. */
+    runnerConnectedAccountMaterialization?: AgentSessionProviderBinding['materialization'];
     launchEnvironment?: AgentLaunchEnvironment;
     modelSelection?: ProviderBoundModelRef;
     configuration?: AgentSessionConfigurationSnapshot;

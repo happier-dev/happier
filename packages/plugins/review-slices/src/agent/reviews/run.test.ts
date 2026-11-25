@@ -97,8 +97,45 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
 }
 
 describe('native clawpatch review', () => {
+  it('refuses missing selected-account materialization despite an ambient Machine home', async () => {
+    const f = await fixture();
+    const runtime = await createClawpatchExecutionRunFactory().open({ kind: 'create', runId: 'missing-material', cwd: f.directory,
+      profile: { pluginId: 'happier.review.clawpatch', localId: 'review' },
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      runnerConnectedAccountPurposes: ['openai-api-key'], launchEnvironment: { values: { CODEX_HOME: '/machine/codex' }, unset: [] },
+      input: { text: 'Review', structuredInput: { scope: 'repository', engines: {}, scmReviewScope: { scope: 'repository', status: 'supported', worktreeRoot: f.directory } } },
+    }, { agent: { id: 'clawpatch' }, signal: f.controller.signal, services: { exec: f.exec, fs: { getPluginDataDirectory: async () => f.state } } } as unknown as AgentExecutionRunRuntimeContextV1);
+    try {
+      const terminal = await new Promise<AgentExecutionRunEvent>(resolve => { runtime.watch(event => {
+        if (event.kind === 'run-complete' || event.kind === 'run-failed') resolve(event);
+      }); });
+      expect(terminal).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'clawpatch_runner_account_unsupported' } });
+      expect(f.commands).toEqual([]);
+    } finally { await runtime.dispose(); }
+  });
+  it.each(['openai-api-key', 'kimi-code-api-key'])('uses the translated Codex %s configuration instead of Machine login', async purpose => {
+    const f = await fixture();
+    const runtime = await createClawpatchExecutionRunFactory().open({ kind: 'create', runId: purpose, cwd: f.directory,
+      profile: { pluginId: 'happier.review.clawpatch', localId: 'review' },
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      runnerConnectedAccountPurposes: [purpose], runnerConnectedAccountMaterialization: { v: 1, kind: 'engineConfig', engineConfig: {
+        modelProvider: 'selected', config: { 'model_providers.selected': { base_url: 'https://selected.example/v1', env_key: 'SELECTED_KEY', wire_api: 'responses' } },
+      } },
+      modelSelection: { modelId: 'selected-model' }, launchEnvironment: { values: { SELECTED_KEY: 'selected-key', CODEX_HOME: '/machine/codex' }, unset: ['OPENAI_API_KEY'] },
+      input: { text: 'Review', structuredInput: { scope: 'repository', engines: {}, scmReviewScope: { scope: 'repository', status: 'supported', worktreeRoot: f.directory } } },
+    }, { agent: { id: 'clawpatch' }, signal: f.controller.signal, services: { exec: f.exec, fs: { getPluginDataDirectory: async () => f.state } } } as unknown as AgentExecutionRunRuntimeContextV1);
+    try {
+      const terminal = await new Promise<AgentExecutionRunEvent>(resolve => { runtime.watch(event => {
+        if (event.kind === 'run-complete' || event.kind === 'run-failed') resolve(event);
+      }); });
+      expect(terminal.kind).toBe('run-complete');
+      expect(f.configs).toContainEqual(expect.objectContaining({ provider: expect.objectContaining({ codexConfig: expect.objectContaining({ model_provider: 'selected', 'model_providers.selected.env_key': 'SELECTED_KEY' }) }) }));
+      expect(JSON.stringify(f.configs)).not.toContain('selected-key');
+      for (const environment of f.environments) expect(environment).toMatchObject({ SELECTED_KEY: 'selected-key', OPENAI_API_KEY: '' });
+    } finally { await runtime.dispose(); }
+  });
   // U9/F5 replaces the former blanket Provider refusal with the admitted runner route.
-  it.each(['codex-account', 'claude-account', 'codex-provider', 'claude-provider'] as const)(
+  it.each(['codex-account', 'claude-account', 'claude-api-key-account', 'claude-kimi-account', 'codex-provider', 'claude-provider'] as const)(
     'runs the selected model with the host-materialized %s route', async route => {
       const f = await fixture();
       const provider = route.startsWith('claude') ? 'claude' : 'codex';
@@ -117,9 +154,10 @@ describe('native clawpatch review', () => {
       } : undefined;
       const values = { CODEX_HOME: '/host/projected-codex', CLAUDE_CONFIG_DIR: '/host/projected-claude',
         CLAUDE_CODE_OAUTH_TOKEN: route === 'claude-account' ? 'fixture-subscription-token' : '',
+        ANTHROPIC_API_KEY: route === 'claude-api-key-account' || route === 'claude-kimi-account' ? 'fixture-selected-key' : '',
         ANTHROPIC_AUTH_TOKEN: route === 'claude-provider' ? 'fixture-provider-token' : '',
         HAPPIER_CODEX_PROVIDER_API_KEY: route === 'codex-provider' ? 'fixture-provider-token' : '',
-        ANTHROPIC_BASE_URL: route === 'claude-provider' ? 'https://example.com' : '', OPENAI_API_KEY: 'must-be-unset' };
+        ANTHROPIC_BASE_URL: route === 'claude-kimi-account' ? 'https://api.kimi.com/coding' : route === 'claude-provider' ? 'https://example.com' : '', OPENAI_API_KEY: 'must-be-unset' };
       const context = { agent: { id: 'clawpatch' }, signal: f.controller.signal,
         services: { exec: f.exec, fs: { getPluginDataDirectory: async () => f.state } } } as unknown as AgentExecutionRunRuntimeContextV1;
       const runtime = await createClawpatchExecutionRunFactory().open({ kind: 'create', runId: route, cwd: f.directory,
@@ -127,6 +165,9 @@ describe('native clawpatch review', () => {
         runnerAgentTarget: { kind: 'agent', identity: { pluginId: `happier.agent.${provider}`, localId: provider } },
         modelSelection: { modelId: 'selected-model', ...(binding ? { providerConnectionId: 'selected-provider' } : {}) },
         ...(binding ? { providerBinding: binding } : {}), launchEnvironment: { values, unset: ['OPENAI_API_KEY'] },
+        ...(!binding ? { runnerConnectedAccountPurposes: [route === 'codex-account' ? 'primary' : route === 'claude-api-key-account' ? 'model_upstream_api_key' : route === 'claude-kimi-account' ? 'kimi-code-api-key' : 'model_upstream'],
+          runnerConnectedAccountMaterialization: provider === 'claude' ? { v: 1 as const, kind: 'spawnEnv' as const }
+            : { v: 1 as const, kind: 'configFile' as const, rootPath: '/host/projected-codex', relativePaths: ['auth.json'] } } : {}),
         input: { text: 'Review', structuredInput: { scope: 'repository', engines: { clawpatch: { provider: provider === 'claude' ? 'codex' : 'claude', model: 'stale-model' } },
           scmReviewScope: { scope: 'repository', status: 'supported', worktreeRoot: f.directory } } },
       }, context);

@@ -50,6 +50,7 @@ import { withExecutionRunHostRuntimeCleanup } from '../hostRuntime/cleanup';
 import { createLazyExecutionRunHostRuntime } from '../hostRuntime/lazy';
 import { sanitizeExecutionRunError } from '../errors';
 import {
+    ExecutionRunConnectedServicesError,
     hasConnectedExecutionRunBinding,
     resolveExecutionRunConnectedServicesEnv,
     resolveExecutionRunConnectedServicesSelection,
@@ -490,6 +491,29 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 ...(providerLaunch?.environment ?? {}),
                 ...secretReferenceEnvironment,
             }, isolationUnsetEnvKeys);
+            const prepareRunnerAccount = credentialResolution.agent.catalogEntry?.prepareConnectedAccountLaunchEnvironment;
+            const prepareRunnerLaunch = () => {
+                if (!opts.runnerAgentTarget) return undefined;
+                if (connectedServicesEnv && connectedServicesEnv.producedConnectedAccountPurposes === undefined) {
+                    throw new ExecutionRunConnectedServicesError('Execution-run Connected Account purpose materialization is unavailable. Restart the daemon.', 'connected_service_run_materialization_unavailable');
+                }
+                const purposes = connectedServicesEnv?.producedConnectedAccountPurposes ?? [];
+                const prepared = prepareRunnerAccount?.({ purposes, launchEnvironment: { values: isolationEnv, unset: isolationUnsetEnvKeys },
+                    modelId: boundedOpenInputs?.configuration.model.value ?? opts.modelSelection?.modelId ?? opts.modelId });
+                if (prepared) {
+                    isolationEnv = { ...prepared.launchEnvironment.values };
+                    isolationUnsetEnvKeys = [...prepared.launchEnvironment.unset];
+                }
+                return { purposes: prepared?.purposes ?? purposes, materialization: prepared?.materialization };
+            };
+            let runnerAccount: ReturnType<typeof prepareRunnerLaunch>;
+            try { runnerAccount = prepareRunnerLaunch(); }
+            catch (error) {
+                await connectedServicesEnv?.cleanup();
+                await providerLaunch?.cleanupOnExit?.();
+                secretReferenceRedaction?.close();
+                throw error;
+            }
             const prepareRuntimeFailureRecovery: NonNullable<CreateCliExecutionRunBackendParams['prepareRuntimeFailureRecovery']> = async input => {
                 const incumbent = connectedServicesEnv;
                 if (!incumbent) return { status: 'failed' };
@@ -513,6 +537,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                                 ...(pluginIsolationBundle?.env ?? {}), ...next.env,
                                 ...(providerLaunch?.environment ?? {}), ...secretReferenceEnvironment,
                             }, isolationUnsetEnvKeys);
+                            runnerAccount = prepareRunnerLaunch();
                             input.signal.throwIfAborted();
                             await opts.onConnectedServicesRegistration?.(next.registration);
                         }
@@ -568,6 +593,8 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                             ) ?? providerLaunch?.sanitizeDiagnosticText(value) ?? value,
                     }
                     : {}),
+                ...(runnerAccount ? { runnerConnectedAccountPurposes: runnerAccount.purposes,
+                    ...(runnerAccount.materialization ? { runnerConnectedAccountMaterialization: runnerAccount.materialization } : {}) } : {}),
                 permissionMode: opts.permissionMode,
                 workspaceWrites: opts.workspaceWrites,
                 accountSettings: opts.accountSettings ?? null,

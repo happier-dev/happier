@@ -4788,6 +4788,14 @@ and its
 
 ## Execution Run launch selection
 
+In unreleased 0.3 source, engine Runs receive the materializer's selected runner
+Connected Account purposes alongside the runner Agent owner's translated launch
+material. Machine login is used only without a selected runner account. An
+engine that cannot consume a selected purpose returns a typed
+`*_runner_account_unsupported` refusal instead of falling back to the Machine's
+credentials. Engine runner declarations own supported-purpose restrictions;
+the shared picker consumes those restrictions.
+
 In 0.3 development source, an explicit Connected Services binding for a service
 the selected backend does not declare is refused before credential materialization.
 The `connected_service_binding_unsupported` error identifies the service and

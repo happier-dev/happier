@@ -25,10 +25,8 @@ import {
   type DeepSecScopedPathListDiagnostic,
 } from './run.js';
 import { createDeepSecTempFiles } from './tempFiles.js';
-import { buildDeepSecLaunchEnvironment, omitDeepSecProviderEnvironment, readDeepSecLaunchEnvironment,
-  readDeepSecProviderLaunch, type DeepSecProviderRoute } from '../providerBinding.js';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
-import { buildAgentTargetKeyV2 } from '@happier-dev/plugin-sdk/agents';
+import { prepareDeepSecModelAccess, DeepSecProviderHarnessMismatchError } from './modelAccess.js';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import { preflightDeepSecReviewScope } from './scopePreflight.js';
 
 type NormalizedDeepSecStart = Readonly<{
@@ -44,7 +42,6 @@ type NormalizedDeepSecStart = Readonly<{
 
 type DeepSecAgentCli = typeof DEEPSEC_AGENT_CLIS[number];
 
-class DeepSecProviderHarnessMismatchError extends Error {}
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -342,58 +339,6 @@ async function resolveAgentCliReadiness(params: Readonly<{
   return readReadyAgentCli(readiness);
 }
 
-type DeepSecModelAccess = Readonly<{
-  environment: Readonly<Record<string, string>>;
-  agentCli: DeepSecAgentCli | null;
-  provider?: DeepSecProviderRoute;
-  claudeSubscription: boolean;
-  gateway?: true;
-  machineLogin?: true;
-}>;
-
-function prepareDeepSecModelAccess(
-  request: AgentExecutionRunOpenRequest,
-  agentCli: DeepSecAgentCli | null | undefined,
-): DeepSecModelAccess {
-  if (request.runnerAgentTarget) {
-    const runnerKey = buildAgentTargetKeyV2(request.runnerAgentTarget);
-    const runner = new Map([
-      [buildAgentTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), 'codex' as const],
-      [buildAgentTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }), 'claude' as const],
-    ]).get(runnerKey);
-    if (!runner) throw new PluginError({ code: 'deepsec_runner_unsupported', message: 'The selected runner is not supported by DeepSec.' });
-    agentCli = runner;
-  }
-  if (request.providerBinding) {
-    const provider = readDeepSecProviderLaunch(request.providerBinding, request.launchEnvironment);
-    if (agentCli && agentCli !== provider.route.agent) {
-      throw new DeepSecProviderHarnessMismatchError(`The selected DeepSec Provider requires the ${provider.route.agent} harness.`);
-    }
-    return { environment: provider.environment, agentCli: provider.route.agent,
-      provider: provider.route, claudeSubscription: false };
-  }
-  // Admission already selected and materialized the runner. The adapter only
-  // translates the environment accepted by DeepSec's nested Agent SDKs.
-  const values = readDeepSecLaunchEnvironment(request.launchEnvironment);
-  const nativeValues = omitDeepSecProviderEnvironment(values);
-  const oauthToken = values.CLAUDE_CODE_OAUTH_TOKEN || values.ANTHROPIC_OAUTH_TOKEN;
-  if (oauthToken && agentCli !== 'codex') return { environment: buildDeepSecLaunchEnvironment({ ...nativeValues,
-    CLAUDE_CODE_OAUTH_TOKEN: oauthToken, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' }),
-    agentCli: 'claude', claudeSubscription: true };
-  // DeepSec's nested Claude SDK does not forward the admitted native home.
-  // Without its access token it would silently use the Machine's default login.
-  if (agentCli !== 'codex' && nativeValues.CLAUDE_CONFIG_DIR?.trim()) throw new PluginError({
-    code: 'deepsec_provider_transport_unsupported',
-    message: 'DeepSec cannot preserve the selected Claude native home without its access token. Choose another model access route.',
-  });
-  const gatewayKey = Object.entries(values).find(([key]) => key.toUpperCase() === 'AI_GATEWAY_API_KEY')?.[1];
-  if (gatewayKey?.trim()) return { environment: buildDeepSecLaunchEnvironment({ ...nativeValues, AI_GATEWAY_API_KEY: gatewayKey }),
-    agentCli: agentCli ?? null, claudeSubscription: false, gateway: true };
-  return {
-    environment: buildDeepSecLaunchEnvironment(nativeValues), agentCli: agentCli ?? null,
-    claudeSubscription: false, machineLogin: true,
-  };
-}
 
 function createRuntime(
   request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
@@ -471,7 +416,7 @@ function createRuntime(
         provider: modelAccess.provider,
         claudeSubscription: modelAccess.claudeSubscription,
         gateway: modelAccess.gateway,
-        machineLogin: modelAccess.machineLogin,
+        nativeLogin: modelAccess.nativeLogin,
         model: request.providerBinding?.model.id ?? request.modelSelection?.modelId,
         readiness: {
           agentCli,

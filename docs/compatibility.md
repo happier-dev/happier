@@ -8,6 +8,15 @@ The runtime target remains the engine while credential preparation uses the
 selected runner. Protocol, SDK and daemon deploy together for this closed
 development contract; no migration, compatibility epoch or adapter is added.
 
+Runner declarations can restrict `connectedAccountPurposes`; omission accepts
+the runner's declared purposes and an empty list excludes runner Connected Accounts.
+The picker consumes this declaration rather than maintaining an engine-specific
+account list. Match development Protocol, daemon, SDK and UI: these declaration
+objects remain closed and earlier development readers reject the added field.
+An older daemon without the selected-purpose materialization result requires a
+restart; the host refuses that unavailable result instead of inferring an account
+from environment values. No persisted account format changes.
+
 ## Provider environment capacity (unreleased 0.3)
 
 Provider environment materialization accepts the full key count admitted by the

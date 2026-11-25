@@ -65,7 +65,7 @@ import {
 import { ANTHROPIC_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
 import { ANTHROPIC_EFFORT_LEVELS, parseClaudeModelCatalog } from './provider/catalog.js';
 import { CLAUDE_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_API_KEY_ENV } from './connectedAccounts/service.js';
-import { CLAUDE_KIMI_DECLARATION, CLAUDE_KIMI_ENVIRONMENT_USES, prepareClaudeConnectedAccountKeyPreflight } from './agent/runtime/connectedAccountKeys.js';
+import { prepareClaudeConnectedAccountLaunchEnvironment, CLAUDE_KIMI_DECLARATION, CLAUDE_KIMI_ENVIRONMENT_USES, CLAUDE_KIMI_PURPOSE, prepareClaudeConnectedAccountKeyPreflight } from './agent/runtime/connectedAccountKeys.js';
 
 const resolveClaudeDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
   resolveClaudeDaemonSpawnPrerequisites(event, context);
@@ -549,6 +549,7 @@ export const CLAUDE_PLUGIN = definePlugin({
         },
       },
       connectedAccountLaunch: {
+        prepareEnvironment: prepareClaudeConnectedAccountLaunchEnvironment,
         switchContinuity: {
           continuityMode: 'restart_same_home',
           supportedTransitions: ['same_connected_group'],
@@ -572,7 +573,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           })),
           { purpose: 'model_upstream_api_key', environmentKey: ANTHROPIC_API_KEY_ENV },
         ],
-        environmentUnsetUses: ['model_upstream', 'model_upstream_api_key'].flatMap(purpose =>
+        environmentUnsetUses: ['model_upstream', 'model_upstream_api_key', CLAUDE_KIMI_PURPOSE].flatMap(purpose =>
           CLAUDE_AUTH_ISOLATION_ENV_KEYS.map(environmentKey => ({ purpose, environmentKey }))),
         stateSharingDescriptor: AGENT_STATE_SHARING_DESCRIPTOR,
         continuity: {

@@ -15,6 +15,8 @@ function completed(stdout = '', exitCode = 0): PluginProcessResult {
 async function runFixture(options: { engineId?: string; failedMember?: boolean; unableToReview?: boolean; cancel?: boolean; missingDocument?: boolean; captured?: boolean; pullRequest?: boolean; selectedPaths?: string[]; selectedFiles?: string[]; workingTreeCapture?: boolean; sessionCapture?: boolean; commitCapture?: boolean; turnCapture?: boolean; cleanupFailure?: boolean;
   providerBinding?: AgentExecutionRunOpenRequest['providerBinding']; launchEnvironment?: AgentExecutionRunOpenRequest['launchEnvironment']; nativeAgent?: string; model?: string; panel?: string; providerConnectionId?: string;
   runnerAgentTarget?: AgentExecutionRunOpenRequest['runnerAgentTarget'];
+  runnerConnectedAccountPurposes?: AgentExecutionRunOpenRequest['runnerConnectedAccountPurposes'];
+  runnerConnectedAccountMaterialization?: AgentExecutionRunOpenRequest['runnerConnectedAccountMaterialization'];
 } = {}) {
   const engineId = options.engineId ?? 'roborev';
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
@@ -52,6 +54,8 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
     ...(options.launchEnvironment ? { launchEnvironment: options.launchEnvironment } : {}),
     ...(options.providerBinding ? { providerBinding: options.providerBinding } : {}),
     ...(options.runnerAgentTarget ? { runnerAgentTarget: options.runnerAgentTarget } : {}),
+    ...(options.runnerConnectedAccountPurposes ? { runnerConnectedAccountPurposes: options.runnerConnectedAccountPurposes } : {}),
+    ...(options.runnerConnectedAccountMaterialization ? { runnerConnectedAccountMaterialization: options.runnerConnectedAccountMaterialization } : {}),
     ...(options.model ? { modelSelection: { agentTargetKey: options.nativeAgent === 'claude-code' ? 'backend:claude' : 'backend:codex', providerConnectionId: options.providerConnectionId ?? null, modelId: options.model } } : {}),
     input: { text: 'Review this change.', structuredInput: { reviewers: [{ kind: 'engine', engineId }], instructions: 'Review this change.',
       ...(options.selectedPaths ? { selectedPaths: options.selectedPaths } : {}),
@@ -84,10 +88,43 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
 }
 
 describe('activated roborev reviewer', () => {
+  it('refuses missing selected-account materialization despite an ambient Machine home', async () => {
+    const result = await runFixture({ panel: 'none', model: 'selected-model',
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      runnerConnectedAccountPurposes: ['openai-api-key'], launchEnvironment: { values: { CODEX_HOME: '/machine/codex' }, unset: [] },
+    });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'roborev_runner_account_unsupported' } });
+    expect(result.run).not.toHaveBeenCalled();
+  });
+  it.each(['model_upstream_api_key', 'kimi-code-api-key'])('refuses selected Claude %s before native auth stripping can use Machine login', async purpose => {
+    const result = await runFixture({ panel: 'none', nativeAgent: 'claude-code', model: 'selected-model',
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      runnerConnectedAccountPurposes: [purpose], runnerConnectedAccountMaterialization: { v: 1, kind: 'spawnEnv' },
+      launchEnvironment: { values: { ANTHROPIC_API_KEY: 'selected-key', CLAUDE_CONFIG_DIR: '/machine/claude' }, unset: [] },
+    });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'roborev_runner_account_unsupported' } });
+    expect(result.run).not.toHaveBeenCalled();
+  });
+  it.each(['openai-api-key', 'kimi-code-api-key'])('preserves the selected Codex %s through native config', async purpose => {
+    const result = await runFixture({ panel: 'none', model: 'selected-model',
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      runnerConnectedAccountPurposes: [purpose], runnerConnectedAccountMaterialization: { v: 1, kind: 'engineConfig', engineConfig: {
+        modelProvider: 'selected', config: { 'model_providers.selected': { base_url: 'https://selected.example/v1', env_key: 'SELECTED_KEY', wire_api: 'responses' } },
+      } },
+      launchEnvironment: { values: { SELECTED_KEY: 'selected-key', CODEX_HOME: '/machine/codex' }, unset: ['OPENAI_API_KEY'] },
+    });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    const config = result.writeFile.mock.calls.map(call => new TextDecoder().decode(call[1])).join('');
+    expect(config).toContain('model_provider = "selected"');
+    expect(config).toContain('SELECTED_KEY');
+    expect(config).not.toContain('selected-key');
+    expect(result.run.mock.calls[0]?.[0].env).toMatchObject({ SELECTED_KEY: 'selected-key', OPENAI_API_KEY: '' });
+  });
   it('uses the admitted Claude runner instead of a stale engine agent and preserves its host login', async () => {
     const result = await runFixture({ panel: 'none', nativeAgent: 'codex', model: 'selected-claude',
       runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
       launchEnvironment: { values: { CLAUDE_CODE_OAUTH_TOKEN: 'selected-subscription' }, unset: [] },
+      runnerConnectedAccountPurposes: ['model_upstream'], runnerConnectedAccountMaterialization: { v: 1, kind: 'spawnEnv' },
     });
     expect(result.events.at(-1)?.kind).toBe('run-complete');
     const review = result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0];

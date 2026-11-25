@@ -46,7 +46,10 @@ export function createClawpatchExecutionRunFactory(): AgentExecutionRunRuntimeFa
           if (runnerKey !== null && !provider) return { status: 'failed', diagnostic: {
             code: 'clawpatch_runner_unsupported', severity: 'error', message: 'The selected runner is not supported by clawpatch.',
           } };
-          const materialization = request.providerBinding?.materialization;
+          const materialization = request.providerBinding?.materialization ?? request.runnerConnectedAccountMaterialization;
+          if (request.runnerConnectedAccountPurposes?.length && !materialization) return { status: 'failed', diagnostic: {
+            code: 'clawpatch_runner_account_unsupported', severity: 'error', message: 'clawpatch cannot preserve the selected runner account. Choose another model access route.',
+          } };
           const codexConfig = materialization?.kind === 'engineConfig'
             ? flattenCodexConfig({ model_provider: materialization.engineConfig.modelProvider!,
               ...materialization.engineConfig.config as Readonly<Record<string, JsonValue>> }) : undefined;

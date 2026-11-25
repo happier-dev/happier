@@ -260,6 +260,67 @@ function readStructuredOutput(events: readonly AgentExecutionRunEvent[]) {
 }
 
 describe('activate', () => {
+  it.each([
+    { runner: 'claude', purpose: 'model_upstream_api_key', values: { ANTHROPIC_API_KEY: 'selected-key' }, baseUrl: 'https://api.anthropic.com' },
+    { runner: 'claude', purpose: 'kimi-code-api-key', values: { ANTHROPIC_API_KEY: 'selected-key', ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding' }, baseUrl: 'https://api.kimi.com/coding' },
+    { runner: 'codex', purpose: 'openai-api-key', values: { HAPPIER_CODEX_PROVIDER_API_KEY: 'selected-key' }, baseUrl: 'https://api.openai.com/v1' },
+    { runner: 'codex', purpose: 'kimi-code-api-key', values: { HAPPIER_CODEX_PROVIDER_API_KEY: 'selected-key' }, baseUrl: 'https://api.kimi.com/coding/v1' },
+  ])('preserves selected $runner $purpose instead of an ambient Machine login', async ({ runner, purpose, values, baseUrl }) => {
+    const fixture = createRuntimeContext({ checkReadiness: async request => ({ launchable: request.candidates.map(agentId => ({ agentId })) }) });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(),
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: `happier.agent.${runner}`, localId: runner } },
+      runnerConnectedAccountPurposes: [purpose],
+      runnerConnectedAccountMaterialization: runner === 'claude' ? { v: 1, kind: 'spawnEnv' } : {
+        v: 1, kind: 'engineConfig', engineConfig: { modelProvider: 'selected', config: {
+          'model_providers.selected': { base_url: baseUrl, env_key: 'HAPPIER_CODEX_PROVIDER_API_KEY', wire_api: 'responses' },
+        } },
+      },
+      modelSelection: { modelId: 'selected-model' },
+      launchEnvironment: { values: { ...values, CLAUDE_CONFIG_DIR: '/machine/claude', CODEX_HOME: '/machine/codex' }, unset: ['CLAUDE_CODE_OAUTH_TOKEN'] },
+    }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    const process = fixture.run.mock.calls.find(([request]) => request.args?.[0] === 'process')?.[0];
+    expect(process?.args).toEqual(expect.arrayContaining(['--agent', runner, '--ai-base-url', baseUrl, '--model', 'selected-model']));
+    expect(process?.env).toMatchObject(runner === 'claude' ? { ANTHROPIC_API_KEY: 'selected-key', OPENAI_API_KEY: '', AI_GATEWAY_API_KEY: '' }
+      : { OPENAI_API_KEY: 'selected-key', OPENAI_BASE_URL: baseUrl, AI_GATEWAY_API_KEY: '' });
+    expect(process?.args).not.toContain('--ai-api-key-env');
+    expect(JSON.stringify(events)).not.toContain('selected-key');
+  });
+  it('refuses a bound account without a supported transport before considering Machine login or Gateway', async () => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(),
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      runnerConnectedAccountPurposes: ['unsupported-purpose'],
+      launchEnvironment: { values: { CODEX_HOME: '/machine/codex', AI_GATEWAY_API_KEY: 'machine-gateway' }, unset: [] },
+    }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_runner_account_unsupported' } });
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+  it('pins an admitted Codex subscription home and suppresses an ambient Gateway', async () => {
+    const fixture = createRuntimeContext({ checkReadiness: async request => ({ launchable: request.candidates.map(agentId => ({ agentId })) }) });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(),
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      runnerConnectedAccountPurposes: ['primary'],
+      runnerConnectedAccountMaterialization: { v: 1, kind: 'configFile', rootPath: '/selected/codex', relativePaths: ['auth.json'] },
+      launchEnvironment: { values: { CODEX_HOME: '/selected/codex', AI_GATEWAY_API_KEY: 'ambient-gateway' }, unset: [] },
+    }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    const process = fixture.run.mock.calls.find(([request]) => request.args?.[0] === 'process')?.[0];
+    expect(process?.env).toMatchObject({ CODEX_HOME: '/selected/codex', OPENAI_API_KEY: '', AI_GATEWAY_API_KEY: '' });
+    expect(process?.args).toEqual(expect.arrayContaining(['--agent', 'codex', '--ai-api-key-env', 'OPENAI_API_KEY']));
+  });
   it('translates the host Codex Provider config while retaining its projected native home', async () => {
     const fixture = createRuntimeContext({ checkReadiness: async request => ({ launchable: request.candidates.map(agentId => ({ agentId })) }) });
     const { runtime } = await createNativeDeepSecRuntime();
@@ -292,6 +353,7 @@ describe('activate', () => {
     const opened = await runtime.executionRuns?.open({ ...createOpenRequest(),
       runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
       launchEnvironment: { values: { CLAUDE_CODE_OAUTH_TOKEN: 'host-access-only', CLAUDE_CONFIG_DIR: '/host/claude' }, unset: [] },
+      runnerConnectedAccountPurposes: ['model_upstream'], runnerConnectedAccountMaterialization: { v: 1, kind: 'spawnEnv' },
     }, fixture.context);
     if (!opened) throw new Error('Expected DeepSec execution');
     const events = await watchToTerminal(opened);

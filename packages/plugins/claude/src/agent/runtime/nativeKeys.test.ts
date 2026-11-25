@@ -74,3 +74,26 @@ it.each(['model_upstream', 'model_upstream_api_key'])('refuses a selected Kimi k
     configuration: { model: { value: 'concrete-model', updatedAtMs: 0 }, mode: { value: null, updatedAtMs: 0 }, permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {} },
   })).toThrow(expect.objectContaining({ code: 'claude_connected_account_provider_conflict' }));
 });
+
+
+it('prepares the registered runner account route through the host catalog without Machine auth fallback', async () => {
+  const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+  try {
+    const agent = activation.registration('agents', 'claude')!;
+    const catalog = projectAgentConnectedAccountLaunchCatalogEntry({ pluginId: PLUGIN_MANIFEST.id, agentId: 'claude',
+      connectedAccountLaunch: agent.connectedAccountLaunch!, hostAccess: PLUGIN_MANIFEST.hostAccess, isCurrent: () => true });
+    const prepare = catalog.prepareConnectedAccountLaunchEnvironment;
+    expect(prepare).toBeTypeOf('function');
+    if (!prepare) throw new Error('Runner account preparation missing');
+    const prepared = await prepare({ purposes: ['kimi-code-api-key'], modelId: 'selected-model',
+      launchEnvironment: { values: { KIMI_API_KEY: 'selected-secret', KIMI_CODE_ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/', CLAUDE_CODE_OAUTH_TOKEN: 'ambient', KEEP_ME: 'preserved' }, unset: [] } });
+    expect(prepared.purposes).toEqual(['kimi-code-api-key']);
+    expect(prepared.materialization).toEqual({ v: 1, kind: 'spawnEnv' });
+    expect(prepared.launchEnvironment.values.ANTHROPIC_API_KEY).toBe('selected-secret');
+    expect(prepared.launchEnvironment.values.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(prepared.launchEnvironment.values.KEEP_ME).toBe('preserved');
+    const native = await prepare({ purposes: [], launchEnvironment: { values: { CLAUDE_CONFIG_DIR: '/machine-home' }, unset: [] } });
+    expect(native.purposes).toEqual([]);
+    expect(native.materialization).toBeUndefined();
+  } finally { await activation.dispose(); }
+});

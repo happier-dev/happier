@@ -1013,6 +1013,8 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
         }).configuration);
     const boundedOpenInputs = Object.freeze({
         ...(params.options.runnerAgentTarget ? { runnerAgentTarget: params.options.runnerAgentTarget } : {}),
+        ...(params.options.runnerConnectedAccountPurposes ? { runnerConnectedAccountPurposes: params.options.runnerConnectedAccountPurposes } : {}),
+        ...(params.options.runnerConnectedAccountMaterialization ? { runnerConnectedAccountMaterialization: params.options.runnerConnectedAccountMaterialization } : {}),
         stateSharing: resolveNativeAgentSessionStateSharingPolicy(params.lease.agentId),
         ...(launchEnvironment ? { launchEnvironment } : {}),
         ...(params.options.runtimeDescriptorV1

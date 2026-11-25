@@ -238,6 +238,8 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
     runnerAgentTarget?: import('@happier-dev/protocol').AgentExecutionTargetV1;
+    runnerConnectedAccountPurposes?: import('@happier-dev/plugin-sdk/agents/runtime').AgentExecutionRunOpenRequest['runnerConnectedAccountPurposes'];
+    runnerConnectedAccountMaterialization?: import('@happier-dev/plugin-sdk/agents/runtime').AgentExecutionRunOpenRequest['runnerConnectedAccountMaterialization'];
     modelId?: string;
     modelSelection?: PersonalSessionModelRef;
     modelSelectionSource?: 'explicit' | 'inherited';

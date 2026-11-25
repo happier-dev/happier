@@ -58,7 +58,7 @@ export function resolveDeepSecProviderRoute(input: Readonly<{
 
 /** Consume the runner owner's materialization; DeepSec does not read Codex
  * config.toml, so its SDK needs the selected bearer under OPENAI_API_KEY. */
-export function readDeepSecProviderLaunch(binding: AgentSessionProviderBinding, environment: Readonly<{
+export function readDeepSecProviderLaunch(binding: Pick<AgentSessionProviderBinding, 'model' | 'upstream' | 'materialization'>, environment: Readonly<{
   values: Readonly<Record<string, string>>;
   unset: readonly string[];
 }> | undefined) {
@@ -88,4 +88,31 @@ export function readDeepSecProviderLaunch(binding: AgentSessionProviderBinding, 
   if (!key?.trim()) throw unsupported();
   return { route, environment: buildDeepSecLaunchEnvironment({ ...nativeValues,
     OPENAI_API_KEY: key, OPENAI_BASE_URL: route.baseUrl }) };
+}
+
+/** The runner already translated its connected account into a native transport. */
+export function readDeepSecConnectedAccountLaunch(
+  materialization: AgentSessionProviderBinding['materialization'],
+  environment: AgentExecutionRunOpenRequest['launchEnvironment'],
+  agent: 'claude' | 'codex',
+  model: string,
+) {
+  const values = readDeepSecLaunchEnvironment(environment);
+  const unsupported = () => new PluginError({ code: 'deepsec_runner_account_unsupported',
+    message: 'DeepSec cannot preserve the selected runner account. Choose another model access route.' });
+  let binding: Pick<AgentSessionProviderBinding, 'model' | 'upstream' | 'materialization'>;
+  if (agent === 'claude' && materialization.kind === 'spawnEnv') {
+    binding = { model: { id: model, name: model },
+      upstream: { protocol: 'anthropic', normalizedUrl: values.ANTHROPIC_BASE_URL || 'https://api.anthropic.com', credential: 'apiKey' },
+      materialization };
+  } else if (agent === 'codex' && materialization.kind === 'engineConfig') {
+    const { modelProvider, config } = materialization.engineConfig;
+    if (typeof modelProvider !== 'string' || !isConfigObject(config)) throw unsupported();
+    const provider = config[`model_providers.${modelProvider}`];
+    if (!isConfigObject(provider) || typeof provider.base_url !== 'string' || provider.wire_api !== 'responses') throw unsupported();
+    binding = { model: { id: model, name: model },
+      upstream: { protocol: 'openai-responses', normalizedUrl: provider.base_url, credential: 'apiKey' }, materialization };
+  } else throw unsupported();
+  try { return readDeepSecProviderLaunch(binding, environment); }
+  catch (error) { if (error instanceof PluginError) throw unsupported(); throw error; }
 }

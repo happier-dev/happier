@@ -57,6 +57,13 @@ it('authors a native runner account through the same controlled account picker a
     if (!token) throw new Error('Expected the admitted synthetic Account credentials');
     const screen = await renderScreen(<InjectedAuthProvider credentials={{ token }}><ModalProvider><Host /></ModalProvider></InjectedAuthProvider>);
     expect(screen.findByTestId('execution-run-native-account')).not.toBeNull();
+    const restricted = await renderScreen(<InjectedAuthProvider credentials={{ token }}><ModalProvider>
+        <ExecutionRunAgentModelPicker choice={choice} sessionId={null} serverId={serverId} machineId={machineId}
+            connectedAccountPurposes={[]} providerProtocols={[]} actionInput={{}} selected={null}
+            inheritedTeamCredentialModel={null} selectBackend={() => undefined} setActionInput={() => undefined} />
+    </ModalProvider></InjectedAuthProvider>);
+    expect(restricted.findByTestId('execution-run-native-account')).toBeNull();
+    await restricted.unmount();
     const popover = screen.findAllByType(AgentInputContentPopover)[0];
     if (!popover) throw new Error('Expected the existing native account picker');
     const content = popover.props.content;

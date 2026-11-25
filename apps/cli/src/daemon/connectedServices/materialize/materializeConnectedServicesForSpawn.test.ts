@@ -283,6 +283,7 @@ it.each(['copied', 'isolated'] as const)('reapplies Agent Account settings after
         } },
       });
       materialized.push(result);
+      expect(result?.producedConnectedAccountPurposes).toEqual(['model_upstream']);
       expect(result?.env.CLAUDE_CONFIG_DIR).toBeTruthy();
       return JSON.parse(await readFile(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8'));
     };
@@ -664,6 +665,53 @@ const LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY = {
 } as const satisfies MaterializeParams['connectedAccountMaterializationAuthority'];
 
 describe('materializeConnectedServicesForSpawn', () => {
+  it.each(['claude', 'codex'] as const)('preserves selected Kimi credentials through %s materialization, isolation and engine preparation', async agentId => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-runner-key-route-'));
+    let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>> = null;
+    let bindingLease: { dispose(): void } | undefined;
+    try {
+      const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+        agentId, contributions: runtimeFixture!.registry.contributes,
+      })!;
+      const scope = declaration.authorizedPurposes.find(scope => scope.purpose.purpose === 'kimi-code-api-key')!;
+      const material = { KIMI_API_KEY: 'selected-kimi-secret', KIMI_CODE_BASE_URL: 'https://api.kimi.com/coding/v1',
+        KIMI_CODE_ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/' };
+      const fixture = createForegroundPurposeOwnerFixture({
+        consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
+        // The credential-store boundary supplies the selected account's requested secret fields.
+        materializeAccount: async ({ request }) => {
+          if (request.kind !== 'environment') throw new Error('Expected a key account environment request');
+          return { kind: 'environment', env: Object.fromEntries(request.keys.flatMap(key =>
+            Object.hasOwn(material, key) ? [[key, material[key as keyof typeof material]]] : [])) };
+        },
+      });
+      bindingLease = fixture.owner.activateSessionPurposeBindings({
+        sessionId: 'runner-key-route', purposes: declaration.purposes, bindings: [fixture.binding],
+      });
+      result = await materializeConnectedServicesForSpawnProduction({
+        agentId, materializationKey: 'runner-key-route', purposeBindingSessionId: 'runner-key-route',
+        activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'), recordsByServiceId: new Map(),
+        connectedAccountsOwner: fixture.owner,
+        connectedAccountMaterializationAuthority: { kind: 'qualified', purposeBindings: [fixture.binding], requestAuthPurposeBindings: [] },
+        qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [fixture.binding] },
+        processEnv: { ANTHROPIC_API_KEY: 'machine-secret', OPENAI_API_KEY: 'machine-secret', CLAUDE_CODE_OAUTH_TOKEN: 'machine-secret' },
+      });
+      expect(result?.producedConnectedAccountPurposes).toEqual(['kimi-code-api-key']);
+      const prepare = findCatalogEntry(agentId).prepareConnectedAccountLaunchEnvironment;
+      if (!prepare || !result) throw new Error('Runner account preparation missing');
+      const prepared = prepare({ purposes: result.producedConnectedAccountPurposes!, modelId: 'selected-model',
+        launchEnvironment: { values: result.env, unset: result.unsetEnvKeys ?? [] } });
+      const final = { ...prepared.launchEnvironment.values };
+      for (const name of prepared.launchEnvironment.unset) delete final[name];
+      expect(final[agentId === 'claude' ? 'ANTHROPIC_API_KEY' : 'HAPPIER_CODEX_PROVIDER_API_KEY']).toBe('selected-kimi-secret');
+      expect(prepared.materialization?.kind).toBe(agentId === 'claude' ? 'spawnEnv' : 'engineConfig');
+      expect(JSON.stringify(final)).not.toContain('machine-secret');
+      expect(prepared.purposes).toEqual(['kimi-code-api-key']);
+    } finally {
+      bindingLease?.dispose(); await result?.cleanupOnExit?.(); await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('projects the selected Claude access token and clears competing Machine credentials for engine runners', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-claude-runner-auth-'));
     let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>> = null;

@@ -12,6 +12,7 @@ describe('Agent runner declarations', () => {
     const declaration = { ...engine, runnerSelection: 'perMember', runnerAgents: [{
       agentTarget: { kind: 'agent', identity: { pluginId: 'acme.runner', localId: 'reviewer' } },
       providerProtocols: ['acme-protocol'],
+      connectedAccountPurposes: ['model_upstream'],
     }] };
     expect(PluginAgentContributionV2Schema.parse(declaration)).toEqual(declaration);
   });

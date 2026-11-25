@@ -43,6 +43,7 @@ export type ConnectedServiceResolvedSelection =
 
 export type ConnectedServicesMaterialization = Readonly<{
   env: Record<string, string>;
+  producedConnectedAccountPurposes?: readonly string[];
   agentLaunchMaterials?: AgentLaunchMaterialization;
   sessionConnectedAccounts?: readonly AgentSessionConnectedAccountSelection[];
   unsetEnvKeys?: readonly string[];

@@ -29,7 +29,7 @@ import { shouldUseCodexDeferredBootstrap } from './agent/lifecycle/deferredStart
 import { readCodexMcpConfigServers } from './agent/mcp/configServers.js';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import { createCodexAgentRuntime } from './agent/runtime/factory.js';
-import { CODEX_KEY_DECLARATIONS, CODEX_KEY_ENVIRONMENT_USES } from './agent/runtime/connectedAccountKeys.js';
+import { prepareCodexConnectedAccountLaunchEnvironment, CODEX_KEY_DECLARATIONS, CODEX_KEY_ENVIRONMENT_USES } from './agent/runtime/connectedAccountKeys.js';
 import { CODEX_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV } from './agent/providerBinding/runtimeConfig.js';
 import {
@@ -389,6 +389,7 @@ export const CODEX_PLUGIN = definePlugin({
       },
       factory: createCodexAgentRuntime,
       connectedAccountLaunch: {
+        prepareEnvironment: prepareCodexConnectedAccountLaunchEnvironment,
         environmentUses: CODEX_KEY_ENVIRONMENT_USES,
         environmentUnsetUses: ['primary', ...CODEX_KEY_DECLARATIONS.map(row => row.purpose)].flatMap(purpose =>
           CODEX_PROVIDER_OWNED_ENV_KEYS.map(environmentKey => ({ purpose, environmentKey }))),

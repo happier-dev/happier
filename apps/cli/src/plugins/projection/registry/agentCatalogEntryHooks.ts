@@ -156,6 +156,7 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
     | 'connectedAccountRequestAuthUses'
     | 'connectedAccountFileEnvironmentUses'
     | 'connectedAccountEnvironmentUses'
+    | 'prepareConnectedAccountLaunchEnvironment'
     | 'connectedAccountEnvironmentUnsetUses'
     | 'connectedAccountSwitchContinuity'
     | 'connectedAccountNativeHome'
@@ -396,6 +397,14 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
         ...(fileEnvironmentUses === undefined
             ? {}
             : { connectedAccountFileEnvironmentUses: fileEnvironmentUses }),
+        ...(params.connectedAccountLaunch.prepareEnvironment === undefined ? {} : {
+            prepareConnectedAccountLaunchEnvironment: (input: Parameters<NonNullable<AgentConnectedAccountLaunchContributionV1['prepareEnvironment']>>[0]) => {
+                if (!params.isCurrent()) throw new Error('plugin_generation_retired');
+                const result = params.connectedAccountLaunch.prepareEnvironment!(input);
+                if (!params.isCurrent()) throw new Error('plugin_generation_retired');
+                return result;
+            },
+        }),
         ...(environmentUses === undefined
             ? {}
             : { connectedAccountEnvironmentUses: environmentUses }),

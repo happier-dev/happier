@@ -40,7 +40,7 @@ import {
   PluginJsonValueV2Schema,
   PluginLocalizedStringV2Schema,
 } from './publicTypes.js';
-import { ConnectedAccountPurposeDeclarationsV1Schema } from '../../connect/connectedAccountPurposes.js';
+import { ConnectedAccountPurposeDeclarationsV1Schema, ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountPurposes.js';
 import {
   AgentSessionStartupInstructionsIdV1Schema,
   AgentSessionStartupInstructionsTextV1Schema,
@@ -478,6 +478,8 @@ export const PluginAgentRunnerV1Schema = lazyZodSchema(() => z.strictObject({
   agentTarget: AgentExecutionTargetV1Schema,
   /** Empty means native/Connected Account access only, with no supported Provider route. */
   providerProtocols: z.array(ProviderWireProtocolSchema),
+  /** Omitted accepts all runner purposes; an empty list excludes runner Connected Accounts. */
+  connectedAccountPurposes: z.optional(z.array(ConnectedAccountPurposeIdSchema)),
 }));
 export const PluginAgentRunnerSelectionV1Schema = lazyZodSchema(() => z.enum(['single', 'perMember']));
 

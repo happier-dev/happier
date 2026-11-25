@@ -20,7 +20,7 @@ export const ROBOREV_PLUGIN = definePlugin({
   agents: { roborev: { declaration: { title: 'roborev', runtime: { kind: 'custom' }, primary: 'executionRuns',
     runnerAgents: [
       { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, providerProtocols: ['openai-responses'] },
-      { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, providerProtocols: ['anthropic'] },
+      { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, providerProtocols: ['anthropic'], connectedAccountPurposes: ['model_upstream'] },
     ],
     runnerSelection: 'perMember',
     connectedAccounts: [], sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,

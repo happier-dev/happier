@@ -374,6 +374,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       : Object.freeze({ env: Object.freeze({}), unsetEnvKeys: Object.freeze([]), producedPurposeKeys: Object.freeze([]) });
 
     signalController.signal.throwIfAborted();
+    const producedPurposeKeys = new Set(launchEnvironment.producedPurposeKeys);
     const env: Record<string, string> = { ...launchEnvironment.env };
     const agentSelectedMaterials: AgentLaunchSelectedMaterial[] = [
       ...(launchEnvironment.agentLaunchMaterials?.selectedMaterials ?? []),
@@ -698,7 +699,6 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
             : Object.freeze({});
           const nativeHomeFiles: Record<string, Uint8Array> = Object.create(null);
           const teamCredentialDeliveries: TeamCredentialNativeHomeDelivery[] = [];
-          const producedPurposeKeys = new Set(launchEnvironment.producedPurposeKeys);
           for (const scope of nativePurposes) {
             if (!connectedAccountsOwner) throw new Error('Connected Account launch authority is unavailable');
             const expectedAccount = expectedAccountsByPurposeKey.get(qualifiedPurposeKey(scope.purpose));
@@ -848,6 +848,11 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       && pluginSourceCustodyV1Equal(currentRuntime.sourceCustody, sourceCustody);
     return {
       env,
+      producedConnectedAccountPurposes: [...new Set((snapshot?.bindings ?? [])
+        .filter(binding => identity
+          && resolveAgentContributionQualifiedId(binding.purpose.consumer) === resolveAgentContributionQualifiedId(identity)
+          && producedPurposeKeys.has(qualifiedPurposeKey(binding.purpose)))
+        .map(binding => binding.purpose.purpose))],
       ...(params.agentLaunchTarget ? { agentLaunchMaterials: Object.freeze({
         runtimeHome: params.agentLaunchTarget.runtimeHome,
         ...(params.agentLaunchTarget.memberIdentity ? { memberIdentity: params.agentLaunchTarget.memberIdentity } : {}),

@@ -1,5 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import type { AgentLaunchEnvironment, AgentPreflightSessionControlsContributionV1, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentConnectedAccountLaunchContributionV1, AgentLaunchEnvironment, AgentPreflightSessionControlsContributionV1, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_ANTHROPIC_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
 import { buildClaudeNativeUpstreamEnvironment, isClaudeProviderOwnedEnvName } from '../providerBinding/adapter.js';
 
@@ -32,14 +32,28 @@ function prepareEnvironment(environment: AgentLaunchEnvironment, model?: string)
     .filter(name => !(name in values)) };
 }
 
-export function prepareClaudeConnectedAccountKeyRequest<T extends Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'connectedAccounts' | 'configuration' | 'providerBinding'>>(request: T): T {
-  if (!hasSelectedKey(request.connectedAccounts?.map(row => row.purpose) ?? [], Boolean(request.providerBinding))) return request;
-  const model = request.configuration?.model.value?.trim();
+function resolveSelectedAccountModel(value: string | null | undefined): string {
+  const model = value?.trim();
   if (!model || model === 'default') throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
     message: 'Choose a model for the selected Claude Connected Account.', details: { failureCause: {
       code: 'agent_startup_model_reconciliation_failed', phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
+  return model;
+}
+
+export function prepareClaudeConnectedAccountKeyRequest<T extends Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'connectedAccounts' | 'configuration' | 'providerBinding'>>(request: T): T {
+  if (!hasSelectedKey(request.connectedAccounts?.map(row => row.purpose) ?? [], Boolean(request.providerBinding))) return request;
+  const model = resolveSelectedAccountModel(request.configuration?.model.value);
   return { ...request, launchEnvironment: prepareEnvironment(request.launchEnvironment ?? { values: {}, unset: [] }, model) };
 }
+
+export const prepareClaudeConnectedAccountLaunchEnvironment: NonNullable<AgentConnectedAccountLaunchContributionV1['prepareEnvironment']> = input => {
+  const purposes = input.purposes.filter(purpose => MODEL_SOURCE_PURPOSES.some(modelPurpose => modelPurpose === purpose));
+  if (hasSelectedKey(purposes)) {
+    const model = resolveSelectedAccountModel(input.modelId);
+    return { purposes, launchEnvironment: prepareEnvironment(input.launchEnvironment, model), materialization: { v: 1, kind: 'spawnEnv' } };
+  }
+  return { purposes, launchEnvironment: input.launchEnvironment, ...(purposes.length ? { materialization: { v: 1 as const, kind: 'spawnEnv' as const } } : {}) };
+};
 
 export const prepareClaudeConnectedAccountKeyPreflight: NonNullable<AgentPreflightSessionControlsContributionV1['prepareLaunchEnvironment']> = async ({ environment, modelId, connectedAccounts, signal }) => {
   const bindings = await Promise.all(MODEL_SOURCE_PURPOSES.map(async purpose =>

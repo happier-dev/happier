@@ -35,7 +35,8 @@ export function ExecutionRunEngineRunnerPicker(props: Readonly<{
                 if (!runner) return;
                 props.setActionInput(previous => selectReviewLauncherRunner(previous, runner.agentTarget));
             }} />
-        {selected ? <ExecutionRunAgentModelPicker choice={selected.choice} providerProtocols={selected.providerProtocols} sessionId={props.sessionId}
+        {selected ? <ExecutionRunAgentModelPicker choice={selected.choice} providerProtocols={selected.providerProtocols}
+            connectedAccountPurposes={selected.connectedAccountPurposes} sessionId={props.sessionId}
             serverId={props.serverId} machineId={props.machineId} actionInput={props.actionInput}
             selected={props.selected} inheritedTeamCredentialModel={null} selectBackend={() => undefined}
             setActionInput={props.setActionInput} /> : null}

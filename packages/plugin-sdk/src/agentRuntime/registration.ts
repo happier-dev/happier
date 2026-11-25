@@ -1,4 +1,5 @@
 import type { AgentProviderBindingAdapter } from './providerBinding.js';
+import type { AgentLaunchEnvironment, AgentSessionProviderBinding } from './session.js';
 import type {
   AgentTerminalSessionStateUpdate,
   AttachSessionMetadata,
@@ -528,6 +529,17 @@ export type AgentConnectedAccountSwitchContinuityV1 = Readonly<{
  * and static state-sharing classification.
  */
 export type AgentConnectedAccountLaunchContributionV1 = Readonly<{
+  /** Reuses the native Agent's translation when an engine drives its selected account. */
+  prepareEnvironment?: (input: Readonly<{
+    purposes: readonly string[];
+    launchEnvironment: AgentLaunchEnvironment;
+    modelId?: string;
+  }>) => Readonly<{
+    /** Only this Agent's model-source purposes; unrelated tool accounts are excluded. */
+    purposes: readonly string[];
+    launchEnvironment: AgentLaunchEnvironment;
+    materialization?: AgentSessionProviderBinding['materialization'];
+  }>;
   requestAuthUses?: readonly AgentConnectedAccountRequestAuthUseV1[];
   fileEnvironmentUses?: readonly AgentConnectedAccountFileEnvironmentUseV1[];
   environmentUses?: readonly AgentConnectedAccountEnvironmentUseV1[];

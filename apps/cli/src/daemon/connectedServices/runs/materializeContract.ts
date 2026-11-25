@@ -78,6 +78,7 @@ export const ConnectedServiceRunMaterializeSuccessResponseSchema = z.strictObjec
     result: z.strictObject({
         activationId: z.string().check(z.uuid()),
         env: z.record(z.string(), z.string()),
+        producedConnectedAccountPurposes: z.optional(z.array(z.string())),
         unsetEnvKeys: z.optional(z.array(z.string())),
         connectedServicesBindings: z.unknown(),
         registration: ExecutionRunConnectedServicesRegistrationV1Schema,
@@ -216,6 +217,7 @@ export type ConnectedServiceRunMaterializationHandlerResult =
         ok: true;
         activationId: string;
         env: Readonly<Record<string, string>>;
+        producedConnectedAccountPurposes?: readonly string[];
         unsetEnvKeys?: readonly string[];
         connectedServicesBindings: unknown;
         registration: ExecutionRunConnectedServicesRegistrationV1;

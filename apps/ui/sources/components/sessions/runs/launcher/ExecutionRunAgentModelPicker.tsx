@@ -10,6 +10,7 @@ import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import { ExactModelChoicePicker } from '@/components/sessions/modelPicker/useExactModelChoice';
 import type { SessionModelPickerProps } from '@/components/sessions/modelPicker/SessionModelPicker';
+import type { ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
 import { SessionAuthoringConnectedServicesField } from '@/components/sessions/authoring/controls/SessionAuthoringConnectedServicesField';
 import { t } from '@/text';
 import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
@@ -25,14 +26,21 @@ type AgentModelPickerProps = Readonly<{
     actionInput: Record<string, unknown>;
     selected: PersonalSessionModelRef | null;
     providerProtocols?: SessionModelPickerProps['providerProtocols'];
+    connectedAccountPurposes?: NonNullable<ReviewEngineListItem['runnerAgents']>[number]['connectedAccountPurposes'];
     inheritedTeamCredentialModel: TeamCredentialProviderModelSelectionV1 | null;
     selectBackend: (targetKey: string) => void;
     setActionInput: React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
 }>;
 
 export function ExecutionRunAgentModelPicker(props: AgentModelPickerProps) {
+    const catalog = props.choice.agentCatalogEntry;
+    const purposes = props.connectedAccountPurposes;
+    const choice = React.useMemo(() => catalog && purposes !== undefined
+        ? { ...props.choice, agentCatalogEntry: { ...catalog, connectedAccounts: catalog.connectedAccounts.filter(
+            declaration => purposes.includes(declaration.purpose),
+        ) } } : props.choice, [catalog, props.choice, purposes]);
     return getAgentModelConfig(props.choice.agentId)?.supportsSelection === false
-        ? <ExecutionRunAccountPurposePicker {...props} /> : <ExecutionRunAgentModelPickerContent {...props} />;
+        ? <ExecutionRunAccountPurposePicker {...props} choice={choice} /> : <ExecutionRunAgentModelPickerContent {...props} choice={choice} />;
 }
 
 /** Account-only engines consume their Agent declaration, with no model catalog demand. */
@@ -82,7 +90,7 @@ function ExecutionRunAgentModelPickerContent(props: AgentModelPickerProps) {
         setSelection(previous => ({ ...clearExecutionRunChildSelection(previous), connectedServices: value }));
     }, [setSelection]);
     return <>
-    {catalog ? <SessionAuthoringConnectedServicesField agentId={props.choice.agentId} agentIdentity={catalog.identity}
+    {catalog?.connectedAccounts.length ? <SessionAuthoringConnectedServicesField agentId={props.choice.agentId} agentIdentity={catalog.identity}
         connectedAccounts={catalog.connectedAccounts} context={{ serverId: props.serverId }} value={connectedServices}
         onChange={selectAccount} chipRenderContext={chipRenderContext} trigger="select" testID="execution-run-native-account" /> : null}
     <ExactModelChoicePicker

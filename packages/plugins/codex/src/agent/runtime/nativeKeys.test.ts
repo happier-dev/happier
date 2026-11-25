@@ -107,3 +107,26 @@ it('marks the Codex ACP catalog unverified under the prepared alternate upstream
   });
   expect(buildCodexNativeAcpRuntimeOptions(request).definition?.models?.catalogConfidence).toBe('account_unverified');
 });
+
+
+it('prepares the registered runner account route through the host catalog without Machine auth fallback', async () => {
+  const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+  try {
+    const agent = activation.registration('agents', 'codex')!;
+    const catalog = projectAgentConnectedAccountLaunchCatalogEntry({ pluginId: PLUGIN_MANIFEST.id, agentId: 'codex',
+      connectedAccountLaunch: agent.connectedAccountLaunch!, hostAccess: PLUGIN_MANIFEST.hostAccess, isCurrent: () => true });
+    const prepare = catalog.prepareConnectedAccountLaunchEnvironment;
+    expect(prepare).toBeTypeOf('function');
+    if (!prepare) throw new Error('Runner account preparation missing');
+    const prepared = await prepare({ purposes: ['openai-api-key'], modelId: 'selected-model',
+      launchEnvironment: { values: { HAPPIER_CONNECTED_OPENAI_API_KEY: 'selected-secret', CODEX_API_KEY: 'ambient', KEEP_ME: 'preserved' }, unset: [] } });
+    expect(prepared.purposes).toEqual(['openai-api-key']);
+    expect(prepared.materialization).toMatchObject({ v: 1, kind: 'engineConfig', engineConfig: { config: expect.any(Object) } });
+    expect(prepared.launchEnvironment.values.HAPPIER_CODEX_PROVIDER_API_KEY).toBe('selected-secret');
+    expect(prepared.launchEnvironment.values.CODEX_API_KEY).toBeUndefined();
+    expect(prepared.launchEnvironment.values.KEEP_ME).toBe('preserved');
+    const native = await prepare({ purposes: [], launchEnvironment: { values: { CODEX_HOME: '/machine-home' }, unset: [] } });
+    expect(native.purposes).toEqual([]);
+    expect(native.materialization).toBeUndefined();
+  } finally { await activation.dispose(); }
+});

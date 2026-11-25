@@ -228,6 +228,7 @@ export type AgentCatalogEntry = Readonly<{
   connectedAccountRequestAuthUses?: readonly ConnectedAccountRequestAuthUseV1[];
   connectedAccountFileEnvironmentUses?: readonly AgentConnectedAccountFileEnvironmentUseV1[];
   connectedAccountEnvironmentUses?: readonly AgentConnectedAccountEnvironmentUseV1[];
+  prepareConnectedAccountLaunchEnvironment?: NonNullable<import('@happier-dev/plugin-sdk/agents/runtime').AgentConnectedAccountLaunchContributionV1['prepareEnvironment']>;
   connectedAccountEnvironmentUnsetUses?: readonly AgentConnectedAccountEnvironmentUseV1[];
   connectedAccountSwitchContinuity?: AgentConnectedAccountSwitchContinuityV1;
   cliSubcommand: CatalogAgentLookupId;
