@@ -10,8 +10,91 @@ import { RPC_METHODS } from '../../rpc/methods.js';
 import { createActionExecutor } from '../actionExecutor.js';
 import { ActionsSettingsV1Schema } from '../actionSettings.js';
 import { createEmptyActionAutomationPortV1 } from './actionAutomationAdmission.testkit.js';
+import { SessionSpawnNewActionInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 
 describe('ordinary reviewed child admission transport', () => {
+  it.each(['exact', 'captured-session-executor', 'nested-template', 'wrong-child', 'wrong-input', 'wrong-target', 'wrong-root', 'wrong-root-request', 'missing-root-envelope'] as const)(
+    'admits opaque preset custody only for the exact ordinary Session acquire child (%s)', async scenario => {
+      const parent = { actionId: 'session.spawn_new', input: SessionSpawnNewActionInputV2Schema.parse({
+        executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/tmp' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      }) };
+      const acquisition = { selection: { kind: 'preset' as const, homeId: 'home', id: 'preset', revision: 1 },
+        controller: { machineId: 'machine', installationId: 'installation' }, retention: { kind: 'until-delete' as const } };
+      const nativeParent = { actionId: 'machines.managed.acquire', input: acquisition };
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-root', binding: {
+        serverIdentityId: 'home', accountId: 'member', custodianAccountId: 'owner',
+        authentication: { kind: 'account', tokenEpoch: 1 }, machineId: 'machine', installationId: 'installation',
+        actionId: scenario === 'wrong-root' ? 'machines.roles.set'
+          : scenario === 'nested-template' ? 'template.instantiate' : parent.actionId,
+        requestId: 'request', requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+      } });
+      let custodyAdmitted = false;
+      let managedRequestId: string | undefined;
+      // The protocol's managed Action transport is the substituted process
+      // boundary; exact child issuance and ordinary executor admission stay real.
+      const executor = createActionExecutor({ actionAutomations: createEmptyActionAutomationPortV1('member'), managedMachineAction: async request => {
+        managedRequestId = request.context.actionRequestId ?? undefined;
+        const policy = { action: { pluginId: 'acme.compute', localId: 'acquire' }, role: 'acquire', surface: 'cli' as const };
+        custodyAdmitted = issuer.retainManagedOpaquePresetCustodianAdmissionV1(policy, {
+          parent: nativeParent, context: request.context,
+          admission: { homeId: 'home', requestId: request.context.actionRequestId!, custodianAccountId: 'owner', controller: acquisition.controller },
+        }) !== null;
+        return { managedId: 'managed', operation: { operationId: 'parent-operation' } };
+      }, sessionSpawnNew: async args => {
+        if (!args.context || !args.admittedInput || !args.executeSessionIsolationAcquire) throw new Error('Missing admitted Session producer');
+        const acquired = await issuer.invokeHostReviewedChildV1({ parent: { actionId: 'session.spawn_new', input: args.admittedInput },
+          context: args.context, child: { action: 'machines.managed.acquire', role: 'acquire-session-sandbox', input: acquisition },
+          execute: (input, childContext) => args.executeSessionIsolationAcquire!(input as typeof acquisition, childContext) });
+        expect(acquired).toMatchObject({ ok: true });
+        return { type: 'success', disposition: 'created', sessionId: 'session',
+          executionTarget: { serverId: 'home', machineId: 'machine' },
+          organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
+      } });
+      const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: 'home', runtimeAccountId: 'member', actionRequestId: 'request',
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['cli'], 'session.spawn_new': ['cli'] } }),
+        externalActionExecutionAuthorization: authorization,
+        externalActionTarget: { kind: 'machine', machineId: scenario === 'wrong-target' ? 'another-machine' : 'machine' },
+        ...(scenario === 'missing-root-envelope' ? {} : { originalActionEnvelope: {
+          v: 1, requestId: scenario === 'wrong-root-request' ? 'another-request' : 'request',
+          target: authorization.binding.target, input: parent.input } as const }),
+        operationAcceptance: { operationId: 'parent-operation', accept() {} },
+      };
+      const child = scenario === 'wrong-child'
+        ? { action: 'machines.managed.get' as const, role: 'read', input: { homeId: 'home', managedId: 'managed' } }
+        : { action: 'machines.managed.acquire' as const, role: 'acquire-session-sandbox',
+          input: scenario === 'wrong-input' ? { ...acquisition, selection: { ...acquisition.selection, id: 'another-preset' } } : acquisition };
+      const invokeAcquire = (context: ActionExecutorContext) => issuer.invokeHostReviewedChildV1({ parent, context, child,
+        execute: (input, childContext, actionId) => executor.execute(actionId, input, childContext) });
+      if (scenario === 'captured-session-executor') {
+        const spawned = await executor.execute('session.spawn_new', parent.input, context);
+        if (!spawned.ok) throw new Error(`Session admission failed before custody: ${JSON.stringify(spawned)}`);
+        expect(spawned).toMatchObject({ ok: true });
+        expect(managedRequestId).toEqual(expect.any(String));
+        expect(managedRequestId).not.toBe(context.actionRequestId);
+      } else if (scenario === 'nested-template') {
+        const acquired = await issuer.invokeHostReviewedChildV1({ parent: { actionId: 'template.instantiate', input: { machineId: 'machine' } },
+          context, child: { action: 'session.spawn_new', role: 'create-session', input: parent.input },
+          admittedReview: { action: 'session.spawn_new', role: 'create-session', surface: 'cli' },
+          execute: async (_input, spawnContext) => {
+            const admitted = issuer.retainHostReviewedChildAdmissionV1(spawnContext, parent.actionId, parent.input);
+            if (!admitted) throw new Error('The canonical issuer must admit the exact Session child');
+            return invokeAcquire(admitted);
+          } });
+        expect(acquired, JSON.stringify(acquired)).toMatchObject({ ok: true });
+      } else {
+        const acquired = await invokeAcquire(context);
+        const expectedOutcome = scenario === 'wrong-target'
+          ? { ok: false, errorCode: 'credential_scope_denied', failureCause: { errorCode: 'issuer_target' } }
+          : scenario === 'wrong-child'
+            ? { ok: false, errorCode: 'invalid_action_output' }
+            : { ok: true };
+        expect(acquired, JSON.stringify(acquired)).toMatchObject(expectedOutcome);
+      }
+      expect(custodyAdmitted).toBe(scenario === 'exact' || scenario === 'captured-session-executor' || scenario === 'nested-template');
+    });
+
   it.each(['before reentry', 'during execution'] as const)('keeps exact reviewed HTTP effects on the admitted operation lifetime after caller cancellation %s', async cancellationPhase => {
     const caller = new AbortController();
     const operation = new AbortController();
