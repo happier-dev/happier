@@ -605,7 +605,7 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'Domain stale Link child refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator access unavailable', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'Tunnel review with ready Caddy', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'Domain stale Link child refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator access unavailable', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'Tunnel review after reinstall', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const noActiveDomainMembers = scenario === 'no active Domain members' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
@@ -629,7 +629,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         remedy: 'Inspect and reconcile the existing Caddy seed before retrying the Domain operation.' });
     const nativeUnknownFailure = MachineElevationFailureV1Schema.parse({ ...nativeCheckFailure, kind: 'native_effect_failed' });
     const environment = createDeploymentEnvironmentDetailV1();
-    const reviewTunnel = scenario === 'Tunnel review with ready Caddy';
+    const reviewTunnel = scenario === 'Tunnel review after reinstall';
     const adminWriteRefused = scenario === 'direct installed Caddy admin write refused';
     const recordedReplicaCase = scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy redirect';
     // A public Add settles from its finite DNS observation; private origins
@@ -672,6 +672,9 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         link.state = 'deployed';
         link.activeDeploymentId = 'serving';
     }
+    const retiredLink = reviewTunnel ? { ...link, id: 'retired-link', contentArtifactId: 'retired-target-content',
+        members: [{ machineId: 'a', installationId: 'retired-installation', state: 'active' as const }] } : undefined;
+    if (retiredLink) link.predecessorTargetLinkId = retiredLink.id;
     const nativeRuntime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
         serverId: 'home', serverHttpBaseUrl: 'https://domain-origin.test', machineId: 'a',
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
@@ -827,6 +830,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
         const path = new URL(url).pathname;
         const childProof = config?.headers?.[EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER];
+        if (retiredLink && path === `/v1/artifacts/${retiredLink.contentArtifactId}`) return { status: 401,
+            data: { error: 'invalid_token', authorizationRefusal: 'deployment_child_http' } };
         if (staleLink && path === '/v1/machines/controller' && typeof childProof === 'string') {
             const token = config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
             expect(typeof token).toBe('string');
@@ -883,7 +888,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         }
         if (request.method === 'GET' && path.endsWith('/receipts/serving')) return { status: 200, data: { ok: true, deployment: incumbent.deployment } };
         if (request.method === 'GET') return { status: 200, data: DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-            environment: environment.environment, targetLinks: [link] }) };
+            environment: environment.environment, targetLinks: retiredLink ? [retiredLink, link] : [link] }) };
         if (removingNativeOutput) {
             expect(request.method).toBe('POST');
             expect(path).toBe(`/v1/deployments/environments/${input.environmentId}/domains/${input.domainId}/remove`);

@@ -106,7 +106,8 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
             retained = parsed.domain;
         }
         const targetLinkId = add?.targetLinkId ?? retained?.targetLinkId ?? refuse('target_mismatch');
-        const environment = await host.readEnvironment({ environmentId: input.environmentId, targetLinkId, context: request.context });
+        const environment = await host.readEnvironment({ environmentId: input.environmentId,
+            targetLinkId, targetLinkScope: 'selected', context: request.context });
         const link = environment.targetLinks.find(row => row.targetLink.id === targetLinkId)?.targetLink;
         if (!link) return refuse('target_mismatch');
         if (link.source.kind !== 'plugin') {

@@ -317,7 +317,7 @@ export async function prepareOwnServerDomainReviewedChildren(
         content = opened.content;
     }
     const readEnvironment = (targetLinkId: string) => observed?.environment
-        ?? host.readEnvironment({ environmentId: input.environmentId, targetLinkId, context: request.context });
+        ?? host.readEnvironment({ environmentId: input.environmentId, targetLinkId, targetLinkScope: 'selected', context: request.context });
     const environment = add ? await readEnvironment(add.targetLinkId) : undefined;
     if (add && !environment?.targetLinks.some(item => item.targetLink.id === add.targetLinkId)) return failure('target_mismatch');
     const resolved = resolveDomainIngress(content, environment?.content.ingress, add !== undefined);
@@ -485,7 +485,8 @@ export function createOwnServerDomainActions(host: Readonly<{
                 if (isDeploymentDomainAddActionIdV1(actionId)) {
                     if (!context.externalActionExecutionAuthorization || !context.originalActionEnvelope) return failure('action_forbidden');
                     const original = DeploymentActionInputSchemasV1[actionId].parse(input);
-                    const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
+                    const environment = await host.readEnvironment({ environmentId: input.environmentId,
+                        targetLinkId: original.targetLinkId, targetLinkScope: 'selected', context });
                     const link = environment.targetLinks.find(item => item.targetLink.id === original.targetLinkId)?.targetLink;
                     if (!link) return failure('target_mismatch');
                     // Authored content (app, CLI and agent adds alike) gets its default outside check here, once.

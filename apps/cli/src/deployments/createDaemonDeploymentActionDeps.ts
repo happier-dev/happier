@@ -406,14 +406,15 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         async readEnvironmentMetadata(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>) {
             return (await readEnvironmentMetadata(request)).environment;
         },
-        async readEnvironment({ environmentId, targetLinkId, context }: Readonly<{ environmentId: string; targetLinkId?: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1> {
+        async readEnvironment({ environmentId, targetLinkId, targetLinkScope, context }: Parameters<OwnServerDeploymentTargetHostInput['readEnvironment']>[0]): Promise<DeploymentEnvironmentDetailV1> {
             const detail = await readDeploymentEnvironmentForHost({ environmentId, context }, {
                 readMetadata: readEnvironmentMetadata, open, assertCurrent,
             });
-            // Native deployment execution consumes the selected workload and its
-            // retained predecessor proofs, not other private target resources.
+            // Some native deployment operations consume retained predecessor proofs.
+            // Domain readers consume only the target link admitted for that Domain.
             const selected = detail.targetLinks.find(link => link.id === (targetLinkId ?? detail.environment.runtimeTargetLinkId));
-            const lineage = selected?.role === 'runtime' ? getDeploymentTargetLinkLineageV1(selected, detail.targetLinks)
+            const lineage = selected?.role === 'runtime' && targetLinkScope !== 'selected'
+                ? getDeploymentTargetLinkLineageV1(selected, detail.targetLinks)
                 : new Set(selected ? [selected.id] : []);
             const links = await Promise.all(detail.targetLinks.filter(link => lineage.has(link.id))
                 .map(link => readTargetLink(link, context)));

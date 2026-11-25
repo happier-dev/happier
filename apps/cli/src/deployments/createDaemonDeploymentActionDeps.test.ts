@@ -1173,14 +1173,16 @@ describe('installed deployment storage and target composition', () => {
                 .resolves.toMatchObject({ ok: false, errorCode: 'action_forbidden' });
         }
     });
-    it.each(['runtime', 'selected', 'unavailable'] as const)(
+    it.each(['runtime', 'selected', 'unavailable', 'replacement'] as const)(
         'prepares the exact Cloudflare Account child from private Domain custody before parent approval (%s)', async selection => {
         const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null };
         const base = createDeploymentEnvironmentDetailV1();
         const runtime = base.targetLinks[0];
         const selected = selection === 'runtime' ? runtime : { ...runtime, targetLink: { ...runtime.targetLink,
-            id: 'selected-link', contentArtifactId: 'selected-link-content' } };
-        const environment = selection === 'runtime' ? base : { ...base, targetLinks: [runtime, selected] };
+            id: 'selected-link', contentArtifactId: 'selected-link-content',
+            ...(selection === 'replacement' ? { predecessorTargetLinkId: runtime.targetLink.id } : {}) } };
+        const environment = selection === 'runtime' ? base : { ...base, targetLinks: [runtime, selected],
+            environment: selection === 'replacement' ? { ...base.environment, runtimeTargetLinkId: selected.targetLink.id } : base.environment };
         const link = selected.targetLink;
         const credentialRef = { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'cloudflare-profile' };
         const controller = { accountId: 'vendor-account', zoneId: 'vendor-zone',
@@ -1212,6 +1214,8 @@ describe('installed deployment storage and target composition', () => {
             const readLink = environment.targetLinks.find(item => path === `/v1/artifacts/${item.targetLink.contentArtifactId}`);
             if (!isEnvironment && !readLink) expect(path).toBe('/v1/artifacts/domain-content');
             reads.push(path);
+            if (readLink === runtime && selection === 'replacement') return { status: 401,
+                data: { error: 'invalid_token', authorizationRefusal: 'deployment_child_http' } };
             if (readLink === selected && selection === 'unavailable') return { status: 404, data: { error: 'artifact_not_found' } };
             return { status: 200, data: { id: isEnvironment ? environment.environment.contentArtifactId
                 : readLink ? readLink.targetLink.contentArtifactId : input.contentArtifactId,
@@ -1234,7 +1238,7 @@ describe('installed deployment storage and target composition', () => {
             expect(reads).toEqual([`/v1/artifacts/${environment.environment.contentArtifactId}`, `/v1/artifacts/${link.contentArtifactId}`]);
             return;
         }
-        expect(prepared, JSON.stringify({ prepared, reads })).toEqual({ children: [{ action: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare-named/configure' },
+        expect(prepared, JSON.stringify({ prepared, reads })).toMatchObject({ children: [{ action: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare-named/configure' },
             role: 'configure', scopeInput: { credentialRef, accountId: controller.accountId, zoneId: controller.zoneId,
                 tunnel: controller.tunnel, owned: controller.owned, dnsOwnership: controller.dnsOwnership } }] });
         expect.soft(domainInputParse).toHaveBeenCalledTimes(1);

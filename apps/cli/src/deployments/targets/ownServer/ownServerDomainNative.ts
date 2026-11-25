@@ -167,7 +167,7 @@ export function createOwnServerDomainNative(host: Readonly<{
     ensureServiceObservations?: import('@/plugins/runtime/invocation/services/environmentServiceRecovery').EnsureEnvironmentServices;
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
     open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
-    readEnvironment(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
+    readEnvironment: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readEnvironment'];
     readReceipt: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readReceipt'];
 }>) {
     async function acquire(job: DomainJob, context: ActionExecutorContext) {
@@ -196,7 +196,8 @@ export function createOwnServerDomainNative(host: Readonly<{
         let namedTunnel = false;
         let members: Array<{ machineId: string; installationId: string; state: 'active' }> = [];
         if (job.kind === 'domainDiscover' || reviewing) {
-            const environment = await host.readEnvironment({ environmentId: job.input.environmentId, context });
+            const environment = await host.readEnvironment({ environmentId: job.input.environmentId,
+                targetLinkId: job.input.targetLinkId, targetLinkScope: 'selected', context });
             const link = environment.targetLinks.find(item => item.targetLink.id === job.input.targetLinkId)?.targetLink;
             if (!link || link.targetKind !== 'ownServer') return refuse('target_mismatch');
             environmentContent = environment.content;

@@ -81,6 +81,7 @@ export type OwnServerDeploymentMemberRouteEnrollmentForHost = Readonly<{
 export type OwnServerDeploymentReadContext = Readonly<{
     environmentId: string;
     targetLinkId?: string;
+    targetLinkScope?: 'selected';
     context: ActionExecutorContext;
 }>;
 export type OwnServerDeploymentTransition = OwnServerDeploymentReadContext & Readonly<{
