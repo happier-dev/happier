@@ -1,15 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
+import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits, type DaemonDatabase, type DaemonDatabaseRow, type DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
 import { captureMigrations, createCaptureStore } from './capture.js';
 import { writeCaptureWorktree } from './worktrees.js';
 import { createCaptureSqliteFixture as fixture } from '../testing/sqlite.js';
 describe('capture store through SQLite', () => {
+ it('preserves useful first lines when 100 logs are requested', async () => {
+  const f = fixture();
+  try {
+   for (const migration of captureMigrations) await migration.up(f.db);
+   const store = createCaptureStore(f.db, () => {});
+   const line = 'Checkout completed for the authenticated customer. '.repeat(4).trim();
+   await store.write(Array.from({ length: 100 }, (_, at) => ({
+    id: String(at), worktree: 'chosen', kind: 'log', source: 'otlp', at,
+    detail: { log: { body: at % 2 ? line : `${line}\nrequest metadata` } },
+   })));
+   const rows = await store.list({ worktree: 'chosen', kind: 'log', limit: 100 });
+   expect(rows.map(({ bodyPrefix }) => bodyPrefix)).toEqual(Array(100).fill(line));
+   expect(rows.map(({ bodyPrefixTruncated }) => bodyPrefixTruncated))
+    .toEqual(Array.from({ length: 100 }, (_, index) => index % 2 === 1));
+  } finally { f.close(); }
+ });
  it('returns bounded redacted log prefixes for N rows in one list read, with details on demand', async () => {
   const f = fixture();
   try {
    for (const migration of captureMigrations) await migration.up(f.db);
    const store = createCaptureStore(f.db, () => {});
-   const bodies = ['short [REDACTED]', 'first line\nprivate second line', '😀'.repeat(1000), { message: '[REDACTED]' }];
+   const bodies = ['short [REDACTED]', 'first line\nprivate second line', '😀'.repeat(3000), { message: '[REDACTED]' }];
    await store.write(bodies.map((body, index) => ({ id: String(index), worktree: 'chosen', kind: 'log', source: 'otlp', at: index, detail: { log: { body } } })));
    await store.write([{ id: '0', worktree: 'other', kind: 'log', source: 'otlp', at: 99, detail: { log: { body: 'other worktree' } } }]);
    f.statements.length = 0;
@@ -27,6 +43,48 @@ describe('capture store through SQLite', () => {
    expect(rows[1]!.bodyPrefix!.length).toBeLessThan(String(bodies[2]).length);
    expect(Buffer.byteLength(JSON.stringify(rows))).toBeLessThanOrEqual(limits.maximumResultBytes);
    expect(await store.detail('chosen', '1')).toEqual({ log: { body: bodies[1] } });
+  } finally { f.close(); }
+ });
+ it('continues after byte-limited log pages, including an oversized single-row projection', async () => {
+  const f = fixture();
+  try {
+   for (const migration of captureMigrations) await migration.up(f.db);
+   const acceptedBytes: number[] = [];
+   // The daemon worker measures encoded row bytes and separator commas, excluding array brackets.
+   const db: DaemonDatabase = {
+    ...f.db,
+    async query<T extends DaemonDatabaseRow>(sql: string, params: readonly DaemonDatabaseValue[] = []) {
+     const rows = await f.db.query<T>(sql, params);
+     const bytes = Buffer.byteLength(JSON.stringify(rows)) - 2;
+     if (bytes > limits.maximumResultBytes) {
+      throw Object.assign(new Error('SQLite query result exceeds the daemon database limit'), { code: 'daemon_database_result_too_large' });
+     }
+     acceptedBytes.push(bytes);
+     return rows;
+    },
+   };
+   const store = createCaptureStore(db, () => {});
+   const body = '\u0001'.repeat(2000);
+   await store.write(['a', 'b', 'c'].map(id => ({
+    id, worktree: 'chosen', kind: 'log', source: 'otlp', at: 10,
+    serviceName: id === 'c' ? 'x'.repeat(5000) : 'checkout',
+    detail: { log: { body } },
+   })));
+   const input = { worktree: 'chosen', kind: 'log', limit: 100 } as const;
+   const first = await store.listPage(input);
+   expect(first.items.map(({ id }) => id)).toEqual(['c']);
+   expect(first.items[0]!.bodyPrefixTruncated).toBe(true);
+   expect(first.items[0]!.bodyPrefix!.length).toBeGreaterThan(200);
+   expect(first.nextCursor).toEqual({ at: 10, id: 'c' });
+
+   const second = await store.listPage({ ...input, before: first.nextCursor });
+   expect(second.items).toMatchObject([{ id: 'b', bodyPrefix: body, bodyPrefixTruncated: false }]);
+   expect(second.nextCursor).toEqual({ at: 10, id: 'b' });
+   const last = await store.listPage({ ...input, before: second.nextCursor });
+   expect(last.items).toMatchObject([{ id: 'a', bodyPrefix: body, bodyPrefixTruncated: false }]);
+   expect(last.nextCursor).toBeUndefined();
+   expect(acceptedBytes).toHaveLength(3);
+   expect(Math.max(...acceptedBytes)).toBeLessThanOrEqual(limits.maximumResultBytes);
   } finally { f.close(); }
  });
  it('adds browser provenance without relabeling or discarding retained pre-provenance exceptions', async () => {

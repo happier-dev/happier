@@ -67,16 +67,76 @@ function detailBody(event: Pick<CaptureSummaryEvent, 'id' | 'worktree' | 'detail
 }
 export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly string[]) => void) {
  const metricStore = createMetricStore(queryPage);
- async function queryPage<T extends DaemonDatabaseRow>(statement: string, params: readonly DaemonDatabaseValue[], requested: number) {
+ async function queryPage<T extends DaemonDatabaseRow>(statement: string, params: readonly DaemonDatabaseValue[],
+  requested: number, prefixLength?: number) {
   let pageSize = requested;
   while (true) {
-   try { return { rows: await db.query<T>(statement, [...params, pageSize]), pageSize }; }
+   const pageParams = prefixLength === undefined ? [...params, pageSize] : [...params, pageSize, prefixLength];
+   try { return { rows: await db.query<T>(statement, pageParams), pageSize }; }
    catch (error) {
-    if (pageSize <= 1 || error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'daemon_database_result_too_large') throw error;
-    // The host owns the byte ceiling: shrink only after that actual boundary refuses a page.
-    pageSize = Math.ceil(pageSize / 2);
+    if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'daemon_database_result_too_large') throw error;
+    // Preserve the prefix unless the host refuses even a single row with its metadata.
+    if (pageSize > 1) pageSize = Math.ceil(pageSize / 2);
+    else if (prefixLength) prefixLength = Math.floor(prefixLength / 2);
+    else throw error;
    }
   }
+ }
+ async function listPage(input: CaptureListInput): Promise<{
+  items: readonly CaptureSummary[]; nextCursor: CaptureListInput['before'];
+ }> {
+  const predicates = ['worktree = ?'];
+  const params: (string | number)[] = [input.worktree];
+  if (input.kind) { predicates.push('kind = ?'); params.push(input.kind); }
+  if (input.databaseMember !== undefined) {
+   predicates.push('databaseMemberKey = ?'); params.push(createCanonicalJsonSigningInput(input.databaseMember));
+  }
+  if (input.traceId) { predicates.push('traceId = ?'); params.push(input.traceId); }
+  if (input.spanKind !== undefined) { predicates.push('spanKind = ?'); params.push(input.spanKind); }
+  if (input.serviceName !== undefined) { predicates.push('serviceName = ?'); params.push(input.serviceName); }
+  if (input.appLlmCalls) {
+   predicates.push('genAi IS NOT NULL', "traceId IS NOT NULL AND traceId <> ''");
+   for (const field of ['serviceName', 'serviceVersion'] as const) {
+    const value = input.appLlmCalls[field];
+    if (value !== undefined) { predicates.push(`${field} = ?`); params.push(value); }
+   }
+  }
+  if (input.severityNumber !== undefined) { predicates.push('severityNumber = ?'); params.push(input.severityNumber); }
+  if (input.since !== undefined) { predicates.push('at >= ?'); params.push(input.since); }
+  if (input.until !== undefined) { predicates.push('at < ?'); params.push(input.until); }
+  if (input.before) { predicates.push('(at < ? OR (at = ? AND id < ?))'); params.push(input.before.at, input.before.at, input.before.id); }
+  const requested = Math.min(input.limit, limits.maximumResultRows);
+  const includeLogs = (input.kind === undefined || input.kind === 'log') && input.spanKind === undefined;
+  const fields = input.appLlmCalls ? [...summaryFields, 'serviceVersion', 'genAi'] : summaryFields;
+  const selected = `SELECT ${fields.join(',')} FROM captureSummaries WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?`;
+  // Only already-redacted retained bodies are projected, scoped by BOTH keys.
+  // substr works in Unicode code points, so the prefix cannot split UTF-8.
+  const statement = includeLogs ? `WITH selected AS (${selected}),
+logBodies AS MATERIALIZED (SELECT selected.*, CASE WHEN selected.kind = 'log' THEN
+ (SELECT CAST(json_extract(body,'$.log.body') AS TEXT) FROM captureDetails WHERE worktree = selected.worktree AND id = selected.id)
+ END AS logBody FROM selected),
+logPrefixes AS (SELECT *, substr(
+ CASE WHEN instr(logBody,char(10)) > 0 THEN substr(logBody,1,instr(logBody,char(10))-1) ELSE logBody END,
+ 1, ?) AS bodyPrefix FROM logBodies)
+SELECT ${summaryFields.join(',')},bodyPrefix,
+ CASE WHEN length(logBody) > length(bodyPrefix) THEN 1 ELSE 0 END AS bodyPrefixTruncated FROM logPrefixes ORDER BY at DESC,id DESC` : selected;
+  // A JSON-escaped code point can occupy six bytes. The host measures the actual page, including metadata.
+  const prefixLength = includeLogs ? Math.floor(limits.maximumResultBytes / 6) : undefined;
+  const { rows: page, pageSize } = await queryPage(statement, params, requested, prefixLength);
+  // The table is produced only by this store; SQLite scalar decoding is the genuine boundary.
+  const summaries = page as unknown as readonly CaptureSummary[];
+  const last = summaries.at(-1);
+  const nextCursor = last && page.length === pageSize ? { at: last.at, id: last.id } : undefined;
+  if (input.appLlmCalls) {
+   const calls = page as unknown as readonly (Omit<CaptureSummary, 'genAi'> & { genAi: string })[];
+   return { items: calls.map(call => ({ ...call, genAi: JSON.parse(call.genAi) as DatabaseCaptureCostMetadataV1 })), nextCursor };
+  }
+  const items = includeLogs ? summaries.map(summary => {
+   const { bodyPrefix, bodyPrefixTruncated, ...rest } = summary;
+   return bodyPrefix === null || bodyPrefix === undefined ? rest
+    : { ...rest, bodyPrefix, bodyPrefixTruncated: Boolean(bodyPrefixTruncated) };
+  }) : summaries;
+  return { items, nextCursor };
  }
  return {
   ...metricStore,
@@ -146,65 +206,15 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
    });
    if (changed.size) publish([...changed]);
   },
+  listPage,
   async list(input: CaptureListInput): Promise<readonly CaptureSummary[]> {
    const rows: CaptureSummary[] = [];
-   let cursor = input.before;
+   let before = input.before;
    while (rows.length < input.limit) {
-    const predicates = ['worktree = ?'];
-    const params: (string | number)[] = [input.worktree];
-    if (input.kind) { predicates.push('kind = ?'); params.push(input.kind); }
-    if (input.databaseMember !== undefined) {
-     predicates.push('databaseMemberKey = ?'); params.push(createCanonicalJsonSigningInput(input.databaseMember));
-    }
-    if (input.traceId) { predicates.push('traceId = ?'); params.push(input.traceId); }
-    if (input.spanKind !== undefined) { predicates.push('spanKind = ?'); params.push(input.spanKind); }
-    if (input.serviceName !== undefined) { predicates.push('serviceName = ?'); params.push(input.serviceName); }
-    if (input.appLlmCalls) {
-     predicates.push('genAi IS NOT NULL', "traceId IS NOT NULL AND traceId <> ''");
-     for (const field of ['serviceName', 'serviceVersion'] as const) {
-      const value = input.appLlmCalls[field];
-      if (value !== undefined) { predicates.push(`${field} = ?`); params.push(value); }
-     }
-    }
-    if (input.severityNumber !== undefined) { predicates.push('severityNumber = ?'); params.push(input.severityNumber); }
-    if (input.since !== undefined) { predicates.push('at >= ?'); params.push(input.since); }
-    if (input.until !== undefined) { predicates.push('at < ?'); params.push(input.until); }
-    if (cursor) { predicates.push('(at < ? OR (at = ? AND id < ?))'); params.push(cursor.at, cursor.at, cursor.id); }
-    const requested = Math.min(input.limit - rows.length, limits.maximumResultRows);
-    // Divide the public 16 KiB result boundary across the requested rows. A JSON
-    // character can require six bytes (\uXXXX); metadata overflow uses queryPage's
-    // existing host-bound paging. No telemetry-specific size cap or detail reads.
-    const prefixLength = Math.floor(limits.maximumResultBytes / requested / 6);
-    const includeLogs = (input.kind === undefined || input.kind === 'log') && input.spanKind === undefined;
-    const fields = input.appLlmCalls ? [...summaryFields, 'serviceVersion', 'genAi'] : summaryFields;
-    const selected = `SELECT ${fields.join(',')} FROM captureSummaries WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?`;
-    // Only already-redacted retained bodies are projected, scoped by BOTH keys.
-    // substr works in Unicode code points, so the prefix cannot split UTF-8.
-    const statement = includeLogs ? `WITH selected AS (${selected}),
-logBodies AS MATERIALIZED (SELECT selected.*, CASE WHEN selected.kind = 'log' THEN
- (SELECT CAST(json_extract(body,'$.log.body') AS TEXT) FROM captureDetails WHERE worktree = selected.worktree AND id = selected.id)
- END AS logBody FROM selected),
-logLines AS (SELECT *, CASE WHEN instr(logBody,char(10)) > 0 THEN substr(logBody,1,instr(logBody,char(10))-1) ELSE logBody END AS logLine FROM logBodies)
-SELECT ${summaryFields.join(',')},substr(logLine,1,${prefixLength}) AS bodyPrefix,
- CASE WHEN length(logBody) > length(substr(logLine,1,${prefixLength})) THEN 1 ELSE 0 END AS bodyPrefixTruncated FROM logLines ORDER BY at DESC,id DESC` : selected;
-    const { rows: page, pageSize } = await queryPage(statement, params, requested);
-    // The table is produced only by this store; SQLite scalar decoding is the genuine boundary.
-    const summaries = page as unknown as readonly CaptureSummary[];
-    if (input.appLlmCalls) {
-     const calls = page as unknown as readonly (Omit<CaptureSummary, 'genAi'> & { genAi: string })[];
-     rows.push(...calls.map(call => ({ ...call, genAi: JSON.parse(call.genAi) as DatabaseCaptureCostMetadataV1 })));
-    } else {
-     rows.push(...summaries.map(summary => {
-      if (!includeLogs) return summary;
-      const { bodyPrefix, bodyPrefixTruncated, ...rest } = summary;
-      return bodyPrefix === null || bodyPrefix === undefined ? rest
-       : { ...rest, bodyPrefix, bodyPrefixTruncated: Boolean(bodyPrefixTruncated) };
-     }));
-    }
-    if (page.length < pageSize) break;
-    const last = summaries.at(-1);
-    if (!last) break;
-    cursor = { at: last.at, id: last.id };
+    const page = await listPage({ ...input, before, limit: input.limit - rows.length });
+    rows.push(...page.items);
+    if (!page.nextCursor) break;
+    before = page.nextCursor;
    }
    return rows;
   },

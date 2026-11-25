@@ -262,9 +262,10 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
                 ...(findings && { findings }) };
         },
         async listCapturedLogs(input: database.DatabaseCaptureLogsListInputV1) {
-            return page(await selected.runtime.store.list({ ...input.page, since: input.since, until: input.until,
+            const { items, nextCursor } = await selected.runtime.store.listPage({ ...input.page, since: input.since, until: input.until,
                 serviceName: input.serviceName, severityNumber: input.severityNumber,
-                worktree: selected.partition, kind: 'log' }), input.page.limit);
+                worktree: selected.partition, kind: 'log' });
+            return { ok: true as const, source: selected.source, items: [...items], ...(nextCursor && { nextCursor }) };
         },
         async listCapturedEndpoints(input: database.DatabaseCaptureEndpointsListInputV1) {
             const { source, runtime, partition } = selected;
