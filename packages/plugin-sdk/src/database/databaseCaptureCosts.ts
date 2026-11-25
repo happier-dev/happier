@@ -11,15 +11,19 @@ const time = z.number().check(z.int(), z.nonnegative());
 const count = z.number().check(z.int(), z.nonnegative());
 const text = z.string().check(z.minLength(1));
 export const DATABASE_CAPTURE_COST_TOKEN_FIELDS_V1 = Object.keys(UsageObservationTokensSchema.shape) as Array<keyof z.infer<typeof UsageObservationTokensSchema>>;
-export const DatabaseCaptureCostsReadInputV1Schema = z.strictObject({
-    source: DatabaseCaptureSourceV1Schema, since: time, until: time,
+export const databaseCaptureCostsSelection = {
+    source: DatabaseCaptureSourceV1Schema,
     serviceName: z.optional(text), serviceVersion: z.optional(text),
     granularity: z.optional(z.enum(['hour', 'day'])),
-}).check(z.refine(input => input.since < input.until, 'Expected a nonempty selected window'));
+    groupByRoute: z.optional(z.boolean()),
+};
+export const DatabaseCaptureCostsReadInputV1Schema = z.strictObject({ ...databaseCaptureCostsSelection, since: time, until: time })
+    .check(z.refine(input => input.since < input.until, 'Expected a nonempty selected window'));
 
 /** One observation belongs to one operand: currency/null and known-token masks are grouping dimensions. */
 export const DatabaseCaptureCostOperandV1Schema = z.strictObject({
     bucketStartMs: time,
+    route: z.optional(z.nullable(z.strictObject({ method: text, path: text }))),
     provider: z.nullable(text), modelId: z.nullable(text), requestedModel: z.nullable(text), operation: z.nullable(text),
     callCount: count, tokens: UsageObservationTokensSchema, tokenCategories: z.nullable(UsageObservationTokensSchema),
     reportedCost: z.nullable(z.strictObject({ amount: z.number().check(z.nonnegative()), currency: text })),

@@ -160,8 +160,8 @@ const telemetryKeyFlowConfigV1 = projectSchemaType(telemetryMetrics.TelemetryKey
 const telemetryKeyFlowMeasureV1 = projectSchemaType(telemetryMetrics.TelemetryKeyFlowMeasureV1Schema);
 const telemetryMetricsActionReadInputV1 = projectSchemaType(telemetryMetrics.telemetryMetricsActionReadInputV1Schema);
 const telemetryMetricsActionReadResultV1: ProtocolComposableSchema<
-    TelemetryMetricsResultInput | TelemetryMetricsByEnvironment<TelemetryMetricsResultInput>,
-    TelemetryMetricsResultOutput | TelemetryMetricsByEnvironment<TelemetryMetricsResultOutput>
+    TelemetryMetricsResultInput | TelemetryMetricsByEnvironment<TelemetryMetricsResultInput> | z.input<typeof telemetryMetrics.telemetryMetricsOverviewResult>,
+    TelemetryMetricsResultOutput | TelemetryMetricsByEnvironment<TelemetryMetricsResultOutput> | telemetryMetrics.TelemetryMetricsOverviewResultV1
 > = projectSchemaType(telemetryMetrics.telemetryMetricsActionReadResultV1Schema);
 const telemetryMetricsReadInputV1 = projectSchemaType(telemetryMetrics.TelemetryMetricsReadInputV1Schema);
 const telemetryMetricsReadResultV1: ProtocolComposableSchema<TelemetryMetricsResultInput, TelemetryMetricsResultOutput> =

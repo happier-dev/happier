@@ -183,6 +183,8 @@ export type {
     TelemetryEnvironmentMetricsReadResultV1,
     TelemetryMetricsReadResultV1,
     TelemetryMetricsReadInputV1,
+    TelemetryMetricsOverviewInputV1,
+    TelemetryMetricsOverviewResultV1,
     TelemetryKeyFlowConfigV1,
     TelemetryKeyFlowMeasureV1,
 } from './telemetryProjections.js';

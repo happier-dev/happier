@@ -31,6 +31,23 @@ export const TelemetryMetricsReadInputV1Schema = z.strictObject({ ...selection, 
 export const TelemetryMetricsReadResultV1Schema = z.strictObject({ result,
     routes: z.array(z.strictObject({ method: z.string(), route: z.string(), result })),
     trend: z.array(DatabaseTelemetryMetricIntervalV1Schema), usage: z.optional(UsageAnalyticsQueryResponseSchema) });
+export const telemetryMetricsOverviewSelection = { view: z.literal('overview'), serverId: text, environmentId: text,
+    serviceName: z.optional(text), serviceVersion: z.optional(text) };
+const metricsOverviewInput = z.strictObject({ ...telemetryMetricsOverviewSelection, since: time, until: time });
+type OverviewMeasurement<Result> = {
+    result: Result;
+    trend: Array<z.infer<typeof DatabaseTelemetryMetricIntervalV1Schema>>;
+};
+const overviewMeasurement: z.ZodMiniType<OverviewMeasurement<z.output<typeof result>>, OverviewMeasurement<z.input<typeof result>>> =
+    z.strictObject({ result, trend: z.array(DatabaseTelemetryMetricIntervalV1Schema) });
+export const telemetryMetricsOverviewResult = z.strictObject({ view: z.literal('overview'),
+    services: z.array(z.strictObject({ serviceName: text, versions: z.array(text) })),
+    selected: z.nullable(z.strictObject({ serviceName: text, serviceVersion: z.nullable(text) })),
+    metrics: z.nullable(z.strictObject({ http: overviewMeasurement, heap: overviewMeasurement,
+        gc: overviewMeasurement, activeRequests: overviewMeasurement })),
+});
+export type TelemetryMetricsOverviewInputV1 = z.infer<typeof metricsOverviewInput>;
+export type TelemetryMetricsOverviewResultV1 = z.infer<typeof telemetryMetricsOverviewResult>;
 const environmentBatch = { serverId: text, environmentIds: z.array(text).check(z.minLength(1)) };
 export const TelemetryEnvironmentMetricsReadInputV1Schema = z.strictObject({ ...environmentBatch, since: time, until: time,
     includeTrend: z.optional(z.literal(false)),
@@ -39,18 +56,20 @@ export const TelemetryEnvironmentMetricsReadResultV1Schema = z.strictObject({ it
     environmentId: text, ...TelemetryMetricsReadResultV1Schema.shape,
 })) });
 export const telemetryMetricsActionReadInputV1Schema = z.union([
-    TelemetryMetricsReadInputV1Schema, TelemetryEnvironmentMetricsReadInputV1Schema,
+    TelemetryMetricsReadInputV1Schema, TelemetryEnvironmentMetricsReadInputV1Schema, metricsOverviewInput,
 ]);
 export const TelemetryMetricsActionReadInputV1ProtocolSchema: ProtocolComposableSchema<
     z.input<typeof telemetryMetricsActionReadInputV1Schema>,
-    (TelemetryMetricsReadInputV1 | TelemetryEnvironmentMetricsReadInputV1) & ProtocolJsonValue
+    (TelemetryMetricsReadInputV1 | TelemetryEnvironmentMetricsReadInputV1 | TelemetryMetricsOverviewInputV1) & ProtocolJsonValue
 > = projectZodProtocolSchema(telemetryMetricsActionReadInputV1Schema);
-export const telemetryMetricsActionReadResultV1Schema = z.union([
-    TelemetryMetricsReadResultV1Schema, TelemetryEnvironmentMetricsReadResultV1Schema,
-]);
+export const telemetryMetricsActionReadResultV1Schema: z.ZodMiniType<
+    TelemetryMetricsReadResultV1 | TelemetryEnvironmentMetricsReadResultV1 | TelemetryMetricsOverviewResultV1,
+    z.input<typeof TelemetryMetricsReadResultV1Schema> | z.input<typeof TelemetryEnvironmentMetricsReadResultV1Schema>
+        | z.input<typeof telemetryMetricsOverviewResult>
+> = z.union([TelemetryMetricsReadResultV1Schema, TelemetryEnvironmentMetricsReadResultV1Schema, telemetryMetricsOverviewResult]);
 export const TelemetryMetricsActionReadResultV1ProtocolSchema: ProtocolComposableSchema<
     z.input<typeof telemetryMetricsActionReadResultV1Schema>,
-    (TelemetryMetricsReadResultV1 | TelemetryEnvironmentMetricsReadResultV1) & ProtocolJsonValue
+    (TelemetryMetricsReadResultV1 | TelemetryEnvironmentMetricsReadResultV1 | TelemetryMetricsOverviewResultV1) & ProtocolJsonValue
 > = projectZodProtocolSchema(telemetryMetricsActionReadResultV1Schema);
 
 /** Usage retains exact-money metadata in process. Parse the native result before JSON admission. */

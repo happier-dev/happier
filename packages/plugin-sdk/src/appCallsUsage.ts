@@ -1,8 +1,10 @@
-import type { UsageAnalyticsContribution, UsageAnalyticsQueryResponse, UsageAnalyticsSeriesBucket, UsageAnalyticsTotals, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageAnalyticsBreakdownEntry, UsageAnalyticsContribution, UsageAnalyticsQueryResponse, UsageAnalyticsSeriesBucket, UsageAnalyticsTotals, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { addUsageMeasuredTokens, aggregateUsageCosts, createEmptyUsageCost, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { repriceUsageAnalyticsResponse } from '@happier-dev/protocol/usage/usageCost';
 import { resolveUsageCostBasis, type UsageCostMode } from '@happier-dev/protocol/usage/usageCostFacts';
+import { buildUsageBreakdownList } from '@happier-dev/protocol/usage/usageLeaderProjection';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
+import type { DatabaseCaptureCostOperandV1 } from './database/databaseCaptureCosts.js';
 export const APP_CALLS_SPEND_EVIDENCE_LABEL = 'App LLM cost';
 
 /**
@@ -42,6 +44,7 @@ export type AppCallsUsageWindowV1 = Readonly<{
         bucketStartMs: number;
         firstSeenMs: number;
         callCount: number;
+        route?: DatabaseCaptureCostOperandV1['route'];
         modelId: string | null;
         requestedModel: string | null;
         tokens: UsageObservationTokens;
@@ -61,6 +64,7 @@ export type AppCallsUsageV1 = Readonly<{
     subject: 'app_calls';
     accounting: UsageAnalyticsQueryResponse;
     coverage: AppCallsUsageCoverageV1;
+    routeBreakdown?: readonly UsageAnalyticsBreakdownEntry[];
 }>;
 export type AppCallsCostMetricIntervalV1 = Readonly<{
     since: number;
@@ -88,7 +92,26 @@ export type AppCallsUsagePartV1 = Readonly<{ source: string; label?: string; rea
 export function projectAppCallsUsageV1(read: AppCallsUsageWindowV1, catalog: UsageModelPriceCatalog,
     viewerOverrides: UsageModelPriceOverridesV1,
     options: Readonly<{ granularity: 'hour' | 'day'; costMode?: UsageCostMode }>): AppCallsUsageV1 {
-    return projectAppCallsUsageSourcesV1([{ source: 'app_calls', read }], catalog, viewerOverrides, options);
+    const usage = projectAppCallsUsageSourcesV1([{ source: 'app_calls', read }], catalog, viewerOverrides, options);
+    const contributions = usage.accounting.contributions;
+    if (read.items[0]?.route === undefined || !contributions) return usage;
+
+    // The collector attributes the window as a whole. Reuse the priced contributions for route bars.
+    const labels = new Map<string, string>();
+    const routeRows = contributions.map((row, index) => {
+        const item = read.items[index]!;
+        const route = item.route;
+        if (!route) return { ...row, source: null, eventCount: item.callCount };
+        const source = JSON.stringify([route.method, route.path]);
+        labels.set(source, `${route.method} ${route.path}`);
+        return { ...row, source, eventCount: item.callCount };
+    });
+    const routeBreakdown = buildUsageBreakdownList(routeRows, 'source', routeRows.length, options.costMode ?? 'api_equivalent')
+        .map(entry => {
+            const label = labels.get(entry.key);
+            return label ? { ...entry, label } : entry;
+        });
+    return { ...usage, routeBreakdown };
 }
 
 /** Several source windows as one App calls population. */

@@ -312,6 +312,18 @@ export function createTelemetryCaptureFixtureInvoke(
         coverage: { lostObservations: 0, reason: null, callCount: waiting ? 0 : 48_210, tokenCategoryCallCount: 0,
           reportedCostCallCount: waiting ? 0 : 410 } };
     if (actionId.endsWith('/capture/metrics/read')) {
+      const selection = input as { view?: string; serviceName?: string; serviceVersion?: string };
+      if (selection.view === 'overview') {
+        if (waiting) return { view: 'overview', services: [], selected: null, metrics: null };
+        const services = [{ serviceName: 'billing-api', versions: ['v1.43'] }, { serviceName: 'billing-worker', versions: ['v1.12'] }];
+        const { result: http, trend: httpTrend } = metricsRead({ kind: 'http' });
+        const { result: heap, trend: heapTrend } = metricsRead({ kind: 'runtime' });
+        const unknown = { result: { status: 'unknown', observedAt: NOW, evidence: metricsEvidence }, trend: [] };
+        return { view: 'overview', services, selected: { serviceName: selection.serviceName ?? 'billing-api',
+          serviceVersion: selection.serviceVersion ?? null }, metrics: {
+          http: { result: http, trend: httpTrend }, heap: { result: heap, trend: heapTrend }, gc: unknown, activeRequests: unknown,
+        } };
+      }
       if (waiting) throw Object.assign(new Error('unexpected'), { code: 'unexpected' });
       return metricsRead((input as { measure: { kind: string } }).measure);
     }
@@ -369,10 +381,12 @@ export function createTelemetryCaptureFixtureTransport(
           throw new Error('Expected a capture list');
         }
         const until = Date.now();
-        const window = { since: Math.max(0, until - reference.windowMs), until };
+        const window = reference.windowMs === undefined ? undefined : { since: Math.max(0, until - reference.windowMs), until };
         reading = invoke({ scope, collectorMachineId, actionId: formatQualifiedPluginActionId(reference.input.action) as TelemetryCaptureActionId,
           input: { ...selected.input, ...window }, ...(options?.signal ? { signal: options.signal } : {}) }).then(result => {
-          const bytes = new TextEncoder().encode(JSON.stringify({ view: selected.view, result, window, coverage: readCoverage?.() }));
+          const snapshot = selected.view === 'costs' || selected.view === 'metrics' || selected.view === 'status'
+            ? { view: selected.view, result } : { view: selected.view, result, window, coverage: readCoverage?.() };
+          const bytes = new TextEncoder().encode(JSON.stringify(snapshot));
           digest = `sha256:${computeSha256HexDigest(bytes)}`;
           return { contentType: 'application/json', digest, bytes };
         });

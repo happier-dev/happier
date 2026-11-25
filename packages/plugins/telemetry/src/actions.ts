@@ -208,6 +208,7 @@ export type AdmittedCaptureSource = Readonly<{
     databaseMember?: DatabaseWorktreeTargetV1;
     collectorMachineId?: string;
     assignmentStamped?: boolean;
+    capabilities?: import('./health.js').TelemetryCapabilities;
 }>;
 export type AdmittedCaptureScope = Omit<AdmittedCaptureSource, 'runtime'>;
 type CaptureSourceInput = Pick<database.DatabaseCaptureQueriesListInputV1, 'source' | 'databaseTarget'>;
@@ -225,7 +226,7 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
         async readCapturedCosts(input: database.DatabaseCaptureCostsReadInputV1) {
             return { ok: true as const, source: selected.source, ...await readCaptureCostWindow(selected.runtime, {
                 worktree: selected.partition, since: input.since, until: input.until, serviceName: input.serviceName,
-                serviceVersion: input.serviceVersion, granularity: input.granularity,
+                serviceVersion: input.serviceVersion, granularity: input.granularity, groupByRoute: input.groupByRoute,
             }) };
         },
         async captureStatus(_input: database.DatabaseCaptureStatusInputV1): Promise<Extract<database.DatabaseCaptureStatusResultV1, { ok: true }>> {

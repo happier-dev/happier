@@ -61,3 +61,30 @@ it('aggregates only the selected source/service/version/window, preserving unkno
         expect(await store.costOperands({ worktree: 'environment:1', since: 1000, until: 2000 })).toHaveLength(1);
     } finally { sqlite.close(); }
 });
+
+it('buckets only admitted service calls by UTC day and their nearest retained request route', async () => {
+    const sqlite = createCaptureSqliteFixture();
+    try {
+        for (const migration of captureMigrations) await migration.up(sqlite.db);
+        const store = createCaptureStore(sqlite.db, () => {});
+        const span = { worktree: 'environment:0', kind: 'span' as const, source: 'otlp' as const,
+            at: 86_400_000, serviceName: 'api', serviceVersion: 'build-1', traceId: 'trace' };
+        await store.write([
+            { ...span, id: 'server', spanId: 'root', spanKind: 2, at: span.at - 2, endpointMethod: 'POST', endpointRoute: '/ask/:id' },
+            { ...span, id: 'job', spanId: 'job', spanKind: 1, at: span.at - 1, parentSpanId: 'root' },
+            { ...span, id: 'call', spanId: 'one', spanKind: 3, parentSpanId: 'job', genAi: usage },
+            { ...span, id: 'standalone', spanId: 'two', spanKind: 3, at: span.at + 86_400_000, genAi: usage },
+            { ...span, id: 'other-build', spanId: 'three', spanKind: 3, serviceVersion: 'build-2', parentSpanId: 'root', genAi: usage },
+            { ...span, id: 'other-environment', worktree: 'environment:1', spanId: 'root', spanKind: 2, endpointRoute: '/other', genAi: usage },
+        ]);
+        const before = sqlite.queryRows.length;
+        const items = await store.costOperands({ worktree: span.worktree, since: span.at, until: span.at * 3,
+            granularity: 'day', groupByRoute: true, serviceName: 'api', serviceVersion: 'build-1' });
+        expect(items).toHaveLength(2);
+        expect(items.find(item => item.bucketStartMs === span.at)).toMatchObject({
+            callCount: 1, route: { method: 'POST', path: '/ask/:id' },
+        });
+        expect(items.find(item => item.bucketStartMs === span.at * 2)).toMatchObject({ callCount: 1, route: null });
+        expect(sqlite.queryRows.slice(before)).toEqual([2]);
+    } finally { sqlite.close(); }
+});

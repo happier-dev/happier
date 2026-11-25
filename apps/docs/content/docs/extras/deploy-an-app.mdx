@@ -321,13 +321,20 @@ A static-only app needs a server or edge endpoint, or an existing error
 integration.
 
 Exercise a controlled error and an unhandled rejection in a test deployment.
-Open the resulting Happier issue in **PRs & Issues** and inspect its occurrence.
-The issue summary is stored with your Account, while the stack and raw occurrence
-stay on the collector. Investigation of a minified stack needs the source map from
-the matching build. After deploying a fix, repeat the failing interaction and
+The Environment's **Telemetry** tab shows the open exception count. While it is
+open, the collector updates the latest exception time. If the collector is
+unavailable, the summary can show the last time recorded on the Account issue.
+Choose **Open in PRs & Issues**, select the Happier source, and inspect the
+issue's occurrence. The stack and raw occurrence stay on the collector.
+Investigation of a minified stack needs the source map from the matching build.
+After deploying a fix, repeat the failing interaction and
 record which build and route you exercised.
 
 ### Check an endpoint with a Key flow
+
+In **Telemetry → Metrics**, choose the service, version and time window to follow
+the selected collector. HTTP duration and traffic, heap, garbage collection and
+active requests appear when the app reports them.
 
 Enable **Metrics**, redeploy, and send traffic through a route your app
 instruments with OpenTelemetry. In the Environment's **Telemetry** tab, open
@@ -343,7 +350,9 @@ page reads measurements retained by the collector.
 ### View model usage from your apps
 
 Enable **App LLM cost**, redeploy, and emit OpenTelemetry GenAI model and token
-usage attributes from your app. In **Usage**, open **Sources** and choose
+usage attributes from your app. In 0.3 development builds, open **Telemetry →
+LLM calls** in the Environment to narrow the call list and totals by service,
+version and time window. In **Usage**, open **Sources** and choose
 **Your apps**, then narrow by app or **Environments**. This view shows app
 activity separately from agent activity. Estimated cost uses the model prices
 available to the signed-in viewer. Viewers sharing an Environment can see

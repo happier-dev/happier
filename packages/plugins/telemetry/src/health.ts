@@ -1,11 +1,15 @@
 import { HealthCheckResultV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSchema,
     PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { projectNativeJsonValueForTransport, type ProtocolSchemaInput } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1, type TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
-import { projectTelemetryMetricsActionReadResultV1 } from '@happier-dev/plugin-sdk/database';
+import {
+    projectTelemetryMetricsActionReadResultV1,
+    type TelemetryMetricsOverviewInputV1,
+    type TelemetryMetricsOverviewResultV1,
+} from '@happier-dev/plugin-sdk/database';
 import { databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
 import {
     APP_CALLS_SPEND_EVIDENCE_LABEL, appCallsPricingModelIds,
@@ -16,7 +20,6 @@ import { projectUsagePageCost } from '@happier-dev/plugin-sdk/usage';
 import { localCaptureBackground } from './background.js';
 import type { CaptureRuntime } from './runtime.js';
 import type { CaptureSummary } from './store/capture.js';
-import type { TelemetryEnvironmentMetricsReadInputV1 } from '@happier-dev/database-protocol';
 import { telemetryPartition } from './telemetry/assignments.js';
 import { analyzeKeyFlow, evaluateKeyFlow, keyFlowRouteKey, type KeyFlowMeasurements } from './analysis/keyFlows.js';
 import { analyzeMetricWindow, type MetricInterval } from './analysis/metrics.js';
@@ -25,7 +28,7 @@ import { readCaptureCostWindow, loadCaptureCostPricingContext } from './costs.js
 
 type TrafficReadInput = Omit<KeyFlowReadInput, 'serverId' | 'measure' | 'serviceName'> & { serviceName?: string;
     measure: Exclude<KeyFlowReadInput['measure'], { kind: 'spend' }> };
-type TelemetryCapabilities = Awaited<ReturnType<PluginInvocationContext['services']['deploymentTelemetry']['readAssignments']>>[number]['capabilities'];
+export type TelemetryCapabilities = Awaited<ReturnType<PluginInvocationContext['services']['deploymentTelemetry']['readAssignments']>>[number]['capabilities'];
 export type KeyFlowWindow = Awaited<ReturnType<typeof readKeyFlowWindow>> & {
     usage?: NonNullable<TelemetryMetricsReadResultV1['usage']> };
 
@@ -193,6 +196,36 @@ function metadata(id: typeof TELEMETRY_METRICS_READ_ACTION_ID_V1 | typeof TELEME
         execution: { target: 'daemon' as const } };
 }
 
+export async function readTelemetryMetricsOverview(
+    runtime: CaptureRuntime | null,
+    input: TelemetryMetricsOverviewInputV1,
+    admitted: { capabilities?: TelemetryCapabilities; collectorMachineId?: string },
+    now: number,
+): Promise<TelemetryMetricsOverviewResultV1> {
+    const httpMeasure = { kind: 'http', statistic: 'p95' } as const;
+    const disabled = keyFlowCapabilityDisabledReason(httpMeasure, admitted.capabilities);
+    if (disabled) throw new PluginError({ code: disabled });
+    if (!runtime || !admitted.collectorMachineId) throw new PluginError({ code: 'collector_unavailable' });
+    const collectorMachineId = admitted.collectorMachineId;
+    const services = await runtime.store.metricServices({
+        worktree: telemetryPartition(input.environmentId), since: input.since, until: input.until,
+    });
+    const serviceName = input.serviceName ?? services[0]?.serviceName;
+    if (!serviceName) return { view: 'overview', services, selected: null, metrics: null };
+    const read = async (measure: TrafficReadInput['measure']) => {
+        const window = await readKeyFlowWindow(runtime, { ...input, serviceName, measure });
+        return { result: evaluateKeyFlowWindow(window, undefined, now, collectorMachineId), trend: [...window.trend] };
+    };
+    const [http, heap, gc, activeRequests] = await Promise.all([
+        read(httpMeasure),
+        read({ kind: 'runtime', metricName: 'v8js.memory.heap.used', statistic: 'latest' }),
+        read({ kind: 'runtime', metricName: 'v8js.gc.duration', statistic: 'p95' }),
+        read({ kind: 'runtime', metricName: 'http.server.active_requests', statistic: 'latest' }),
+    ]);
+    return { view: 'overview', services, selected: { serviceName, serviceVersion: input.serviceVersion ?? null },
+        metrics: { http, heap, gc, activeRequests } };
+}
+
 /** The saved source owns admission and placement; the collector assignment owns capability selection. */
 export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
     [databaseActionLocalIdV1(TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1)]: {
@@ -226,7 +259,7 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
     [databaseActionLocalIdV1(TELEMETRY_METRICS_READ_ACTION_ID_V1)]: {
         ...metadata(TELEMETRY_METRICS_READ_ACTION_ID_V1), inputSchema: keyFlowReadInputSchema, resultSchema: keyFlowReadResultSchema,
         async run(value: unknown, context: PluginInvocationContext) {
-            const input: KeyFlowReadInput | TelemetryEnvironmentMetricsReadInputV1 = keyFlowReadInputSchema.parse(value);
+            const input: ProtocolSchemaInput<typeof keyFlowReadInputSchema> = keyFlowReadInputSchema.parse(value);
             if (input.until <= input.since) throw new PluginError({ code: 'invalid_parameters' });
             const admit = context.services.deploymentDatabases?.admitTelemetryRead;
             if (!admit) throw new PluginError({ code: 'deployment_target_role_unavailable' });
@@ -245,6 +278,9 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
             }
             const admitted = await admit({ serverId: input.serverId, environmentId: input.environmentId });
             const runtime = localCaptureBackground.readRuntime();
+            if ('view' in input) {
+                return projectTelemetryMetricsActionReadResultV1(await readTelemetryMetricsOverview(runtime, input, admitted, context.invokedAtMs));
+            }
             const reason = keyFlowCapabilityDisabledReason(input.measure, admitted.capabilities) ?? (!runtime ? 'collector_unavailable' : undefined);
             if (input.measure.kind === 'spend') {
                 throw new PluginError({ code: 'unsupported_action', message: 'Read App calls spend through the Account Usage query.' });

@@ -16,21 +16,22 @@ import type { ExceptionIssueRecord } from './exceptions/issueRecord.js';
 const source = { kind: 'worktree' as const, serverId: 'home', machineId: 'machine', projectId: 'project', workspaceId: 'workspace' };
 const unavailable = () => { throw new Error('Unused public host service'); };
 
-it('counts open issues across the bounded own and Team reads for the demanded Environments', async () => {
+it('follows the issue count and last occurrence across the bounded own and Team reads', async () => {
     const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN });
     try {
         const resource = host.registration('resources', 'environment-open-issues');
         expect(resource).toBeDefined();
         if (!resource) throw new Error('The Environment issue read is not registered');
-        const row = (rowId: string, status: ExceptionIssueRecord['status'], environmentId = 'app') => ({
-            rowId, revision: 1, value: { id: rowId, environmentId, fingerprint: rowId, title: rowId, status,
-                count: 1, firstSeenAtMs: 1, lastSeenAtMs: 1, asOfMs: 1, createdAtMs: 1, updatedAtMs: 1 },
+        const row = (rowId: string, status: ExceptionIssueRecord['status'], lastSeenAtMs: number) => ({
+            rowId, revision: 1, value: { id: rowId, environmentId: 'app', fingerprint: rowId, title: rowId, status,
+                count: 1, firstSeenAtMs: 1, lastSeenAtMs, asOfMs: lastSeenAtMs, createdAtMs: 1, updatedAtMs: lastSeenAtMs },
         });
+        let resolvedLastSeenAtMs = 4;
         const own = vi.fn(async (_query: { cursor?: string }) => _query.cursor === 'own-next'
-            ? { rows: [row('resolved', 'resolved')], changeCursor: 2 }
-            : { rows: [row('same-id', 'open')], nextCursor: 'own-next', changeCursor: 2 });
+            ? { rows: [row('resolved', 'resolved', resolvedLastSeenAtMs)], changeCursor: 2 }
+            : { rows: [row('same-id', 'open', 3)], nextCursor: 'own-next', changeCursor: 2 });
         const sharedRow = (ownerAccountId: string, rowId: string, access: 'owner' | 'view') => ({
-            ...row(rowId, 'open'), ownerAccountId, access,
+            ...row(rowId, 'open', access === 'owner' ? 10 : 7), ownerAccountId, access,
         });
         const shared = vi.fn(async ({ query }: { query: { cursor?: string } }) => query.cursor === 'team-next'
             ? { rows: [sharedRow('other', 'same-id', 'view')] }
@@ -54,14 +55,17 @@ it('counts open issues across the bounded own and Team reads for the demanded En
         const value = await resource.read(options);
         const snapshot = PluginServiceListFieldResourceResultV1Schema.parse(JSON.parse(String(value)));
         expect(snapshot.items).toEqual([
-            { environmentId: 'app', value: null, facts: { 'open-issues': { value: 2 } } },
-            { environmentId: 'empty', value: null, facts: { 'open-issues': { value: 0 } } },
+            { environmentId: 'app', value: null, facts: { 'open-issues': { value: 2 }, 'last-issue-seen': { value: 7 } } },
+            { environmentId: 'empty', value: null, facts: { 'open-issues': { value: 0 }, 'last-issue-seen': { value: null } } },
         ]);
         const index = { index: 'by-environment', prefixes: [['app'], ['empty']], order: 'asc' };
         expect(own.mock.calls.map(([query]) => query)).toEqual([index, { ...index, cursor: 'own-next' }]);
         expect(shared.mock.calls.map(([request]) => request)).toEqual([{ query: index }, { query: { ...index, cursor: 'team-next' } }]);
+        resolvedLastSeenAtMs = 8;
         invalidated?.();
         expect(notify).toHaveBeenCalledOnce();
+        const refreshed = PluginServiceListFieldResourceResultV1Schema.parse(JSON.parse(String(await resource.read(options))));
+        expect(refreshed.items[0]?.facts).toMatchObject({ 'open-issues': { value: 2 }, 'last-issue-seen': { value: 8 } });
         await observation.dispose();
         expect(dispose).toHaveBeenCalledOnce();
     } finally { await host.dispose(); }
@@ -210,29 +214,35 @@ describe('capture demanded Resource through real public Actions', () => {
     });
 
 
-    it('pushes selected cost operands through the existing demanded Resource and stops its subscription on disposal', async () => {
+    it.each(['finite', 'rolling'] as const)('pushes %s cost operands and stops on disposal', async mode => {
         const fixture = createCaptureSqliteFixture(), owner = localCaptureBackground;
         const lifetime = new AbortController(), consumer = new AbortController();
         for (const migration of captureMigrations) await migration.up(fixture.db);
         const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
         const selectedSource = { kind: 'environment' as const, serverId: 'home', environmentId: 'app' };
-        const deploymentDatabases = { async admitTelemetryRead() { return {
+        const admitTelemetryRead = vi.fn(async () => ({
             environment: { serverId: 'home', environmentId: 'app', revision: 1 }, collectorMachineId: 'collector',
             capabilities: { queries: true, traces: true, appLlmCost: true },
-        }; } } as unknown as PluginServices['deploymentDatabases'];
+        }));
+        const deploymentDatabases = { admitTelemetryRead } as unknown as PluginServices['deploymentDatabases'];
         const lease = await owner.acquireRuntime({ signal: lifetime.signal, services: { storage } });
         const partition = captureSourcePartition(selectedSource, undefined);
         const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
             services: { storage, deploymentDatabases } });
-        const options: PluginDynamicResourceInvocationOptionsV1 = { signal: consumer.signal,
-            context: { kind: 'surface', mountInstanceKey: 'costs', launchInput: { view: 'costs', input: { source: selectedSource, since: 0, until: 100 } } },
+        const options = { signal: consumer.signal, requesterAccount: { accountId: 'requester' },
+            chosenMachine: { machineId: 'collector', installationId: 'installation' }, daemonStorage: storage.daemon, deploymentDatabases,
+            context: { kind: 'surface', mountInstanceKey: 'costs', launchInput: mode === 'rolling'
+                ? { view: 'costs', windowMs: 100, input: { source: selectedSource, serviceName: 'api', groupByRoute: true } }
+                : { view: 'costs', input: { source: selectedSource, since: 0, until: 100 } } },
             resources: { describe: unavailable, read: unavailable, watch: unavailable, invokeDemand: unavailable, notifyDemands: unavailable },
             observeAction: unavailable,
             async readAction(ref, input) {
+                if (mode === 'rolling') throw new Error('admitted rolling reads must use their selected source');
                 return { ok: true, result: await host.invokeAction(ref.localId, input) };
             },
-        };
+        } satisfies PluginDynamicResourceInvocationOptionsV1;
         try {
+            vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(100);
             const resource = host.registration('resources', database.DATABASE_CAPTURE_RESOURCE_ID_V1);
             expect(resource).toBeDefined();
             if (!resource?.createProducer) throw new Error('Resource registration missing');
@@ -245,17 +255,105 @@ describe('capture demanded Resource through real public Actions', () => {
                 expect(JSON.parse(String(await producer.read(options)))).toMatchObject({ view: 'costs', result: {
                     ok: true, items: [], coverage: { callCount: 0 } } });
                 const tokens = { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: null };
-                await lease.runtime.store.write([{ id: 'call', kind: 'span', source: 'otlp', worktree: partition, at: 1,
+                await lease.runtime.store.write([{ id: 'call', kind: 'span', source: 'otlp', worktree: partition, at: 1, serviceName: 'api',
                     genAi: { provider: null, modelId: 'model', requestedModel: 'model', operation: 'chat', tokens,
                         tokenCategories: tokens, reportedCost: null } }]);
                 expect(invalidations).toBe(1);
                 const snapshot = database.DatabaseCaptureResourceSnapshotV1Schema.parse(JSON.parse(String(await producer.read(options))));
                 expect(snapshot).toMatchObject({ view: 'costs', result: { ok: true, coverage: { callCount: 1 }, items: [{ tokens }] } });
+                if (mode === 'rolling') expect(admitTelemetryRead).toHaveBeenCalledTimes(1);
                 await observation.dispose(); await producer.dispose();
                 await lease.runtime.clear(partition);
                 expect(invalidations).toBe(1);
             } finally { await observation.dispose(); await producer.dispose(); }
-        } finally { consumer.abort(); lifetime.abort(); await host.dispose(); await lease.release(); fixture.close(); }
+        } finally { vi.useRealTimers(); consumer.abort(); lifetime.abort(); await host.dispose(); await lease.release(); fixture.close(); }
+    });
+
+    it('pushes the selected Metrics overview only on collector changes until the viewer closes it', async () => {
+        const fixture = createCaptureSqliteFixture();
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        const lifetime = new AbortController();
+        const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
+        const admitTelemetryRead = vi.fn(async () => ({
+            collectorMachineId: 'collector', capabilities: { metrics: true },
+        }));
+        const deploymentDatabases = { admitTelemetryRead } as unknown as PluginServices['deploymentDatabases'];
+        const lease = await localCaptureBackground.acquireRuntime({ signal: lifetime.signal, services: { storage } });
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
+            services: { storage, deploymentDatabases } });
+        try {
+            const resource = host.registration('resources', database.DATABASE_CAPTURE_RESOURCE_ID_V1);
+            if (!resource?.createProducer) throw new Error('Resource registration missing');
+            const options = {
+                signal: lifetime.signal, requesterAccount: { accountId: 'requester' },
+                chosenMachine: { machineId: 'collector', installationId: 'installation' },
+                daemonStorage: storage.daemon, deploymentDatabases,
+                context: { kind: 'surface', mountInstanceKey: 'metrics', launchInput: { view: 'metrics', windowMs: 100_000,
+                    input: { view: 'overview', serverId: 'home', environmentId: 'app' } } },
+                resources: { describe: unavailable, read: unavailable, watch: unavailable, invokeDemand: unavailable, notifyDemands: unavailable },
+                observeAction: unavailable, readAction: unavailable,
+            } satisfies PluginDynamicResourceInvocationOptionsV1;
+            const producer = await resource.createProducer(options);
+            let invalidations = 0;
+            const watch = await producer.observe(() => { invalidations++; }, options);
+            const span = (environment: string) => ({ id: environment, kind: 'span' as const, spanKind: 2, source: 'otlp' as const,
+                worktree: `environment:${environment}`, at: Date.now() - 10, serviceName: 'api', durationMs: 18 });
+            try {
+                expect(JSON.parse(String(await producer.read(options)))).toMatchObject({ view: 'metrics', result: { services: [], selected: null } });
+                await lease.runtime.store.write([span('unrelated')]);
+                expect(invalidations).toBe(0);
+                await lease.runtime.store.write([span('app')]);
+                expect(invalidations).toBe(1);
+                const snapshot = database.DatabaseCaptureResourceSnapshotV1Schema.parse(JSON.parse(String(await producer.read(options))));
+                expect(snapshot).toMatchObject({ view: 'metrics', result: { selected: { serviceName: 'api' } } });
+                expect(admitTelemetryRead).toHaveBeenCalledTimes(1);
+            } finally { await watch.dispose(); await producer.dispose(); }
+            await lease.runtime.clear('environment:app');
+            expect(invalidations).toBe(1);
+        } finally { lifetime.abort(); await host.dispose(); await lease.release(); fixture.close(); }
+    });
+
+    it('pushes the latest retained exception without writing Account issue metadata', async () => {
+        const fixture = createCaptureSqliteFixture();
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        const lifetime = new AbortController();
+        const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
+        const admitTelemetryRead = vi.fn(async () => ({ collectorMachineId: 'collector', capabilities: { exceptions: true } }));
+        const deploymentDatabases = { admitTelemetryRead } as unknown as PluginServices['deploymentDatabases'];
+        const lease = await localCaptureBackground.acquireRuntime({ signal: lifetime.signal, services: { storage } });
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
+            services: { storage, deploymentDatabases } });
+        try {
+            const resource = host.registration('resources', database.DATABASE_CAPTURE_RESOURCE_ID_V1);
+            if (!resource?.createProducer) throw new Error('Resource registration missing');
+            const options = {
+                signal: lifetime.signal, requesterAccount: { accountId: 'requester' },
+                chosenMachine: { machineId: 'collector', installationId: 'installation' },
+                daemonStorage: storage.daemon, deploymentDatabases,
+                context: { kind: 'surface', mountInstanceKey: 'status', launchInput: { view: 'status',
+                    input: { source: { kind: 'environment', serverId: 'home', environmentId: 'app' } } } },
+                resources: { describe: unavailable, read: unavailable, watch: unavailable, invokeDemand: unavailable, notifyDemands: unavailable },
+                observeAction: unavailable, readAction: unavailable,
+            } satisfies PluginDynamicResourceInvocationOptionsV1;
+            const producer = await resource.createProducer(options);
+            let invalidations = 0;
+            const watch = await producer.observe(() => { invalidations++; }, options);
+            const occurrence = (environment: string, at: number) => ({ id: `${environment}:${at}`, kind: 'exception' as const,
+                worktree: `environment:${environment}`, at, fingerprint: 'same-issue', origin: 'span' as const,
+                serviceName: 'api', type: 'TypeError', message: 'Unexpected value', detail: {} });
+            try {
+                const read = async () => database.DatabaseCaptureResourceSnapshotV1Schema.parse(JSON.parse(String(await producer.read(options))));
+                expect(await read()).toMatchObject({ view: 'status', result: { capabilityLastSampleAt: { exceptions: null } } });
+                await lease.runtime.store.write([occurrence('other', 4)]);
+                expect(invalidations).toBe(0);
+                await lease.runtime.store.write([occurrence('app', 5), occurrence('app', 6)]);
+                expect(invalidations).toBe(1);
+                expect(await read()).toMatchObject({ view: 'status', result: { capabilityLastSampleAt: { exceptions: 6 } } });
+                expect(admitTelemetryRead).toHaveBeenCalledTimes(1);
+            } finally { await watch.dispose(); await producer.dispose(); }
+            await lease.runtime.store.write([occurrence('app', 7)]);
+            expect(invalidations).toBe(1);
+        } finally { lifetime.abort(); await host.dispose(); await lease.release(); fixture.close(); }
     });
 
     it('reads actual selected bytes, observes only after a successful baseline, and stops on typed transport refusal and disposal', async () => {

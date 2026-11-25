@@ -124,10 +124,11 @@ export function readComparedBeforeValue(compared: unknown): number | null {
 }
 
 type Measurements = TelemetryMetricsReadResultV1['result']['measurements'];
+type MeasurementRead = Pick<TelemetryMetricsReadResultV1, 'result'>;
 type Interval = TelemetryMetricsReadResultV1['trend'][number];
 
 function measurementsOf(
-  read: TelemetryMetricsReadResultV1,
+  read: MeasurementRead,
 ): NonNullable<Measurements> | null {
   return read.result.measurements ?? null;
 }
@@ -141,7 +142,7 @@ function secondsOf(
 
 /** Requests per second over the read window, from the collector's request count. */
 export function readRequestRate(
-  read: TelemetryMetricsReadResultV1,
+  read: MeasurementRead,
 ): number | null {
   const measured = measurementsOf(read);
   const seconds = measured
@@ -152,12 +153,12 @@ export function readRequestRate(
     : measured.requestCount / seconds;
 }
 
-export function readP95Ms(read: TelemetryMetricsReadResultV1): number | null {
+export function readP95Ms(read: MeasurementRead): number | null {
   return measurementsOf(read)?.p95Ms ?? null;
 }
 
 export function readErrorRate(
-  read: TelemetryMetricsReadResultV1,
+  read: MeasurementRead,
 ): number | null {
   return measurementsOf(read)?.errorRate ?? null;
 }
@@ -165,7 +166,7 @@ export function readErrorRate(
 /** The selected metric's one number for the window. */
 export function readMetricValue(
   metric: TelemetryWidgetMetricV1,
-  read: TelemetryMetricsReadResultV1,
+  read: MeasurementRead,
 ): number | null {
   if (metric === 'requests') return readRequestRate(read);
   if (metric === 'errorRate') return readErrorRate(read);

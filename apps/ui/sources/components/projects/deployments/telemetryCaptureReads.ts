@@ -27,11 +27,8 @@ import {
   type DatabaseCaptureSummaryV1,
   type DatabaseCaptureSourceV1,
   type DatabaseCaptureTracesListInputV1,
-  DatabaseCaptureCostsReadResultV1Schema,
   TELEMETRY_COSTS_READ_ACTION_ID_V1,
   TELEMETRY_METRICS_READ_ACTION_ID_V1,
-  TelemetryMetricsReadResultV1Schema,
-  type TelemetryMetricsReadInputV1,
 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { projectCapturedLogBody } from '@happier-dev/plugins-telemetry/capture-views';
@@ -122,7 +119,9 @@ export type TelemetryCaptureConfigureOutcome =
   | Readonly<{ kind: 'configured'; enabled: boolean }>
   | Readonly<{ kind: 'approval_pending'; artifactId: string }>;
 
-export type TelemetryCaptureList = keyof typeof DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1;
+export type TelemetryCaptureList = Exclude<keyof typeof DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, 'costs' | 'metrics'>;
+export type TelemetryAppLlmCallSelection = NonNullable<DatabaseCaptureTracesListInputV1['appLlmCalls']>;
+export type TelemetryMetricsSelection = Readonly<{ serviceName?: string; serviceVersion?: string }>;
 export type TelemetryCapturePage<Item, Cursor> = Readonly<{
   items: readonly Item[];
   nextCursor: Cursor | null;
@@ -141,7 +140,7 @@ function unreadableCapture() {
   return new HappyError(code, false, { code });
 }
 
-export function readTelemetryCaptureListSnapshot(list: TelemetryCaptureList, bytes: Uint8Array): TelemetryCaptureListSnapshot {
+function readTelemetryCaptureSnapshot(bytes: Uint8Array) {
   let raw: unknown;
   try {
     raw = JSON.parse(new TextDecoder().decode(bytes));
@@ -149,8 +148,31 @@ export function readTelemetryCaptureListSnapshot(list: TelemetryCaptureList, byt
     throw unreadableCapture();
   }
   const parsed = DatabaseCaptureResourceSnapshotV1Schema.safeParse(raw);
-  if (!parsed.success || parsed.data.view !== list) throw unreadableCapture();
-  const snapshot = parsed.data;
+  if (!parsed.success) throw unreadableCapture();
+  return parsed.data;
+}
+
+export function readTelemetryCaptureCostsSnapshot(bytes: Uint8Array) {
+  const snapshot = readTelemetryCaptureSnapshot(bytes);
+  if (snapshot.view !== 'costs') throw unreadableCapture();
+  return settle({ success: true, data: snapshot.result });
+}
+
+export function readTelemetryCaptureMetricsSnapshot(bytes: Uint8Array) {
+  const snapshot = readTelemetryCaptureSnapshot(bytes);
+  if (snapshot.view !== 'metrics') throw unreadableCapture();
+  return snapshot.result;
+}
+
+export function readTelemetryCaptureStatusSnapshot(bytes: Uint8Array) {
+  const snapshot = readTelemetryCaptureSnapshot(bytes);
+  if (snapshot.view !== 'status') throw unreadableCapture();
+  return settle({ success: true, data: snapshot.result });
+}
+
+export function readTelemetryCaptureListSnapshot(list: TelemetryCaptureList, bytes: Uint8Array): TelemetryCaptureListSnapshot {
+  const snapshot = readTelemetryCaptureSnapshot(bytes);
+  if (snapshot.view !== list) throw unreadableCapture();
   if (!snapshot.window) throw unreadableCapture();
   const { window, coverage } = snapshot;
   if (snapshot.view === 'endpoints') {
@@ -210,14 +232,40 @@ export function createTelemetryCaptureReads(
   const window = (since: number, until: number) => ({ since, until });
   return {
     targetMachineId: environment.collectorMachineId,
-    listReference(list: TelemetryCaptureList, windowMs: number): PluginUiTelemetryCaptureReadReferenceV1 {
+    listReference(list: TelemetryCaptureList, windowMs: number, appLlmCalls?: TelemetryAppLlmCallSelection): PluginUiTelemetryCaptureReadReferenceV1 {
       return {
         hostRead: 'telemetry.capture',
         input: {
           action: parseQualifiedPluginActionId(DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1[list])!,
-          input: { source: source(environment), page: { limit: PAGE_LIMIT } },
+          input: { source: source(environment), page: { limit: PAGE_LIMIT }, ...(appLlmCalls ? { appLlmCalls } : {}) },
         },
         windowMs,
+      };
+    },
+    costsReference(selection: TelemetryAppLlmCallSelection, windowMs: number): PluginUiTelemetryCaptureReadReferenceV1 {
+      return {
+        hostRead: 'telemetry.capture',
+        input: {
+          action: parseQualifiedPluginActionId(TELEMETRY_COSTS_READ_ACTION_ID_V1)!,
+          input: { source: source(environment), ...selection, granularity: 'day', groupByRoute: true },
+        },
+        windowMs,
+      };
+    },
+    metricsReference(selection: TelemetryMetricsSelection, windowMs: number): PluginUiTelemetryCaptureReadReferenceV1 {
+      return {
+        hostRead: 'telemetry.capture',
+        input: {
+          action: parseQualifiedPluginActionId(TELEMETRY_METRICS_READ_ACTION_ID_V1)!,
+          input: { view: 'overview', serverId: environment.scope.serverId, environmentId: environment.environmentId, ...selection },
+        },
+        windowMs,
+      };
+    },
+    statusReference(): PluginUiTelemetryCaptureReadReferenceV1 {
+      return {
+        hostRead: 'telemetry.capture',
+        input: { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_STATUS_ACTION_ID_V1)!, input: { source: source(environment) } },
       };
     },
     async clear() {
@@ -308,7 +356,7 @@ export function createTelemetryCaptureReads(
     },
     /** Retained individual calls for the LLM calls view; each row keeps its own Trace detail operand. */
     async appLlmCalls(
-      selection: NonNullable<DatabaseCaptureTracesListInputV1['appLlmCalls']>,
+      selection: TelemetryAppLlmCallSelection,
       since: number,
       until: number,
       before: DatabaseCaptureCursorV1 | null,
@@ -320,26 +368,6 @@ export function createTelemetryCaptureReads(
         await call(DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, input, signal),
       ));
       return { items: result.items, nextCursor: result.nextCursor ?? null };
-    },
-    /** The window's App LLM call totals and coverage (J4); pricing stays with Usage's catalog and the viewer's prices. */
-    async costs(since: number, until: number, signal?: AbortSignal) {
-      return settle(DatabaseCaptureCostsReadResultV1Schema.safeParse(
-        await call(TELEMETRY_COSTS_READ_ACTION_ID_V1, { source: source(environment), since, until }, signal),
-      ));
-    },
-    /** One service's selected measure over the window (J5), as the check pages and widgets read it. */
-    async metrics(
-      selection: Readonly<{ serviceName: string; measure: TelemetryMetricsReadInputV1['measure'] }>,
-      since: number,
-      until: number,
-      signal?: AbortSignal,
-    ) {
-      if (!environment.environmentId) throw new HappyError('telemetry_unavailable', false, { code: 'telemetry_unavailable' });
-      const read = await call(TELEMETRY_METRICS_READ_ACTION_ID_V1, { serverId: environment.scope.serverId,
-        environmentId: environment.environmentId, serviceName: selection.serviceName, measure: selection.measure, since, until }, signal);
-      const parsed = TelemetryMetricsReadResultV1Schema.safeParse(read);
-      if (!parsed.success) throw unreadableCapture();
-      return parsed.data;
     },
     async trace(
       traceId: string,

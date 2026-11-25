@@ -36,7 +36,11 @@ export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version:
     AND NOT EXISTS (SELECT 1 FROM captureExceptions AS exception WHERE exception.worktree = detail.worktree AND exception.id = detail.id)`);
 } }, { version: 9, id: 'worktree-database-member', async up(tx) {
  await tx.execute('ALTER TABLE captureSummaries ADD COLUMN databaseMemberKey TEXT');
-} }, productionFindingMigration];
+} }, productionFindingMigration, { version: 11, id: 'environment-status-time', async up(tx) {
+ // The open status reads the latest exception across fingerprints and the latest cost across models.
+ await tx.execute('CREATE INDEX captureExceptionTime ON captureExceptions(worktree,at)');
+ await tx.execute('CREATE INDEX captureAppLlmTime ON captureSummaries(worktree,at) WHERE genAi IS NOT NULL');
+} }];
 const summaryFields = ['id','worktree','kind','source','at','shape','traceId','spanId','durationMs','outcome','parentSpanId','spanKind','serviceName','endpointMethod','endpointRoute','httpStatusCode','statementKind','parameterIdentity','executionIdentity','callsite','transactionId','retryOf','connectionId','severityNumber'] as const;
 const summaryWriteFields = [...summaryFields, 'serviceVersion', 'genAi', 'databaseMemberKey'] as const;
 const changingFields = summaryWriteFields.filter(field => field !== 'id' && field !== 'worktree');

@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
+import type { PluginUiResourceProjection } from '@happier-dev/plugin-ui/hostApi';
+import { useMachineServiceResource } from '@/components/machines/resources/useMachineServiceResource';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import {
   formatTelemetryMetric,
   intervalMetricValue,
   readMetricValue,
-  telemetryWidgetMeasure,
   type TelemetryWidgetMetricV1,
 } from '@happier-dev/plugins-telemetry/capture-views';
 import {
@@ -18,6 +19,7 @@ import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemePro
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -27,23 +29,18 @@ import {
   TelemetryChartHead,
 } from './TelemetryChartHead';
 import {
-  telemetryCaptureFailureCode,
+  readTelemetryCaptureMetricsSnapshot,
+  TelemetryCaptureTransportContext,
+  type TelemetryMetricsSelection,
   type TelemetryCaptureReads,
 } from './telemetryCaptureReads';
 import { serviceCheckWindowEnds } from './serviceCheckPresentation';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
-type Read =
-  | Readonly<{ kind: 'loading' }>
-  | Readonly<{ kind: 'empty' }>
-  | Readonly<{
-      kind: 'ready';
-      services: readonly string[];
-      service: string;
-      http: TelemetryMetricsReadResultV1;
-      heap: TelemetryMetricsReadResultV1 | null;
-    }>
-  | Readonly<{ kind: 'unavailable'; code: string }>;
+const METRICS_PROJECTION: PluginUiResourceProjection<ReturnType<typeof readTelemetryCaptureMetricsSnapshot>> = {
+  decode: content => readTelemetryCaptureMetricsSnapshot(content.bytes),
+};
+const ALL_VERSIONS = '';
 
 type Chart = Readonly<{
   metric: TelemetryWidgetMetricV1;
@@ -51,118 +48,50 @@ type Chart = Readonly<{
   detail: string | null;
 }>;
 
-/**
- * Telemetry → Metrics (P7 J5): one service's request time, traffic and errors from one whole-service read (its
- * intervals carry all three), and its heap from the runtime metric the SDKs report, over the tab's window. The
- * measure and units are the Telemetry widgets' own vocabulary; a metric the runtime does not report says so.
- */
-export function TelemetryMetrics(
-  props: Readonly<{
-    reads: TelemetryCaptureReads;
-    active: boolean;
-    windowMs: number;
-    locale: string;
-  }>,
-) {
-  const { reads, active, windowMs, locale } = props;
+/** One rolling collector read for the selected Environment, service, version and window. */
+export function TelemetryMetrics(props: Readonly<{
+  reads: TelemetryCaptureReads;
+  lifetime: ServerAccountScopeLifetime | null;
+  active: boolean;
+  windowMs: number;
+  locale: string;
+}>) {
+  const { reads, lifetime, active, windowMs, locale } = props;
   const { theme } = useUnistyles();
   const chartTheme = usePluginUiTheme(theme);
-  const [chosen, setChosen] = React.useState<string | null>(null);
-  const [read, setRead] = React.useState<Read>({ kind: 'loading' });
-  const [attempt, setAttempt] = React.useState(0);
+  const { createResourceClient } = React.useContext(TelemetryCaptureTransportContext);
+  const [selection, setSelection] = React.useState<TelemetryMetricsSelection>({});
   const [width, setWidth] = React.useState<number | null>(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
-  React.useEffect(() => {
-    if (!active) return;
-    const controller = new AbortController();
-    const until = Date.now();
-    const since = until - windowMs;
-    (async () => {
-      // The services that answered in this window, busiest first (the Endpoints read's own order).
-      const endpoints = await reads.endpoints(
-        since,
-        until,
-        null,
-        controller.signal,
-      );
-      const services = [
-        ...new Set(
-          endpoints.items
-            .map((endpoint) => endpoint.serviceName)
-            .filter(Boolean),
-        ),
-      ];
-      const service =
-        chosen !== null && services.includes(chosen) ? chosen : services[0];
-      if (!service) return { kind: 'empty' } as const;
-      const [http, heap] = await Promise.all([
-        reads.metrics(
-          { serviceName: service, measure: telemetryWidgetMeasure('p95') },
-          since,
-          until,
-          controller.signal,
-        ),
-        reads
-          .metrics(
-            { serviceName: service, measure: telemetryWidgetMeasure('heap') },
-            since,
-            until,
-            controller.signal,
-          )
-          .catch(() => null),
-      ]);
-      return { kind: 'ready', services, service, http, heap } as const;
-    })().then(
-      (next) => {
-        if (!controller.signal.aborted) setRead(next);
-      },
-      (error: unknown) => {
-        if (!controller.signal.aborted)
-          setRead({
-            kind: 'unavailable',
-            code: telemetryCaptureFailureCode(error),
-          });
-      },
-    );
-    return () => controller.abort();
-  }, [reads, active, windowMs, chosen, attempt]);
-
-  if (read.kind === 'unavailable') {
-    return (
-      <SurfaceStateCard
-        testID="project-deployments.telemetry.metrics.unavailable"
-        kind="unavailable"
-        size="line"
-        title={t('deploymentTelemetry.metrics.unavailable')}
-        diagnosticCode={read.code}
-        action={{
-          label: t('common.retry'),
-          onPress: () => setAttempt((value) => value + 1),
-        }}
-      />
+  const [versionsOpen, setVersionsOpen] = React.useState(false);
+  const reference = React.useMemo(() => reads.metricsReference(selection, windowMs), [reads, selection, windowMs]);
+  const snapshot = useMachineServiceResource({
+    accountLifetime: lifetime, reference, targetMachineId: reads.targetMachineId,
+    active, follow: true, projection: METRICS_PROJECTION, createClient: createResourceClient,
+  });
+  const read = snapshot?.value;
+  const failure = snapshot?.error;
+  const retry = () => { void snapshot?.refresh(); };
+  if (!read) {
+    return failure ? (
+      <SurfaceStateCard testID="project-deployments.telemetry.metrics.unavailable" kind="unavailable" size="line"
+        title={t('deploymentTelemetry.metrics.unavailable')} diagnosticCode={failure.code}
+        action={{ label: t('common.retry'), onPress: retry }} />
+    ) : (
+      <SurfaceStateCard testID="project-deployments.telemetry.metrics.reading" kind="loading" size="line"
+        title={t('deploymentTelemetry.metrics.reading')} />
     );
   }
-  if (read.kind === 'empty') {
+  if (!read.metrics || !read.selected) {
     return (
-      <SurfaceStateCard
-        testID="project-deployments.telemetry.metrics.empty"
-        kind="empty"
-        size="line"
-        title={t('deploymentTelemetry.metrics.noService')}
-      />
+      <SurfaceStateCard testID="project-deployments.telemetry.metrics.empty" kind="empty" size="line"
+        title={t('deploymentTelemetry.metrics.noService')} />
     );
   }
-  if (read.kind === 'loading') {
-    return (
-      <SurfaceStateCard
-        testID="project-deployments.telemetry.metrics.reading"
-        kind="loading"
-        size="line"
-        title={t('deploymentTelemetry.metrics.reading')}
-      />
-    );
-  }
-  const p50 = read.http.result.measurements?.p50Ms ?? null;
+  const { http, heap, gc, activeRequests } = read.metrics;
+  const { serviceName, serviceVersion } = read.selected;
+  const versions = read.services.find(service => service.serviceName === serviceName)?.versions ?? [];
+  const p50 = http.result.measurements?.p50Ms ?? null;
   const charts: readonly Chart[] = [
     {
       metric: 'p95',
@@ -190,26 +119,26 @@ export function TelemetryMetrics(
   const twoUp = width !== null && width >= TELEMETRY_CHART_MIN_WIDTH_PX * 2;
   const color = theme.colors.text.secondary;
   const serviceChoice =
-    read.services.length > 1 ? (
+    read.services.some(service => service.serviceName !== serviceName) ? (
       <DropdownMenu
         open={menuOpen}
         onOpenChange={setMenuOpen}
         items={read.services.map((service) => ({
-          id: service,
-          title: service,
-          testID: `project-deployments.telemetry.metrics.service.${service}`,
+          id: service.serviceName,
+          title: service.serviceName,
+          testID: `project-deployments.telemetry.metrics.service.${service.serviceName}`,
         }))}
         matchTriggerWidth={false}
         placement="bottom"
         popoverAccessibilityLabel={t('deploymentTelemetry.metrics.service')}
         onSelect={(id) => {
           setMenuOpen(false);
-          setChosen(id);
+          setSelection({ serviceName: id });
         }}
         trigger={({ toggle }) => (
           <TextLinkButton
             testID="project-deployments.telemetry.metrics.service"
-            label={read.service}
+            label={serviceName}
             size="meta"
             onPress={toggle}
           />
@@ -217,16 +146,35 @@ export function TelemetryMetrics(
       />
     ) : (
       <Text variant="meta" style={styles.quiet}>
-        {read.service}
+        {serviceName}
       </Text>
     );
+  const allVersions = t('deploymentTelemetry.metrics.allVersions');
+  const versionChoice = versions.length > 0 || serviceVersion !== null ? (
+    <DropdownMenu open={versionsOpen} onOpenChange={setVersionsOpen}
+      items={[{ id: ALL_VERSIONS, title: allVersions }, ...versions.map(version => ({
+        id: version, title: version, testID: `project-deployments.telemetry.metrics.version.${version}`,
+      }))]}
+      matchTriggerWidth={false} placement="bottom" popoverAccessibilityLabel={t('common.version')}
+      onSelect={id => {
+        setVersionsOpen(false);
+        setSelection({ serviceName, ...(id === ALL_VERSIONS ? {} : { serviceVersion: id }) });
+      }}
+      trigger={({ toggle }) => <TextLinkButton testID="project-deployments.telemetry.metrics.version"
+        accessibilityLabel={t('common.version')} label={serviceVersion ?? allVersions} size="meta" onPress={toggle} />}
+    />
+  ) : null;
   return (
     <ItemGroup
       title={t('deploymentTelemetry.metrics.service')}
-      action={serviceChoice}
       surface="none"
       testID="project-deployments.telemetry.metrics"
     >
+      <View style={styles.selection}>{serviceChoice}{versionChoice}</View>
+      {failure || snapshot?.freshness === 'stale' ? (
+        <SurfaceFreshnessLine reason={failure?.message ?? t('common.unavailable')}
+          action={{ label: t('common.retry'), onPress: retry }} />
+      ) : null}
       <View
         style={[styles.charts, twoUp ? styles.chartsRow : null]}
         onLayout={(event) =>
@@ -234,19 +182,19 @@ export function TelemetryMetrics(
         }
       >
         {charts.map((chart) => {
-          const source = chart.metric === 'heap' ? read.heap : read.http;
-          const value = source ? readMetricValue(chart.metric, source) : null;
+          const source = chart.metric === 'heap' ? heap : http;
+          const value = readMetricValue(chart.metric, source);
           const pick = intervalMetricValue(chart.metric);
           const points =
-            source?.trend.map((interval) => ({
+            source.trend.map((interval) => ({
               id: JSON.stringify([interval.since, interval.until]),
               x: interval.until,
               y: pick(interval) ?? null,
               // The pointer reads each interval by its clock time, as the check page's trend does.
               label: formatWithCachedDateTimeFormatter(interval.until, locale, { hour: 'numeric', minute: '2-digit' }),
-            })) ?? [];
-          const first = source?.trend[0];
-          const last = source?.trend[source.trend.length - 1];
+            }));
+          const first = source.trend[0];
+          const last = source.trend.at(-1);
           const series: HappierSeries = {
             id: chart.metric,
             label: chart.title,
@@ -289,12 +237,26 @@ export function TelemetryMetrics(
             </View>
           );
         })}
+        {([
+          ['gc', t('deploymentTelemetry.metrics.gc'), gc.result],
+          ['activeRequests', t('deploymentTelemetry.metrics.activeRequests'), activeRequests.result],
+        ] as const).map(([id, title, result]) => {
+          const measurement = result.status === 'unknown' ? undefined : result.measurements;
+          const value = measurement?.value;
+          return <View key={id} style={[styles.chart, twoUp ? styles.chartHalf : null]}
+            testID={`project-deployments.telemetry.metrics.${id}`}>
+            <TelemetryChartHead title={title} latest={value === undefined ? '—'
+              : `${value.toLocaleString(locale)}${id === 'gc' && measurement?.unit ? ` ${measurement.unit}` : ''}`}
+              detail={value === undefined ? t('deploymentTelemetry.metrics.notReported') : null} />
+          </View>;
+        })}
       </View>
     </ItemGroup>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  selection: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
   quiet: { color: theme.colors.text.secondary },
   charts: { gap: theme.space.s16 },
   chartsRow: { flexDirection: 'row', flexWrap: 'wrap' },

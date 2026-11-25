@@ -1,8 +1,9 @@
 import { z } from 'zod/mini';
+import { telemetryMetricsOverviewResult, telemetryMetricsOverviewSelection } from './telemetryMetrics.js';
 import type { PluginJsonValueV2, ProtocolComposableSchema, ProtocolJsonValue } from '../protocol/protocolFacade.js';
 import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
 import { DatabaseFailureV1Schema } from './schemas/databaseOperations.js';
-import { DatabaseCaptureCostMetadataV1Schema, DatabaseCaptureCostsReadInputV1Schema, DatabaseCaptureCostsReadResultV1Schema } from './databaseCaptureCosts.js';
+import { databaseCaptureCostsSelection, DatabaseCaptureCostMetadataV1Schema, DatabaseCaptureCostsReadInputV1Schema, DatabaseCaptureCostsReadResultV1Schema } from './databaseCaptureCosts.js';
 import { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 import {
     databaseCaptureQueryScope,
@@ -121,7 +122,11 @@ export const DatabaseCaptureConfigureInputV1Schema = z.strictObject({
 export const DatabaseCaptureConfigureResultV1Schema = z.union([DatabaseFailureV1Schema, z.strictObject({ ok: z.literal(true), enabled: z.boolean() })]);
 
 export const DatabaseCaptureResourceInputV1Schema = z.discriminatedUnion('view', [
-    z.strictObject({ view: z.literal('costs'), input: DatabaseCaptureCostsReadInputV1Schema }),
+    z.strictObject({ view: z.literal('metrics'), windowMs: z.number().check(z.int(), z.positive()),
+        input: z.strictObject(telemetryMetricsOverviewSelection) }),
+    z.strictObject({ view: z.literal('costs'), windowMs: z.optional(z.number().check(z.int(), z.positive())),
+        input: z.union([DatabaseCaptureCostsReadInputV1Schema, z.strictObject(databaseCaptureCostsSelection)]),
+    }).check(z.refine(demand => demand.windowMs !== undefined || 'since' in demand.input, 'Expected a selected costs window')),
     z.strictObject({ view: z.literal('status'), input: DatabaseCaptureStatusInputV1Schema }),
     z.strictObject({ view: z.literal('queries'), windowMs: z.optional(z.number().check(z.int(), z.positive())), input: DatabaseCaptureQueriesListInputV1Schema }),
     z.strictObject({ view: z.literal('query'), input: DatabaseCaptureQueryGetInputV1Schema }),
@@ -135,6 +140,7 @@ const captureResourcePageMetadata = {
     coverage: z.optional(DatabaseCaptureCoverageV1Schema),
 };
 export const DatabaseCaptureResourceSnapshotV1Schema = z.discriminatedUnion('view', [
+    z.strictObject({ view: z.literal('metrics'), result: telemetryMetricsOverviewResult }),
     z.strictObject({ view: z.literal('costs'), result: DatabaseCaptureCostsReadResultV1Schema }),
     z.strictObject({ view: z.literal('status'), result: DatabaseCaptureStatusResultV1Schema }),
     z.strictObject({ view: z.literal('queries'), ...captureResourcePageMetadata, result: DatabaseCaptureQueriesListResultV1Schema }),

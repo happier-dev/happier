@@ -9,7 +9,8 @@ import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
 import { productionFindingEventParts } from './telemetry/productionFindingEvent.js';
 import { telemetryExceptionManifestParts, telemetryExceptionSourceContribution } from './exceptions/contribution.js';
-import { TELEMETRY_ACCOUNT_DEFINITION, TELEMETRY_OPEN_ISSUES_FIELD } from './exceptions/serviceFacts.js';
+import { TELEMETRY_ACCOUNT_DEFINITION } from './exceptions/serviceFacts.js';
+import { TELEMETRY_OPEN_ISSUES_FIELD } from './exceptions/serviceFactIds.js';
 import { createCaptureActionProducers, createCaptureActions, createCapturePublicActionProducers } from './actions.js';
 import { createCaptureResourceRuntime, TELEMETRY_SERVICE_SUMMARY_FIELDS } from './resources.js';
 import { captureSourcePartition } from './partition.js';
@@ -43,8 +44,8 @@ async function admitCaptureSource(source: DatabaseCaptureSourceV1, context: Capt
   return { source, partition };
  }
  if (!deployments?.admitTelemetryRead) throw new PluginError({ code: 'deployment_target_role_unavailable' });
- const { collectorMachineId, assignmentStamped } = await deployments.admitTelemetryRead(environment);
- return { source, partition, collectorMachineId, ...(assignmentStamped === undefined ? {} : { assignmentStamped }) };
+ const { collectorMachineId, assignmentStamped, capabilities } = await deployments.admitTelemetryRead(environment);
+ return { source, partition, collectorMachineId, capabilities, ...(assignmentStamped === undefined ? {} : { assignmentStamped }) };
 }
 
 const capture = createCapturePublicActionProducers({

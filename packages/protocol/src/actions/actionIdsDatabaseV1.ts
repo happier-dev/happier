@@ -36,17 +36,19 @@ export const DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1 = 'happier.telemetry/acti
 export const DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1 = 'happier.telemetry/actions/capture/trace/get' as const;
 export const DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1 = 'happier.telemetry/actions/capture/logs/list' as const;
 export const DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 = 'happier.telemetry/actions/capture/endpoints/list' as const;
-/** The native capture lists use the same finite Action selection in the Resource. */
+export const TELEMETRY_COSTS_READ_ACTION_ID_V1 = 'happier.telemetry/actions/capture/costs/read' as const;
+export const TELEMETRY_METRICS_READ_ACTION_ID_V1 = 'happier.telemetry/actions/capture/metrics/read' as const;
+/** Rolling capture lists and cost operands use the same finite Action selection in the Resource. */
 export const DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1 = {
     endpoints: DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
     traces: DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
     logs: DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
     queries: DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+    costs: TELEMETRY_COSTS_READ_ACTION_ID_V1,
+    metrics: TELEMETRY_METRICS_READ_ACTION_ID_V1,
 } as const;
 export const DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 = 'happier.telemetry/actions/capture/clear' as const;
 export const DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 = 'happier.telemetry/actions/capture/configure' as const;
-export const TELEMETRY_METRICS_READ_ACTION_ID_V1 = 'happier.telemetry/actions/capture/metrics/read' as const;
-export const TELEMETRY_COSTS_READ_ACTION_ID_V1 = 'happier.telemetry/actions/capture/costs/read' as const;
 export const TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1 = 'happier.telemetry/actions/health/key-flow' as const;
 export const TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 = 'happier.telemetry/actions/capture/regressions/compare' as const;
 export const TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 = 'happier.telemetry/actions/capture/regressions/schedule' as const;

@@ -62,6 +62,30 @@ export async function writeMetricPoint(tx: DaemonDatabaseTransaction, worktree: 
 
 export function createMetricStore(queryPage: <T extends DaemonDatabaseRow>(statement: string, params: readonly DaemonDatabaseValue[], requested: number) => Promise<{ rows: readonly T[]; pageSize: number }>) {
  return {
+  async metricServices(input: Pick<MetricPointsInput, 'worktree' | 'since' | 'until'>) {
+   const { worktree, since, until } = input;
+   const services = new Map<string, string[]>();
+   let afterService = '', afterVersion = '';
+   while (true) {
+    const page = await queryPage(`WITH producers AS (
+      SELECT serviceName,coalesce(serviceVersion,'') AS version FROM metricPoints
+      WHERE worktree=? AND at>? AND at<=? AND serviceName<>''
+      UNION
+      SELECT serviceName,'' AS version FROM captureSummaries
+      WHERE worktree=? AND at>=? AND at<? AND kind='span' AND spanKind=2 AND serviceName<>''
+    ) SELECT serviceName,version FROM producers WHERE (serviceName,version)>(?,?) ORDER BY serviceName,version LIMIT ?`,
+    [worktree, since, until, worktree, since, until, afterService, afterVersion], limits.maximumResultRows);
+    for (const row of page.rows) {
+     afterService = String(row.serviceName);
+     afterVersion = String(row.version);
+     const versions = services.get(afterService) ?? [];
+     if (afterVersion) versions.push(afterVersion);
+     services.set(afterService, versions);
+    }
+    if (page.rows.length < page.pageSize) break;
+   }
+   return [...services].map(([serviceName, versions]) => ({ serviceName, versions }));
+  },
   /** Includes each selected series' last pre-window sample for cumulative differencing. */
   async metricPoints(input:MetricPointsInput):Promise<readonly NormalizedMetricPoint[]> {
    const filters=['worktree=?','at<=?','at>?'];

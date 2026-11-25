@@ -17,15 +17,18 @@ type Input<T> = Readonly<{ accountLifetime: ServerAccountScopeLifetime | null; r
     resolving?: boolean; active: boolean; follow: boolean; projection: Projection<T>;
     /** Capture's transport target is outside its finite Action input. */
     targetMachineId?: string;
+    /** Change when an existing live admission needs to be reacquired. */
+    admissionKey?: string;
     createClient?: MachineResourceClientFactory }>;
 type Read<T> = Snapshot<T> & Readonly<{ refresh(): Promise<void> }>;
 const noSubscribe = () => () => {};
 const noSnapshot = () => null;
 type RetainedResource = { store: PluginUiResourceStore; consumers: number };
 const resources = new WeakMap<ServerAccountScopeLifetime, Map<string, RetainedResource>>();
-function resourceKey(reference: MachineReference, targetMachineId: string | undefined): string {
+function resourceKey(reference: MachineReference, targetMachineId: string | undefined, admissionKey?: string): string {
     const key = pluginUiResourceReferenceKey(reference, null);
-    return targetMachineId ? `${targetMachineId}\u0000${key}` : key;
+    const machineKey = targetMachineId ? `${targetMachineId}\u0000${key}` : key;
+    return admissionKey === undefined ? machineKey : `${machineKey}\u0000${admissionKey}`;
 }
 const emptySnapshot = Object.freeze({ freshness: 'unknown' as const, pending: 'initial' as const,
     subscription: 'unsupported' as const });
@@ -33,11 +36,11 @@ const emptySnapshot = Object.freeze({ freshness: 'unknown' as const, pending: 'i
 /** The existing Resource owner, usable by a mounted hook or the shared Environment controller. */
 export function createMachineServiceResourceBinding<T>(input: Readonly<{
     accountLifetime: ServerAccountScopeLifetime; reference: MachineReference; projection: Projection<T>;
-    targetMachineId?: string; createClient?: MachineResourceClientFactory;
+    targetMachineId?: string; admissionKey?: string; createClient?: MachineResourceClientFactory;
 }>) {
     const { reference } = input;
     const lifetime = readServerAccountScopeOwnerLifetime(input.accountLifetime);
-    const key = resourceKey(reference, input.targetMachineId);
+    const key = resourceKey(reference, input.targetMachineId, input.admissionKey);
     const capture = reference.hostRead === 'telemetry.capture';
     const machineId = capture ? input.targetMachineId ?? null : reference.input.machineId;
     const serverId = capture ? lifetime.scope.serverId : reference.input.serverId;
@@ -108,7 +111,7 @@ export function useMachineServiceResource<T>(input: Input<T> & Readonly<{
 }>): Read<T>;
 export function useMachineServiceResource<T>(input: Input<T>): Read<T> | null;
 export function useMachineServiceResource<T>(input: Input<T>): Read<T> | null {
-    const key = input.reference ? resourceKey(input.reference, input.targetMachineId) : null;
+    const key = input.reference ? resourceKey(input.reference, input.targetMachineId, input.admissionKey) : null;
     const retainedLifetime = React.useRef<Readonly<{ key: string | null; lifetime: ServerAccountScopeLifetime }> | null>(null);
     const lifetime = input.accountLifetime ? readServerAccountScopeOwnerLifetime(input.accountLifetime)
         : input.resolving && retainedLifetime.current?.key === key && retainedLifetime.current.lifetime.isCurrent()
@@ -118,8 +121,8 @@ export function useMachineServiceResource<T>(input: Input<T>): Read<T> | null {
         const reference = input.reference;
         if (!reference || !lifetime) return null;
         return createMachineServiceResourceBinding({ reference, accountLifetime: lifetime, projection: input.projection,
-            targetMachineId: input.targetMachineId, createClient: input.createClient });
-    }, [lifetime, key, input.projection, input.targetMachineId, input.createClient]);
+            targetMachineId: input.targetMachineId, admissionKey: input.admissionKey, createClient: input.createClient });
+    }, [lifetime, key, input.projection, input.targetMachineId, input.admissionKey, input.createClient]);
     // A mounted hidden view keeps its finite snapshot; replacing its live/static
     // subscription must not dispose the store beneath useSyncExternalStore.
     React.useEffect(() => owner?.retain(), [owner]);

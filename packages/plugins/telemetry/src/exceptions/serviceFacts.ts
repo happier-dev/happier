@@ -2,12 +2,8 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginDynamicResourceInvocationOptionsV1, PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { PluginServiceListFieldResourceInputV1Schema, type PluginServiceListFieldResourceResultV1 } from '@happier-dev/plugin-sdk/ui';
 
-import { TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1, TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX } from './issueRecord.js';
-
-export const TELEMETRY_OPEN_ISSUES_FIELD = {
-    id: 'open-issues', title: 'Open issues', source: { resource: 'environment-open-issues' },
-    value: { kind: 'number', unit: '{issue}' }, byline: true,
-} as const;
+import { TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1, TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX, type ExceptionIssueRecord } from './issueRecord.js';
+import { TELEMETRY_LAST_ISSUE_SEEN_FACT_ID, TELEMETRY_OPEN_ISSUES_FIELD } from './serviceFactIds.js';
 
 function environmentIssueDemand(options: PluginDynamicResourceInvocationOptionsV1) {
     if (options.context.kind !== 'surface') throw new PluginError({ code: 'plugin_resource_demand_unavailable' });
@@ -24,16 +20,20 @@ const issueResource: PluginDynamicResourceRuntime = {
         const { issues, environmentIds } = environmentIssueDemand(options);
         if (!environmentIds.length) return JSON.stringify({ items: [] });
         const query = { index: TELEMETRY_EXCEPTION_ENVIRONMENT_INDEX, order: 'asc', prefixes: environmentIds.map(id => [id]) } as const;
-        const perEnvironment = new Map(environmentIds.map(id => [id, new Set<string>()]));
+        const perEnvironment = new Map(environmentIds.map(id => [id, { open: new Set<string>(), lastSeenAtMs: null as number | null }]));
         const cancellation = { signal: options.signal };
+        const include = (row: ExceptionIssueRecord, ownerAccountId: string | null, rowId: string) => {
+            const summary = perEnvironment.get(row.environmentId);
+            if (!summary) return;
+            if (row.status === 'open') summary.open.add(JSON.stringify([ownerAccountId, rowId]));
+            if (summary.lastSeenAtMs === null || row.lastSeenAtMs > summary.lastSeenAtMs) summary.lastSeenAtMs = row.lastSeenAtMs;
+        };
 
         const readOwn = async () => {
             let cursor: string | undefined;
             do {
                 const page = await issues.query({ ...query, ...(cursor ? { cursor } : {}) }, cancellation);
-                for (const row of page.rows) {
-                    if (row.value.status === 'open') perEnvironment.get(row.value.environmentId)?.add(JSON.stringify([null, row.rowId]));
-                }
+                for (const row of page.rows) include(row.value, null, row.rowId);
                 cursor = page.nextCursor;
             } while (cursor);
         };
@@ -42,16 +42,17 @@ const issueResource: PluginDynamicResourceRuntime = {
             do {
                 const page = await issues.sharing.sharedWithMe({ query: { ...query, ...(cursor ? { cursor } : {}) } }, cancellation);
                 for (const row of page.rows) {
-                    if (row.access !== 'owner' && row.value.status === 'open') {
-                        perEnvironment.get(row.value.environmentId)?.add(JSON.stringify([row.ownerAccountId, row.rowId]));
-                    }
+                    if (row.access !== 'owner') include(row.value, row.ownerAccountId, row.rowId);
                 }
                 cursor = page.nextCursor;
             } while (cursor);
         };
         await Promise.all([readOwn(), readShared()]);
-        return JSON.stringify({ items: [...perEnvironment].map(([environmentId, rows]) => ({
-            environmentId, value: null, facts: { [TELEMETRY_OPEN_ISSUES_FIELD.id]: { value: rows.size } },
+        return JSON.stringify({ items: [...perEnvironment].map(([environmentId, summary]) => ({
+            environmentId, value: null, facts: {
+                [TELEMETRY_OPEN_ISSUES_FIELD.id]: { value: summary.open.size },
+                [TELEMETRY_LAST_ISSUE_SEEN_FACT_ID]: { value: summary.lastSeenAtMs },
+            },
         })) } satisfies PluginServiceListFieldResourceResultV1);
     },
     observe(invalidate, options) {

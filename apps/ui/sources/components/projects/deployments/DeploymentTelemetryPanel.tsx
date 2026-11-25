@@ -44,6 +44,7 @@ import { subjectStarterEventSeed } from '@/components/workflows/triggers/subject
 import { AddCheckSetup } from './AddCheckSetup';
 import { useDeploymentTelemetryBrief } from './useDeploymentTelemetryBrief';
 import { TelemetryAppLlmCalls } from './TelemetryAppLlmCalls';
+import { TelemetryExceptionSummary } from './TelemetryExceptionSummary';
 import { TelemetryMetrics } from './TelemetryMetrics';
 import { formatTelemetryCapabilityStatus } from './telemetryCapabilityStatus';
 import { TelemetryCapabilityReadiness } from './TelemetryCapabilityReadiness';
@@ -60,12 +61,16 @@ import {
   TelemetryCaptureTransportContext,
   createTelemetryCaptureReads,
   readTelemetryCaptureListSnapshot,
+  readTelemetryCaptureStatusSnapshot,
   type TelemetryCaptureListPage,
   type TelemetryCaptureListSnapshot,
   telemetryCaptureFailureCode,
   type TelemetryCaptureList,
   type TelemetryCaptureReads,
+  type TelemetryAppLlmCallSelection,
 } from './telemetryCaptureReads';
+
+const ALL_LLM_CALLS: TelemetryAppLlmCallSelection = {};
 
 /**
  * An Environment's Telemetry tab (P7 J1, P6 F14d). Not set up, it says what telemetry is for and opens the one setup
@@ -175,6 +180,9 @@ const CAPTURE_PROJECTIONS = {
   logs: captureProjection('logs'),
   queries: captureProjection('queries'),
 } satisfies Record<TelemetryCaptureList, PluginUiResourceProjection<TelemetryCaptureListSnapshot>>;
+const CAPTURE_STATUS_PROJECTION = {
+  decode: ({ bytes }: Readonly<{ bytes: Uint8Array }>) => readTelemetryCaptureStatusSnapshot(bytes),
+};
 
 /** Follow the selected first page. Older pages are valid only for the collector window that produced their cursor. */
 export function useTelemetryCaptureList(
@@ -281,7 +289,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const collectorLabel = useServerScopedMachineLabel(serverId, collectorId);
   const machine = collectorLabel ?? t('projects.deployments.aMachine');
   const collectorOnline = useServerScopedMachine(serverId, collectorId, selectCollectorOnline);
-  const { invoke } = React.useContext(TelemetryCaptureTransportContext);
+  const { invoke, createResourceClient } = React.useContext(TelemetryCaptureTransportContext);
   const reads = React.useMemo(() => lifetime
     ? createTelemetryCaptureReads(invoke, { scope: lifetime.scope, environmentId: environment.id, collectorMachineId: collectorId })
     : null, [invoke, lifetime, environment.id, collectorId]);
@@ -292,30 +300,21 @@ function DeploymentTelemetryTabs(props: Readonly<{
   // A capability turned off in settings takes its view with it; the tab falls back to Endpoints.
   const tab = tabIds.includes(chosenTab) ? chosenTab : 'endpoints';
   const [windowId, setWindowId] = React.useState<WindowId>('day');
-  const [attempt, setAttempt] = React.useState(0);
-  const [collectorStatus, setCollectorStatus] = React.useState<Readonly<{
+  const [llmFilter, setLlmFilter] = React.useState<Readonly<{
     reads: TelemetryCaptureReads;
-    lastReceivedAt?: number | null;
-    environmentReadiness?: Awaited<ReturnType<TelemetryCaptureReads['status']>>['environmentReadiness'];
-    coverage?: Awaited<ReturnType<TelemetryCaptureReads['status']>>['coverage'];
-    capabilityLastSampleAt?: Awaited<ReturnType<TelemetryCaptureReads['status']>>['capabilityLastSampleAt'];
-    failure?: string;
+    selection: TelemetryAppLlmCallSelection;
   }> | null>(null);
-  React.useEffect(() => {
-    if (!active || !reads || !demandCollectorStatus) return;
-    const controller = new AbortController();
-    reads.status(controller.signal).then(
-      status => {
-        if (!controller.signal.aborted) {
-          setCollectorStatus({ reads, ...status });
-        }
-      },
-      (error: unknown) => {
-        if (!controller.signal.aborted) setCollectorStatus({ reads, failure: telemetryCaptureFailureCode(error) });
-      },
-    );
-    return () => controller.abort();
-  }, [active, reads, demandCollectorStatus, attempt, environment.revision, hostedServingDeploymentId]);
+  const collectorStatus = useMachineServiceResource({
+    accountLifetime: lifetime,
+    reference: active && demandCollectorStatus ? reads?.statusReference() ?? null : null,
+    targetMachineId: reads?.targetMachineId,
+    admissionKey: JSON.stringify([environment.revision, hostedServingDeploymentId]),
+    active,
+    follow: true,
+    projection: CAPTURE_STATUS_PROJECTION,
+    createClient: createResourceClient,
+  });
+  const refreshStatus = collectorStatus?.refresh;
   const [openTrace, setOpenTrace] = React.useState<Readonly<{
     reads: TelemetryCaptureReads;
     request: DatabaseCaptureSummaryV1;
@@ -331,9 +330,9 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const { state, more, discardOlder, refresh } = useTelemetryCaptureList(lifetime, reads, active && !trace && captureTab !== null,
     captureTab ?? 'endpoints', WINDOW_MS[windowId]);
   const retry = React.useCallback(() => {
-    setAttempt(value => value + 1);
+    void refreshStatus?.();
     void refresh?.();
-  }, [refresh]);
+  }, [refresh, refreshStatus]);
   const clear = reads && environment.capabilities.manage ? async () => {
     try {
       await reads.clear();
@@ -347,7 +346,6 @@ function DeploymentTelemetryTabs(props: Readonly<{
     if (!lifetime?.isCurrent()) return;
     discardOlder();
     setOpenTrace(current => current?.reads === reads ? null : current);
-    setAttempt(value => value + 1);
     setOpenTraceId(null);
   } : null;
   const offline = collectorOnline === false;
@@ -388,7 +386,8 @@ function DeploymentTelemetryTabs(props: Readonly<{
   }), [openTraceId, reads, lifetime, active, locale, canAddCheck]);
   const data = captureTab ? state.data : null;
   const failed = captureTab !== null && state.failure !== null && !state.reading;
-  const status = demandCollectorStatus && collectorStatus?.reads === reads ? collectorStatus : null;
+  const status = collectorStatus?.value;
+  const statusFailure = collectorStatus?.error && (collectorStatus.error.code ?? 'telemetry_unavailable');
   const readiness = status?.environmentReadiness;
   const keptOn = t('deploymentTelemetry.recording.keptOn', { machine });
   // On a capability's own view the bar says that capability's delivery; the capture lists say the collector's.
@@ -425,9 +424,13 @@ function DeploymentTelemetryTabs(props: Readonly<{
       onAddCheck={canAddCheck ? setAddingCheck : undefined}
     />
   ) : tab === 'llmCalls' && reads ? (
-    <TelemetryAppLlmCalls reads={reads} active={active} windowMs={WINDOW_MS[windowId]} locale={locale} onOpenCall={openRequest} />
+    <TelemetryAppLlmCalls key={JSON.stringify([lifetime?.scope, environment.id, collectorId])}
+      reads={reads} lifetime={lifetime} active={active} windowMs={WINDOW_MS[windowId]} locale={locale} onOpenCall={openRequest}
+      selection={llmFilter?.reads === reads ? llmFilter.selection : ALL_LLM_CALLS}
+      onSelect={selection => setLlmFilter({ reads, selection })} />
   ) : tab === 'metrics' && reads ? (
-    <TelemetryMetrics reads={reads} active={active} windowMs={WINDOW_MS[windowId]} locale={locale} />
+    <TelemetryMetrics key={JSON.stringify([lifetime?.scope, environment.id, collectorId])}
+      reads={reads} lifetime={lifetime} active={active} windowMs={WINDOW_MS[windowId]} locale={locale} />
   ) : data?.list === 'endpoints' ? (
     <CaptureEndpoints items={data.items} loading={state.reading} locale={locale}
       actions={endpointActions}
@@ -449,14 +452,16 @@ function DeploymentTelemetryTabs(props: Readonly<{
   return (
     <PageContentColumn testID="project-deployments.telemetry.recording">
     <View style={styles.panel}>
+      {capabilities.exceptions ? <TelemetryExceptionSummary active={active} environmentId={environment.id} lifetime={lifetime}
+        retainedLastSeen={status?.capabilityLastSampleAt?.exceptions} /> : null}
       {status?.capabilityLastSampleAt && status.lastReceivedAt !== undefined ? (
         <TelemetryCapabilityReadiness lastReceivedAt={status.lastReceivedAt} samples={status.capabilityLastSampleAt}
           recorded={capabilities} onAddTelemetry={addTelemetry} addingTelemetry={openingSetup} />
       ) : null}
       <View style={styles.lines}>
-      {!failed && status?.failure ? (
+      {!failed && statusFailure ? (
         <SurfaceStateCard kind="unavailable" size="line" title={t('deploymentTelemetry.unavailable.title')}
-          diagnosticCode={status.failure} action={{ label: t('common.retry'), onPress: retry }} />
+          diagnosticCode={statusFailure} action={{ label: t('common.retry'), onPress: retry }} />
       ) : null}
       {failed && data !== null ? (
         <SurfaceFreshnessLine

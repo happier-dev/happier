@@ -990,10 +990,13 @@ describe('Environment Telemetry capability views', () => {
       if (call_.actionId.endsWith('/capture/traces/list') && (call_.input as { appLlmCalls?: unknown }).appLlmCalls)
         return { ok: true, source, items: [call] };
       if (call_.actionId.endsWith('/capture/metrics/read')) {
-        const measure = (call_.input as { measure: { kind: string } }).measure;
-        return measure.kind === 'runtime'
-          ? { result: { status: 'unknown', observedAt: now, evidence }, routes: [], trend: [] }
-          : httpRead(412);
+        const input = call_.input as { view?: string; serviceName?: string; serviceVersion?: string };
+        const http = httpRead(412);
+        const unknownMetric = { result: { status: 'unknown', observedAt: now, evidence }, trend: [] };
+        return { view: 'overview', services: [{ serviceName: 'billing-api', versions: ['v1.43'] }],
+          selected: { serviceName: input.serviceName ?? 'billing-api', serviceVersion: input.serviceVersion ?? null },
+          metrics: { http: { result: http.result, trend: http.trend }, heap: unknownMetric, gc: unknownMetric,
+            activeRequests: unknownMetric } };
       }
       return answers(call_);
     };
@@ -1001,6 +1004,94 @@ describe('Environment Telemetry capability views', () => {
     const detail = setUpDetail();
     return { ...detail, content: { ...detail.content, telemetry } };
   };
+
+  it('refreshes the open LLM tab on collector change and stops the reads when it closes', async () => {
+    const { invoke, calls } = collector(capabilityAnswers({ metrics: null, appLlmCost: now, exceptions: null }));
+    const transport = createTelemetryCaptureFixtureTransport(invoke);
+    const screen = await renderScreen(panel(invoke, detailWith({ metrics: false, appLlmCost: true, exceptions: false }),
+      { active: true, telemetryApplied: true }, transport));
+    const llmCostReads = () => calls.filter(read => read.actionId.endsWith('/capture/costs/read')).length;
+    try {
+      await settle();
+      expect(llmCostReads()).toBe(0);
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:llmCalls');
+      await settle();
+      expect(llmCostReads()).toBe(1);
+      expect(transport.watchers).toBe(2);
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(llmCostReads()).toBe(2);
+      await reportCollectionLayout(screen, 'telemetry.capture.llmCalls');
+      await screen.pressByTestIdAsync('telemetry.capture.llmCall.call-1');
+      await settle();
+      expect(transport.watchers).toBe(0);
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(llmCostReads()).toBe(2);
+    } finally { await screen.unmount(); }
+  });
+
+  it('opens the native PRs and Issues page from the Environment exception summary', async () => {
+    const { invoke } = collector(capabilityAnswers({ metrics: null, appLlmCost: null, exceptions: now }));
+    const screen = await renderScreen(panel(invoke, detailWith({ metrics: false, appLlmCost: false, exceptions: true }),
+      { active: true, telemetryApplied: true }));
+    try {
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.exceptions.open-triage');
+      expect(router.spies.push).toHaveBeenCalledWith(buildPluginAppPageRoutePath(TRIAGE_APP_PAGE_DESTINATION_V1));
+    } finally { await screen.unmount(); }
+  });
+
+  it('follows newly retained exception times while the Environment summary is open', async () => {
+    let exceptions: number | null = null;
+    const { invoke, calls } = collector(call_ => capabilityAnswers({ metrics: null, appLlmCost: null, exceptions })(call_));
+    const transport = createTelemetryCaptureFixtureTransport(invoke);
+    const detail = detailWith({ metrics: false, appLlmCost: false, exceptions: true });
+    const screen = await renderScreen(panel(invoke, detail, { active: true, telemetryApplied: true }, transport));
+    const statusReads = () => calls.filter(read => read.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1).length;
+    const summary = () => (screen.findByTestId('project-deployments.telemetry.exceptions.summary')?.findAll(node => typeof node.type === 'string') ?? [])
+      .flatMap(node => [node.props.children].flat().filter((child): child is string => typeof child === 'string')).join(' ');
+    try {
+      await settle();
+      expect(statusReads()).toBe(1);
+      expect(summary()).not.toContain('Last seen');
+      exceptions = now;
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(statusReads()).toBe(2);
+      expect(summary()).toContain('Last seen');
+      await screen.update(panel(invoke, detail, { active: false, telemetryApplied: true }, transport));
+      const whileHidden = statusReads();
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(statusReads()).toBe(whileHidden);
+    } finally { await screen.unmount(); }
+  });
+
+  it('refreshes the open Metrics tab from one selected collector watch', async () => {
+    const { invoke, calls } = collector(capabilityAnswers({ metrics: now, appLlmCost: null, exceptions: null }));
+    const transport = createTelemetryCaptureFixtureTransport(invoke);
+    const screen = await renderScreen(panel(invoke, detailWith({ metrics: true, appLlmCost: false, exceptions: false }),
+      { active: true, telemetryApplied: true }, transport));
+    const metricReads = () => calls.filter(read => read.actionId.endsWith('/capture/metrics/read')).map(read => read.input);
+    try {
+      await settle();
+      expect(metricReads()).toEqual([]);
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:metrics');
+      await settle();
+      expect(metricReads()).toEqual([expect.objectContaining({ view: 'overview', serverId: 'home', environmentId: 'production' })]);
+      // The selected Metrics overview and collector readiness each have one watch.
+      expect(transport.watchers).toBe(2);
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(metricReads()).toHaveLength(2);
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:endpoints');
+      await settle();
+      await act(async () => transport.invalidate());
+      await settle();
+      expect(metricReads()).toHaveLength(2);
+    } finally { await screen.unmount(); }
+  });
 
   it('says each enabled capability’s delivery, and opens a selected LLM call in the existing trace detail', async () => {
     const { invoke, calls } = collector(capabilityAnswers({ metrics: null, appLlmCost: now - 180_000, exceptions: null }));
@@ -1026,22 +1117,51 @@ describe('Environment Telemetry capability views', () => {
         expect.objectContaining({ collectorMachineId: 'collector', input: expect.objectContaining({ source, appLlmCalls: {} }) }),
       ]);
       expect(textIn('project-deployments.telemetry.llm.reported')).toContain('$0.0042');
+      const service = screen.findByTestId('project-deployments.telemetry.llm.service');
+      const version = screen.findByTestId('project-deployments.telemetry.llm.version');
+      expect(service).not.toBeNull();
+      expect(version).not.toBeNull();
+      await act(async () => {
+        service!.props.onChangeText('billing-api');
+        version!.props.onChangeText('v1.43');
+      });
+      await screen.pressByTestIdAsync('project-deployments.telemetry.llm.applyFilters');
+      await settle();
+      const selectedReads = calls.filter(read => read.actionId.endsWith('/capture/costs/read') || read.actionId.endsWith('/capture/traces/list')).slice(-2);
+      expect(selectedReads).toEqual([
+        expect.objectContaining({ input: expect.objectContaining({ source, serviceName: 'billing-api', serviceVersion: 'v1.43',
+          granularity: 'day', groupByRoute: true }) }),
+        expect.objectContaining({ input: expect.objectContaining({ source, appLlmCalls: { serviceName: 'billing-api', serviceVersion: 'v1.43' } }) }),
+      ]);
       await reportCollectionLayout(screen, 'telemetry.capture.llmCalls');
       await screen.pressByTestIdAsync('telemetry.capture.llmCall.call-1');
       await settle();
       expect(calls.at(-1)).toEqual(expect.objectContaining({ input: expect.objectContaining({ source, traceId: 'trace-1' }) }));
       expect(screen.findByTestId('project-deployments.telemetry.request')).not.toBeNull();
 
+      await screen.pressByTestIdAsync('project-deployments.telemetry.request.back');
+      await settle();
+      expect(screen.findByTestId('project-deployments.telemetry.llm.service')?.props.value).toBe('billing-api');
+      expect(screen.findByTestId('project-deployments.telemetry.llm.version')?.props.value).toBe('v1.43');
+
       await screen.pressByTestIdAsync('project-deployments.telemetry.tab:metrics');
       await settle();
       expect(barStatus()).toContain('Not receiving yet');
       const metricReads = calls.filter(read => read.actionId.endsWith('/capture/metrics/read')).map(read => read.input);
       expect(metricReads).toEqual([
-        expect.objectContaining({ serverId: 'home', environmentId: 'production', serviceName: 'billing-api', measure: { kind: 'http', statistic: 'p95' } }),
-        expect.objectContaining({ serviceName: 'billing-api', measure: expect.objectContaining({ kind: 'runtime' }) }),
+        expect.objectContaining({ view: 'overview', serverId: 'home', environmentId: 'production' }),
       ]);
       expect(textIn('project-deployments.telemetry.metrics.p95')).toContain('412');
       expect(textIn('project-deployments.telemetry.metrics.heap')).toContain('doesn’t report heap use');
+      await screen.pressByTestIdAsync('project-deployments.telemetry.metrics.version');
+      await waitForHomeGovernance(() => {
+        expect(screen.findByTestId('project-deployments.telemetry.metrics.version.v1.43')).not.toBeNull();
+      });
+      await screen.pressByTestIdAsync('project-deployments.telemetry.metrics.version.v1.43');
+      await waitForHomeGovernance(() => {
+        expect(calls.at(-1)?.input).toMatchObject({ view: 'overview', serverId: 'home', environmentId: 'production',
+          serviceName: 'billing-api', serviceVersion: 'v1.43' });
+      });
     } finally {
       await screen.unmount();
     }

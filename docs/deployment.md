@@ -3294,7 +3294,11 @@ unestablished label or insufficient retained evidence returns Inconclusive.
 Disarming the Workflow stops further automatic evaluations.
 
 App LLM cost reads return the selected collector's token operands, reported
-currency and coverage. Account-placed Usage reads price those operands using
+currency and coverage. The Environment's LLM calls view applies the selected
+service, version and time window to both the cost Action and the individual
+calls. Day buckets can include the normalized HTTP route of the nearest retained
+request in the same trace. Calls with no retained route remain in the window's
+totals. Account-placed Usage reads price those operands using
 `usage.prices.get` and the invoking Account's model price overrides. A saved
 spend check uses the Account operating its observer daemon. The retained
 result identifies that Account and the API-equivalent USD catalog revision.
@@ -3306,6 +3310,18 @@ and the Environment's collector assignment. The tab retains results for the
 selected collector, Environment and Account read lifetime. Trace selection opens
 the shared request view, which follows the trace into query and correlated log
 details.
+
+The Metrics tab follows one selected collector Resource for its window, service
+and recorded version. Its inventory includes services that emit metrics without
+request trace samples. It uses OTLP HTTP duration and traffic, V8 heap and GC,
+and active HTTP requests when the app emits those measurements. The exception
+summary follows the Account's entitled native issue records for this Environment.
+While the summary is open, the selected collector also pushes the latest retained
+exception time without writing the Account issue on every repeat. When the collector
+is unavailable, the summary can show the last time recorded on the Account issue.
+Open in PRs & Issues opens the native Triage page, where you can select the Happier
+source. Raw occurrence details require the selected collector.
+
 For a retained failing request or suspected N+1 finding, the selected request
 can seed a Workflow with the Telemetry Event and its exact group filter. The
 ordinary collector read admission validates setup for the Environment. While

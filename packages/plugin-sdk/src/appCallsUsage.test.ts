@@ -3,6 +3,7 @@ import { projectAppCallsUsageV1 as project, projectAppCallsUsageSourcesV1 as pro
 } from './appCallsUsage.js';
 import type { AppCallsUsageWindowV1 } from './appCallsUsage.js';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 
 const catalog: UsageModelPriceCatalog = { v: 1, models: { model: {
@@ -52,6 +53,24 @@ describe('App calls Usage projection', () => {
         expect(result.accounting.coverage?.reasons).toContain('unknown_token_categories');
         expect(result.accounting.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'unpriced', eventCount: 2 })]));
         expect(result.coverage.lostObservations).toBe(1);
+    });
+
+    it('uses the same viewer-priced population for daily and route breakdowns, including unattributed calls', () => {
+        const result = project({ ...raw, until: 172_800_000, items: [
+            { ...row, route: { method: 'GET', path: '/orders/:id' } },
+            { ...row, route: { method: 'GET', path: '/orders/:id' }, bucketStartMs: 86_400_000, firstSeenMs: 86_401_000 },
+            { ...row, route: null, modelId: 'unlisted', callCount: 1 },
+        ], coverage: { ...raw.coverage, callCount: 5, tokenCategoryCallCount: 5 } }, catalog, {
+            model: { kind: 'rates', inputUsdPerMillion: 10, outputUsdPerMillion: 20, cacheReadUsdPerMillion: 2, cacheWriteUsdPerMillion: 4 },
+        }, { granularity: 'day' });
+
+        expect(result.accounting.series?.map(bucket => bucket.cost.apiEquivalentUsd)).toEqual([26.5, 26.5]);
+        expect(result.routeBreakdown?.map(entry => ({ label: entry.label, calls: entry.eventCount,
+            amount: resolveUsageCostBasis(entry.cost, 'api_equivalent')?.amountUsd ?? null }))).toEqual([
+            { label: 'GET /orders/:id', calls: 4, amount: 53 },
+            { label: 'unknown', calls: 1, amount: null },
+        ]);
+        expect(result.accounting.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'unpriced', eventCount: 1 })]));
     });
 
     it('keeps each Environment a distinct named App calls source in one priced population', () => {

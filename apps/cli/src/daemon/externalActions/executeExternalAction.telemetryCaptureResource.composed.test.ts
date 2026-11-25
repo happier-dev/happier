@@ -10,7 +10,7 @@ import {
     sealExternalActionRequestV2,
 } from '@happier-dev/protocol/actions';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { DATABASE_CAPTURE_RESOURCE_ID_V1 } from '@happier-dev/database-protocol';
@@ -38,8 +38,10 @@ const credentials = vi.hoisted(() => ({ token: `e30.${Buffer.from(JSON.stringify
 vi.mock('@/persistence', async original => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: async () => credentials }));
 afterEach(() => resetActiveAccountSettingsSnapshotForTests());
 
-it.each(['worktree', 'environment'] as const)('reuses the selected %s capture producer after signed ingress closes', async kind => {
-    const pluginId = parseQualifiedPluginActionId(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1)!.pluginId;
+it.each([['worktree', 'endpoints'], ['environment', 'endpoints'], ['environment', 'costs'], ['environment', 'metrics'], ['environment', 'status']] as const)(
+    'reuses the selected %s %s producer after signed ingress closes', async (kind, view) => {
+    const action = parseQualifiedPluginActionId(view === 'status' ? DATABASE_CAPTURE_STATUS_ACTION_ID_V1 : DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1[view])!;
+    const pluginId = action.pluginId;
     const localId = DATABASE_CAPTURE_RESOURCE_ID_V1;
     const serverIdentityId = 'srv_capture';
     const machineId = 'capture-machine';
@@ -98,8 +100,12 @@ it.each(['worktree', 'environment'] as const)('reuses the selected %s capture pr
     const source = kind === 'worktree'
         ? { kind, serverId: serverIdentityId, machineId, projectId: 'billing-api', workspaceId: 'selected-folder' }
         : { kind, serverId: serverIdentityId, environmentId };
-    const input = { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1)!, input: { source, page: { limit: 6 } } };
-    const resource = { hostRead: 'telemetry.capture' as const, input, windowMs: 60_000 };
+    const input = { action, input: view === 'metrics'
+        ? { view: 'overview', serverId: serverIdentityId, environmentId, serviceName: 'billing-api', serviceVersion: 'v42' }
+        : view === 'costs'
+            ? { source, serviceName: 'billing-api', serviceVersion: 'v42', granularity: 'day', groupByRoute: true }
+            : view === 'status' ? { source } : { source, page: { limit: 6 } } };
+    const resource = { hostRead: 'telemetry.capture' as const, input, ...(view === 'status' ? {} : { windowMs: 60_000 }) };
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(18) };
     const executor = createActionExecutor(createUnavailableActionTransportDeps());
@@ -184,12 +190,13 @@ it.each(['worktree', 'environment'] as const)('reuses the selected %s capture pr
         const bytes = (current.result as { bytesBase64: string }).bytesBase64;
         expect(JSON.parse(Buffer.from(bytes, 'base64').toString('utf8'))).toMatchObject({
             admission: kind === 'worktree' ? { accountId } : { collectorMachineId: machineId, environment: { environmentId, revision: 7 } },
-            scope: { launchInput: { input: { source } } },
+            scope: { launchInput: { view, input: input.input } },
         });
         expect(opened).toBe(2);
         const foreignSource = kind === 'worktree' ? { ...source, workspaceId: 'neighbor' } : { ...source, environmentId: 'neighbor' };
+        const foreignInput = view === 'metrics' ? { ...input.input, environmentId: 'neighbor' } : { ...input.input, source: foreignSource };
         expect(await run(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, new AbortController().signal,
-            { ...resource, input: { ...input, input: { ...input.input, source: foreignSource } } })).toMatchObject({ kind: 'invalid_request' });
+            { ...resource, input: { ...input, input: foreignInput } })).toMatchObject({ kind: 'invalid_request' });
         expect(await run(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE, new AbortController().signal))
             .toMatchObject({ ok: true, result: { ok: true, closed: true } });
         expect(producerSignal?.aborted).toBe(true);

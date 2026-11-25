@@ -19,6 +19,64 @@ function histogram(status: number, counts: string[]): NormalizedMetricPoint {
 }
 
 describe('published selected key-flow reads', () => {
+    it('opens a selected Environment metrics overview for a metrics-only service version', async () => {
+        const fixture = createCaptureSqliteFixture();
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
+        const admitTelemetryRead = vi.fn(async () => ({
+            environment: { serverId: 'home', environmentId: 'app', revision: 1 }, collectorMachineId: 'collector',
+            capabilities: resolveDeploymentTelemetryCapabilitiesV1({ metrics: true }),
+        }));
+        const deploymentDatabases = { admitTelemetryRead } as unknown as PluginServices['deploymentDatabases'];
+        const lease = await localCaptureBackground.acquireRuntime({ signal: new AbortController().signal, services: { storage } });
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
+            services: { storage, deploymentDatabases } });
+        const gauge = (name: string, unit: string, serviceVersion: string, value: number): NormalizedMetricPoint => ({
+            metricType: 'gauge', name, unit, serviceName: 'metrics-only', serviceVersion, serviceInstanceId: 'one',
+            startTimeUnixNano: '1000000000', timeUnixNano: '1500000000', temporality: 'unspecified', dimensions: {}, value,
+        });
+        const stored = (id: string, worktree: string, metric: NormalizedMetricPoint) => ({
+            id, worktree, metric, kind: 'metric' as const, source: 'otlp' as const, at: 1_500,
+        });
+        try {
+            await lease.runtime.store.write([
+                stored('heap-current', 'environment:app', gauge('v8js.memory.heap.used', 'By', 'v2', 128)),
+                stored('heap-previous', 'environment:app', gauge('v8js.memory.heap.used', 'By', 'v1', 32)),
+                stored('active', 'environment:app', gauge('http.server.active_requests', '{request}', 'v2', 4)),
+                stored('neighbor', 'environment:neighbor', gauge('v8js.memory.heap.used', 'By', 'foreign', 512)),
+            ]);
+            const selection = {
+                view: 'overview', serverId: 'home', environmentId: 'app', serviceName: 'metrics-only', serviceVersion: 'v2',
+                since: 1_000, until: 2_000,
+            };
+            const actionId = database.databaseActionLocalIdV1(database.TELEMETRY_METRICS_READ_ACTION_ID_V1);
+            const readAt = fixture.queryRows.length;
+            const result = await host.invokeAction(actionId, selection);
+            const selectedRows = fixture.queryRows.slice(readAt);
+            expect(result).toMatchObject({ view: 'overview', services: [{ serviceName: 'metrics-only', versions: ['v1', 'v2'] }],
+                selected: { serviceName: 'metrics-only', serviceVersion: 'v2' }, metrics: {
+                    http: { result: { status: 'unknown' } }, heap: { result: { measurements: { value: 128 } } },
+                    gc: { result: { status: 'unknown' } }, activeRequests: { result: { measurements: { value: 4 } } },
+                },
+            });
+            expect(admitTelemetryRead).toHaveBeenCalledExactlyOnceWith({ serverId: 'home', environmentId: 'app' });
+
+            // Bring the fixture to 100 Environments and 1,000 distinct series. The new series use the same metric
+            // name, so a query that loses its partition predicate reads their rows as well as the selected service.
+            const otherSeries = Array.from({ length: 996 }, (_, index) => {
+                const partition = `environment:neighbor-${index % 98}`;
+                return stored(`series-${index}`, partition, { ...gauge('v8js.memory.heap.used', 'By', 'v2', 512),
+                    serviceInstanceId: `instance-${index}` });
+            });
+            await lease.runtime.store.write(otherSeries);
+            const scaledReadAt = fixture.queryRows.length;
+            const scaled = await host.invokeAction(actionId, selection);
+            expect(scaled).toMatchObject({ selected: { serviceName: 'metrics-only', serviceVersion: 'v2' },
+                metrics: { heap: { result: { measurements: { value: 128 } } } } });
+            expect(fixture.queryRows.slice(scaledReadAt)).toEqual(selectedRows);
+        } finally { await host.dispose(); await lease.release(); fixture.close(); }
+    });
+
     it('reads the mounted Environment batch once across every emitted service and preserves unknown and measured zero', async () => {
         const fixture = createCaptureSqliteFixture();
         for (const migration of captureMigrations) await migration.up(fixture.db);

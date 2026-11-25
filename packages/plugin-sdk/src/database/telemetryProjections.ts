@@ -23,13 +23,14 @@ export const TelemetryEnvironmentMetricsReadResultV1ProtocolSchema: ProtocolComp
 > = native.TelemetryEnvironmentMetricsReadResultV1ProtocolSchema;
 export const TelemetryMetricsActionReadInputV1ProtocolSchema: ProtocolComposableSchema<
     SchemaInput<'telemetryMetricsActionReadInputV1'>,
-    (TelemetryMetricsReadInputV1 | TelemetryEnvironmentMetricsReadInputV1) & ProtocolJsonValue
+    (TelemetryMetricsReadInputV1 | TelemetryEnvironmentMetricsReadInputV1 | native.TelemetryMetricsOverviewInputV1) & ProtocolJsonValue
 > = native.TelemetryMetricsActionReadInputV1ProtocolSchema;
 export const TelemetryMetricsActionReadResultV1ProtocolSchema: ProtocolComposableSchema<
     SchemaInput<'telemetryMetricsActionReadResultV1'>,
-    (TelemetryMetricsReadResultV1 | TelemetryEnvironmentMetricsReadResultV1) & ProtocolJsonValue
+    (TelemetryMetricsReadResultV1 | TelemetryEnvironmentMetricsReadResultV1 | native.TelemetryMetricsOverviewResultV1) & ProtocolJsonValue
 > = native.TelemetryMetricsActionReadResultV1ProtocolSchema;
 export const projectTelemetryMetricsActionReadResultV1: (input: SchemaInput<'telemetryMetricsActionReadResultV1'>) => ProtocolJsonValue = native.projectTelemetryMetricsActionReadResultV1;
+export type { TelemetryMetricsOverviewInputV1, TelemetryMetricsOverviewResultV1 } from './telemetryMetrics.js';
 export type {
     TelemetryEnvironmentMetricsReadInputV1,
     TelemetryEnvironmentMetricsReadResultV1,

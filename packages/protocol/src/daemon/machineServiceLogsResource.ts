@@ -7,7 +7,7 @@ import { DeploymentHealthCurrentInputV1Schema, DeploymentStageLogsReadInputV1Sch
 import { ActionInvokeInputSchema, type ActionInvokeInput } from '../actions/actionInvokeInput.js';
 import { PluginUiDeclaredResourceBindingV1Schema } from '../plugins/ui/resourceBinding.js';
 import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '../databases/databaseResourceIdentityV1.js';
-import { DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
+import { DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 
 /** Protected operands of the original semantic describe invocation and mounted Resource. */
@@ -39,17 +39,19 @@ export function projectDatabaseConnectionResourceReadV1(binding: z.infer<typeof 
 
 export const PluginUiTelemetryCaptureReadReferenceV1Schema = lazyZodSchema(() => z.strictObject({
   hostRead: z.literal('telemetry.capture'), input: ActionInvokeInputSchema,
-  windowMs: z.number().check(z.int(), z.positive()),
-}));
+  windowMs: z.optional(z.number().check(z.int(), z.positive())),
+}).check(z.refine(value => (value.windowMs === undefined)
+  === (formatQualifiedPluginActionId(value.input.action) === DATABASE_CAPTURE_STATUS_ACTION_ID_V1))));
 export type PluginUiTelemetryCaptureReadReferenceV1 = z.output<typeof PluginUiTelemetryCaptureReadReferenceV1Schema>;
 
-/** Only the existing semantic list Actions may be carried into this read-only Resource. */
+/** Carry only the semantic Actions the selected capture Resource can serve. */
 export function projectTelemetryCaptureResourceDemandV1(reference: PluginUiTelemetryCaptureReadReferenceV1) {
   const action = formatQualifiedPluginActionId(reference.input.action);
+  const input = reference.input.input;
+  if (input === undefined) return null;
+  if (reference.windowMs === undefined) return action === DATABASE_CAPTURE_STATUS_ACTION_ID_V1 ? { view: 'status', input } : null;
   const entry = Object.entries(DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1).find(([, id]) => id === action);
-  return entry && reference.input.input !== undefined
-    ? { view: entry[0], input: reference.input.input, windowMs: reference.windowMs }
-    : null;
+  return entry ? { view: entry[0], input, windowMs: reference.windowMs } : null;
 }
 
 /** Native identity only. The original logs Action remains the admission owner. */

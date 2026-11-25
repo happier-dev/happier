@@ -9,6 +9,7 @@ import type { createCaptureBackgroundOwner } from './background.js';
 import { captureSourcePartition } from './partition.js';
 import { createCaptureSelectedSourceReaders, type AdmittedCaptureSource } from './actions.js';
 import { telemetryPartition } from './telemetry/assignments.js';
+import { readTelemetryMetricsOverview } from './health.js';
 
 type ResourceContext = Parameters<NonNullable<PluginDynamicResourceRuntime['createProducer']>>[0];
 
@@ -59,8 +60,8 @@ async function readServiceColumnSnapshot(context: ResourceContext, input: Plugin
     }) };
 }
 
-async function readCaptureResourceSnapshot(context: ResourceContext, demand: database.DatabaseCaptureResourceInputV1,
-    signal: AbortSignal): Promise<database.DatabaseCaptureResourceSnapshotV1> {
+async function readCaptureResourceSnapshot(context: ResourceContext, demand: Exclude<database.DatabaseCaptureResourceInputV1, { view: 'metrics' }>,
+    signal: AbortSignal): Promise<Exclude<database.DatabaseCaptureResourceSnapshotV1, { view: 'metrics' }>> {
     const input = projectNativeJsonValueForTransport(demand.input);
     const read = (actionId: database.DatabaseActionIdV1, input: JsonValue) => readCaptureAction(context, actionId, input, signal);
     switch (demand.view) {
@@ -83,11 +84,14 @@ function isRollingCaptureDemand(demand: database.DatabaseCaptureResourceInputV1)
 }
 
 async function readRollingCapturePage(demand: RollingCaptureDemand,
-    readers: ReturnType<typeof createCaptureSelectedSourceReaders>, windowMs: number):
+    readers: ReturnType<typeof createCaptureSelectedSourceReaders>, admission: AdmittedCaptureSource, windowMs: number):
     Promise<Extract<database.DatabaseCaptureResourceSnapshotV1, { view: RollingCaptureDemand['view'] }>> {
     const until = Date.now();
     const window = { since: Math.max(0, until - windowMs), until };
     switch (demand.view) {
+        case 'metrics': return { view: demand.view,
+            result: await readTelemetryMetricsOverview(admission.runtime, { ...demand.input, ...window }, admission, until) };
+        case 'costs': return { view: demand.view, result: await readers.readCapturedCosts({ ...demand.input, ...window }) };
         case 'endpoints': return { view: demand.view, window, result: await readers.listCapturedEndpoints({ ...demand.input, ...window }) };
         case 'logs': return { view: demand.view, window, result: await readers.listCapturedLogs({ ...demand.input, ...window }) };
         case 'traces': return { view: demand.view, window, result: await readers.listCapturedTraces({ ...demand.input, ...window }) };
@@ -109,12 +113,19 @@ export function createCaptureResourceRuntime(options: Readonly<{
         async createProducer(context) {
             if (context.context.kind !== 'surface') throw new PluginError({ code: 'plugin_resource_demand_unavailable' });
             const serviceInput = PluginServiceListFieldResourceInputV1Schema.safeParse(context.context.launchInput);
-            const demand = serviceInput.success ? { kind: 'service' as const, input: serviceInput.data }
-                : { kind: 'capture' as const, input: database.DatabaseCaptureResourceInputV1Schema.parse(context.context.launchInput) };
-            if (demand.kind === 'capture' && isRollingCaptureDemand(demand.input) && demand.input.windowMs !== undefined) {
-                const selected = demand.input;
+            const demand: { kind: 'service'; input: PluginServiceListFieldResourceInputV1 }
+                | { kind: 'capture'; input: database.DatabaseCaptureResourceInputV1 } = serviceInput.success
+                ? { kind: 'service', input: serviceInput.data }
+                : { kind: 'capture', input: database.DatabaseCaptureResourceInputV1Schema.parse(context.context.launchInput) };
+            const capture = demand.kind === 'capture' ? demand.input : null;
+            const follow = capture?.view === 'status' && capture.input.source.kind === 'environment'
+                ? { kind: 'status' as const, input: capture }
+                : capture && isRollingCaptureDemand(capture) && capture.windowMs !== undefined
+                    ? { kind: 'rolling' as const, input: capture, windowMs: capture.windowMs }
+                    : null;
+            if (follow) {
+                const selected = follow.input;
                 if (selected.view === 'queries' && selected.input.databaseTarget !== undefined) return unavailable();
-                const windowMs = demand.input.windowMs;
                 const acquire = options.acquireSelection;
                 if (!acquire) return unavailable();
                 let invalidate: (() => void) | undefined;
@@ -122,7 +133,12 @@ export function createCaptureResourceRuntime(options: Readonly<{
                 let disposed = false;
                 // Authority and the database lease are captured once for this demand. The subscription is
                 // installed after admission and before the first snapshot so a concurrent commit is visible.
-                const binding = acquire(selected.input.source, context, database.DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1[selected.view])
+                const source = selected.view === 'metrics'
+                    ? { kind: 'environment' as const, serverId: selected.input.serverId, environmentId: selected.input.environmentId }
+                    : selected.input.source;
+                const actionId = selected.view === 'status' ? database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1
+                    : database.DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1[selected.view];
+                const binding = acquire(source, context, actionId)
                     .then(async admission => {
                         if (disposed || context.signal.aborted) {
                             await admission.release();
@@ -138,8 +154,11 @@ export function createCaptureResourceRuntime(options: Readonly<{
                         invocation.signal.throwIfAborted();
                         const { readers, admission } = await binding;
                         invocation.signal.throwIfAborted();
-                        const page = await readRollingCapturePage(selected, readers, windowMs);
-                        return JSON.stringify({ ...page, coverage: admission.runtime.ingest.coverage(admission.partition) });
+                        if (follow.kind === 'status') {
+                            return JSON.stringify({ view: follow.input.view, result: await readers.captureStatus(follow.input.input) });
+                        }
+                        const page = await readRollingCapturePage(follow.input, readers, admission, follow.windowMs);
+                        return JSON.stringify('window' in page ? { ...page, coverage: admission.runtime.ingest.coverage(admission.partition) } : page);
                     },
                     observe(callback) {
                         invalidate = callback;
@@ -155,15 +174,19 @@ export function createCaptureResourceRuntime(options: Readonly<{
                     },
                 };
             }
+            const finite = demand.kind === 'service' ? demand : {
+                kind: 'capture' as const,
+                input: demand.input.view === 'metrics' ? unavailable() : demand.input,
+            };
             let invalidate: (() => void) | undefined;
             let stop: (() => void) | undefined;
             const unsubscribe = () => { stop?.(); stop = undefined; };
             return {
                 async read(invocation) {
                     try {
-                        const snapshot = demand.kind === 'service'
-                            ? await readServiceColumnSnapshot(context, demand.input, invocation.signal)
-                            : await readCaptureResourceSnapshot(context, demand.input, invocation.signal);
+                        const snapshot = finite.kind === 'service'
+                            ? await readServiceColumnSnapshot(context, finite.input, invocation.signal)
+                            : await readCaptureResourceSnapshot(context, finite.input, invocation.signal);
                         const partitions = 'items' in snapshot
                             ? snapshot.items.map(item => telemetryPartition(item.environmentId))
                             : snapshot.result.ok ? [captureSourcePartition(snapshot.result.source, context.requesterAccount?.accountId)] : [];

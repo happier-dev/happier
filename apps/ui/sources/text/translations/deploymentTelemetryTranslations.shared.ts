@@ -34,6 +34,11 @@ export type Copy = Readonly<{
   }>;
   /** While a recorded choice has kept nothing yet (lab p7Setup-waiting): each choice's own delivery. */
   readiness: Readonly<{ title: string; description: string }>;
+  exceptionSummary: Readonly<{
+    openTriage: string;
+    openCount: (p: Readonly<{ count: number }>) => string;
+    lastSeen: (p: Readonly<{ time: string }>) => string;
+  }>;
   /** Telemetry → LLM calls (J4): typed totals and coverage, then each retained call. */
   llm: Readonly<{
     calls: string;
@@ -56,6 +61,10 @@ export type Copy = Readonly<{
     errorRate: string;
     heap: string;
     heapNotReported: string;
+    allVersions: string;
+    gc: string;
+    activeRequests: string;
+    notReported: string;
     noService: string;
     reading: string;
     unavailable: string;
@@ -193,6 +202,11 @@ const en: Copy = {
     title: 'Getting ready',
     description: 'Each choice starts as soon as its data arrives.',
   },
+  exceptionSummary: {
+    openTriage: 'Open in PRs & Issues',
+    openCount: ({ count }) => count === 1 ? '1 open exception issue' : `${count} open exception issues`,
+    lastSeen: ({ time }) => `Last seen ${time}`,
+  },
   llm: {
     calls: 'Model calls',
     tokens: ({ count }) => `${count} tokens`,
@@ -213,7 +227,11 @@ const en: Copy = {
     errorRate: 'Error rate',
     heap: 'Heap used',
     heapNotReported: 'This runtime doesn’t report heap use.',
-    noService: 'No requests in this window yet',
+    allVersions: 'All versions',
+    gc: 'Garbage collection',
+    activeRequests: 'Active requests',
+    notReported: 'This runtime doesn’t report this metric.',
+    noService: 'No service metrics in this window yet',
     reading: 'Reading metrics',
     unavailable: 'Metrics aren’t available right now',
   },

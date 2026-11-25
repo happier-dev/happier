@@ -6,32 +6,41 @@ import {
   CaptureAppLlmCalls,
   type CaptureAppLlmCallV1,
 } from '@happier-dev/plugins-telemetry/capture-views';
+import type { PluginUiResourceProjection } from '@happier-dev/plugin-ui/hostApi';
 import { HappierDataMetric } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useMachineServiceResource } from '@/components/machines/resources/useMachineServiceResource';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 
 import {
-  telemetryCaptureFailureCode,
+  readTelemetryCaptureCostsSnapshot,
+  readTelemetryCaptureListSnapshot,
+  TelemetryCaptureTransportContext,
+  type TelemetryAppLlmCallSelection,
   type TelemetryCaptureReads,
 } from './telemetryCaptureReads';
 
 type Totals = Extract<DatabaseCaptureCostsReadResultV1, { ok: true }>;
-type Read =
-  | Readonly<{ kind: 'loading' }>
-  | Readonly<{
-      kind: 'ready';
-      totals: Totals;
-      calls: readonly CaptureAppLlmCallV1[];
-    }>
-  | Readonly<{ kind: 'unavailable'; code: string }>;
+const COSTS_PROJECTION: PluginUiResourceProjection<Totals> = {
+  decode: content => readTelemetryCaptureCostsSnapshot(content.bytes),
+};
+const CALLS_PROJECTION: PluginUiResourceProjection<readonly CaptureAppLlmCallV1[]> = {
+  decode: content => {
+    const { page } = readTelemetryCaptureListSnapshot('traces', content.bytes);
+    return page.list === 'traces' ? page.items : [];
+  },
+};
 
 /** The window's totals as the costs Action typed them: calls, tokens and each currency the provider reported. */
 function summarize(totals: Totals) {
@@ -62,58 +71,72 @@ function summarize(totals: Totals) {
 export function TelemetryAppLlmCalls(
   props: Readonly<{
     reads: TelemetryCaptureReads;
+    lifetime: ServerAccountScopeLifetime | null;
     active: boolean;
     windowMs: number;
     locale: string;
+    selection: TelemetryAppLlmCallSelection;
+    onSelect: (selection: TelemetryAppLlmCallSelection) => void;
     onOpenCall: (call: CaptureAppLlmCallV1) => void;
   }>,
 ) {
-  const { reads, active, windowMs, locale, onOpenCall } = props;
+  const { reads, lifetime, active, windowMs, locale, selection, onSelect, onOpenCall } = props;
   const { theme } = useUnistyles();
   const chartTheme = usePluginUiTheme(theme);
   const router = useRouter();
-  const [read, setRead] = React.useState<Read>({ kind: 'loading' });
-  const [attempt, setAttempt] = React.useState(0);
-  React.useEffect(() => {
-    if (!active) return;
-    const controller = new AbortController();
-    const until = Date.now();
-    const since = until - windowMs;
-    Promise.all([
-      reads.costs(since, until, controller.signal),
-      reads.appLlmCalls({}, since, until, null, controller.signal),
-    ]).then(
-      ([totals, page]) => {
-        if (!controller.signal.aborted)
-          setRead({ kind: 'ready', totals, calls: page.items });
-      },
-      (error: unknown) => {
-        if (!controller.signal.aborted)
-          setRead({
-            kind: 'unavailable',
-            code: telemetryCaptureFailureCode(error),
-          });
-      },
-    );
-    return () => controller.abort();
-  }, [reads, active, windowMs, attempt]);
+  const { createResourceClient } = React.useContext(TelemetryCaptureTransportContext);
+  const costsReference = React.useMemo(() => reads.costsReference(selection, windowMs), [reads, selection, windowMs]);
+  const callsReference = React.useMemo(() => reads.listReference('traces', windowMs, selection), [reads, selection, windowMs]);
+  const demand = { accountLifetime: lifetime, targetMachineId: reads.targetMachineId, active, follow: true, createClient: createResourceClient };
+  const costs = useMachineServiceResource({ ...demand, reference: costsReference, projection: COSTS_PROJECTION });
+  const calls = useMachineServiceResource({ ...demand, reference: callsReference, projection: CALLS_PROJECTION });
+  const [service, setService] = React.useState(selection.serviceName ?? '');
+  const [version, setVersion] = React.useState(selection.serviceVersion ?? '');
+  const serviceName = service.trim() || undefined;
+  const serviceVersion = version.trim() || undefined;
+  const selectionChanged = selection.serviceName !== serviceName || selection.serviceVersion !== serviceVersion;
 
-  if (read.kind === 'unavailable') {
+  const filters = (
+    <ItemGroup>
+      <View style={styles.facts}>
+        <FieldItem label={t('deploymentTelemetry.metrics.service')} style={styles.fact}>
+          <FieldTextInput testID="project-deployments.telemetry.llm.service" accessibilityLabel={t('deploymentTelemetry.metrics.service')}
+            value={service} onChangeText={setService} autoCapitalize="none" />
+        </FieldItem>
+        <FieldItem label={t('common.version')} style={styles.fact}>
+          <FieldTextInput testID="project-deployments.telemetry.llm.version" accessibilityLabel={t('common.version')}
+            value={version} onChangeText={setVersion} autoCapitalize="none" />
+        </FieldItem>
+      </View>
+      <View style={styles.note}>
+        <TextLinkButton testID="project-deployments.telemetry.llm.applyFilters" label={t('common.apply')} disabled={!selectionChanged}
+          onPress={() => {
+            onSelect({ ...(serviceName ? { serviceName } : {}), ...(serviceVersion ? { serviceVersion } : {}) });
+          }} />
+      </View>
+    </ItemGroup>
+  );
+
+  const failure = costs?.error ?? calls?.error;
+  if (failure) {
     return (
-      <SurfaceStateCard
-        testID="project-deployments.telemetry.llm.unavailable"
-        kind="unavailable"
-        size="line"
-        title={t('deploymentTelemetry.llm.unavailable')}
-        diagnosticCode={read.code}
-        action={{
-          label: t('common.retry'),
-          onPress: () => setAttempt((value) => value + 1),
-        }}
-      />
+      <View style={styles.body} testID="project-deployments.telemetry.llm">
+        {filters}
+        <SurfaceStateCard
+          testID="project-deployments.telemetry.llm.unavailable"
+          kind="unavailable"
+          size="line"
+          title={t('deploymentTelemetry.llm.unavailable')}
+          diagnosticCode={failure.code ?? 'telemetry_unavailable'}
+          action={{
+            label: t('common.retry'),
+            onPress: () => { void Promise.all([costs?.refresh(), calls?.refresh()]); },
+          }}
+        />
+      </View>
     );
   }
-  const ready = read.kind === 'ready' ? read : null;
+  const ready = costs?.value && calls?.value ? { totals: costs.value, calls: calls.value } : null;
   const summary = ready ? summarize(ready.totals) : null;
   const coverage = ready?.totals.coverage ?? null;
   const count = (value: number) => new Intl.NumberFormat(locale).format(value);
@@ -137,6 +160,7 @@ export function TelemetryAppLlmCalls(
     coverage && (coverage.lostObservations > 0 || coverage.reason !== null);
   return (
     <View style={styles.body} testID="project-deployments.telemetry.llm">
+      {filters}
       <ItemGroup testID="project-deployments.telemetry.llm.totals">
         <View style={styles.facts}>
           <View style={styles.fact}>
