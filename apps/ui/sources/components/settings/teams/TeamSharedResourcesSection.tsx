@@ -13,6 +13,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { ReservedShape } from '@/components/ui/lists/ReservedShape';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
@@ -21,6 +22,7 @@ import { usePreferredLanguage, t } from '@/text';
 import { credentialFailureMessage } from './credentials/teamCredentialPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
 import { teamReadFailureLabel } from './teamMutationPresentation';
+import { useTeamReadFailureAction } from './useTeamReadFailureAction';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
 import { teamCredentialsPath, teamSessionsPath, teamSharedCollectionPath, teamSharedKindPath } from './teamsRoutes';
 
@@ -81,7 +83,7 @@ export const TeamSharedResourcesSection = React.memo(
       return true;
     } : undefined, [openBeside, context.team.name]);
     return (
-      <TeamSharedResourcesView teamName={context.team.name} serverId={context.address.serverId} summary={summary}
+      <TeamSharedResourcesView teamName={context.team.name} serverId={address.serverId} address={address} summary={summary}
         destinationOf={destinationOf} onOpen={open} onOpenRow={onOpenRow} selectedKey={besidePage?.openKey ?? null} />
     );
   },
@@ -101,6 +103,7 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
   props: Readonly<{
     teamName: string;
     serverId: string;
+    address?: TeamAddress;
     summary: TeamSharedSummaryState;
     destinationOf: (row: TeamSharedResourceSummaryRowV1) => KindDestination | null;
     onOpen: (destination: KindDestination) => void;
@@ -111,6 +114,7 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
   }>,
 ) {
     const language = usePreferredLanguage();
+    const failureAction = useTeamReadFailureAction(props.address);
     const rows = React.useMemo(
       () =>
         props.summary.kinds
@@ -123,8 +127,11 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
       [props.summary.kinds],
     );
     const hasAnswer = props.summary.status === 'ready' || props.summary.status === 'refreshing';
-    const failedWithNothing =
-      props.summary.status === 'error' && props.summary.kinds.length === 0;
+    const readFailure = props.summary.status === 'error' ? props.summary.error : null;
+    const failurePrefix = 'team-overview-shared-failed';
+    const recovery = readFailure && failureAction(readFailure, { onPress: props.summary.reload, testIDPrefix: failurePrefix });
+    const failureMessage = readFailure?.code === 'invalid_team_input' ? t('homeGovernance.invalidRead')
+      : readFailure ? teamReadFailureLabel(readFailure) : t('teams.overview.shared.failed');
     const loadingWithNothing = isTeamSharedResourcesSummaryPending(props.summary);
     // Last-known kinds stay in place while a refresh runs, including "nothing shared yet".
     const empty = (hasAnswer || props.summary.kinds.length > 0) && rows.length === 0;
@@ -149,18 +156,14 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
             />
           </ReservedShape>
         ) : null}
-        {failedWithNothing ? (
-          <ItemLoadStateRows
-            testID="team-overview-shared-failed"
-            state={{
-              kind: 'failed',
-              reason: props.summary.error
-                ? teamReadFailureLabel(props.summary.error)
-                : t('teams.overview.shared.failed'),
-              onRetry: props.summary.reload,
-              homeServerIds: [props.serverId],
-            }}
-          />
+        {props.summary.status === 'error' ? (
+          recovery?.onPress === props.summary.reload ? (
+            <ItemLoadStateRows testID={failurePrefix}
+              state={{ kind: 'failed', reason: failureMessage, onRetry: props.summary.reload, homeServerIds: [props.serverId] }} />
+          ) : (
+            <SurfaceStateCard testID={failurePrefix} kind="error" size="line" title={failureMessage}
+              accessibilitySemantics="alert" action={recovery ?? undefined} />
+          )
         ) : null}
         {empty ? (
           // The lab's empty row (L12 empty): what isn't here yet and where sharing starts, as a row of the group.
@@ -178,6 +181,7 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
               onOpen={props.onOpen}
               onOpenRow={props.onOpenRow}
               onRetry={props.summary.reload}
+              failureAction={failureAction}
               selected={props.selectedKey === key}
             />
           );
@@ -194,6 +198,7 @@ const TeamSharedResourceRow = React.memo(function TeamSharedResourceRow(props: R
   onOpen: (destination: KindDestination) => void;
   onOpenRow?: (row: TeamSharedResourceSummaryRowV1) => boolean;
   onRetry: () => Promise<void>;
+  failureAction: ReturnType<typeof useTeamReadFailureAction>;
   selected: boolean;
   showDivider?: boolean;
 }>) {
@@ -205,8 +210,8 @@ const TeamSharedResourceRow = React.memo(function TeamSharedResourceRow(props: R
   const destination = props.destinationOf(row);
   if (row.status === 'unavailable') {
     const failure = homeDomainFailureFromActionFailure({ errorCode: row.reason });
-    const reason = (row.kind === 'credentials' ? credentialFailureMessage(failure) : null)
-      ?? teamReadFailureLabel(failure);
+    const reason = sharedResourceCountFailureLabel(row, failure);
+    const recovery = props.failureAction(failure, { onPress: props.onRetry, testIDPrefix: `team-overview-shared:${rowKey}` });
     return (
       <Item
         testID={`team-overview-shared:${rowKey}`}
@@ -217,13 +222,9 @@ const TeamSharedResourceRow = React.memo(function TeamSharedResourceRow(props: R
         subtitleLines={0}
         accessibilityLabel={`${t('teams.overview.shared.unknownA11y', { kind: label })}. ${reason}`}
         detail={t('teams.overview.shared.unknown')}
-        rightElement={
-          <TextLinkButton
-            testID={`team-overview-shared-retry:${rowKey}`}
-            label={t('common.retry')}
-            onPress={props.onRetry}
-          />
-        }
+        rightElement={recovery ? (
+          <TextLinkButton testID={recovery.testID} label={recovery.label} onPress={recovery.onPress} />
+        ) : undefined}
         mode="info"
         showChevron={false}
       />
@@ -251,6 +252,23 @@ const TeamSharedResourceRow = React.memo(function TeamSharedResourceRow(props: R
     />
   );
 });
+
+function sharedResourceCountFailureLabel(
+  row: Extract<TeamSharedResourceSummaryRowV1, { status: 'unavailable' }>,
+  failure: ReturnType<typeof homeDomainFailureFromActionFailure>,
+): string {
+  switch (row.reason) {
+    case 'audience': return t('session.collaboration.unavailable');
+    case 'not_found': return row.kind === 'machinePools' ? t('machinePools.unavailable') : teamReadFailureLabel(failure);
+    case 'permission_denied':
+    case 'forbidden': return t('teams.errors.forbidden');
+    case 'source_unavailable': return t('projects.sources.unavailable');
+    case 'discussions_unavailable': return t('session.collaboration.discussion.unavailable');
+    case 'discussion_not_found': return t('errors.permissionDenied');
+    default:
+      return (row.kind === 'credentials' ? credentialFailureMessage(failure) : null) ?? teamReadFailureLabel(failure);
+  }
+}
 
 /** The invitation to share, as one row of the section; the never-seen reserve draws it unseen for its box. */
 function SharedEmptyRow(props: Readonly<{ teamName: string }>) {

@@ -298,6 +298,86 @@ describe('Team shared kind list', () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    { status: 400, error: 'invalid_team_input', message: 'homeGovernance.invalidRead' },
+    { status: 403, error: 'team_forbidden', message: 'teams.errors.forbidden' },
+    { status: 404, error: 'team_not_found', message: 'teams.errors.notFound' },
+    { status: 404, error: 'teams_unavailable', message: 'teams.unavailable.disabled' },
+  ] as const)('says why the Team summary was refused with $error without retrying', async ({ status, error, message }) => {
+    const serverId = await addHome([]);
+    const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: 'team-1' });
+    harness.answer(serverId, summary.path, { status, body: { error } });
+    const screen = await renderScreen(<TeamSection serverId={serverId} teamId="team-1" title="Shared">
+      {context => <SharedSection context={context} />}
+    </TeamSection>);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t(message)));
+    expect(screen.findByTestId('team-overview-shared-failed')).toBeTruthy();
+    expect(screen.findByTestId('team-overview-shared-failed-retry')).toBeNull();
+  });
+
+  it('signs in again when the summary rejects a legacy Home credential', async () => {
+    const serverId = await addHome([]);
+    const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: 'team-1' });
+    harness.answer(serverId, summary.path, { status: 403, body: { error: 'team_forbidden', details: { reason: 'legacy_home_credential' } } });
+    const screen = await renderScreen(<TeamSection serverId={serverId} teamId="team-1" title="Shared">
+      {context => <SharedSection context={context} />}
+    </TeamSection>);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('teams.errors.signInOutdated')));
+    expect(screen.findByTestId('team-overview-shared-failed-retry')).toBeNull();
+    expect(screen.findByTestId('team-overview-shared-failed-sign-in')).not.toBeNull();
+  });
+
+  it('reloads the summary when a transient read fails', async () => {
+    const serverId = await addHome([]);
+    const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: 'team-1' });
+    harness.answer(serverId, summary.path, { status: 503, body: { error: 'home_unreachable' } });
+    const screen = await renderScreen(<TeamSection serverId={serverId} teamId="team-1" title="Shared">
+      {context => <SharedSection context={context} />}
+    </TeamSection>);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-overview-shared-failed-retry')).not.toBeNull());
+    harness.answer(serverId, summary.path, { body: { teamId: 'team-1', kinds: [] } });
+    await screen.pressByTestIdAsync('team-overview-shared-failed-retry');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-overview-shared-empty')).not.toBeNull());
+    expect(harness.requestsFor(summary.path)).toHaveLength(2);
+  });
+
+  it.each([
+    { kind: 'sessions', reason: 'audience', message: 'session.collaboration.unavailable', action: false },
+    { kind: 'machinePools', reason: 'not_found', message: 'machinePools.unavailable', action: false },
+    { kind: 'machinePresets', reason: 'permission_denied', message: 'teams.errors.forbidden', action: false },
+    { kind: 'projectSources', reason: 'source_unavailable', message: 'projects.sources.unavailable', action: false },
+    ...(['projectDocuments', 'prompts', 'workflows', 'reviews', 'otherArtifacts'] as const).map((kind) => ({
+      kind, reason: 'source_unavailable', message: 'projects.sources.unavailable', action: false,
+    } as const)),
+    { kind: 'discussions', reason: 'discussions_unavailable', message: 'session.collaboration.discussion.unavailable', action: false },
+    { kind: 'discussions', reason: 'discussion_not_found', message: 'errors.permissionDenied', action: false },
+    { kind: 'discussions', reason: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: false },
+    { kind: 'discussions', reason: 'team_authentication_required', message: 'session.access.authenticationRequired', action: true },
+    { kind: 'savedSecrets', reason: 'forbidden', message: 'teams.errors.forbidden', action: false },
+    { kind: 'savedSecrets', reason: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: false },
+    { kind: 'savedSecrets', reason: 'team_authentication_required', message: 'session.access.authenticationRequired', action: true },
+    { kind: 'credentials', reason: 'feature_disabled', message: 'teams.credentials.errors.featureDisabled', action: false },
+    { kind: 'credentials', reason: 'team_authentication_required', message: 'teams.credentials.errors.teamAuthenticationRequired', action: true },
+    { kind: 'credentials', reason: 'team_authentication_policy_unavailable', message: 'teams.credentials.errors.teamAuthenticationPolicyUnavailable', action: false },
+  ] as const)('says why $kind could not be counted when the owner answered $reason', async ({ kind, reason, message, action }) => {
+    const serverId = await addHome([]);
+    const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: 'team-1' });
+    harness.answer(serverId, summary.path, { body: { teamId: 'team-1', kinds: [{ kind, status: 'unavailable', count: null, reason }] } });
+    const screen = await renderScreen(<TeamSection serverId={serverId} teamId="team-1" title="Shared">
+      {context => <SharedSection context={context} />}
+    </TeamSection>);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t(message)));
+    expect(screen.findByTestId(`team-overview-shared-retry:${kind}`)).toBeNull();
+    if (action) {
+      await screen.pressByTestIdAsync(`team-overview-shared:${kind}-sign-in`);
+      const destination = new URL(String(routerPush.mock.lastCall?.[0]), HOME_URL);
+      expect(destination.pathname).toBe('/teams/team-1/sign-in');
+      expect(destination.searchParams.get('serverId')).toBe(serverId);
+    } else {
+      expect(screen.findByTestId(`team-overview-shared:${kind}-sign-in`)).toBeNull();
+    }
+  });
+
   it('opens the exact Collection when two plugins share the same Collection id', async () => {
     const serverId = await addHome([]);
     const kind = TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1;
