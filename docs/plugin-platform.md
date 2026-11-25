@@ -4103,7 +4103,9 @@ person/group/Team access picker. Authors supply its model, actions and domain
 adapter; the mounted presentation host supplies the existing native list,
 identity visuals, localized words and device services. App sharing callers use
 that same component. Directory acquisition, grant changes and access policy
-stay with their existing domain owners.
+stay with their existing domain owners. Portable SelectionList descriptors take
+a generic callback context. The App adapter binds its private Action executor
+context when it consumes those descriptors.
 
 `CodeEditor` from the same public entry delegates to the incumbent Monaco or
 native CodeMirror editor through the presentation host. Portable props and its

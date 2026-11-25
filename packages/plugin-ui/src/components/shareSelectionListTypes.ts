@@ -1,6 +1,5 @@
 import type * as React from 'react';
 import type { GestureResponderEvent } from 'react-native';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 /**
  * Type definitions for the SelectionList primitive.
@@ -208,15 +207,15 @@ type SelectionListOptionBase = Readonly<{
  *     be `undefined`. The orchestrator handles the push and never calls the
  *     parent's top-level `onSelect` for this row.
  */
-export type SelectionListOption<TInvocation = unknown> =
+export type SelectionListOption<TInvocation = unknown, TContext = unknown> =
     | (SelectionListOptionBase & Readonly<{
         /** When the option just selects (default), called on press / Enter. */
-        onSelect?(event?: GestureResponderEvent, context?: ActionExecutorContext, invocation?: TInvocation): void;
+        onSelect?(event?: GestureResponderEvent, context?: TContext, invocation?: TInvocation): void;
         openStep?: undefined;
     }>)
     | (SelectionListOptionBase & Readonly<{
         /** When set, tapping pushes a new step instead of selecting. */
-        openStep: SelectionListStep<TInvocation>;
+        openStep: SelectionListStep<TInvocation, TContext>;
         onSelect?: undefined;
     }>);
 
@@ -270,12 +269,12 @@ export type SelectionListVirtualizedOptionSourceHeader = Readonly<{
  * expose its own focus traversal because its opaque option positions need not
  * be dense or match visual-row indices.
  */
-export type SelectionListVirtualizedOptionSource<TInvocation = unknown> = Readonly<{
+export type SelectionListVirtualizedOptionSource<TInvocation = unknown, TContext = unknown> = Readonly<{
     items: readonly SelectionListVirtualizedOptionSourceItem[];
     optionCount: number;
     /** Changes when mounted option state or focusability changes without a structural source rebuild. */
     stateKey: string;
-    getOption: (optionIndex: number) => SelectionListOption<TInvocation>;
+    getOption: (optionIndex: number) => SelectionListOption<TInvocation, TContext>;
     getOptionId: (optionIndex: number) => string;
     findOptionIndexById: (optionId: string) => number;
     /** Visual row position, including section headers/hints; indexed with the inventory. */
@@ -302,7 +301,7 @@ export type SelectionListSectionAction = Readonly<{
     testID?: string;
 }>;
 
-export type SelectionListSection<TInvocation = unknown> = Readonly<{
+export type SelectionListSection<TInvocation = unknown, TContext = unknown> = Readonly<{
     id: string;
     /** Uppercase tracking label; renders as a section header. */
     title?: string;
@@ -312,11 +311,11 @@ export type SelectionListSection<TInvocation = unknown> = Readonly<{
     count?: number;
     /** One quiet destination at the header's trailing edge ("New machine · Presets"); never an option. */
     action?: SelectionListSectionAction;
-    options: ReadonlyArray<SelectionListOption<TInvocation>>;
+    options: ReadonlyArray<SelectionListOption<TInvocation, TContext>>;
     /** Query projection for grouped rows (for example, matches inside a closed disclosure).
      * Owns matching and ordering for a nonempty query; empty input keeps `options` as authored.
      */
-    filterOptions?: (query: string) => ReadonlyArray<SelectionListOption<TInvocation>>;
+    filterOptions?: (query: string) => ReadonlyArray<SelectionListOption<TInvocation, TContext>>;
     /** Optional non-activatable status rendered after this static section. */
     resultHint?: string;
     /**
@@ -348,8 +347,8 @@ export type SelectionListSection<TInvocation = unknown> = Readonly<{
  * `visibleWhen(input)` gates whether the section participates in rendering at
  * all for the current input. See `useSelectionListDynamicSections.ts`.
  */
-export type SelectionListDynamicSectionResolveResult<TInvocation = unknown> = Readonly<{
-    options: ReadonlyArray<SelectionListOption<TInvocation>>;
+export type SelectionListDynamicSectionResolveResult<TInvocation = unknown, TContext = unknown> = Readonly<{
+    options: ReadonlyArray<SelectionListOption<TInvocation, TContext>>;
     emptyHint?: string;
     /** Optional non-activatable status shown after a successful nonempty result set. */
     resultHint?: string;
@@ -367,7 +366,7 @@ export type SelectionListDynamicSectionResolveResult<TInvocation = unknown> = Re
     notFoundHint?: string;
 }>;
 
-export type SelectionListDynamicSection<TInvocation = unknown> = Readonly<{
+export type SelectionListDynamicSection<TInvocation = unknown, TContext = unknown> = Readonly<{
     id: string;
     title?: string;
     rightAccessory?: SelectionListLazyVisual;
@@ -394,17 +393,17 @@ export type SelectionListDynamicSection<TInvocation = unknown> = Readonly<{
         seed: string,
         abortSignal: AbortSignal,
         /** Current results while the same request is still resolving; never cached as final. */
-        onProgress?: (result: SelectionListDynamicSectionResolveResult<TInvocation>) => void,
+        onProgress?: (result: SelectionListDynamicSectionResolveResult<TInvocation, TContext>) => void,
         /** Current output for this target, so producers can retain unchanged option identities. */
-        previousOptions?: readonly SelectionListOption<TInvocation>[],
-    ) => Promise<SelectionListDynamicSectionResolveResult<TInvocation>>;
+        previousOptions?: readonly SelectionListOption<TInvocation, TContext>[],
+    ) => Promise<SelectionListDynamicSectionResolveResult<TInvocation, TContext>>;
     /**
      * Binds resolved or retained row data to this descriptor's current presentation
      * and actions. Runs before matching and activation, including while cached
      * results refresh or a request fails. Keep unchanged projected rows stable;
      * changing this binding does not invalidate or repeat the resolver request.
      */
-    projectOptions?: (options: readonly SelectionListOption<TInvocation>[]) => readonly SelectionListOption<TInvocation>[];
+    projectOptions?: (options: readonly SelectionListOption<TInvocation, TContext>[]) => readonly SelectionListOption<TInvocation, TContext>[];
     /** Debounce window in ms; default 120ms. */
     debounceMs?: number;
     /** Skeleton row count while loading; default 3. Pass 0 to collapse during load. */
@@ -483,11 +482,11 @@ export type SelectionListDynamicSection<TInvocation = unknown> = Readonly<{
  * flag. Each entry is either a static section or a dynamic (async-resolved)
  * section.
  */
-export type SelectionListSectionDescriptor<TInvocation = unknown> =
-    | (Readonly<{ kind: 'static' }> & SelectionListSection<TInvocation>)
-    | (Readonly<{ kind: 'dynamic' }> & SelectionListDynamicSection<TInvocation>);
+export type SelectionListSectionDescriptor<TInvocation = unknown, TContext = unknown> =
+    | (Readonly<{ kind: 'static' }> & SelectionListSection<TInvocation, TContext>)
+    | (Readonly<{ kind: 'dynamic' }> & SelectionListDynamicSection<TInvocation, TContext>);
 
-export type SelectionListStep<TInvocation = unknown> = Readonly<{
+export type SelectionListStep<TInvocation = unknown, TContext = unknown> = Readonly<{
     id: string;
     /** Keep one flat virtualized body from the first render, including empty/multi-source search results. */
     virtualization?: 'force';
@@ -530,7 +529,7 @@ export type SelectionListStep<TInvocation = unknown> = Readonly<{
      * and closes through the normal selection path, so it doubles as the
      * keyboard-navigable commit affordance for value-mode steps.
      */
-    buildInputRow?: (input: string) => SelectionListOption<TInvocation> | null;
+    buildInputRow?: (input: string) => SelectionListOption<TInvocation, TContext> | null;
     /**
      * When `true`, this step's static + dynamic rows are NOT narrowed by the
      * input value. Use for value-mode steps where the input is the candidate
@@ -562,14 +561,14 @@ export type SelectionListStep<TInvocation = unknown> = Readonly<{
      */
     emptyStateForQuery?: (query: string) => Readonly<{ label: string; clearLabel?: string }>;
     /** Ordered array of section descriptors; the array order IS the visual order. */
-    sections: ReadonlyArray<SelectionListSectionDescriptor<TInvocation>>;
+    sections: ReadonlyArray<SelectionListSectionDescriptor<TInvocation, TContext>>;
     /**
      * Direct structural source for a large server-filtered corpus. It is
      * mutually exclusive with authored sections: callers provide `sections: []`
      * and let this source preserve their precomputed visual order through the
      * canonical body virtualizer.
      */
-    virtualizedOptionSource?: SelectionListVirtualizedOptionSource<TInvocation>;
+    virtualizedOptionSource?: SelectionListVirtualizedOptionSource<TInvocation, TContext>;
     /** Footer hints rendered for this step (suppressed when no hardware keyboard). */
     footerHints?: ReadonlyArray<SelectionListKeyboardHint>;
 }>;
