@@ -166,6 +166,19 @@ describe('protocol ESM import safety', () => {
     MODULE_IMPORT_TIMEOUT_MS + 5_000,
   );
 
+  it('imports the Stack browser worker before parsing machine-pool authoring intent', async () => {
+    const authoring = pathToFileURL(path.join(__dirname, 'sessions/authoring/fieldCatalog.ts')).href;
+    await importInFreshProcess('../../../apps/stack/scripts/utils/dev_targets/qa_browser.mjs', `
+      const { strict: assert } = await import('node:assert');
+      const { SessionAuthoringExecutionTargetV2Schema: schema } = await import(${JSON.stringify(authoring)});
+      const target = { kind: 'machine', target: { serverId: 'home', machineId: 'machine' } };
+      const selectionOrigin = { kind: 'machine_pool', poolId: '247ac4cf-6709-4440-b415-38698cb33004' };
+      assert.deepEqual(schema.parse(target), target);
+      assert.deepEqual(schema.parse({ ...target, selectionOrigin }), { ...target, selectionOrigin });
+      assert.equal(schema.safeParse({ ...target, selectionOrigin: { ...selectionOrigin, poolId: 'invalid' } }).success, false);
+    `, true);
+  }, MODULE_IMPORT_TIMEOUT_MS + 5_000);
+
   it(
     'imports executionRuns under node + tsx without initialization errors',
     async () => {

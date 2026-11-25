@@ -1,5 +1,6 @@
 import { SessionInitialAccessDraftV1Schema } from '../access/sessionInitialAccessDraftV1.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 
@@ -92,7 +93,7 @@ export const SessionAuthoringAutomationV1Schema = z.strictObject({
 }));
 
 /** Authoring intent; parsing a temporary target does not authorize headless activation. */
-export const SessionAuthoringExecutionTargetV2Schema = z.discriminatedUnion('kind', [
+export const SessionAuthoringExecutionTargetV2Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('machine'),
     target: SessionExecutionTargetV1Schema,
@@ -114,7 +115,7 @@ export const SessionAuthoringExecutionTargetV2Schema = z.discriminatedUnion('kin
      */
     packageExpiresAt: z.optional(z.number().check(z.int(), z.positive(), z.int())),
   }),
-]);
+]));
 export type SessionAuthoringExecutionTargetV2 = z.infer<typeof SessionAuthoringExecutionTargetV2Schema>;
 
 /** Synchronized display/recovery reference only; the activation service owns lifecycle and authority. */
