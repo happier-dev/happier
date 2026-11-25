@@ -40,6 +40,30 @@ describe('detached Run raw ingress Account isolation', () => {
         installationId: 'installation', role: accountId === 'custodian' ? 'manage' : 'use', encryptionMode: 'plain' } };
   }
 
+  it.each(['failed', 'succeeded', 'cancelled'] as const)(
+    'returns the retained %s status to the Run owner on every Stop', async status => {
+      const runId = 'ended-run';
+      await retainExecutionRunState({
+        runId, callId: 'ended-call', sidechainId: 'ended-sidechain', sessionId: null,
+        depth: 0, intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex',
+        instructions: 'Fixture input', permissionMode: 'read_only', retentionPolicy: 'resumable',
+        runClass: 'bounded', ioMode: 'request_response', status, startedAtMs: 1, finishedAtMs: 2,
+        requesterWorkAttributionV1: { serverId: 'home', accountId: 'grantee', machineId: 'machine', installationId: 'installation' },
+      });
+      const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain' });
+      const registration = registerMachineRpcHandlers({ rpcHandlerManager: rpc,
+        handlers: { spawnSession: async () => ({ type: 'success', sessionId: 'unused' }), stopSession: async () => true, requestShutdown() {} },
+        deps: { currentMachineId: 'machine', currentServerId: 'home', workingDirectory: directory },
+      });
+      disposers.push(() => registration.dispose());
+      const stop = (accountId: string) => rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId },
+        { rpcContext: requester(accountId) });
+      await expect(stop('custodian')).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
+      await expect(stop('grantee')).resolves.toEqual({ ok: true, status });
+      await expect(stop('grantee')).resolves.toEqual({ ok: true, status });
+    },
+  );
+
   it.each(['present_user', 'account_automation'] as const)(
     'keeps detached permission responses in the requester Account under %s authority', async (authority) => {
     const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain' });

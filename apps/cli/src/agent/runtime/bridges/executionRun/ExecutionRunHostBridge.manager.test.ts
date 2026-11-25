@@ -3478,7 +3478,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
         ioMode: 'streaming',
       });
 
-      await expect(manager.stop(started.runId)).resolves.toEqual({ ok: true });
+      await expect(manager.stop(started.runId)).resolves.toEqual({ ok: true, status: 'cancelled' });
       await disposalStartedPromise;
       const resume = manager.ensure(started.runId, { resume: true });
 
@@ -3619,7 +3619,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 
       const resume = manager.ensure(started.runId, { resume: true });
       await resumeProvisionStartedPromise;
-      await expect(manager.stop(started.runId)).resolves.toEqual({ ok: true });
+      await expect(manager.stop(started.runId)).resolves.toEqual({ ok: true, status: 'cancelled' });
       const updatesAfterStop = publicStates.length;
       releaseResumeProvision();
 

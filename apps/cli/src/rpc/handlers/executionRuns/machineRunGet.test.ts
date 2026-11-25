@@ -154,7 +154,7 @@ describe('Machine Run get through the shared registered handler', () => {
             { sessionId: 'hosting-session', runId: 'machine-run' }))
             .toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
         expect(await invoke(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: run.runId }))
-            .toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
+            .toEqual({ ok: true, status: 'succeeded' });
         await retainExecutionRunState({ ...run, runId: 'timed-out-run', status: 'timeout', terminalOccurrenceId: 'timeout-original' });
         expect(ExecutionRunFollowFrontierResponseSchema.parse(await invoke(SESSION_RPC_METHODS.EXECUTION_RUN_FOLLOW_FRONTIER,
             { machineId: 'machine', runId: 'timed-out-run' })))

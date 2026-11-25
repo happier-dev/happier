@@ -18,7 +18,7 @@ describe('happier session run stop (action executor)', () => {
   it('routes through ActionExecutor with the expected action id and args', async () => {
     execute.mockResolvedValueOnce({
       ok: true,
-      result: { ok: true },
+      result: { ok: true, status: 'failed' },
     });
 
     const { handleSessionCommand } = await import('../handleSessionCommand');
@@ -44,6 +44,7 @@ describe('happier session run stop (action executor)', () => {
       expect(output.json()).toEqual(expect.objectContaining({
         ok: true,
         kind: 'session_run_stop',
+        data: { sessionId: 'sess-1', runId: 'run-1', stopped: false, status: 'failed' },
       }));
     } finally {
       output.restore();

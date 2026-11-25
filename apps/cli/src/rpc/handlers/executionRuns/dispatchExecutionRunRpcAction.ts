@@ -940,7 +940,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           errorCode: stopped.errorCode ?? 'execution_run_failed',
         };
       }
-      return { ok: true };
+      return { ok: true, status: stopped.status };
     },
     executionRunAction: async (sessionId, request, opts) => {
       const disabled = ensureEnabled();

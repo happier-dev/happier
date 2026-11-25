@@ -283,7 +283,7 @@ describe('ExecutionRunHostBridge detached task scope', () => {
       await expect(cancelledWait).rejects.toBe(cancellation);
       expect(manager.get(started.runId)?.status).toBe('running');
 
-      await expect(manager.stop(started.runId)).resolves.toEqual({ ok: true });
+      await expect(manager.stop(started.runId)).resolves.toEqual({ ok: true, status: 'cancelled' });
       await expect(siblingWait).resolves.toBeUndefined();
     } finally {
       await manager.dispose();

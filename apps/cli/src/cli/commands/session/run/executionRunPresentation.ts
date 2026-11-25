@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { ExecutionRunGetResponseSchema, ExecutionRunListResponseSchema, ExecutionRunStartResponseSchema, ExecutionRunStopResponseSchema, ExecutionRunWaitResultSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
+import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/runs/waitForTerminal';
 
 import type { ActionCliPresentation } from '@/cli/actions/commandPresentation';
 import { ACTION_CLI_ENVELOPE_KINDS } from '@/cli/actions/commandPresentationMetadata';
@@ -85,7 +86,8 @@ export const EXECUTION_RUN_START_PRESENTATION: ActionCliPresentation = {
 export const EXECUTION_RUN_STOP_PRESENTATION: ActionCliPresentation = {
   envelopeKind: fixedEnvelopeKind(ACTION_CLI_ENVELOPE_KINDS['execution.run.stop']),
   presentSuccess: async (payload, context) => {
-    ExecutionRunStopResponseSchema.parse({ ok: true, ...readRecord(payload) });
+    const result = ExecutionRunStopResponseSchema.parse({ ok: true, ...readRecord(payload) });
+    const status = isExecutionRunTerminalStatus(result.status) ? result.status : undefined;
     if (context.json) {
       await printJsonEnvelope({
         ok: true,
@@ -93,12 +95,13 @@ export const EXECUTION_RUN_STOP_PRESENTATION: ActionCliPresentation = {
         data: {
           sessionId: readInputString(context.input, 'sessionId'),
           runId: readInputString(context.input, 'runId'),
-          stopped: true,
+          stopped: status === undefined || status === 'cancelled',
+          ...(status ? { status } : {}),
         },
       });
       return true;
     }
-    console.log(chalk.green('✓'), 'stopped run');
+    console.log(chalk.green('✓'), status ? `run ended (${status})` : 'stopped run');
     return true;
   },
 };

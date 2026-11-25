@@ -35,7 +35,7 @@ describe('ExecutionRunHostBridge ensure-or-start response', () => {
                     publishedCallId = message.callId;
                     const accepted = bridge.listPublic()[0];
                     if (!accepted) throw new Error('Expected the accepted Run before transcript publication');
-                    expect(await bridge.stop(accepted.runId)).toEqual({ ok: true });
+                    expect(await bridge.stop(accepted.runId)).toEqual({ ok: true, status: 'cancelled' });
                 },
             });
             const start = {

@@ -203,9 +203,11 @@ describe('detached Run Stop through the UI Action and registered Machine RPC', (
         readCapability = async () => readyCapability;
         expect(await get()).toMatchObject({ ok: true, result: { run: { status: 'running' } } });
         const stopped = await executor.execute('execution.run.stop', { sessionId: null, runId: run.runId }, context);
-        expect(stopped).toEqual({ ok: true, result: { ok: true } });
+        expect(stopped).toEqual({ ok: true, result: { ok: true, status: 'cancelled' } });
         if (!stopped.ok) throw new Error(stopped.errorCode);
-        expect(ExecutionRunStopResponseSchema.parse(stopped.result)).toEqual({ ok: true });
+        expect(ExecutionRunStopResponseSchema.parse(stopped.result)).toEqual({ ok: true, status: 'cancelled' });
+        expect(await executor.execute('execution.run.stop', { sessionId: null, runId: run.runId }, context))
+            .toEqual(stopped);
         const observed = await get();
         expect(observed).toMatchObject({ ok: true, result: { run: { status: 'cancelled' } } });
         if (!observed.ok) throw new Error(observed.errorCode);

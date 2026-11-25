@@ -3526,7 +3526,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     });
   }
 
-  async stop(runId: string): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+  async stop(runId: string): ReturnType<typeof stopExecutionRun> {
     await this.recoverRetainedRuns();
     const recoveryInput = this.boundedRecoveryInputs.get(runId);
     this.boundedRecoveryInputs.delete(runId);
@@ -3539,8 +3539,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       if (childId && this.runs.get(childId)?.status === 'running') await this.stop(childId);
       await custody.settled;
     }
-    const run = this.runs.get(runId) ?? null;
-    const result = await stopExecutionRun({
+    return await stopExecutionRun({
       runId,
       runs: this.runs,
       controllers: this.controllers,
@@ -3548,19 +3547,12 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       getNowMs: this.getNowMs,
       finishRun: this.finishRun.bind(this),
       onPublicStateUpdated: (updatedRunId) => this.emitPublicStateUpdated(updatedRunId),
-    });
-    if (result.ok && run) {
-      await this.emitLifecycleHookEvent({
+      onStopped: async run => await this.emitLifecycleHookEvent({
         eventId: 'executionRun.stopped',
         runId,
-        payload: {
-          sessionId: run.sessionId,
-          runId,
-          reason: 'user',
-        },
-      });
-    }
-    return result;
+        payload: { sessionId: run.sessionId, runId, reason: 'user' },
+      }),
+    });
   }
 
   async dispose(): Promise<void> {

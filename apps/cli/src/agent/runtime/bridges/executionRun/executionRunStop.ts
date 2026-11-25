@@ -6,6 +6,21 @@ import { isExecutionRunControllerCurrent, settleExecutionRunController } from '.
 import { readExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
 import { createExecutionRunOccurrenceWitnessRegistry, projectExecutionRunInputTurn, projectExecutionRunInputTurns } from './runOccurrenceWitness';
 
+type ExecutionRunStopResult = {
+  ok: boolean;
+  status?: Exclude<ExecutionRunState['status'], 'running'>;
+  errorCode?: string;
+  error?: string;
+};
+
+function readStoppedRunResult(run: ExecutionRunState | undefined): ExecutionRunStopResult {
+  if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
+  if (run.status === 'running') {
+    return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Run changed during Stop' };
+  }
+  return { ok: true, status: run.status };
+}
+
 export async function stopExecutionRun(args: Readonly<{
   runId: string;
   runs: Map<string, ExecutionRunState>;
@@ -14,10 +29,10 @@ export async function stopExecutionRun(args: Readonly<{
   getNowMs: () => number;
   finishRun: FinishExecutionRun;
   onPublicStateUpdated?: (runId: string) => void;
-}>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+  onStopped?: (run: ExecutionRunState) => Promise<void>;
+}>): Promise<ExecutionRunStopResult> {
   const run = args.runs.get(args.runId);
-  if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
-  if (run.status !== 'running') return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
+  if (!run || run.status !== 'running') return readStoppedRunResult(run);
   const ctrl = args.controllers.get(args.runId);
   if (ctrl) {
     if (ctrl.kind === 'backend' && ctrl.hostWorkPending && !ctrl.turnInFlight && ctrl.lastInputTurn?.state === 'completed') {
@@ -25,7 +40,7 @@ export async function stopExecutionRun(args: Readonly<{
       // host barrier drains. The Stop cleanup below still handles barrier failure.
       await readExecutionRunControllerHostBarrier(ctrl)?.catch(() => undefined);
       if (!isExecutionRunControllerCurrent({ runId: args.runId, controller: ctrl, controllers: args.controllers })) {
-        return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
+        return readStoppedRunResult(args.runs.get(args.runId));
       }
     }
     // Read the exact-input occurrence before cancellation revokes a retained
@@ -106,5 +121,7 @@ export async function stopExecutionRun(args: Readonly<{
       args.onPublicStateUpdated?.(args.runId);
     }
   }
-  return { ok: true };
+  const result = readStoppedRunResult(args.runs.get(args.runId));
+  if (result.status === 'cancelled') await args.onStopped?.(run);
+  return result;
 }
