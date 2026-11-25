@@ -3,6 +3,8 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/action
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { accountSettingsParse, buildBackendTargetKeyV2, createActionExecutor, readBackendTargetRefV2, ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema, ScmDiffSummaryGenerateInputSchema, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import type {
@@ -14,6 +16,8 @@ import type {
 } from '@happier-dev/plugin-sdk/actions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import credentialAxios from '@/api/client/credentialAxios';
+import { randomUUID } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
@@ -80,6 +84,23 @@ function runProtocolDescribeResponse(overrides?: Readonly<{ version?: number; fe
   if (overrides === undefined) return response;
   return { ...response, capabilities: response.capabilities.map(descriptor => ({ ...descriptor,
     protocol: overrides === null ? undefined : descriptor.protocol && { ...descriptor.protocol, ...overrides } })) };
+}
+
+function serveEmptyExecutionRunAutomationIndex(): string {
+  const accountId = randomUUID();
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+  const features = FeaturesResponseSchema.parse({ features: { workflows: { enabled: true } } });
+  // These fixtures represent an authenticated Account with no Action automations.
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+    if (new URL(String(url)).pathname !== '/v1/features') throw new Error('Unexpected server feature request');
+    return Response.json(features);
+  });
+  vi.spyOn(credentialAxios, 'request').mockImplementation(async (config) => {
+    if (config.method !== 'GET' || !config.url || new URL(config.url).pathname !== AUTOMATION_ACTION_INDEX_HTTP_PATH_V1
+      || config.headers?.Authorization !== `Bearer ${token}`) throw new Error('Unexpected Account index request');
+    return { status: 200, data: { v: 1, rows: [] } };
+  });
+  return token;
 }
 
 function serveSessionRecord(row: Readonly<{ id: string; active: boolean; machineId?: string; path?: string; local?: boolean }>) {
@@ -1308,7 +1329,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('preflights an attached immediate secret overlay against the exact Session machine before start dispatch', async () => {
     const credentials = {
-      token: 'token',
+      token: serveEmptyExecutionRunAutomationIndex(),
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
@@ -1368,7 +1389,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     });
 
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
-      credentials: expect.objectContaining({ token: 'token' }),
+      credentials: expect.objectContaining({ token: credentials.token }),
       machineId: 'machine-1',
       method: RPC_METHODS.CAPABILITIES_DESCRIBE,
       request: {},
@@ -1379,7 +1400,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('starts no attached Team-bound run when the Session moves after exact-machine capability admission', async () => {
     const credentials = {
-      token: 'token',
+      token: serveEmptyExecutionRunAutomationIndex(),
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     const rawSession = { id: 'session-1', active: true, machineId: 'machine-capable' };
@@ -1522,7 +1543,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('uses the exact Session machine capability fact and refuses detached dispatch to a V1 daemon', async () => {
     const credentials = {
-      token: 'token',
+      token: serveEmptyExecutionRunAutomationIndex(),
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
@@ -1559,7 +1580,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
     expect(callMachineRpc).toHaveBeenCalledTimes(1);
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
-      credentials: expect.objectContaining({ token: 'token' }),
+      credentials: expect.objectContaining({ token: credentials.token }),
       machineId: 'machine-1',
       method: RPC_METHODS.CAPABILITIES_DESCRIBE,
       request: {},
@@ -1569,7 +1590,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('retains the unavailable V2 capability method refusal before start dispatch', async () => {
     const credentials = {
-      token: 'token',
+      token: serveEmptyExecutionRunAutomationIndex(),
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
@@ -1617,7 +1638,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('classifies a malformed V2 capability fact as protocol-unsupported before start dispatch', async () => {
     const credentials = {
-      token: 'token',
+      token: serveEmptyExecutionRunAutomationIndex(),
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
@@ -1658,7 +1679,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
   it('classifies a failed V2 capability probe as target-unavailable before start dispatch', async () => {
     const credentials = {
-      token: 'token',
+      token: serveEmptyExecutionRunAutomationIndex(),
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
@@ -1746,7 +1767,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
   it('keeps a detached start identity when its CLI waiter catches an AbortError', async () => {
     const caller = new AbortController();
     const credentials = {
-      token: 'token',
+      token: serveEmptyExecutionRunAutomationIndex(),
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     callMachineRpc.mockImplementation(async ({ method }: Readonly<{ method: string }>) => {
@@ -1873,7 +1894,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     ['outcomeUnknown', 'outcomeUnknown'],
   ] as const)('projects a %s detached start transport failure as %s', async (disposition, runCreation) => {
     const credentials = {
-      token: 'token',
+      token: serveEmptyExecutionRunAutomationIndex(),
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     const startError = new Error(`start ${disposition}`);
