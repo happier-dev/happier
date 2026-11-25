@@ -2956,6 +2956,51 @@ describe('Account Action placement through the executable dispatcher', () => {
         }
     });
 
+    it('waits for the declared client executable before a cold UI Action on the addressed Machine', async () => {
+        const { publishCommittedAppShellPluginUiProjection, subscribeCommittedAppShellPluginUiProjection } =
+            await import('@/components/appShell/plugins/committedPluginUiProjection');
+        const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier('server-client-action'));
+        await publishManageMachine(lifetime.scope);
+        const handler = vi.fn(async () => ({ actions: [] }));
+        const fixture = createClientActionActivation({ accountLifetime: lifetime, handler });
+        await fixture.composition.unload();
+        const read = () => fixture.projection;
+        const unpublish = publishCommittedAppShellPluginUiProjection(read);
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: read, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            clientExecutableAdmission: {
+                read: () => ({ projection: read(), accountLifetime: lifetime, platform: 'web', activation: { status: 'establishing' } }),
+                subscribe: subscribeCommittedAppShellPluginUiProjection,
+            },
+        }));
+        const context = { surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
+            expectedAccountId: lifetime.scope.accountId, externalActionTarget: {
+                kind: 'machine', machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
+            } } as const;
+        const controller = new AbortController();
+        let outcome: Awaited<ReturnType<typeof executeCurrentUiContextContributedAction>> | undefined;
+        const result = executeCurrentUiContextContributedAction({
+            action: { pluginId: fixture.action.pluginId, localId: fixture.action.id }, input: {}, context, signal: controller.signal,
+        }, { execute: async () => { throw new Error('Unexpected child Action'); }, context }, lifetime)
+            .then(answer => { outcome = answer; return answer; });
+        try {
+            await act(async () => {});
+            expect(outcome).toBeUndefined();
+            expect(handler).not.toHaveBeenCalled();
+            expect((await fixture.composition.reconcile([fixture.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+            await expect(result).resolves.toEqual({ ok: true, result: { actions: [] } });
+            expect(handler).toHaveBeenCalledTimes(1);
+        } finally {
+            controller.abort();
+            await result;
+            unregister();
+            unpublish();
+            await fixture.composition.unload();
+            lifetime.retire();
+        }
+    });
+
     it('delivers a real Artifact refusal through the mounted dispatcher and native author API while peer activation is pending', async () => {
         const { createPluginAccountAvailabilityReaderStore } = await import('@/sync/domains/plugins/availability/reader');
         const { reconcileProjectedPluginUiClientExecutables } = await import('@/components/plugins/reactNative/clientExecutableActivation');

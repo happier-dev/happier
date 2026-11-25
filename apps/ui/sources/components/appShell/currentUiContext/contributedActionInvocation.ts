@@ -26,7 +26,10 @@ export type CurrentContributedAction = Readonly<{ action: PluginUiActionProjecti
 /** Both mounted and captured-scope invocations borrow the producer's exact current registration. */
 export function resolveCurrentContributedAction(readProjection: () => PluginUiProjectionModel | null,
     identity: PluginContributionIdentityV1): CurrentContributedAction | null {
-    const action = createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity);
+    return resolveDeclaredContributedAction(createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity));
+}
+
+function resolveDeclaredContributedAction(action: PluginUiActionProjection | null): CurrentContributedAction | null {
     if (action && ('hostAccountOrigin' in action || action.execution.target === 'account' && action.execution.invokingUi)) {
         const origin = readPluginUiAccountExecutableOrigin(action);
         const accountRegistration = resolvePluginUiClientActionRegistration({ action, platform: resolvePluginUiClientExecutablePlatform() });
@@ -127,7 +130,7 @@ export async function executeCapturedScopeContributedAction(
     request: Parameters<NonNullable<ActionExecutorDeps['invokeContributedAction']>>[0],
     hostAction: PluginSurfaceHostActionBinding,
     accountLifetime: ServerAccountScopeLifetime,
-    invokeMounted?: () => Promise<ActionExecuteResult>,
+    invokeMounted?: (expectedOccurrenceId?: string) => Promise<ActionExecuteResult>,
 ): Promise<ActionExecuteResult> {
     const refused = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode,
         details: { actionHandlerInvocation: 'notStarted' } });
@@ -135,7 +138,8 @@ export async function executeCapturedScopeContributedAction(
     const readProjection = () => readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true });
     const target = request.context.externalActionTarget;
     const machineId = target?.kind === 'machine' ? target.machineId : undefined;
-    const committed = resolveCurrentContributedAction(readProjection, request.action);
+    const declaration = createPluginUiProjectedActionResolver(readProjection()?.actionsById)(request.action);
+    const committed = resolveDeclaredContributedAction(declaration);
     const resolved = machineId && committed?.kind === 'machine' && committed.origin.machineId !== machineId ? null : committed;
     const parsedInput = PluginJsonValueV2Schema.safeParse(request.input ?? null);
     if ((!resolved && !machineId) || !parsedInput.success || request.signal?.aborted || !accountLifetime.isCurrent()) {
@@ -146,6 +150,19 @@ export async function executeCapturedScopeContributedAction(
     if (resolved && request.context.expectedContributedActionOccurrenceId !== undefined
         && request.context.expectedContributedActionOccurrenceId !== resolved.action.occurrenceId) return refused('plugin_action_generation_retired');
     if (resolved && invokeMounted) return invokeMounted();
+    if (invokeMounted && machineId && declaration?.execution.target === 'client') {
+        const origin = readPluginUiContributionOrigin(declaration);
+        // A published client declaration can precede registration. The mounted
+        // reader owns that wait for this exact Machine and occurrence.
+        if (origin?.phase === 'current' && origin.interactionEnabled && origin.machineId === machineId
+            && areServerProfileIdentifiersEquivalent(origin.serverId, scope.serverId)) {
+            if (request.context.expectedContributedActionOccurrenceId !== undefined
+                && request.context.expectedContributedActionOccurrenceId !== declaration.occurrenceId) {
+                return refused('plugin_action_generation_retired');
+            }
+            return invokeMounted(declaration.occurrenceId);
+        }
+    }
     const followsAccountPublication = resolved?.action.execution.target === 'client'
         && !isPluginSurfaceClientActionOccurrencePinned({ hostAction,
             expectedContributorOccurrenceId: request.context.expectedContributedActionOccurrenceId });

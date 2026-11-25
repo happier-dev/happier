@@ -164,16 +164,17 @@ export async function executeCurrentUiContextContributedAction(
     if (retained?.resume) return retained.resume(request, hostAction);
     const surface = PluginActionSurfaceV2Schema.safeParse(request.context.surface);
     const port = surface.success ? mountedPortFactory?.(surface.data, hostAction) : null;
-    const invokeMounted = async (): Promise<ActionExecuteResult> => {
+    const invokeMounted = async (expectedOccurrenceId?: string): Promise<ActionExecuteResult> => {
         const input = PluginJsonValueV2Schema.safeParse(request.input ?? null);
         if (!port?.invokeAction || request.signal?.aborted || !input.success) {
             return { ok: false, errorCode: 'contributed_action_unavailable', error: 'current_ui_context_not_mounted', details: { actionHandlerInvocation: 'notStarted' } };
         }
+        const expectedContributorOccurrenceId = request.context.expectedContributedActionOccurrenceId ?? expectedOccurrenceId;
         const outcome = await port.invokeAction({
             action: request.action,
             input: input.data,
             ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}),
-            ...(request.context.expectedContributedActionOccurrenceId ? { expectedContributorOccurrenceId: request.context.expectedContributedActionOccurrenceId } : {}),
+            ...(expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId }),
             ...(request.context.defaultSessionId ? { defaultSessionId: request.context.defaultSessionId } : {}),
             ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
             ...(request.signal ? { signal: request.signal } : {}),
