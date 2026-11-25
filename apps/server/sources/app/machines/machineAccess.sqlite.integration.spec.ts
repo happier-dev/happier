@@ -16,7 +16,7 @@ import { resourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGr
 import { applyMachineReplacement } from './applyMachineReplacement';
 import { validateMachineReplacement } from './validateMachineReplacement';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { DaemonPluginStructuredMessageActionExecuteRequestSchema, readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
@@ -1051,6 +1051,32 @@ describe('Machine current access (real SQLite)', () => {
         // Found reads native configuration as the daemon user; it stays the custodian's.
         expect(await access.resolveMachineAdmission({ machineId: f.machine.id, actorAccountId: requester.id, actionId: 'mcp.found.list' }))
             .toMatchObject({ kind: 'denied', code: 'custodian_only' });
+    });
+
+    it.each([
+        ['execution.run.stream.read', 'EXECUTION_RUN_STREAM_READ', 'custodian_only'],
+        ['execution.run.stream.cancel', 'EXECUTION_RUN_STREAM_CANCEL', 'custodian_only'],
+        ['execution.run.cancel_turn', 'EXECUTION_RUN_CANCEL_TURN_V1', 'custodian_only'],
+        ['execution.run.stop', 'EXECUTION_RUN_STOP', 'use'],
+        ['execution.run.get', 'EXECUTION_RUN_GET', 'use'],
+        ['execution.run.wait', 'EXECUTION_RUN_WAIT', 'use'],
+    ] as const)('admits signed own-Run %s at Use and keeps the raw RPC policy', async (actionId, method, rawRole) => {
+        const f = await fixture();
+        const requester = await account();
+        const input = { machineId: f.machine.id, actorAccountId: requester.id, actionId };
+        const admitted = { kind: 'admitted', role: 'use', actorAccountId: requester.id, custodianAccountId: f.owner.id };
+        expect(await access.resolveMachineAdmission({ ...input, actorAccountId: f.owner.id }))
+            .toMatchObject({ kind: 'admitted', role: 'manage', actorAccountId: f.owner.id });
+        expect(await access.resolveMachineAdmission(input)).toEqual({ kind: 'denied', code: 'access_denied' });
+        await grant(f.owner.id, f.machine.id, requester.id);
+        expect(await access.resolveMachineAdmission({ ...input, actionId: 'machines.command.run' }))
+            .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+        expect(await access.resolveMachineAdmission({ machineId: f.machine.id, actorAccountId: requester.id, rpcMethod: SESSION_RPC_METHODS[method] }))
+            .toMatchObject(rawRole === 'use' ? admitted : { kind: 'denied', code: 'custodian_only' });
+        expect(await access.resolveMachineAdmission(input)).toMatchObject(admitted);
+        await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id,
+            principal: { kind: 'account', accountId: requester.id } }));
+        expect(await access.resolveMachineAdmission(input)).toEqual({ kind: 'denied', code: 'access_denied' });
     });
 
     it('keeps reviewed composite role separate from actual Session child operation support', async () => {

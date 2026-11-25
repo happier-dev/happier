@@ -496,6 +496,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
 	  } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.get', executionPlacement: 'machine', approval: {result: 'required'},
+    originalExecution: { machineAdmission: 'requester_own_work' },
     title: 'Get execution run',
     description: `Get one execution run from the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -648,6 +649,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.stream.read', executionPlacement: 'machine', approval: {result: 'required'},
+    originalExecution: { machineAdmission: 'requester_own_work' },
     title: 'Read execution run stream',
     description: `Read bounded deltas from an execution-run stream cursor. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -678,6 +680,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.stream.cancel', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    originalExecution: { machineAdmission: 'requester_own_work' },
     title: 'Cancel execution run stream',
     description: `Cancel a bounded streaming turn for an execution run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -706,6 +709,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.stop', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    originalExecution: { machineAdmission: 'requester_own_work' },
     title: 'Stop execution run',
     description: `Stop one execution run in the selected scope. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -736,6 +740,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
 	  } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.cancel_turn', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
+    originalExecution: { machineAdmission: 'requester_own_work' },
     title: 'Cancel this response',
     description: `Cancel the addressed active response without stopping its execution run. ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
@@ -812,6 +817,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'execution.run.wait', executionPlacement: 'machine', approval: {result: 'required'},
+    originalExecution: { machineAdmission: 'requester_own_work' },
     title: 'Wait for execution run',
     description: `Observe an execution run until terminal by default, or select permission attention, either condition, or a changed snapshot. Pass timeoutSeconds to bound the observation; omit it for no Happier-side deadline. ${EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION} ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
