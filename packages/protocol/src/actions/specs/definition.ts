@@ -427,6 +427,13 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
     nativePurpose: z.optional(z.enum(['quota_read', 'session_board_write', 'pending_reset_start', 'machine_npm_profile_acquisition'])),
     /** Origin hosts that delegate admission to the receiving daemon. Never serialized. */
     daemonIngressSurfaces: z.optional(z.readonly(z.array(z.enum(['cli', 'ui'])))),
+    /**
+     * The signed Action is its requester's own Session, Project or server work on the receiving Machine.
+     * Home admits it with Use (owner ruling 2026-11-23 ~15:10Z) instead of its private raw route's policy;
+     * the receiving daemon's placement owner and the Action's domain owner still decide isolation and
+     * whose Session or server it is. Never serialized.
+     */
+    machineAdmission: z.optional(z.literal('requester_own_work')),
   })),
   /** Explicit host-stamped caller authority for a Plugin Action. */
   pluginCallerPolicy: z.optional(ActionPluginCallerPolicySchema),

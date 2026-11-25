@@ -299,6 +299,8 @@ function createMcpServerActionSpecsV1() {
     'Remove an MCP server. Agents lose its tools everywhere it was used.', { danger: true, confirm: true }),
   { ...mcpSpec('mcp.servers.test', 'Test MCP server connection',
     'Start an MCP server on a machine and check that it answers with its tools.', { danger: true, machine: true, direct: true }),
+    // The requester's own catalog row; the daemon's placement owner decides where its stdio may run.
+    originalExecution: { machineAdmission: 'requester_own_work' },
     cli: { acceptsServerId: true,
       inputSchema: z.strictObject({ itemId: z.string().check(z.minLength(1)), directory: z.optional(z.string().check(z.minLength(1))),
         machineId: z.optional(z.string().check(z.minLength(1))) }),

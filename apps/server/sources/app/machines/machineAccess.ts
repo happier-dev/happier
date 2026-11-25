@@ -18,7 +18,7 @@ import { isRequesterProjectDefinitionActionIdV1 } from '@happier-dev/protocol/ac
 import { isProjectWorkerCopyInspectActionIdV1, PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
 import { isDeploymentActionIdV1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec, SignedRootActionIdSchema, PluginPublicationActionOutputSchemas } from '@happier-dev/protocol/actions/actionSpecs';
-import { isMachineAgentInventoryReadActionIdV1, RuntimeActionIdV1Schema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isMachineAgentInventoryReadActionIdV1, RuntimeActionIdV1Schema, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isBrowserRuntimeActionId } from '@happier-dev/protocol/actions/executor/browser';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { requiredMachineRoleForBrowserAction } from '@happier-dev/protocol/actions';
@@ -639,15 +639,18 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
     let method = input.rpcMethod;
     const requesterProviderRole = method ? undefined : readRequesterProviderMachineActionRoleV1(input.actionId);
     if (requesterProviderRole === 'manage') requiredRole = 'manage';
-    const requesterSessionLifecycle = operationActionId === 'session.spawn_new' || operationActionId === 'session.open';
+    // A signed requester own-work Action (its spec declares it: Session create/open/fork/message,
+    // the requester's own MCP server Test) is admitted with Use under the owner ruling of
+    // 2026-11-23 ~15:10Z; its domain owner and the receiving daemon's placement owner decide
+    // whose Session or server it is and where it may run. Its private raw RPC stays custodian-only.
+    const operationAction = operationActionId === undefined ? null : SignedRootActionIdSchema.safeParse(operationActionId);
+    const requesterOwnWork = operationAction?.success === true
+        && getActionSpec(operationAction.data).originalExecution?.machineAdmission === 'requester_own_work';
     // Requester Project Actions, worker status and copy review use signed Account admission
     // and native requester custody. Their raw RPCs stay custodian-only.
-    // A signed message uses this Machine only as a carrier; the Session message
-    // owner authorizes its effect without exposing a private custodian RPC.
-    const requesterActionIngress = requesterSessionLifecycle || requesterCopyPreview || requesterProviderRole !== undefined
+    const requesterActionIngress = requesterOwnWork || requesterCopyPreview || requesterProviderRole !== undefined
         || isRequesterProjectDefinitionActionIdV1(input.actionId)
-        || input.actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1
-        || input.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
+        || input.actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1;
     if (input.actionId && !method) {
         const actionId = SignedRootActionIdSchema.safeParse(input.actionId);
         const spec = actionId.success ? getActionSpec(actionId.data) : null;

@@ -233,7 +233,7 @@ function createSessionLifecycleActionSpecs() {
   return Object.freeze([
   ...SESSION_WORKSPACE_RETURN_ACTION_SPECS_V1,
   {
-    id: 'session.open', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.open', executionPlacement: 'session', originalExecution: { machineAdmission: 'requester_own_work' }, approval: {result: 'optional',flow: 'deferred'},
     machineRuntimeDemandForInput: (input, context) => {
       if (readRecord(input).intent !== 'resume') return null;
       const sessionId = resolveSessionIdFromInput(input, context);
@@ -281,7 +281,7 @@ function createSessionLifecycleActionSpecs() {
     cli: { commands: [{ path: ['session', 'open'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.fork', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.fork', executionPlacement: 'session', originalExecution: { machineAdmission: 'requester_own_work' }, approval: {result: 'optional',flow: 'deferred'},
     operation: {
       version: 1,
       visibility: 'activity',
@@ -718,7 +718,7 @@ type SessionSpawnActionSpec = ActionSpecProjectionMetadata & Readonly<{
 function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
   return Object.freeze([
   {
-    id: 'session.spawn_new', executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed', terminalRoot: 'host' }, approval: {result: 'optional',flow: 'deferred'},
+    id: 'session.spawn_new', executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed', terminalRoot: 'host', machineAdmission: 'requester_own_work' }, approval: {result: 'optional',flow: 'deferred'},
     requesterAccountContentDemandForInput: input => {
       const parsed = SessionSpawnNewInputSchema.parse(input);
       return Boolean(parsed.machineSetupPlanInput) || sessionProjectFilesConsumeRequesterAccountContentV1(parsed);

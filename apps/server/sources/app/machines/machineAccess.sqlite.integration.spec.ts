@@ -1015,6 +1015,26 @@ describe('Machine current access (real SQLite)', () => {
             .toMatchObject({ kind: 'admitted' });
     });
 
+    it.each([
+        ['mcp.servers.test', null],
+        ['session.fork', RPC_METHODS.SESSION_FORK],
+    ] as const)('admits a Use guest\'s signed own-work %s; private raw routes keep their policy', async (actionId, custodianRawMethod) => {
+        const f = await fixture();
+        const requester = await account();
+        const outsider = await account();
+        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        const input = { machineId: f.machine.id, actionId };
+        expect(await access.resolveMachineAdmission({ ...input, actorAccountId: requester.id }))
+            .toMatchObject({ kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'use' });
+        expect(await access.resolveMachineAdmission({ ...input, actorAccountId: outsider.id }))
+            .toMatchObject({ kind: 'denied', code: 'access_denied' });
+        if (custodianRawMethod) expect(await access.resolveMachineAdmission({ machineId: f.machine.id, actorAccountId: requester.id,
+            rpcMethod: custodianRawMethod })).toMatchObject({ kind: 'denied', code: 'custodian_only' });
+        // Found reads native configuration as the daemon user; it stays the custodian's.
+        expect(await access.resolveMachineAdmission({ machineId: f.machine.id, actorAccountId: requester.id, actionId: 'mcp.found.list' }))
+            .toMatchObject({ kind: 'denied', code: 'custodian_only' });
+    });
+
     it('keeps reviewed composite role separate from actual Session child operation support', async () => {
         const f = await fixture();
         const requester = await account();

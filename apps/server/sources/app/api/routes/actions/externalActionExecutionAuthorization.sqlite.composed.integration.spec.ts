@@ -1324,6 +1324,35 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    // Owner ruling 2026-11-23 ~15:10Z: a Use guest's own server Test is their own work; the
+    // receiving daemon's placement owner decides isolation. Live refusal: build #154 Home refused
+    // the guest's mcp.servers.test mint custodian_only (RU2 W31 G02, 00:51:21Z).
+    it('mints a Use guest\'s MCP server Test and names the phase and request of a refused Found', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: guest.id, role: 'member' } });
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: fixture.machine.id, teamId: fixture.team.id,
+            accessLevel: 'view', createdByAccountId: fixture.account.id } });
+        const { app } = await createApp(fixture.team.id);
+        const mint = async (accountId: string, actionId: 'mcp.servers.test' | 'mcp.found.list') => app.inject({
+            method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+            headers: { authorization: `Bearer ${await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' })}` },
+            payload: { v: 1, machineId: fixture.machine.id, envelope: { ...fixture.envelope, input: actionId === 'mcp.servers.test'
+                ? { t: 'byId', serverId: 'guest-server', machineId: fixture.machine.id, directory: '/' } : { machineId: fixture.machine.id } } } });
+        try {
+            const admitted = await mint(guest.id, 'mcp.servers.test');
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json()).toMatchObject({ binding: { accountId: guest.id, custodianAccountId: fixture.account.id,
+                machineId: fixture.machine.id, actionId: 'mcp.servers.test', requestId: fixture.envelope.requestId } });
+            const found = await mint(guest.id, 'mcp.found.list');
+            expect(found.statusCode, found.body).toBe(409);
+            expect(found.json()).toMatchObject({ code: 'target_unavailable', requestId: fixture.envelope.requestId,
+                failureCause: { phase: 'execution_authorization', errorCode: 'custodian_only' } });
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            expect((await mint(outsider.id, 'mcp.servers.test')).statusCode).not.toBe(200);
+        } finally { await app.close(); }
+    });
+
     it('admits only Home Session defaults for a signed no-Project terminal spawn', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const terminal = await auth.createToken(fixture.account.id, undefined, {
