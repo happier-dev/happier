@@ -2359,7 +2359,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       }
       finally { releaseActivity?.(); }
     };
-    if (accepted.requiresMachineStartCapacity ?? workflowRequiresMachineStartCapacityV1(accepted.materializedLeaves)) {
+    if (workflowRequiresMachineStartCapacityV1(accepted.materializedLeaves, accepted, claim.automationCause)) {
       await claim.acquireMachineStartCapacity?.(claim.signal);
     }
     claim.signal?.throwIfAborted();

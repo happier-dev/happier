@@ -3212,7 +3212,7 @@ describe('composed Workflow front door and claimed execution', () => {
 });
 
 describe('composed Automation workflow claim and optional receipt', () => {
-  it('arms Keep going on an undecidable answer and refuses its Judge at real Run start', async () => {
+  it.each(['native Judge refusal', 'full Machine start capacity'] as const)('arms Keep going on an undecidable answer (%s)', async scenario => {
     const native = await installedNativeWorkflowFixture();
     const { directory, machineId, accountId, credentials, executor } = native;
     const sessionId = 'c123456789012345678901234';
@@ -3331,12 +3331,17 @@ describe('composed Automation workflow claim and optional receipt', () => {
     });
     const result = await coordinate({ runId, automationId: row.id, workflowDefinitionId: row.workflowDefinitionId, scopeSessionId: sessionId,
       attempt: 1, expectedRevision: 0, accountCurrentness: currentness, definitionEnvelope: JSON.stringify(row.executionRecipe.workflow),
-      automationCause: cause, causeWorkDepth: 0 });
+      automationCause: cause, causeWorkDepth: 0,
+      ...(scenario === 'full Machine start capacity' ? {
+        acquireMachineStartCapacity: async () => { throw new Error('The Machine Run cap is full'); },
+      } : {}) });
 
     const check = rowFor(storage, 'check');
     const requestPaths = vi.mocked(axios.get).mock.calls.map(([url]) => new URL(url, 'http://workflow-home.test').pathname);
     expect(check, JSON.stringify({ result, requestPaths })).toMatchObject({ lifecycle: 'failed' });
-    expect(openRowProgress(storage, check!)).toMatchObject({ reason: { code: 'role_policy_unenforceable' } });
+    if (scenario === 'native Judge refusal') {
+      expect(openRowProgress(storage, check!)).toMatchObject({ reason: { code: 'role_policy_unenforceable' } });
+    }
     expect(open).not.toHaveBeenCalled();
   });
 

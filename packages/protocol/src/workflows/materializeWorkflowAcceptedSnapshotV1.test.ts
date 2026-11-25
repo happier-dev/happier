@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { admitAgentStartV1, type AgentStartContextV1 } from '../account/settings/admitAgentStartV1.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
 import { AutomationRunCauseSchema } from '../automations/automationRunCause.js';
+import { deriveAutomationOccurrenceKeyV1 } from '../automations/automationOccurrenceV1.js';
 import type { ActionCaller, ActionExecutorContext } from '../actions/executor/types.js';
 import { resolveActionCurrentSessionScopeFailure } from '../actions/executor/sessionListAccess.js';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, readCompleteActionSpecV1 } from '../actions/actionCatalog.js';
@@ -471,6 +472,27 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       context: { ...context, origin: { kind: 'direct', originSessionId: 'origin' } },
     })).toMatchObject({ ok: true, snapshot: { requiresMachineStartCapacity: kind === 'fresh',
       targetSessionIds: kind === 'fresh' ? [] : ['origin'] } });
+  });
+
+  it.each(['session', 'detached_run'] as const)('charges Machine start capacity when a Session trigger starts a %s', async kind => {
+    const evidence = { v: 1 as const, kind: 'sessionLifecycle' as const, event: 'parentTurnCompleted' as const,
+      sourceSessionId: 'origin', sourceTurnId: 'turn', occurredAt: 1 };
+    const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'sessionLifecycle',
+      triggerId: 'trigger', triggerRevision: 0, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: 'trigger', evidence }),
+      occurredAt: 1, evidence: { event: evidence.event, sourceSessionId: evidence.sourceSessionId,
+        sourceTurnId: evidence.sourceTurnId, policy: { kind: 'everyMatch' } } });
+    await expect(materialize({
+      definition: { ...definition, defaults: { ...definition.defaults, conversation: { kind: 'fresh' } } },
+      context: { ...context, executionTarget: { kind }, origin: { kind: 'direct', originSessionId: 'origin' },
+        actionCaller: { kind: 'automationRun', runId: 'run', automationId: 'automation', cause } },
+      admission: { kind: 'trigger', workDepth: 0, admitLeaf: async (leaf, { permissionCeiling }) =>
+        admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf }, {
+          ...policyContext,
+          caller: { kind: 'originless', runId: 'run', runDepth: 0, runOriginSessionId: 'origin' },
+          callerPermissionCeiling: permissionCeiling,
+        }) },
+    })).resolves.toMatchObject({ ok: true, snapshot: { requiresMachineStartCapacity: true,
+      materializedLeaves: [{ executionTarget: { kind } }] } });
   });
 
   it.each(['implicit steps', 'selected steps', 'fix'] as const)(

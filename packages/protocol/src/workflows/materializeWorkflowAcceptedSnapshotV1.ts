@@ -37,6 +37,8 @@ import { SessionSpawnNewSelectionV2Schema } from '../sessions/creation/sessionSp
 import { resolveWorkflowContextInputsV1, workflowInputErrorV1, WorkflowInputErrorV1, type ResolveWorkflowSessionTargetV1, type WorkflowResolvedSessionTargetV1 } from './workflowStartPreparationV1.js';
 import { requiresReviewWorkflowCompositionV1, readReviewSessionScopeAddressesV1 } from '../reviews/reviewStart.js';
 import { ReviewSessionInputV1Schema } from '../reviews/reviewRoundActionsV1.js';
+import type { AutomationRunCause } from '../automations/automationRunCause.js';
+import { isKeepGoingTriggerTargetV1 } from './triggers/triggerTargetV1.js';
 
 export type WorkflowMaterializationContextV1 = Readonly<{
   /** Host-stamped admitting caller; private input, never authored Workflow content. */
@@ -242,9 +244,17 @@ function startsAgentInWorkflow(actionId: string, actionInput: WorkflowMaterializ
     && (actionId !== 'review.start' || !requiresReviewWorkflowCompositionV1(actionInput ?? {}));
 }
 
-/** Machine start admission is about execution, never trigger scope. */
-export function workflowRequiresMachineStartCapacityV1(leaves: readonly WorkflowMaterializedLeafV1[]): boolean {
-  return leaves.flatMap(listWorkflowAcceptedLeafSelectionsV1).some(leaf => {
+/** A parent-turn Keep going Run continues its Session. Its detached checks have their own budget. */
+export function workflowRequiresMachineStartCapacityV1(
+  leaves: readonly WorkflowMaterializedLeafV1[],
+  run?: Pick<WorkflowAcceptedSnapshotV1, 'source' | 'origin' | 'requiresMachineStartCapacity'>,
+  cause?: AutomationRunCause,
+): boolean {
+  if (cause?.kind === 'trigger' && cause.triggerKind === 'sessionLifecycle'
+    && cause.evidence.event === 'parentTurnCompleted'
+    && run?.origin?.originSessionId === cause.evidence.sourceSessionId && run.source.kind === 'catalog'
+    && isKeepGoingTriggerTargetV1({ kind: 'workflow', ref: run.source.ref })) return false;
+  return run?.requiresMachineStartCapacity ?? leaves.flatMap(listWorkflowAcceptedLeafSelectionsV1).some(leaf => {
     if (leaf.kind === 'action') return leaf.actionId !== undefined && startsAgentInWorkflow(leaf.actionId, leaf.actionInput);
     if (leaf.kind !== 'step') return false;
     const conversation = leaf.selection.conversation?.kind;
@@ -1184,7 +1194,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
     ...(resultDelivery ? { resultDelivery } : {}),
     triggerEventValues: sealWorkflowTriggerEventValuesV1(concrete.values(), input.admission.kind === 'trigger' ? input.admission.eventOccurrence : undefined),
     definition: concrete.get('$root'), authoredDefinition: root, materializedLeaves, frozenChildren, workDepth,
-    requiresMachineStartCapacity: workflowRequiresMachineStartCapacityV1(materializedLeaves),
+    requiresMachineStartCapacity: workflowRequiresMachineStartCapacityV1(materializedLeaves, input.context, cause),
     targetSessionIds: deriveWorkflowDestinationsV1({ definition: concrete.get('$root')!, materializedLeaves,
       originSessionId: input.context.origin?.originSessionId }).targetSessionIds,
     startedBy: actionCaller ? resolveWorkflowRunStartedByForActionCallerV1(actionCaller) : input.admission.kind,

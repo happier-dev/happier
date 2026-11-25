@@ -6058,17 +6058,15 @@ not notification-delivery success. New writes remain strict and retained
 progress reads tolerate extra fields. Transcript rendering can consume this fact;
 it must not infer suppression from empty text, a sentinel or the last step.
 
-Workflow machine start capacity is independent of trigger scope. The incumbent Automation
-worker's active-execution map reserves the existing server-configured budget
-only for accepted graphs that can start an Agent within the Run. A composed
-Review dispatcher delegates the start to its child Workflow, which reserves the
-slot for the reviewer. Existing-Session writes from Account recipes and
-Session-scoped triggers reserve no slot. At a full budget,
-the worker still claims Workflow recipes so it can classify their private graph;
-new Agent starts wait on that same budget with claim cancellation and heartbeat
-still active. `scopeSessionId` retains Session-trigger identity and serialization,
-not capacity authority. Old accepted snapshots derive these projections from
-their frozen leaves when the added fields are absent.
+The Automation worker reserves Machine start capacity for accepted Workflows
+that start an Agent within the Run, including Session-triggered Workflows that
+start a new Session or detached Run. A Keep going occurrence from the origin
+Session's completed turn can continue that Session at the outer Run cap. Its
+Judge and Second opinion use the detached execution budget when dispatched.
+A composed Review dispatcher delegates capacity to its child Workflow. At a
+full budget, the worker still claims Workflow recipes to classify the private
+graph. New starts that need a slot wait with claim cancellation and heartbeat
+active. Older snapshots without a capacity projection use their frozen leaves.
 
 In 0.3 development source, initial direct Workflow Run admission freezes its
 per-Run Machine assignment and publishes the queued hint to that exact Machine
