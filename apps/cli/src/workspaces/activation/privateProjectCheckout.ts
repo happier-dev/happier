@@ -83,8 +83,9 @@ export function admitPrivateProjectCheckoutDestination(input: Readonly<{
     : choice.kind === 'clone' && choice.destinationParentPath === input.prepared.destinationParentPath
       && choice.destinationDirectoryName === input.prepared.destinationDirectoryName;
   if (!matches) {
-    throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required', choice.kind === 'clone' && input.reviewIdentity
+    const destinationReview = (choice.kind === 'clone' || choice.kind === 'sync') && input.reviewIdentity
       ? { ...input.reviewIdentity, destinationParentPath: input.prepared.destinationParentPath,
-        destinationDirectoryName: input.prepared.destinationDirectoryName } : undefined);
+        destinationDirectoryName: input.prepared.destinationDirectoryName } : undefined;
+    throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required', destinationReview);
   }
 }

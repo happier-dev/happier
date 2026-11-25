@@ -1455,14 +1455,19 @@ describe('Project Open RPC', () => {
         expect(nativeBoundary.runAsUsers).toEqual([]);
       }
       if (syncing && input.materialization.kind === 'sync') {
-        for (const [denied, code] of [[{ ...input, materialization: { ...input.materialization,
-          targetPath: join(member.workspaceRoot, '..', 'other-member', 'foreign-checkout') } }, 'workspace_private_checkout_review_required'],
-        [{ ...input, source: { kind: 'folder', path: root } }, 'workspace_private_checkout_required']] as const) {
-          expect(await register(RPC_METHODS.PROJECTS_OPEN, runtime)(denied, context))
-            .toMatchObject({ kind: 'refused', code });
-          expect(post.mock.calls.some(([, body]) => ProjectAccountRowMutationRequestV1Schema.safeParse(body).success)).toBe(false);
-          expect(nativeBoundary.runAsUsers).toEqual([]);
-        }
+        const open = register(RPC_METHODS.PROJECTS_OPEN, runtime);
+        const foreignTarget = join(member.workspaceRoot, '..', 'other-member', 'foreign-checkout');
+        expect(OpenProjectResultV1Schema.parse(await open({
+          ...input, materialization: { ...input.materialization, targetPath: foreignTarget },
+        }, context))).toMatchObject({
+          kind: 'refused', code: 'workspace_private_checkout_review_required', effectAttempted: false,
+          destinationReview: { accountId: 'bob', serverId: homeId, machineId: 'machine',
+            destinationParentPath: member.workspaceRoot, destinationDirectoryName: 'foreign-checkout' },
+        });
+        expect(await open({ ...input, source: { kind: 'folder', path: root } }, context))
+          .toMatchObject({ kind: 'refused', code: 'workspace_private_checkout_required' });
+        expect(post.mock.calls.some(([, body]) => ProjectAccountRowMutationRequestV1Schema.safeParse(body).success)).toBe(false);
+        expect(nativeBoundary.runAsUsers).toEqual([]);
         const foreign = { ...workspace, id: 'foreign-source', machineId: 'machine',
           rootPath: join(member.workspaceRoot, '..', 'other-member', 'foreign-source') };
         const foreignKey = { ...key, id: foreign.id };
