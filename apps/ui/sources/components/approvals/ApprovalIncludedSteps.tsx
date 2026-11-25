@@ -12,7 +12,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ActionApprovalFieldsCard, type ApprovalFieldsPresentation } from './ActionApprovalFieldsCard';
 import { readApprovalActionTitle } from './approvalRequestTitle';
-import { NamedMachines, readDeploymentReviewApproval, readDeploymentReviewMachineIds } from './DeploymentReviewApprovalFacts';
+import { describeDeploymentRemovalStepTitle, NamedMachines, readDeploymentReviewApproval, readDeploymentReviewMachineIds } from './DeploymentReviewApprovalFacts';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { describeRetention } from '@/components/settings/machines/managed/managedRetentionPresentation';
 
@@ -23,6 +23,7 @@ import { describeRetention } from '@/components/settings/machines/managed/manage
 type IncludedStep = Readonly<{
   action: string | PluginContributionIdentityV1;
   role: string;
+  input?: unknown;
   machineIds: readonly string[] | null;
   keepsOn: Readonly<{ homeId: string; managedId: string }> | null;
 }>;
@@ -76,8 +77,8 @@ export function readApprovalIncludedSteps(preview: unknown): readonly IncludedSt
     if (!action || typeof entry?.role !== 'string' || !entry.role
       || Object.keys(entry).some((key) => key !== 'action' && key !== 'role' && key !== 'input' && key !== 'scopeInput')) return [];
     const machineIds = readStepMachineIds(entry.input === undefined ? entry.scopeInput : entry.input);
-    steps.push({ action, role: entry.role, machineIds: entry.input === undefined && machineIds.length === 0 ? null : machineIds,
-      keepsOn: readKeepsOn(action, entry.input) });
+    steps.push({ action, role: entry.role, input: entry.input,
+      machineIds: entry.input === undefined && machineIds.length === 0 ? null : machineIds, keepsOn: readKeepsOn(action, entry.input) });
   }
   return steps;
 }
@@ -93,18 +94,24 @@ export const ApprovalIncludedSteps = React.memo(function ApprovalIncludedSteps(p
   serverId: string | null;
   testID: string;
 }>) {
-  const steps = React.useMemo(() => readApprovalIncludedSteps(props.preview), [props.preview]);
-  const reviewedMachineIds = React.useMemo(() => {
-    const review = steps.length > 0 ? readDeploymentReviewApproval({ preview: props.preview }) : null;
-    return review ? readDeploymentReviewMachineIds(review.review) : [];
-  }, [steps, props.preview]);
+  const { steps, reviewedMachineIds } = React.useMemo(() => {
+    const included = readApprovalIncludedSteps(props.preview);
+    const review = included.length ? readDeploymentReviewApproval({ preview: props.preview }) : null;
+    return {
+      steps: included.flatMap(step => {
+        const title = describeDeploymentRemovalStepTitle(review, step);
+        return title === null ? [] : [{ ...step, title }];
+      }),
+      reviewedMachineIds: review ? readDeploymentReviewMachineIds(review.review) : [],
+    };
+  }, [props.preview]);
   return steps.length === 0 ? null
     : <IncludedStepFields steps={steps} managedAcquire={readObject(props.preview)?.actionId === 'machines.managed.acquire'}
         reviewedMachineIds={reviewedMachineIds} serverId={props.serverId} testID={props.testID} />;
 });
 
 const IncludedStepFields = React.memo(function IncludedStepFields(props: Readonly<{
-  steps: readonly IncludedStep[];
+  steps: readonly (IncludedStep & Readonly<{ title?: string }>)[];
   managedAcquire: boolean;
   reviewedMachineIds: readonly string[];
   serverId: string | null;
@@ -114,7 +121,8 @@ const IncludedStepFields = React.memo(function IncludedStepFields(props: Readonl
   const localize = usePluginLocalizedTextResolver({ projection });
   const titles = React.useMemo(() => {
     const resolveAction = createPluginUiProjectedActionResolver(projection?.actionsById);
-    return props.steps.map(({ action, role, keepsOn }) => {
+    return props.steps.map(({ action, role, keepsOn, title }) => {
+      if (title !== undefined) return title;
       // The outcome a person approves ("always on"), not the generic "change when a machine stops".
       if (keepsOn) return t('approvals.includedStepKeepAlwaysOn');
       if (typeof action === 'string') return readApprovalActionTitle(action) ?? t('approvals.includedStepUnnamed');

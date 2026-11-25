@@ -3,6 +3,7 @@ import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { areDeploymentSourceLabelsEqualV1, DeploymentApprovalReviewV1Schema, DeploymentRemovalApprovalReviewV1Schema, type DeploymentRemovalReviewV1, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentPlatformCreateReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { readDeploymentDomainHostnameV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -146,6 +147,7 @@ function isRemoval(review: DeploymentReviewApproval['review']): review is Deploy
 /** What a teardown deletes, where, and what goes with it, as the delete sheet said it before the request. */
 function describeRemovalFields(removal: DeploymentRemovalReviewV1, names: MachineNames, projectName: string | null): ApprovalFieldsPresentation {
   const { subject } = removal;
+  const domains = subject.kind === 'domain' ? [subject.hostname] : removal.domains ?? [];
   const describeVolume = ({ name, machineId }: NonNullable<DeploymentRemovalReviewV1['volumes']>[number]) =>
     machineId && names[machineId] && (removal.placements?.length ?? 0) > 1
       ? joinHappierFacts(name, names[machineId]) : name;
@@ -160,15 +162,46 @@ function describeRemovalFields(removal: DeploymentRemovalReviewV1, names: Machin
     ...removal.placements?.flatMap(({ machineId, services }, index) =>
       field(`removal.placement.${index}`, t('projects.deployments.machine'),
         names[machineId] ?? t('approvals.machineNotKnown'), { note: services?.join(', ') })) ?? [],
-    ...field('removal.name', t('projects.deployments.review.createName'),
-      subject.kind === 'platformResource' ? subject.name : subject.kind === 'domain' ? subject.hostname : null),
-    ...field('removal.domains', t('projects.deployments.factStops'), removal.domains?.length
-      ? t('projects.deployments.factStopsDomains', { domains: removal.domains.join(', ') }) : null),
+    ...field('removal.name', t('projects.deployments.review.createName'), subject.kind === 'platformResource' ? subject.name : null),
+    ...domains.flatMap((hostname, index) => field(`removal.domains.${index}`, t('projects.deployments.domainFieldHost'), hostname, {
+      note: t('projects.deployments.review.removalDomainStops'),
+    })),
     ...field('removal.data', t('projects.deployments.factData'), joinHappierFacts(
       deleted.length ? t('projects.deployments.review.removalVolumesDeleted', { names: deleted.join(', ') }) : null,
       kept.length ? t('projects.deployments.review.removalVolumesKept', { names: kept.join(', ') }) : null)
       || (removal.placements?.length ? t('projects.deployments.factDataValue') : null)),
   ], unrepresentable: null };
+}
+
+/** Display only: null hides a status read, undefined keeps the shared action title. */
+export function describeDeploymentRemovalStepTitle(
+  approval: DeploymentReviewApproval | null,
+  step: Readonly<{ role: string; input?: unknown }>,
+): string | null | undefined {
+  if (!approval || !isRemoval(approval.review)) return undefined;
+  const { subject, domains } = approval.review;
+  switch (step.role) {
+    case 'observe':
+    case 'projects.observe':
+      return null;
+    case 'teardown':
+    case 'projects.delete':
+    case 'branches.delete':
+      if (subject.kind !== 'platformResource') return undefined;
+      return step.role === 'teardown' && subject.platform === 'Railway'
+        ? t('projects.deployments.review.removalStepService', { name: subject.name })
+        : t('projects.deployments.review.removalStepResource', { name: subject.name });
+    case 'domains.remove':
+    case 'disable': {
+      const hostname = subject.kind === 'domain' ? subject.hostname
+        : (domains?.length ?? 0) > 1 ? readDeploymentDomainHostnameV1(readRecord(readRecord(step.input).domain).hostname) : null;
+      return hostname
+        ? t('projects.deployments.review.decisionRemoveDomain', { hostname })
+        : t('projects.deployments.review.removalStepItsDomain');
+    }
+    default:
+      return undefined;
+  }
 }
 
 /** What a provider create makes, where, and what it builds from. */

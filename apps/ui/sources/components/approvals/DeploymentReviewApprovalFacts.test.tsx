@@ -16,7 +16,15 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-  return createTextModuleMock({ translate: (key, params) => key === 'projects.deployments.review.replacesNote'
+  const { en } = await import('@/text/translations/en');
+  const { review, domainFieldHost } = en.projects.deployments;
+  return createTextModuleMock({ translate: (key, params) => key === 'projects.deployments.domainFieldHost' ? domainFieldHost
+    : key === 'projects.deployments.review.removalDomainStops' ? review.removalDomainStops
+    : key === 'projects.deployments.review.removalStepService' ? review.removalStepService({ name: String(params?.name) })
+    : key === 'projects.deployments.review.removalStepResource' ? review.removalStepResource({ name: String(params?.name) })
+    : key === 'projects.deployments.review.removalStepItsDomain' ? review.removalStepItsDomain
+    : key === 'projects.deployments.review.decisionRemoveDomain' ? review.decisionRemoveDomain({ hostname: String(params?.hostname) })
+    : key === 'projects.deployments.review.replacesNote'
     ? `${key} ${String(params?.revision)}`
     : key === 'projects.deployments.review.versionStored' ? `Compose revision ${String(params?.revision)}`
     : key === 'projects.deployments.review.decisionPromote' ? `Promote ${String(params?.version)} to ${String(params?.environment)}`
@@ -27,6 +35,9 @@ vi.mock('@/text', async () => {
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const { DeploymentReviewApprovalFacts, describeDeploymentReviewDecision, readDeploymentReviewApproval } = await import('./DeploymentReviewApprovalFacts');
+
+
+const { ApprovalIncludedSteps, readApprovalIncludedSteps } = await import('./ApprovalIncludedSteps');
 
 const initialState = storage.getState();
 afterEach(() => {
@@ -72,11 +83,63 @@ describe('DeploymentReviewApprovalFacts', () => {
       technicalRows={[{ kind: 'value', path: 'environmentId', title: 'Environment ID', value: 'env-7f3a', technical: true }]} />);
     const text = screen.getTextContent();
     expect(text).toContain('projects.deployments.review.removalWhatTitle');
-    for (const value of ['Production API', 'Railway', 'checkout-api', 'projects.deployments.factStopsDomains',
+    for (const value of ['Production API', 'Railway', 'checkout-api', 'Domain', 'shop.example.com', 'Stops responding',
       'projects.deployments.review.removalVolumesDeleted', 'projects.deployments.review.removalVolumesKept',
       'projects.deployments.review.removalEnvironmentToo']) expect(text).toContain(value);
     expect(text).not.toContain('env-7f3a');
     expect(text).not.toContain('manual');
+    expect(text).not.toContain('projects.deployments.factStopsDomains');
+  });
+
+  it.each([
+    ['Railway', 'teardown', 'observe', 'Remove the orders-api service'],
+    ['Vercel', 'teardown', 'observe', 'Remove orders-api'],
+    ['Cloudflare Pages', 'teardown', 'observe', 'Remove orders-api'],
+    ['Cloudflare Workers', 'teardown', 'observe', 'Remove orders-api'],
+    ['Railway', 'projects.delete', 'projects.observe', 'Remove orders-api'],
+  ])('names the approved removal effects for %s (%s) while retaining the observation in the plan', async (platform, teardown, observe, title) => {
+    const subject = { kind: 'platformResource', name: 'orders-api', platform };
+    const action = { pluginId: 'fixture.deploy', localId: 'remove' };
+    const preview = {
+      deploymentReview: { removal: { subject, domains: ['orders.example.com'] } },
+      hostReviewedChildren: { children: [
+        { action, role: teardown },
+        { action: { ...action, localId: 'observe' }, role: observe },
+        { action, role: 'domains.remove', input: { domain: { hostname: 'orders.example.com' } } },
+      ] },
+    };
+    const original = structuredClone(preview);
+    const screen = await renderScreen(<ApprovalIncludedSteps preview={preview} serverId={null} testID="steps" />);
+    expect(screen.findHostByTestId('steps.rows.row:step.0')).not.toBeNull();
+    expect(screen.findHostByTestId('steps.rows.row:step.1')).not.toBeNull();
+    expect(screen.findHostByTestId('steps.rows.row:step.2')).toBeNull();
+    expect(screen.getTextContent()).toContain(title);
+    expect(screen.getTextContent()).toContain('Remove its domain');
+    expect(preview).toEqual(original);
+    expect(readApprovalIncludedSteps(preview).map(step => step.role)).toEqual([teardown, observe, 'domains.remove']);
+  });
+
+  it.each([
+    [{ kind: 'ownServer' }, 'disable', 'Remove its domain'],
+    [{ kind: 'domain', hostname: 'orders.example.com' }, 'disable', 'Remove orders.example.com'],
+    [{ kind: 'domain', hostname: 'orders.example.com' }, 'domains.remove', 'Remove orders.example.com'],
+  ])('names the Domain removal for %j', async (subject, role, title) => {
+    const preview = {
+      deploymentReview: { removal: { subject, environment: 'Production', ...(subject.kind === 'ownServer'
+        ? { domains: ['orders.example.com'] } : {}) } },
+      hostReviewedChildren: { children: [{ action: { pluginId: 'fixture.deploy', localId: 'remove' }, role }] },
+    };
+    const approval = readDeploymentReviewApproval({ preview });
+    if (!approval) throw new Error('Expected a typed removal review');
+    const screen = await renderScreen(<>
+      <DeploymentReviewApprovalFacts approval={approval} serverId={null} testID="facts" />
+      <ApprovalIncludedSteps preview={preview} serverId={null} testID="steps" />
+    </>);
+    const text = screen.getTextContent();
+    expect(text).toContain('Domain');
+    expect(text).toContain('orders.example.com');
+    expect(text).toContain('Stops responding');
+    expect(text).toContain(title);
   });
 
   it('names the native placement and serving services with the retained volume decision', async () => {
