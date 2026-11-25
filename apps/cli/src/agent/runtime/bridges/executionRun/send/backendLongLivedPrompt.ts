@@ -708,7 +708,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       });
       args.onPublicStateUpdated?.(args.runId);
     }
-    return { ok: false, errorCode: 'execution_run_failed', error: message };
+    return { ok: false, errorCode: error.code, error: message };
   }
 
   return { ok: true };

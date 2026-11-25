@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 
+import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import {
   createTestExecutionRunHostRuntime,
@@ -528,6 +529,38 @@ describe('sendBackendLongLivedRun (resume)', () => {
     expect(controller.turnInFlight).toBe(true);
     expect(finishRun).not.toHaveBeenCalled();
   });
+  it('returns the retained profile refusal before invoking the provider', async () => {
+    const deliverInput = vi.fn(async () => ({ status: 'admitted' as const }));
+    const { runtime } = createTestExecutionRunHostRuntime({ deliverInput });
+    const run = createLongLivedResumableRun({ status: 'running', profileId: 'retired-profile' });
+    const controller: ExecutionRunBackendController = {
+      kind: 'backend', controllerOccurrenceId: 'profile-refusal', backend: runtime, backendSupportsResume: true,
+      runtimeId: 'native', buffer: '', sidechainStreamBuffer: '', sidechainStreamKey: '', streamWriter: null,
+      cancelled: false, turnCount: 0, turnEpoch: 0, turnInFlight: false, turnCancelReason: null, turnCancelEpoch: null,
+      admittedLiveInterventions: [], admittedLiveInterventionsSignal: null, lastMarkerWriteAtMs: 0,
+      pendingHostBarrier: Promise.resolve(), terminalPromise: Promise.resolve(), resolveTerminal: () => {},
+    };
+    const result = await sendBackendLongLivedRun({
+      runId: run.runId,
+      params: { message: 'Continue' },
+      runs: new Map([[run.runId, run]]),
+      controllers: new Map([[run.runId, controller]]),
+      budgetRegistry: null,
+      createRuntime: () => runtime,
+      profileCatalog: buildExecutionRunProfileCatalog(),
+      maxTurns: null,
+      getNowMs: () => 123,
+      finishRun: async () => {},
+      sendAcp: async () => {},
+      parentProvider: 'codex',
+      streamedTranscriptSession: null,
+      writeActivityMarker: async () => {},
+    });
+
+    expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_profile_stale' });
+    expect(deliverInput).not.toHaveBeenCalled();
+  });
+
   it('forwards tool-call events after resuming a long-lived run (no fresh-vs-resume divergence)', async () => {
     const sendAcp = vi.fn(async (..._args: unknown[]) => {});
     const { runtime, setSendPrompt } = createResumableBackendHarness();
