@@ -516,6 +516,14 @@ describe('parseClaudeScreenState — dialogs and editors', () => {
     const state = parseClaudeScreenState(CLAUDE_2_1_170.userDraft);
     expect(state.userDraftPresent).toBe(true);
   });
+
+  it('reads a rule-boxed draft that starts with digits and a dot as the composer, not a numbered option', () => {
+    const screen = ['────────────────────', '❯ 1.1.5 は配布済み', '────────────────────', '  ? for shortcuts'].join('\n');
+    const state = parseClaudeScreenState(screen, { cursor: { x: 16, y: 1 } });
+    expect(state.composerContent).toBe('1.1.5 は配布済み');
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.inputBoxInteractive).toBe(true);
+  });
 });
 
 // Live runner capture 2026-06-12 (Claude Code 2.1.174, zellij, fresh-dir spawn pid-45964): the

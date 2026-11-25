@@ -216,10 +216,12 @@ const EFFORT_STATUS_LINE = /\beffort:\s*([a-z]+)\b/im;
 // optional content (inside an optional box border). The negative lookahead excludes menu-selection
 // lines (`❯ 1. Yes`) — the same `❯` glyph marks dialog choices — so a dialog never reads as an
 // interactive composer (fail-closed: an ambiguous numbered line is treated as not-a-composer).
+// A numbered line directly under a horizontal rule is the rule-boxed composer holding a draft
+// such as `1.1.5 is released` (issue #1013); no captured dialog renders an option there.
 // Shell recognition needs its following footer so the hint cannot match itself. Both prompt kinds
 // participate in the SAME last-input selection: an old shell capture cannot outrank a newer normal
 // draft, and an old normal composer cannot make the active shell prompt ready for ordinary input.
-const COMPOSER_LINE = /(?:^|\n)[^\S\n]*(?:[│|][^\S\n]*)?((?:>|›|❯)(?![^\S\n]*(?:\d+\.|[◯◉○●◐◑]))|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[│|][^\S\n]*)?(?:\n|$)/;
+const COMPOSER_LINE = /(?:^|\n)[^\S\n]*(?:[│|][^\S\n]*)?((?:>|›|❯)(?:(?<=(?:^|\n)[^\S\n]*╭?[─━]{3,}╮?[^\S\n]*\n[^\S\n]*(?:[│|][^\S\n]*)?.)(?![^\S\n]*[◯◉○●◐◑])|(?![^\S\n]*(?:\d+\.|[◯◉○●◐◑])))|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[│|][^\S\n]*)?(?:\n|$)/;
 // A scrolled native composer replaces its hidden prompt row with an overflow border.
 // Require the complete bordered, indented viewport; arbitrary transcript tails are not input.
 // Leave the next row's delimiter unconsumed so a newer prompt starts outside this match.

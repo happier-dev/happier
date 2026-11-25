@@ -55,6 +55,19 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
     })).toBe(false);
   });
 
+  it.each(['1.1.5 は配布済み', '21.2 installed', '1. check the build'])(
+    'stages a prompt that starts with digits and a dot in the rule-boxed composer: %s',
+    (prompt) => {
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      const rule = '────────────────────';
+
+      expect(policy.isPromptStagedBeforeSubmit({
+        promptText: prompt,
+        screenText: ['❯ earlier prompt', '', '⏺ Done.', '', rule, `❯ ${prompt}`, rule, '  ? for shortcuts'].join('\n'),
+      })).toBe(true);
+    },
+  );
+
   it('detects a single-line prompt that remains visually wrapped in the composer after submit', () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const prompt = [
