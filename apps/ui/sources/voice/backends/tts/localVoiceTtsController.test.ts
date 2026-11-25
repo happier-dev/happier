@@ -636,6 +636,33 @@ describe('localVoiceTtsController', () => {
         }));
     });
 
+    it('keeps a missing daemon speech model distinguishable in the Settings sample result', async () => {
+        const { invokeVoiceSettingsOperation } = await import('@/voice/settings/voiceSettingsOperationInvoker');
+        const { describeTtsSampleFailure } = await import('@/voice/settings/panels/localTts/ttsSampleFailureMessage');
+        const { t } = await import('@/text');
+        const settings = storage.getState().settings;
+        const voice = voiceSettingsParse({ ...settings.voice, providerId: 'local_conversation' });
+        storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
+            voice: writeLocalConversationVoiceSettings(voice, {
+                ...readLocalConversationVoiceSettings(voice), tts: neuralRequest().tts,
+            }),
+        }, settings));
+        machineRpc.mockImplementationOnce(async request => {
+            expect(request.method).toBe('daemon.voiceInference.tts.stream.start');
+            return DaemonVoiceInferenceTtsStreamStartResponseSchema.parse({ ok: false,
+                errorCode: 'model_not_installed', error: 'daemon_voice_inference_model_not_installed' });
+        });
+
+        const result = await invokeVoiceSettingsOperation('tts_test', 'conversation', {
+            isCurrent: () => true,
+            readSettings: async () => storage.getState().settings,
+            mutateSettings: async () => { throw new Error('A sample must not change the settings'); },
+        });
+        expect(result).toEqual({ status: 'unavailable', reason: 'model_not_installed' });
+        if (result.status !== 'unavailable') throw new Error('Expected the model refusal');
+        expect(describeTtsSampleFailure(result.reason ?? null)).toBe(t('settingsVoice.local.daemonInference.model.subtitleTts'));
+    });
+
     it.each([429, 503])('reports segmented daemon playback failure with cause status %s through the typed TTS recovery owner', async status => {
         const failureCause = projectActionFailureCauseV1(Object.assign(new TypeError('private playback response'), { status }), 'voice.playback');
         encodedAudio.start.mockRejectedValueOnce(Object.assign(new Error('native_playback_failed'), { failureCause }));

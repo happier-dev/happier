@@ -14,6 +14,7 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { resolveLocalVoiceAdapterSettings, parseLocalVoiceSttSettings, parseLocalVoiceTtsSettings } from '@/voice/local/localVoiceSettings';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { DaemonVoiceInferenceClient } from '@/voice/runtime/daemonInference/DaemonVoiceInferenceClient';
+import { DAEMON_VOICE_INFERENCE_CLIENT_ERROR_CODES, type DaemonVoiceInferenceClientErrorCode } from '@/voice/runtime/daemonInference/daemonVoiceInferenceErrors';
 import { createVoiceDictationRuntimeSettingsSnapshot } from '@/voice/dictation/voiceDictationRuntimeSettings';
 import { createVoiceDiagnosticsClientForMachine } from '@/voice/diagnostics/client';
 import { applyVoiceDiagnosticsMachinePolicy, retryVoiceDiagnosticsRevocation, revokeVoiceDiagnosticsSessionAuthorization } from '@/voice/diagnostics/runtimeRevocation';
@@ -292,6 +293,10 @@ export async function invokeVoiceSettingsOperation(operation: VoiceSettingsOpera
         if (!current()) return { status: 'cancelled' };
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : null;
         // Error messages can contain provider/credential material; return only structural known codes.
-        return unavailable(code && ['feature_disabled', 'connected_purpose_catalog_unavailable', 'machine_unreachable', 'runtime_unavailable', 'unsupported_runtime_family', 'request_timeout', 'internal_error', 'invalid_response'].includes(code) ? code : 'voice_settings_operation_failed');
+        if (code === 'connected_purpose_catalog_unavailable' || code === 'invalid_response'
+            || code && DAEMON_VOICE_INFERENCE_CLIENT_ERROR_CODES.has(code as DaemonVoiceInferenceClientErrorCode)) {
+            return unavailable(code);
+        }
+        return unavailable('voice_settings_operation_failed');
     }
 }

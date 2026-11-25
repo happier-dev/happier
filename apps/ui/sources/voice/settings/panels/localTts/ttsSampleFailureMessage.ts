@@ -14,6 +14,8 @@ export function describeTtsSampleFailure(reason: string | null): string {
       return t('settingsVoice.local.daemonInference.states.requestTimeout');
     case 'feature_disabled':
       return t('settingsVoice.local.daemonInference.states.unavailable');
+    case 'model_not_installed':
+      return t('settingsVoice.local.daemonInference.model.subtitleTts');
     case 'runtime_unavailable':
     case 'unsupported_runtime_family':
       return t('settingsVoice.local.daemonInference.states.runtimeUnavailable');
