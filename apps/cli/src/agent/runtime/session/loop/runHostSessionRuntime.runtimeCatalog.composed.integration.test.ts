@@ -14959,7 +14959,10 @@ describe('runHostSessionRuntime', () => {
     { delivery: 'newTurn', persisted: true }, { delivery: 'steer', persisted: true },
     { delivery: 'newTurn', persisted: false }, { delivery: 'steer', persisted: false },
     { delivery: 'busy', persisted: true },
-  ] as const)('durably represents sibling execution completions before native acceptance retires their custody ($delivery, persisted=$persisted)', async ({ delivery, persisted }) => {
+    { delivery: 'newTurn', persisted: true, repairFirstPublication: true },
+  ] as const)('durably represents execution completions before native acceptance retires their custody ($delivery, persisted=$persisted, repair=$repairFirstPublication)', async scenario => {
+    const { delivery, persisted } = scenario;
+    const repairFirstPublication = 'repairFirstPublication' in scenario;
     onTestFinished(installEmptyProjectAccountRowsHttpBoundary());
     const directory = await mkdtemp(join(tmpdir(), 'happier-host-worker-natural-'));
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
@@ -14985,14 +14988,24 @@ describe('runHostSessionRuntime', () => {
         import('@/plugins/runtime/runtimeCore/plugin/sessionLaunch'),
       ]);
       const harness = createHarness('session-1', { accountId: 'worker-update-account' });
-      const runIds = delivery === 'busy' ? ['natural-busy-child'] : ['natural-sibling-one', 'natural-sibling-two'];
+      const runIds = repairFirstPublication ? ['repaired-original']
+        : delivery === 'busy' ? ['natural-busy-child'] : ['natural-sibling-one', 'natural-sibling-two'];
       const finishSiblings = async () => await Promise.all(runIds.map(async (runId) => {
         const run: import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState = {
           runId, callId: `${runId}-call`, sidechainId: `${runId}-side`, sessionId: harness.session.sessionId,
           depth: 0, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: 'acme.actual' }, backendId: 'acme.actual',
           instructions: 'Complete the task.', permissionMode: 'read_only', retentionPolicy: 'resumable',
           runClass: 'bounded', ioMode: 'request_response', notifyParentOnCompletion: true, status: 'running', startedAtMs: 1,
+          ...(repairFirstPublication ? { runReportPolicy: { preset: 'everything' as const } } : {}),
         };
+        if (repairFirstPublication) {
+          // This is the durable state at the owner-loss cut, before the
+          // independently published WorkerUpdate file exists.
+          const terminalEventId = 'repaired-terminal-occurrence';
+          await registry.retainExecutionRunState({ ...run, status: 'succeeded', finishedAtMs: 2,
+            terminalOccurrenceId: terminalEventId, latestToolResult: { output: `RESULT_${runId}` } }, terminalEventId);
+          return;
+        }
         await finishExecutionRun({
           runId, next: { status: delivery === 'newTurn' ? 'succeeded' : 'failed', finishedAtMs: 2 }, toolResult: { output: `RESULT_${runId}` },
           runs: new Map([[runId, run]]), controllers: new Map(), budgetRegistry: null,
@@ -15003,7 +15016,20 @@ describe('runHostSessionRuntime', () => {
       const bridge = new ExecutionRunHostBridge({ parentProvider: 'acme.parent', cwd: directory,
         happyHomeDir: directory, sendAcp: async () => undefined });
       const signal = controller.signal;
-      if (delivery === 'newTurn') await finishSiblings();
+      if (repairFirstPublication) {
+        await finishSiblings();
+        const [runId] = runIds;
+        const committed = await registry.readRetainedExecutionRunRecord(runId!);
+        expect(committed?.state.status).toBe('succeeded');
+        expect(committed?.terminalEventId).toEqual(expect.any(String));
+        expect(await registry.readPendingExecutionRunWorkerUpdates()).toEqual([]);
+        const recover = () => registry.reconcileRetainedExecutionRunRecords({ nowMs: 3 });
+        await recover();
+        await recover();
+        expect(await registry.readPendingExecutionRunWorkerUpdates()).toMatchObject([
+          { localId: `execution-run-worker-update:${committed!.terminalEventId}`, update: { workerId: runId } },
+        ]);
+      } else if (delivery === 'newTurn') await finishSiblings();
       let userMessageHandler: ((message: import('@/api/types').UserMessage) => boolean | void) | null = null;
       harness.session.onUserMessage = (handler: typeof userMessageHandler) => { userMessageHandler = handler; };
       delete harness.deps.createPermissionModeQueueStateFn;
@@ -15192,14 +15218,15 @@ describe('runHostSessionRuntime', () => {
         for (const runId of runIds) expect(JSON.stringify(written())).toContain(`RESULT_${runId}`);
         expect(workerEvents.map(event => event.update.workerId).sort()).toEqual(runIds);
         expect(workerEvents.map(event => event.localId).sort()).toEqual(pending.map(item => item.localId).sort());
-        // Native transport submission alone cannot retire either completion.
-        expect(await registry.readPendingExecutionRunWorkerUpdates()).toHaveLength(2);
+        // Native transport submission alone cannot retire a completion.
+        expect(await registry.readPendingExecutionRunWorkerUpdates()).toHaveLength(runIds.length);
         await provider.observeTerminalLifecycle({ agentId: 'claude', type: 'prompt_submitted',
           turnId: null, promptText: written().at(-1), observedAtMs: Date.now(),
           source: 'hook' });
-        expect(nativeEvents).toContainEqual(expect.objectContaining({ kind: 'input-accepted',
-          inputIds: ['natural-lead-input'],
-          delivery: expect.objectContaining({ kind: delivery }) }));
+        expect(nativeEvents.filter(event => event.kind === 'input-accepted')).toEqual([
+          expect.objectContaining({ inputIds: ['natural-lead-input'],
+            delivery: expect.objectContaining({ kind: delivery }) }),
+        ]);
         terminal.service.captureInputState = captureIdleInput;
         await provider.observeTerminalLifecycle({ agentId: 'claude', type: 'completion_candidate',
           turnId: null, source: 'hook' });
