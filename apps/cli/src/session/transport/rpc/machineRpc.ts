@@ -489,8 +489,12 @@ export async function callExactMachineRpc(params: Readonly<{
       throw new MachineRpcTargetNotCurrentError(machineId, 'archive_origin_mismatch');
     }
     const moveChild = childFamily !== null;
-    const timeoutMs = params.timeoutMs === null ? null
-      : typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_MACHINE_RPC_TIMEOUT_MS;
+    // As on the mounted path, Work bounds setup and lets the admitted SCM read
+    // run under its operation lifecycle. An explicit caller deadline still wins.
+    const requestedTimeoutMs = params.timeoutMs === undefined && params.method === RPC_METHODS.SCM_WORK_EVIDENCE_READ
+      ? null : params.timeoutMs;
+    const timeoutMs = requestedTimeoutMs === null ? null
+      : typeof requestedTimeoutMs === 'number' && requestedTimeoutMs > 0 ? requestedTimeoutMs : DEFAULT_MACHINE_RPC_TIMEOUT_MS;
     const setupTimeoutMs = timeoutMs ?? DEFAULT_MACHINE_RPC_TIMEOUT_MS;
     const connectTimeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0
       ? setupTimeoutMs : resolveSessionControlSocketConnectTimeoutMs();
