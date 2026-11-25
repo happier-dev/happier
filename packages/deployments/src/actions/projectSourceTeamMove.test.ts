@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createProjectSourceTeamMovePreparationV1 } from './projectSourceTeamMove.js';
 
 it('preserves the typed Home refusal when preparing reviewed Source move children', async () => {
@@ -23,4 +25,43 @@ it('preserves the typed Home refusal when preparing reviewed Source move childre
         input: { serverId: 'home', sourceId: 'source', teamId: 'team', expectedRevision: 2, requestKey: 'source-move', clientId: 'answering-app' },
         context: {},
     })).toEqual(refusal);
+});
+
+it('keeps the typed Artifact cause when a reviewed Source move cannot open an Environment', async () => {
+    const accountId = 'account';
+    const input = { serverId: 'home', sourceId: 'source', teamId: 'team', expectedRevision: 2, requestKey: 'source-move' };
+    const environment = createDeploymentEnvironmentHeaderV1({ serverId: input.serverId, projectSourceId: input.sourceId });
+    const unexpectedRead = async (): Promise<never> => { throw new Error('Read after Environment refusal'); };
+    const preparation = createProjectSourceTeamMovePreparationV1({
+        accountId, credentialAuthorityKind: 'account', assertCurrent: () => {},
+    }, {
+        projectSourcesRead: async () => ProjectSourcesReadOutputV1Schema.parse({
+            ok: true, canManage: true, source: {
+                id: input.sourceId, revision: input.expectedRevision, name: 'Source',
+                owner: { kind: 'account', accountId }, audience: [], createdByAccountId: accountId,
+            },
+        }),
+        deploymentAction: async (actionId) => {
+            if (actionId === 'deployments.environments.list') return { ok: true, items: [environment], nextCursor: null };
+            if (actionId === 'deployments.environments.get') return {
+                ok: true, environment, targetLinks: [], retainedTargetLinkCleanupCompleteIds: [],
+            };
+            if (actionId === 'deployments.receipts.list') return { ok: true, items: [], nextCursor: null };
+            return unexpectedRead();
+        },
+        workflowAction: unexpectedRead, machineAccessAction: unexpectedRead, readApiTokens: unexpectedRead,
+        readDefaults: async () => ({
+            ok: true, projectSourceId: input.sourceId, sourceRevision: input.expectedRevision, revision: 0, content: null,
+        }),
+        readArtifactContents: async (ids) => ids.map(() => ({ status: 'fulfilled', value: null })),
+        isSameHome: (left, right) => left === right,
+    });
+    expect(await preparation.prepareHostReviewedChildren({
+        actionId: PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, input, context: {},
+    })).toEqual({
+        ok: false, errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable',
+        failureCause: {
+            phase: 'deployment.artifact.missing', errorCode: 'deployment_content_unavailable', errorClass: 'TypeError', httpStatus: null,
+        },
+    });
 });

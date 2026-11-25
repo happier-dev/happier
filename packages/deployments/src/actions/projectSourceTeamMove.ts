@@ -121,7 +121,7 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
     };
     const details = environments.map(detail => {
         const content = readDeploymentEnvironmentArtifactV1(detail.environment, opened.get(detail.environment.contentArtifactId) ?? null);
-        if (!content.ok) return refuse(content.error);
+        if (!content.ok) throw new ProjectSourceTeamMoveReadFailure({ ...content, errorCode: content.error });
         const environment = detail.environment;
         if (environment.deletedAtMs === undefined) {
             addMachine(environment.controllerMachineId, 'controller');
