@@ -4639,8 +4639,13 @@ describe('Channels settings surface (real source, mounted)', () => {
     const settingsContent = findByTestId(renderer, 'channels-settings-content')[0];
     expect(settingsContent).toBeDefined();
     expect(hasRenderedAncestor(settingsContent!, 'ScrollView')).toBe(true);
-    const scrollers = renderer.root.findAll((instance) => hasRenderedHostType(instance, 'ScrollView'));
-    expect(scrollers.some((scroll) => StyleSheet.flatten(scroll.props.contentContainerStyle).padding === surface.theme.spacing.large)).toBe(true);
+    const screen = findByTestId(renderer, 'channels-surface').find(instance => hasRenderedHostType(instance, 'View'));
+    expect(StyleSheet.flatten(screen?.props.style)).toMatchObject({
+      paddingTop: safeAreaInsets.top,
+      paddingRight: safeAreaInsets.right,
+      paddingBottom: safeAreaInsets.bottom,
+      paddingLeft: safeAreaInsets.left,
+    });
     act(() => renderer?.unmount());
     renderer = await renderChannelsSurface(host.hostApi, createChannelsPageSurfaceContextFixture());
     expect(findByTestId(renderer, 'channels-page-row-binding-1').length).toBeGreaterThan(0);
