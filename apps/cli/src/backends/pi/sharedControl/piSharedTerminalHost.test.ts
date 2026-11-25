@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentState } from '@/api/types';
 import type { RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
-import type { PiRpcChannel, PiRpcChannelClosure, PiRpcChannelOpenSpec } from '@/backends/pi/rpc/piRpcChannel';
+import { PiSharedTerminalUnavailableError, type PiRpcChannel, type PiRpcChannelClosure, type PiRpcChannelOpenSpec } from '@/backends/pi/rpc/piRpcChannel';
 import { logger } from '@/ui/logger';
 
 import {
@@ -67,7 +67,7 @@ async function connectBridge(config: PiSharedControlConfig, hello: Partial<Recor
     received,
     closed,
     sendRaw: (text: string) => socket.write(text),
-    sendHello: () => writeLine(helloFrame),
+    sendHello: (...frames: unknown[]) => socket.write([helloFrame, ...frames].map((frame) => `${JSON.stringify(frame)}\n`).join('')),
     out: (record: Record<string, unknown>) => writeLine({ ch: 'out', line: JSON.stringify(record) }),
     err: (record: Record<string, unknown>) => writeLine({ ch: 'err', line: JSON.stringify(record) }),
     bye: (reason: string) => writeLine({ type: 'bye', reason }),
@@ -245,7 +245,8 @@ describe('Pi shared terminal host', () => {
   it('fences a replaced terminal session with a notice and read-only local control', async () => {
     const { host } = createHost();
     const port = createSessionPort();
-    const { config, bridge } = await attachFirstBridge(host);
+    const { config, bridge, channel } = await attachFirstBridge(host);
+    const initial = listenTo(channel);
     host.publishLocalControl(port.session);
     expect(port.localControl()).toEqual({
       attached: true,
@@ -257,12 +258,26 @@ describe('Pi shared terminal host', () => {
 
     bridge.bye('new');
     await bridge.end();
+    await vi.waitFor(() => expect(initial.closures).toEqual([{ kind: 'detached', reattachable: true }]));
+
+    const stdout = vi.fn();
+    const stderr = vi.fn();
+    const reopening = host.channelHost.open(SPEC).then((next) => {
+      next.listen({ onStdoutLine: stdout, onStderrLine: stderr, onIoError: () => {}, onClosed: () => {} });
+    }, (error: unknown) => error);
     const replaced = await connectBridge(config, { sessionId: 'pi-session-2' });
     sockets.push(replaced.socket);
-    replaced.sendHello();
+    replaced.sendHello(
+      { ch: 'out', line: JSON.stringify({ type: 'agent_start' }) },
+      { ch: 'err', line: JSON.stringify({ type: 'happy-pi-model-catalog' }) },
+    );
 
     await vi.waitFor(() => expect(port.localControl()?.remoteWritable).toBe(false));
     expect(port.notices).toHaveLength(1);
+    expect(await reopening).toBeInstanceOf(PiSharedTerminalUnavailableError);
+    expect(stdout).not.toHaveBeenCalled();
+    expect(stderr).not.toHaveBeenCalled();
+    await expect(host.channelHost.open(SPEC)).rejects.toBeInstanceOf(PiSharedTerminalUnavailableError);
   });
 
   it('asks for a re-attach when the terminal returns to the bound session, and is writable again only once attached', async () => {

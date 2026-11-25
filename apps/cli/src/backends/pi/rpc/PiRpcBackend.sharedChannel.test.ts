@@ -19,12 +19,13 @@ import {
 } from '@/backends/pi/sharedControl/piSharedControlProtocol';
 
 import { PiRpcBackend } from './PiRpcBackend';
-import type {
-  PiRpcChannel,
-  PiRpcChannelHost,
-  PiRpcChannelListener,
-  PiRpcChannelOpenOptions,
-  PiRpcChannelOpenSpec,
+import {
+  PiSharedTerminalUnavailableError,
+  type PiRpcChannel,
+  type PiRpcChannelHost,
+  type PiRpcChannelListener,
+  type PiRpcChannelOpenOptions,
+  type PiRpcChannelOpenSpec,
 } from './piRpcChannel';
 
 type BridgeCommand = Readonly<{ id: string; type: string; message?: string }>;
@@ -43,7 +44,7 @@ const RPC_ORDER_PROMPT: PromptScript = ['response', { type: 'agent_start' }, { t
  * an interactive Pi, answering only the shared-mode command set the way the real bridge does.
  * Everything above the channel (RPC protocol, turn lifecycle, mapping) is the real backend.
  */
-function createFakeAttachedPi(initialSessionId: string) {
+function createFakeAttachedPi(initialSessionId: string, beforeStateReply?: () => Promise<void> | undefined) {
   let sessionId = initialSessionId;
   // What the bridge's get_state reports as `isStreaming` (a run, including one still preparing).
   let streaming = false;
@@ -78,7 +79,8 @@ function createFakeAttachedPi(initialSessionId: string) {
           const command = JSON.parse(line) as BridgeCommand;
           written.push(command);
           switch (command.type) {
-            case 'get_state':
+            case 'get_state': {
+              await beforeStateReply?.();
               reply(command, {
                 success: true,
                 data: {
@@ -91,6 +93,7 @@ function createFakeAttachedPi(initialSessionId: string) {
                 },
               });
               return;
+            }
             case 'get_commands':
               reply(command, { success: true, data: { commands: [] } });
               return;
@@ -322,13 +325,23 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     expect(fake.opens).toHaveLength(1);
   });
 
-  it('rejects before effect when the re-attached terminal is on another session', async () => {
+  it.each(['host refusal', 'get_state mismatch'] as const)('rejects before effect when the re-attached terminal is on another session (%s)', async (source) => {
     const fake = createFakeAttachedPi('pi-terminal-session');
     const { backend, messages } = createAttachedBackend(fake);
     const { sessionId } = await backend.startSession();
 
+    const unavailable = new PiSharedTerminalUnavailableError('The Pi terminal is on another session');
+    if (source === 'host refusal') {
+      fake.failNextOpen(unavailable);
+    } else {
+      fake.replaceSession('pi-replaced-session');
+    }
     fake.detach();
-    fake.replaceSession('pi-replaced-session');
+    await vi.waitFor(() => expect(fake.opens).toHaveLength(2));
+    await flushIo();
+    expect(messages.filter(isSessionNotice)).toEqual([]);
+
+    if (source === 'host refusal') fake.failNextOpen(unavailable);
     const submission = backend.sendPromptWithAdmission(sessionId, 'must not reach the new session');
     void submission.completion.catch(() => undefined);
 
@@ -341,6 +354,35 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     // The host already posted the fence notice; the refused re-attach adds none.
     await flushIo();
     expect(messages.filter(isSessionNotice)).toEqual([]);
+  });
+
+  it('holds web prompts until an attached channel has passed its session identity check', async () => {
+    let releaseStateReply!: () => void;
+    const stateReply = new Promise<void>((resolve) => { releaseStateReply = resolve; });
+    let delayStateReply = false;
+    const fake = createFakeAttachedPi('pi-terminal-session', () => delayStateReply ? stateReply : undefined);
+    const { backend } = createAttachedBackend(fake);
+    const { sessionId } = await backend.startSession();
+
+    fake.replaceSession('pi-other-session');
+    delayStateReply = true;
+    fake.detach();
+    await vi.waitFor(() => expect(fake.commands[1]?.map((command) => command.type)).toContain('get_state'));
+
+    const submission = backend.sendPromptWithAdmission(sessionId, 'web prompt during session identity check');
+    void submission.completion.catch(() => undefined);
+    try {
+      await flushIo();
+      expect(fake.commands[1]!.map((command) => command.type)).toEqual(['get_state']);
+    } finally {
+      releaseStateReply();
+    }
+
+    expect(await submission.admission).toMatchObject({
+      status: 'rejected_before_effect',
+      error: { reason: 'provider_unavailable_before_acceptance' },
+    });
+    expect(promptCommands(fake)).toEqual([]);
   });
 
   it('re-attaches when the host reports the terminal back on its session, so terminal turns mirror again', async () => {

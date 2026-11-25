@@ -7,12 +7,13 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { buildPiBridgeExtensionSource } from '@/backends/pi/bridgeExtension/piBridgeExtensionSource';
 import { attachPiRpcJsonlLineReader } from '@/backends/pi/rpc/attachPiRpcJsonlLineReader';
-import type {
-  PiRpcChannel,
-  PiRpcChannelClosure,
-  PiRpcChannelHost,
-  PiRpcChannelListener,
-  PiRpcChannelOpenSpec,
+import {
+  PiSharedTerminalUnavailableError,
+  type PiRpcChannel,
+  type PiRpcChannelClosure,
+  type PiRpcChannelHost,
+  type PiRpcChannelListener,
+  type PiRpcChannelOpenSpec,
 } from '@/backends/pi/rpc/piRpcChannel';
 import { launchOwnedTerminalProcess, type OwnedTerminalProcess } from '@/terminal/runtime/ownedTerminalProcess';
 import { prepareOwnedTerminalSpawn } from '@/terminal/runtime/terminalLaunchSpec';
@@ -399,11 +400,15 @@ export function createPiSharedTerminalHost(params: Readonly<{
   };
 
   const bindChannel = (live: BridgeConnection): PiRpcChannel => {
+    // A bridge can send frames in the same read as hello, before the backend can query its state.
+    if (live.hello.sessionId !== boundSessionId) {
+      throw new PiSharedTerminalUnavailableError('The Pi terminal is on another session');
+    }
     const binding = createAttachedChannel(live, () => {
       if (attached === binding) attached = null;
     });
     attached = binding;
-    if (live.hello.sessionId === boundSessionId) updateFence(false);
+    updateFence(false);
     return binding.channel;
   };
 
@@ -416,7 +421,14 @@ export function createPiSharedTerminalHost(params: Readonly<{
         signal?.removeEventListener('abort', onAbort);
       };
       const waiter: HelloWaiter = {
-        admit: (next) => { settle(); resolve(bindChannel(next)); },
+        admit: (next) => {
+          settle();
+          try {
+            resolve(bindChannel(next));
+          } catch (error) {
+            reject(error);
+          }
+        },
         reject: (error) => { settle(); reject(error); },
       };
       const onAbort = (): void => {

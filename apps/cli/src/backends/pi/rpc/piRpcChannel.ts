@@ -6,6 +6,14 @@ import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
 import { attachPiRpcJsonlLineReader, type PiRpcJsonlLineReader } from './attachPiRpcJsonlLineReader';
 
+/** The interactive Pi cannot take a prompt now. No provider effect occurred, so retry is safe. */
+export class PiSharedTerminalUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PiSharedTerminalUnavailableError';
+  }
+}
+
 /**
  * Transport between `PiRpcBackend` and one Pi process. The backend owns the RPC protocol, turn
  * lifecycle and event mapping; a channel only moves JSONL lines.

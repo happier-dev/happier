@@ -61,8 +61,6 @@ let openAbortSettleGate = null;
 let currentRun = null;
 let handlers = new Map();
 let loads = 0;
-// A busy Pi event loop (rendering, loading a session) answers the runner late.
-let stalledStateRead = null;
 
 const ctx = {
   mode: "tui",
@@ -103,14 +101,14 @@ const emitNow = (name, event) => {
   for (const handler of handlers.get(name) ?? []) void runHandler(name, handler, event);
 };
 
-async function runAgent(text, hold) {
+async function runAgent(text, hold, immediate = false) {
   let abortRun;
   const aborted = new Promise((resolve) => { abortRun = resolve; });
   let releaseRun;
   const released = new Promise((resolve) => { releaseRun = resolve; });
   const run = { aborted: false, abort: () => { run.aborted = true; abortRun(); }, release: () => releaseRun() };
   currentRun = run;
-  await tick();
+  if (!immediate) await tick();
   idle = false;
   await emit("before_agent_start", { prompt: text, systemPrompt: "Pi system prompt" });
   await emit("agent_start");
@@ -120,10 +118,10 @@ async function runAgent(text, hold) {
     await emit("message_start", { message: system });
     await emit("message_end", { message: system });
   }
-  await tick();
+  if (!immediate) await tick();
   const user = { role: "user", content: [{ type: "text", text }], timestamp: Date.now() };
   await emit("message_start", { message: user });
-  await tick();
+  if (!immediate) await tick();
   await emit("message_end", { message: user });
   const reply = "echo: " + text;
   const partial = { role: "assistant", content: [{ type: "text", text: "" }], usage: { input: 10, output: 0 } };
@@ -139,7 +137,7 @@ async function runAgent(text, hold) {
       message: partial,
       assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial },
     });
-    await tick();
+    if (!immediate) await tick();
   }
   const final = {
     role: "assistant",
@@ -192,11 +190,6 @@ async function loadExtensions(reason) {
     // Only the bridge's get_state reads this, so it marks the runner querying Pi's state.
     getThinkingLevel: () => {
       report({ kind: "state_read", sessionId, load });
-      if (stalledStateRead?.sessionId === sessionId) {
-        const { ms } = stalledStateRead;
-        stalledStateRead = null;
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-      }
       return "medium";
     },
     setThinkingLevel: () => undefined,
@@ -220,10 +213,6 @@ process.on("message", async (command) => {
       holdNextRun = true;
       report({ kind: "armed", command: command.kind });
       break;
-    case "stall-state-read":
-      stalledStateRead = { sessionId: command.sessionId, ms: command.ms };
-      report({ kind: "armed", command: command.kind });
-      break;
     case "release":
       currentRun?.release();
       break;
@@ -243,6 +232,11 @@ process.on("message", async (command) => {
       await emit("session_shutdown", { reason: "new" });
       sessionId = command.sessionId;
       await loadExtensions("new");
+      if (command.text) {
+        // Queue the turn's frames behind hello before servicing a get_state request.
+        await emit("input", { source: "interactive", text: command.text });
+        await runAgent(command.text, false, true);
+      }
       break;
     case "quit":
       await emit("session_shutdown", { reason: "quit" });
@@ -255,13 +249,11 @@ await loadExtensions("startup");
 
 type FakePiReport = Readonly<{ kind: string; [field: string]: unknown }>;
 /** Shapes how Pi handles what arrives next; acknowledged because IPC is not ordered with the socket. */
-type FakePiArming =
-  | Readonly<{ kind: 'hold-next-run' | 'gate-abort-settle' }>
-  | Readonly<{ kind: 'stall-state-read'; sessionId: string; ms: number }>;
+type FakePiArming = Readonly<{ kind: 'hold-next-run' | 'gate-abort-settle' }>;
 type FakePiCommand =
   | Readonly<{ kind: 'type'; text: string; hold?: boolean }>
   | Readonly<{ kind: 'release' | 'settle' | 'reload' }>
-  | Readonly<{ kind: 'new'; sessionId: string }>
+  | Readonly<{ kind: 'new'; sessionId: string; text?: string }>
   | Readonly<{ kind: 'quit'; code: number }>;
 
 const WAIT = { timeout: 10_000, interval: 10 } as const;
@@ -517,7 +509,9 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
       canDetach: false,
     });
 
-    pi.tell({ kind: 'new', sessionId: 'pi-session-2' });
+    const switchMark = pi.mark();
+    pi.tell({ kind: 'new', sessionId: 'pi-session-2', text: 'typed in the foreign session' });
+    await pi.waitForReport('settled', (report) => report.text === 'typed in the foreign session');
     await vi.waitFor(() => expect(pi.localControl()?.remoteWritable).toBe(false), WAIT);
     expect(pi.notices).toHaveLength(1);
 
@@ -529,6 +523,10 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
     // Retryable once the terminal is back, not refused for good.
     expect(admission.status !== 'accepted' && admission.error).toMatchObject({ reason: 'provider_unavailable_before_acceptance' });
     expect(pi.webPrompts()).toEqual([]);
+    expect(pi.reported('state_read').map((report) => report.sessionId)).not.toContain('pi-session-2');
+    expect(pi.userRows(switchMark)).toEqual([]);
+    expect(pi.deltas(switchMark)).toEqual([]);
+    expect(pi.statuses(switchMark)).toEqual([]);
 
     // The terminal returns to the bound session (`/resume`); no web action is needed to mirror it.
     pi.tell({ kind: 'new', sessionId: BOUND_SESSION_ID });
@@ -541,23 +539,6 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
     expect(pi.userRows(mark)).toEqual(['typed after returning']);
     expect(pi.notices).toHaveLength(1);
     expect(pi.launches).toHaveLength(1);
-  });
-
-  // After `bye{new}` the runner re-attaches on its own and checks the session identity in the
-  // background. A web prompt can arrive while that check is still waiting for Pi's answer; it must
-  // not use the fresh connection to the session the terminal switched to.
-  it('never sends a web prompt to the replaced session while its identity is still being checked', async () => {
-    const pi = await startSharedTerminal();
-    await pi.arm({ kind: 'stall-state-read', sessionId: 'pi-session-2', ms: 300 });
-
-    pi.tell({ kind: 'new', sessionId: 'pi-session-2' });
-    await pi.waitForReport('state_read', (report) => report.sessionId === 'pi-session-2');
-    const racing = pi.backend.sendPromptWithAdmission(pi.sessionId, 'web prompt during the session switch');
-    void racing.completion.catch(() => undefined);
-    const admission = await racing.admission;
-
-    expect(admission.status).toBe('rejected_before_effect');
-    expect(pi.webPrompts()).toEqual([]);
   });
 
   it('asks the runner to terminate with Pi exit code when Pi exits, and never relaunches it', async () => {

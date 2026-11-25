@@ -52,6 +52,7 @@ import {
   resolvePiSessionIdFromResumeReference,
 } from '../utils/piSessionFiles';
 import {
+  PiSharedTerminalUnavailableError,
   spawnedPiRpcChannelHost,
   type PiRpcChannel,
   type PiRpcChannelHost,
@@ -225,18 +226,6 @@ class PiSharedTerminalBusyError extends Error {
   constructor() {
     super(PI_SHARED_CONTROL_BUSY_ERROR);
     this.name = 'PiSharedTerminalBusyError';
-  }
-}
-
-/**
- * The interactive Pi cannot take a web prompt now: the terminal is on another session, or Stop
- * withdrew a prompt that was waiting for the terminal. Nothing reached Pi, so the row stays
- * retryable (`provider_unavailable_before_acceptance`) rather than refused for good.
- */
-class PiSharedTerminalUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'PiSharedTerminalUnavailableError';
   }
 }
 
