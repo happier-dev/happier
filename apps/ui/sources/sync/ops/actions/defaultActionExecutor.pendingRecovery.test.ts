@@ -10,8 +10,6 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 
@@ -53,12 +51,8 @@ async function targetFixture(actionId: RecoveryActionId, approval: boolean | 'as
     }
     homes.answer(serverId, '/v1/features', { body: features });
     homes.answer(serverId, '/v1/features/authenticated', { body: features });
-    if (approval) homes.answer(serverId, '/v2/account/settings', { body: AccountSettingsV2GetResponseSchema.parse({
-        content: { t: 'plain', v: { actionsSettingsV1: normalizeActionsSettingsV1({
-            v: 1, actions: approval === 'ask' ? { [actionId]: { approvalRequiredSurfaces: ['ui'] } } : {},
-            ...(approval === true ? { approvalWaivedSurfaces: { [actionId]: ['ui'] } } : {}),
-        }) } }, version: 1,
-    }) });
+    if (approval === 'ask') await homes.requireUiApproval(serverId, actionId);
+    if (approval === true) await homes.setActionPolicy(serverId, actionId, 'ui', 'allowed');
     const targetExecutionRunId = actionId === 'session.pending.markHandled' || actionId === 'session.pending.action.set' ? undefined : 'run/one';
     const owner = `/v2/sessions/session/pending`;
     const target = targetExecutionRunId ? '/v2/sessions/session/execution-runs/run%2Fone/pending' : owner;
@@ -185,9 +179,11 @@ describe('registered UI Pending recovery Action delivery', () => {
 
     it('honors an explicit Ask for reversible pending rearm', async () => {
         const { path, serverId, input, context } = await targetFixture('session.pending.action.set', 'ask');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
         expect(await createDefaultActionExecutor().execute('session.pending.action.set', input, context))
-            .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-        expect(homes.artifacts(serverId).list()).toHaveLength(1);
+            .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(homes.artifacts(serverId).list()).toHaveLength(0);
         expect(homes.requestsFor(path)).toEqual([]);
     });
 
