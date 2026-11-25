@@ -32,8 +32,7 @@ import { resolveMachineSetup, reportMachineSetup, skipManagedMachineSetup } from
 import { readSessionTeamCredentialNativeSelectionInTx } from '@/app/teams/credentials/nativeDeliveryRead';
 import { completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCredentialNativeDeliveryInTx,
     readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from '@/app/teams/credentials/sessionBinding';
-import { ManagedControllerCredentialDeliveryReportV1Schema, ManagedControllerCredentialDeliveryReportOutputV1Schema,
-    ManagedCredentialDeliveryResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedControllerCredentialDeliveryReportV1Schema, ManagedControllerCredentialDeliveryReportOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { isManagedPresentUser, resolveSignedManagedAccountExecutorInTx } from './managedRequestAuthority';
@@ -636,11 +635,9 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 }
                 const completion = await completeSessionTeamCredentialNativeDeliveryInTx(tx, { ...authority,
                     outcome: delivery.result.kind, appliedPolicy: delivery.appliedPolicy });
-                const result = completion.ok ? delivery.result : ManagedCredentialDeliveryResultV1Schema.parse({
-                    kind: 'unknown', code: completion.code === 'action_outcome_unknown' ? completion.code : 'credential_unavailable',
-                });
                 return ManagedControllerCredentialDeliveryReportOutputV1Schema.parse({
-                    machine: projectManagedMachine(row), credentialDeliveryResult: result,
+                    machine: projectManagedMachine(row),
+                    credentialDeliveryResult: completion.ok ? delivery.result : { kind: 'unknown', code: completion.code },
                 });
             });
         }

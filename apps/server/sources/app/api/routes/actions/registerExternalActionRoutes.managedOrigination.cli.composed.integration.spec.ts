@@ -45,7 +45,7 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineSetupPlanResultV1Schema, MachineSetupPlanInputV1Schema, MachineSetupSourcesApplyInputV1Schema, ManagedControllerContextOutputV1Schema, ManagedEnrollmentCorrelationV1Schema,
-    ManagedControllerCredentialDeliveryReportV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+    ManagedControllerCredentialDeliveryReportOutputV1Schema, ManagedControllerCredentialDeliveryReportV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sealManagedCreationActionCodecV1, openManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { machineRolesMetadataFieldV1, resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
@@ -1340,7 +1340,8 @@ describe('ordinary Account managed Action origination', () => {
             expect((await issue(siblingInput)).statusCode).toBe(409);
             const competingReport = await report(reportBody, controllerKeys.secretKey, competing);
             expect(competingReport.statusCode, competingReport.body).toBe(200);
-            expect(competingReport.json().credentialDeliveryResult).toEqual({ kind: 'unknown', code: 'credential_unavailable' });
+            expect(ManagedControllerCredentialDeliveryReportOutputV1Schema.parse(competingReport.json()).credentialDeliveryResult)
+                .toEqual({ kind: 'unknown', code: 'resource_changed' });
             expect(await inTx(tx => readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: f.session.id })))
                 .toMatchObject({ ok: true, binding: { submission: { requestId: root.binding.requestId, operation: 'install' } } });
             expect(calls).toHaveLength(pendingCalls);

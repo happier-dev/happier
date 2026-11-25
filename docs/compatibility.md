@@ -4974,6 +4974,10 @@ no reverse-development rollback writer, dual writer or new client floor follows.
 Unsupported Home/Machine combinations refuse before credential effects while
 unaffected ordinary released operations retain their existing contracts.
 
+When Home cannot settle a signed native-delivery completion, the controller
+report returns the binding owner's code in the existing `unknown` result.
+Only a confirmed result releases launch.
+
 ### Team direct-material invalidation (0.3 development)
 
 Direct-material PUT and withdrawal retain the existing Account-change `kind:

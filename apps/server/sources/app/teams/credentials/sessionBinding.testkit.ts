@@ -77,7 +77,7 @@ export async function createPlannedSessionTeamCredentialFixture(sessionUsePolicy
 /** Real accepted-selection/managed-declaration fixture shared with install admission. */
 export async function createNativeSessionTeamCredentialFixture() {
     const fixture = await createCreatorFixture();
-    const { custodian, creator, controller, row, homeId } = fixture;
+    const { custodian, creator, controller, homeId } = fixture;
     const launch = defineProtocolObject({}, { policy: 'closed' });
     const resource = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
     const roles = defineMachineProvisionerSchemas({ launch, resource });
@@ -114,7 +114,8 @@ export async function createNativeSessionTeamCredentialFixture() {
             homeDir: '/home/native', happyHomeDir: '/home/native/.happier' }),
         dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
         installationId: crypto.randomUUID(), active: true } });
-    await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: guest.id,
+    const row = await db.managedMachine.update({ where: { id: fixture.row.id }, data: { enrolledMachineId: guest.id,
+        presetId: null, presetRevision: null, launch: fixture.launch,
         allocation: 'bound', resource: { contributionRef: fixture.launch.provider, schemaVersion: 1, value: { id: 'native-guest' } } } });
     const team = await db.team.create({ data: { name: `Native selection ${crypto.randomUUID()}` } });
     await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: 'owner' } });
@@ -161,6 +162,6 @@ export async function createNativeSessionTeamCredentialFixture() {
                         destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' } } },
                 endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible' }],
         }] });
-    return { ...fixture, guest, team, membership, credential, session, intent, authorizationTicket, nativeSource, application,
+    return { ...fixture, row, guest, team, membership, credential, session, intent, authorizationTicket, nativeSource, application,
         get sourceResponse() { return readSourceResponse(); } };
 }
