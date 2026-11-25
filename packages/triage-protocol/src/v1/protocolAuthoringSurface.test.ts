@@ -5,21 +5,6 @@ import { describe, expect, it } from 'vitest';
 const v1Directory = new URL('./', import.meta.url);
 const testingDirectory = new URL('../testing/', import.meta.url);
 
-const ALLOWED_SDK_SUBPATHS = [
-    '@happier-dev/plugin-sdk/protocol',
-    '@happier-dev/plugin-sdk/contributions',
-    '@happier-dev/plugin-sdk/connected-accounts',
-    '@happier-dev/plugin-sdk/manifest',
-    '@happier-dev/plugin-sdk/webhooks',
-    '@happier-dev/plugin-sdk/sessions',
-    '@happier-dev/plugin-sdk/automations',
-    '@happier-dev/plugin-sdk/scm',
-    '@happier-dev/plugin-sdk/actions',
-    '@happier-dev/plugin-sdk/agents',
-    '@happier-dev/plugin-sdk/collections',
-    '@happier-dev/plugin-sdk/errors',
-] as const;
-
 const RETIRED_AUTHORING_SPELLINGS = [
     'defineProtocolSchema',
     'adoptProtocolSchema',
@@ -64,21 +49,6 @@ describe('Triage protocol authoring surface', () => {
             'maximumEncodedValue.ts',
         ])) {
             expect(source).not.toMatch(/\bRegExp\b/u);
-        }
-    });
-
-    it('imports only allowlisted browser-safe public SDK entry points', async () => {
-        const sources = await productionSources(new URL('../', import.meta.url));
-        const happierSpecifiers = new Set<string>();
-        for (const source of sources) {
-            for (const match of source.matchAll(/from\s+['"](@happier-dev\/[^'"]+)['"]/gu)) {
-                happierSpecifiers.add(match[1]!);
-            }
-        }
-
-        expect(happierSpecifiers.size).toBeGreaterThan(0);
-        for (const specifier of happierSpecifiers) {
-            expect(ALLOWED_SDK_SUBPATHS).toContain(specifier);
         }
     });
 

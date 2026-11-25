@@ -698,7 +698,7 @@ describe('the session-link writer Action', () => {
         control.sourceInstances.seed(toCorpusStoredValue({ ...row,
             lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired, retiredReason: 'userRemoved',
         }));
-        expect(await handler(input, context)).toEqual({ kind: 'unavailable' });
+        await expect(handler(input, context)).rejects.toMatchObject({ code: 'triage_source_retired' });
         expect(configurationReads).toBe(2);
         expect(sourceReads).toBe(1);
     });

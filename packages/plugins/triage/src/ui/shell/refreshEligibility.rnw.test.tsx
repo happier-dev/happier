@@ -289,7 +289,7 @@ describe('the Refresh control while a source has asked us to wait', () => {
         expect(await refreshDisabled(shell)).toBe(true);
         await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
         const lines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent ?? '');
-        expect(lines.filter(line => line.includes('Example account asked us to slow down until'))).toHaveLength(1);
+        expect(lines.filter(line => line.includes('Example account') && line.includes('next read'))).toHaveLength(1);
     });
 
     it('does not wake while the refusal is still running', async () => {

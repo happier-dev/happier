@@ -43,7 +43,8 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
-import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { TRIAGE_LIST_DEFAULT_LENS_V1 } from '../projection/listWindow.js';
+import { projectTriageListWindow, refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 
@@ -458,7 +459,8 @@ describe('the mounted Pin/Unpin affordance', () => {
         await act(async () => {
             await refreshTriageListWindow('manual', shell.context.hostApi, harness.ephemeralSharedScope);
         });
-        await expect(shell.getByText('These details are not loaded')).resolves.toBeDefined();
+        const current = projectTriageListWindow(TRIAGE_LIST_DEFAULT_LENS_V1, shell.context.hostApi, harness.ephemeralSharedScope);
+        expect(current?.rows.map(row => row.entryRef)).toEqual([]);
 
         await act(async () => {
             await shell.press(await shell.getByRole('button', {

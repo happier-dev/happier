@@ -800,7 +800,7 @@ describe('the mounted Composer entry picker', () => {
 
         const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent ?? '');
         // The fixture also has an unavailable Tasks lane. The forge's own pacing should still be visible.
-        expect(statusLines.some(line => line.includes('example/repository asked us to slow down until')),
+        expect(statusLines.some(line => line.includes('example/repository') && line.includes('next read')),
             JSON.stringify(statusLines)).toBe(true);
         expect(await picker.queryByRole('alert')).toBeUndefined();
         expect(await picker.queryByText('No source could be read')).toBeUndefined();

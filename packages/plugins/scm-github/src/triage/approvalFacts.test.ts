@@ -50,7 +50,7 @@ describe('Triage write approval facts', () => {
         expect(repositoryRow).toMatchObject({ value: 'octo/example' });
     });
 
-    it('shows the repository, Account and supplied issue fields in normal approval Details', () => {
+    it('shows the repository, Account and supported issue fields in normal approval Details', () => {
         const action = PluginActionContributionV2Schema.parse(
             PLUGIN_MANIFEST.contributes.actions?.find(({ id }) => id === GITHUB_TRIAGE_ACTION_IDS_V1.create),
         );
@@ -87,8 +87,6 @@ describe('Triage write approval facts', () => {
             'Connected Account': 'Octo Release Account',
             Title: 'Fix launch',
             Description: 'Steps to reproduce',
-            Assignees: '["octocat"]',
-            Labels: '["bug"]',
         });
         expect(JSON.stringify(normalRows)).not.toContain(token);
     });

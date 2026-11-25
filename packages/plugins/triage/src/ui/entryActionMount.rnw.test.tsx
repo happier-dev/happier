@@ -837,8 +837,8 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(draftsOpened).toBe(0);
         expect(harness.startRequests).toEqual([]);
         expect(harness.comparisonOpens).toEqual([]);
-        expect(newSessionSeeds).toHaveLength(1);
         expect(reads).toBe(1);
+        expect(newSessionSeeds, document.body.textContent ?? '').toHaveLength(1);
     }, 60_000);
 
     it('keeps a comparison failure visible after source re-admission', async () => {

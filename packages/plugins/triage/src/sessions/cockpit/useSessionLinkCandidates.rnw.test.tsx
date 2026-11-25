@@ -30,7 +30,9 @@ async function readRelationsResource(read: () => Promise<TriageReadSourceSession
     // Replace the host Action transport only; resource parsing and retained projection stay real.
     const text = await TRIAGE_SESSION_LINKS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
         context: { kind: 'session', sessionId: SESSION }, signal: new AbortController().signal,
-        readAction: async () => ({ ok: true, result: await read() }),
+        readAction: async (ref) => ref.pluginId === 'happier.channels'
+            ? { ok: false, errorCode: 'plugin_action_not_found', error: 'Channels is not installed in this fixture.' }
+            : { ok: true, result: await read() },
     }));
     const bytes = typeof text === 'string' ? new TextEncoder().encode(text) : text;
     return { contentType: 'application/json', digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes };

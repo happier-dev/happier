@@ -382,6 +382,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   const host = usePluginHostApi();
   const text = usePluginTranslation();
   const controller = useTriageEntrySessionStart({ reviewKey: props.reviewKey });
+  const startSession = React.useRef(controller.start);
+  React.useLayoutEffect(() => { startSession.current = controller.start; }, [controller.start]);
   // A Happier task can be shared through the host's own ShareSheet; an older host without it offers nothing.
   const shareSheet = useHostTaskShareSheet();
   const viewerScope = useSurfaceContext().accountScope;
@@ -536,7 +538,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
           appliesTo: ['pullRequest'], profileId: null, workspaceMode: 'reference_only',
           target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
         };
-        controller.start({
+        // The entry stays mounted across source re-admission, which can replace its launch controller.
+        startSession.current({
           action, entryRef: target.entryRef, display: props.display,
           sourceInstance: { source: target.entryRef.source, sourceInstanceId: target.sourceInstanceId },
           presentation: props.presentation,
@@ -552,7 +555,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
         if (mounted.current) setReadingComparison(false);
       }
     })();
-  }, [controller, props, readComparison]);
+  }, [props, readComparison]);
   const retireReviewChooser = React.useCallback(() => {
     controller.reset();
   }, [controller]);

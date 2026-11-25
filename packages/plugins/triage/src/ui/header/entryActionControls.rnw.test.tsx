@@ -27,6 +27,8 @@ import type { TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui'
 import { TriageSourceWriteCluster } from './sourceWriteCluster.js';
 import { operationOffers } from '../../sessions/testkit/sessionPullRequestOperations.test-support.js';
 
+const PR_AGENT_ACTIONS = TRIAGE_DEFAULT_ACTIONS_V1.filter(action => action.target.kind !== 'reviewStart');
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mounted: PluginUiTestkit[] = [];
@@ -266,8 +268,8 @@ describe('the mounted configured entry action controls', () => {
   });
 
   it('names the settled agent on a row-opened pull request from first paint, while its workspace still reads (F10)', async () => {
-    // Opening a row: the next pull request's review preparation is still pending at first paint. The primary already
-    // names the agent the last entry settled on, so "Review with Claude Code" never draws as "Review" and grows,
+    // Opening a row: the next pull request's placement data is still pending at first paint. The primary already
+    // names the agent the last entry settled on, so "Fix with Claude Code" never draws as "Fix" and grows,
     // and Ask and ⋯ beside it never move when the preparation and the default agent land.
     let entryId = 'pr-a';
     let preparation: 'ready' | 'pending' = 'ready';
@@ -277,7 +279,7 @@ describe('the mounted configured entry action controls', () => {
       <TriageEntryActionControls
         target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId, kindId: 'pull-request' }),
           sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
-        actions={TRIAGE_DEFAULT_ACTIONS_V1}
+        actions={PR_AGENT_ACTIONS}
         workflowSubject="pullRequest"
         viewerIsAuthor={false}
         reviewPreparation={preparation}
@@ -303,7 +305,7 @@ describe('the mounted configured entry action controls', () => {
     });
     mounted.push(fixture);
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
-    await expect(fixture.getByRole('button', { name: 'Review with Claude Code' })).resolves.toBeDefined();
+    await expect(fixture.getByRole('button', { name: 'Fix with Claude Code' })).resolves.toBeDefined();
     const row = () => Array.from(document.querySelectorAll('button, [role="button"]'))
       .map((node) => node.getAttribute('aria-label') ?? node.textContent ?? '').filter((name) => name !== '');
     const settledRow = row();
@@ -327,7 +329,7 @@ describe('the mounted configured entry action controls', () => {
 
   it('names the Account\'s preferred Agent from first paint, unchanged when the catalog read lands (F10)', async () => {
     // A cold document: the host's surface context already names the preferred Agent, so the primary draws
-    // "Review with Codex" before `agents.backends.list` answers, and the same words after.
+    // "Fix with Codex" before `agents.backends.list` answers, and the same words after.
     const held: Array<() => void> = [];
     const surface = defineUiSurface(() => (
       <TriageEntryActionControls
@@ -335,7 +337,7 @@ describe('the mounted configured entry action controls', () => {
           sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
         // A repository no earlier entry in this document settled, so no last-known default answers for it.
         repository={{ kind: 'github', deployment: 'github.com', repository: 'acme/preferred-agent' }}
-        actions={TRIAGE_DEFAULT_ACTIONS_V1}
+        actions={PR_AGENT_ACTIONS}
         workflowSubject="pullRequest"
         viewerIsAuthor={false}
         reviewPreparation="ready"
@@ -364,10 +366,10 @@ describe('the mounted configured entry action controls', () => {
       .map((node) => node.getAttribute('aria-label') ?? node.textContent ?? '').filter((name) => name !== '');
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
     const firstPaint = row();
-    expect(firstPaint).toContain('Review with Codex');
+    expect(firstPaint).toContain('Fix with Codex');
     const face = Array.from(document.querySelectorAll('button, [role="button"]'))
-      .find(node => node.getAttribute('aria-label') === 'Review with Codex');
-    expect(face?.textContent).toContain('Review with Codex');
+      .find(node => node.getAttribute('aria-label') === 'Fix with Codex');
+    expect(face?.textContent).toContain('Fix with Codex');
     expect(face?.querySelector('[style*="opacity: 0"]')).toBeNull();
     await act(async () => {
       for (const release of held.splice(0)) release();
@@ -384,7 +386,7 @@ describe('the mounted configured entry action controls', () => {
       <TriageEntryActionControls
         target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 'pr-order', kindId: 'pull-request' }),
           sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
-        actions={TRIAGE_DEFAULT_ACTIONS_V1}
+        actions={PR_AGENT_ACTIONS}
         workflowSubject="pullRequest"
         viewerIsAuthor={false}
         reviewPreparation="ready"
@@ -409,10 +411,10 @@ describe('the mounted configured entry action controls', () => {
     });
     mounted.push(fixture);
     await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
-    await expect(fixture.getByRole('button', { name: 'Review with Claude Code' })).resolves.toBeDefined();
+    await expect(fixture.getByRole('button', { name: 'Fix with Claude Code' })).resolves.toBeDefined();
     const names = Array.from(document.querySelectorAll('button, [role="button"]'))
       .map((node) => node.getAttribute('aria-label') ?? node.textContent ?? '');
-    const primary = names.indexOf('Review with Claude Code');
+    const primary = names.indexOf('Fix with Claude Code');
     expect(names.indexOf('Ask')).toBeGreaterThanOrEqual(0);
     expect(names.indexOf('Ask')).toBeLessThan(primary);
     expect(names.indexOf('More actions')).toBeGreaterThan(primary);

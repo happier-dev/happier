@@ -180,6 +180,8 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
   const offlineNothingCached = <ErrorState testID="triage-latest-widget.offline" layout="line"
     titleKey="plugins.triage.widget.error" title="The latest entries could not be read" />;
 
+  if (hostOutage.settled && shellState.kind === 'unavailable' && rows?.length === 0) return <>{header}{offlineNothingCached}</>;
+
   if (rows === undefined) {
     if (snapshot.error !== undefined) {
       return (

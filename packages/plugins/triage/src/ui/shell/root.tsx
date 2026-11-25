@@ -2222,11 +2222,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   };
   // While the host's band names the outage, retained rows keep their age in its usual place (QB-25(a)): the band says
   // why the list is read-only, the age says how old it is, and nothing above the rows comes or goes.
-  const freshness = state.kind !== 'window' ? null : state.sourceMachineUnavailable
+  const freshness = state.kind !== 'window' ? null
+    : hostSpeaksForOutage ? (rowCount === 0 ? null : readAge) : state.sourceMachineUnavailable
     ? rowCount === 0 ? null
       : { tone: 'warning' as const, pulsing: false, indicator: true,
         label: text('plugins.triage.surface.lastKnown', 'Showing the last known list') }
-    : hostSpeaksForOutage ? (rowCount === 0 ? null : readAge) : state.refreshing
+    : state.refreshing
     ? { tone: 'neutral' as const, pulsing: true, indicator: true, label: text('plugins.triage.surface.refreshing', 'Refreshing') }
     : state.showReadWarning
       // "The last known list" is a claim about rows on screen. With none, the body's failure state is the
@@ -2642,9 +2643,30 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const coldMachineOutage = hostSpeaksForOutage && state.kind === 'window' && window.snapshot.completedAtMs === undefined
     && emptyAnswer?.kind === 'sourceFailure';
   const machineUnreachable = coldMachineOutage ? readTriageMachineUnreachableNoticeV1(text) : null;
-  const listFailureStatus = listWindow?.sourceMachineUnavailable === true
+  const coldSourceReadFailure = hostSpeaksForOutage && rowCount === 0 && state.kind === 'sourcesUnreachable';
+  let listReadFailure: React.ReactNode = null;
+  if (state.kind === 'sourcesUnreachable' || state.kind === 'readFailed') {
+    const { title, description } = readTriageListReadFailureNotice(state, text);
+    listReadFailure = (
+      <Stack gap="xsmall" align="flex-start">
+        <Status tone="warning" label={title} value={description}
+          action={coldSourceReadFailure ? undefined : state.retryable ? (
+            <TriageFailureLineAction label={retryLabel}
+              busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />
+          ) : <TriageFailureLineAction label={text('plugins.triage.surface.sources.manage', 'Manage sources')}
+            onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />}
+        />
+        <PullRequestFailureDetails
+          codes={[window.snapshot.error?.code, ...(window.snapshot.error?.diagnostics ?? [])]}
+          requestId={window.snapshot.error?.requestId}
+        />
+      </Stack>
+    );
+  }
+  const listFailureStatus = hostSpeaksForOutage && rowCount > 0 ? null
+    : listWindow?.sourceMachineUnavailable === true
     ? <Status tone="warning" label={readTriageMachineUnreachableNoticeV1(text).title} value={readAge?.label} />
-    : listWindow?.failure == null || coldMachineOutage || (hostSpeaksForOutage && rowCount > 0) ? null : (
+    : listWindow?.failure == null || coldMachineOutage ? null : (
     <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
       retry={refreshState.kind === 'available' ? <TriageFailureLineAction label={retryLabel} onPress={refreshPage} /> : null} />
   );
@@ -2811,30 +2833,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             />
           )}
 
-          {/*
-            The list read failed, so there is no window or freshness claim.
-            Only a classified Machine failure claims source unreachability.
-            The reader's own durable state is still live, which is
-            why this is a notice above their pins rather than a screen instead of
-            them.
-          */}
-          {state.kind !== 'sourcesUnreachable' && state.kind !== 'readFailed' ? null : (
-              // The line and its one press stay on one baseline; Details opens beneath the line, on its left edge.
-              <Stack gap="xsmall" align="flex-start">
-                <Status tone="warning" label={readTriageListReadFailureNotice(state, text).title}
-                  value={readTriageListReadFailureNotice(state, text).description}
-                  action={state.retryable ? (
-                    <TriageFailureLineAction label={retryLabel}
-                      busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />
-                    ) : <TriageFailureLineAction label={text('plugins.triage.surface.sources.manage', 'Manage sources')}
-                      onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />}
-                />
-                <PullRequestFailureDetails
-                  codes={[window.snapshot.error?.code, ...(window.snapshot.error?.diagnostics ?? [])]}
-                  requestId={window.snapshot.error?.requestId}
-                />
-              </Stack>
-          )}
+          {coldSourceReadFailure ? null : listReadFailure}
 
           {/*
             The configured actions, edited where they are pressed.
@@ -3057,7 +3056,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               {...emptyNextControls}
             />
           ) })}
-          empty={state.kind === 'unavailable' ? (
+          empty={coldSourceReadFailure ? listReadFailure : state.kind === 'unavailable' ? (
             <ErrorState
               titleKey="plugins.triage.surface.listFailed"
               title="The list could not be read"

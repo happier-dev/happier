@@ -100,10 +100,10 @@ describe('the configured-action Actions', () => {
         const explicitReview = catalog.actions.find(action => action.actionId === 'inspect-pr');
         const defaultReview = catalog.actions.find(action => action.actionId === 'review');
         expect(explicitReview).toMatchObject({ label: 'Inspect this change', ...configured });
-        expect(defaultReview).toMatchObject({ label: 'Review', target: { kind: 'agent', delivery: 'compose' } });
+        expect(defaultReview).toMatchObject({ label: 'Review', workspaceMode: 'pull_request', target: { kind: 'reviewStart' } });
         if (!explicitReview || !defaultReview) throw new Error('Expected both saved and default actions');
         expect(readTriageActionLaunchModeV1(explicitReview)).toBe('start');
-        expect(readTriageActionLaunchModeV1(defaultReview)).toBe('review');
+        expect(readTriageActionLaunchModeV1(defaultReview)).toBe('start');
     });
 
     it('offers the Workflows owner record only for Workflow Runs through the shared catalog', async () => {
@@ -275,10 +275,9 @@ describe('the configured-action Actions', () => {
         // downstream infers it from a label.
         expect(result.actions[2]?.target)
             .toEqual({
-                kind: 'agent',
+                kind: 'reviewStart',
                 promptInvocationId: null,
                 seededFallbackInstruction: 'Review this change.',
-                delivery: 'compose',
             });
     });
 
