@@ -53,10 +53,15 @@ it.each(['csv', 'json'] as const)('exports selected %s bytes through canonical h
     } finally { await f.host.dispose(); }
 });
 
-it('does not replay or reinterpret an uncertain publication result', async () => {
+it('returns a safe Action failure when publication throws unexpectedly, without replay', async () => {
     const f = await fixture(true);
     try {
-        await expect(f.host.invokeAction(downloadId, { ...input, destination })).rejects.toThrow('Publication response lost');
+        await expect(f.host.invokeAction(downloadId, { ...input, destination })).rejects.toMatchObject({
+            code: 'plugin_action_execution_failed',
+            message: expect.not.stringContaining('Publication response lost'),
+            retryable: false,
+            data: { failureCause: { phase: 'action.handler', errorClass: 'Error', errorCode: null } },
+        });
         expect(f.prepareDownload).toHaveBeenCalledTimes(1);
     } finally { await f.host.dispose(); }
 });
