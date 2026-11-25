@@ -217,6 +217,29 @@ function reply(label: string) {
 }
 
 describe('qualified input field options scope', () => {
+    it('names the selected Home in a Machine-targeted event setup form', async () => {
+        const serverId = 'srv_event_setup_options';
+        const profileId = await harness.addHome({ name: 'Event setup Home', serverUrl: 'https://event-setup-options.example',
+            serverIdentityId: serverId, accountId: 'viewer', currentAccount: true });
+        const field = { path: 'serverId', inputType: { hostType: 'homeId' as const } };
+        let choices: InputFieldOptionsState['options'] | undefined;
+        function HomeOptions() {
+            const options = useActionFieldOptionsForMachine({ machineId: 'controller-a', serverId, enabled: true,
+                requests: [{ actionId: 'happier.machine-services/actions/health-check-failed/setup', field,
+                    draftInput: { serverId: profileId } }] });
+            choices = options(field);
+            return <View testID="event-setup.home" accessibilityLabel={options.state?.(field).status}>
+                {options(field).map(option => <Text key={String(option.value)}>{option.label}</Text>)}
+            </View>;
+        }
+        const screen = await renderScreen(<HomeOptions />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('event-setup.home')?.props.accessibilityLabel).not.toBe('loading'));
+            expect(screen.getTextContent()).toContain('Event setup Home');
+            expect(choices).toEqual([{ value: profileId, label: 'Event setup Home' }]);
+        } finally { await screen.unmount(); }
+    });
+
     it('offers detached review engines from a Machine form through the real options owner', async () => {
         const origin = 'https://detached-review-options.example';
         const serverIdentityId = 'srv_detached_review_options';

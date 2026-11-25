@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { useShallow } from 'zustand/react/shallow';
 import type { InputFieldHint  as ActionInputFieldHint} from '@happier-dev/protocol/inputs/inputFields';
-import { inputTypeOptionsSourceId, projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
+import { accountInputTypeOptionsSourceId, inputTypeOptionsSourceId, projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
 import { readInputFieldOptionsConstraint, readInputFieldOptionsSourceId } from '@happier-dev/protocol/inputs/runtime';
 
 import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -148,12 +148,15 @@ export function useInputFieldOptions(params: Readonly<{
             };
             if (!needsOptionsRead(request.field, params.declaredInputTypes)) continue;
             const producer = producerRoutes[index];
-            const requestMachineId = params.machineId ?? producer?.machineId;
-            const optionsSourceId = request.field.optionsSourceId ?? (!requestMachineId && request.field.inputType
+            const accountSource = accountInputTypeOptionsSourceId(request.field.inputType);
+            const requestMachineId = accountSource ? undefined : params.machineId ?? producer?.machineId;
+            const optionsSourceId = accountSource ?? request.field.optionsSourceId ?? (!requestMachineId && request.field.inputType
                 ? inputTypeOptionsSourceId(request.field.inputType) : undefined);
+            // A host inventory can be read directly on its Home. Contributed inventories still
+            // travel with their Action or consumer so their serving Machine admits the field.
             const input = { ...(optionsSourceId ? { optionsSourceId } : {}),
-                ...(request.actionId ? { actionId: request.actionId, fieldPath: request.field.path } : {}),
-                ...(request.consumer ? { consumer: request.consumer, fieldPath: request.field.path } : {}),
+                ...(!accountSource && request.actionId ? { actionId: request.actionId, fieldPath: request.field.path } : {}),
+                ...(!accountSource && request.consumer ? { consumer: request.consumer, fieldPath: request.field.path } : {}),
                 ...(request.values ? { values: request.values } : {}),
                 ...(request.query === undefined ? {} : { query: request.query }),
                 ...(request.cursor === undefined ? {} : { cursor: request.cursor }),

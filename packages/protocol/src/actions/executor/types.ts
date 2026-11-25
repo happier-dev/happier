@@ -2465,6 +2465,8 @@ export type ActionExecutorDeps = Readonly<{
    */
   savedHealthChecksList?: (args: Readonly<{ serverId: string }>, context?: ActionExecutorContext) => Promise<
     import('../../inputs/savedHealthCheckOptions.js').SavedHealthChecksListResultV1 | ActionExecuteFailure>;
+  /** The answering client's name for the exact Home addressed by an input form. */
+  inputHomeLabel?: (serverId: string) => string;
   projectsContextUpdate?: (args: ProjectContextUpdateInputV1, context?: ActionExecutorContext) => Promise<ProjectContextUpdateOutputV1>;
   projectsVisibilitySet?: (args: import('../../projects/projectVisibilityV1.js').ProjectVisibilitySetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectVisibilityV1.js').ProjectVisibilitySetOutputV1>;
   projectsOrganizationUpdate?: (args: import('../../projects/projectOrganizationV1.js').ProjectOrganizationUpdateInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectOrganizationV1.js').ProjectOrganizationUpdateOutputV1>;

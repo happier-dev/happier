@@ -544,6 +544,15 @@ export async function resolveInputOptions(params: Readonly<{
     return await resolveDeploymentTelemetryRouteOptionsV1({ deps, ctx, input, readFailure: params.readFailure });
   }
 
+  if (optionsSourceId === inputTypeOptionsSourceId({ hostType: 'homeId' })) {
+    const serverId = readNonEmptyString(ctx.serverId);
+    if (!serverId) return { ok: false, errorCode: 'server_not_selected', error: 'server_not_selected' };
+    if (!deps.inputHomeLabel) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:home_input' };
+    const draftedServerId = readNonEmptyString(params.query.draftInput.serverId);
+    const value = draftedServerId && sameHome(draftedServerId, serverId) ? draftedServerId : serverId;
+    return { ok: true, result: [{ value, label: deps.inputHomeLabel(serverId) }] };
+  }
+
   const savedHealthSource = optionsSourceId === inputTypeOptionsSourceId({ hostType: 'savedHealthSourceId' });
   if (optionsSourceId === SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1 || savedHealthSource) {
     return await resolveSavedHealthCheckOptionsV1({ deps, ctx, readFailure: params.readFailure,

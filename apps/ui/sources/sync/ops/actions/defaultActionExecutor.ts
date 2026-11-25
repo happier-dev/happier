@@ -479,6 +479,7 @@ import {
 import { probeAgentModelsForActions, type AgentInventoryProbeTarget } from './agentInventoryProbe';
 import { listMachinesForVoiceTool } from '@/voice/tools/actionImpl/machinesList';
 import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
+import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEnginesList';
 import { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } from '@/voice/tools/actionImpl/agentCatalogList';
 import { createReviewCommentsHttpActionExecutor } from '@/sync/domains/reviews/comments/api';
@@ -3705,6 +3706,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         usageProjects: projectUsageOptionFacts([...projected.projectGroups, ...projected.hiddenProjectGroups], rows.organizations),
       }) };
     },
+    inputHomeLabel: serverId => resolveHomeDisplayLabel(getServerProfileById(serverId), serverId),
     // The Check widget's choices: the Account's saved Checks named as its Checks list names them.
     savedHealthChecksList: async (args, context) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };

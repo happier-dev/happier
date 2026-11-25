@@ -15,9 +15,16 @@ export type InputTypeReferenceV1 = z.infer<typeof InputTypeReferenceV1Schema>;
 
 /** A type selects its declared Resource; it is never an executable callback id. */
 export function inputTypeOptionsSourceId(type: InputTypeReferenceV1): string {
-  if ('hostType' in type && type.hostType === 'homeId') return 'sessions.spawn.servers.available';
   if ('hostType' in type) return type.hostType === 'session' ? 'sessions' : `host-input:${type.hostType}${type.hostType === 'usageQuery' && type.field ? `:${type.field}` : ''}`;
   return `plugin-input:${buildQualifiedPluginContributionKey(type)}`;
+}
+
+/** These host inventories belong to the form's Home, even when the Action runs on a Machine. */
+export function accountInputTypeOptionsSourceId(type: InputTypeReferenceV1 | undefined): string | undefined {
+  if (type && 'hostType' in type && (type.hostType === 'homeId' || type.hostType === 'savedHealthSourceId')) {
+    return inputTypeOptionsSourceId(type);
+  }
+  return undefined;
 }
 
 export function parseInputTypeOptionsSourceId(value: string): InputTypeReferenceV1 | null {
@@ -28,6 +35,8 @@ export function parseInputTypeOptionsSourceId(value: string): InputTypeReference
   if (value === 'host-input:machine') return { hostType: 'machine' };
   if (value === 'host-input:agentParticipant') return { hostType: 'agentParticipant' };
   if (value === 'host-input:savedSecretReference') return { hostType: 'savedSecretReference' };
+  if (value === 'host-input:homeId') return { hostType: 'homeId' };
+  if (value === 'host-input:savedHealthSourceId') return { hostType: 'savedHealthSourceId' };
   return value.startsWith('plugin-input:')
     ? parseQualifiedPluginContributionKey(value.slice('plugin-input:'.length)) : null;
 }
