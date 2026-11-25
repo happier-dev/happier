@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -47,7 +48,7 @@ export function describeProjectOpenChosenRow(subject: ProjectOpenSubject | null,
   }
   // A checkout reads as a folder row: its name, then the folder it sits in.
   const path = subject.workspace.rootPath.replace(/(?<=.)[\\/]+$/u, '');
-  const name = path.split(/[\\/]/u).filter(Boolean).pop() ?? path;
+  const name = resolveWorkspacePathBasenameV1(path) ?? path;
   const parent = path.slice(0, Math.max(0, path.length - name.length)).replace(/[\\/]+$/u, '') || null;
   return { id: `workspace:${path}`, title: name, subtitle: parent, mono: true };
 }

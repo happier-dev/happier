@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { SessionDraftAddressV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
-import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspacePathBasenameV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { isManagedWorkspaceRefV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -264,7 +264,7 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   function opened(result: Extract<OpenProjectResultV1, { kind: 'opened' }>) {
       const workspace = result.workspace;
       const machineName = sentenceMachineName('controller' in workspace ? workspace.controller.machineId : workspace.machineId);
-      const projectName = result.directory.split(/[\\/]/u).filter(Boolean).pop() ?? result.directory;
+      const projectName = resolveWorkspacePathBasenameV1(result.directory) ?? result.directory;
       // One notice says what is true where the person lands: no agent runs, and setup's own state.
       publishPresentationNotice({
         key: `project-opened:${result.workspace.workspaceId}`,

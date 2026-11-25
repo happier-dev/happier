@@ -7,6 +7,7 @@ import { executeProjectWorkerActionV1, ProjectWorkerActionError } from '@/sync/o
 import { t } from '@/text';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import type { ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
+import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { ProjectWorkerDependencyV1Schema, type ProjectWorkerDependencyV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getWorkspaceSyncCommittedCopyPreview, listWorkspaceSyncStatuses, type WorkspaceSyncCommittedCopyReviewResult } from '@/sync/ops/workspaceSync';
@@ -140,7 +141,7 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
     const observed = facts?.key === key ? facts.values.get(row.relationship) : null;
     return { ...row, lastCleanSyncAtMs: observed?.lastCleanSyncAtMs ?? null, sizeBytes: observed?.sizeBytes ?? null,
       review: observed?.review ?? null,
-      name: row.source.label ?? row.source.rootPath.split(/[\\/]+/).filter(Boolean).at(-1) ?? row.source.rootPath,
+      name: row.source.label ?? resolveWorkspacePathBasenameV1(row.source.rootPath) ?? row.source.rootPath,
       sourceRefId: row.source.id, sourceMachineId: row.source.machineId };
   }) ?? null, [facts, key, rawCopies, retired]);
   const keyRef = React.useRef(key);

@@ -2,7 +2,7 @@ import { OpenProjectInputV1Schema, suggestProjectOpenCloneDestinationV1, type Op
 import { OpenProjectDraftSelectionV1Schema, type OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
 import { normalizeProjectSourceSubdirV1, type ProjectSourceV1, type ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { isManagedWorkspaceRefV2, type WorkspaceAddressV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { findWorkspaceProjectCandidatesV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { findWorkspaceProjectCandidatesV1, resolveWorkspacePathBasenameV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { ScmRepositoryDiscoverMatch, ScmRepositoryDiscoverRequest } from '@happier-dev/protocol/scm/repositoryDiscovery';
 import { buildSessionHandoffWorkspaceAction } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
@@ -74,7 +74,7 @@ export function suggestProjectOpenDestination(
     ? state.subject.source.repository?.repository.nameWithOwner.split('/').pop()
     : state.subject.kind === 'repository' ? state.subject.selector.repository.nameWithOwner.split('/').pop()
     : state.subject.kind === 'workspace'
-      ? state.subject.workspace.rootPath.split(/[\\/]/u).filter(Boolean).pop() : null;
+      ? resolveWorkspacePathBasenameV1(state.subject.workspace.rootPath) : null;
   if (!name) return '';
   const clone = suggestProjectOpenCloneDestinationV1({
     machineId: state.machineId, homeDir: state.machineHomeDir, name, checkouts: state.checkouts,
