@@ -895,8 +895,20 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
       if (index % perRow === 0) rows.push([]);
       rows[rows.length - 1]!.push(index);
     }
+    // A group the caller keeps while its first window loads (`retainEmpty`) keeps its heading over the skeleton, as the
+    // table and list do, with no count until its cards arrive.
+    const loadingShelf = model.sections.find((section) => section.group !== null && section.group.title !== '')?.group ?? null;
     return (
       <GridScroller singleChoice={single !== undefined} pageScroll={props.pageScroll === true} viewport={viewport} request={scrollRequest} accessibilityLabel={props.accessibilityLabel}>
+        {loadingShelf === null ? null : (
+          <View style={card.shelfHeaderStyle}
+            {...(props.testID === undefined ? {} : { testID: `${props.testID}:shelf:${loadingShelf.key}` })}>
+            <View style={shrinkStyle}>
+              <HappierListSection title={loadingShelf.title} titleRole={props.pageScroll === true ? 'section' : 'micro'}
+                {...(loadingShelf.description === undefined ? {} : { description: loadingShelf.description })} />
+            </View>
+          </View>
+        )}
         {rows.map((row, rowIndex) => (
           <View key={rowIndex} style={paged ? [gridRowStyle, pagedSkeletonRowStyle] : gridRowStyle}>
             {row.map((index) => (

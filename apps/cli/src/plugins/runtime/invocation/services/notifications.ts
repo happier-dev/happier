@@ -461,20 +461,27 @@ export function createStablePluginNotificationsOwner(host: StablePluginNotificat
                 kind: ResolvedNotificationChannelContribution['definition']['kind'];
                 destinationSetup?: QualifiedRef;
             }>[] = [];
+            const pluginIds = new Map<string, string>();
             for (const channel of host.channels) {
                 const ref = hostChannelRef(channel);
                 if (!ref || failedActivationPluginIds?.has(ref.pluginId)) continue;
                 const binding = host.readChannel(ref);
                 if (binding && !await isSenderBindingCurrent(binding)) continue;
                 const destinationSetup = PluginContributionIdentityV1Schema.safeParse(channel.definition.metadata?.destinationSetup);
+                pluginIds.set(qualifiedKey(ref), ref.pluginId);
                 items.push(Object.freeze({
                     value: qualifiedKey(ref),
-                    label: `${localizedFallback(channel.definition.title)} (${ref.pluginId})`,
+                    label: localizedFallback(channel.definition.title),
                     kind: channel.definition.kind,
                     ...(destinationSetup.success ? { destinationSetup: destinationSetup.data } : {}),
                 }));
             }
-            return Object.freeze(items.sort((left, right) => left.value.localeCompare(right.value)));
+            // A destination reads by its declared title. Only titles two channels share are told apart by their plugin.
+            const titleCounts = new Map<string, number>();
+            for (const item of items) titleCounts.set(item.label, (titleCounts.get(item.label) ?? 0) + 1);
+            return Object.freeze(items.map((item) => (titleCounts.get(item.label) ?? 0) > 1
+                ? Object.freeze({ ...item, label: `${item.label} (${pluginIds.get(item.value)})` }) : item)
+                .sort((left, right) => left.value.localeCompare(right.value)));
         },
         async sendHostNotification(request) {
             const channel = host.channels.find((entry) => entry.pluginId

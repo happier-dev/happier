@@ -143,7 +143,7 @@ describe('stable plugin notifications service', () => {
         });
 
         await expect(owner.availableHostChannels()).resolves.toEqual([
-            { value: 'acme.notifications/configured', label: 'Configured (acme.notifications)', kind: 'plugin' },
+            { value: 'acme.notifications/configured', label: 'Configured', kind: 'plugin' },
         ]);
         expect(activated).toEqual([]);
         await expect(owner.sendHostNotification({
@@ -163,6 +163,22 @@ describe('stable plugin notifications service', () => {
             channelId: 'unqualified', title: 'Unknown',
         })).resolves.toBe(false);
         expect(requests).toHaveLength(1);
+    });
+
+    // R11 M6: a destination reads by its declared title; the plugin id names it only when two channels share a title.
+    it('labels host channels by title and qualifies only titles two channels share', async () => {
+        const owner = createStablePluginNotificationsOwner({
+            categories: [],
+            channels: [channels[0]!, { ...channels[0]!, pluginId: 'other.notifications' },
+                { ...channels[0]!, definition: { ...channels[0]!.definition, id: 'email', title: 'Email' } }],
+            async activateChannel() {},
+            readChannel: () => null,
+        });
+        await expect(owner.availableHostChannels()).resolves.toEqual([
+            { value: 'acme.notifications/configured', label: 'Configured (acme.notifications)', kind: 'plugin' },
+            { value: 'acme.notifications/email', label: 'Email', kind: 'plugin' },
+            { value: 'other.notifications/configured', label: 'Configured (other.notifications)', kind: 'plugin' },
+        ]);
     });
 
     it('keeps host discovery and sending behind manifest policy and the current sender occurrence', async () => {
@@ -191,7 +207,7 @@ describe('stable plugin notifications service', () => {
             }),
         });
         await expect(owner.availableHostChannels()).resolves.toEqual([
-            { value: 'acme.notifications/configured', label: 'Configured (acme.notifications)', kind: 'plugin' },
+            { value: 'acme.notifications/configured', label: 'Configured', kind: 'plugin' },
         ]);
         await expect(owner.sendHostNotification({
             channelId: 'acme.notifications/hidden', title: 'Hidden',

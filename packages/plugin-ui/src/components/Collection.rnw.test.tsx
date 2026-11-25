@@ -5278,6 +5278,22 @@ describe('board', () => {
     } finally { view.unmount(); }
   });
 
+  // R11 M5: a kept group whose first window is still loading shows its heading with no count, never "0".
+  it.each(['list', 'grid'] as const)('keeps a loading %s group heading without a count until its rows arrive', async (presentation) => {
+    const view = mount({
+      presentation, detail: 'none', items: [], loading: true,
+      grouping: { axis: [{ key: 'library', title: 'Library' }], groupOf: (entry) => entry.group, retainEmpty: true },
+    });
+    try {
+      await act(async () => { view.measure(1280); });
+      const text = view.container.textContent ?? '';
+      expect(text).toContain('Library');
+      expect(text).not.toMatch(/Library\s*0/);
+      await view.update({ loading: false, items: [{ id: 'a', title: 'Review changes', group: 'library', repo: 'app', reason: '', age: '1m' }] });
+      expect(view.container.textContent ?? '').toMatch(/Library\s*1/);
+    } finally { view.unmount(); }
+  });
+
   it('keeps five status columns on stable tracks with empty buckets still reachable', () => {
     const view = mount({
       presentation: 'board',
