@@ -101,7 +101,7 @@ describe('approval principal names', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('uses Unavailable for Group and profile names the approver cannot read', async () => {
+    it('uses an em dash for Group and profile names the approver cannot read', async () => {
         const home = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://private-policy-review.test', accountId: 'viewer' });
         harness.answer(home, 'POST /v1/session-access/principals/resolve', {
             select: input => ({ body: { v: 1, principals: (input as { subjects: { kind: string }[] }).subjects
@@ -117,7 +117,7 @@ describe('approval principal names', () => {
             await vi.waitFor(() => {
                 const text = screen.getTextContent();
                 expect(text).toContain(team.name);
-                expect(text.split(t('common.unavailable'))).toHaveLength(3);
+                expect(text.split('—')).toHaveLength(3);
                 for (const hidden of [groupId, profileId, 'Unshared profile', 'Other Home profile']) expect(text).not.toContain(hidden);
             });
         } finally { await screen.unmount(); }

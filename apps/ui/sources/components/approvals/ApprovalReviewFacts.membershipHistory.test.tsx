@@ -6,7 +6,6 @@ import { TEAM_MEMBERSHIP_HISTORY_ACTION_IDS_V1 } from '@happier-dev/protocol/tea
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { teamMembershipFixture } from '@/dev/testkit/fixtures/teamFixtures';
-import { t } from '@/text';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -49,7 +48,7 @@ it.each(cases)('reads $state in $actionId', async ({ actionId, state, target, id
     try {
         await waitForHomeGovernance(() => {
             const text = screen.getTextContent();
-            expect(text).toContain(name ?? t('common.unavailable'));
+            expect(text).toContain(name ?? '—');
             expect(text).toContain(account.name);
             expect(text).not.toContain(id);
         });

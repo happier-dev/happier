@@ -117,7 +117,7 @@ describe('approval field semantics shared by card and page', () => {
         expect(screen.findByType(ApprovalTechnicalDetails).props.lines).toContainEqual(
           expect.objectContaining({ key: 'principal', value: literal }),
         );
-        expect(text).toContain('common.unavailable');
+        expect(text).toContain('—');
         expect(text).not.toContain(literal);
         expect(text).not.toContain('Kind');
         await screen.unmount();

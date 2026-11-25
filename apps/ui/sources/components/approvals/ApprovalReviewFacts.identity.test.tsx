@@ -6,7 +6,6 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { managedIdentityProviderFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { teamIdentityConnectionFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { t } from '@/text';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -47,7 +46,7 @@ it.each(['readable', 'disabled', 'other Account'] as const)(
         try {
             await waitForHomeGovernance(() => {
                 const text = screen.getTextContent();
-                expect(text).toContain(state === 'other Account' ? t('common.unavailable') : connectionName);
+                expect(text).toContain(state === 'other Account' ? '—' : connectionName);
                 if (state === 'other Account') expect(text).not.toContain(connectionName);
                 expect(text).not.toContain(connectionId);
             });

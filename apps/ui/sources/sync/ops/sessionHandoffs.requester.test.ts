@@ -75,6 +75,6 @@ describe('human requester handoff transport', () => {
             accountId: 'bob', custodianAccountId: 'alice', installationId: 'source-install' } } });
         expect(rawRpc).not.toHaveBeenCalled();
         expect(result).toMatchObject(mode === 'plain' ? { ok: true, result: { handoffId: 'moved' } }
-            : { ok: false, errorCode: 'target_unavailable', failureCause });
+            : { ok: false, errorCode: 'target_unavailable', failureCause, requestId: 'human-handoff', effectAttempted: false });
     });
 });

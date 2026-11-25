@@ -1195,7 +1195,8 @@ export function describeApprovalActionFields(input: Readonly<{
   const presentationInput = parsedReview?.success ? parsedReview.data : projectedInput;
   const presentationSpec = review?.inputSchema || review?.inputHints
     ? { ...spec, inputSchema: review.inputSchema ?? spec.inputSchema, inputHints: review.inputHints ?? spec.inputHints } : spec;
-  const resolved = [...resolveEffectiveActionInputFields(presentationSpec, presentationInput)];
+  // Form visibility only decides what a person fills in; review also retains fixed operands.
+  const resolved = [...resolveEffectiveActionInputFields(presentationSpec, presentationInput, { includeHidden: true })];
   const coveredRoots = new Set(resolved.map(field => field.path.split('.')[0]));
   const schema = unwrapActionInputSchema(presentationSpec.inputSchema).schema;
   const shape = schema instanceof z.ZodMiniObject ? schema.shape as Record<string, z.core.$ZodType> : {};
@@ -1341,7 +1342,7 @@ export function describeApprovalActionFields(input: Readonly<{
       // admitted invocation that retains the raw input; omission here means
       // withheld, not missing approval context.
       const withheldByLiveOnlyCustody = spec.approvalInputCustody === 'live_only';
-      if (field.required && !declaredNull && !withheldByLiveOnlyCustody) {
+      if (field.visible && field.required && !declaredNull && !withheldByLiveOnlyCustody) {
         const reason = 'missing_required_context' as const;
         unrepresentable ??= { path: field.path, reason };
         rows.push({ kind: 'unrepresentable', path: field.path, title: field.title, reason });

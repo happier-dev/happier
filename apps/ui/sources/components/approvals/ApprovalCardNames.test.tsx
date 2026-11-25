@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
+import { preloadTranslations, setPreferredLanguageFromSettings } from '@/text';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -14,9 +14,9 @@ it.each(['page', 'card'] as const)('keeps unreadable resource identities behind 
     const id = '3d703df7-5a51-4be7-91ec-dc877ae861ab';
     const presentation = describeApprovalActionFields({ actionId: 'artifact.delete', actionArgs: getActionSpec('artifact.delete').inputSchema.parse({ artifactId: id, expectedRevision: { headerVersion: 1, bodyVersion: 1 } }) });
     const screen = await renderScreen(<ActionApprovalFieldsCard anatomy={anatomy} presentation={presentation} />);
-    expect(screen.getTextContent()).toContain(t('common.unavailable'));
+    expect(screen.getTextContent()).toContain('Artifact —');
     expect(screen.getTextContent()).not.toContain(id);
-    await screen.pressByTestIdAsync('approvals.technical-details.header');
+    await screen.pressByTestIdAsync(anatomy === 'page' ? 'approvals.technical-details.header' : 'approvals.technical-details');
     expect(screen.getTextContent()).toContain(id);
     await screen.unmount();
 });

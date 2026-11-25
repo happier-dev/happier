@@ -64,8 +64,8 @@ it.each([
     const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
         preview={null} status="open" serverId={serverId} testID="pool-review" />);
     try {
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain(readable ? 'Compile farm' : t('common.unavailable')));
-        expect(screen.getTextContent()).toContain(readable ? 'Build runner' : t('common.unavailable'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(readable ? 'Compile farm' : '—'));
+        expect(screen.getTextContent()).toContain(readable ? 'Build runner' : '—');
         expect(screen.getTextContent()).toContain(t('approvals.clearsField', { field: 'Description' }));
         expect(screen.getTextContent()).not.toContain(poolId);
         expect(screen.getTextContent()).not.toContain(machineId);
@@ -92,7 +92,7 @@ it.each(['named', 'archived', 'unreadable'])('reads a %s preset by its name', as
         serverId={serverId} actionArgs={getActionSpec(actionId).inputSchema.parse({ homeId, id: presetId, expectedRevision: 1 })}
         testID="preset-reference" />);
     try {
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain(state === 'unreadable' ? t('common.unavailable') : name));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(state === 'unreadable' ? '—' : name));
         expect(screen.getTextContent()).not.toContain(presetId);
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         expect(screen.getTextContent()).toContain(presetId);
@@ -143,7 +143,7 @@ it.each([true, false])('names the Team setup checkout from the viewer’s census
     const screen = await renderScreen(<ApprovalReviewFacts actionId={TEAM_SETUP_RUN_ACTION_ID_V1} actionArgs={actionArgs}
         preview={{ summary: buildApprovalPreviewSummary(spec, actionArgs) }} status="open" serverId={serverId} testID="setup-review" />);
     try {
-        expect(screen.getTextContent()).toContain(readable ? 'Setup runner' : t('common.unavailable'));
+        expect(screen.getTextContent()).toContain(readable ? 'Setup runner' : '—');
         if (readable) expect(screen.getTextContent()).toContain('release-notes');
         else expect(screen.getTextContent()).not.toContain('release-notes');
         expect(screen.getTextContent()).not.toContain(machineId);

@@ -2,7 +2,6 @@ import * as React from 'react';
 import { expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { renderScreen } from '@/dev/testkit';
-import { t } from '@/text';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -22,7 +21,7 @@ it.each([
     const screen = await renderScreen(<ApprovalReviewFacts actionId={id} actionArgs={actionArgs}
         preview={null} serverId={null} testID="governance-fallback" />);
     try {
-        expect(screen.getTextContent()).toContain(t('common.unavailable'));
+        expect(screen.getTextContent()).toContain('—');
         expect(screen.getTextContent()).not.toContain(exact);
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         expect(screen.getTextContent()).toContain(exact);

@@ -70,8 +70,8 @@ it.each(cases)('reads pending $actionId private labels with $access', async ({ a
     try {
         await vi.waitFor(() => {
             const nameTitle = actionId === 'teams.groups.create' ? 'Group name ' : 'Name ';
-            expect(screen.getTextContent()).toContain(nameTitle + (access === 'no key' ? t('common.unavailable') : name));
-            expect(screen.getTextContent()).toContain('Description ' + (access === 'no key' ? t('common.unavailable') : description));
+            expect(screen.getTextContent()).toContain(nameTitle + (access === 'no key' ? '—' : name));
+            expect(screen.getTextContent()).toContain('Description ' + (access === 'no key' ? '—' : description));
         });
         expect(screen.getTextContent()).not.toContain(targetId);
         await screen.pressByTestIdAsync('approvals.technical-details.header');

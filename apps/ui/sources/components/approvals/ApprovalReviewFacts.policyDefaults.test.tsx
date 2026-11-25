@@ -8,7 +8,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { storage } from '@/sync/domains/state/storage';
-import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
+import { preloadTranslations, setPreferredLanguageFromSettings } from '@/text';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -49,7 +49,7 @@ it.each([true, false])('shows a Home Session default Machine through the viewerâ
         preview={null} status="open" serverId={serverId} testID="policy-review" />);
     try {
         const text = screen.getTextContent();
-        expect(text).toContain(readable ? 'Policy runner' : t('common.unavailable'));
+        expect(text).toContain(readable ? 'Policy runner' : 'â€”');
         if (!readable) expect(text).not.toContain('Policy runner');
         expect(text).toContain('WorkOS');
         expect(text).toContain('GitHub');

@@ -429,6 +429,52 @@ describe('Project Open rendered choices', () => {
         await act(async () => { content!.props.onSelect('git_worktree'); });
         expect(seeded.read().selection.value?.materialization).toMatchObject({ workspaceAction: { contentPolicy: { selection: 'git_worktree', extraIncludePatterns: ['.env.local'] } } });
     });
+    it('presents an offline admission failure with its phase and request id', async () => {
+        const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const home = createHomeGovernanceHarness();
+        installHomeGovernanceBoundaries(home);
+        onTestFinished(() => home.reset());
+        const serverId = await home.addHome({ name: 'Project Open', serverUrl: 'https://offline-open.test',
+            serverIdentityId: 'srv_offline_open', accountId: 'account', currentAccount: true });
+        installFileFindAccountBoundaryMocks(serverId, 'account');
+        const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://offline-open.test',
+            serverIdentityId: 'srv_offline_open', accountId: 'account', machineId: 'machine', actionId: 'projects.open', tokenEpoch: 0,
+            execute: async () => { throw new Error('Offline admission must not execute'); } });
+        for (const path of ['/v1/machines', '/v1/machines/read-batch', '/v1/machines/machine']) home.answer(serverId, path, {
+            select: async (_input, request) => {
+                const response = await boundary.handle(new URL(request.url), request.init);
+                return { status: response!.status, body: await response!.json() };
+            } });
+        const { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionHttpErrorSchema } =
+            await import('@happier-dev/protocol/actions/externalActionApi');
+        let refusalRequestId: string | undefined;
+        home.answer(serverId, '/v1/actions/projects.open/execution-authorization', { select: input => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(input);
+            refusalRequestId = request.envelope.requestId;
+            return { status: 409, body: ExternalActionHttpErrorSchema.parse({
+                error: 'invalid_request', code: 'target_unavailable', requestId: request.envelope.requestId,
+                diagnostic: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' },
+                failureCause: { phase: 'rpc.admission.machine', errorClass: 'HttpStatusError', errorCode: 'target_unavailable', httpStatus: 409 },
+            }) };
+        } });
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const scope = { serverId, accountId: 'account' };
+        await seedOpenDraft(draftId, scope);
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        writeProjectOpenDraft({ scope, draftId, patch: { selection: { serverId, machineId: 'machine',
+            source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' } } } });
+        const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+        const screen = await renderScreen(<ProjectOpenScreen routeParams={{ draftId, serverId }} />);
+        await screen.pressByTestIdAsync('projects.open.submit');
+        const banner = () => screen.findAllByType(AttentionBanner).find(node => node.props.testID === 'projects.open.failed');
+        await vi.waitFor(() => expect(banner()).toBeDefined());
+        expect(refusalRequestId).toBeTypeOf('string');
+        expect(banner()!.props.details.join(' ')).toContain('target_unavailable');
+        expect(banner()!.props.description).toBe(t('errors.machineNotAnswering'));
+        expect(banner()!.props.details.join(' ')).toContain('rpc.admission.machine');
+        expect(banner()!.props.details.join(' ')).toContain(refusalRequestId);
+    });
     it('says an unclassified Open failure honestly, with what failed behind Details instead of the Action id', async () => {
         const draftId = '00000000-0000-4000-8000-000000000081';
         await seedOpenDraft(draftId);

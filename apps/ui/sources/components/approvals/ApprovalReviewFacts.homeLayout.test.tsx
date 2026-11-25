@@ -93,7 +93,7 @@ it('presents a Home group request in French even when the stored summary is Engl
 
 it.each([
     ['addPhone', 'settings.addYourPhone'],
-    ['67cffe92-bd4e-4b28-8512-706b1cc4ab77', 'common.unavailable'],
+    ['67cffe92-bd4e-4b28-8512-706b1cc4ab77', null],
 ] as const)('reviews setup visibility by the setup step title (%s)', async (stepId, titleKey) => {
     const serverId = await harness.addHome({ name: 'Layout Home', serverUrl: 'https://layout-review.test',
         accountId: 'layout-reviewer' });
@@ -102,7 +102,7 @@ it.each([
     const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
         preview={null} status="open" serverId={serverId} testID="setup-visibility-review" />);
     try {
-        expect(screen.getTextContent()).toContain(t(titleKey));
+        expect(screen.getTextContent()).toContain(titleKey ? t(titleKey) : 'Step —');
         expect(screen.getTextContent()).not.toContain(stepId);
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         expect(screen.getTextContent()).toContain(stepId);
@@ -149,14 +149,14 @@ it.each([
     const screen = await renderScreen(review(connection.home.id));
     try {
         await waitForHomeGovernance(() => {
-            expect(screen.getTextContent()).toContain(visibility === 'unreadable' ? t('common.unavailable') : 'Capacity lab');
+            expect(screen.getTextContent()).toContain(visibility === 'unreadable' ? (kind === 'visibility' ? 'Section —' : 'Instance —') : 'Capacity lab');
             if (kind === 'widget_rename') expect(screen.getTextContent()).toContain('Lab budget');
             expect(screen.getTextContent()).not.toContain(instanceId);
         });
         if (otherHomeId) {
             await screen.update(review(otherHomeId));
             const text = screen.getTextContent();
-            expect(text).toContain(t('common.unavailable'));
+            expect(text).toContain(kind === 'visibility' ? 'Section —' : 'Instance —');
             if (kind === 'widget_rename') expect(text).toContain('Lab budget');
             expect(text).not.toContain('Capacity lab');
             expect(text).not.toContain(instanceId);
@@ -179,7 +179,7 @@ it.each(['profile', 'portable', 'unreadable'] as const)('names the saved Home wh
     try {
         const text = screen.getTextContent();
         expect(text).not.toContain(homeServerId);
-        expect(text).toContain(address === 'unreadable' ? t('common.unavailable') : 'Design Home');
+        expect(text).toContain(address === 'unreadable' ? 'Home —' : 'Design Home');
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         expect(screen.getTextContent()).toContain(homeServerId);
     } finally { await screen.unmount(); }
@@ -258,7 +258,7 @@ it('keeps captured Widget removal operands in Technical details', async () => {
         preview={null} status="open" serverId={null} testID="captured-widget-removal" />);
     try {
         const text = screen.getTextContent();
-        expect(text).toContain(t('common.unavailable'));
+        expect(text).toContain('Instance —');
         for (const id of [instanceId, artifactId, groupId]) expect(text).not.toContain(id);
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         for (const id of [instanceId, artifactId, groupId]) expect(screen.getTextContent()).toContain(id);
@@ -282,7 +282,7 @@ it('names a new built-in Widget and keeps an unreadable Widget artifact out of t
         expect(screen.getTextContent()).not.toContain(builtin.id);
         expect(screen.getTextContent()).not.toContain(instanceId);
         await screen.update(card({ kind: 'artifact', artifactId }));
-        expect(screen.getTextContent()).toContain(t('common.unavailable'));
+        expect(screen.getTextContent()).toContain('Artifact —');
         expect(screen.getTextContent()).not.toContain(artifactId);
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         expect(screen.getTextContent()).toContain(artifactId);

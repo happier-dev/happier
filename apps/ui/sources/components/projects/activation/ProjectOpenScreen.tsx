@@ -1,3 +1,4 @@
+import { presentActionExecutionFailure, resolveActionExecutionFailureTitle } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -885,9 +886,11 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
                 'kind' in retired.result ? retired.result.kind : retired.result.errorCode]} /> : null;
     }
     if ('ok' in result && result.ok === false) {
-        // An Action failure is a refusal in the same words as a returned one: one presenter decides them.
+        const failure = presentActionExecutionFailure(result, t('projects.open.failedHint'));
         return <AttentionBanner testID="projects.open.failed"
-            {...projectOpenRefusalPresentation(result.errorCode, props.gitRef, undefined, props.repository, result.failureCause, props.subfolder)} />;
+            title={resolveActionExecutionFailureTitle(result, t('projects.open.failed'))}
+            description={failure.reason}
+            details={failure.technicalDetails.map(line => `${line.label}: ${line.value}`)} />;
     }
     if (!('kind' in result)) return null;
     switch (result.kind) {

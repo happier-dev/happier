@@ -54,7 +54,7 @@ it.each([
     try {
         await waitForHomeGovernance(() => {
             const text = screen.getTextContent();
-            expect(text).toContain(readable ? row.displayName : t('common.unavailable'));
+            expect(text).toContain(readable ? row.displayName : '—');
             if (!readable) expect(text).not.toContain(row.displayName);
             if (actionId === 'teams.externalGroupBindings.set') expect(text).toContain(source.displayName);
             expect(text).not.toContain(exactId);
@@ -101,7 +101,7 @@ it.each(['active', 'paused', 'other Account'] as const)('reviews a directory syn
             expect(text).not.toContain(source.id);
             if (state === 'other Account') {
                 expect(text).not.toContain(source.displayName);
-                expect(text).toContain(t('common.unavailable'));
+                expect(text).toContain('—');
             } else expect(text).toContain(source.displayName);
         });
         await screen.pressByTestIdAsync('approvals.technical-details.header');

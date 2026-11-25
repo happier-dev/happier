@@ -60,7 +60,7 @@ it.each(['readable', 'denied', 'different revision'] as const)('identifies a rea
                 expect(content).toContain(t('teams.credentials.limits.metric.requests'));
                 expect(content).toContain('500');
             } else {
-                expect(content).toContain(t('common.unavailable'));
+                expect(content).toContain('Limit —');
                 expect(content).not.toContain('500');
             }
         });
@@ -126,7 +126,7 @@ it.each(['readable', 'other Account'] as const)('reviews a Team credential audie
                 expect(text).toContain(groupName);
                 expect(text).toContain('Ada');
             } else {
-                expect(text).toContain(t('common.unavailable'));
+                expect(text).toContain('Resource —');
                 expect(text).not.toContain(resourceName);
                 expect(text).not.toContain(groupName);
                 expect(text).not.toContain('Ada');
@@ -225,7 +225,7 @@ it.each([
             expect(text).not.toContain(keyId);
             if (readable) expect(text).toContain(label);
             else {
-                expect(text).toContain(t('common.unavailable'));
+                expect(text).toContain('Key —');
                 expect(text).not.toContain(label);
             }
         });

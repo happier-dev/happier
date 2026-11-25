@@ -6,7 +6,6 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { teamCredentialResourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { applyTeamCredentialResource } from '@/sync/store/teams/teamsSnapshots';
-import { t } from '@/text';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -38,7 +37,7 @@ it.each([
         : <ApprovalReviewFacts {...props} status="open" />);
     try {
         await vi.waitFor(() => {
-            expect(screen.getTextContent()).toContain(readable ? credentialName : t('common.unavailable'));
+            expect(screen.getTextContent()).toContain(readable ? credentialName : '—');
             expect(screen.getTextContent()).not.toContain(resourceId);
         });
         await screen.pressByTestIdAsync('approvals.technical-details.header');

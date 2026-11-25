@@ -68,7 +68,7 @@ it.each([true, false])('reviews an erasure disposition by the managed Machine na
         await waitForHomeGovernance(() => {
             const text = screen.getTextContent();
             expect(text).not.toContain(managedId);
-            expect(text).toContain(readable ? launchName : t('common.unavailable'));
+            expect(text).toContain(readable ? launchName : '—');
             if (!readable) expect(text).not.toContain(launchName);
         });
         await screen.pressByTestIdAsync('approvals.technical-details.header');

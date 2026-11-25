@@ -3,7 +3,6 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { t } from '@/text';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
 const harness = createHomeGovernanceHarness();
@@ -26,7 +25,7 @@ it.each([true, false])('shares Project command reference names and disclosure (r
     }} preview={null} status="open" serverId={home} testID="script-review" />);
     expect(screen.getTextContent()).toContain('build release');
     expect(screen.getTextContent()).toContain('/workspace/project');
-    expect(screen.getTextContent()).toContain(readable ? 'Studio runner' : t('common.unavailable'));
+    expect(screen.getTextContent()).toContain(readable ? 'Studio runner' : '—');
     expect(screen.getTextContent()).not.toContain(machineId);
     await screen.pressByTestIdAsync('approvals.technical-details.header');
     expect(screen.getTextContent()).toContain(machineId);

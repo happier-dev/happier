@@ -383,7 +383,7 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     // A Document this Account can open names itself on a cold page: the one exact demand Doc labels use opens it.
     const artifactRefs = React.useMemo(() => (reference?.kind === 'skill' || reference?.kind === 'artifact') && ownHome
         ? [reference.id] : NO_ARTIFACT_REFS, [ownHome, reference]);
-    useArtifactTitleProjections(viewer, artifactRefs, artifactRefs.length > 0);
+    const artifactTitles = useArtifactTitleProjections(viewer, artifactRefs, artifactRefs.length > 0);
     const machineReference = reference?.kind === 'machine' && (!reference.serverId
         || areServerProfileIdentifiersEquivalent(reference.serverId, approvalServerId)) ? reference : null;
     const machine = useServerScopedMachine(approvalServerId, machineReference?.id ?? '');
@@ -480,7 +480,7 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const workflowRun = useApprovalWorkflowRun(reference?.kind === 'workflowRun' && ownHome ? reference.id : null);
     const homeLayout = useApprovalHomeLayoutItemReading(reference?.kind === 'homeLayoutItem' ? approvalServerId : null, viewer?.serverId);
     const homeLayoutItemName = reference?.kind === 'homeLayoutItem' ? homeLayout.readName(reference.id) : null;
-    return resolveApprovalReferenceReading(reference, literal, approvalServerId, { serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
+    return resolveApprovalReferenceReading(reference, literal, approvalServerId, { serverId, sessionReading, viewer, ownHome, artifact, artifactResolving: artifactRefs.length > 0 && artifactTitles[0] === undefined, machine, machineInventory, connectedAccount, savedSecret,
         managedMachine, managedEnrolledMachine, managedMachineLoading, sessionMachine, mcp, registries, project, projectCensusComplete, agents,
         providerConnection, providerManualModel, providerCatalogLoading, declarations, localizePluginText,
         syncLink, workspace, discussionTitle: discussion.title, discussionTitleResolving: discussion.resolving,
@@ -621,6 +621,7 @@ export function useManagedMachineName(serverId: string | null, managedId: string
 const CONNECTED_ACCOUNT_KEY = 'connectedAccount';
 
 type ApprovalReferenceSources = {
+    artifactResolving?: boolean;
     serverId: string | null;
     principalName?: string | null;
     principalResolving?: boolean;
@@ -731,7 +732,10 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
         return { text: title || t(reference.unavailableWithoutName ? 'common.unavailable' : 'contextBar.machine'), named: Boolean(title), subject: 'managedMachine',
             ...(sources.managedMachineLoading && !title ? { resolving: true } : {}) };
     }
-    if (reference?.kind === 'skill' || reference?.kind === 'artifact') return readApprovalArtifactReference(reference, ownHome ? artifact : null);
+    if (reference?.kind === 'skill' || reference?.kind === 'artifact') {
+        if (sources.artifactResolving) return { text: t('common.loading'), named: false, resolving: true };
+        return readApprovalArtifactReference(reference, ownHome ? artifact : null);
+    }
     if (reference?.kind === 'builtinWidget') {
         const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: reference.id });
         const name = descriptor ? t(descriptor.titleKey) : null;

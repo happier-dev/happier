@@ -54,7 +54,9 @@ export function resolveApprovalRequestTitle(
     ? t('settingsPlugins.updatePluginTitle') : readApprovalActionTitle(actionId);
   // A subject named by the very value the request sets (a renamed Session already reads by its new title) would say
   // that value twice; the title then names the Action alone and the value reads once, in the facts.
-  const subject = input.subject?.trim() && !readsActionArgValue(input.actionArgs, input.subject.trim()) ? input.subject : null;
+  // The declared model id is its person-facing name when no friendly name is available.
+  const subject = input.subject?.trim() && (readActionApprovalSubject(input)?.kind === 'providerModel'
+    || !readsActionArgValue(input.actionArgs, input.subject.trim())) ? input.subject : null;
   const presentation = presentActionApproval({ ...input, actionId, subject });
   const [firstLineRaw, ...rest] = String(input.storedTitle ?? '').split('\n');
   let firstLine = (firstLineRaw ?? '').trim();

@@ -5,7 +5,6 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { teamInvitationRowFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { t } from '@/text';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
@@ -43,7 +42,7 @@ it.each([
             expect(text).not.toContain(invitation.id);
             if (readable) expect(text).toContain(invitation.recipientEmailMask);
             else {
-                expect(text).toContain(t('common.unavailable'));
+                expect(text).toContain('—');
                 expect(text).not.toContain(invitation.recipientEmailMask);
             }
         });

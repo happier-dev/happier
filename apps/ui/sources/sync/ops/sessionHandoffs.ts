@@ -1,4 +1,5 @@
-import { readActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionHandoffStartResponseSchema, SessionHandoffActionResultV1Schema, SessionHandoffStatusSchema, type SessionHandoffStartResponse, type SessionHandoffActionResultV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { HandoffTargetReplacementPreflightResultV1Schema, type HandoffWorkspaceActionV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { SessionHandoffStatus } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
@@ -17,7 +18,7 @@ import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAc
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 
 /** UI-side request/status adapter. The daemon owns all handoff phases, retries and recovery. */
-type HandoffErrorResult = Readonly<{ ok: false; errorCode: string; errorMessage: string; failureCause?: ActionFailureCauseV1; details?: ActionExecuteFailure['details']; handoffId?: string; status?: SessionHandoffStatus; recovery?: unknown }>;
+type HandoffErrorResult = Readonly<Omit<ActionExecuteFailure, 'error'> & { errorMessage: string; handoffId?: string; status?: SessionHandoffStatus; recovery?: unknown }>;
 
 /**
  * Source transcript storage is deliberately absent: the source daemon derives it
@@ -60,22 +61,16 @@ function normalizeId(value: unknown): string { return typeof value === 'string' 
 function readError(raw: unknown): HandoffErrorResult | null {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
     const record = raw as Record<string, unknown>;
-    const carriedFailure = {
-        ...(record.failureCause === undefined ? {} : { failureCause: readActionFailureCauseV1(record.failureCause) }),
-        ...(record.details === undefined ? {} : { details: record.details }),
-    };
-    if (raw instanceof Error) {
-        const errorCode = readRpcErrorCode(raw);
-        if (errorCode) return { ok: false, errorCode, errorMessage: raw.message, ...carriedFailure };
-    }
-    if (record.ok !== false && typeof record.error !== 'string') return null;
+    if (!(raw instanceof Error && readRpcErrorCode(raw)) && record.ok !== false && typeof record.error !== 'string') return null;
     const status = SessionHandoffStatusSchema.safeParse(record.status);
     const handoffId = normalizeId(record.handoffId) || (status.success ? status.data.handoffId : '');
-    const errorCode = normalizeId(record.errorCode)
+    const errorCode = (raw instanceof Error ? readRpcErrorCode(raw) : null) || normalizeId(record.errorCode)
         || normalizeId(record.code)
         || (normalizeId(record.error).includes('workspace_sync_update_required') ? 'workspace_sync_update_required' : '')
         || 'UNEXPECTED';
-    return { ok: false, ...carriedFailure, errorCode, errorMessage: normalizeId(record.error) || normalizeId(record.errorMessage) || errorCode, ...(handoffId ? { handoffId } : {}), ...(status.success ? { status: status.data } : {}), ...(record.recovery !== undefined ? { recovery: record.recovery } : {}) };
+    const { error, ...failure } = readActionFailureEnvelope({ ...record, ok: false, errorCode,
+        error: raw instanceof Error ? raw.message : normalizeId(record.error) || normalizeId(record.errorMessage) || errorCode })!;
+    return { ...failure, errorMessage: error, ...(handoffId ? { handoffId } : {}), ...(status.success ? { status: status.data } : {}), ...(record.recovery !== undefined ? { recovery: record.recovery } : {}) };
 }
 
 function resolveSourceMachineId(options: Pick<StartSessionHandoffOptions, 'sessionId' | 'sourceMachineId' | 'serverId'>): string | null {
