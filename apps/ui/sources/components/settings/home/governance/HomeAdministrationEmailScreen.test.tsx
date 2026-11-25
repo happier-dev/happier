@@ -52,6 +52,9 @@ const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilit
 const { resetHomeSettingsEngineForTests } = await import('@/sync/engine/home/governance/homeSettingsEngine');
 const { resetHomeSettingsSnapshotsForTests } = await import('@/sync/store/home/governance/homeSettingsSnapshots');
 
+const { HomeAdministrationEmailScreen } = await import('./HomeAdministrationEmailScreen');
+const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
+
 const GOVERNANCE_PATH = '/v1/home/governance/get';
 const SETTINGS_GET = '/v1/home/settings/get';
 const SETTINGS_SET = '/v1/home/settings/set';
@@ -84,8 +87,6 @@ async function addHome(options?: Readonly<{ admin?: boolean }>): Promise<string>
 }
 
 async function renderEmail(serverId: string) {
-    const { HomeAdministrationEmailScreen } = await import('./HomeAdministrationEmailScreen');
-    const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
     resetHomeGovernanceEngineForTests();
     const screen = await renderScreen(<HomeAdministrationEmailScreen serverId={serverId} />);
     await waitForHomeGovernance(() => {
@@ -112,8 +113,6 @@ describe('HomeAdministrationEmailScreen', () => {
         const home = await addHome();
         harness.answer(home, SETTINGS_GET, { body: homeSettingsProjectionFixture() });
         harness.answer(home, MAIL_GET, { status: 503, body: { error: 'temporarily_unavailable' } });
-        const { HomeAdministrationEmailScreen } = await import('./HomeAdministrationEmailScreen');
-        const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
         resetHomeGovernanceEngineForTests();
         const screen = await renderScreen(<HomeAdministrationEmailScreen serverId={home} />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('home-email-readiness-error')).not.toBeNull());
@@ -125,6 +124,38 @@ describe('HomeAdministrationEmailScreen', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('home-email-status-sending')).not.toBeNull());
         expect(screen.findByTestId('home-email-readiness-error')).toBeNull();
         expect(screen.findHostByTestId('home-email-host-input')?.props.value).toBe('smtp.draft.example');
+    });
+
+    it.each([
+        { error: 'temporarily_unavailable', status: 503, showsReadinessRefusal: false },
+        { error: 'invalid_home_input', status: 400, showsReadinessRefusal: true },
+    ])('shows both read causes only when their outcomes differ ($error)', async ({ error, status, showsReadinessRefusal }) => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: homeSettingsProjectionFixture() });
+        harness.answer(home, MAIL_GET, { status, body: { error } });
+        resetHomeGovernanceEngineForTests();
+        const screen = await renderScreen(<HomeAdministrationEmailScreen serverId={home} />);
+        await waitForHomeGovernance(() => {
+            expect(screen.findHostByTestId('home-email-host-input')).not.toBeNull();
+            expect(screen.findByTestId('home-email-readiness-error')).not.toBeNull();
+        });
+
+        harness.answer(home, SETTINGS_GET, { status: 503, body: { error: 'temporarily_unavailable' } });
+        const accountId = `account-${home}`;
+        const { refreshHomeSettings } = await import('@/sync/engine/home/governance/homeSettingsEngine');
+        await act(async () => {
+            await refreshHomeSettings({ serverId: home, accountId });
+        });
+
+        expect(textUnder(screen.findByTestId('home-email-refresh-error'))).toContain('homeGovernance.unavailableBody');
+        if (showsReadinessRefusal) {
+            expect(textUnder(screen.findByTestId('home-email-readiness-error'))).toContain('homeGovernance.invalidRead');
+        } else {
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-email-readiness-error');
+        }
+        const testIds = collectRenderedTestIds(screen.tree.toJSON());
+        expect(testIds).toContain('home-email-refresh-retry');
+        expect(testIds).not.toContain('home-email-readiness-retry');
     });
 
     it('saves only what the owner changed, sends the password as a write-only replacement and never shows it back', async () => {

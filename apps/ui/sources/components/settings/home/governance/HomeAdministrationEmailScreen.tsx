@@ -528,6 +528,16 @@ const EmailPage = React.memo(function EmailPage(props: Readonly<{ context: HomeA
     const readOnly = !isOwner;
     const anyEditable = !readOnly && Object.values(entries).some((entry) => isHomeSettingWritable(entry));
     const readiness = mail.readiness;
+    const settingsFailure = mail.failure;
+    const readinessFailure = mail.readinessFailure;
+    const settingsReason = settingsFailure ? homeGovernanceFailureNotice(settingsFailure, { effect: 'read' }).body : null;
+    const readinessReason = readinessFailure ? homeGovernanceFailureNotice(readinessFailure, { effect: 'read' }).body : null;
+    const repeatsSettingsFailure = settingsFailure && readinessFailure
+        && settingsFailure.kind === readinessFailure.kind && settingsFailure.code === readinessFailure.code
+        && settingsReason === readinessReason;
+    // Both observations use the same reload. Keep distinct causes visible with a single recovery action.
+    const retrySettings = settingsFailure?.retryable === true;
+    const retryReadiness = readinessFailure?.retryable === true && !retrySettings;
     const textRow = (field: HomeEmailTextField, setting: SettingRef, title: string, keyboardType?: 'email-address') => (
         <EmailTextRow
             field={field}
@@ -545,33 +555,35 @@ const EmailPage = React.memo(function EmailPage(props: Readonly<{ context: HomeA
 
     return (
         <>
-            {mail.failure ? (
+            {settingsReason ? (
                 <SurfaceFreshnessLine
                     testID="home-email-refresh-error"
                     tone="warning"
                     busy={mail.loading}
-                    reason={homeGovernanceFailureNotice(mail.failure, { effect: 'read' }).body}
-                    action={mail.failure.retryable ? { label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
+                    reason={settingsReason}
+                    action={retrySettings ? { testID: 'home-email-refresh-retry', label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
                 />
             ) : null}
-            {mail.readinessFailure && mail.readiness ? (
-                <SurfaceFreshnessLine
-                    testID="home-email-readiness-error"
-                    tone="warning"
-                    busy={mail.readinessLoading}
-                    reason={homeGovernanceFailureNotice(mail.readinessFailure, { effect: 'read' }).body}
-                    action={mail.readinessFailure.retryable ? { label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
-                />
-            ) : mail.readinessFailure ? (
-                <SurfaceStateCard
-                    testID="home-email-readiness-error"
-                    kind="error"
-                    size="line"
-                    title={t('homeGovernance.email.loadFailed')}
-                    reason={homeGovernanceFailureNotice(mail.readinessFailure, { effect: 'read' }).body}
-                    action={mail.readinessFailure.retryable ? { testID: 'home-email-readiness-retry', label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
-                />
-            ) : !mail.readiness && mail.readinessLoading ? (
+            {readinessReason && !repeatsSettingsFailure ? (
+                mail.readiness ? (
+                    <SurfaceFreshnessLine
+                        testID="home-email-readiness-error"
+                        tone="warning"
+                        busy={mail.readinessLoading}
+                        reason={readinessReason}
+                        action={retryReadiness ? { testID: 'home-email-readiness-retry', label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
+                    />
+                ) : (
+                    <SurfaceStateCard
+                        testID="home-email-readiness-error"
+                        kind="error"
+                        size="line"
+                        title={t('homeGovernance.email.loadFailed')}
+                        reason={readinessReason}
+                        action={retryReadiness ? { testID: 'home-email-readiness-retry', label: t('homeGovernance.retry'), onPress: mail.reload } : undefined}
+                    />
+                )
+            ) : !readinessFailure && !mail.readiness && mail.readinessLoading ? (
                 <SurfaceStateCard testID="home-email-readiness-loading" kind="loading" size="line" title={t('homeGovernance.loading')} />
             ) : null}
             {readOnly ? (
