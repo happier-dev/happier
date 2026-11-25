@@ -827,6 +827,18 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.headerToggle')).toBeNull();
     });
 
+    it('lets a lone queued row say it is queued without a counted head over it (design ruling 2026-11-25)', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+
+        expect(screen.findByTestId('pendingMessages.headerLabel')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:p1')?.props.children).toBe('Queued');
+    });
+
     it('passes the main Session queue to the shared semantic reorder binding', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -2593,7 +2605,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:head')?.props.children).toBe('Queued');
         expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:later')?.props.children).toBe('Queued');
         expect(screen.findByTestId('pendingMessages.pendingAffordance:head')?.props.accessibilityLabel)
-            .toBe('Queued. Waiting for runtime activity to finish');
+            .toBe('Queued. Waiting for the current work to finish');
         expect(screen.findByTestId('pendingMessages.pendingAffordance:later')?.props.accessibilityLabel)
             .toBe('Queued. Waiting for an earlier message');
     });

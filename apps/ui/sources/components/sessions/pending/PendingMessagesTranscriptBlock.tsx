@@ -1302,6 +1302,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const headerLabel = visiblePendingMessageIds.size > 0
         ? `${t('session.pendingMessages.title')} (${visiblePendingMessageIds.size})`
         : retainedTitle;
+    // A lone queued row right under the head already says it is queued: the counted head would say it twice
+    // (design ruling 2026-11-25). The inset keeps its height, so the block and its size estimate do not change.
+    const headStatedByRow = visiblePendingMessageIds.size === 1 && discardedCount === 0
+        && !canExpandPendingQueue && !showNonSteerableNotice;
     const clampedViewportHeightPx = effectiveScrollContentHeightPx > 0
         ? Math.max(1, Math.min(effectiveScrollContentHeightPx, maxHeight))
         : undefined;
@@ -1313,7 +1317,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     <View style={constrainedRowStyle}>
                         {/* The header sits in the queue's top inset, so the send crossover keeps its geometry. */}
                         <View style={styles.queueTopInset}>
-                            <TranscriptSeparatorRow
+                            {headStatedByRow ? null : <TranscriptSeparatorRow
                                 iconName="clock"
                                 title={headerLabel}
                                 titleTestID="pendingMessages.headerLabel"
@@ -1327,7 +1331,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 ) : null}
                                 padding="none"
                                 chipChrome="minimal"
-                            />
+                            />}
                         </View>
 
                         {showNonSteerableNotice ? (
