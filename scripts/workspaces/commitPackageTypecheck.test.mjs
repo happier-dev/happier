@@ -700,6 +700,38 @@ test('dependencies are prepared once per dependency generation, outside the comp
   assert.equal(installs.length, 2);
 });
 
+test('warm exact-tree compilation pins declaration imports to the selected tree', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-typecheck-pin-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+  const input = 'packages/leaf/src/toolingInput.mjs';
+  const first = await commit(input, "export default 'old';\n");
+  const pinModule = new URL('../../apps/stack/bin/localToolingPackagePin.mjs', import.meta.url).href;
+  const observed = [];
+  const env = { ...process.env, HAPPIER_STACK_TOOLING_PACKAGES: 'pinned' };
+  const { rowsAt } = treeTypechecker({ repo, state, env, log: () => {}, bootstrap: () => {},
+    compile: worktree => {
+      const pinned = execFileSync(process.execPath, ['--input-type=module', '-e', `
+        const { registerToolingPackagePin } = await import(process.argv[1]);
+        registerToolingPackagePin({ repoDir: process.cwd() });
+        console.log((await import(process.argv[2])).default);
+      `, pinModule, pathToFileURL(join(worktree, input)).href], { cwd: worktree, env, encoding: 'utf8' }).trim();
+      observed.push(pinned);
+      return { rows: [], ms: 0 };
+    },
+  });
+  rowsAt(git(repo, 'rev-parse', `${first}^{tree}`), ['packages/leaf'], 'base');
+
+  // A packet can supply a tree before it has a commit.
+  await writeFile(join(repo, input), "export default 'selected';\n");
+  git(repo, 'add', '--', input);
+  const candidate = git(repo, 'write-tree');
+  rowsAt(candidate, ['packages/leaf'], 'head');
+  assert.deepEqual(observed, ['old', 'selected']);
+  assert.equal(git(repo, 'rev-parse', 'HEAD'), first);
+});
+
 // Exact-tree worktrees do not inherit the normal command replica's ignored source inputs.
 // The compiler boundary imports the real generated module; no TypeScript compiler is needed.
 test('each selected tree prepares its own embedded policy before declaration imports', async t => {

@@ -10,7 +10,7 @@
 // owner (runTypeScriptCli.mjs, with its declaration preparation), followed by the package's own
 // declaration emit (TS2883/TS7056 are declaration-emit diagnostics a `--noEmit` check hides), inside
 // ONE persistent worktree per host and repository. The worktree keeps the compiler's incremental and declaration state between
-// checks and is moved to each tree with `git read-tree --reset -u`; its dependencies are installed by
+// checks and moves its files, index and detached HEAD to each selected tree; its dependencies are installed by
 // the canonical dependency refresh that hstack-exec runs for the admitted payload. Results are cached
 // per (tree, package): a tree's diagnostics are a function of its bytes, so a moved HEAD is just
 // another tree, and the next candidate's parent is usually the tree checked last. Only diagnostics new
@@ -69,6 +69,12 @@ const gitEnv = () => {
 
 function gitAt(repo) {
   return (args, options = {}) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', maxBuffer: 2 ** 31 - 1, env: gitEnv(), ...options });
+}
+
+function typecheckTreeCommit(git, tree, parent) {
+  const env = { ...gitEnv(), GIT_AUTHOR_NAME: 'rolling-typecheck', GIT_AUTHOR_EMAIL: 'rolling-typecheck@invalid', GIT_AUTHOR_DATE: '1970-01-01T00:00:00Z',
+    GIT_COMMITTER_NAME: 'rolling-typecheck', GIT_COMMITTER_EMAIL: 'rolling-typecheck@invalid', GIT_COMMITTER_DATE: '1970-01-01T00:00:00Z' };
+  return git(['commit-tree', tree, ...(parent ? ['-p', parent] : []), '-m', `rolling typecheck tree ${tree}`], { env }).trim();
 }
 
 /** One batched object read: `undefined` for an absent spec, otherwise the blob text. */
@@ -334,12 +340,18 @@ function moveWorktree({ repo, state, log, worktreeRev }, treeId) {
   writeFileSync(currentPath, '');
   // The caller holds the worktree lock, and only its holder runs git in this worktree, so an index.lock
   // here was left by a check killed inside git (2026-11-16: every pass exited 2 for hours after one).
-  const indexLock = join(gitAt(worktree)(['rev-parse', '--absolute-git-dir']).trim(), 'index.lock');
+  const git = gitAt(worktree);
+  const indexLock = join(git(['rev-parse', '--absolute-git-dir']).trim(), 'index.lock');
   if (existsSync(indexLock)) {
     log(`[commit-package-typecheck] removing ${indexLock} left by an interrupted check`);
     rmSync(indexLock, { force: true });
   }
-  gitAt(worktree)(['read-tree', '--reset', '-u', treeId]);
+  git(['read-tree', '--reset', '-u', treeId]);
+  // Tooling pins its product dependencies to Git HEAD. A packet may supply a
+  // raw tree, so give it a commit in this worker's detached HEAD.
+  if (git(['rev-parse', 'HEAD^{tree}']).trim() !== treeId) {
+    git(['update-ref', '--no-deref', 'HEAD', typecheckTreeCommit(git, treeId)]);
+  }
   writeFileSync(currentPath, treeId);
 }
 
@@ -1170,8 +1182,6 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
   };
   const ref = lane ? `rolling-${lane}` : 'rolling';
   const git = gitAt(repo);
-  const commitEnv = { ...gitEnv(), GIT_AUTHOR_NAME: 'rolling-typecheck', GIT_AUTHOR_EMAIL: 'rolling-typecheck@invalid', GIT_AUTHOR_DATE: '1970-01-01T00:00:00Z',
-    GIT_COMMITTER_NAME: 'rolling-typecheck', GIT_COMMITTER_EMAIL: 'rolling-typecheck@invalid', GIT_COMMITTER_DATE: '1970-01-01T00:00:00Z' };
   // `(treeId, dirs, side)` -> Map dir -> rows; `([treeIds], dirs, [sides])` -> Map treeId -> (Map dir -> rows), all trees in
   // one push and one worker request.
   return async (treeId, dirs, side) => {
@@ -1209,7 +1219,7 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
       let commit = parent;
       for (const id of publishedTrees) {
         commit = commit && git(['rev-parse', `${commit}^{tree}`]).trim() === id ? commit
-          : git(['commit-tree', id, ...(commit ? ['-p', commit] : []), '-m', `rolling typecheck tree ${id}`], { env: commitEnv }).trim();
+          : typecheckTreeCommit(git, id, commit);
       }
       // A push may replace the ref with an unrelated chain (another controller state).
       const push = io.push(ssh, commit, `refs/heads/${ref}`);
