@@ -980,6 +980,56 @@ it('a result with cards and a question asks the question first; Skip shows those
   }
 });
 
+it('loads platform plans only when the checked cards are shown', async () => {
+  const { createDeploymentTargetsTestPlugin } = await import('../deployments/deploymentPlatformTargetPlugin.testFixture');
+  const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+  const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+  const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui');
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const pluginId = 'com.example.auto-plans';
+  const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+  const manifest = PluginPortableReleaseManifestV1Schema.parse(
+    createDeploymentTargetsTestPlugin(pluginId, undefined, { plans: true }).manifest,
+  );
+  const declaration = { pluginId, pluginVersion: manifest.version, packageName: '@fixture/auto-plans',
+    displayName: manifest.displayName, normalizedManifest: manifest, entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
+  const loadDeclaration = vi.fn(async () => declaration);
+  const restore = installBundledPluginUiDeclarationsForTests([{
+    pluginId, pluginVersion: declaration.pluginVersion, packageName: declaration.packageName, displayName: declaration.displayName,
+    entriesById: {}, presentationManifest: { ...manifest, contributes: { ...manifest.contributes, deploymentTargets: [] } },
+    hasDeploymentTargets: true, loadDeclaration,
+  }]);
+  const targetId = `${pluginId}/alpha`;
+  const platform = { ...targets[0]!, id: targetId, targetClass: 'platform' as const };
+  const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };
+  suggestionBoundary({
+    deploymentSuggestionTargets: async () => ({ targets: [platform], stores: [] }),
+    executionRunWait: async () => ({ ok: true, status: 'succeeded',
+      result: terminal({ recommendations: [{ ...recommendation, targetId }], questions }) }),
+  });
+  const { fixture, screen } = await openDescribe('auto-platform-plans-demand');
+  try {
+    const scope = storage.getState().settingsScope;
+    if (!scope) throw new Error('Expected admitted Home Account');
+    await act(async () => replacePluginAccountAvailabilityProjection({ scope,
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } }));
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('app-shell-question-purpose-text')).toBeTruthy());
+    expect(loadDeclaration).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('newApp.auto.skipQuestions');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy());
+    await waitForHomeGovernance(() => expect(loadDeclaration).toHaveBeenCalledTimes(1));
+  } finally {
+    restore();
+    await screen.unmount();
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('Adjust changes one fact through the validator and asks again with a note, from the same snapshot (journey-deploy autoAdjust)', async () => {
   suggestionBoundary({ deploymentSuggestionTargets: async () => ({ targets, stores: [{ id: 'db', engine: 'postgres' }] }),
     executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }) });

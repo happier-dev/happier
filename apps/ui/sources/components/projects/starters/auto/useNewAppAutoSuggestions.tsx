@@ -204,8 +204,10 @@ export function useNewAppAutoSuggestions(
     [params.serverId, router],
   );
 
-  // The cards' plans come from the Account's declared targets, as on a Session card (review D1).
-  const shown = phase.kind === 'settled' && phase.outcome.kind === 'recommendations' ? phase.outcome : null;
+  const recommendations = phase.kind === 'settled' && phase.outcome.kind === 'recommendations' ? phase.outcome : null;
+  const pendingQuestions = phase.kind === 'settled' && !phase.skippedQuestions ? recommendations?.questions : null;
+  // The cards ask for the Account's declared plans only while their step is visible.
+  const shown = params.active && !pendingQuestions ? recommendations : null;
   const declaredPlans = useDeclaredTargetPlans(shown?.recommendations ?? null, shown?.catalog ?? null);
   const view = React.useMemo((): NewAppAutoView => {
     if (phase.kind === 'describe') return { kind: 'describe' };
@@ -219,8 +221,8 @@ export function useNewAppAutoSuggestions(
           : phase.stop,
       };
     const outcome = phase.outcome;
-    if (outcome.kind === 'recommendations' && outcome.questions && !phase.skippedQuestions)
-      return { kind: 'questions', questions: outcome.questions.questions, skippable: true };
+    if (pendingQuestions)
+      return { kind: 'questions', questions: pendingQuestions.questions, skippable: true };
     if (outcome.kind === 'recommendations') {
       return {
         kind: 'recommendations',
@@ -260,7 +262,7 @@ export function useNewAppAutoSuggestions(
     // Why the check dropped each part of the answer, by its typed reason, for Details.
     const reasons = [...new Set([...outcome.dropped, ...outcome.droppedQuestions].map((row) => row.reason))];
     return { kind: 'nothing', code: reasons.length ? reasons.join(', ') : null };
-  }, [declaredPlans, openMachineSetup, params.serverId, phase, stop, theme.colors.text.secondary]);
+  }, [declaredPlans, openMachineSetup, params.serverId, pendingQuestions, phase, stop, theme.colors.text.secondary]);
 
   const settled = phase.kind === 'settled' ? phase.outcome : phase.kind === 'working' ? lastRecommendations.current : null;
   const chosen = React.useMemo((): NewAppAutoChosen | null => {
@@ -284,8 +286,7 @@ export function useNewAppAutoSuggestions(
     setPhase({ ...phase, outcome });
     return true;
   }, [chosen, chosenCardId, phase]);
-  const questions = settled?.kind === 'questions' ? settled.questions
-    : view.kind === 'questions' && settled?.kind === 'recommendations' ? settled.questions ?? null : null;
+  const questions = settled?.kind === 'questions' ? settled.questions : pendingQuestions ?? null;
   const runner = phase.kind === 'describe' ? null : phase.runner;
 
   return {
