@@ -18,7 +18,7 @@ import {
 import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, createWidgetActionInputResolverV1, readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createPluginActionInputSelectionFactsPublication } from './pluginActionInputSelectionFacts';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import { EMPTY_PLUGIN_UI_PROJECTION, normalizePluginInstalledUiDeclarations, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -214,7 +214,7 @@ it('admits Can-use executeAction only for a database Action on an Environment da
         .resolves.toMatchObject(methodRefusal);
 });
 
-it('runs and applies through a Can-use mount, preserving exact review and Environment refusals', async () => {
+it('runs and applies through a Can-use mount, including inline commits and typed refusals', async () => {
     const shared = createMachineFixture({ id: FACTS.machineId, isShared: true,
         access: { role: 'use', accessState: 'ready', resourceMode: 'plain', custodian: { accountId: 'owner', displayName: 'Owner' } } });
     const owned = storage.getState().machineListByServerId[FACTS.serverId]!;
@@ -223,16 +223,25 @@ it('runs and applies through a Can-use mount, preserving exact review and Enviro
     if (!run || !apply) throw new Error('Invalid database Action identity');
     const target = { kind: 'deployment_service', environment: { serverId: FACTS.serverId, projectSourceId: 'source',
         environmentId: 'environment' }, deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'database', database: 'app' };
-    const statement = { target, mode: 'read', executionMode: 'transaction', operation: 'statement.run',
-        statements: [{ sql: 'SELECT 1', parameters: [] }] };
+    const statement = { target, mode: 'read', operation: 'statement.run',
+        statement: { sql: 'SELECT 1', parameters: [] } };
+    const manualStatement = { ...statement, target: {
+        kind: 'manual', accountId: CURRENT_ACCOUNT_LIFETIME.scope.accountId,
+        workspace: { serverId: FACTS.serverId, machineId: FACTS.machineId, workspaceId: 'workspace-a', rootPath: '/work' },
+        installationId: 'installation', projectKey: 'project', savedSecretId: 'secret-ref',
+    } };
+    const manageRefusal = { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+        effectAttempted: false, failureCause: { phase: 'execution_authorization', errorClass: 'Error',
+            errorCode: 'machine_manage_required', httpStatus: null } } as const;
     const reviewed = { target, operation: 'edits.apply', relation: { schema: 'public', name: 'dbw_f3' },
         changes: [{ kind: 'insert', values: [{ column: 'id', value: { kind: 'default' } }] }] };
     let revoked = false;
     const effects: string[] = [];
     const executor = createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
-        invokeContributedAction: async ({ action, context }) => {
+        invokeContributedAction: async ({ action, input, context }) => {
             expect(context).toMatchObject({ authority: 'present_user', actionCaller: { kind: 'host' } });
             expect(context).not.toHaveProperty('chosenMachine');
+            if (sameStrictJsonValue(input, manualStatement)) return manageRefusal;
             if (action.localId === apply.localId) {
                 expect(context.presentUserApproval).toMatchObject({ actionId: ACTION_INVOKE_ACTION_ID_V1 });
                 if (revoked) return { ok: false, errorCode: 'database_not_an_editor', error: 'database_not_an_editor', effectAttempted: false };
@@ -284,10 +293,15 @@ it('runs and applies through a Can-use mount, preserving exact review and Enviro
                 input = { ...reviewed, changes: [] };
                 await controls.press('apply', reviewed);
                 expect(events.at(-1)).toMatchObject({ execution: { ok: false, errorCode: 'approval_stale' } });
-                input = { ...statement, target: { kind: 'manual', associationId: 'other' } };
+                input = manualStatement;
                 await controls.press('run');
-                expect(events.at(-1)).toMatchObject({ kind: 'settled',
-                    execution: { ok: false, errorCode: 'unavailable', effectAttempted: false } });
+                expect(events.at(-1)).toMatchObject({ kind: 'settled', execution: manageRefusal });
+                const inline = await controls.commit({
+                    actions: { run: run.localId },
+                    prepare: sql => ({ action: 'run', input: { ...statement, statement: { sql, parameters: [] } } }),
+                    onSettled: execution => execution,
+                }, 'SELECT 2');
+                expect(inline).toMatchObject({ ok: true });
                 revoked = true;
                 input = reviewed;
                 await controls.press('apply', reviewed);
@@ -297,7 +311,7 @@ it('runs and applies through a Can-use mount, preserving exact review and Enviro
     }
     await exercise(false);
     await exercise(true);
-    expect(effects).toEqual([run.localId, apply.localId, run.localId, apply.localId]);
+    expect(effects).toEqual([run.localId, apply.localId, run.localId, apply.localId, run.localId]);
 });
 
 describe('mounted host Resource admission', () => {

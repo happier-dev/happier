@@ -13,7 +13,6 @@ import {
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isDatabaseActionIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { isEnvironmentDatabaseAdmissionV1, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizePluginUiMountedContributedActionReferenceV1, type PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
@@ -197,7 +196,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     };
 
     // The one person-admission path, shared by slot buttons and host inline editors.
-    const execute = async ({ hostId, contributed, environmentDatabaseCandidate }: Binding['action'], preparation: PluginUiActionControlPreparationV1,
+    const execute = async ({ hostId, contributed }: Binding['action'], preparation: PluginUiActionControlPreparationV1,
         signal: AbortSignal, requestId: string, reviewedInput?: PluginUiJsonValueV1): Promise<PluginUiActionControlExecutionV1> => {
         let execution: PluginUiActionControlExecutionV1;
         if (!hostId?.success && !contributed) execution = { ok: false, errorCode: 'invalid_action', error: 'invalid_action' };
@@ -222,13 +221,6 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             const actionInput = hostId?.success ? preparation.input : { action: contributed!,
                 ...(machineId ? { expectedContributorOccurrenceId: occurrenceId } : {}),
                 ...(preparation.input === undefined ? {} : { input: preparation.input }) };
-            // The declaration can render the control before there are operands. Only the prepared
-            // Environment invocation takes the existing Home route with Machine Use.
-            if (environmentDatabaseCandidate && input.canManageActions
-                && !isEnvironmentDatabaseAdmissionV1(projectDeploymentReadAdmissionV1(actionId, actionInput))
-                && !input.canManageActions()) {
-                return { ok: false, errorCode: 'unavailable', error: 'unavailable', effectAttempted: false };
-            }
             const result = await dispatch(actionId, actionInput, context);
             execution = PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(result));
         }
@@ -237,9 +229,15 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     const commit = <Value>(binding: PluginUiActionBinding<Value>, value: Value,
         options?: Readonly<{ signal?: AbortSignal }>): Promise<unknown> => invokePluginUiActionBinding(binding, value, {
         signal: input.signal, preparationSignal: options?.signal,
-        available: input.canManageActions?.() !== false, isCurrent: current,
+        available: true, isCurrent: current,
         captureCurrentBinding: input.captureCurrentBinding,
-        execute: (action, preparation, signal) => execute(resolveMountedControlAction(input.pluginId, action), preparation, signal, randomUUID()),
+        execute: async (reference, preparation, signal) => {
+            // Multi-Action bindings choose a declared reference in prepare. Use the same
+            // control availability here, then let Home decide on the prepared invocation.
+            const action = resolveMountedControlAction(input.pluginId, reference);
+            if (!canPresent(action)) return { ok: false, errorCode: 'stale_surface', error: 'stale_surface' };
+            return execute(action, preparation, signal, randomUUID());
+        },
     });
     const press = async (id: string, reviewedInput?: PluginUiJsonValueV1): Promise<void> => {
         const binding = controls.get(id);
