@@ -179,6 +179,7 @@ async function fetchSessionMetadataInventoryWithAuthority(params: Readonly<{
                 requiredHydrationSessionIds: 'all',
                 awaitSessionListHydration: true,
                 contentDemand: 'list-projection',
+                requireListOwnerMetadata: true,
                 serverId: params.scope.serverId,
                 signal: params.signal,
                 credentials,

@@ -88,6 +88,8 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { orderRowsForSessionListHydration } from './sessionListHydrationPriority';
 import { createHydrationApplyQueue, type HydrationApplyFlushReason } from '../hydrationApplyQueue';
 import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import { hasAuthoritativeSessionRouteData, isHydratedSessionCurrentForListState } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
 import { validateSessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions';
 import { createCurrentAccountMaterialReader, createSessionDisplayCrypto } from '@/sync/encryption/sessionDisplayCrypto';
@@ -654,6 +656,7 @@ function needsWarmHydration(params: {
     isAttentionHydrationRow?: boolean;
     admissionScope: SessionListDocumentAdmissionScopes;
     fullDocumentDemand?: boolean;
+    ownerMetadataDemand?: Readonly<{ credentials: AuthCredentials; accountCurrentness: AccountEncryptionIdentity; isCurrent: () => boolean }>;
 }): boolean {
     const { row, cachedEntry, existingSession } = params;
     if (isCompactSessionListRow(row)) {
@@ -680,6 +683,9 @@ function needsWarmHydration(params: {
             || !hasCurrentSessionListDisplayMetadata(existing) || !existingCurrentness?.metadataCurrent)) return true;
         if (!sameDocumentAdmission(current?.[SESSION_LIST_DOCUMENT_ADMISSION], admission)
             || !current || !hasCurrentSessionListDisplayMetadata(current) || !currentCurrentness?.metadataCurrent) return true;
+        if (params.ownerMetadataDemand && row.archivedAt == null && row.metadataLayoutVersion === 1
+            && row.metadataAudience === 'owner' && isUserFacingSession(current)
+            && !readSessionListRenderableOwnerMetadataView(current, { requireAdmitted: params.ownerMetadataDemand })) return true;
         // Counts answer the basic badge. Its request address is a real detail demand.
         return row.active && ((row.pendingPermissionRequestCount ?? 0) > 0 || (row.pendingUserActionRequestCount ?? 0) > 0)
             && (current.currentRequestRef === undefined
@@ -1563,6 +1569,8 @@ export async function fetchAndApplySessions(params: {
     source?: SessionListPageSource;
     /** Inline display opens list-page data without acquiring more Session documents. */
     contentDemand?: 'session' | 'list-projection' | 'list-display';
+    /** The explicit metadata inventory admits private continuation facts alongside the display. */
+    requireListOwnerMetadata?: boolean;
     /** Query-only predicate demand: proven public provenance misses need no private summary. */
     candidateStartedBy?: Readonly<{ selection: SessionListFilterV1['startedBy']; viewerAccountId: string }>;
     sessionListPath?: string;
@@ -1943,6 +1951,9 @@ export async function fetchAndApplySessions(params: {
     const sessionsNeedingEncryption = sessions.filter((session) => session.encryptionMode !== 'plain');
     const sessionDataKeyEnvelopes = params.sessionDataKeyEnvelopes;
     const admissionScope = resolveDocumentAdmissionScope(params.serverId, credentials, accountCurrentness);
+    const ownerMetadataDemand = params.requireListOwnerMetadata && accountCurrentness
+        ? { credentials, accountCurrentness, isCurrent: shouldContinue }
+        : undefined;
 
     // Account processing may have yielded after the membership observation.
     // A retirement in that interval also fences retained legacy rows.
@@ -2192,7 +2203,7 @@ export async function fetchAndApplySessions(params: {
                 cachedEntry: cachedSessionListEntries[row.id], existingSession: params.getExistingSession?.(row.id),
                 currentRenderable: readCurrentDisplay(row.id),
                 isRequiredHydrationRow: requiredHydrationSessionIds.has(row.id) && !isListProjectionDemand,
-                fullDocumentDemand: !isListProjectionDemand, admissionScope }))));
+                fullDocumentDemand: !isListProjectionDemand, admissionScope, ownerMetadataDemand }))));
     if (compactDemand.length) {
         const parts = await readSessionParts({ request: (path, init) => request(path, { ...init,
             headers: { ...Object.fromEntries(new Headers(init.headers)), Authorization: `Bearer ${credentials.token}` } }),
@@ -2435,6 +2446,7 @@ export async function fetchAndApplySessions(params: {
                     isAttentionHydrationRow: isSessionListRowAttentionHydrationPriority(row),
                     admissionScope,
                     fullDocumentDemand: !isListProjectionDemand,
+                    ownerMetadataDemand,
                 }),
             );
         const skippedBackgroundHydrationRows = hydrationPriority.reasonCounts.skippedBackground;

@@ -1041,9 +1041,9 @@ it('waits for paged inventory across bootstrap publications, then refreshes mate
     await hook.rerender({ enabled: true });
     await waitForHomeGovernance(() => expect(homes!.requests.some(request => request.url.searchParams.get('cursor') === 'next')).toBe(true));
     // Normal bootstrap page producer and real scoped store; no internal row fabrication.
-    const publishBootstrap = async (records: typeof c[]) => {
+    const publishBootstrap = async (records: typeof c[], priorityHydrationSessionIds?: readonly string[]) => {
         await act(async () => { await fetchAndApplySessions({ serverId, credentials: auth, encryption,
-            sessionDataKeys: new Map(), sessionListMaxPages: 1,
+            sessionDataKeys: new Map(), sessionListMaxPages: 1, priorityHydrationSessionIds,
             request: createCompactSessionListFetchBoundary(async (path, init) => new URL(path, homes!.homes.a!.serverUrl).pathname === '/v2/sessions'
                 ? Response.json({ sessions: records, nextCursor: null, hasNext: false })
                 : homes!.fetch(new URL(path, homes!.homes.a!.serverUrl), init)),
@@ -1079,7 +1079,9 @@ it('waits for paged inventory across bootstrap publications, then refreshes mate
         expect(hook.getCurrent().existingSessions.map(option => option.sessionId)).toContain(c.id);
         await act(async () => { storage.getState().clearSessionListRowsForServerScope(serverId); });
         expect(hook.getCurrent().existingSessions).toEqual([]);
-        await publishBootstrap([c]);
+        // An ordinary compact page without a display sidecar needs display demand
+        // after the scoped rows have been cleared.
+        await publishBootstrap([c], [c.id]);
         await waitForHomeGovernance(() => expect(hook.getCurrent().existingSessions.map(option => option.sessionId)).toEqual([c.id]));
         detailedRead = createDeferred<void>();
         holdDetail = true;

@@ -124,7 +124,8 @@ import {
 } from './sessions.repositoryTreeExpansion';
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionOwnerMetadataView, SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { areSessionListDocumentAdmissionsEqual, SESSION_LIST_DOCUMENT_ADMISSION } from '@/sync/domains/session/sessionDocumentAdmission';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { createKeyedTimeoutScheduler } from '@/utils/time/keyedTimeoutScheduler';
@@ -1846,20 +1847,40 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 let staleMetadataPreservedCount = 0;
                 let stalePendingFlagsPreservedCount = 0;
                 for (const incoming of sessions) {
-                    if (options.baseline && didSessionListRowChangeSinceBaseline(serverId, incoming.id, previousRows, options.baseline)) continue;
                     const previous = nextRows[incoming.id];
-                    const withStaleFields = preserveSessionListRenderableStaleFields(previous,
-                        incoming.serverId === serverId ? incoming : { ...incoming, serverId });
+                    let candidate = incoming.serverId === serverId ? incoming : { ...incoming, serverId };
+                    const changedSinceBaseline = options.baseline
+                        && didSessionListRowChangeSinceBaseline(serverId, incoming.id, previousRows, options.baseline);
+                    if (changedSinceBaseline) {
+                        const admission = previous?.[SESSION_LIST_DOCUMENT_ADMISSION];
+                        const incomingAdmission = incoming[SESSION_LIST_DOCUMENT_ADMISSION];
+                        const owner = incoming[SESSION_OWNER_METADATA_PROJECTION];
+                        // A concurrent compact publication wins for membership and runtime facts,
+                        // while the matching admitted document can complete its unopened row.
+                        if (!previous || !admission || !owner?.ownerMetadataView
+                            || previous[SESSION_OWNER_METADATA_PROJECTION]?.ownerMetadataView
+                            || !areSessionListDocumentAdmissionsEqual(admission, incomingAdmission)
+                            || admission.observedMetadataVersion !== owner.admittedMetadataVersion) continue;
+                        candidate = applySessionListRenderablePatch(previous, {
+                            metadata: incoming.metadata,
+                            metadataVersion: incoming.metadataVersion,
+                            metadataUnavailable: incoming.metadataUnavailable,
+                            encryptedContentAvailability: incoming.encryptedContentAvailability,
+                            [SESSION_OWNER_METADATA_PROJECTION]: owner,
+                            [SESSION_LIST_DOCUMENT_ADMISSION]: incomingAdmission,
+                        });
+                    }
+                    const withStaleFields = preserveSessionListRenderableStaleFields(previous, candidate);
                     let next = preserveSessionListRenderableTransientState(previous, withStaleFields);
-                    next = resolveSessionRuntimePublication(previous, next, incoming);
-                    if (didPreserveRenderableMetadata(previous, incoming, next)) staleMetadataPreservedCount += 1;
-                    if (didPreserveRenderablePendingFlags(previous, incoming, next)) stalePendingFlagsPreservedCount += 1;
+                    next = resolveSessionRuntimePublication(previous, next, candidate);
+                    if (didPreserveRenderableMetadata(previous, candidate, next)) staleMetadataPreservedCount += 1;
+                    if (didPreserveRenderablePendingFlags(previous, candidate, next)) stalePendingFlagsPreservedCount += 1;
                     if (areSessionPublicationFactsEqual(previous, next)) {
-                        if (publishedRows && previous) publishedRows[incoming.id] = previous;
+                        if (publishedRows && previous && !changedSinceBaseline) publishedRows[incoming.id] = previous;
                         continue;
                     }
                     next = retainDeep(previous, next);
-                    if (publishedRows) publishedRows[incoming.id] = next;
+                    if (publishedRows && !changedSinceBaseline) publishedRows[incoming.id] = next;
                     if (nextRows === previousRows) nextRows = { ...previousRows };
                     nextRows[incoming.id] = next;
                     changedSessionIds.push(incoming.id);
