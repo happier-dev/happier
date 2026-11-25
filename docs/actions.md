@@ -10663,6 +10663,12 @@ confirmation host; a caller must not put another yes/no dialog or two-step butto
 Dialogs that collect a different scope, choose recovery after a refusal, or discard an unsent
 local draft remain separate decisions.
 
+For a confirmed live-only plugin Action on a mounted page, the receiving
+Machine keeps the invocation active while its admitted Before checks run and
+records their outcome on the existing receipt. A detached native confirmation
+from an older development build cannot be approved from the Inbox. Retry the
+Action from its mounted page.
+
 For plugin installation in unreleased 0.3, the native confirmation and approval
 Artifact paths carry the accepted daemon candidate through the same host-only
 approved replay context. Plugin administration consumes that exact review rather

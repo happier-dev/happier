@@ -224,8 +224,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // An Agent's enable request is decided by its own controller here too: Allow · Always in <place> · Not now (P8 U8.5).
   const capabilityEnable = review?.capabilityEnable ?? null;
   const approvalWithheld = approveAdmission?.status === 'unavailable';
+  const invocationUnavailable = approveAdmission?.status === 'unavailable' && approveAdmission.reason === 'live_invocation_unavailable';
   // A request that can never run says why here too, in the card's words (owner ruling C3).
-  const cannotRun = readApprovalCannotRunReason(review?.admission);
+  const cannotRun = readApprovalCannotRunReason(approveAdmission);
 
   const request = parsed?.request ?? null;
   const confidentialAction = review?.confidentialAction ?? false;
@@ -739,7 +740,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     <ApprovalDecisionBar testID="approvals.actions" busy={(checking ? checks.isCancellingChecks : isDeciding) && !homeUnavailable}
       irreversible={review?.irreversible === true && !confidentialAction && !consent && !checking}
       layout={handoffTargetPresentation ? 'stacked' : 'inline'}
-      approve={checking ? undefined : consent ? (canAllow ? {
+      approve={invocationUnavailable || checking ? undefined : consent ? (canAllow ? {
         testID: 'approvals.approve', label: t('workflows.triggers.checks.allow'),
         disabled: isDeciding || approvalRouteUnavailable,
         onPress: () => { void checks.answerConsent('allow'); },

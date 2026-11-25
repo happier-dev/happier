@@ -667,7 +667,8 @@ describe('ApprovalPromptCard', () => {
         });
     });
 
-    it.each(['open', 'failed'] as const)('renders a contributed Action approval when %s', async (status) => {
+    it.each(['open', 'failed', 'detached UI'] as const)('renders a contributed Action approval for %s', async (scenario) => {
+        const status = scenario === 'failed' ? 'failed' : 'open';
         const approval = TargetActionApprovalRequestV1Schema.parse({
             v: 1, kind: 'plugin_target_action', status, createdAtMs: 1, updatedAtMs: 1,
             createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
@@ -678,6 +679,12 @@ describe('ApprovalPromptCard', () => {
                 caller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 },
                 serverId: homeId, sessionId: 'session-1', actionId: 'action.invoke', requestId: 'request-1' },
             summary: 'Update this lead’s stage?',
+            ...(scenario === 'detached UI' ? {
+                requestedSurface: 'ui',
+                replayPlacement: { serverId: homeId, machineId: 'machine-1' },
+                executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
+                    machineId: 'machine-1', serverId: homeId, actionId: 'action.invoke', requestId: 'request-1' },
+            } : {}),
             ...(status === 'failed' ? {
                 decision: { kind: 'approve', decidedAtMs: 2 },
                 execution: { executedAtMs: 3, ok: false, errorCode: 'approval_execution_failed' },
@@ -690,7 +697,10 @@ describe('ApprovalPromptCard', () => {
         />, createApprovalTestSource());
         expect(screen.findByTestId('approval-prompt-card')).toBeTruthy();
         expect(screen.getTextContent()).toContain('Update this lead’s stage?');
-        if (status === 'open') {
+        if (scenario === 'detached UI') {
+            expect(screen.findByTestId('approval-prompt-approve')).toBeNull();
+            expect(screen.getTextContent()).toContain('approvals.cannotRun');
+        } else if (status === 'open') {
             expect(screen.findByTestId('approval-prompt-approve')).toBeTruthy();
             expect(screen.findByTestId('approval-prompt-reject')).toBeTruthy();
         } else {

@@ -2262,6 +2262,29 @@ describe('ApprovalDetailScreen', () => {
   });
 
 
+  it('shows that a detached native Channels confirmation can no longer run and withholds Approve', async () => {
+    const artifact = createTargetActionApprovalArtifact();
+    const request = TargetActionApprovalRequestV1Schema.parse({
+      ...JSON.parse(artifact.body),
+      createdBy: { surface: 'system' },
+      requestedSurface: 'ui',
+      qualifiedActionId: 'happier.channels/actions/binding/set-enabled-v1',
+      input: { bindingId: 'binding-1', expectedRevision: 1, enabled: false },
+      replayPlacement: { serverId: 'channels-home', machineId: 'channels-machine' },
+      executionOriginV1: {
+        v: 1, surface: 'ui', authority: 'present_user', caller: { kind: 'host' },
+        actionId: 'action.invoke', requestId: 'rpc_d39897c1-6c5a-4cb1-9235-f9d6abca32fc',
+        accountId: 'account-secret', serverId: 'channels-home', serverIdentityId: 'srv_channels-home', machineId: 'channels-machine',
+        target: { kind: 'machine', machineId: 'channels-machine' },
+      },
+    });
+    currentArtifact = { ...artifact, header: buildTargetActionApprovalArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const screen = await renderScreen(<approvalDetailScreenModule.ApprovalDetailScreen artifactId="target-artifact-1" />);
+    expect(readRenderedText(screen)).toContain('approvals.cannotRun');
+    expect(screen.findByTestId('approvals.approve')).toBeNull();
+    expect(artifactWrites()).toHaveLength(0);
+  });
+
   it('renders the exact plugin target input and updates only that artifact', async () => {
     currentArtifact = createTargetActionApprovalArtifact();
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');

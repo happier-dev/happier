@@ -31,8 +31,109 @@ import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/action
 import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { ActionSettlementV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 
 describe('mounted caller admission through the real contributed Action RPC', () => {
+    it.each(['succeeded', 'failed'] as const)('keeps confirmed live-only Channels consent in the mount when its Before Run %s', async state => {
+        const pluginId = 'happier.channels';
+        const localId = 'binding/set-enabled-v1';
+        const actionId = `${pluginId}/actions/${localId}`;
+        const machineId = 'channels-machine';
+        const serverIdentityId = 'srv_channels-home';
+        const manifest = createPluginManifestV2Fixture({ id: pluginId, contributes: {
+            ui: { renderers: [{ id: 'panel', kind: 'declarative', root: { kind: 'text', text: 'Channels' } }],
+                views: [{ id: 'channels', container: 'appPage', target: { kind: 'app' }, renderer: 'panel' }] },
+            actions: [{ id: localId, title: 'Change conversation binding enabled state', scopes: ['global'], surfaces: ['ui'],
+                dangerLevel: 'writesRemote', placementBindings: [], execution: { target: 'daemon' },
+                confirmation: { title: 'Change conversation binding enabled state?' } }],
+        } });
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+            plugins: [{ manifest, files: { 'daemon.mjs': `let effects = 0; export function activate(api) {
+                api.actions.register(${JSON.stringify(localId)}, ({ enabled }) => ({ enabled, effects: ++effects }));
+            }` } }],
+            runtimeOptions: { resolveCurrentMachineId: () => machineId },
+        });
+        const manifestSelection = normalizePluginManifestV2(manifest);
+        const sourceCustody = { kind: 'account_release' as const, pluginId, version: manifestSelection.version,
+            archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
+        const artifactId = 'mounted-channels-confirmation';
+        const requestLifetime = new AbortController();
+        const waitersAtPublication: number[] = [];
+        const startedRuns: string[] = [];
+        let approval: TargetActionApprovalRequestV1 | null = null;
+        const requestCurrentIntent = createTargetActionCurrentIntentAdapter({
+            create: async (request, onReady) => {
+                approval = request;
+                onReady?.({ artifactId, request });
+                waitersAtPublication.push(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId));
+                if (!request.automaticChecks) requestLifetime.abort();
+                return { artifactId, request };
+            },
+            read: async () => approval,
+            update: async ({ request }) => {
+                if (!approval) throw new Error('Missing Channels Action receipt');
+                const transition = admitTargetActionApprovalTransition(approval, request);
+                if (transition.ok) approval = request;
+                return transition;
+            },
+        });
+        const port = createActionAutomationPortV1({ accountId: 'actor',
+            seed: async () => ({ v: 1, rows: [
+                { ownerAccountId: 'actor', automationId: 'channels-before', triggerId: 'before-trigger', triggerRevision: 1,
+                    workflowId: 'channels-workflow', workflowRevision: 1, actionIds: [actionId], phase: 'before', mode: 'wait', onFailure: 'refuse' },
+            ] }),
+            start: async ({ selected }) => ({
+                runs: selected.map(({ automationId, triggerId }) => {
+                    startedRuns.push(triggerId);
+                    return { automationId, triggerId, runId: 'channels-check' };
+                }), notices: [],
+            }),
+            settle: async () => {},
+        });
+        try {
+            const handlers = new Map<string, RpcHandler>();
+            registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
+                resolveRuntimeRegistry: async () => fixture.registry,
+                resolveInstalledPackages: async () => [],
+                resolveAccountPluginExecutionSelection: async () => ({
+                    kind: 'available', sourceCustody, manifest: manifestSelection, custodyId: 'channels-release', release: null,
+                }),
+                requestCurrentIntent,
+                resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId, machineId }),
+                resolveActionAutomationContext: async () => ({
+                    actionAutomationPort: { ...port, wait: async () => ({ state }) },
+                    serverIdentityId, serverId: 'channels-home', externalActionTarget: { kind: 'machine', machineId },
+                }),
+            });
+            const execute = handlers.get(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
+            const occurrenceId = fixture.registry.readPluginOccurrenceId?.(pluginId);
+            if (!execute || !occurrenceId) throw new Error('Expected installed Channels Action');
+            const result = await execute({
+                machineId, qualifiedActionId: `${pluginId}/${localId}`, expectedContributorOccurrenceId: occurrenceId,
+                executionSurface: 'ui', input: { bindingId: 'binding-1', expectedRevision: 1, enabled: false },
+                presentUserIntent: 'confirmed',
+                invocation: { kind: 'mountedPluginSurface', mountedBinding: {
+                    pluginId, contributionLocalId: 'channels', occurrenceId, sourceCustody,
+                } },
+            }, { signal: requestLifetime.signal, callerAuthority: 'present_user' });
+            if (state === 'succeeded') {
+                expect(result).toEqual({ ok: true, result: { enabled: false, effects: 1 } });
+                expect(approval).toMatchObject({ status: 'executed', execution: { ok: true } });
+            } else {
+                expect(result).toMatchObject({ ok: false, code: 'action_interception_rejected' });
+                expect(approval).toMatchObject({ status: 'failed', execution: { ok: false, effectAttempted: false } });
+            }
+            expect(startedRuns).toEqual(['before-trigger']);
+            expect(approval).toMatchObject({ approvalInputCustody: 'live_only',
+                automaticChecks: { humanApprovalRequired: false, runs: [{ runId: 'channels-check' }] } });
+            expect(waitersAtPublication).toEqual([0]);
+        } finally {
+            requestLifetime.abort();
+            port.dispose();
+            await fixture.dispose();
+        }
+    });
+
     it.each(['mounted page', 'native Action', 'CLI Action', 'MCP Action'] as const)(
         'runs the qualified Before check and publishes one After settlement through the %s boundary', async entry => {
         const pluginId = 'acme.tickets';

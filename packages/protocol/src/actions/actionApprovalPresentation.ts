@@ -529,6 +529,12 @@ export type ApprovalRequestApproveAdmission = Readonly<
     }
 >;
 
+type TargetActionApprovalApproveAdmission = ApprovalRequestApproveAdmission | Readonly<{
+  status: 'unavailable';
+  reason: 'live_invocation_unavailable';
+  presentation: ApprovalActionFieldsPresentation;
+}>;
+
 export type PluginInstallApprovalPendingReview = Extract<
   PluginChangePendingReviewResult,
   Readonly<{ reviewKind: 'installation' }>
@@ -1730,10 +1736,28 @@ export function describeApprovalRequestFields(
  * button cannot advertise an effect that the decision owner will reject.
  */
 export function resolveApprovalRequestApproveAdmission(
+  request: ApprovalRequest,
+): ApprovalRequestApproveAdmission;
+export function resolveApprovalRequestApproveAdmission(
   request: ApprovalRequest | TargetActionApprovalRequestV1,
-): ApprovalRequestApproveAdmission {
+): TargetActionApprovalApproveAdmission;
+export function resolveApprovalRequestApproveAdmission(
+  request: ApprovalRequest | TargetActionApprovalRequestV1,
+): TargetActionApprovalApproveAdmission {
   if (!('actionId' in request)) {
     const presentation = describeApprovalRequestFields(request);
+    const origin = request.executionOriginV1;
+    // Native Machine confirmation stays with the mounted press. Older builds
+    // could leave a detached request in its place, without the admitted checks.
+    if (request.status === 'open' && request.approvalInputCustody === 'live_only'
+      && !request.automaticChecks && !request.requesterConfirmation
+      && request.requestedSurface === 'ui' && origin?.surface === 'ui'
+      && origin.authority === 'present_user' && origin.caller.kind === 'host'
+      && !origin.hostChild && request.replayPlacement
+      && request.replayPlacement.serverId === origin.serverId
+      && request.replayPlacement.machineId === origin.machineId) {
+      return { status: 'unavailable', reason: 'live_invocation_unavailable', presentation };
+    }
     return presentation.unrepresentable
       ? { status: 'unavailable', reason: 'context_unavailable', details: presentation.unrepresentable, presentation }
       : { status: 'available', presentation };

@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import type { ApprovalRequest, ApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
-import { describeApprovalRequestFields } from '@happier-dev/protocol/actions';
+import { describeApprovalRequestFields, resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -149,7 +149,9 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
     const decisionDisabled = accessDisabled || approvalRouteUnavailable || requesterDecision.withheld;
     const automaticChecksPresentation = usePromptAutomaticChecksPresentation(props.approval, props.artifact.id,
         approvalHome.serverId, decisionDisabled);
-    const actionFields = React.useMemo(() => describeApprovalRequestFields(props.approval), [props.approval]);
+    const admission = React.useMemo(() => resolveApprovalRequestApproveAdmission(props.approval), [props.approval]);
+    const actionFields = admission.presentation;
+    const cannotRun = readApprovalCannotRunReason(admission);
     const automaticChecks = readApprovalAutomaticChecksForRequest(props.approval);
     const failure = React.useMemo(() => {
         const execution = readApprovalExecutionFailure(props.approval);
@@ -161,7 +163,7 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
     const openChecksRoute = React.useMemo(() => transcriptSource.navigate
         ? (route: string) => navigateWithBlurOnWeb(() => transcriptSource.navigate?.(route)) : undefined, [transcriptSource]);
     const onDecision = React.useCallback(async (decision: 'approve' | 'reject') => {
-        if (decisionDisabled || isDeciding) return;
+        if (decisionDisabled || isDeciding || decision === 'approve' && cannotRun) return;
         let settledOnCard = false;
         try {
             setIsDeciding(true);
@@ -176,7 +178,7 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
         } finally {
             setIsDeciding(false);
         }
-    }, [decisionDisabled, decide, isDeciding, props.artifact.id]);
+    }, [decisionDisabled, decide, isDeciding, props.artifact.id, cannotRun]);
     const consentWithDecision = checks.decision?.kind === 'consent' && !decisionRecorded && !requesterDecision.withheld;
     const checksCard = automaticChecks ? (
         <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={props.approval.summary} serverId={approvalHome.serverId}
@@ -185,6 +187,7 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
     ) : null;
     const decisionFooter = (
         <ApprovalDecisionFooter
+            approveHidden={cannotRun !== null}
             {...(checks.decision?.kind === 'consent' ? { testIDPrefix: 'approval-prompt-consent',
                 approveLabel: t('workflows.triggers.checks.allow'), rejectLabel: t('workflows.triggers.checks.skip'),
                 approveHidden: !automaticChecksPresentation.canAllow }
@@ -233,7 +236,7 @@ function TargetActionApprovalPromptCard(props: ApprovalPromptCardProps<TargetAct
                         collapsed={(props.chrome ?? 'card') === 'inline' && props.approval.status === 'open'} />
                 ) : null}
             </ItemGroupRowPositionBoundary>
-            {approvalRouteUnavailable ? (
+            {cannotRun ? <Text style={styles.previewText}>{cannotRun}</Text> : approvalRouteUnavailable ? (
                 <Text style={styles.previewText}>{t('actionConfirmations.homeUnavailable')}</Text>
             ) : null}
         </ApprovalPromptChrome>

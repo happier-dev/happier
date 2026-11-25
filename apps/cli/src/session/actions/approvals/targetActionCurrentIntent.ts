@@ -9,7 +9,7 @@ import { settleTargetActionApprovalReplayInputs } from '@happier-dev/protocol/ap
 import { projectTargetActionApprovalInput, resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { createCliApprovalsArtifactStore } from './artifactStore';
 import { persistTargetActionReceipt } from './targetActionSettlement';
-import { buildTargetActionApprovalDecisionResult } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
+import { buildTargetActionApprovalDecisionResult, createTargetActionAutomaticContinuationV1 } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 import { traceExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 
 function createTargetActionApprovalRequestCandidate(
@@ -27,7 +27,7 @@ function createTargetActionApprovalRequestCandidate(
   } = currentIntent;
   const requestedSurface = invocationSurface ?? surface;
   const approvalRequiredByActionSettings = action.approvalRequiredByActionSettings === true;
-  if (!action.confirmation && !approvalRequiredByActionSettings) {
+  if (!action.confirmation && !approvalRequiredByActionSettings && !currentIntent.automaticChecks) {
     currentIntent.reportUnavailable?.('approval_not_required');
     return null;
   }
@@ -65,6 +65,7 @@ function createTargetActionApprovalRequestCandidate(
     ...(replayPlacement === undefined ? {} : { replayPlacement }),
     ...(executionOriginV1 === undefined ? {} : { executionOriginV1 }),
     ...(requesterConfirmation === undefined ? {} : { requesterConfirmation }),
+    ...(currentIntent.automaticChecks ? { automaticChecks: currentIntent.automaticChecks } : {}),
     summary: action.confirmation
       ? resolveLocalizedConfirmationText(action.confirmation.title)
       : 'Action approval required',
@@ -123,7 +124,12 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
     let created: Awaited<ReturnType<typeof deps.create>>;
     try { created = await deps.create(proposedRequest, ready => {
       traceExternalActionInnerStage('contributed.target_invoke.approval', { artifactId: ready.artifactId, approvalStatus: ready.request.status });
-      if (ready.request.approvalInputCustody === 'live_only') void liveDecision.waitForDecision(ready);
+      // The mounted host already took the Action decision. An automatic
+      // continuation only needs a waiter if it actually reaches another decision.
+      if (ready.request.approvalInputCustody === 'live_only'
+        && ready.request.automaticChecks?.humanApprovalRequired !== false) {
+        void liveDecision.waitForDecision(ready);
+      }
     }); }
     catch (error) {
       await liveDecision.cancelCreation();
@@ -131,18 +137,39 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
       throw error;
     }
     const artifactId = created.artifactId.trim();
-    const request = created.request ?? proposedRequest;
+    const retainedRequest = created.request ?? proposedRequest;
     if (!artifactId) {
       await liveDecision.cancelCreation();
       currentIntent.reportUnavailable?.('approval_artifact_id_unavailable');
       return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
     }
-    if (request.approvalInputCustody !== 'live_only') {
+    let request = retainedRequest;
+    let automaticApproval = false;
+    if (retainedRequest.automaticChecks?.humanApprovalRequired === false) {
+      const context = currentIntent.automationContext;
+      if (!update || !context) return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
+      const automatic = createTargetActionAutomaticContinuationV1({ read: deps.read, update,
+        actionAutomations: context.actionAutomationPort });
+      const admitted = await automatic.admit(artifactId, retainedRequest, context);
+      if ('ok' in admitted) return { status: 'unavailable', code: admitted.errorCode };
+      if (admitted !== retainedRequest) {
+        const failure = await automatic.write(artifactId, admitted, context);
+        if (failure) return { status: 'unavailable', code: failure.errorCode };
+      }
+      const resumed = await automatic.resume(artifactId, admitted, context);
+      if ('ok' in resumed) return { status: 'unavailable', code: resumed.errorCode };
+      if (resumed.kind === 'refused') return { status: 'unavailable', code: resumed.failure.errorCode,
+        ...(resumed.request.automaticChecks?.notices ? { automationNotices: resumed.request.automaticChecks.notices } : {}) };
+      request = resumed.request;
+      automaticApproval = resumed.kind === 'approved';
+    }
+    if (request.approvalInputCustody !== 'live_only' && !automaticApproval) {
       await liveDecision.cancelCreation();
       return { status: 'deferred', artifactId };
     }
-    currentIntent.onLiveApprovalRequested?.(artifactId);
-    const result = await liveDecision.waitForDecision({ artifactId, request });
+    if (!automaticApproval) currentIntent.onLiveApprovalRequested?.(artifactId);
+    const result = automaticApproval ? { decision: 'approve' as const, request }
+      : await liveDecision.waitForDecision({ artifactId, request });
     const decidedRequest = StoredTargetActionApprovalRequestV1Schema.safeParse(result.request);
     if (!decidedRequest.success
       || decidedRequest.data.subjectFingerprint !== fingerprint
@@ -169,6 +196,7 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
     const claimed = await update({ artifactId, request: executionClaim });
     if (!claimed.ok) return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
     return { status: 'approved', fingerprint, artifactId,
+      ...(decidedRequest.data.automaticChecks?.notices ? { automationNotices: decidedRequest.data.automaticChecks.notices } : {}),
       settleExecution: async ({ artifactId: admittedArtifactId, execution }) => {
         if (admittedArtifactId !== artifactId || !update) throw new Error('approval_stale');
         const executedAtMs = Math.max((deps.now ?? Date.now)(), executionClaim.updatedAtMs);

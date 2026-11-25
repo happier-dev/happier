@@ -19,6 +19,29 @@ function accountApproval() {
 }
 
 describe('target Action approval decision custody', () => {
+  it('refuses detached native consent before writing an approval for live-only input', async () => {
+    const stored = TargetActionApprovalRequestV1Schema.parse({
+      ...accountApproval(),
+      createdBy: { surface: 'system' },
+      requestedSurface: 'ui',
+      replayPlacement: { serverId: 'home', machineId: 'machine' },
+      executionOriginV1: {
+        v: 1, surface: 'ui', authority: 'present_user', caller: { kind: 'host' },
+        actionId: 'action.invoke', requestId: 'request-1', serverId: 'home', machineId: 'machine',
+      },
+    });
+    const writes: TargetActionApprovalRequestV1[] = [];
+    const decide = createTargetActionApprovalDecision({
+      read: async () => writes.at(-1) ?? stored,
+      update: async ({ request }) => { writes.push(request); return { ok: true }; },
+      hasLiveInvocation: () => false,
+    });
+    expect(await decide({ artifactId: 'detached-native-confirmation', decision: 'approve' })).toMatchObject({
+      ok: false, errorCode: 'approval_origin_unavailable', details: { reason: 'live_invocation_unavailable' },
+    });
+    expect(writes).toEqual([]);
+  });
+
   it('executes captured daemon placement independently of the requesting surface', async () => {
     const { approvalInputCustody: _liveOnly, ...replayable } = accountApproval();
     let stored = TargetActionApprovalRequestV1Schema.parse({ ...replayable, requestedSurface: 'ui',

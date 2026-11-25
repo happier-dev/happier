@@ -215,7 +215,11 @@ export function createTargetActionApprovalDecision(deps: Readonly<{
       && deps.hasLiveInvocation !== undefined && !deps.hasLiveInvocation(artifactId);
     if (existing.status === 'executing' && isApprovalRequestExecutionApproved(existing)) return failure('approval_execution_outcome_unknown');
     if (existing.status !== 'open' && (existing.status !== 'approved' || !isApprovalRequestExecutionApproved(existing))) return failure('approval_not_open');
-    if (resolveApprovalRequestApproveAdmission(existing).status !== 'available') return failure('approval_context_unavailable');
+    const admission = resolveApprovalRequestApproveAdmission(existing);
+    if (admission.status === 'unavailable') {
+      return admission.reason === 'live_invocation_unavailable'
+        ? buildApprovalOriginFailure(admission.reason) : failure('approval_context_unavailable');
+    }
     let approved = existing;
     if (existing.status === 'open') {
       const approvedAtMs = nextTimestamp(existing);

@@ -12,7 +12,8 @@ export function readApprovalAutomaticChecksDecision(
 ): ApprovalAutomaticChecksDecision {
   if (checks?.phase === 'consent') {
     const pending = checks.consents.find(consent => consent.decision === 'pending');
-    return pending ? { kind: 'consent', automationId: pending.automationId, triggerId: pending.triggerId } : null;
+    if (pending) return { kind: 'consent', automationId: pending.automationId, triggerId: pending.triggerId };
+    return checks.humanApprovalRequired ? null : { kind: 'checking' };
   }
   if (checks?.phase === 'checking') return { kind: 'checking' };
   if (checks?.phase === 'override') return { kind: 'override' };

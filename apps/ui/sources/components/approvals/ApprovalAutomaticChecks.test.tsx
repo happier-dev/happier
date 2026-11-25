@@ -68,6 +68,10 @@ function checks(
 
 // 05 S6/S8/S9: the card answers a shared check's consent, cancels a running check, or approves anyway after a failure.
 describe('Action before checks on the approval card', () => {
+  it('shows check progress while a confirmed Action starts its check without awaiting another answer', () => {
+    expect(readApprovalAutomaticChecksDecision(checks({}))).toEqual({ kind: 'checking' });
+  });
+
   it('opens Review steps and check Runs on the approval Home instead of the focused Home', async () => {
     const navigation = createExpoRouterMock({ params: { serverId: 'focused-home' } });
     const approvalHome = 'approval-home';
