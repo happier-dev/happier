@@ -112,7 +112,7 @@ describe('workspace.sync.relationship.create Action', () => {
       if (runs) expect(effects[0]).not.toHaveProperty('targetReplacementApprovalReceiptId');
     });
 
-  it('binds exact-mirror replacement approval to the replacement Action and its exact old link', async () => {
+  it.each(['mcp', 'cli'] as const)('binds %s exact-mirror replacement approval to the replacement Action and its exact old link', async surface => {
     const exactInput = { ...input, mode: 'mirror_exactly' as const, replaceRelationshipId: 'old-link' };
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'replace-approval' }));
     const create = vi.fn(async () => result);
@@ -132,7 +132,7 @@ describe('workspace.sync.relationship.create Action', () => {
       approvalsCreate,
     } satisfies ActionExecutorDeps);
     expect(await executor.execute('workspace.sync.relationship.replace', exactInput, {
-      surface: 'mcp', authority: 'account_automation', serverId: 'server-a', actionRequestId: 'replace-request',
+      surface, authority: 'account_automation', serverId: 'server-a', actionRequestId: 'replace-request',
     })).toMatchObject({ ok: true, result: { artifactId: 'replace-approval' } });
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({
       actionId: 'workspace.sync.relationship.replace', actionArgs: exactInput,
@@ -149,7 +149,7 @@ describe('workspace.sync.relationship.create Action', () => {
     })).toMatchObject({ ok: false, errorCode: 'workspace_root_identity_unavailable' });
   });
 
-  it('keeps worker-copy purpose and the chosen folder in the existing destination approval', async () => {
+  it.each(['mcp', 'cli'] as const)('keeps worker-copy purpose and the chosen folder in the existing destination approval from %s', async surface => {
     const exactInput = { ...input, mode: 'keep_synced' as const, destinationIntent: 'materialize_from_source_workspace' as const,
       targetPath: '/chosen-worker', purpose: 'worker_clean_copy' as const };
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'worker-approval' }));
@@ -163,9 +163,9 @@ describe('workspace.sync.relationship.create Action', () => {
       approvalsCreate,
     } satisfies ActionExecutorDeps);
     const outcome = await executor.execute('workspace.sync.relationship.create', exactInput, {
-      surface: 'mcp', authority: 'account_automation', machineId: 'source-machine', actionRequestId: 'worker-create', serverId: 'server-a',
+      surface, authority: 'account_automation', machineId: 'source-machine', actionRequestId: 'worker-create', serverId: 'server-a',
     });
-    expect(outcome).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'worker-approval' } });
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'worker-approval' } });
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({ actionId: 'workspace.sync.relationship.create', actionArgs: exactInput }) }));
     expect(create).not.toHaveBeenCalled();
   });

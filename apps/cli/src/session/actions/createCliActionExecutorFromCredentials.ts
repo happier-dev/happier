@@ -71,7 +71,7 @@ import { ManagedMachineControllerError } from '@/machines/managed/controllerErro
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { projectDeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
@@ -144,6 +144,7 @@ import {
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { isSessionBoardActionIdV1 } from '@happier-dev/protocol/sessions/board/actionIds';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS, readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -420,6 +421,25 @@ export async function resolveAccountWorkspaceMachine(params: Parameters<typeof r
     : { ok: true, machineId: selected.ref.machineId };
 }
 
+function readSourceWorkspaceSelector(actionId: string, input: unknown, homeId: string): Readonly<{
+  serverId: string;
+  id: string;
+}> | null | undefined {
+  if (isWorkspaceSyncRelationshipWriteActionId(actionId)) {
+    const write = WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
+    return write.success ? { serverId: homeId, id: write.data.sourceWorkspaceRefId } : null;
+  }
+  if (actionId === 'projects.service.relocate') {
+    const relocate = ProjectServiceRelocateInputV1Schema.safeParse(input);
+    return relocate.success ? { serverId: relocate.data.workspace.serverId, id: relocate.data.workspace.refId } : null;
+  }
+  if (actionId === 'deployments.prepare') {
+    const prepare = DeploymentPrepareInputV1Schema.safeParse(input);
+    return prepare.success ? prepare.data.workspace : null;
+  }
+  return undefined;
+}
+
 async function resolvePatActionTransportPlan(params: Readonly<{
   actionId: string;
   credentials: StoredCredentials;
@@ -446,11 +466,8 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     params = { ...params, input: bound.input };
   }
   const signal = combineInvocationSignals(params.invocationSignal, params.context?.signal);
-  if (publicActionId.data === 'projects.service.relocate' || publicActionId.data === 'deployments.prepare') {
-    const relocated = publicActionId.data === 'projects.service.relocate' ? ProjectServiceRelocateInputV1Schema.safeParse(params.input) : null;
-    const prepared = publicActionId.data === 'deployments.prepare' ? DeploymentPrepareInputV1Schema.safeParse(params.input) : null;
-    const workspace = relocated?.success ? { serverId: relocated.data.workspace.serverId, id: relocated.data.workspace.refId }
-      : prepared?.success ? prepared.data.workspace : null;
+  const workspace = readSourceWorkspaceSelector(publicActionId.data, params.input, params.serverIdentityId ?? params.serverId);
+  if (workspace !== undefined) {
     if (!workspace) return { kind: 'settled', result: actionFailure('invalid_parameters') };
     const source = await resolveAccountWorkspaceMachine({ ...params, workspace, ...(signal ? { signal } : {}) });
     if (!source.ok) return { kind: 'settled', result: actionResolutionFailure(source) };
@@ -2172,16 +2189,13 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         }
       }
       let workspaceMachineId: string | undefined;
-      if (originalCliCaller && (actionId === 'projects.service.relocate' || actionId === 'deployments.prepare')) {
-        const relocated = actionId === 'projects.service.relocate' ? ProjectServiceRelocateInputV1Schema.safeParse(input) : null;
-        const prepared = actionId === 'deployments.prepare' ? DeploymentPrepareInputV1Schema.safeParse(input) : null;
-        const workspace = relocated?.success ? { serverId: relocated.data.workspace.serverId, id: relocated.data.workspace.refId }
-          : prepared?.success ? prepared.data.workspace : null;
+      const workspaceHomeId = context.serverIdentityId ?? params.serverIdentityId;
+      const workspace = originalCliCaller ? readSourceWorkspaceSelector(actionId, admittedInput, workspaceHomeId ?? approvalServerId) : undefined;
+      if (workspace !== undefined) {
         if (!workspace) return { context, invocation: createOneShotPatInvocation(async () => actionFailure('invalid_parameters')) };
         const signal = combineInvocationSignals(invocationSignal, context.signal);
         const source = await resolveAccountWorkspaceMachine({ credentials, workspace, serverId: approvalServerId,
-          ...(context.serverIdentityId ?? params.serverIdentityId
-            ? { serverIdentityId: context.serverIdentityId ?? params.serverIdentityId } : {}),
+          ...(workspaceHomeId ? { serverIdentityId: workspaceHomeId } : {}),
           serverApiUrl: resolveActionServerApiUrl(), ...(signal ? { signal } : {}) });
         if (!source.ok) return { context, invocation: createOneShotPatInvocation(async () => actionResolutionFailure(source)) };
         const captured = context.externalActionTarget;

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 
@@ -44,6 +45,13 @@ async function network(refs = [sourceRef]) {
     }
     const envelope = body && typeof body === 'object' ? body as Readonly<Record<string, unknown>> : {};
     // Action identity belongs to the real HTTP route, not the strict request body.
+    const syncActionId = request.url?.split('/').at(-1);
+    if (syncActionId === 'workspace.sync.relationship.create' || syncActionId === 'workspace.sync.relationship.replace') {
+      actions.push({ actionId: syncActionId, ...envelope });
+      response.end(JSON.stringify({ v: 1, actionId: syncActionId, requestId: envelope.requestId,
+        execution: { ok: false, errorCode: 'workspace_root_identity_unavailable', error: 'Workspace root identity is unavailable' } }));
+      return;
+    }
     const actionId = request.url?.includes('localServices.actions.stopManaged')
       ? 'localServices.actions.stopManaged' : request.url?.includes('deployments.prepare') ? 'deployments.prepare' : 'projects.service.relocate';
     actions.push({ actionId, ...envelope });
@@ -74,6 +82,43 @@ describe('CLI relocation source routing', () => {
     expect(boundary.actions).toEqual([expect.objectContaining({ actionId: 'deployments.prepare',
       target: { kind: 'machine', machineId: sourceRef.machineId }, input: prepare })]);
     expect(boundary.projectReads).toEqual([{ key: prepare.workspace }]);
+  });
+
+  it.each([
+    { actionId: 'workspace.sync.relationship.create', destinationIntent: 'materialize_from_source_workspace', replacement: {} },
+    { actionId: 'workspace.sync.relationship.replace', destinationIntent: 'use_existing', replacement: { replaceRelationshipId: 'old-relationship' } },
+  ] as const)('routes $actionId to the accepted source before target inspection', async ({ actionId, destinationIntent, replacement }) => {
+    const homeId = 'srv_source_home';
+    const boundary = await network([{ ...sourceRef, serverId: homeId }]);
+    const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'source-profile',
+      serverIdentityId: homeId, serverApiUrl: boundary.endpoint });
+    const policy = { v: 1, selection: 'all_files', extraIgnorePatterns: [], extraIncludePatterns: [] } as const;
+    const sync = { v: 1, sourceWorkspaceRefId: sourceRef.id, targetMachineId: 'new-worker',
+      targetPath: '/copy', mode: 'keep_synced', purpose: 'worker_clean_copy',
+      destinationIntent,
+      contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, ...replacement };
+    const execution = await executor.execute(actionId, sync, { surface: 'cli' });
+    expect(execution, JSON.stringify(execution)).toMatchObject({ ok: false, errorCode: 'workspace_root_identity_unavailable' });
+    expect(boundary.actions).toEqual([expect.objectContaining({ actionId, input: sync,
+      target: { kind: 'machine', machineId: sourceRef.machineId } })]);
+    expect(boundary.projectReads).toEqual([{ key: { kind: 'workspace-ref', serverId: homeId, id: sourceRef.id } }]);
+
+    await expect(executor.execute(actionId, sync, { surface: 'cli',
+      externalActionTarget: { kind: 'machine', machineId: 'new-worker' } }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    expect(boundary.actions).toHaveLength(1);
+
+    const storedToken = `e30.${Buffer.from(JSON.stringify({ sub: 'requester-account', tokenEpoch: 1,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' },
+    })).toString('base64url')}.signature`;
+    const stored = createCliActionExecutorFromCredentials({ credentials: { token: storedToken, encryption: null,
+      credentialProvenance: 'stored_session' }, serverId: 'source-profile', serverIdentityId: homeId,
+      serverApiUrl: boundary.endpoint, externalActionClient: true });
+    await expect(stored.execute(actionId, sync, { surface: 'cli',
+      externalActionTarget: { kind: 'machine', machineId: 'new-worker' } }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    expect(boundary.projectReads).toHaveLength(3);
+    expect(boundary.actions).toHaveLength(1);
   });
 
   const nativeStop = { requestId: 'exact-native-stop', action: 'stop_managed' as const, force: false,
