@@ -9,7 +9,7 @@ import { isActionOutcomeUnknownErrorCodeV1, readActionFailureCauseV1, readAction
 import type { ApprovalRequest} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1} from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
-import { ApprovalExecutionV1Schema, LIVE_CLI_APPROVAL_DECIDE_METHOD, resolveApprovalExecutor, type ApprovalExecutionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalExecutionV1Schema, isApprovalRequestV2TerminalStatus, LIVE_CLI_APPROVAL_DECIDE_METHOD, resolveApprovalExecutor, type ApprovalExecutionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ApprovalRequestPublicReadSchema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalStaleReason';
 import { TeamInvitationCreateResultV1Schema, TeamInvitationReissueResultV1Schema } from '@happier-dev/protocol/teams';
@@ -184,7 +184,7 @@ export class ApprovalExecutionError extends HappyError {
 /** A recorded decision is not a successful user outcome when its physical effect failed. */
 export function assertApprovalExecutionSucceeded(execution: ApprovalExecutionV1): void {
     if (execution.ok !== false) return;
-    if (isApprovalDecisionStale(execution)) {
+    if (isApprovalDecisionStale(execution) || isActionOutcomeUnknownErrorCodeV1(execution.errorCode)) {
         const failure = readActionFailureEnvelope(execution);
         if (failure) requireActionSuccess(failure);
     }
@@ -287,6 +287,27 @@ export function useApprovalDecisionHandler(
         [],
     );
     const mounted = React.useRef(true);
+    // Callers already observe this Artifact. Join that observation rather than
+    // treating an early readback as settlement or starting another reader.
+    const observedApproval = React.useRef({ artifactId: artifact.id, serverId, approval });
+    observedApproval.current = { artifactId: artifact.id, serverId, approval };
+    const settlementWaiters = React.useRef(new Set<(request: ApprovalHomeRequest | null) => void>());
+    React.useEffect(() => {
+        if (approval && !isApprovalRequestV2TerminalStatus(approval.status)) return;
+        for (const settle of settlementWaiters.current) settle(approval);
+        settlementWaiters.current.clear();
+    }, [approval]);
+    React.useEffect(() => () => {
+        for (const settle of settlementWaiters.current) settle(null);
+        settlementWaiters.current.clear();
+    }, [artifact.id, serverId]);
+    const awaitObservedSettlement = React.useCallback(() => {
+        const observed = observedApproval.current;
+        if (!mounted.current || observed.artifactId !== artifact.id || observed.serverId !== serverId) return Promise.resolve(null);
+        const current = observed.approval;
+        if (!current || isApprovalRequestV2TerminalStatus(current.status)) return Promise.resolve(current);
+        return new Promise<ApprovalHomeRequest | null>(resolve => { settlementWaiters.current.add(resolve); });
+    }, [artifact.id, serverId]);
     const publicPreparation = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
         mounted.current = true;
@@ -383,6 +404,7 @@ export function useApprovalDecisionHandler(
                     if ((status === 'executed' || status === 'failed' || status === 'outcome_unknown')
                         && execution?.ok === (status === 'executed')) outcome = { status, execution };
                 }
+                if (outcome === null) outcome = await awaitObservedSettlement();
             }
             if (!result.ok && outcome === null) requireActionSuccess(result);
             // A decision can be recorded successfully while its execution was refused.
@@ -464,5 +486,5 @@ export function useApprovalDecisionHandler(
             if (publicPreparation.current === preparation) publicPreparation.current = null;
             if (!retainedForReveal) account?.dispose();
         }
-    }, [approval, artifact.id, executor, replayRoute, serverId]);
+    }, [approval, artifact.id, awaitObservedSettlement, executor, replayRoute, serverId]);
 }

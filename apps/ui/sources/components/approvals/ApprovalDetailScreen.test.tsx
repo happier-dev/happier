@@ -2171,6 +2171,37 @@ describe('ApprovalDetailScreen', () => {
     await screen.unmount();
   });
 
+  it.each(['executed', 'outcome_unknown'] as const)('waits for the observed %s receipt after an early non-terminal decision readback', async status => {
+    const artifact = await createDaemonRoutedApprovalArtifact('session.stop');
+    const request = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+    currentArtifact = artifact;
+    daemonReply = { ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const { Modal } = await import('@/modal');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+    const readsBefore = artifactReads(artifact.id).length;
+    vi.mocked(Modal.alert).mockClear();
+    const pressed = screen.pressByTestIdAsync('approvals.approve');
+    try {
+      await vi.waitFor(() => expect(artifactReads(artifact.id).length).toBeGreaterThan(readsBefore));
+      expect(Modal.alert).not.toHaveBeenCalled();
+      const execution = status === 'executed' ? { executedAtMs: 3, ok: true, result: {} }
+        : { executedAtMs: 3, ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' };
+      const settled = ApprovalRequestV2Schema.parse({ ...request, status, updatedAtMs: 3,
+        ...approvedFixtureLifecycle(artifact.body, 2), execution });
+      await act(async () => {
+        commitRemoteArtifact({ ...artifact, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled) });
+        publishHomeAccountChange(account.serverId, [artifact.id], { changeKinds: ['artifact'] });
+      });
+      await pressed;
+      if (status === 'executed') {
+        await vi.waitFor(() => expect(approvalStatus(screen)).toBe('approvals.status.executed'));
+        expect(Modal.alert).not.toHaveBeenCalled();
+      } else expect(vi.mocked(Modal.alert).mock.calls[0]?.[1]).toBe('errors.scmOutcomeUnknown');
+    } finally { await screen.unmount(); }
+  });
+
   it('preserves and presents the typed Workflow refusal from a settled Setup approval', async () => {
     await prepareApprovalFixture();
     const request = ApprovalRequestV2Schema.parse({

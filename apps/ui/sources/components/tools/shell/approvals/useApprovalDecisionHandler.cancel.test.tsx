@@ -323,6 +323,96 @@ describe('built-in approval decisions through the canonical owner', () => {
             expect(harness.artifacts(serverId).readPlainBody(artifact.id)).toContain('synthetic-private-daemon-authorization');
         } finally { await hook.unmount(); }
     });
+    it.each(['executed', 'outcome_unknown', 'unmounted'] as const)('follows the Artifact observer after a non-terminal readback until %s', async status => {
+        const serverId = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://approval-settlement.test',
+            serverIdentityId: 'srv_approval-settlement', accountId: 'bob', currentAccount: true });
+        await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'bob', machineId: 'machine' });
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'source' }, requestedSurface: 'agent',
+            // APPR-S1 step 2: Account title edits replay in the app; archive
+            // remains Session-placed and exercises the exact-daemon receipt.
+            actionId: 'session.archive', actionArgs: { sessionId: 'source' }, summary: 'Archive session',
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'api', caller: { kind: 'host' },
+                serverId, serverIdentityId: 'srv_approval-settlement', accountId: 'bob', principalId: 'principal', credentialId: 'credential',
+                machineId: 'machine', sessionId: 'source', target: { kind: 'session', sessionId: 'source' },
+                actionId: 'session.archive', requestId: 'title-request', externalActionInputSignature: 'a'.repeat(86),
+                externalActionExecutionAuthorization: { v: 1, token: 'synthetic-private-daemon-authorization', binding: {
+                    serverIdentityId: 'srv_approval-settlement', accountId: 'bob', principalId: 'principal', credentialId: 'credential',
+                    grant: API_TOKEN_FULL_GRANT_V1, machineId: 'machine', custodianAccountId: 'bob', installationId: 'machine-installation',
+                    actionId: 'session.archive', requestId: 'title-request', requestEnvelopeDigest: 'a'.repeat(43),
+                    target: { kind: 'session', sessionId: 'source' },
+                } },
+            } });
+        const artifact = { id: 'lost-title-receipt', header: buildApprovalRequestArtifactHeaderV1(request) };
+        await harness.artifacts(serverId).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+            ...artifact, header: encodePlainArtifactStoredContent(artifact.header),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        }) });
+        // The daemon response is ambiguous while the Artifact is still executing.
+        let decisionRequestId: string | undefined;
+        let settle: (() => Promise<void>) | undefined;
+        harness.answer(serverId, '/v1/actions/approval.request.decide', { select: async input => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+            decisionRequestId = envelope.requestId;
+            const execution = status !== 'outcome_unknown' ? { executedAtMs: 3, ok: true, result: {} }
+                : { executedAtMs: 3, ok: false, requestId: envelope.requestId, effectAttempted: true,
+                    errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown',
+                    failureCause: { phase: 'session.archive', errorClass: 'RpcError', errorCode: 'machine_offline', httpStatus: null } };
+            const settled = ApprovalRequestV2Schema.parse({ ...request, status: status === 'unmounted' ? 'executed' : status, updatedAtMs: 3,
+                decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+            settle = async () => {
+                const context = await captureActionAccountContext(serverId);
+                try {
+                    // The deciding executor already persisted consent. Use the
+                    // actual current revision and Artifact codec for settlement,
+                    // rather than silently losing a hard-coded revision-1 CAS.
+                    const basis = await context.fetchArtifact(artifact.id);
+                    if (!basis) throw new Error('Expected the approval before daemon settlement');
+                    await context.updateArtifact(artifact.id, buildApprovalRequestArtifactHeaderV1(settled), JSON.stringify(settled), basis);
+                    const persisted = await context.fetchArtifact(artifact.id);
+                    expect(persisted?.isDecrypted).toBe(true);
+                    expect(approvalArtifactBodyMatchesHeaderV1(persisted?.header ?? {},
+                        typeof persisted?.body === 'string' ? persisted.body : null)?.request.status).toBe(status === 'unmounted' ? 'executed' : status);
+                } finally { context.dispose(); }
+                const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+                publishHomeAccountChange(serverId, [artifact.id], { changeKinds: ['artifact'] });
+            };
+            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide', requestId: envelope.requestId,
+                execution: { ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' } }) };
+        } });
+        const { useApprovalArtifact } = await import('@/components/approvals/useApprovalArtifact');
+        const { alertApprovalFailure } = await import('./useApprovalDecisionHandler');
+        const { Modal } = await import('@/modal');
+        const hook = await renderHook(() => {
+            const observed = useApprovalArtifact({ artifactId: artifact.id, serverId, observeWhileUnfocused: true });
+            const matched = observed.artifact && approvalArtifactBodyMatchesHeaderV1(observed.artifact.header ?? {}, observed.artifact.body);
+            const approval = matched?.family === 'built_in' ? matched.request : request;
+            return { decide: useApprovalDecisionHandler(artifact, approval, 'source', serverId), status: approval.status };
+        });
+        try {
+            vi.mocked(Modal.alert).mockClear();
+            let finished = false;
+            const decision = hook.getCurrent().decide('approve').catch(error => { alertApprovalFailure(error); return false; })
+                .then(value => { finished = true; return value; });
+            await vi.waitFor(() => expect(settle).toBeDefined());
+            // The real public read is still non-terminal after the ambiguous acknowledgement.
+            await act(async () => { await new Promise(resolve => setImmediate(resolve)); });
+            expect(finished).toBe(false);
+            expect(Modal.alert).not.toHaveBeenCalled();
+            if (status === 'unmounted') {
+                await hook.unmount();
+                expect(await decision).toBe(false);
+                expect(Modal.alert).toHaveBeenCalled();
+                return;
+            }
+            await act(async () => { await settle!(); });
+            await vi.waitFor(() => expect(hook.getCurrent().status).toBe(status));
+            expect(await decision).toBe(status === 'executed');
+            if (status === 'executed') expect(Modal.alert).not.toHaveBeenCalled();
+            else expect(vi.mocked(Modal.alert).mock.calls[0]?.[1]).toBe(t('errors.scmOutcomeUnknown'));
+            expect(harness.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
+        } finally { await hook.unmount(); }
+    });
     it('preserves a typed effect refusal after the approval decision was recorded', async () => {
         const serverId = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://effect-failure.test',
             accountId: 'bob', teamsEnabled: true });
