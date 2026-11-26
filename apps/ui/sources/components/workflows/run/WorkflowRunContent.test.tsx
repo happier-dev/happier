@@ -3820,6 +3820,20 @@ describe('WorkflowRunContent', () => {
     expect(screen.findByTestId('workflow-run-invocations-loading')).toBeNull();
   });
 
+  it.each([false, true])('shows the occurrence instead of a Map placeholder for a queued Run (read settled=%s)', async mapUnavailable => {
+    viewport.window = { width: 390, height: 844 };
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'queued', workflowCustodyState: 'pending' }),
+      view: 'flow', definition: null, mapUnavailable, invocationsLoaded: false,
+      occurrenceDetails: <Item testID="queued-occurrence" title="Occurrence" />,
+    });
+    expect(screen.findByTestId('queued-occurrence')).not.toBeNull();
+    expect(screen.findByTestId('workflow-run-invocations-loading')).toBeNull();
+    expect(screen.findByTestId('workflow-run-invocations-empty')).toBeNull();
+    expect(screen.findByTestId('workflow-run-flow-unavailable')).toBeNull();
+    await screen.unmount();
+  });
+
   it.each(['activity', 'flow', 'steps'] as const)('states a still-loading %s outline and an empty loaded outline distinctly', async view => {
     const loading = await renderContent({
       view,
@@ -3922,6 +3936,7 @@ describe('WorkflowRunContent', () => {
     const waits = 'workflows.run.waitsForMachineOnline:{"machine":"Build box"}';
     expect(screen.getTextContent().split(waits)).toHaveLength(2);
     expect(screen.getTextContent()).not.toContain('workflows.run.outcomeLine');
+    expect(screen.getTextContent()).not.toContain('workflows.run.startedAt');
     expect(screen.findByTestId('workflow-run-machine-unavailable')).toBeNull();
     expect(screen.getTextContent()).not.toContain('workflows.run.machineUnavailableBody');
     expect(screen.findByTestId('workflow-run-cancel')).not.toBeNull();

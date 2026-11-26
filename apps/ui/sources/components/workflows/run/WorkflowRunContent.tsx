@@ -1103,7 +1103,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             }),
         }),
     });
-    const startedAtMs = Date.parse(props.run.createdAt);
+    const runQueued = props.run.state === 'queued';
+    // A queued Run's creation timestamp records admission, before execution starts.
+    const startedAtMs = runQueued ? Number.NaN : Date.parse(props.run.createdAt);
     // Only the server's own terminal-transition instant ends the range; `updatedAt` also moves for
     // later custody and delivery bookkeeping, so it never stands in for a finish.
     const finishedAtMs = props.run.finishedAt == null ? Number.NaN : Date.parse(props.run.finishedAt);
@@ -2028,6 +2030,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 : props.run.state === 'failed' ? t('workflows.run.notReached') : undefined
             : undefined;
 
+    // The queued Run's header already says what it waits for. No invocation can
+    // load or fail to open while the Machine has yet to accept its content.
+    const waitingForRunContent = runQueued
+        && props.run.workflowCustodyState === 'pending' && props.definition === null;
     // Show the accepted Run immediately, while its map waits for the first step
     // states (DESIGN-15 R12). An unread held step must never say "Not started".
     const outline = props.view === 'steps' && props.definition !== null && props.invocationsLoaded ? (
@@ -2053,13 +2059,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 loading={props.loadingMoreInvocations === true} failed={props.loadMoreInvocationsFailed === true} />}
             {footer}
         </ScrollView>
-    ) : props.view === 'flow' && props.mapUnavailable ? (
+    ) : waitingForRunContent || (props.view === 'flow' && props.mapUnavailable) ? (
         <ScrollView testID={testIDPrefix} style={styles.scroll} contentContainerStyle={[styles.root, props.contentContainerStyle]}>
             {header}
-            <View style={pageSectionStyle}>
+            {waitingForRunContent ? null : <View style={pageSectionStyle}>
                 <SurfaceStateCard testID={`${testIDPrefix}-flow-unavailable`} kind="unavailable" size="line"
                     title={t('workflows.contentUnavailable')} />
-            </View>
+            </View>}
             {footer}
         </ScrollView>
     ) : props.view === 'activity' || flowProjection === null || !props.invocationsLoaded ? (

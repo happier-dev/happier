@@ -23,6 +23,7 @@ import { formatQualifiedPluginActionId } from "@happier-dev/protocol/plugins/act
 import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from "@happier-dev/protocol/databases/databaseTargetIdentityV1";
 import { inTx } from '@/storage/inTx';
 import { migrateArtifactAccountEncryptionInTx } from '@/app/artifacts/artifactWriteService';
+import { listWorkflowRuns } from '@/app/workflows/workflowRunService';
 
 describe("Action occurrence admission through the real router", () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -732,11 +733,14 @@ describe("Action occurrence admission through the real router", () => {
         const machineId = randomUUID();
         const invokingMachineId = randomUUID();
         const automationId = randomUUID();
+        const workflowId = randomUUID();
         const triggerId = randomUUID();
         await db.account.create({ data: { id: accountId, encryptionMode: "plain" } });
+        await db.artifact.create({ data: { id: workflowId, accountId, headerVersion: 1, bodyVersion: 1,
+            header: Buffer.from([1]), body: Buffer.from([1]), dataEncryptionKey: Buffer.from([1]) } });
         await db.machine.create({ data: { id: machineId, accountId, metadata: "{}", installationId: randomUUID() } });
         await db.machine.create({ data: { id: invokingMachineId, accountId, metadata: "{}", installationId: randomUUID() } });
-        await db.automation.create({ data: { id: automationId, accountId, name: "Review commit", enabled: true,
+        await db.automation.create({ data: { id: automationId, accountId, workflowDefinitionId: workflowId, name: "Review commit", enabled: true,
             templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({ templateVersion: 1,
                 directory: "/tmp/review", prompt: "Review the commit" })), templateVersion: 1,
             assignments: { create: { machineId, enabled: true, priority: 0 } },
@@ -756,6 +760,9 @@ describe("Action occurrence admission through the real router", () => {
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json().results[0]?.kind).toBe("admitted");
             const runId = response.json().results[0].runId as string;
+            expect.soft((await listWorkflowRuns({ accountId, runIds: [runId], pageByteLimit: 64_000 })).runs).toEqual([
+                expect.objectContaining({ id: runId, state: "queued", workflowCustodyState: "pending", sourceArtifactId: workflowId }),
+            ]);
             const detail = await app.inject({ method: "GET", url: `/v3/automations/${automationId}/runs/${runId}`,
                 headers: { "x-test-user-id": accountId } });
             expect(detail.statusCode, detail.body).toBe(200);

@@ -10,6 +10,7 @@ import { parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkfl
 import { automationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
 import { type AutomationConversationScopedTriggerRefV1 } from '@happier-dev/protocol/automations/result-delivery';
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 
 import { afterTx, type Tx } from "@/storage/inTx";
 import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
@@ -203,6 +204,7 @@ const automationAdmissionDefinitionSelect = {
     id: true,
     enabled: true,
     scopeSessionId: true,
+    workflowDefinitionId: true,
     targetType: true,
     templateVersion: true,
     templateCiphertext: true,
@@ -473,6 +475,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
     const initialExecutionDispatchState = executionInputEnvelope === null
         ? null
         : initialAutomationExecutionDispatchStateForRun(executionInputEnvelope);
+    const workflowSource = parseWorkflowDefinitionRefV1(automation.workflowDefinitionId);
     const inserted = await params.tx.automationRun.create({
         data: {
             ...(runId !== null ? { id: runId } : {}),
@@ -480,7 +483,10 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
             automationScopeCaptured: true,
             automationScopeSessionId: automation.scopeSessionId,
             accountId: params.accountId,
-            ...(workflowDefinitionEnvelope !== null ? { originKind: "automation" } : {}),
+            ...(workflowDefinitionEnvelope !== null ? {
+                originKind: "automation",
+                sourceArtifactId: workflowSource?.kind === "artifact" ? workflowSource.artifactId : null,
+            } : {}),
             state: missed ? "missed" : "queued",
             ...(missed ? { finishedAt: request.now, errorCode: missedReason } : {}),
             ...causeFields,
