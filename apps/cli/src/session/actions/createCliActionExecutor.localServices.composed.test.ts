@@ -24,6 +24,7 @@ import { DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServic
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
 import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
@@ -387,9 +388,12 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
             workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/accepted' },
             declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest' as const, name: 'web' } },
             expectedEffectDigest: 'a'.repeat(64) };
+        const admission = vi.spyOn(getActionSpec('localServices.launcher.start').inputSchema, 'safeParse');
         expect(await executor.execute('localServices.launcher.start', input, context))
-            .toEqual(outcome === 'review' ? { ok: true, result: review } : rejection);
+            .toEqual(outcome === 'review' ? { ok: true, result: review } : { ...rejection, requestId: context.actionRequestId });
         expect(get).toHaveBeenCalled();
+        // Catalog admission and the Action execution projection each read this schema.
+        expect(admission).toHaveBeenCalledTimes(2);
         expect(requests).toEqual([expect.objectContaining({ method: `machine-a:${RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START}`,
             params: { v: 1, kind: 'targeted_action_rpc', input, target: { kind: 'machine', machineId: 'machine-a' }, defaultSessionId: 'session-a' } })]);
     });
@@ -443,9 +447,12 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
                     reviewedEffect: {}, reviewedEffectDigest: 'setup-effect' },
             } });
         const { executor, requests, get, context, approvalActions } = receivingMachineBoundary(snapshot, 'localServices.launcher.start', true);
+        const admission = vi.spyOn(getActionSpec('localServices.launcher.start').inputSchema, 'safeParse');
         expect(await executor.execute('localServices.launcher.start', { machineId: 'machine-a', targetId: 'project-service:selected' }, context))
             .toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId: 'reviewed-service-approval', actionId: 'localServices.launcher.start' } });
         expect(approvalActions).toEqual(['localServices.launcher.start']);
+        // Includes the catalog ingress and projections of the prepared approval.
+        expect(admission).toHaveBeenCalledTimes(4);
         expect(requests).toEqual([expect.objectContaining({ method: `machine-a:${RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT}` })]);
         expect(get).toHaveBeenCalled();
     });

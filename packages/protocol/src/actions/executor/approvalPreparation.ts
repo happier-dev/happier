@@ -27,7 +27,7 @@ import { DeploymentTemplateInstantiationReviewV1Schema } from '../../deployments
 import { WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1 } from '../../widgets/actionsV1.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '../../json/strictJsonValue.js';
 import type { ActionExecuteFailure } from './types.js';
-import { DaemonLocalServiceLauncherStartRequestV1Schema, LocalServiceStartApprovalReviewV1Schema } from '../../local/services/launcher/v1.js';
+import { LocalServiceStartApprovalReviewV1Schema, type DaemonLocalServiceLauncherStartRequestV1 } from '../../local/services/launcher/v1.js';
 import { admitWidgetActionSurfaceV1, readWidgetActionSurfaceAdmissionV1 } from '../../widgets/widgetActionScopeV1.js';
 import { WidgetInstanceV1Schema } from '../../widgets/widgetInstanceV1.js';
 import { isSameWidgetDefinitionV1, readBuiltinWidgetDescriptorV1 } from '../../widgets/builtinWidgetDescriptorV1.js';
@@ -464,9 +464,9 @@ export async function prepareApprovalRequest(params: Readonly<{
       ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}) } };
   }
   if (params.actionId === 'localServices.launcher.start') {
-    const input = DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(params.input);
-    if (!input.success || !params.deps.prepareLocalServiceStartApproval) return null;
-    const prepared = await params.deps.prepareLocalServiceStartApproval({ input: input.data, context: params.context,
+    if (!params.deps.prepareLocalServiceStartApproval) return null;
+    const input = params.input as DaemonLocalServiceLauncherStartRequestV1;
+    const prepared = await params.deps.prepareLocalServiceStartApproval({ input, context: params.context,
       ...(params.executeCanonicalAction ? { executeCanonicalAction: params.executeCanonicalAction } : {}) });
     const failure = readActionFailureEnvelope(prepared);
     if (failure) return failure;
@@ -474,7 +474,7 @@ export async function prepareApprovalRequest(params: Readonly<{
     // The launcher may fill omitted workspace/declaration operands from its
     // published target. It must preserve every operand supplied by the caller;
     // approval and replay bind the completed request and the reviewed effect.
-    if (!review.success || !sameStrictJsonValue(review.data.request, { ...review.data.request, ...input.data })) return null;
+    if (!review.success || !sameStrictJsonValue(review.data.request, { ...review.data.request, ...input })) return null;
     return { actionArgs: review.data.request, preview: { actionId: params.actionId, actionArgs: review.data.request,
       summary: buildApprovalPreviewSummary(spec, review.data.request), serviceStartReview: review.data } };
   }

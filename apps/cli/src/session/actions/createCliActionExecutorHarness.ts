@@ -10,7 +10,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { parseLocalServiceDomainActionRpcRequest, readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
-import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import type { DaemonLocalServiceLauncherStartRequestV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { ProjectWorkerStatusInputV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionId } from '@happier-dev/protocol';
@@ -317,9 +317,9 @@ export function createCliActionExecutorHarness(
         const control = readLocalServiceControlActionRequest(args.actionId, args.input);
         const domain = parseLocalServiceDomainActionRpcRequest(args.actionId, args.input);
         const start = args.actionId === 'localServices.launcher.start'
-          ? DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(args.input) : null;
+          ? args.input as DaemonLocalServiceLauncherStartRequestV1 : undefined;
         const machineId = control?.target.machineId ?? (domain?.success ? domain.data.machineId : undefined)
-          ?? (start?.success ? start.data.machineId : undefined);
+          ?? start?.machineId;
         if (machineId && machineId !== localMachineId) return await transport(args);
       }
       // The installed owner serves only this Machine's simulators; an addressed

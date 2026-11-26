@@ -11,7 +11,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { DaemonLocalServiceLauncherSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
-import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import type { DaemonLocalServiceLauncherStartRequestV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { LocalServiceActionRequestV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { parseLocalServiceDomainActionRpcRequest, resolveLocalServiceDomainActionRpcBinding, resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
 import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -90,17 +90,17 @@ export function createCliLocalServiceActionDeps(
         return createUnavailableRuntimeActionExecutor()(args);
       }
       const spec = getActionSpec(args.actionId);
-      const admittedInput = spec.inputSchema.safeParse(args.input);
-      if (!admittedInput.success) return executionRunActionFailure('invalid_parameters');
-      const parsedStart = !domainRpc && isStart
-        ? DaemonLocalServiceLauncherStartRequestV1Schema.safeParse(admittedInput.data) : null;
-      const parsed = domainRpc ? parseLocalServiceDomainActionRpcRequest(args.actionId, admittedInput.data) : isStart
-        ? parsedStart
-        : LocalServiceActionRequestV1Schema.safeParse(admittedInput.data);
+      // The Action executor admitted Start before handing off to its transport.
+      const start = isStart ? args.input as DaemonLocalServiceLauncherStartRequestV1 : undefined;
+      const admittedInput = isStart ? undefined : spec.inputSchema.safeParse(args.input);
+      if (admittedInput && !admittedInput.success) return executionRunActionFailure('invalid_parameters');
+      const parsed = start ? { success: true as const, data: start }
+        : domainRpc ? parseLocalServiceDomainActionRpcRequest(args.actionId, admittedInput?.data)
+        : LocalServiceActionRequestV1Schema.safeParse(admittedInput?.data);
       if (!parsed?.success) return executionRunActionFailure('invalid_parameters');
       const request = parsed.data;
       const machineId = 'target' in request ? request.target.machineId : request.machineId;
-      const denied = await projectHomeAdmission(parsedStart?.success ? parsedStart.data.workspace?.serverId : undefined, args.context);
+      const denied = await projectHomeAdmission(start?.workspace?.serverId, args.context);
       if (denied) return denied;
       const method = spec.bindings?.rpcMethod;
       if (!method) return executionRunActionFailure('runtime_action_disabled');
