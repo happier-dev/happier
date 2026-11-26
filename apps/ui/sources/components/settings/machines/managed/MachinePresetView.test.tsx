@@ -568,6 +568,11 @@ describe('reachable preset detail', () => {
         binding: { machineId: 'prepare-host', cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
           launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
         } } } };
+    const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+    const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+    const ownerAnswer = createDeferred<unknown>();
+    boundary.rpc.mockImplementation(async request => request.method === ACTION_OPERATION_RPC_METHODS_V2.get
+      ? ownerAnswer.promise : { kind: 'unsupported' });
     let displayed = opened;
     const onChanged = vi.fn();
     const hook = await renderHook(() => useMachinePresetPreparation({ serverId: scopeId, preset: displayed,
@@ -576,14 +581,18 @@ describe('reachable preset detail', () => {
       expect(hook.getCurrent().reportedStatus).toBe('building');
       expect(hook.getCurrent().estimates).toBeNull();
       expect(hook.getCurrent().readySummary).toBeNull();
-      expect(hook.getCurrent().interrupted).toBe(true);
+      expect(hook.getCurrent().interrupted).toBe(false);
+      expect(hook.getCurrent().awaitingOperation).toBe(true);
       expect(hook.getCurrent().operation).toBeNull();
       expect(hook.getCurrent().canCancel).toBe(false);
       expect(onChanged).not.toHaveBeenCalled();
-      expect(boundary.rpc).not.toHaveBeenCalled();
+      await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls).toEqual([
+        [expect.objectContaining({ serverId: scopeId, accountId: 'owner', machineId: 'prepare-host',
+          method: ACTION_OPERATION_RPC_METHODS_V2.get, payload: { operationId: 'previous-build', waitForTerminal: true } })],
+      ]));
       const snapshot = { version: 1 as const, operationId: 'previous-build', revision: 1,
         actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, state: 'running' as const,
-        scope: { accountId: 'owner', machineId: 'actual-builder' }, title: 'Prepare preset',
+        scope: { accountId: 'owner', machineId: 'prepare-host' }, title: 'Prepare preset',
         createdAt: 1, startedAt: 2, cancellation: 'supported' as const,
         progress: { kind: 'phase' as const, phase: 'build-image', label: 'Build image', steps: [
           { id: 'prepare-inputs', label: 'Prepare build inputs', state: 'succeeded' as const, startedAt: 1, settledAt: 2 },
@@ -591,7 +600,7 @@ describe('reachable preset detail', () => {
           { id: 'save-image', label: 'Save prepared image', state: 'pending' as const },
         ] } };
       await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId, snapshots: [snapshot] }));
-      expect(hook.getCurrent().operation?.snapshot.scope.machineId).toBe('actual-builder');
+      expect(hook.getCurrent().operation?.snapshot.scope.machineId).toBe('prepare-host');
       expect(hook.getCurrent().steps).toEqual(snapshot.progress.steps);
       await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId,
         snapshots: [{ ...snapshot, revision: 2, progress: { kind: 'indeterminate', steps: snapshot.progress.steps } }] }));
@@ -614,7 +623,11 @@ describe('reachable preset detail', () => {
       await hook.rerender();
       expect(hook.getCurrent().operation).toBeNull();
       expect(hook.getCurrent().canCancel).toBe(false);
-    } finally { await hook.unmount(); actionOperationStore.reset(); }
+    } finally {
+      await hook.unmount();
+      ownerAnswer.resolve({ kind: 'not_found' });
+      actionOperationStore.reset();
+    }
   });
   it('reattaches a still-running preparation after reload from the persisted owner host', async () => {
     const serverId = await seed();
@@ -658,6 +671,8 @@ describe('reachable preset detail', () => {
   });
   it('exposes prepared measurements and canonical configuration staleness without treating a rename as stale', async () => {
     const serverId = await seed();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
     const { useMachinePresetPreparation } = await import('./useMachinePresets');
     const opened = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened;
     const prepared = { operationId: 'measured-build', status: 'ready' as const, artifactSizeBytes: 1024, builtAt: 1700000000000, builtFromRevision: 7,
@@ -683,7 +698,10 @@ describe('reachable preset detail', () => {
       launch = { ...opened.launch!, name: 'Renamed launch' };
       await hook.rerender();
       expect(hook.getCurrent().readySummary?.stale).toBe(false);
-      expect(boundary.rpc).not.toHaveBeenCalled();
+      expect(boundary.rpc.mock.calls).toEqual([
+        [expect.objectContaining({ serverId: scopeId, accountId: 'owner', machineId: 'prepare-host',
+          method: ACTION_OPERATION_RPC_METHODS_V2.get, payload: { operationId: 'measured-build', waitForTerminal: true } })],
+      ]);
     } finally { await hook.unmount(); }
   });
   it('headless preset preparation sends the displayed revision and retries through the same admitted Action', async () => {
@@ -746,7 +764,7 @@ describe('reachable preset detail', () => {
     const { replaceManagedMachinePresetPreparationV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
     const { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
     const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
-    const { ACTION_OPERATION_RPC_METHODS_V1 } = await import('@happier-dev/protocol/actions/operations/v1');
+    const { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
     const stored = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true },
       ...(pooled ? { controller: undefined, controllerPoolId: '00000000-0000-4000-8000-000000000001' } : {}) });
     const selected = pooled ? { machineId: 'picked-builder', installationId: 'picked-installation' } : preset.controller;
@@ -767,18 +785,37 @@ describe('reachable preset detail', () => {
       actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'action.operations.cancel': ['ui'] } },
     } }, version: 1 } });
     const inputs: unknown[] = [];
+    const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+    const previousOwnerAnswer = createDeferred<unknown>();
+    const replacementOwnerAnswer = createDeferred<unknown>();
     await answerExternalActionAccountForHome(harness, serverId, {
       actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, machineId: selected.machineId,
       installationId: selected.installationId, tokenEpoch: 0, requesterInvocation: 'optional',
-      execute: input => { inputs.push(input); return { status: 'accepted', operationId: 'replacement-build', machineId: 'actual-image-builder' }; },
+      execute: input => {
+        inputs.push(input);
+        actionOperationStore.mergeSnapshots({ serverId: scopeId, snapshots: [{
+          version: 1, operationId: 'replacement-build', revision: 1, actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1,
+          state: 'running', scope: { accountId: 'owner', machineId: 'actual-image-builder' }, title: 'Prepare preset',
+          createdAt: 1, cancellation: 'supported',
+        }] });
+        return { status: 'accepted', operationId: 'replacement-build', machineId: 'actual-image-builder' };
+      },
     });
-    const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
-    const ownerAnswer = createDeferred<unknown>();
-    boundary.rpc.mockImplementation(async request => request.method === ACTION_OPERATION_RPC_METHODS_V1.cancel
-      ? { kind: 'requested' } : ownerAnswer.promise);
+    boundary.rpc.mockImplementation(async request => {
+      if (request.method === ACTION_OPERATION_RPC_METHODS_V1.cancel) return { kind: 'requested' };
+      if (request.method !== ACTION_OPERATION_RPC_METHODS_V2.get) return { kind: 'unsupported' };
+      return request.payload.operationId === prepared.operationId ? previousOwnerAnswer.promise : replacementOwnerAnswer.promise;
+    });
     const restorePopoverGlobals = withPopoverWebGlobals();
     const screen = await renderSettingsView(<MachinePresetView serverId={scopeId} presetId={preset.id} />);
     try {
+      await waitForHomeGovernance(() => expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({
+        serverId: scopeId, accountId: 'owner', machineId: 'prepare-host', method: ACTION_OPERATION_RPC_METHODS_V2.get,
+        payload: { operationId: prepared.operationId, waitForTerminal: true },
+      })));
+      expect(screen.getTextContent()).not.toContain(t('voiceAssistant.interrupted'));
+      expect(screen.findByTestId('machine-preset.preparation.retry')).toBeNull();
+      await act(async () => previousOwnerAnswer.resolve({ kind: 'not_found' }));
       await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('voiceAssistant.interrupted')));
       expect(inputs).toEqual([]);
       expect(screen.findByTestId('machine-preset.preparation.stop')).toBeNull();
@@ -795,11 +832,10 @@ describe('reachable preset detail', () => {
       await screen.pressByTestIdAsync('machine-preset.preparation.retry');
       await waitForHomeGovernance(() => expect(inputs).toEqual([{ homeId: preset.homeId, id: preset.id,
         expectedRevision: preset.revision + 1, machineId: selected.machineId }]));
-      await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId, snapshots: [{
-        version: 1, operationId: 'replacement-build', revision: 1, actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1,
-        state: 'running', scope: { accountId: 'owner', machineId: 'actual-image-builder' }, title: 'Prepare preset',
-        createdAt: 1, cancellation: 'supported',
-      }] }));
+      await waitForHomeGovernance(() => expect(boundary.rpc).toHaveBeenCalledWith(expect.objectContaining({
+        serverId: scopeId, accountId: 'owner', machineId: 'actual-image-builder', method: ACTION_OPERATION_RPC_METHODS_V2.get,
+        payload: { operationId: 'replacement-build', waitForTerminal: true },
+      })));
       await screen.pressByTestIdAsync('machine-preset.preparation.stop');
       await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls).toEqual(expect.arrayContaining([
         [expect.objectContaining({ serverId: scopeId, machineId: 'actual-image-builder',
@@ -807,7 +843,7 @@ describe('reachable preset detail', () => {
       ])));
       expect(inputs).toHaveLength(1);
       // The finite owner lost its live receipt after reporting the running build.
-      await act(async () => ownerAnswer.resolve({ kind: 'not_found' }));
+      await act(async () => replacementOwnerAnswer.resolve({ kind: 'not_found' }));
       await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('voiceAssistant.interrupted')));
       expect(screen.findByTestId('machine-preset.preparation.stop')).toBeNull();
       expect(screen.findByTestId('machine-preset.preparation.retry')).not.toBeNull();
@@ -829,7 +865,13 @@ describe('reachable preset detail', () => {
       await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.archived')).not.toBeNull());
       expect(screen.findByTestId('machine-preset.preparation')).toBeNull();
       expect(inputs).toHaveLength(1);
-    } finally { await screen.unmount(); actionOperationStore.reset(); restorePopoverGlobals(); }
+    } finally {
+      await screen.unmount();
+      previousOwnerAnswer.resolve({ kind: 'not_found' });
+      replacementOwnerAnswer.resolve({ kind: 'not_found' });
+      actionOperationStore.reset();
+      restorePopoverGlobals();
+    }
   });
   it('offers the existing in-place Review when preset preparation Stop awaits approval and cancels its actual builder after confirmation', async () => {
     const serverId = await seed();
@@ -839,7 +881,7 @@ describe('reachable preset detail', () => {
     const { replaceManagedMachinePresetPreparationV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
     const stored = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } });
     const prepared = { operationId: 'approval-build', status: 'building' as const,
-      binding: { machineId: 'prepare-host', cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
+      binding: { machineId: 'actual-image-builder', cliIdentity: 'supplier-identity', credentialConfigurations: [], configuration: {
         launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
       } } };
     const operational = replaceManagedMachinePresetPreparationV1({ presetId: preset.id, mode: 'plain',
@@ -3120,7 +3162,7 @@ describe('reachable preset detail', () => {
       await act(async () => {
         const commands = hook.getCurrent().commands;
         const refused = await commands.duplicate(scopeId, opened, 'Build box copy');
-        expect(refused).toEqual({ kind: 'failed', code: 'provider_unavailable' });
+        expect(refused).toMatchObject({ kind: 'failed', code: 'account_availability_not_loaded' });
         expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
 
         await seedPresetDeclaration(serverId);
