@@ -1998,6 +1998,7 @@
 | `./database` | `TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1` | value | any |
 | `./database` | `TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1` | value | any |
 | `./database` | `TELEMETRY_METRICS_READ_ACTION_ID_V1` | value | any |
+| `./database` | `TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_LOCAL_ID_V1` | value | any |
 | `./database` | `TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1` | value | any |
 | `./database` | `TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1` | value | any |
 | `./database` | `TelemetryEnvironmentMetricsReadInputV1` | type | any |

@@ -1,9 +1,9 @@
 import { computeCanonicalDomainSeparatedDigest, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { DatabaseCaptureFindingDetailV1ProtocolSchema, type DatabaseCaptureFindingDetailV1 } from '@happier-dev/plugin-sdk/database';
+import { DatabaseCaptureFindingDetailV1ProtocolSchema, TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_LOCAL_ID_V1 as setupId,
+    type DatabaseCaptureFindingDetailV1 } from '@happier-dev/plugin-sdk/database';
 import { createPluginEventAutomationSetupResultV1JsonSchema, type PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { PRODUCTION_CAPTURE_FINDING_EVENT_REF_V1 as eventRef, readProductionCaptureFindingGroupKeyV1 } from '@happier-dev/database-protocol';
-import { TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_LOCAL_ID_V1 as setupId } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 const sourceContractVersion = 1;
 const id = defineProtocolString({ minLength: 1 });
 const subjectSchema = defineProtocolObject({
