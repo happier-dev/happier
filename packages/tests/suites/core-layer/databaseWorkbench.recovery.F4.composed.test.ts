@@ -250,10 +250,17 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
             contentArtifactId: editorBasis.environment.contentArtifactId,
             contentHeaderVersion: editorBasis.environment.contentHeaderVersion,
             contentBodyVersion: editorBasis.environment.contentBodyVersion,
-            patch: { dataEditorMode: 'managers' },
+            patch: { dataEditorMode: 'managers', dataAgentAccess: 'readWriteAsk' },
         }, { presentUserConfirmation: { actionId: 'deployments.environments.update' } });
         if (!editor.ok) throw new Error(`R6 editor setup refused (${editor.errorCode})`);
         expect(DeploymentEnvironmentUpdateResultV1Schema.parse(editor.result)).toMatchObject({ ok: true });
+        const editAccess = await owner.executeAsPerson('deployments.environments.get', { serverId: fixture.serverId, environmentId });
+        if (!editAccess.ok) throw new Error(`R6 manager Environment read refused (${editAccess.errorCode})`);
+        const editorProjection = DeploymentEnvironmentGetResultV1Schema.parse(editAccess.result);
+        if (!editorProjection.ok) throw new Error(`R6 manager Environment read failed (${editorProjection.error})`);
+        const { dataEditorMode, dataAgentAccess, revision, capabilities: { role: editorRole, editData } } = editorProjection.environment;
+        expect({ dataEditorMode, dataAgentAccess, editorRole, editData }, `R6 manager Environment revision ${revision}`)
+            .toEqual({ dataEditorMode: 'managers', dataAgentAccess: 'readWriteAsk', editorRole: 'manager', editData: true });
         const control = await execute('docker', ['exec', container, 'psql', '-X', '-A', '-t', '-v', 'ON_ERROR_STOP=1',
             '-U', 'happier', '-d', 'app', '-c',
             'SELECT json_build_array(marker, absent, empty_text, exact_integer::text)::text FROM dbw_recovery_sentinel']);
