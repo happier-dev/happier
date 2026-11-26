@@ -9,6 +9,7 @@ import { normalizeWidgetSizeForSurfaceV1, type WidgetInstanceV1 } from '@happier
 import { HappierSurfaceStateFrame } from '@happier-dev/plugin-ui/presentation';
 
 import { useCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { DetailsPaneHost, type DetailsPaneContent } from '@/components/appShell/panes/details/DetailsPaneHost';
 import { ITEM_DETAILS_PREFERRED_WIDTH_PX } from '@/components/appShell/panes/details/DetailsPaneSlot';
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
@@ -353,6 +354,10 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
         placement,
     })), [widgetDescriptors, widgets]);
     const arrivals = useBoardWidgetArrivals(board.id, ownAdds.current, dispatchIntent);
+    const hasArrivals = arrivals.pending.length > 0;
+    useCurrentUiContextLocalCommands(hasArrivals ? [{
+        key: 'board.arrivals.dismiss', title: t('boards.widgets.dismiss'), invoke: arrivals.dismiss,
+    }] : [], { contextKey: board.id });
     const renderWidget = React.useCallback<BoardCanvasWidgetRender>((widget, state) => (
         <BoardWidgetCard
             boardId={board.id}
@@ -465,7 +470,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                     </View>
                 ) : null}
             </View>
-            {arrivals.pending.length > 0 ? (
+            {hasArrivals ? (
                 <View style={styles.line}>
                     <SurfaceStateCard
                         testID="board-widgets-arrived"

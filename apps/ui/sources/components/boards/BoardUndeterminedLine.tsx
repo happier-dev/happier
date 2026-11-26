@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { describeBoardUndetermined } from './model/boardCards';
 import type { BoardUndeterminedMembership } from './model/boardMembership';
@@ -18,9 +19,13 @@ export const BoardUndeterminedLine = React.memo(function BoardUndeterminedLine(p
 }>) {
     const said = describeBoardUndetermined(props.undetermined);
     const tasksIncomplete = props.taskItemsComplete === false;
+    const retry = tasksIncomplete ? props.onRetryTasks : undefined;
+    useCurrentUiContextLocalCommands(retry ? [{
+        key: 'board.tasks.retry', title: t('common.retry'), invoke: retry,
+    }] : []);
     if (!said && !tasksIncomplete) return null;
     const reason = [said ? `${said.headline} · ${said.reason}` : null,
         tasksIncomplete ? t('boards.undetermined.taskSources') : null].filter(Boolean).join(' · ');
     return <SurfaceFreshnessLine testID="board-undetermined" glyph="info" reason={reason} emphasis={said?.headline}
-        action={tasksIncomplete && props.onRetryTasks ? { label: t('common.retry'), onPress: props.onRetryTasks } : undefined} />;
+        action={retry ? { label: t('common.retry'), onPress: retry } : undefined} />;
 });

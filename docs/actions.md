@@ -11742,6 +11742,10 @@ in its existing current record. Unmount, layout or viewer replacement and native
 background retirement invalidate the old opaque command ids; no answering
 mounted client means typed unavailability.
 
+The Board's visible arrival Dismiss and task-source Retry also use their existing
+local handlers through mounted commands. They update the displayed projection;
+they do not add another Board writer.
+
 The client-placed `clipboard.write { text }` is the shared copy effect for UI and
 Agent/MCP callers, including Usage widgets' Copy query. Its existing safe default
 remains configurable through ordinary Action settings. If the person requires

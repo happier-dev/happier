@@ -30,6 +30,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
 import { router } from 'expo-router';
 import { t } from '@/text';
+import { WidgetDefinitionV1Schema } from '@happier-dev/protocol/widgets';
 
 // Native and navigation adapters are external boundaries; the Board store and collection stay real.
 vi.mock('react-native', async () => {
@@ -102,6 +103,7 @@ describe('BoardsColumn collection search', () => {
                 const rows = (noBoards ? [] : artifacts).map(artifact => liveBoard && artifact.id === liveBoard.id ? {
                     ...artifact, header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(liveBoard)),
                     body: encodePlainArtifactStoredContent({ body: JSON.stringify(liveBoard) }),
+                    headerVersion: 2, bodyVersion: 2, updatedAt: 2,
                 } : artifact);
                 for (const row of rows) artifactBoundary.replaceStoredRow(row);
                 if (request.path === '/v1/artifacts' && failIndex) return new Response(null, { status: 500 });
@@ -176,6 +178,47 @@ describe('BoardsColumn collection search', () => {
         await vi.waitFor(() => expect(failed.findByTestId('boards-read-state')).toBeNull());
         expect(failed.findByTestId('boards-column:board:beta')).not.toBeNull();
         await failed.unmount();
+    });
+
+    it('dismisses arrival news through the visible control', async () => {
+        vi.useRealTimers();
+        await home!.restoreActiveConnection();
+        const { useWorkBoardReadState } = await import('./model/useWorkBoards');
+        let refresh = () => Promise.resolve();
+        function Refresh() { refresh = useWorkBoardReadState('alpha').retry; return null; }
+        const screen = await renderMountedCurrentUiContext(<CommandPage><BoardsColumn /><BoardScreen boardId="alpha" /><Refresh /></CommandPage>);
+        await vi.waitFor(() => expect(screen.findByTestId('board-empty')).not.toBeNull());
+        const serverId = home!.homes.boards!.id;
+        const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'arrived', name: 'Arrived note',
+            sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [] },
+            inputSchema: { type: 'object', additionalProperties: false }, provenance: { source: { kind: 'authored' } },
+            body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'New note' } } },
+        });
+        liveBoard = { ...boards[0]!, widgets: [{ kind: 'widget', size: 'medium',
+            ref: { surface: { serverId, accountId: 'owner', owner: { kind: 'workBoard', boardId: 'alpha' } }, instanceId: 'arrived' },
+            instance: { v: 1, id: 'arrived', definition: { kind: 'inline', definition }, bindings: {} },
+        }] };
+        await act(async () => { await refresh(); });
+        await vi.waitFor(() => expect(screen.findByTestId('board-widgets-arrived')).not.toBeNull());
+        const executor = createDefaultActionExecutor();
+        const commands = async () => {
+            const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+            if (!read.ok) throw new Error('Expected mounted Board arrival context');
+            return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+        };
+        const inventory = await commands();
+        const retainedTitles = ['Alpha release', 'Beta work', `${t('widgetDefinition.aboutTitle')}: ${definition.name}`,
+            `${t('widgetFrame.groupAddTo')}: ${definition.name}`, `${t('common.rename')}: ${definition.name}`];
+        expect(inventory.map(command => command.title).sort()).toEqual([...retainedTitles, t('boards.widgets.dismiss')].sort());
+        const dismiss = inventory.find(command => command.title === t('boards.widgets.dismiss'))!;
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+            { commandId: dismiss.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(screen.findByTestId('board-widgets-arrived')).toBeNull();
+        expect(screen.findByTestId('board-widget:arrived')).not.toBeNull();
+        expect((await commands()).map(command => command.title).sort()).toEqual(retainedTitles.sort());
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: dismiss.id }, { surface: 'agent' }))
+            .toMatchObject({ ok: false });
+        await screen.unmount();
     });
 
     // More opens this page with no tab bar and no native header, so its head is the only way out.
