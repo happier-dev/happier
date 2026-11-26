@@ -85,16 +85,23 @@ function subscribeAppliedHomeSummary(listener: () => void): () => void {
     return () => { unsubscribe(); unsubscribeApplied(); unsubscribeAvailability(); };
 }
 
-/** The connection verdict for this mount's Home, when the applied runtime owns it. */
-export function useScopedHomeConnectionKind(serverId: string | null | undefined) {
+/** The applied transport's verdict, before the Home summary adds socket and inventory failures. */
+export function useScopedHomeEndpointStatus(serverId: string | null | undefined) {
     const read = React.useCallback(() => {
         if (!serverId || !areServerProfileIdentifiersEquivalent(serverId, getAppliedActiveServerSnapshot().serverId)) {
             return null;
         }
-        return readAppliedHomeSummaryKind() ?? 'reconnecting';
+        if (!isAppliedActiveServerRuntimeAvailable()) return 'connecting';
+        const { endpointStatus, endpointReason } = storage.getState();
+        return endpointStatus === 'offline' && endpointReason === 'server_restarting' ? 'connecting' : endpointStatus;
     }, [serverId]);
-    const subscribe = React.useCallback((listener: () => void) =>
-        serverId ? subscribeAppliedHomeSummary(listener) : () => {}, [serverId]);
+    const subscribe = React.useCallback((listener: () => void) => {
+        if (!serverId) return () => {};
+        const unsubscribe = storage.subscribe(listener, { endpointStatus: true, endpointReason: true });
+        const unsubscribeApplied = subscribeAppliedActiveServer(listener);
+        const unsubscribeAvailability = subscribeAppliedActiveServerRuntimeAvailability(listener);
+        return () => { unsubscribe(); unsubscribeApplied(); unsubscribeAvailability(); };
+    }, [serverId]);
     return React.useSyncExternalStore(subscribe, read, read);
 }
 

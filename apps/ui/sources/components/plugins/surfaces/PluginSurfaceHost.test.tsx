@@ -361,7 +361,7 @@ const pluginSurfaceAccountLifetime = {
             hostedWebEnabled?: boolean;
             artifactTransfer?: boolean;
             request?: Parameters<typeof restoreServerAccountForTest>[0]['request'];
-        }>, legacyOptions?: Readonly<{ serverIdentityId?: string; currentAccount?: boolean }>) {
+        }>, legacyOptions?: Readonly<{ serverIdentityId?: string; currentAccount?: boolean; requestOwnsReachabilityProbes?: true }>) {
         const request = typeof requestOrOptions === 'function' ? requestOrOptions : undefined;
         const options = typeof requestOrOptions === 'function' || requestOrOptions === undefined
             ? { ...legacyOptions, credentials: legacyOptions?.currentAccount
@@ -380,6 +380,7 @@ const pluginSurfaceAccountLifetime = {
             serverUrl: `https://${scope.serverId}`, accountId: scope.accountId,
             serverIdentityId: options.serverIdentityId ?? 'srv_server_a',
             credentials: options.credentials,
+            requestOwnsReachabilityProbes: legacyOptions?.requestOwnsReachabilityProbes,
             request: createSessionReadBatchFetchBoundary(async (url, init) => {
                 const path = new URL(String(url)).pathname;
                 surfaceHttpRequests.push(path);
@@ -16571,37 +16572,39 @@ describe('Composer physical surface mount', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('mounts no unavailable card during cold Home resolution or reconnect and shows one for a settled outage', async () => {
+    it('keeps a cold Composer empty through failed reads and shows one card for a settled Home outage', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
+        const { sync } = await import('@/sync/sync');
         const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        const { invalidateAllServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         const mode = createPlainAccountEncryptionCurrentnessFixture({ version: 2, updatedAt: 2 });
+        const modeStarted = createDeferred<void>();
+        const firstMode = createDeferred<Response>();
+        const retryStarted = createDeferred<void>();
+        const retryMode = createDeferred<Response>();
         let readMode: (() => Promise<Response>) | undefined;
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' }, path =>
-            path === '/v1/account/encryption/currentness' ? readMode?.() : undefined, { serverIdentityId: 'srv_server_a' });
-        const setHomeHealth = (endpointStatus: 'connecting' | 'online' | 'offline') => storage.setState({
-            endpointStatus,
-            socketStatus: endpointStatus === 'online' ? 'connected' : 'disconnected',
-            endpointReason: null,
-            syncError: null,
-        });
-        const beginModeRead = () => {
-            const first = createDeferred<Response>();
-            const retry = createDeferred<Response>();
-            const retryStarted = createDeferred<void>();
-            let firstRead = true;
-            readMode = () => {
-                if (firstRead) {
-                    firstRead = false;
-                    return first.promise.then(response => response.clone());
-                }
-                retryStarted.resolve();
-                return retry.promise.then(response => response.clone());
-            };
-            return { first, retry, retryStarted };
+        let machineCensusFails = false;
+        let homeDown = false;
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' }, path => {
+            if (path === '/health' || path === '/v1/auth/ping') {
+                return homeDown ? Promise.reject(new TypeError('Failed to fetch')) : Response.json({});
+            }
+            if (path === '/v1/machines' && machineCensusFails) {
+                return Response.json({ error: 'unavailable' }, { status: 503 });
+            }
+            if (path === '/v1/account/encryption/currentness') return readMode?.();
+            return undefined;
+        }, { serverIdentityId: 'srv_server_a', requestOwnsReachabilityProbes: true });
+        let first = true;
+        readMode = () => {
+            if (first) {
+                first = false;
+                modeStarted.resolve();
+                return firstMode.promise.then(response => response.clone());
+            }
+            retryStarted.resolve();
+            return retryMode.promise.then(response => response.clone());
         };
-        const unavailable = () => Response.json({ error: 'unavailable' }, { status: 503 });
-        const cold = beginModeRead();
-        setHomeHealth('connecting');
         invalidateAccountEncryptionModeCache();
         const { composerMount } = createComposerRegionMountFixture();
         const { PluginSurfaceHost } = await import('./PluginSurfaceHost');
@@ -16612,38 +16615,36 @@ describe('Composer physical surface mount', () => {
         let cardMounted = Boolean(screen.findHostByTestId(cardId));
         let cardMounts = Number(cardMounted);
         const stop = screen.subscribe(() => {
-            const visible = Boolean(screen.findHostByTestId(cardId));
-            if (visible && !cardMounted) cardMounts += 1;
-            cardMounted = visible;
+            const mounted = Boolean(screen.findHostByTestId(cardId));
+            if (mounted && !cardMounted) cardMounts += 1;
+            cardMounted = mounted;
         });
         try {
-            const recover = async (attempt: ReturnType<typeof beginModeRead>) => {
-                await act(async () => attempt.first.resolve(unavailable()));
-                await attempt.retryStarted.promise;
-                await act(async () => setHomeHealth('online'));
-                await act(async () => attempt.retry.resolve(Response.json(mode)));
-                await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Composer summary'));
-            };
-            await recover(cold);
-            const afterCold = cardMounts;
-
-            const reconnect = beginModeRead();
+            // Delta 22 c390-r1: Composer mounted, a Home card arrived, then
+            // the same Composer recovered. Model that order at the HTTP boundary.
+            await modeStarted.promise;
+            machineCensusFails = true;
             await act(async () => {
-                setHomeHealth('connecting');
-                invalidateAccountEncryptionModeCache();
+                await expect(sync.refreshMachines({ serverId: 'server-a' })).rejects.toBeDefined();
             });
-            await recover(reconnect);
-            expect([afterCold, cardMounts - afterCold], 'cold and reconnect unavailable card mounts').toEqual([0, 0]);
+            expect(storage.getState().endpointStatus).toBe('online');
+            await act(async () => firstMode.reject(new TypeError('Failed to fetch')));
+            await retryStarted.promise;
+            await act(async () => retryMode.resolve(Response.json(mode)));
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Composer summary'));
+            expect(cardMounts, 'cold Composer unavailable card mounts').toBe(0);
         } finally {
             stop();
             await screen.unmount();
         }
 
-        readMode = async () => unavailable();
+        readMode = async () => Response.json({ error: 'unavailable' }, { status: 503 });
+        homeDown = true;
         await act(async () => {
-            setHomeHealth('offline');
+            await invalidateAllServerReachabilitySupervisors();
             invalidateAccountEncryptionModeCache();
         });
+        await waitForHomeGovernance(() => expect(storage.getState().endpointStatus).toBe('offline'));
         const offline = await renderScreen(host);
         try {
             await waitForHomeGovernance(() => expect(offline.findHostByTestId(cardId)).toBeTruthy());

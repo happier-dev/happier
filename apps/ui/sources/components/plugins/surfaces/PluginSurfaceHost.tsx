@@ -31,7 +31,7 @@ import { InputTypePickerHostProvider } from '@/components/sessions/actions/Input
 import { useSurfaceStateCardSize, useSurfaceStateQuietActions } from '@/components/ui/surfaces/surfaceStateSize';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useScopedHomeConnectionKind } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { useScopedHomeEndpointStatus } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { useUnistyles } from 'react-native-unistyles';
 import { useGlassMaterialColorResolver } from '@/components/ui/glass/useGlassSurfaceColor';
 import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurface';
@@ -3347,15 +3347,16 @@ function PluginSurfaceHostMount(props: Readonly<(
     const accountEncryptionMode = accountEncryptionModeReadiness.status === 'ready'
         ? accountEncryptionModeReadiness.mode
         : null;
-    const accountModeHomeConnection = useScopedHomeConnectionKind(
+    const accountModeHomeEndpoint = useScopedHomeEndpointStatus(
         accountEncryptionMode === null ? accountLifetime?.scope.serverId ?? serverId : null,
     );
-    // A failed attempt can outlive a reconnect. The Home's verdict owns the
-    // outage card while the Account read keeps working toward a valid mode.
     const accountModeReadRetrying = accountEncryptionModeReadiness.status === 'unavailable'
         && accountEncryptionModeReadiness.retrying === true;
-    const accountModeHomeResolving = accountModeHomeConnection === 'reconnecting'
-        || (accountModeReadRetrying && accountModeHomeConnection === 'connected');
+    // A failed Account attempt and a failed Machine census can coexist on a reachable Home.
+    // Only the endpoint's own outage verdict settles a pending read into a Home card.
+    const accountModePending = accountModeHomeEndpoint === 'connecting'
+        || (accountModeHomeEndpoint !== 'offline'
+            && (accountModeReadRetrying || accountEncryptionModeReadiness.status === 'loading'));
     // The generated surface receives a closed exact-target resolver through
     // private bindings. Keep that composition stable across equivalent parent
     // renders: the map is its only package-data authority, while the bound
@@ -3557,10 +3558,10 @@ function PluginSurfaceHostMount(props: Readonly<(
         return renderUnavailable('artifact_technical_admission_unavailable');
     };
     const renderAccountEncryptionModeReadiness = (): React.ReactElement => (
-        accountModeHomeResolving
-            ? <PluginSurfaceLoadingMarker reason="account_encryption_mode_pending" />
-            : accountEncryptionModeReadiness.status === 'loading'
-            ? renderUnavailable('account_encryption_mode_pending', 'loading')
+        accountModePending
+            ? accountModeReadRetrying || accountModeHomeEndpoint === 'connecting'
+                ? <PluginSurfaceLoadingMarker reason="account_encryption_mode_pending" />
+                : renderUnavailable('account_encryption_mode_pending', 'loading')
             // The Home did not answer the Account-mode read: Retry runs that read again now.
             : renderUnavailable('account_encryption_mode_unavailable', 'unavailable',
                 accountEncryptionModeReadiness.status === 'unavailable' ? accountEncryptionModeReadiness.retry : undefined)
@@ -3621,7 +3622,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     // context. Revalidation keeps only the incumbent presentation within its
     // controller lifetime; it does not replace current Account/Action admission.
     if (accountLocalInteractionEnabled && !accountEncryptionMode) {
-        return accountModeHomeResolving || accountEncryptionModeReadiness.status === 'loading' || accountModeReadRetrying
+        return accountModePending || accountEncryptionModeReadiness.status === 'loading' || accountModeReadRetrying
             ? <PluginSurfacePresentation lifetime={controller}
                 notice={(retained) => retained
                     ? <PluginSurfaceLoadingMarker reason={accountEncryptionModeReadiness.status === 'loading'

@@ -44,7 +44,7 @@ const COLLAPSE_WIDTH = 300;
  * `yield` first (plain values and quiet notes) and leaves the rest whole: a
  * prominent badge keeps its label, a gauge its readout.
  */
-type StripInstrument = Readonly<{ node: React.ReactNode; yields: boolean }>;
+type StripInstrument = Readonly<{ node: React.ReactNode; yields: boolean; presentsImmediately?: true }>;
 
 /** One action ending the composer's status line, drawn by the shared text link. */
 export type SessionInstrumentStripLineAction = Readonly<{
@@ -324,7 +324,10 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
         for (const badge of badges) {
             instruments.push({ yields: badge.emphasis === 'quiet', node: renderBadge(badge) });
         }
-        for (const region of props.statusRegions ?? []) instruments.push({ yields: region.emphasis === 'quiet', node: region.node });
+        // A region may contain a full status card. Its first visible frame must be the first one that takes space.
+        for (const region of props.statusRegions ?? []) {
+            instruments.push({ yields: region.emphasis === 'quiet', node: region.node, presentsImmediately: true });
+        }
         return instruments;
     };
     const collapsibleInstruments = buildCollapsibleInstruments(isCompact);
@@ -431,9 +434,9 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                 {isCollapsed && collapsibleInstruments.length > 0 ? (
                     <CollapsedInstrumentsChip instruments={buildCollapsibleInstruments(false)} />
                 ) : (
-                    collapsibleInstruments.map(({ node, yields }, index) => (
-                        <InstrumentEntrance key={(node as React.ReactElement).key ?? index} index={index} enabled={entranceEnabled} yields={yields}
-                            leading={index === 0}>
+                    collapsibleInstruments.map(({ node, yields, presentsImmediately }, index) => (
+                        <InstrumentEntrance key={(node as React.ReactElement).key ?? index} index={index}
+                            enabled={entranceEnabled && !presentsImmediately} yields={yields} leading={index === 0}>
                             {node}
                         </InstrumentEntrance>
                     ))

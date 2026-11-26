@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -317,6 +318,18 @@ describe('SessionInstrumentStrip', () => {
         layout(tree!, 340);
         const ctx = tree!.root.findAll((n) => n.props?.testID === 'ctx')[0];
         expect(ctx!.props['data-percent-text']).toBe(false);
+    });
+
+    it('presents a plugin status card in the same frame that it takes up space', () => {
+        motionState.entrance = { kind: 'travel', durationMs: 360 };
+        const card = React.createElement('View', { key: 'plugin', testID: 'plugin-status-card', style: { height: 240 } });
+        act(() => { tree = create(<SessionInstrumentStrip />); });
+        layout(tree!, 390);
+        act(() => { tree!.update(<SessionInstrumentStrip statusRegions={[{ node: card }]} />); });
+        const cardInstance = tree!.root.findByProps({ testID: 'plugin-status-card' });
+        for (let node = cardInstance.parent; node; node = node.parent) {
+            expect(StyleSheet.flatten(node.props.style)?.opacity).not.toBe(0);
+        }
     });
 
     it('fades a leaving instrument out with its entrance motion, and not at all under reduced motion', () => {
