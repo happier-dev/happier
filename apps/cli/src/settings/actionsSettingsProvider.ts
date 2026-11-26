@@ -126,12 +126,14 @@ export function createActionSettingsProvider(params: Readonly<{
  * profile applied, so a profile's Off hides the tool. Approval routing keeps the Account
  * settings plus the profile reference and applies the same overlay itself.
  */
+const VOICE_HANDOFF_ACTION_SETTINGS = normalizeActionsSettingsV1(undefined);
+
 export function createSessionActionSettingsView(provider: RuntimeActionSettingsProvider,
   readSessionMetadata: () => Readonly<{ approvalProfileId?: unknown; approvalProfileTeamOrGroupDerived?: unknown }> | null | undefined,
   surface?: 'agent' | 'voice',
 ): RuntimeActionSettingsProvider {
   // A Voice Run Session is the carrier. The App default executor reads the bound Session's profile at admission.
-  if (surface === 'voice') return provider;
+  if (surface === 'voice') return { ...provider, getActionsSettings: () => VOICE_HANDOFF_ACTION_SETTINGS };
   let last: Readonly<{ settings: ActionsSettingsV1; profileId: unknown; derived: boolean;
     catalog: readonly ReadableApprovalProfileV1[] | undefined; effective: ActionsSettingsV1 }> | undefined;
   return { ...provider, getActionsSettings: () => {

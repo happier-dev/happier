@@ -1,3 +1,4 @@
+import type { FeatureDecision } from '../features/decision.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { isActionEnabledByActionsSettings, normalizeActionSettingsActionId, type ActionSettingsActionId, type ActionsSettingsV1 } from './actionSettings.js';
 import type { ActionCallerSurfaceV1 } from './actionSettings.js';
@@ -44,12 +45,24 @@ export type ActionSurfaceAvailabilityReason =
 
 export type ActionSurfaceSettingsState = 'enabled' | 'disabled' | 'approval_required' | 'unknown';
 
+/** Rich readers carry the owner's cause; boolean callers remain compatible. */
+export type ActionEnablementDecision = Readonly<{
+  enabled: boolean;
+  featureDecision?: FeatureDecision;
+  authenticatedRuntime?: false;
+}>;
+export type ActionEnablementReader = ((id: ActionId) => boolean) & Readonly<{
+  readDecision?: (id: ActionId) => ActionEnablementDecision;
+}>;
+
 export type ActionSurfaceAvailability = Readonly<{
   available: boolean;
   reason: ActionSurfaceAvailabilityReason;
   actionId: string;
   surface: keyof ActionSurfaces;
   availableSurfaces: readonly (keyof ActionSurfaces)[];
+  featureDecision?: FeatureDecision;
+  authenticatedRuntime?: false;
   settingsState?: ActionSurfaceSettingsState;
   defaultToolExposureMode?: ActionToolExposureMode;
   effectiveToolExposureMode?: ActionToolExposureMode;
@@ -59,7 +72,7 @@ export type ActionSurfaceAvailability = Readonly<{
 export type ActionSurfaceAvailabilityContext = Readonly<{
   callerSurface?: ActionCallerSurfaceV1;
   settings?: ActionsSettingsV1 | null;
-  isActionEnabled?: ((id: ActionId) => boolean) | null;
+  isActionEnabled?: ActionEnablementReader | null;
   /** Undefined means an Account host without a bound Session. */
   sessionMemoryEnabled?: boolean;
   requireToolBinding?: boolean | null;
@@ -219,13 +232,19 @@ export function resolveActionSurfaceAvailability(params: Readonly<{
   }
 
   const memoryAllowed = isActionEnabledWithSessionMemory(actionId, params.sessionMemoryEnabled);
+  const enablement = memoryAllowed && parsedActionId.success && params.isActionEnabled
+    ? params.isActionEnabled.readDecision?.(parsedActionId.data)
+      ?? { enabled: params.isActionEnabled(parsedActionId.data) }
+    : undefined;
   if (
     !memoryAllowed
-    || (params.isActionEnabled && parsedActionId.success && !params.isActionEnabled(parsedActionId.data))
+    || enablement?.enabled === false
   ) {
     return {
       available: false,
       reason: memoryAllowed ? 'disabled_by_policy' : 'session_memory_off',
+      ...(enablement?.featureDecision ? { featureDecision: enablement.featureDecision } : {}),
+      ...(enablement?.authenticatedRuntime === false ? { authenticatedRuntime: false as const } : {}),
       actionId,
       surface: params.surface,
       availableSurfaces,

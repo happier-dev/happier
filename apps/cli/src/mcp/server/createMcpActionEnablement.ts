@@ -1,6 +1,6 @@
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
-import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
+import { type ActionEnablementDecision, type ActionEnablementReader, isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import type { AccountSettings, ActionId, ActionSurfaces } from '@happier-dev/protocol';
 
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
@@ -11,6 +11,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 
 import {
   createActionSettingsProvider,
+  createSessionActionSettingsView,
   type ActionSettingsProvider,
   type RuntimeActionSettingsProvider,
 } from '@/settings/actionsSettingsProvider';
@@ -44,10 +45,12 @@ export function createMcpActionEnablement(params: Readonly<{
   actionSettingsProvider?: RuntimeActionSettingsProvider | null;
   surface: keyof ActionSurfaces;
 }>): (id: ActionId) => boolean {
-  const provider = params.actionSettingsProvider ?? createMcpActionSettingsProvider({
+  const baseProvider = params.actionSettingsProvider ?? createMcpActionSettingsProvider({
     accountSettings: params.accountSettings ?? null,
     getAccountSettings: params.getAccountSettings ?? null,
   });
+  const provider = params.surface === 'voice'
+    ? createSessionActionSettingsView(baseProvider, () => null, 'voice') : baseProvider;
   return (id) =>
     isActionEnabledByActionsSettings(id, provider.getActionsSettings(), {
       surface: params.surface,
@@ -70,27 +73,29 @@ export function createMcpActionEnablementWithServerFeatureAvailability(params: R
   readSessionMemoryEnabled?: () => boolean;
   readServerFeaturesSnapshot: () => CliServerFeaturesSnapshot | undefined;
   env?: NodeJS.ProcessEnv;
-}>): (id: ActionId) => boolean {
+}>): ActionEnablementReader {
   const env = resolveCliFeatureDecisionEnvironment(params.env);
   const isEnabledByPolicy = createMcpActionEnablement({
     actionSettingsProvider: params.actionSettingsProvider,
     surface: params.surface,
   });
-  return (id) => {
+  const readDecision = (id: ActionId): ActionEnablementDecision => {
     // A Voice Run's host Session is its carrier. The App owns the working Session's Memory choice.
-    if (params.surface !== 'voice' && !isActionEnabledWithSessionMemory(id, params.readSessionMemoryEnabled?.())) return false;
-    if (!isEnabledByPolicy(id)) return false;
+    if (params.surface !== 'voice' && !isActionEnabledWithSessionMemory(id, params.readSessionMemoryEnabled?.())) return { enabled: false };
+    if (!isEnabledByPolicy(id)) return { enabled: false };
     const featureId = getActionRequiredServerFeatureId(id);
-    if (featureId === null) return true;
-    if (!params.hasAuthenticatedRuntime) return false;
+    if (featureId === null) return { enabled: true };
+    if (!params.hasAuthenticatedRuntime) return { enabled: false, authenticatedRuntime: false };
     try {
-      return resolveCliFeatureDecision({
+      const featureDecision = resolveCliFeatureDecision({
         featureId,
         env,
         serverSnapshot: params.readServerFeaturesSnapshot(),
-      }).state === 'enabled';
+      });
+      return { enabled: featureDecision.state === 'enabled', featureDecision };
     } catch {
-      return false;
+      return { enabled: false };
     }
   };
+  return Object.assign((id: ActionId) => readDecision(id).enabled, { readDecision });
 }

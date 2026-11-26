@@ -126,7 +126,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
         return {
             actionsSettings: sessionActionSettings.getActionsSettings(),
             serverFeatures: params.client.getServerFeaturesSnapshot?.(),
-            sessionMemoryEnabled: readSessionMemoryEnabledV1(params.client.getMetadataSnapshot?.()),
+            sessionMemoryEnabled: surface === 'voice' ? undefined : readSessionMemoryEnabledV1(params.client.getMetadataSnapshot?.()),
             happierToolsEnabled: params.happierToolsEnabled ?? isSessionHappierToolsEnabled(params.client.getMetadataSnapshot?.()),
             sessionMachineId: location?.machineId ?? null,
             sessionRootPath: location?.path ?? null,

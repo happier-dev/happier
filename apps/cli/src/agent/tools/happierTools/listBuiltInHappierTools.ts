@@ -94,13 +94,13 @@ function admitHappierTools(params: HappierToolAdmissionParams | undefined, onlyT
     : params?.isActionEnabled ? null : createActionSettingsProvider().getActionsSettings();
   const policy = actionsSettings ?? normalizeActionsSettingsV1(undefined);
   const isEnabledByPolicy = params?.isActionEnabled ?? ((id: ActionId) => isActionEnabledByActionsSettings(id, policy, { surface }));
-  const isActionEnabled = (id: ActionId): boolean => {
+  const isServerFeatureEnabled = params?.isServerFeatureEnabled;
+  const isActionEnabled = isServerFeatureEnabled === undefined ? isEnabledByPolicy : (id: ActionId): boolean => {
     if (!isEnabledByPolicy(id)) return false;
-    if (params?.isServerFeatureEnabled === undefined) return true;
     const requiredFeatureId = getActionRequiredServerFeatureId(id);
     if (requiredFeatureId === null) return true;
     try {
-      return params.isServerFeatureEnabled(requiredFeatureId) === true;
+      return isServerFeatureEnabled(requiredFeatureId) === true;
     } catch {
       return false;
     }

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 
-import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput, isActionSpecSurfacedOn, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -103,11 +103,12 @@ export function createExternalMcpServer(params: Readonly<{
     hasAuthenticatedRuntime: true,
     readServerFeaturesSnapshot: () => params.serverFeaturesSnapshot,
   });
-  const isActionEnabled = (id: ActionId): boolean => (
-    (!usesApiToken || PublicActionIdSchema.safeParse(id).success)
-    && isActionExecutableFromStandaloneMcp(getActionSpec(id))
-    && isServerFeatureAvailable(id)
-  );
+  const readDecision = (id: ActionId) => {
+    if ((usesApiToken && !PublicActionIdSchema.safeParse(id).success)
+      || !isActionExecutableFromStandaloneMcp(getActionSpec(id))) return { enabled: false };
+    return isServerFeatureAvailable.readDecision?.(id) ?? { enabled: isServerFeatureAvailable(id) };
+  };
+  const isActionEnabled = Object.assign((id: ActionId) => readDecision(id).enabled, { readDecision });
 
   let defaultSessionAddress: Readonly<{ serverId: string; sessionId: string }> | null = (() => {
     const sessionId = normalizeId(params.defaultSessionId);
@@ -374,10 +375,7 @@ export function createExternalMcpServer(params: Readonly<{
 
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
-    isActionEnabled: (id) => {
-      const spec = getActionSpec(id);
-      return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabled(id);
-    },
+    isActionEnabled,
     surface: toolSurface,
     actionsSettings,
     pluginToolCatalog,

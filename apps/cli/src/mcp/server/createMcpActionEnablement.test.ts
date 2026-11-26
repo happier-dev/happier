@@ -215,3 +215,114 @@ describe('Lane 10 Action feature availability', () => {
     expect(createEnablement(notPublicHttps)('teams.credentials.create')).toBe(true);
   });
 });
+
+describe('Voice MCP target-policy handoff', () => {
+  it('lets the App apply the target profile instead of the carrier Account Off', async () => {
+    const actionSettingsProvider = createMcpActionSettingsProvider({ accountSettings: accountSettingsParse({
+      actionsSettingsV1: { v: 1, actions: { 'memory.remember': { enabled: false } } },
+    }) });
+    const params = { actionSettingsProvider, hasAuthenticatedRuntime: true,
+      readServerFeaturesSnapshot: () => undefined, env: {} };
+    expect(createMcpActionEnablementWithServerFeatureAvailability({ ...params, surface: 'agent' })('memory.remember')).toBe(false);
+    expect(createMcpActionEnablementWithServerFeatureAvailability({ ...params, surface: 'voice' })('memory.remember')).toBe(true);
+    const { applyApprovalProfileOverlayV1 } = await import('@happier-dev/protocol/actions/approvalProfiles');
+    const { isActionEnabledByActionsSettings } = await import('@happier-dev/protocol/actions/actionSettings');
+    const targetPolicy = applyApprovalProfileOverlayV1(actionSettingsProvider.getActionsSettings(), {
+      id: 'working-session', name: 'Working Session',
+      actions: { 'memory.remember': { enabled: true, approvalRequiredSurfaces: ['voice'] } },
+    });
+    expect(isActionEnabledByActionsSettings('memory.remember', targetPolicy, { surface: 'voice' })).toBe(true);
+    expect(isApprovalRequiredByActionsSettings('memory.remember', targetPolicy, { surface: 'voice' })).toBe(true);
+    expect(actionSettingsProvider.getActionsSettings().actions['memory.remember']?.enabled).toBe(false);
+    const targetOff = applyApprovalProfileOverlayV1(actionSettingsProvider.getActionsSettings(), {
+      id: 'target-off', name: 'Target Off', actions: { 'memory.remember': { enabled: false } },
+    });
+    expect(isActionEnabledByActionsSettings('memory.remember', targetOff, { surface: 'voice' })).toBe(false);
+  });
+
+  it('carries the exact Home feature refusal into Action availability', async () => {
+    const { resolveActionSurfaceAvailability } = await import('@happier-dev/protocol/actions/actionSurfaceAvailability');
+    let snapshot = readySnapshot({ sessions: { enabled: true, conversations: { enabled: true } }, sharing: { session: { enabled: true } } });
+    const isActionEnabled = createMcpActionEnablementWithServerFeatureAvailability({
+      actionSettingsProvider: createMcpActionSettingsProvider({ accountSettings: null }),
+      surface: 'voice', hasAuthenticatedRuntime: true,
+      readServerFeaturesSnapshot: () => snapshot, env: {},
+    });
+    expect(resolveActionSurfaceAvailability({ actionId: 'discussion.list', surface: 'voice', isActionEnabled }).available).toBe(true);
+    snapshot = readySnapshot({ sessions: { enabled: true, conversations: { enabled: false } }, sharing: { session: { enabled: true } } });
+    expect(isActionEnabled('discussion.list')).toBe(false);
+    expect(resolveActionSurfaceAvailability({ actionId: 'discussion.list', surface: 'voice', isActionEnabled })).toMatchObject({
+      available: false, featureDecision: { featureId: 'sessions.conversations', state: 'disabled', blockedBy: 'server', blockerCode: 'feature_disabled' },
+    });
+  });
+
+  it('distinguishes absence of authenticated runtime from Actions policy', async () => {
+    const { resolveActionSurfaceAvailability } = await import('@happier-dev/protocol/actions/actionSurfaceAvailability');
+    const isActionEnabled = createMcpActionEnablementWithServerFeatureAvailability({
+      actionSettingsProvider: createMcpActionSettingsProvider({ accountSettings: null }),
+      surface: 'voice', hasAuthenticatedRuntime: false,
+      readServerFeaturesSnapshot: () => readySnapshot({ sessions: { enabled: true, conversations: { enabled: true } }, sharing: { session: { enabled: true } } }), env: {},
+    });
+    expect(resolveActionSurfaceAvailability({ actionId: 'discussion.list', surface: 'voice', isActionEnabled })).toMatchObject({
+      available: false, authenticatedRuntime: false,
+    });
+  });
+});
+
+describe('MCP availability consumers', () => {
+  it('uses the Voice handoff view for inventory while retaining agent Account Off', async () => {
+    const { createSessionActionSettingsView } = await import('@/settings/actionsSettingsProvider');
+    const { createHappierToolInventory } = await import('@/agent/tools/happierTools/listBuiltInHappierTools');
+    const { resolveSessionNativeToolDescriptors } = await import('@/agent/tools/happierTools/resolveSessionNativeToolBridge');
+    const provider = createMcpActionSettingsProvider({ accountSettings: accountSettingsParse({
+      actionsSettingsV1: { v: 1, actions: { 'session.title.set': { enabled: false }, 'memory.remember': { enabled: false } } },
+    }) });
+    const agentView = createSessionActionSettingsView(provider, () => null, 'agent');
+    expect(agentView.getActionsSettings()).toBe(provider.getActionsSettings());
+    const profiledProvider = { ...provider, getApprovalProfiles: () => [{ id: 'carrier-off', access: 'owner' as const,
+      profile: { id: 'carrier-off', name: 'Carrier Off', actions: { 'session.title.set': { enabled: false }, 'memory.remember': { enabled: false } } },
+      revision: { headerVersion: 1, bodyVersion: 1 } }] };
+    for (const surface of ['voice', 'agent'] as const) {
+      const view = createSessionActionSettingsView(profiledProvider, () => ({ approvalProfileId: 'carrier-off' }), surface);
+      const isActionEnabled = createMcpActionEnablementWithServerFeatureAvailability({ actionSettingsProvider: view,
+        surface, hasAuthenticatedRuntime: true, readServerFeaturesSnapshot: () => undefined, env: {} });
+      const inventory = createHappierToolInventory({ surface, isActionEnabled, actionsSettings: view.getActionsSettings() });
+      expect(inventory.tools.some(tool => tool.name === 'memory_remember')).toBe(surface === 'voice');
+      const descriptors = resolveSessionNativeToolDescriptors({ surface, accountSettings: { actionsSettingsV1: provider.getActionsSettings() },
+        sessionId: 'carrier', memoryRecallGuidanceEnabled: false, sessionMemoryEnabled: false, isServerFeatureEnabled: () => true });
+      expect(descriptors.some(tool => tool.name === 'change_title')).toBe(false);
+      expect(descriptors.some(tool => tool.name === 'memory_remember')).toBe(surface === 'voice');
+    }
+  });
+
+  it('returns the typed feature cause through direct and generic MCP dispatch', async () => {
+    const { createActionToolExecutorBridge } = await import('@/agent/tools/happierTools/createActionToolExecutorBridge');
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { formatHappierMcpToolFailure } = await import('@/mcp/server/registerHappierMcpBuiltInTools');
+    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+    let snapshot = readySnapshot({ sessions: { enabled: true, conversations: { enabled: true } }, sharing: { session: { enabled: true } } });
+    const isActionEnabled = createMcpActionEnablementWithServerFeatureAvailability({
+      actionSettingsProvider: createMcpActionSettingsProvider({ accountSettings: null }),
+      surface: 'voice', hasAuthenticatedRuntime: true, readServerFeaturesSnapshot: () => snapshot, env: {},
+    });
+    const bridge = createActionToolExecutorBridge({ surface: 'voice', executor: createActionExecutor({}), isActionEnabled });
+    expect(bridge.isActionEnabled('discussion.list')).toBe(true);
+    snapshot = readySnapshot({ sessions: { enabled: true, conversations: { enabled: false } }, sharing: { session: { enabled: true } } });
+    const toolName = getActionSpec('discussion.list').bindings!.mcpToolName!;
+    for (const [name, input] of [[toolName, {}], ['action_execute', { actionId: 'discussion.list', input: {} }]] as const) {
+      const result = await bridge.executeActionByToolName(name, input, 'carrier');
+      expect(result).toMatchObject({
+        ok: false, errorCode: 'action_disabled', details: { featureDecision: {
+          featureId: 'sessions.conversations', state: 'disabled', blockerCode: 'feature_disabled', blockedBy: 'server',
+        } },
+      });
+      if (result.ok) throw new Error('Expected feature refusal');
+      const formatted = formatHappierMcpToolFailure(result, { actionId: 'discussion.list' });
+      const text = formatted.content.find(block => block.type === 'text');
+      if (text?.type !== 'text') throw new Error('Expected MCP text failure');
+      expect(JSON.parse(text.text)).toMatchObject({ errorCode: 'action_disabled', details: {
+        reason: 'disabled_by_policy', featureDecision: { featureId: 'sessions.conversations', blockerCode: 'feature_disabled' },
+      } });
+    }
+  });
+});

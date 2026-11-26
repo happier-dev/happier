@@ -9,6 +9,7 @@ import { z } from 'zod/mini';
 
 import { projectSessionBoundActionToolInputSchema } from './actionToolContext';
 import { isBuiltInHappierToolAdmitted, listBuiltInHappierTools } from './listBuiltInHappierTools';
+import { createSessionActionSettingsView } from '@/settings/actionsSettingsProvider';
 import { resolveActionsSettingsWithEnvironmentOverride } from '@/settings/actionsSettings';
 import { projectMcpToolInputJsonSchema } from '@/mcp/server/projectMcpToolInputJsonSchema';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
@@ -83,7 +84,9 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
   /** Exact external Action tools admitted by the daemon catalog owner. */
   pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
 }>): readonly AgentSessionNativeToolDescriptor[] {
-  const actionsSettings = resolveActionsSettingsWithEnvironmentOverride(params.accountSettings);
+  const accountActionsSettings = resolveActionsSettingsWithEnvironmentOverride(params.accountSettings);
+  const actionsSettings = createSessionActionSettingsView({ getActionsSettings: () => accountActionsSettings },
+    () => null, params.surface).getActionsSettings();
   const isActionEnabled = (actionId: ActionId) => isActionEnabledByActionsSettings(
     actionId,
     actionsSettings,
@@ -102,7 +105,7 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
     happierToolsEnabled: params.happierToolsEnabled,
     actionsSettings,
     isActionEnabled,
-    sessionMemoryEnabled: params.sessionMemoryEnabled === true,
+    sessionMemoryEnabled: params.surface === 'voice' ? undefined : params.sessionMemoryEnabled === true,
     isServerFeatureEnabled: params.isServerFeatureEnabled ?? (() => false),
     requiredDirectActionIds: params.memoryRecallGuidanceEnabled
       ? MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS

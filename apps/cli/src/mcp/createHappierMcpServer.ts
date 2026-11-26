@@ -42,7 +42,7 @@ import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/per
 import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import type { ActionId, AccountSettings, ActionExecutorContext, ActionExecutorDeps, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
-import { getActionSpec, isActionSpecSurfacedOn, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
+import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isMemorySessionSearchHitV1, negotiateMemorySearchV1 } from '@happier-dev/protocol/memory/memorySearch';
@@ -205,7 +205,9 @@ export function createHappierMcpServer(
     credentials,
     sessionCredentials,
   });
-  const readActionsSettings = () => actionSettingsProvider.getActionsSettings();
+  const sessionActionSettings = createSessionActionSettingsView(actionSettingsProvider,
+    () => client.getMetadataSnapshot?.(), toolSurface);
+  const readActionsSettings = () => (toolSurface === 'voice' ? sessionActionSettings : actionSettingsProvider).getActionsSettings();
   const readSessionAgentSpawnPolicyV1 = async (signal?: AbortSignal) => {
     if (credentials) return actionSettingsProvider.getAccountSettings?.()?.sessionAgentSpawnPolicyV1;
     const policy = await readCurrentRunnerAgentStartPolicyV1(client.sessionId, toolExecutionSignal
@@ -214,7 +216,7 @@ export function createHappierMcpServer(
     return policy.sessionAgentSpawnPolicyV1;
   };
   const isActionEnabled = createMcpActionEnablementWithServerFeatureAvailability({
-    actionSettingsProvider: createSessionActionSettingsView(actionSettingsProvider, () => client.getMetadataSnapshot?.(), toolSurface),
+    actionSettingsProvider: sessionActionSettings,
     surface: toolSurface,
     hasAuthenticatedRuntime: sessionCredentials !== null,
     authorityScope: opts?.authorityScope,
@@ -599,7 +601,7 @@ export function createHappierMcpServer(
         }),
 
       resetGlobalVoiceAgent: async () => {},
-      isActionEnabled: (id) => isActionEnabled(id),
+      isActionEnabled,
     },
   );
 
@@ -753,10 +755,7 @@ export function createHappierMcpServer(
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
     resolveSessionListAccess: () => credentials ? 'led_subtree' : 'current_session',
-    isActionEnabled: (id) => {
-      const spec = getActionSpec(id as any);
-      return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabled(id as any);
-    },
+    isActionEnabled,
     surface: toolSurface,
     actionsSettings: readActionsSettings(),
     getActionsSettings: readActionsSettings,
