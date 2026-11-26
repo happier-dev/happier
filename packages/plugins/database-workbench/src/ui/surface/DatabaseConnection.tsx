@@ -7,7 +7,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { databaseActionLocalIdV1, isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import { DatabaseDescriptorV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { Action, Button, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Action, Button, SelectionTiles, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { SavedSecretChoiceList } from '@happier-dev/plugin-ui/components';
 import {
   projectPluginActionControlExecutionV1, projectPluginActionRejectionV1, usePluginHostApi, type PluginActionExecution,
@@ -28,15 +28,21 @@ export function DatabaseConnection({ scope, onConnected, onFileOpened, onCancel 
   onCancel(): void;
 }>) {
   const t = usePluginTranslation();
-  const [useFile, selectFile] = React.useState(false);
+  const [source, selectSource] = React.useState<'server' | 'file'>('server');
 
+  // What to connect is one visible choice (lab dbFind-connectFile engine tiles), never a toggle that swaps the form.
   return <Stack gap="small">
-    {useFile
+    <SelectionTiles testID="database-connect-source" density="compact" maximumColumns={2}
+      accessibilityLabel={t('plugins.database.connect.source', 'What to connect')}
+      value={source} onChange={selectSource} options={[
+        { id: 'server', icon: 'database', title: t('plugins.database.connect.sourceServer', 'A database server'),
+          subtitle: t('plugins.database.connect.sourceServerDetail', 'Its address, kept as a Saved Secret') },
+        { id: 'file', icon: 'file', title: t('plugins.database.connect.sourceFile', 'A SQLite file'),
+          subtitle: t('plugins.database.connect.sourceFileDetail', 'A file in this checkout') },
+      ]} />
+    {source === 'file'
       ? <SQLiteFileConnection scope={scope} onOpened={onFileOpened} />
       : <SavedSecretConnection scope={scope} onConnected={onConnected} onForgot={onCancel} />}
-    <Button
-      title={useFile ? t('plugins.database.connect.useSecret', 'Use a Saved Secret') : t('plugins.database.connect.useFile', 'Use a SQLite file')}
-      variant="plain" onPress={() => selectFile(!useFile)} />
     <Button title={t('plugins.database.cancel', 'Cancel')} variant="plain" onPress={onCancel} />
   </Stack>;
 }

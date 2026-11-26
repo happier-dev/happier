@@ -1583,7 +1583,9 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await fixture.press(await fixture.findByRole('button', { name: 'Connect a database' }));
-      await fixture.press(await fixture.getByRole('button', { name: 'Use a SQLite file' }));
+      // What to connect is one visible choice (no mode toggle): a database server or a SQLite file in this checkout.
+      expect((await fixture.getByRole('radio', { name: 'A database server, Its address, kept as a Saved Secret' })).state?.checked).toBe(true);
+      await fixture.press(await fixture.getByRole('radio', { name: 'A SQLite file, A file in this checkout' }));
       const field = document.querySelector<HTMLInputElement>('input[aria-label="SQLite file path"]')!;
       expect(field).toBeTruthy();
       expect(control.presentation('Open SQLite file')?.disabled).toBe(true);
