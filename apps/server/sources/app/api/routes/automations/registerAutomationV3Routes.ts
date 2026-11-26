@@ -14,7 +14,7 @@ import { AutomationManualIdempotencyKeyV1Schema } from '@happier-dev/protocol/au
 import { type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { type Fastify } from "../../types";
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
-import { summarizeWorkflowRuns } from '@/app/workflows/workflowRunService';
+import { failUninitializedWorkflowRunForMissingKey, summarizeWorkflowRuns } from '@/app/workflows/workflowRunService';
 import { loadAutomationScheduleOccurrences } from '@/app/automations/automationScheduleOccurrenceProjection';
 import { loadAutomationScheduleHolds } from '@/app/automations/automationRunQueueService';
 import { db } from "@/storage/db";
@@ -974,14 +974,21 @@ export function registerAutomationV3Routes(
         },
     }, async (request, reply) => {
         const body = AutomationV3WorkerFailRequestSchema.parse(request.body);
-        if (!await resolveAutomationRunWorkerPublisher({
+        const publisher = await resolveAutomationRunWorkerPublisher({
             dependencies: workerPublisherDependencies,
             accountId: request.userId,
             request,
             path: `/v3/automations/runs/${encodeURIComponent(request.params.runId)}/fail`,
             machineId: body.machineId,
             runId: request.params.runId,
-        })) return reply.code(401).send(null);
+        });
+        if (!publisher) return reply.code(401).send(null);
+        if (body.errorCode === 'waiting_for_keys' && body.errorDetailEnvelope === null
+            && body.producedSessionId == null && body.terminalState === undefined
+            && await failUninitializedWorkflowRunForMissingKey({
+                accountId: request.userId, runId: request.params.runId, machineId: body.machineId,
+                installationId: publisher.machineInstallationId, attempt: body.attempt, accountCurrentness: body.accountCurrentness,
+            })) return reply.code(204).send();
         const run = await failAutomationRun({
             accountId: request.userId,
             runId: request.params.runId,

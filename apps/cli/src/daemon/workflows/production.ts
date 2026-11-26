@@ -1397,7 +1397,8 @@ export type WorkflowTriggerAdmissionRefusal = Readonly<{
   /** No accepted snapshot or coordinator effects were committed by this claim. */
   admission: 'refused';
 }>;
-export type WorkflowClaimCoordinationResult = WorkflowCoordinatorResult | WorkflowTriggerAdmissionRefusal;
+export type WorkflowClaimCoordinationResult = WorkflowCoordinatorResult | WorkflowTriggerAdmissionRefusal
+  | Readonly<{ state: 'failed'; reason: 'waiting_for_keys'; preInitializationFailure: true }>;
 
 function refuseWorkflowTriggerAdmission(reason: string, blockId?: string): WorkflowTriggerAdmissionRefusal {
   return { state: 'failed', reason, ...(blockId === undefined ? {} : { blockId }), admission: 'refused' };
@@ -1833,6 +1834,11 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     if (resolved.kind !== 'available' || initial.keyCensus.ownerAccountId !== params.accountId) {
       logger.debug('[WORKFLOW] Run key unavailable before initialization', { runId: claim.runId, attempt: claim.attempt,
         stage: 'run_key', reason: resolved.kind === 'unavailable' ? resolved.reason : 'owner_mismatch' });
+      if (resolved.kind === 'unavailable' && resolved.reason === 'waiting_for_keys'
+        && initial.keyCensus.ownerAccountId === params.accountId && initial.run.state === 'claimed'
+        && initial.checkpointEnvelope === null && initial.rootProgress == null) {
+        return { state: 'failed', reason: resolved.reason, preInitializationFailure: true };
+      }
       return { state: 'failed', reason: 'content_unavailable' };
     }
     const encryption = resolved.encryption;

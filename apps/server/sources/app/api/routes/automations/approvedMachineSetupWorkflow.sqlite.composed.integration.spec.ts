@@ -17,11 +17,16 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { installAxiosFastifyAdapter } from '../../../../../../cli/src/testkit/http/axiosAdapter';
 import { createCombinedMachineSetupActionDeps } from '../../../../../../cli/src/machines/setup/composeMachineSetup';
 import { createWorkflowRunStorageClient } from '../../../../../../cli/src/daemon/workflows/workflowRunStorageClient';
+import { createProductionWorkflowRunCoordinator } from '../../../../../../cli/src/daemon/workflows/production';
+import { createAutomationClaimClient } from '../../../../../../cli/src/daemon/automation/automationClaimClient';
+import { executeClaimedRun } from '../../../../../../cli/src/daemon/automation/automationRunExecutor';
+import { runWithServerHttpBaseUrl } from '../../../../../../cli/src/api/client/serverHttpBaseUrl';
 import { signPluginInstallationPublisherHeader } from '../../../../../../cli/src/plugins/installations/publisherProof';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { deriveAccountEncryptionMigrationKeyFingerprints } from '@/app/encryption/accountEncryptionTransition';
 import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { createUnavailableActionTransportDeps } from '../../../../../../cli/src/testkit/actionTransportDeps';
 import { RpcHandlerManager } from '../../../../../../cli/src/api/rpc/RpcHandlerManager';
@@ -32,11 +37,13 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { registerMachineAdmissionRoutes } from '../machines/registerMachineAdmissionRoutes';
 import { registerWorkflowRunStorageRoutes } from './registerWorkflowRunStorageRoutes';
+import { registerAutomationV3Routes } from './registerAutomationV3Routes';
 
 let harness: LightSqliteHarness;
 beforeAll(async () => {
     harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-approved-setup-workflow-', initAuth: true,
-        env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', AUTH_REQUIRED_LOGIN_PROVIDERS: '' } });
+        env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', AUTH_REQUIRED_LOGIN_PROVIDERS: '',
+            HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1' } });
 }, 120_000);
 afterAll(async () => { if (harness) await harness.close(); });
 
@@ -105,7 +112,7 @@ it('refuses a Use grantee Workflow Software Apply step at daemon ingress for mis
     }, { authentication: 'real' });
 });
 
-it('starts an encrypted Wait through the recording HTTP transport in two storage round trips and rejoins the same sealed Run', async () => {
+it.each(['admission replay', 'stale Run key'] as const)('starts an encrypted Wait through HTTP (%s)', async variant => {
     const machineKey = randomBytes(32);
     const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
         material: { type: 'dataKey', machineKey }, dataKeyPublicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey });
@@ -122,6 +129,7 @@ it('starts an encrypted Wait through the recording HTTP transport in two storage
     const requests: string[] = [];
     const preparedGets: unknown[] = [];
     const refusals: Array<{ operation: string; status: number; error: string }> = [];
+    const workerFailureStatuses: number[] = [];
     let encryptionReads = 0;
     let beforeAdmit: (() => Promise<void>) | undefined;
     await withAuthenticatedTestApp(app => {
@@ -134,6 +142,7 @@ it('starts an encrypted Wait through the recording HTTP transport in two storage
             }
         });
         app.addHook('onSend', async (request, reply, payload) => {
+            if (request.url.endsWith('/fail')) workerFailureStatuses.push(reply.statusCode);
             if (request.url === '/v3/automations/runs/workflow-storage' && reply.statusCode >= 400 && typeof payload === 'string') {
                 const body = request.body as { operation: string };
                 const response = JSON.parse(payload) as { error: string };
@@ -142,6 +151,7 @@ it('starts an encrypted Wait through the recording HTTP transport in two storage
             return payload;
         });
         registerWorkflowRunStorageRoutes(app);
+        if (variant === 'stale Run key') registerAutomationV3Routes(app);
     }, async app => {
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://wait-home.test' });
         try {
@@ -179,6 +189,44 @@ it('starts an encrypted Wait through the recording HTTP transport in two storage
                 binding: { v: 1, purpose: 'accepted_snapshot', accountId: account.id, runId },
                 envelope: parseWorkflowStoredContentEnvelopeV1(snapshot.acceptedEnvelope) }))
                 .toMatchObject({ kind: 'available', content: { materializedLeaves: [{ kind: 'wait', blockId: 'review' }] } });
+            if (variant === 'stale Run key') {
+                // Retain the Run and wrapped key, but withdraw the envelope's current-recipient proof.
+                await db.workflowRunDataKeyEnvelope.updateMany({ where: { runId, recipientAccountId: account.id },
+                    data: { recipientContentPublicKeyFingerprint: `content-public-key-sha256:${'0'.repeat(64)}` } });
+                const client = runWithServerHttpBaseUrl('http://wait-home.test', () => createAutomationClaimClient({ token,
+                    createPublisherHeader: request => signPluginInstallationPublisherHeader({ ...request, identity, machineId: machine.id }) }));
+                const claimed = await client.claimRun({ machineId: machine.id, leaseDurationMs: 30_000, scope: 'workflow' });
+                if (claimed.run === null) throw new Error('Expected a signed Workflow claim');
+                expect(claimed.run.id).toBe(runId);
+                await expect(client.failRun({ protocol: 'v3', runId, machineId: machine.id,
+                    attempt: claimed.run.attempt + 1, accountCurrentness: claimed.accountCurrentness,
+                    errorCode: 'waiting_for_keys', errorDetailEnvelope: null }))
+                    .rejects.toMatchObject({ response: { status: 404 } });
+                const unexpected = async (): Promise<never> => { throw new Error('No execution without the accepted Run key'); };
+                const coordinate = createProductionWorkflowRunCoordinator({ token, accountId: account.id, machineId: machine.id, storage,
+                    resolveAccountEncryption: async () => encryption, isAcceptedAuthorizationCurrent: unexpected,
+                    resolveControllerContext: unexpected, execution: { credentials: { token, encryption: null }, serverId: 'home',
+                        machineAdmissionTransport: unexpected, resolveExistingSessionConversation: unexpected,
+                        detachedRun: { actionExecutor: { execute: unexpected }, buildActionContext: unexpected } } });
+                const locked = await storage.execute({ operation: 'get', runId }) as typeof snapshot;
+                expect(resolveWorkflowRunDataKeyV1({ encryption, census: WorkflowRunRecipientCensusResponseV1Schema.parse(locked.keyCensus) }))
+                    .toEqual({ kind: 'unavailable', reason: 'waiting_for_keys' });
+                let coordinatorResult: unknown;
+                await executeClaimedRun({ machineId: machine.id, claimClient: client, claimed,
+                    heartbeatMs: 5_000, leaseDurationMs: 30_000, resolveAutomationAccountEncryption: async () => encryption,
+                    coordinateWorkflowRun: async claim => {
+                        const result = await coordinate(claim);
+                        coordinatorResult = result;
+                        return result;
+                    } });
+                expect(coordinatorResult).toMatchObject({ state: 'failed' });
+                const settled = await storage.execute({ operation: 'get', runId }) as typeof snapshot & { run: unknown };
+                expect(settled.run).toMatchObject({ id: runId, state: 'failed', errorCode: 'waiting_for_keys' });
+                expect(workerFailureStatuses).toEqual([404, 204]);
+                expect(settled.acceptedEnvelope === snapshot.acceptedEnvelope).toBe(true);
+                expect(await db.workflowRunInvocation.count({ where: { runId } })).toBe(0);
+                return;
+            }
             requests.length = 0;
             await expect(owner.execute(start)).resolves.toMatchObject({ admission: 'existing', run: { id: runId } });
             expect(requests).toEqual(['get']);

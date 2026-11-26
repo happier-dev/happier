@@ -4407,6 +4407,12 @@ they open the existing recipient envelope instead of generating a new per-run
 key or re-reading the live definition. Signed claim receipts retain no private
 accepted-snapshot copy: replay re-reads it from the transition-owned Run row.
 
+When the admitted executor cannot open its Run key before initialization, the
+existing signed worker failure endpoint may record `waiting_for_keys` without
+a Run key. Home binds the write to the requester, admitted installation,
+active claim attempt and current Account content identity. It settles only
+metadata on an E2EE Run with no checkpoint, invocation or execution effect.
+
 An authenticated invocation page with no rows has no private content to open.
 The current-development content-list Action returns empty details before root
 initialization without requiring a Run key. Pages containing invocation content

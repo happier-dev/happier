@@ -15,7 +15,7 @@ import { startAutomationLeaseHeartbeat } from './automationLeaseHeartbeat';
 import type { AutomationClaimClient, AutomationLeaseRenewalProgress } from './automationClaimClient';
 import { logAutomationWarn } from './automationTelemetry';
 import type { AutomationClaimedRunPayload, AutomationV3ClaimedAutomation } from './automationTypes';
-import type { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
+import type { createProductionWorkflowRunCoordinator, WorkflowClaimCoordinationResult } from '@/daemon/workflows/production';
 
 export type ClaimableRunPayload = AutomationClaimedRunPayload;
 
@@ -206,6 +206,13 @@ export async function executeClaimedRun(params: {
   }
   const isCurrent = () => !executionController.signal.aborted;
   const claimedAutomationId = claimed.run.automationId;
+  const settleUninitializedRun = async (result: WorkflowClaimCoordinationResult) => {
+    if (!isCurrent() || !('preInitializationFailure' in result)) return;
+    await claimClient.failRun({
+      protocol: 'v3', runId: claimed.run.id, machineId, attempt,
+      accountCurrentness: claimed.accountCurrentness, errorCode: result.reason, errorDetailEnvelope: null,
+    });
+  };
 
   try {
     if (!isCurrent()) return;
@@ -246,7 +253,7 @@ export async function executeClaimedRun(params: {
     try {
       if (isDirectWorkflowRunClaim(claimed)) {
         if (!params.coordinateWorkflowRun) throw new Error('Workflow Run coordinator is unavailable');
-        await params.coordinateWorkflowRun({
+        const result = await params.coordinateWorkflowRun({
           runId: claimed.run.id,
           attempt: claimed.run.attempt,
           expectedRevision: claimed.run.revision,
@@ -259,6 +266,7 @@ export async function executeClaimedRun(params: {
           acquireMachineStartCapacity: params.acquireMachineStartCapacity,
           signal: executionController.signal,
         });
+        await settleUninitializedRun(result);
         return;
       }
       if (claimed.run.recipeKind === 'action-v1') {
@@ -346,6 +354,7 @@ export async function executeClaimedRun(params: {
           acquireMachineStartCapacity: params.acquireMachineStartCapacity,
           signal: executionController.signal,
         });
+        await settleUninitializedRun(result);
         if ('admission' in result && result.admission === 'refused') {
           const refusalMessage = result.targetUnavailableReason === 'agent_not_installed'
             ? 'Selected Agent is not installed on this Machine (agent_not_installed)'

@@ -556,6 +556,34 @@ export async function recordWorkflowRequesterCustodyUnavailable(input: Readonly<
     }, { isolationLevel: 'ReadCommitted', transactionClass: 'workflow-requester-custody-refusal' });
 }
 
+/** An exact active claim may settle a key refusal before any private execution begins. */
+export async function failUninitializedWorkflowRunForMissingKey(input: Readonly<{
+    accountId: string; runId: string; machineId: string; installationId: string;
+    attempt: number; accountCurrentness: AutomationAccountCurrentnessWitnessV1;
+}>): Promise<boolean> {
+    try {
+        return await inTx(async tx => {
+            const mode = await loadCurrentWorkflowAccountModeTx(tx, input.accountId, input.accountCurrentness, input.runId);
+            if (mode !== "e2ee") return false;
+            const now = new Date();
+            const result = await failAutomationRunWithoutContentInTx({ tx, accountId: input.accountId, runId: input.runId,
+                previousState: 'claimed', errorCode: 'waiting_for_keys', settleWorkflowCustody: true, now,
+                where: { ...automationRunWithoutExecutionWhere, workflowCustodyState: 'pending',
+                    workflowAcceptedSnapshotEnvelope: { not: null }, claimedByMachineId: input.machineId,
+                    attempt: input.attempt, leaseExpiresAt: { gt: now }, assignments: { some: {
+                        machineId: input.machineId, admittedMachineInstallationId: input.installationId,
+                    } } } });
+            if (result.changed) await markWorkflowRunChangedTx(tx, input.accountId, input.runId);
+            return result.changed;
+        }, { isolationLevel: 'ReadCommitted', transactionClass: 'workflow-missing-key-refusal' });
+    } catch (error) {
+        if (error instanceof WorkflowRunServiceError && (error.code === 'content_unavailable' || error.code === 'currentness_conflict')) {
+            return false;
+        }
+        throw error;
+    }
+}
+
 export async function admitWorkflowRun(params: AdmitWorkflowRunInput): Promise<{ kind: "created" | "existing"; run: WorkflowRunSummaryV1 }> {
     try {
         return await inTx(async (tx) => await admitWorkflowRunTx(tx, params), {
