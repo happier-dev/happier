@@ -1,7 +1,7 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ReviewListResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 import { createAccountServerActionDeps } from '../../../../cli/src/api/accountServerActionDeps';
@@ -38,10 +38,54 @@ import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
     sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
+    openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1,
     type WorkflowDefinitionV1, type WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol';
 import { createProductionWorkflowRunCoordinator } from '../../../../cli/src/daemon/workflows/production';
 import { createWorkflowRunStorageTestkit } from '../../../../cli/src/daemon/workflows/workflowRunStorage.testkit';
 import { createCliActionExecutor } from '../../../../cli/src/session/actions/createCliActionExecutor';
+import tweetnacl from 'tweetnacl';
+import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationTriggerIdSchema,
+    AutomationSourceSelectorIdV1Schema, AutomationRunPluginEventTriggerEvidenceV1Schema,
+    buildAutomationPluginEventOccurrenceEvidenceV1, deriveAutomationOccurrenceKeyV1,
+    encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { createPullRequestReviewWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/pullRequestReview';
+import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import { freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { createWorkflowMaterializationHostV1 } from '@happier-dev/protocol/actions/executor/workflowMaterializationHost';
+import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/triage/src/manifest';
+import { createTriagePullRequestReviewActionTestkit, TESTKIT_OBSERVED_REVISION } from '../../../../../packages/plugins/triage/src/sessions/testkit/entrySessionTestkit.test-support';
+import { normalizeGithubRepositoryEventForAutomation } from '../../../../../packages/plugins/scm-github/src/observations/githubRepositoryEventNormalization';
+import { capturedRepositoryPullRequestEvent } from '../../../../../packages/plugins/scm-github/src/observations/testkit/githubRepositoryPullRequestEvent.fixture';
+import { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from '../../../../../packages/plugins/scm-github/src/githubAutomationEvents';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { normalizePluginManifestV2 } from '../../../../cli/src/plugins/manifest/normalize';
+import { projectLoadedPluginContributes } from '../../../../cli/src/plugins/projection/registry/fullProjection';
+import { createResolvedContributionRegistry } from '../../../../cli/src/plugins/projection/registry/createResolvedContributionRegistry';
+import { buildPluginWorkflowMaterializationProjectionV2 } from '../../../../cli/src/plugins/projection/registry/projection/v2';
+import { createPluginInvocationActionsService } from '../../../../cli/src/plugins/runtime/invocation/services/actions';
+import { createPluginActionCallerMaterializationFixture } from '../../../../cli/src/plugins/runtime/invocation/services/actionCaller.testkit';
+import { createPluginRuntimeOccurrenceId } from '../../../../cli/src/plugins/runtime/runtimeSlots';
+import { buildWorkflowActionContext } from '../../../../cli/src/daemon/workflows/workflowActionContext';
+import { fetchServerFeaturesSnapshot } from '../../../../cli/src/features/serverFeaturesClient';
+import { createCredentialedWorkflowAcceptedAuthorizationCurrentness } from '../../../../cli/src/daemon/workflows/daemonRuntime';
+import { prepareWorkflowAcceptedWorkspaceTarget } from '../../../../cli/src/daemon/workflows/resolveWorkflowWorkspace';
+import { createWorkflowRunStorageClient } from '../../../../cli/src/daemon/workflows/workflowRunStorageClient';
+import type { WorkflowClaimForCoordination } from '../../../../cli/src/daemon/workflows/worker';
+import { createAutomation, runAutomationNow } from '@/app/automations/automationCrudService';
+import { admitAutomationRunTx } from '@/app/automations/automationRunAdmissionService';
+import { claimAutomationRun, toAutomationV3WorkerClaimResponse } from '@/app/automations/automationClaimService';
+import { cancelAutomationRun } from '@/app/automations/automationRunService';
+import { fetchAutomationAccountCurrentnessWitnessTx } from '@/app/automations/automationAccountCurrentness';
+import { registerWorkflowRunStorageRoutes } from '@/app/api/routes/automations/registerWorkflowRunStorageRoutes';
+import { registerAutomationActionIndexRoutes } from '@/app/api/routes/automations/registerAutomationActionIndexRoutes';
+import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
+import { createTrustedMachineInstallation, createSignedPluginInstallationPublisherHeader } from '@/testkit/pluginInstallationPublisherTestkit';
+import * as machineRpc from '../../../../cli/src/session/transport/rpc/machineRpc';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 
 describe('Review read Actions through authenticated HTTP', () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
@@ -58,6 +102,9 @@ describe('Review read Actions through authenticated HTTP', () => {
         registerProjectAccountRowRoutes(app);
         registerSessionListingRoutes(app);
         registerReviewHumanRoutes(app);
+        registerWorkflowRunStorageRoutes(app);
+        registerAutomationActionIndexRoutes(app);
+        machinesRoutes(app);
         featuresRoutes(app);
         await app.listen({ port: 0, host: '127.0.0.1' });
         const address = app.server.address();
@@ -65,6 +112,258 @@ describe('Review read Actions through authenticated HTTP', () => {
         origin = `http://127.0.0.1:${address.port}`;
     }, 180_000);
     afterAll(async () => { await app?.close(); await harness?.close(); });
+
+    it('consumes retained Account PR occurrences through production holds and actual Review HTTP starts', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: null };
+        const machineId = randomUUID();
+        const installationId = randomUUID();
+        const keyPair = tweetnacl.sign.keyPair();
+        await createTrustedMachineInstallation({ accountId: owner.id, machineId, installationId, keyPair });
+        await db.machine.update({ where: { id: machineId }, data: {
+            metadata: encodePlainMachineStoredContent({ host: 'fixture', platform: 'linux', happyCliVersion: '0.3.0',
+                homeDir: harness.baseDir, happyHomeDir: harness.baseDir }),
+            dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+        } });
+        const metadata = { path: harness.baseDir, machineId, host: 'fixture' };
+        const ownerMetadata = createSessionOwnerMetadataV1({ metadata });
+        if (!ownerMetadata.ok) throw new Error('Expected canonical Session owner metadata');
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain',
+            metadataLayoutVersion: 1, metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata })),
+            ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata.ownerMetadata)) } });
+        await runWithServerHttpBaseUrl(origin, async () => {
+            let childActions: ReturnType<typeof createPluginInvocationActionsService>;
+            const source = await createTriagePullRequestReviewActionTestkit({ executeReview: async input =>
+                childActions.execute('review.start', projectNativeJsonValueForTransport(input)) });
+            // Native SCM is outside this HTTP fixture. Preserve the sender's
+            // selected Machine and Session authorization at its socket boundary.
+            const nativeScm = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+                expect(request.machineId).toBe(machineId);
+                expect(request.authorization).toEqual({ kind: 'session.write', sessionId: session.id });
+                if (request.method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) throw new Error(`unexpected_machine_effect:${request.method}`);
+                const captured = await source.context.services.actions.execute('scm.diffSummary.capture', projectNativeJsonValueForTransport(request.request));
+                if (!captured || typeof captured !== 'object' || !('comparison' in captured)) throw new Error('Missing native comparison');
+                const comparison = ScmComparisonSchema.parse(captured.comparison);
+                return ScmComparisonCaptureOutputSchema.parse({ success: true, comparison,
+                    metadata: { source: comparison.source, sourceKey: comparison.id } });
+            });
+            onTestFinished(() => nativeScm.mockRestore());
+            const caller = createPluginActionCallerMaterializationFixture(PLUGIN_MANIFEST.id, { machineId });
+            const occurrenceId = createPluginRuntimeOccurrenceId(PLUGIN_MANIFEST.id);
+            const definitions = PLUGIN_MANIFEST.contributes.actions.map(action => ActionDefinitionV1Schema.parse({
+                kindVersion: 1, id: `${PLUGIN_MANIFEST.id}/actions/${action.id}`, title: resolvePluginLocalizedStringV2Text(action.title),
+                description: null, safety: action.dangerLevel === 'safe' ? 'safe' : 'danger', placements: [], slash: null, bindings: null,
+                examples: null, surfaces: { agent: true }, inputHints: null, inputSchema: action.inputSchema, outputSchema: action.resultSchema,
+            }));
+            const executor = createCliActionExecutor({ token, credentials, sessionId: session.id, mode: 'plain', ctx: null,
+                serverId: origin, serverHttpBaseUrl: origin, pluginActionExecutionOwner: 'current_process',
+                accountServerActionDeps: createAccountServerActionDeps({ token, credentials, machineId,
+                    serverId: origin, serverHttpBaseUrl: origin }),
+                listContributedActionDefinitions: () => definitions,
+                resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl: origin }),
+                invokeContributedAction: async request => {
+                    childActions = createPluginInvocationActionsService({ seed: {
+                        plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                        contribution: { id: request.action.localId, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${request.action.localId}` },
+                        occurrenceId, sourceCustody: { kind: 'development', registeredRootId: 'triage-root-1' },
+                        surface: 'agent', initiatingActionCaller: request.context.actionCaller, approvalContext: request.context,
+                        resolveCurrentPluginMaterializationRef: caller.resolveCurrentPluginMaterializationRef,
+                        signal: request.signal ?? new AbortController().signal, isOccurrenceCurrent: () => true,
+                    }, actionExecutor: executor,
+                    invokeContributedAction: async () => { throw new Error('No nested contributed Action'); } });
+                    return { ok: true, result: await source.invoke(request.action.localId, projectNativeJsonValueForTransport(request.input)) };
+                },
+                // The SCM operation is the source's native/process boundary. Its
+                // real Triage preparation, Action executor and Review port stay on path.
+                runtimeActionExecute: async request => {
+                    if (request.actionId !== 'scm.diffSummary.capture') throw new Error(`unexpected_native_effect:${request.actionId}`);
+                    return source.context.services.actions.execute('scm.diffSummary.capture', projectNativeJsonValueForTransport(request.input));
+                },
+            });
+            const event = { pluginId: 'example.forge', localId: 'pull-request' };
+            const definition = createPullRequestReviewWorkflowV1(event);
+            const { v: _version, reviewTarget, ...saved } = source.savedInput;
+            const people = [{ kind: 'person', principal: { kind: 'account', accountId: owner.id }, required: true }];
+            const selectedWorkspace = { serverId: origin, machineId, rootPath: harness.baseDir };
+            source.preparedWorkspace.repositoryPath = harness.baseDir;
+            const inputs = { ...saved, request: { ...saved.request, workspace: selectedWorkspace },
+                prepareReviewWorkspaceSelection: { ...saved.prepareReviewWorkspaceSelection, input: {
+                    ...saved.prepareReviewWorkspaceSelection.input, workspace: selectedWorkspace } }, sessionId: session.id,
+                quickReview: { reviewers: people, instructions: 'Quick composition' },
+                standardReview: { reviewers: people, instructions: 'Standard composition' } };
+            const automation = await createAutomation({ accountId: owner.id, recipeFeaturePolicy: { workflowsEnabled: true }, input: {
+                automationId: randomUUID(), name: 'PR occurrence persistence', enabled: true, triggers: [], assignments: [{ machineId }],
+                executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1, triggerEvidence: null,
+                    workflow: { t: 'plain', v: { workspace: { directory: harness.baseDir }, executionTarget: { kind: 'session' },
+                        inlineDefinition: definition, inputs } } }),
+            } });
+            const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+            const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(randomUUID());
+            await db.automationTrigger.create({ data: { id: triggerId, automationId: automation.id, kind: 'pluginEvent', enabled: true,
+                eventPluginId: event.pluginId, eventLocalId: event.localId, sourceSelectorId, sourceContractVersion: 1,
+                observationTransport: 'checkpointedPull', watcherMachineId: machineId, watcherMachineInstallationId: installationId,
+                watcherPluginId: event.pluginId, watcherMaterializationId: 'selected-pr-source',
+                definitionEnvelope: JSON.stringify({ t: 'plain', v: {} }) } });
+            const admit = async (association: 'external' | 'unknown' | 'internal', headSha: string, number: number) => {
+                const nativeAssociation = association === 'internal' ? 'MEMBER' : association === 'external' ? 'CONTRIBUTOR' : undefined;
+                const normalized = normalizeGithubRepositoryEventForAutomation({ ...capturedRepositoryPullRequestEvent, payload: {
+                    ...capturedRepositoryPullRequestEvent.payload, pull_request: { ...capturedRepositoryPullRequestEvent.payload.pull_request,
+                        number, author_association: nativeAssociation,
+                        head: { ...capturedRepositoryPullRequestEvent.payload.pull_request.head, sha: headSha } },
+                } }, { v: 1, repositoryId: '77', owner: 'acme', name: 'widgets', nameWithOwner: 'acme/widgets' },
+                GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle).observation;
+                if (!normalized || !('pullRequest' in normalized.payload)) throw new Error('Missing native PR occurrence');
+                // The selected source/SCM adapter boundary is the same canonical
+                // testkit as the PR coordinator suite, retaining native author/head facts.
+                const evidence = buildAutomationPluginEventOccurrenceEvidenceV1({ eventRef: event, sourceSelectorId,
+                    occurrenceId: randomUUID(), occurredAt: Date.now(), payload: { pullRequest: normalized.payload.pullRequest,
+                        reviewTarget: { ...reviewTarget, entryRef: { ...reviewTarget.entryRef, entryId: String(number) },
+                            comparisonSource: { ...reviewTarget.comparisonSource, locator: { ...reviewTarget.comparisonSource.locator, number, headOid: headSha } } } } });
+                const frozen = JSON.stringify({ t: 'plain', v: AutomationRunPluginEventTriggerEvidenceV1Schema.parse({ ...evidence,
+                    sourceInstanceId: 'selected-pr-source', sourceContractVersion: 1, observationReceivedAt: Date.now(),
+                    filter: { version: null, result: 'matched' } }) });
+                const admitted = await inTx(tx => admitAutomationRunTx({ tx, accountId: owner.id, automationId: automation.id,
+                    now: new Date(), recipeFeaturePolicy: { workflowsEnabled: true }, triggerEvidenceEnvelope: frozen,
+                    executionTriggerEvidenceEnvelope: frozen, cause: { kind: 'trigger', triggerId, triggerRevision: 0,
+                        triggerKind: 'pluginEvent', occurredAt: evidence.occurredAt,
+                        occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence }), evidence: { eventRef: event, sourceSelectorId } } }));
+                if (admitted.kind !== 'admitted') throw new Error(JSON.stringify(admitted));
+                return admitted.run.id;
+            };
+            const storage = createWorkflowRunStorageClient({ token, machineId, serverHttpBaseUrl: origin,
+                createPublisherHeader: async ({ path, body }) => createSignedPluginInstallationPublisherHeader({
+                    keyPair, machineId, installationId, path, body, nonce: randomUUID() }) });
+            const encryption = async () => {
+                const witness = await fetchAutomationAccountCurrentnessWitnessTx(db, owner.id);
+                if (!witness) throw new Error('Missing actual Account currentness');
+                return { kind: 'available' as const, witness };
+            };
+            const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({
+                loadResult: { diagnosticsByPluginId: {}, loadedPlugins: [{ pluginId: PLUGIN_MANIFEST.id,
+                    pluginRootPath: harness.baseDir, manifestPath: `${harness.baseDir}/plugin.json`,
+                    daemonEntryPath: null, devDaemonEntryPath: null,
+                    sourceSpec: { kind: 'path', locator: harness.baseDir, trustPolicy: 'local_trusted', installPolicy: 'link' },
+                    manifest: normalizePluginManifestV2(PLUGIN_MANIFEST) }] }, provenance: 'first_party',
+            }));
+            const projection = buildPluginWorkflowMaterializationProjectionV2({ generation: 1,
+                registry: { ...registry, occurrenceIdsByPluginId: { [PLUGIN_MANIFEST.id]: occurrenceId } } });
+            const materializer = createWorkflowMaterializationHostV1({ serverId: origin,
+                readAuthorizedSession: async () => { throw new Error('No Session leaf'); }, isHomeEquivalent: id => id === origin,
+                callMachineAction: async ({ method, request }) => {
+                    if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                        return { protocolVersion: 1, projection };
+                    }
+                    if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+                        const identity = (request as { qualifiedActionId: string }).qualifiedActionId;
+                        const action = PLUGIN_MANIFEST.contributes.actions.find(item => `${PLUGIN_MANIFEST.id}/${item.id}` === identity);
+                        if (action) return { ok: true, inputSchema: action.inputSchema, outputSchema: action.resultSchema };
+                    }
+                    throw new Error(`No native leaf admission:${method}`);
+                },
+                readRoleSelection: async () => { throw new Error('No Role selection'); }, readLaunchProfile: async () => null,
+                readWorkflowDefinition: async () => { throw new Error('The admitted definition is inline'); },
+                readHostActionContract: async id => { const action = definitions.find(item => item.id === id);
+                    return action ? freezeWorkflowActionContractV1(action) : null; },
+            });
+            const context = (input: Parameters<typeof buildWorkflowActionContext>[0]) => ({ ...buildWorkflowActionContext(input),
+                serverId: origin, bypassApprovals: true, defaultSessionMachineId: machineId,
+                externalActionTarget: { kind: 'machine' as const, machineId, project: { machineId, directory: harness.baseDir } } });
+            const coordinate = createProductionWorkflowRunCoordinator({ token, accountId: owner.id, machineId, storage,
+                resolveAccountEncryption: encryption, isAcceptedAuthorizationCurrent: createCredentialedWorkflowAcceptedAuthorizationCurrentness({
+                    credentials, accountId: owner.id, serverId: origin, serverHttpBaseUrl: origin }),
+                resolveControllerContext: async () => ({ surface: 'cli', authority: 'present_user' }),
+                resolveMaterializationHost: async target => ({ ...await materializer({ ...target, machineId }),
+                    admitLeaf: async () => { throw new Error('No native leaf'); } }),
+                prepareAcceptedWorkspaceTarget: input => prepareWorkflowAcceptedWorkspaceTarget({ ...input,
+                    inspectLocation: async () => null }),
+                workspaceScm: { inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+                execution: { credentials, serverId: origin,
+                    machineAdmissionTransport: async () => { throw new Error('No native Session admission'); },
+                    resolveExistingSessionConversation: async () => null,
+                    detachedRun: { actionExecutor: executor, buildActionContext: context },
+                    action: { executor, buildContext: async input => context(input),
+                        observeRun: async () => { throw new Error('Human-only Review has no native Run'); } } },
+            });
+            const claim = async (expectedRunId: string): Promise<WorkflowClaimForCoordination> => {
+                const claimed = toAutomationV3WorkerClaimResponse(await claimAutomationRun({ accountId: owner.id, machineId,
+                    leaseDurationMs: 30_000, scope: 'workflow', recipeFeaturePolicy: { workflowsEnabled: true } }), owner.id);
+                expect(claimed.run?.id).toBe(expectedRunId);
+                if (!claimed.run || !claimed.automation || !claimed.accountCurrentness || !claimed.run.executionInputEnvelope) throw new Error('Missing real claim');
+                return { runId: claimed.run.id, automationId: claimed.run.automationId, automationName: claimed.automation.name,
+                    attempt: claimed.run.attempt, expectedRevision: claimed.run.revision, accountCurrentness: claimed.accountCurrentness,
+                    definitionEnvelope: claimed.run.executionInputEnvelope, acceptedEnvelope: claimed.run.workflowAcceptedSnapshotEnvelope,
+                    workflowDefinitionId: claimed.automation.workflowDefinitionId, scopeSessionId: claimed.automation.scopeSessionId,
+                    causeWorkDepth: claimed.run.causeWorkDepth, automationEvidenceEnvelope: claimed.run.automationEvidenceEnvelope,
+                    automationCause: claimed.run.cause };
+            };
+            const first = await claim(await admit('external', TESTKIT_OBSERVED_REVISION.headSha, 17));
+            const firstResult = await coordinate(first);
+            expect(firstResult, JSON.stringify(firstResult)).toMatchObject({ state: 'waiting_for_review' });
+            const headB = 'e'.repeat(40);
+            const second = await claim(await admit('unknown', headB, 17));
+            expect(await coordinate(second)).toMatchObject({ state: 'waiting_for_review' });
+            expect(source.events).toEqual([]);
+            expect(source.prepareInputs).toEqual([]);
+            expect(source.captureInputs).toEqual([]);
+            expect(await db.reviewMetadata.count({ where: { artifact: { accountId: owner.id } } })).toBe(0);
+            expect(await cancelAutomationRun({ accountId: owner.id, runId: first.runId })).toMatchObject({ state: 'cancelled' });
+            expect(source.events).toEqual([]);
+            const headC = 'f'.repeat(40);
+            source.setRevision({ ...TESTKIT_OBSERVED_REVISION, headSha: headC, nativeRevision: 'head-c' });
+            source.setPullRequestNumber(18);
+            const third = await claim(await admit('internal', headC, 18));
+            const thirdResult = await coordinate(third);
+            expect(thirdResult).toMatchObject({ state: 'succeeded' });
+            const records = () => createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(createCredentialedAccountArtifactStore(credentials)));
+            const firstReview = await db.reviewMetadata.findFirstOrThrow({ where: { workflowRunId: third.runId } });
+            expect((await records().read(firstReview.artifactId))?.rounds[0]?.comparisonCapture).toMatchObject({
+                input: { source: { kind: 'pullRequest', locator: { number: 18, headOid: headC } } } });
+            const runs = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => owner.id, resolveEncryption: encryption,
+                definitions: { get: async () => { throw new Error('No saved definition'); } }, normalizeAbsolutePath: path => path,
+                randomBytes, storage });
+            const held = await db.workflowRunInvocation.findFirstOrThrow({ where: { runId: second.runId, lifecycle: 'waiting_for_review' } });
+            expect(await runs.execute({ actionId: 'workflow.run.invocations.complete_review', input: {
+                runId: second.runId, invocation: { recordId: held.id }, expectedContentRevision: held.contentRevision.toString(), mode: 'use_result',
+            }, context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'yolo' } })).toMatchObject({ disposition: 'completed' });
+            source.setRevision({ ...TESTKIT_OBSERVED_REVISION, headSha: headB, nativeRevision: 'head-b' });
+            source.setPullRequestNumber(17);
+            const resumedResult = await coordinate(await claim(second.runId)).catch(error => {
+                throw new Error('Approved PR head resume failed', { cause: error });
+            });
+            expect(resumedResult).toMatchObject({ state: 'succeeded' });
+            const secondReview = await db.reviewMetadata.findFirstOrThrow({ where: { workflowRunId: second.runId } });
+            expect((await records().read(secondReview.artifactId))?.rounds[0]?.comparisonCapture).toMatchObject({
+                input: { source: { kind: 'pullRequest', locator: { number: 17, headOid: headB } } } });
+            expect(source.prepareInputs).toHaveLength(2);
+            expect(await db.reviewMetadata.count({ where: { artifact: { accountId: owner.id } } })).toBe(2);
+            const manual = await runAutomationNow({ accountId: owner.id, automationId: automation.id, idempotencyKey: randomUUID(),
+                recipeFeaturePolicy: { workflowsEnabled: true } });
+            if (!manual) throw new Error('Missing manual occurrence');
+            const manualResult = await coordinate(await claim(manual.id)).catch(error => {
+                throw new Error('Manual PR template start failed', { cause: error });
+            });
+            expect(manualResult).toMatchObject({ state: 'failed', reason: 'invalid_input' });
+            const failedInputs = await db.workflowRunInvocation.findMany({ where: { runId: manual.id, lifecycle: 'failed' } });
+            const failedProgress = failedInputs.map(row => {
+                const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+                    binding: { v: 1, purpose: 'invocation_progress', accountId: owner.id, runId: manual.id,
+                        recordId: row.id, sequence: row.sequence.toString(), parentRecordId: row.parentRecordId,
+                        memberOrdinal: row.memberOrdinal.toString(), attempt: row.attempt.toString() },
+                    envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope) });
+                if (opened.kind !== 'available') throw new Error('Expected readable failed input diagnostics');
+                return opened.content;
+            });
+            const failedPrepare = failedProgress.find(progress => progress.invocationPath.blockId === 'quick-prepare');
+            expect(failedPrepare?.reason).toMatchObject({ code: 'invalid_input' });
+            expect(failedPrepare?.validationIssues).toEqual(expect.arrayContaining([
+                expect.objectContaining({ pointer: '/reviewTarget', keyword: 'required', schemaPath: '#/required', message: expect.any(String) }),
+                expect.objectContaining({ pointer: '/expectedHeadSha', keyword: 'required', schemaPath: '#/required', message: expect.any(String) }),
+            ]));
+            expect(source.prepareInputs).toHaveLength(2);
+            expect(await db.reviewMetadata.count({ where: { artifact: { accountId: owner.id } } })).toBe(2);
+        });
+    });
 
     it.each(['completed', 'failed', 'cancelled'] as const)('reloads a direct %s empty Review after actual terminal settlement through authenticated HTTP', async outcome => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

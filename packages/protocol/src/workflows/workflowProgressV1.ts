@@ -49,6 +49,7 @@ import { WorkflowProjectTargetV1Schema, WorkflowWorkspaceProgressV1Schema } from
 import { WorkflowResolvedInputsV1Schema, WorkflowRunStartedByV1Schema, WorkflowDefinitionContentUnavailableReasonV1Schema, WorkflowDefinitionSavedByV1Schema } from './workflowDefinitionV1.js';
 import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
 import { SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
+import { StoredPluginJsonSchemaValueIssueSchema } from '../plugins/actions/jsonSchemaValidationIssue.js';
 
 export {
   WorkflowDefinitionIdV1Schema,
@@ -581,7 +582,7 @@ export const WorkflowReviewV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type WorkflowReviewV1 = z.infer<typeof WorkflowReviewV1Schema>;
 
-const WorkflowResultValidationIssuesV1Schema = lazyZodSchema(() => z.array(z.strictObject({ pointer: z.string(), message: z.string() })));
+const WorkflowResultValidationIssuesV1Schema = lazyZodSchema(() => z.array(StoredPluginJsonSchemaValueIssueSchema));
 
 /** Condition outcome, not delivery success. Absence means it has not been observed. */
 export const WorkflowNotificationConditionV1Schema = lazyZodSchema(() => z.enum(['matched', 'suppressed']));

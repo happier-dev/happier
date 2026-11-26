@@ -10662,6 +10662,15 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Workflow progress retains the canonical JSON Schema validation
+issue's `schemaPath` and `keyword` alongside its existing `pointer` and `message`.
+The issue and enclosing invocation facts remain closed. Current readers still
+accept retained pointer/message-only issues without inventing missing diagnostics.
+Matching Protocol, CLI, Home and UI development readers load together because
+earlier strict readers reject the schema-side fields. This repairs the existing
+validator-to-progress contract under the unpublished direct cut; no migration,
+wire epoch, compatibility adapter or authority change is introduced.
+
 In unreleased 0.3, a managed Database descriptor can carry
 `origin.environmentName` from the admitted Environment. The provider display
 label is still `origin.label`. Load matching client, daemon and bundled

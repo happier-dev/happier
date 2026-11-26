@@ -5,6 +5,7 @@ import { SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.
 
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import { projectActionExecuteFailure } from '../actions/actionExecutionResult.js';
+import { validateExecutionRunProfileResult } from '../execution/runs/resultContract.js';
 
 import {
   WorkflowContainerClosingV1Schema,
@@ -35,6 +36,24 @@ import {
 } from './workflowProgressV1.js';
 
 describe('workflow progress v1', () => {
+  it('persists canonical result validation diagnostics and still reads earlier pointer/message issues', () => {
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'step',
+      invocationPath: { blockId: 'input', scope: [] }, attempt: '0', logicalInvocationRecordId: 'input-row',
+      validationIssues: [{ pointer: '/required', message: 'Missing value' }] });
+    expect(progress.validationIssues).toEqual([{ pointer: '/required', message: 'Missing value' }]);
+    const validation = validateExecutionRunProfileResult({}, { kind: 'json', schema: {
+      type: 'object', properties: { required: { type: 'string' } }, required: ['required'], additionalProperties: false,
+    } });
+    if (validation.ok || !validation.issues) throw new Error('Expected missing required input');
+    const failed = applyWorkflowInvocationFactV1(progress, { reason: 'invalid_input',
+      validationIssues: [...validation.issues] });
+    expect(WorkflowProgressEnvelopeV1Schema.parse(JSON.parse(JSON.stringify(failed)))).toMatchObject({
+      reason: { code: 'invalid_input' }, validationIssues: [{ pointer: '/required', schemaPath: '#/required', keyword: 'required' }],
+    });
+    expect(failed.validationIssues?.[0]?.message).toEqual(expect.any(String));
+    expect(WorkflowProgressEnvelopeV1Schema.safeParse({ ...failed,
+      validationIssues: [{ ...failed.validationIssues?.[0], rejectedValue: 'private' }] }).success).toBe(false);
+  });
   it('keeps content-unavailable details from the generic Action producer while rejecting extra fields', () => {
     const failure = projectActionExecuteFailure({
       ok: false, errorCode: 'content_unavailable', error: 'Unavailable', details: { reason: 'invalid_header' },

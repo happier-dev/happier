@@ -16,6 +16,8 @@ import { compileProtocolJsonSchema } from './jsonSchemaCompiler.js';
 import { jsonSchemaContainsReference } from '../../actions/actionInputJsonSchema.js';
 
 import type { PluginJsonSchemaV2 } from '../contributions/jsonSchema.js';
+import type { PluginJsonSchemaValueIssue } from './jsonSchemaValidationIssue.js';
+export type { PluginJsonSchemaValueIssue } from './jsonSchemaValidationIssue.js';
 import {
   isValidPluginJsonSchemaValue,
   normalizePluginJsonSchema,
@@ -101,8 +103,6 @@ export function compilePluginJsonSchema(schema: object): PluginJsonSchemaValidat
  * `keyword` are where in the schema, the contract's own words. A record that must not keep a producer's text (a run's
  * refused result) keeps the schema side only.
  */
-export type PluginJsonSchemaValueIssue = Readonly<{ pointer: string; schemaPath: string; keyword: string; message: string }>;
-
 /** Projects the most recent AJV validation errors without exposing AJV in the public validator type. */
 export function describePluginJsonSchemaValueIssues(
   validate: PluginJsonSchemaValidator,
