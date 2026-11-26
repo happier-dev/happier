@@ -1,4 +1,5 @@
 import type { Router } from 'expo-router';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 import { useCurrentProjectedAgentCapabilities } from '@/agents/hooks/useCurrentProjectedAgentCapabilities';
@@ -25,6 +26,7 @@ export function useExternalSessionReplayForkLauncher(params: Readonly<{
     executionRunsEnabled: boolean;
     router: Pick<Router, 'push'>;
 }>): () => void {
+    const commandBridge = useCurrentUiContextCommandBridge();
     const ownerMetadata = params.session ? readSessionOwnerMetadataView(params.session) : null;
     const agentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
     const currentAgentCapabilities = useCurrentProjectedAgentCapabilities({
@@ -41,6 +43,7 @@ export function useExternalSessionReplayForkLauncher(params: Readonly<{
     return useEventCallback(() => {
         const settings = storage.getState().settings;
         openSessionForkStrategyFlow({
+            commandBridge,
             navigation: params.router,
             sessionId: params.sessionId,
             forkSupportSource: params.session,
