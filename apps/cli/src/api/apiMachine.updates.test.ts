@@ -25,6 +25,16 @@ vi.mock('socket.io-client', () => ({
   io: ioMock,
 }));
 
+// The retry scheduler imports native timers. Delegate to the test clock at call time.
+vi.mock('node:timers', async (importOriginal) => {
+  const timers = await importOriginal<typeof import('node:timers')>();
+  return {
+    ...timers,
+    setTimeout: (...args: Parameters<typeof timers.setTimeout>) => globalThis.setTimeout(...args),
+    clearTimeout: (...args: Parameters<typeof timers.clearTimeout>) => globalThis.clearTimeout(...args),
+  };
+});
+
 // Cold source transformation belongs to collection, not a held-operation deadline.
 await Promise.all([import('./api'), import('./apiMachine')]);
 
@@ -289,6 +299,70 @@ describe('ApiMachineClient updates', () => {
       expect(delivered).toEqual(key);
       expect(persistence.writeAccountChangesCursor).toHaveBeenCalledWith('bob', 1);
     } finally { await client.shutdown(); }
+  });
+
+  it('retries a failed Account feed for 600 seconds without rereading the Machine until a change arrives', async () => {
+    const persistence = await import('@/persistence');
+    const { runWithServerHttpBaseUrl } = await import('./client/serverHttpBaseUrl');
+    const { ApiClient } = await import('./api');
+    const token = 'legacy-token';
+    const id = 'idle-executor';
+    const key = new Uint8Array(32).fill(41);
+    vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', '1');
+    vi.spyOn(persistence, 'readAccountChangesCursor').mockResolvedValue(0);
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json({
+      features: {}, capabilities: { serverIdentity: { serverIdentityId: 'fixture-home' } },
+    })));
+    let markFeedConsumed!: () => void;
+    const feedConsumed = new Promise<void>(resolve => { markFeedConsumed = resolve; });
+    vi.spyOn(persistence, 'writeAccountChangesCursor').mockImplementation(async (_, cursor) => {
+      if (cursor === 1) markFeedConsumed();
+    });
+    let feedAvailable = false;
+    let feedReads = 0;
+    let machineReads = 0;
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const { pathname } = new URL(url);
+      if (pathname === '/v1/account/profile') return { status: 200, data: { id: 'legacy-holder' } };
+      if (pathname === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+      if (pathname === '/v2/changes') {
+        feedReads++;
+        return feedAvailable
+          ? { status: 200, data: { changes: [{ cursor: 1, kind: 'machine', entityId: id, changedAt: 1 }], nextCursor: 1 } }
+          : { status: 503, data: { error: 'busy' } };
+      }
+      if (pathname === `/v1/machines/${id}`) {
+        machineReads++;
+        return { status: 200, data: { machine: { id, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 } } };
+      }
+      return { status: 404, data: {} };
+    });
+    const baseUrl = 'https://idle-home.test';
+    const client = await runWithServerHttpBaseUrl(baseUrl, async () => {
+      const api = await ApiClient.create({ token, encryption: { type: 'legacy', secret: key } });
+      return api.machineSyncClient({ id, encryptionMode: 'e2ee', encryptionKey: key, encryptionVariant: 'legacy',
+        metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+    });
+    client.onConnectedServicesProjection(async () => {});
+    await seedActiveAccountSnapshot(token);
+    vi.useFakeTimers();
+    try {
+      runWithServerHttpBaseUrl(baseUrl, () => (client as unknown as {
+        startChangesSyncWithRetry(input: { reason: 'live' }): void;
+      }).startChangesSyncWithRetry({ reason: 'live' }));
+      await vi.waitFor(() => expect(feedReads).toBe(1));
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(feedReads).toBeGreaterThan(1);
+      expect(machineReads).toBe(0);
+
+      feedAvailable = true;
+      await vi.advanceTimersByTimeAsync(30_000);
+      await feedConsumed;
+      expect(machineReads).toBe(1);
+    } finally {
+      await client.shutdown();
+      vi.useRealTimers();
+    }
   });
 
   it('skips the recipient worklist when the daemon holds no encryption material', async () => {

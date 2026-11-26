@@ -7298,12 +7298,10 @@ export class ApiMachineClient {
                     if (changesEndpointUnavailable) {
                         this.applyResourceSessionAccessWitness({ accountId });
                         signal.throwIfAborted();
-                    }
-                    // Live wakes refresh per wake; a retried reconnect already refreshed on this transport.
-                    if (opts.reason === 'reconnect' && !transportRecovered || opts.reason === 'live') {
-                        await this.refreshMachineFromServer(signal);
-                    }
-                    if (changesEndpointUnavailable) {
+                        // Older Homes only have the snapshot route for these invalidations.
+                        if (opts.reason === 'reconnect' && !transportRecovered || opts.reason === 'live') {
+                            await this.refreshMachineFromServer(signal);
+                        }
                         await this.notifyAccountProjectRowsChanged({
                             source: opts.reason === 'live' ? 'changes' : opts.reason,
                             signal,
