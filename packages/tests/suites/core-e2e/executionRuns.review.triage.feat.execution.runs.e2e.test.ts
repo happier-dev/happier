@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -7,22 +7,22 @@ import {
   ExecutionRunActionResponseSchema,
   ExecutionRunGetResponseSchema,
   ExecutionRunStartResponseSchema,
-  SessionUserMessageSendResponseSchema,
+  type ExecutionRunGetResponse,
 } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
+import { openSessionStoredContent } from '../../../../apps/cli/src/session/transport/encryption/sessionStoredContentCodec';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
-import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { waitFor } from '../../src/testkit/timing';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { fetchAllMessages } from '../../src/testkit/sessions';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
+import { readDecryptedSessionMetadataV2 } from '../../src/testkit/sessionHandoffMetadata';
+import { unwrapSerializedJsonValue } from '../../src/testkit/unwrapSerializedJsonValue';
 import { fakeClaudeLogContainsUserText } from '../../src/testkit/sessionHandoffUiMessages';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -30,8 +30,10 @@ const run = createRunDirs({ runLabel: 'core' });
 describe('core e2e: execution runs (review) supports triage updates', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
+  let ui: Awaited<ReturnType<typeof connectUiPersonActionClient>> | null = null;
 
   afterAll(async () => {
+    await ui?.close();
     await daemon?.stop().catch(() => {});
     await server?.stop();
   }, 60_000);
@@ -53,7 +55,6 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
     await mkdir(daemonHomeDir, { recursive: true });
     await mkdir(workspaceDir, { recursive: true });
 
-    const secret = Uint8Array.from(randomBytes(32));
     await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: serverBaseUrl, auth, mode: 'legacy' });
 
     const fakeClaudePath = fakeClaudeFixturePath();
@@ -78,7 +79,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
       },
     });
-    const controlToken = (daemon.state as any)?.controlToken as string | undefined;
+    const controlToken = (daemon.state as { controlToken?: string }).controlToken;
 
     const spawnRes = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
       port: daemon.state.httpPort,
@@ -110,17 +111,29 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
       throw new Error('Missing sessionId from daemon spawn-session');
     }
 
-    const ui = createUserScopedSocketCollector(serverBaseUrl, auth.token);
-    ui.connect();
-    await waitFor(() => ui.isConnected(), { timeoutMs: 20_000 });
+    const actions = await connectUiPersonActionClient({ serverUrl: serverBaseUrl, accountSecret: auth.accountSigningSeed });
+    ui = actions;
+    const content = await readDecryptedSessionMetadataV2({
+      baseUrl: serverBaseUrl, token: auth.token, sessionId, machineKeys: [auth.accountMachineKey],
+    });
+    if (!content.selectedSecret) throw new Error('Created Session content key is unavailable');
+    const contentKey = content.selectedSecret;
+    const readContent = (value: unknown) => unwrapSerializedJsonValue(openSessionStoredContent({
+      mode: 'e2ee', ctx: { encryptionKey: contentKey,
+        encryptionVariant: content.selectedUsesDataKeyVariant ? 'dataKey' : 'legacy' }, content: value,
+    }));
+    const act = async (actionId: 'execution.run.start' | 'execution.run.get' | 'execution.run.action', input: unknown) => {
+      const result = await actions.execute(actionId, input, { sessionId });
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      return result.result;
+    };
 
-    const started = await callSessionRpc({
-      ui,
-      sessionId,
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
-      req: {
+    const started = ExecutionRunStartResponseSchema.parse(await act('execution.run.start', {
+        sessionId,
         intent: 'review',
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        modelId: 'claude-sonnet-4-5',
+        connectedServices: null,
         instructions: 'Review this repository.',
         permissionMode: 'read_only',
         retentionPolicy: 'ephemeral',
@@ -135,68 +148,47 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
           changeType: 'committed',
           base: { kind: 'none' },
         },
-      },
-      secret,
-      schema: ExecutionRunStartResponseSchema,
-      timeoutMs: 40_000,
-    });
+    }));
 
     const runId = started.runId;
 
-    let finished: any = null;
+    const completion: { result?: ExecutionRunGetResponse } = {};
     await waitFor(async () => {
-      const res = await callSessionRpc({
-        ui,
-        sessionId,
-        method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
-        req: { runId, includeStructured: true },
-        secret,
-        schema: ExecutionRunGetResponseSchema,
-        timeoutMs: 40_000,
-      });
+      const res = ExecutionRunGetResponseSchema.parse(await act('execution.run.get', {
+        sessionId, runId, includeStructured: true,
+      }));
       if (res.run.status === 'running') return false;
-      finished = res;
+      completion.result = res;
       return true;
     }, { timeoutMs: 60_000, intervalMs: 250 });
 
-    expect(finished?.run?.status).toBe('succeeded');
-    expect(finished?.structuredMeta?.kind).toBe('review_findings.v2');
-    const payload = finished.structuredMeta.payload as any;
+    const finishedRun = completion.result;
+    if (!finishedRun) throw new Error('Review run did not finish');
+    expect(finishedRun.run.status).toBe('succeeded');
+    expect(finishedRun.structuredMeta?.kind).toBe('review_findings.v2');
+    const payload = finishedRun.structuredMeta?.payload as any;
     expect(payload?.findings?.length ?? 0).toBeGreaterThanOrEqual(1);
     const findingId = String(payload.findings[0].id);
 
-    const acted = await callSessionRpc({
-      ui,
-      sessionId,
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
-      req: {
+    const acted = ExecutionRunActionResponseSchema.parse(await act('execution.run.action', {
+        sessionId,
         runId,
         actionId: 'review.triage',
         input: {
           findings: [{ id: findingId, status: 'accept', comment: 'Looks good' }],
         },
-      },
-      secret,
-      schema: ExecutionRunActionResponseSchema,
-      timeoutMs: 40_000,
-    });
+    }));
     expect(acted.ok).toBe(true);
 
-    const updated = await callSessionRpc({
-      ui,
-      sessionId,
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
-      req: { runId, includeStructured: true },
-      secret,
-      schema: ExecutionRunGetResponseSchema,
-      timeoutMs: 40_000,
-    });
+    const updated = ExecutionRunGetResponseSchema.parse(await act('execution.run.get', {
+      sessionId, runId, includeStructured: true,
+    }));
     expect(updated.structuredMeta?.kind).toBe('review_findings.v2');
     const updatedPayload = updated.structuredMeta?.payload as any;
     // The decision lives in the finding's ReviewComment; the review result itself is never rewritten.
     expect(updatedPayload?.triage).toBeUndefined();
 
-    // Simulate the UI "apply accepted findings" message through the live parent-agent queue.
+    // Deliver the finding summary as ordinary parent-agent input; this is not a Review.apply invocation.
     const applyPayload = {
       runId,
       callId: String((updated.structuredMeta?.payload as any)?.runRef?.callId ?? ''),
@@ -210,25 +202,13 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
       ],
     };
     const applyText = `@happier/review.apply_accepted_findings\n${JSON.stringify(applyPayload)}`;
-    const applySend = await callSessionRpc({
-      ui,
-      sessionId,
-      method: SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
-      req: {
-        text: applyText,
-        localId: `review-apply-${randomUUID()}`,
-        meta: { source: 'ui', sentFrom: 'e2e' },
-      },
-      secret,
-      schema: SessionUserMessageSendResponseSchema,
-      timeoutMs: 40_000,
-    });
-    expect(applySend.ok).toBe(true);
+    const applySend = await actions.submitSessionMessage(sessionId, applyText);
+    expect(applySend.type).toBe('success');
 
     await waitFor(async () => {
       const rows = await fetchAllMessages(serverBaseUrl, auth.token, sessionId);
       const decoded = rows
-        .map((row) => decryptLegacyBase64(row.content.c, secret))
+        .map((row) => readContent(row.content))
         .filter(Boolean) as any[];
 
       const applyMessage = decoded.find((m) => {
