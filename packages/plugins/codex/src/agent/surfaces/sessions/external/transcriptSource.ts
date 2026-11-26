@@ -1,6 +1,6 @@
 import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import { createCodexNativeAppServerClient } from '../../../runtime/appServer/client.js';
-import { resolveCodexRuntimeHomeEnvironment } from '../../../auth/services/state/sharing/files.js';
+import { resolveCodexRuntimeStore } from '../../../auth/services/state/sharing/files.js';
 import { readCodexSessionMetaFromRollout } from '../../../rollout/discovery/indexData.js';
 import { decodeCodexNativeTranscriptCursor, pageCodexNativeTranscript } from './nativeTranscript.js';
 import { createHash } from 'node:crypto';
@@ -1273,15 +1273,15 @@ async function readCodexNativeTranscriptIfNeeded(
       const requestOptions = () => ({ signal: params.signal,
         ...(params.deadlineAtMs === undefined ? {} : { timeoutMs: Math.max(1, params.deadlineAtMs - Date.now()) }) });
       const env = { ...process.env, ...params.env };
-      const processEnv = { ...env, ...await resolveCodexRuntimeHomeEnvironment({ env, codexHome: home.codexHome, home: home.source.home,
-        cwd: process.cwd(), expandHomePath: value => expandHomePath(value, resolveHomeDirFromEnvironment(env)) }) };
-      client = await createCodexNativeAppServerClient({ exec: params.exec, logger: params.logger, processEnv, signal: params.signal,
+      const runtimeStore = await resolveCodexRuntimeStore({ env, codexHome: home.codexHome, home: home.source.home, cwd: process.cwd() });
+      const processEnv = { ...env, ...runtimeStore.environment };
+      client = await createCodexNativeAppServerClient({ exec: params.exec, logger: params.logger, processEnv, runtimeStore, signal: params.signal,
         // History belongs to the selected native store, not a live Agent's
         // control socket. The runtime owns binary resolution and this client.
         transport: { kind: 'stdio' }, initializeRequestOptions: requestOptions() });
       const activeClient = client;
       const page = await pageCodexNativeTranscript({ ...params, hasPaginatedRollout, home: home.codexHome,
-        sqliteHome: processEnv.CODEX_SQLITE_HOME,
+        sqliteHome: runtimeStore.sqliteHome ?? await activeClient.readRuntimeSqliteHome?.(requestOptions()),
         client: { request: (method, value) => {
           throwIfCodexExternalSessionInvocationStopped(params);
           return activeClient.request(method, value, requestOptions());

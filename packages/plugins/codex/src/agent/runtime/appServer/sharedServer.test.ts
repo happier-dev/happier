@@ -573,7 +573,8 @@ describe('createCodexSharedAppServer', () => {
         const startupOwner = readFileSync(nativeStartupLock, 'utf8');
         await mkdir(guard);
         const args = request.args ?? [];
-        if (process.platform === 'linux') expect(args).toContain(`sqlite_home=${JSON.stringify(sqliteHome)}`);
+        expect(args).not.toContainEqual(expect.stringMatching(/^sqlite_home=/u));
+        expect(request.env?.CODEX_SQLITE_HOME).toBe(sqliteHome);
         const endpoint = args[args.indexOf('--listen') + 1];
         if (!endpoint?.startsWith('unix://')) throw new Error('Expected native Unix endpoint');
         const socketPath = endpoint.slice('unix://'.length);

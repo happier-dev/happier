@@ -579,7 +579,6 @@ describe('codex session handoff bundle', () => {
       directory: targetPath,
       environmentVariables: {
         CODEX_HOME: codexHome,
-        CODEX_SQLITE_HOME: codexHome,
       },
     });
 

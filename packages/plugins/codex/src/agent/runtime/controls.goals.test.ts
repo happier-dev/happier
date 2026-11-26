@@ -156,7 +156,7 @@ describe('Codex inactive Session Goal scope', () => {
       expect(launches).toHaveLength(3);
       for (const launch of launches) {
         expect(launch.env).toMatchObject(context.session.launchEnvironment?.values ?? {});
-        expect(launch.argv).toContain(`sqlite_home=${JSON.stringify(`${fixture.directory}/target-sqlite`)}`);
+        expect(launch.argv).not.toContainEqual(expect.stringMatching(/^sqlite_home=/u));
       }
     }, { observer: { recordAppServerRequest() {}, recordLaunch: input => { launches.push(input); } } });
   });

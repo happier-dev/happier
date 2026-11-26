@@ -12,7 +12,7 @@ import {
 import { resolveCodexNativeTranscriptPathCandidate } from '../../../rollout/discovery/nativeSessionLog.js';
 import { buildCodexAgentRuntimeDescriptor, readCanonicalCodexAgentRuntimeDescriptorV1, readExactCodexProviderSessionId } from '../../../../protocol/runtimeDescriptorV1.js';
 import { resolveConfiguredCodexHomePath } from '../../../rollout/discovery/homeEntries.js';
-import { resolveCodexRuntimeHomeEnvironment } from '../../../auth/services/state/sharing/files.js';
+import { resolveCodexRuntimeStore } from '../../../auth/services/state/sharing/files.js';
 import { resolveExistingCodexIndexedRolloutPath } from '../../../auth/services/state/sharing/reconcileResumeRolloutPath.js';
 import { exportCodexSessionBundle, resolveCodexSource } from './export.js';
 import { importCodexSessionBundle } from './import.js';
@@ -127,15 +127,14 @@ export const codexHandoffSurface = {
       const env = params.environmentVariables === undefined ? process.env : params.environmentVariables;
       const codexHome = resolveConfiguredCodexHomePath(env);
       const homeDir = resolveHomeDirFromEnvironment(env);
-      const environmentVariables = await resolveCodexRuntimeHomeEnvironment({
+      const store = await resolveCodexRuntimeStore({
         env,
         codexHome,
         cwd: params.targetDirectory,
         expandHomePath: rawPath => expandHomePath(rawPath, homeDir),
       });
       const indexedPath = await resolveExistingCodexIndexedRolloutPath({
-        processEnv: environmentVariables,
-        cwd: params.targetDirectory,
+        store,
         vendorResumeId: providerSessionId,
         signal: context.signal,
       });
@@ -166,7 +165,7 @@ export const codexHandoffSurface = {
         value: {
           providerSessionId,
           source,
-          launch: { directory: params.targetDirectory, environmentVariables, sessionStateUpdates },
+          launch: { directory: params.targetDirectory, environmentVariables: store.environment, sessionStateUpdates },
         },
       };
     } catch (error) {

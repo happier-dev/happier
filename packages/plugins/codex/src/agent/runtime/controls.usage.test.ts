@@ -89,7 +89,7 @@ describe('Codex Session usage checks', () => {
         .toEqual({ status: 'ready' });
       expect(launches).toHaveLength(1);
       expect(launches[0]?.env).toMatchObject(context.session.launchEnvironment!.values);
-      expect(launches[0]?.argv).toContain(`sqlite_home=${JSON.stringify(`${fixture.directory}/usage-sqlite`)}`);
+      expect(launches[0]?.argv).not.toContainEqual(expect.stringMatching(/^sqlite_home=/u));
     }, { observer: { recordAppServerRequest() {}, recordLaunch: input => { launches.push(input); } } });
   });
 });

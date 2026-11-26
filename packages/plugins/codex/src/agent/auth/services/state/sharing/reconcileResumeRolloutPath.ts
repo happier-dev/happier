@@ -1,21 +1,16 @@
 import { stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import {
-  expandHomePath,
   openSqliteDatabaseSync,
-  resolveHomeDirFromEnvironment,
   type SqliteDatabaseSync,
 } from '@happier-dev/plugin-sdk/fs';
 
-import {
-  findCodexRolloutFileById,
-} from '../../../../rollout/discovery/sessionFileSearch.js';
-import { resolveCodexLogicalRolloutPath, resolveExistingCodexRolloutPath } from '../../../../rollout/discovery/indexData.js';
-import { resolveConfiguredCodexHomePath } from '../../../../rollout/discovery/homeEntries.js';
+import { findCodexRolloutFileById, isMatchingCodexRolloutFileName } from '../../../../rollout/discovery/sessionFileSearch.js';
+import { isMatchingCodexRolloutIdentity, readCodexSessionMetaFromRollout, resolveCodexLogicalRolloutPath, resolveExistingCodexRolloutPath } from '../../../../rollout/discovery/indexData.js';
 import { readExactCodexVendorResumeId } from '../../home/sync/sessionFiles.js';
 import { readExactCodexProviderSessionId } from '../../../../../protocol/runtimeDescriptorV1.js';
-import { resolveCodexRuntimeHomeEnvironment } from './files.js';
+import { resolveCodexRuntimeStore, type CodexRuntimeStore } from './files.js';
 
 const CODEX_STATE_DATABASE_FILE_NAME = 'state_5.sqlite';
 
@@ -34,7 +29,7 @@ function readRolloutPath(database: SqliteDatabaseSync, vendorResumeId: string): 
   if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
   const rolloutPath = (row as Readonly<{ rollout_path?: unknown }>).rollout_path;
   return typeof rolloutPath === 'string' && rolloutPath.trim().length > 0
-    ? rolloutPath.trim()
+    ? rolloutPath
     : null;
 }
 
@@ -51,23 +46,15 @@ async function isExistingFile(path: string): Promise<boolean> {
 
 /** Observes native resume authority without creating or repairing its index. */
 export async function resolveExistingCodexIndexedRolloutPath(params: Readonly<{
-  processEnv: Readonly<Record<string, string | undefined>>;
-  cwd: string;
+  store: CodexRuntimeStore;
   vendorResumeId: string;
   signal: AbortSignal;
 }>): Promise<string | null> {
   params.signal.throwIfAborted();
   const vendorResumeId = readExactCodexProviderSessionId(params.vendorResumeId);
   if (!vendorResumeId) return null;
-  const codexHome = resolve(resolveConfiguredCodexHomePath(params.processEnv));
-  const homeDir = resolveHomeDirFromEnvironment(params.processEnv);
-  const runtimeHome = await resolveCodexRuntimeHomeEnvironment({
-    env: params.processEnv,
-    codexHome,
-    cwd: params.cwd,
-    expandHomePath: rawPath => expandHomePath(rawPath, homeDir),
-  });
-  const databasePath = join(runtimeHome.CODEX_SQLITE_HOME, CODEX_STATE_DATABASE_FILE_NAME);
+  if (!params.store.sqliteHome) return null;
+  const databasePath = join(params.store.sqliteHome, CODEX_STATE_DATABASE_FILE_NAME);
   const databaseExists = await isExistingFile(databasePath);
   params.signal.throwIfAborted();
   if (!databaseExists) return null;
@@ -90,8 +77,8 @@ export async function resolveExistingCodexIndexedRolloutPath(params: Readonly<{
 }
 
 /**
- * Repairs the one Codex-native index field needed by `thread/resume` after the
- * exact rollout has survived a Connected Account materialization replacement.
+ * Repairs the one Codex-native index field needed by `thread/resume` or
+ * `thread/fork` after the exact rollout has moved to this Codex home.
  *
  * The Codex plugin owns both the provider schema and this provider-operation
  * boundary. This is intentionally not a reindexer: it never creates a database,
@@ -99,34 +86,16 @@ export async function resolveExistingCodexIndexedRolloutPath(params: Readonly<{
  * compare-and-set so a concurrent Codex write wins.
  */
 export async function reconcileCodexResumeRolloutPath(params: Readonly<{
-  processEnv: Readonly<Record<string, string | undefined>>;
-  cwd: string;
   vendorResumeId: string;
-}>): Promise<boolean> {
+}> & ({ store: CodexRuntimeStore } | { processEnv: Readonly<Record<string, string | undefined>>; cwd: string })): Promise<boolean> {
   const vendorResumeId = readExactCodexVendorResumeId(params.vendorResumeId);
   if (!vendorResumeId) return false;
 
-  const rawCodexHome = params.processEnv.CODEX_HOME?.trim() ?? '';
-  if (!rawCodexHome) return true;
+  const store = 'store' in params ? params.store
+    : await resolveCodexRuntimeStore({ env: params.processEnv, cwd: params.cwd });
+  if (!store.sqliteHome) return false;
 
-  const codexHome = resolve(resolveConfiguredCodexHomePath(params.processEnv));
-  const homeDir = resolveHomeDirFromEnvironment(params.processEnv);
-  const runtimeHome = await resolveCodexRuntimeHomeEnvironment({
-    env: params.processEnv,
-    codexHome,
-    cwd: params.cwd,
-    expandHomePath: (rawPath) => expandHomePath(rawPath, homeDir),
-  });
-  const sqliteHome = resolve(runtimeHome.CODEX_SQLITE_HOME);
-  if (codexHome === sqliteHome) return true;
-
-  const resolvedRolloutPath = await findCodexRolloutFileById({
-    sessionsRoot: join(codexHome, 'sessions'),
-    vendorResumeId,
-  });
-  if (!resolvedRolloutPath) return false;
-
-  const databasePath = join(sqliteHome, CODEX_STATE_DATABASE_FILE_NAME);
+  const databasePath = join(store.sqliteHome, CODEX_STATE_DATABASE_FILE_NAME);
   if (!await isFile(databasePath)) return true;
 
   let database: SqliteDatabaseSync | null = null;
@@ -139,9 +108,21 @@ export async function reconcileCodexResumeRolloutPath(params: Readonly<{
     if (!table) return true;
 
     const indexedPath = readRolloutPath(database, vendorResumeId);
-    if (!indexedPath || indexedPath === resolvedRolloutPath) return true;
+    if (!indexedPath) return true;
     if (await resolveExistingCodexRolloutPath(indexedPath)) return true;
 
+    // A revert can leave several same-thread rollouts. Only the recorded
+    // physical basename (canonicalized for compression) identifies this row's continuation.
+    const recordedName = indexedPath.split(/[\\/]/u).pop() ?? '';
+    if (!isMatchingCodexRolloutFileName(recordedName, vendorResumeId)) return false;
+    const resolvedRolloutPath = await findCodexRolloutFileById({
+      sessionsRoot: join(store.environment.CODEX_HOME, 'sessions'),
+      vendorResumeId,
+      recordedFileName: resolveCodexLogicalRolloutPath(recordedName),
+    });
+    if (!resolvedRolloutPath) return false;
+    const metadata = await readCodexSessionMetaFromRollout(resolvedRolloutPath);
+    if (!isMatchingCodexRolloutIdentity(readExactCodexProviderSessionId(metadata?.id) ?? undefined, vendorResumeId)) return false;
     const logicalRolloutPath = resolveCodexLogicalRolloutPath(resolvedRolloutPath);
 
     database

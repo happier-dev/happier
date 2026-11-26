@@ -57,7 +57,6 @@ import {
   sanitizeCodexAppServerRuntimeAuthClassification,
 } from './turns/failure.js';
 import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV, parseCodexProviderBindingEngineConfigV1, readCodexNativeUpstreamConfig } from '../../providerBinding/runtimeConfig.js';
-import { reconcileCodexResumeRolloutPath } from '../../auth/services/state/sharing/reconcileResumeRolloutPath.js';
 import type { CodexGoalProjection } from './work/goalProjection.js';
 import type { CodexSessionCatalogBinder } from '../controls.js';
 import {
@@ -1053,22 +1052,6 @@ export async function openCodexNativeAppServerSession(
     }), 'client_start');
   }
   let providerSessionId = request.kind === 'resume' ? request.providerSessionId : null;
-  const continuationProviderSessionId = request.kind === 'resume'
-    ? request.providerSessionId
-    : request.kind === 'fork'
-      ? request.source.providerSessionId
-      : null;
-  if (
-    continuationProviderSessionId
-    && appServerTransport !== 'daemonProxy'
-    && !await reconcileCodexResumeRolloutPath({
-      processEnv,
-      cwd: request.cwd,
-      vendorResumeId: continuationProviderSessionId,
-    })
-  ) {
-    throw new Error('Codex resume index reconciliation failed.');
-  }
   if (request.kind === 'fork') {
     const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy, promptProfile: request.promptProfile });
     const forkClient = await createCodexNativeAppServerClient({

@@ -7,6 +7,7 @@ import {
 import { open, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, join, posix, win32 } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import { createZstdDecompress } from 'node:zlib';
 
 import {
     throwIfCodexExternalSessionInvocationStopped,
@@ -222,12 +223,13 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[
 }
 
 type FileHandle = Awaited<ReturnType<typeof open>>;
+const CODEX_SESSION_META_PROBE_BYTES = 64 * 1024;
 
 async function readFirstLineFromHandle(
     fh: FileHandle,
     bounds: CodexExternalSessionInvocationBounds,
 ): Promise<string | null> {
-    const maxProbeBytes = 64 * 1024;
+    const maxProbeBytes = CODEX_SESSION_META_PROBE_BYTES;
     // Use the existing probe allowance in one I/O. Long native instruction
     // headers otherwise multiply filesystem round trips across the home scan.
     const chunkBytes = maxProbeBytes;
@@ -271,7 +273,7 @@ async function readFirstLineFromHandle(
 }
 
 function readFirstLineSync(filePath: string): string | null {
-    const maxProbeBytes = 64 * 1024;
+    const maxProbeBytes = CODEX_SESSION_META_PROBE_BYTES;
     const chunkBytes = 4 * 1024;
     let fd: number | null = null;
     try {
@@ -330,6 +332,30 @@ function readFirstLineSync(filePath: string): string | null {
                 // Ignore close failures after a best-effort metadata probe.
             }
         }
+    }
+}
+
+async function readFirstCompressedLine(fh: FileHandle, bounds: CodexExternalSessionInvocationBounds): Promise<string | null> {
+    const file = fh.createReadStream({ autoClose: false, signal: bounds.signal });
+    const decoder = createZstdDecompress();
+    file.on('error', error => decoder.destroy(error));
+    file.pipe(decoder);
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    try {
+        for await (const chunk of decoder as AsyncIterable<Buffer>) {
+            throwIfCodexExternalSessionInvocationStopped(bounds);
+            const newline = chunk.indexOf(0x0a);
+            const length = newline < 0 ? chunk.length : newline;
+            bytes += length;
+            if (bytes >= CODEX_SESSION_META_PROBE_BYTES) return null;
+            chunks.push(chunk.subarray(0, length));
+            if (newline >= 0) break;
+        }
+        return Buffer.concat(chunks, bytes).toString('utf8').trim() || null;
+    } finally {
+        file.destroy();
+        decoder.destroy();
     }
 }
 
@@ -402,7 +428,8 @@ export async function readCodexSessionMetaFromRollout(
         try {
             throwIfCodexExternalSessionInvocationStopped(bounds);
             const metadata = await fh.stat();
-            const line = await readFirstLineFromHandle(fh, bounds);
+            const line = filePath === resolveCodexLogicalRolloutPath(filePath)
+                ? await readFirstLineFromHandle(fh, bounds) : await readFirstCompressedLine(fh, bounds);
             throwIfCodexExternalSessionInvocationStopped(bounds);
             const sessionMeta = line ? retainSessionMetaFields(parseCodexSessionMetaLine(line)) : null;
             if (sessionMeta) {

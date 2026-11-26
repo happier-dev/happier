@@ -95,7 +95,7 @@ const expected = (input: Readonly<{ startupOverrides: readonly string[]; nativeL
 });
 // Recorded from the pre-extraction bytes (HEAD de178a62c11 plus the PARK-BUILD-5 builder hunk): golden-1/2.log.
 const EXPECTED = {
-  false: expected({ startupOverrides: ['-c', 'sqlite_home="<dir>/sqlite"'], nativeLaunch: 'native' }),
-  // Under the native proxy the startup lock drops the host sqlite_home (the shim selects CODEX_HOME).
+  false: expected({ startupOverrides: [], nativeLaunch: 'native' }),
+  // Under the native proxy the shim supplies the native identity’s environment.
   true: expected({ startupOverrides: [], nativeLaunch: 'directory' }),
 };

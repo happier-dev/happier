@@ -13,6 +13,7 @@ import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-servi
 import { parseCodexCliStableVersion } from '../../cli/detect.js';
 import { assertCodexToolRestrictionRuntimeSupported } from './client/toolRestriction.js';
 import {
+  bindCodexNativeRuntimeStore,
   buildCodexAppServerArgs,
   buildCodexAppServerEnv,
   createCodexNativeAppServerClient,
@@ -20,6 +21,7 @@ import {
   verifyCodexNativeAppServerClient,
   type DisposableCodexAppServerClient,
 } from './client.js';
+import { applyCodexRuntimeStoreEnvironment, type CodexRuntimeStore } from '../../auth/services/state/sharing/files.js';
 import { readCodexAppServerStartupRpcTimeoutMs } from './client/timeout.js';
 import { withCodexNativeStartupLock } from './nativeStartupLock.js';
 import { readCodexAppServerProbeFailureCode } from './startupFailure.js';
@@ -438,6 +440,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
   let realtimeConversationAdvertised = false;
   let startPromise: Promise<ManagedExecutableRef> | null = null;
   let initialClient: DisposableCodexAppServerClient | null = null;
+  let runtimeStore: CodexRuntimeStore | null = null;
   let disposed = false;
 
   const ensureStarted = async (request: Readonly<{
@@ -458,13 +461,14 @@ export async function createCodexSharedAppServer(params: Readonly<{
         probeRealtime: dependencies.probeRealtime });
       realtimeConversationAdvertised = launch.realtimeConversationAdvertised;
       const lockStartedAt = Date.now();
-      await withCodexNativeStartupLock(async (configOverrides, admit) => {
+      await withCodexNativeStartupLock(async (configOverrides, admit, store) => {
+        runtimeStore = store;
         params.logger?.debug('Codex startup phase', { phase: 'native_startup_admission', elapsedMs: Date.now() - lockStartedAt });
         try {
           const spawnStartedAt = Date.now();
           serverProcess = await params.exec.withSpawnAdmission(admit, async exec => await exec.spawn(buildCodexSharedAppServerSpawnRequest({
             executable: launch.executable,
-            processEnv: request.processEnv,
+            processEnv: applyCodexRuntimeStoreEnvironment(request.processEnv, store),
             startupConfigOverrides: configOverrides,
             disableUserMcpServers: request.disableUserMcpServers,
             enableRealtimeConversation: realtimeConversationAdvertised,
@@ -550,14 +554,15 @@ export async function createCodexSharedAppServer(params: Readonly<{
         // Native readiness ends admission; Account/config/model verification
         // must still succeed before the caller receives its restricted client.
         try {
-          return await verifyCodexNativeAppServerClient({ ...request, exec: params.exec, signal: params.signal,
+          const verified = await verifyCodexNativeAppServerClient({ ...request, exec: params.exec, signal: params.signal,
             transport: { ...transport, realtimeConversationAdvertised } }, client, executable);
+          return bindCodexNativeRuntimeStore(verified, runtimeStore, request.cwd);
         } catch (error) {
           await dispose().catch(() => undefined);
           throw error;
         }
       }
-      return await dependencies.createClient({
+      const client = await dependencies.createClient({
         exec: params.exec,
         logger: params.logger,
         cwd: request.cwd,
@@ -573,6 +578,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
           realtimeConversationAdvertised,
         },
       });
+      return bindCodexNativeRuntimeStore(client, runtimeStore, request.cwd);
     },
     dispose,
   };

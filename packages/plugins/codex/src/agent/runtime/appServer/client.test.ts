@@ -463,14 +463,16 @@ describe('createCodexAppServerClient', () => {
             expect(probes[0]?.[0].env).toMatchObject({ CODEX_HOME: '/session/materialized', SESSION_PROXY: 'fixture' });
         } finally { await client.dispose(); }
     });
-    it.skipIf(process.platform !== 'linux')('pins projected SQLite in the real stdio launch and admits both warm clients before either initializes', async () => {
+    it.skipIf(process.platform !== 'linux')('leaves the configured SQLite root unpinned and admits both warm stdio clients before either initializes', async () => {
         await mkdir(join(osBoundary.home, '.codex'));
         await writeFile(join(osBoundary.home, '.codex', 'config.toml'), 'cli_auth_credentials_store = "keyring"\n');
         const cwd = join(osBoundary.home, 'project');
         await mkdir(join(cwd, '.git'), { recursive: true });
         await writeFile(join(cwd, '.git', 'HEAD'), 'ref: refs/heads/main\n');
         const sqliteHome = join(osBoundary.home, 'shared-sqlite');
-        const processEnv = { CODEX_HOME: join(osBoundary.home, 'auth'), CODEX_SQLITE_HOME: sqliteHome };
+        const processEnv = { CODEX_HOME: join(osBoundary.home, 'auth'), CODEX_SQLITE_HOME: join(osBoundary.home, 'decoy') };
+        await mkdir(processEnv.CODEX_HOME);
+        await writeFile(join(processEnv.CODEX_HOME, 'config.toml'), 'sqlite_home = "../shared-sqlite"\n');
         await mkdir(sqliteHome);
         const captures = [0, 1, 2].map(() => createCapturingExec());
         for (const capture of captures) {
@@ -485,7 +487,8 @@ describe('createCodexAppServerClient', () => {
         const entered: number[] = [];
         for (const [index, capture] of captures.slice(1).entries()) {
             vi.spyOn(capture.exec.clients, 'spawn').mockImplementation(async (spec) => {
-                expect(spec.launch.args).toContain(`sqlite_home=${JSON.stringify(sqliteHome)}`);
+                expect(spec.launch.args).not.toContainEqual(expect.stringMatching(/^sqlite_home=/u));
+                expect(spec.launch.env.CODEX_SQLITE_HOME).toBe(processEnv.CODEX_SQLITE_HOME);
                 const handle = createCapturingExec({ async request(method) {
                     if (method === 'initialize') { entered.push(index); await initialized; }
                     return { ok: true };

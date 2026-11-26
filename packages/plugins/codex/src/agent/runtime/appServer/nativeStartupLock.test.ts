@@ -206,18 +206,24 @@ describe.skipIf(process.platform !== 'linux')('native SQLite startup admission',
     expect(bothEntered).toContain('next');
   });
 
-  it('pins the launch to the same canonical SQLite root and does not mark failed initialization warm', async () => {
+  it('keeps the Connected Account pin and does not mark failed initialization warm', async () => {
     const root = join(osBoundary.home, 'sqlite');
     await mkdir(root);
     const alias = join(osBoundary.home, 'sqlite-alias');
     await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const configuration = startup(alias);
+    await mkdir(configuration.processEnv.CODEX_HOME, { recursive: true });
+    await writeFile(join(configuration.processEnv.CODEX_HOME, '.happier-state-sharing.json'), JSON.stringify({
+      v: 1, effectiveStateMode: 'shared', stateRootEnvironment: { CODEX_SQLITE_HOME: root },
+    }));
+    await writeFile(join(configuration.processEnv.CODEX_HOME, 'config.toml'), 'sqlite_home = "./decoy"\n');
     const debug = vi.fn();
     let launchOverrides: readonly string[] | undefined;
     await expect(withCodexNativeStartupLock(async overrides => {
       launchOverrides = overrides;
       await completeDatabase(root);
       throw new Error('initialize failed');
-    }, undefined, { debug }, { ...startup(alias), configOverrides: ['model="kept"'] })).rejects.toThrow('initialize failed');
+    }, undefined, { debug }, { ...configuration, configOverrides: ['model="kept"'] })).rejects.toThrow('initialize failed');
     expect(launchOverrides).toEqual(['model="kept"', `sqlite_home=${JSON.stringify(root)}`]);
     await expect(readFile(join(root, '.happier-codex-native-startup.version'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
@@ -228,7 +234,7 @@ describe.skipIf(process.platform !== 'linux')('native SQLite startup admission',
     await mkdir(configuration.processEnv.CODEX_HOME, { recursive: true });
     await writeFile(join(configuration.processEnv.CODEX_HOME, 'auth.json'), '{}');
     await withCodexNativeStartupLock(async overrides => {
-      expect(overrides).toEqual([`sqlite_home=${JSON.stringify(root)}`]);
+      expect(overrides).toEqual([]);
       const owner = JSON.parse(await readFile(join(osBoundary.home, '.happier-codex-native-startup.lock'), 'utf8'));
       expect(owner.pid).toBe(process.pid);
     }, undefined, undefined, configuration);

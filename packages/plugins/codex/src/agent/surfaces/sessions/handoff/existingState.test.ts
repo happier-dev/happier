@@ -131,7 +131,7 @@ describe('Codex existing-state handoff', () => {
       ok: true,
       value: {
         source: { kind: 'codexHome', home: 'user', homePath: f.codexHome },
-        launch: { environmentVariables: { CODEX_HOME: f.codexHome, CODEX_SQLITE_HOME: f.codexHome } },
+        launch: { environmentVariables: { CODEX_HOME: f.codexHome } },
       },
     });
   });

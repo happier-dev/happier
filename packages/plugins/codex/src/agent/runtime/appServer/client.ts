@@ -26,6 +26,8 @@ import {
     initializeCodexAppServerClient,
 } from './connection.js';
 import { withCodexNativeStartupLock } from './nativeStartupLock.js';
+import { applyCodexRuntimeStoreEnvironment, proveCodexNativeRuntimeStore, type CodexRuntimeStore } from '../../auth/services/state/sharing/files.js';
+import { reconcileCodexResumeRolloutPath } from '../../auth/services/state/sharing/reconcileResumeRolloutPath.js';
 import { buildCodexUserMcpServerDisableOverrides } from './config/overrides.js';
 import { assertCodexToolRestrictionRuntimeSupported, readCodexToolRestrictionEvidence } from './client/toolRestriction.js';
 import { parseCodexCliStableVersion } from '../../cli/detect.js';
@@ -73,6 +75,7 @@ export type DisposableCodexAppServerClient = CodexAppServerClient & Readonly<{
         codexHome: string | null;
         requestedSqliteHome: string | null;
     }>;
+    readRuntimeSqliteHome?: (options?: CodexAppServerRequestOptions) => Promise<string | undefined>;
     launchFeatures: Readonly<{
         realtimeConversationAdvertised: boolean;
         nativeVersion?: string;
@@ -427,6 +430,7 @@ type CodexNativeAppServerClientParams = Readonly<{
     onContinuationInitializeFailure?: (cause: ActionFailureCauseV1) => void;
     onStartupWaiting?: (waiting: boolean) => void;
     transport?: CodexAppServerTransport;
+    runtimeStore?: CodexRuntimeStore;
 }>;
 
 export async function createCodexNativeAppServerClient(params: CodexNativeAppServerClientParams): Promise<DisposableCodexAppServerClient> {
@@ -464,18 +468,40 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
         ...(params.signal ? { signal: params.signal } : {}),
     });
     const ready = await withCodexNativeStartupLock(
-        async (configOverrides, admit, requestedSqliteHome) => ({ configOverrides, client: await params.exec.withSpawnAdmission(admit, async exec =>
-            await createUnlockedCodexNativeAppServerClient({ ...params, exec, configOverrides }, {
+        async (configOverrides, admit, store) => ({ configOverrides, store, client: await params.exec.withSpawnAdmission(admit, async exec =>
+            await createUnlockedCodexNativeAppServerClient({ ...params, exec, configOverrides,
+                processEnv: applyCodexRuntimeStoreEnvironment(env, store) }, {
                 executable: resolvedSystemTool.executable, executablePath: resolvedSystemTool.executablePath,
-                realtimeConversationAdvertised, requestedSqliteHome,
+                realtimeConversationAdvertised, requestedSqliteHome: store?.sqliteHome ?? null,
             })) }),
         params.initializeRequestOptions?.signal ?? params.signal,
         params.logger,
         { processEnv: env, readVersion, versionOutput, configOverrides: params.configOverrides, cwd: params.cwd,
-            separateNativeIdentity: params.nativeLaunch?.separateNativeIdentity, deferUntilSpawn: true },
+            separateNativeIdentity: params.nativeLaunch?.separateNativeIdentity, runtimeStore: params.runtimeStore, deferUntilSpawn: true },
         params.onStartupWaiting,
     );
-    return await verifyCodexNativeAppServerClient({ ...params, configOverrides: ready.configOverrides }, ready.client, resolvedSystemTool.executable);
+    const verified = await verifyCodexNativeAppServerClient({ ...params, configOverrides: ready.configOverrides }, ready.client, resolvedSystemTool.executable);
+    return bindCodexNativeRuntimeStore(verified, ready.store, params.cwd);
+}
+
+/** Local resume and fork use the store of the native process receiving the request. */
+export function bindCodexNativeRuntimeStore(client: DisposableCodexAppServerClient, store: CodexRuntimeStore | null, cwd = process.cwd()): DisposableCodexAppServerClient {
+    if (!store) return client;
+    const resolveStore = (options?: CodexAppServerRequestOptions) => proveCodexNativeRuntimeStore({ store, cwd,
+        request: (method, value) => client.request(method, value, options) });
+    return {
+        ...client,
+        readRuntimeSqliteHome: async options => (await resolveStore(options)).sqliteHome ?? undefined,
+        async request(method, value, options) {
+            if ((method === 'thread/resume' || method === 'thread/fork') && value && typeof value === 'object' && 'threadId' in value
+                && typeof value.threadId === 'string') {
+                const activeStore = await resolveStore(options);
+                options?.signal?.throwIfAborted();
+                await reconcileCodexResumeRolloutPath({ store: activeStore, vendorResumeId: value.threadId });
+            }
+            return await client.request(method, value, options);
+        },
+    };
 }
 
 export async function verifyCodexNativeAppServerClient(
