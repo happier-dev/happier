@@ -27,6 +27,17 @@ export type StatefulDeploymentMoveWorkflowInputV1 = Readonly<{
   teardown?: DeploymentTeardownRequestInputV1;
 }>;
 
+/** A data Move restores on the source's own data installation: the copy reads the source backup repository with
+ * credentials sealed only for the source's installations (a stateful source has exactly one data member). The Move
+ * sheet and the Move's first check both consume this one decision. */
+export function isDeploymentDataMoveOnSourceMachineV1(
+  input: Readonly<{ backupTarget: Pick<DeploymentBackupRunInputV1, 'machineId' | 'installationId'>;
+    restoreTarget: Readonly<{ machineId: string; installationId: string }> }>,
+): boolean {
+  return input.restoreTarget.machineId === input.backupTarget.machineId
+    && input.restoreTarget.installationId === input.backupTarget.installationId;
+}
+
 type Bindings = Record<string, WorkflowActionFieldBindingV1>;
 type References = (id: string, path?: (string | number)[]) => WorkflowValueReference;
 type Phase = Readonly<{ id: string; name: string; actionId: string;
@@ -160,6 +171,10 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
     blocks: [{ kind: 'if', id: 'reviewedWriters', name: 'Use every reviewed writer slot', when: all(
       ...(writerCount > 0 ? [{ kind: 'exists' as const, value: operand('writers', writerCount - 1) }] : []),
       { kind: 'not', condition: { kind: 'exists', value: operand('writers', writerCount) } }),
+      // The same decision as isDeploymentDataMoveOnSourceMachineV1, before any writer is stopped.
+      then: [{ kind: 'if', id: 'sourceMachine', name: 'Restore on the source data Machine', when: all(
+        ...(['machineId', 'installationId'] as const).map((field): WorkflowCondition => ({ kind: 'compare', operator: 'eq',
+          left: operand('restoreTarget', field), right: operand('backupTarget', field) }))),
       then: sequence(start, 1, {}, (depth, producers) => [{ kind: 'loop', id: 'snapshots',
       name: 'Restore only the reviewed final data source', repetition: { kind: 'items',
         items: result('backup', ['manifests'], { kind: 'outer', levels: depth - producers.backup! }),
@@ -176,6 +191,8 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
           { kind: 'compare', operator: 'eq', left: { kind: 'loop_trailing_count', producer: result('selectedSnapshot').producer,
             path: [], equals: {} }, right: { kind: 'item', field: 'count' } }),
           then: recovery('snapshotMissing', false), otherwise: [] }] }]),
+      otherwise: [{ kind: 'wait', id: 'sourceMachineRequired', name: 'Needs decision',
+        document: document('This Move restores on a Machine that does not already run the source Environment. The copy can only read the source backups on the source’s own Machine, so nothing has been stopped. Choose a destination on that Machine and start a new Move.') }] }],
       otherwise: [{ kind: 'wait', id: 'writerReview', name: 'Review source writers',
         document: document('The reviewed writer slots do not match the supplied source writers. Review and save this Workflow with one quiesce/observe pair for every source writer before starting a new Run. No effects have been attempted.') }] },
       { kind: 'wait', id: 'operationRecovery', name: 'Needs decision', runWhen: 'failure',

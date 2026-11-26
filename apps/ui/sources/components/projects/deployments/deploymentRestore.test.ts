@@ -25,7 +25,7 @@ describe('database copy restore operands', () => {
     const destination = { ...base, runtimeTargetLink: null,
       targetLinks: [{ targetLink, content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project',
         providerEnvironment: 'main' }, providerEnvironment: { kind: 'native' as const, selection: { branchId: 'main' } } } }] };
-    expect(deploymentDatabaseMoveDestination(destination, { runtimeTargetLink: createDeploymentTargetLinkHeaderV1() }))
+    expect(deploymentDatabaseMoveDestination(destination, { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1() }))
       .toEqual({ kind: 'unavailable', reason: 'unsupported' });
     // A verified source capture cannot turn an undeclared provider import into native restore operands.
     expect(deploymentRestoreOperands({ ...base, runtimeTargetLink: base.targetLinks[0]!.targetLink },
@@ -36,7 +36,7 @@ describe('database copy restore operands', () => {
 
   it('refuses at review a destination whose data Machine does not already run the source Environment', () => {
     // The copy reads the source repository with credentials sealed only for the source's own Machines.
-    const source = { runtimeTargetLink: createDeploymentTargetLinkHeaderV1() };
+    const source = { ...createDeploymentEnvironmentDetailV1(), runtimeTargetLink: createDeploymentTargetLinkHeaderV1() };
     const member = source.runtimeTargetLink.members[0]!;
     const base = { ...createDeploymentEnvironmentDetailV1(), databaseMoveCandidate: true };
     const on = (machineId: string, installationId: string) => ({ ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1({

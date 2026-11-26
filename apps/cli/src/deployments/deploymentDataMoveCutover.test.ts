@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DeploymentBackupRestoreResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
-import { createDeploymentDataMoveWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/deploymentMoveV1';
+import { createDeploymentDataMoveWorkflowV1, isDeploymentDataMoveOnSourceMachineV1 } from '@happier-dev/protocol/workflows/builtins/deploymentMoveV1';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { evaluateWorkflowCondition, type WorkflowValueResolutionRuntime } from '@/daemon/workflows/input';
@@ -31,6 +31,29 @@ function observations(restore = noAmcheck, health = 'healthy', freshness = 'curr
         resolveWorkspace: async () => { throw new Error('The cutover review does not read a workspace'); },
     };
 }
+
+describe('Data Move source Machine', () => {
+    const target = (machineId: string, installationId: string) => ({ serverId: 'home', environmentId: 'environment',
+        machineId, installationId, targetLinkId: 'link', deploymentId: 'deployment', expectedRevision: 1 });
+    const start = (restoreTarget: ReturnType<typeof target>): WorkflowValueResolutionRuntime => ({
+        inputs: { dataMove: { backupTarget: target('source-machine', 'source-installation'), restoreTarget } },
+        resolveResult: async () => { throw new Error('The source Machine check reads only the reviewed operand'); },
+        resolveWorkspace: async () => { throw new Error('The source Machine check does not read a workspace'); },
+    });
+    it.each([
+        ['another Machine', target('destination-machine', 'destination-installation'), false],
+        ['a reinstalled source Machine', target('source-machine', 'other-installation'), false],
+        ['the source data installation', target('source-machine', 'source-installation'), true],
+    ] as const)('holds a Move restoring on %s before any writer is stopped, as the Move sheet decides', async (_label, restoreTarget, admitted) => {
+        const check = conditionBlock('sourceMachine');
+        await expect(evaluateWorkflowCondition(check.when, start(restoreTarget))).resolves.toBe(admitted);
+        expect(isDeploymentDataMoveOnSourceMachineV1({ backupTarget: target('source-machine', 'source-installation'), restoreTarget }))
+            .toBe(admitted);
+        expect(walkWorkflowBlocks(check.otherwise).some(block => block.kind === 'action')).toBe(false);
+        expect(check.otherwise).toMatchObject([{ kind: 'wait', id: 'sourceMachineRequired' }]);
+        expect(walkWorkflowBlocks(check.then).find(block => block.kind === 'action')).toMatchObject({ id: 'quiesce0' });
+    });
+});
 
 describe('Data Move cutover review', () => {
     it('shows the missing amcheck warning at the person’s review before applying the Connect patch', async () => {

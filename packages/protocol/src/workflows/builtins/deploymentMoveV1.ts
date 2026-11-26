@@ -4,7 +4,7 @@ import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1,
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 
-export { createDeploymentDataMoveWorkflowV1, type StatefulDeploymentMoveWorkflowInputV1,
+export { createDeploymentDataMoveWorkflowV1, isDeploymentDataMoveOnSourceMachineV1, type StatefulDeploymentMoveWorkflowInputV1,
   type DeploymentMoveHealthTargetV1 } from './deploymentDataMoveV1.js';
 
 /** Stateless repository Move. Domain cutover and local-data restore are outside this starter. */

@@ -2626,9 +2626,11 @@ async function walkReplacementLinkMove(mode: 'plain' | 'e2ee', approvalDecision:
     return { ...walk, links: (await environment.read()).targetLinks, sourceLinkId: currentSourceLink.id, destination };
 }
 
-async function walkStatefulDataMove(mode: 'plain' | 'e2ee') {
+async function walkStatefulDataMove(mode: 'plain' | 'e2ee', placement: 'sameMachine' | 'otherMachine' = 'sameMachine') {
     const fixtureRun = await fixture('exact', undefined, false, true, false, undefined, undefined, mode, undefined, 'dataMove');
-    const { server, host: source, first: destination, nativeApp, credentials } = fixtureRun;
+    const { server, host: source, nativeApp, credentials } = fixtureRun;
+    // A data Move restores only on the source's own data Machine; another Machine is held before any effect.
+    const destination = placement === 'sameMachine' ? source : fixtureRun.first;
     expect(server.currentness.mode).toBe(mode);
     if (nativeApp?.child.actionId !== 'deployments.templates.instantiate' || !('document' in nativeApp))
         throw new Error('Data Move requires the PostgreSQL fixture definition');
@@ -2798,23 +2800,16 @@ describe('built-in deployment Workflow step walks', () => {
         { step: 'backup', action: 'deployments.backups.run', state: 'completed' },
         { step: 'verify', action: 'deployments.backups.verify', state: 'completed' },
     ];
-    it.each(['plain', 'e2ee'] as const)('quiesces the writer and verifies the Data Move backup (%s)', async mode => {
-        const { leaves, asks, settlements, detailObservations } = await walkStatefulDataMove(mode);
-        expect(leaves.slice(0, dataMovePrefix.length), JSON.stringify({ leaves, settlements })).toMatchObject(dataMovePrefix);
-        expect(leaves.filter(leaf => dataMovePrefix.some(expected => expected.step === leaf.step))).toHaveLength(dataMovePrefix.length);
-        expect(asks.filter(action => dataMovePrefix.some(expected => expected.action === action)))
-            .toEqual(['machines.services.control', 'deployments.backups.run']);
-        expect(settlements.slice(0, 2)).toMatchObject([
-            { action: 'machines.services.control', status: 'executed' },
-            { action: 'deployments.backups.run', status: 'executed' },
-        ]);
-        expect(detailObservations).toMatchObject([{ kind: 'service', state: 'stopped', phase: 'stopped' }]);
+    it.each(['plain', 'e2ee'] as const)('holds a cross-Machine Data Move at its source Machine check before any writer stops (%s)', async mode => {
+        const { outcome, leaves, asks, settlements, detailObservations } = await walkStatefulDataMove(mode, 'otherMachine');
+        // The Move's first check holds it: no Action ran, nothing asked, no writer was stopped.
+        expect(outcome, JSON.stringify({ outcome, leaves, asks, settlements })).toMatchObject({ state: 'waiting_for_review' });
+        expect(leaves).toEqual([]);
+        expect(asks).toEqual([]);
+        expect(detailObservations).toEqual([]);
     });
 
-    // Pending by ruling (ORCH-TOP 2026-11-26): this fixture restores on a different Machine from the source. The copy can
-    // only read the source repository on a Machine sealed for the source's credentials, so Move review refuses it
-    // (`source_machine_required`) before anything stops. It stays here until cross-Machine credential delivery exists.
-    it.skip.each(['plain', 'e2ee'] as const)('pending cross-Machine credential delivery: restore the verified Data Move backup, cut over and verify the app (%s)', async mode => {
+    it.each(['plain', 'e2ee'] as const)('restores the verified Data Move backup on the source Machine, cuts over and verifies the app (%s)', async mode => {
         const { outcome, leaves, asks, settlements, detailObservations } = await walkStatefulDataMove(mode);
         expect(outcome.state, JSON.stringify({ leaves, asks, settlements, detailObservations })).toBe('succeeded');
         expect(leaves).toMatchObject([
@@ -2828,6 +2823,8 @@ describe('built-in deployment Workflow step walks', () => {
             { step: 'appServices', action: 'machines.services.list', state: 'completed' },
             { step: 'appHealth', action: 'deployments.health.read', state: 'completed' },
         ]);
+        expect(asks.slice(0, 2)).toEqual(['machines.services.control', 'deployments.backups.run']);
+        expect(detailObservations[0]).toMatchObject({ kind: 'service', state: 'stopped', phase: 'stopped' });
         expect(settlements.every(approval => approval.status === 'executed')).toBe(true);
     });
 });

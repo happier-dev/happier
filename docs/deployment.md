@@ -6482,11 +6482,13 @@ midnight refreshes on its next existing read or push.
 ## Database Move Workflow (0.3 development)
 
 The data-safe Move starter uses the existing Workflow Run and Action owners.
-Move review accepts only a destination whose data Machine already runs the source
-Environment (same Machine and installation). The copy reads the source backup
-repository with credentials sealed only for the source's own installations, so a
-destination on another Machine is refused at review as `source_machine_required`
-before any writer is stopped. It stops each reviewed source writer and observes
+A data Move restores only on the source's own data installation (same Machine
+and installation as its backup target). The copy reads the source backup
+repository with credentials sealed only for the source's own installations.
+`isDeploymentDataMoveOnSourceMachineV1` decides this once: the Move sheet shows
+the destination as `source_machine_required`, and the Move's first check holds
+any other start (Agent, CLI) at its `sourceMachineRequired` decision before any
+writer is stopped. It stops each reviewed source writer and observes
 its native stopped state before capturing the final backup. Only the selected source's final snapshot is verified
 and restored. Current destination health precedes the reviewed Connect change;
 the app deploy and health check follow that change. When the settled restore
