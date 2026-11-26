@@ -77,8 +77,20 @@ existing context indicator.
 
 ## Permissions
 
-Happier sends no static permission-mode override for Antigravity and preserves your agent
-configuration unless you choose otherwise in the session.
+Happier's permission mode chooses the Antigravity mode a session starts or resumes in:
+
+| Happier permission mode | Antigravity mode |
+| --- | --- |
+| CLI Settings | Unchanged; Antigravity's own default applies |
+| Read Only | Default, which asks before edits and commands |
+| Auto | Auto when the CLI offers it, otherwise Accept edits |
+| YOLO | Auto when the CLI offers it, otherwise Accept edits; Happier approves the remaining permission requests |
+| Plan Mode | Plan |
+
+Antigravity has no read-only mode, so in Read Only Happier still shows each edit or
+command request for you to decide. A mode you pick in the session's mode picker takes
+precedence over this mapping.
+
 The mode picker lists exactly the modes `agy acp` advertises for the session: Default,
 Accept edits and Plan, plus Auto on accounts and platforms where the Antigravity CLI
 offers it. Auto approves edits inside the workspace and runs commands in Antigravity's
@@ -91,6 +103,16 @@ When Antigravity asks you a question with its question tool, Happier shows it as
 structured question card with the offered choices and an **Other** answer, and sends your
 answer back to the agent. Declining the question tells Antigravity that you skipped
 it. Images you attach to a message are sent to Antigravity with the prompt.
+
+## Subagents
+
+In development builds, when Antigravity launches subagents of its own, each launch
+shows as a subagent card in the transcript and the subagent's tool calls appear inside
+that card instead of interrupting the main reply. Permission requests from a subagent's
+tool calls still reach you. Antigravity streams only a subagent's tool calls, not its
+messages. Happier matches a subagent to its launch through the role Antigravity records
+for it; a subagent it cannot match keeps its tool calls out of the main reply but is not
+shown under a card.
 
 ## MCP tools
 

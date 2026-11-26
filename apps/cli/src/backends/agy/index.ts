@@ -36,7 +36,11 @@ export const agent = {
   getConnectedServiceStateSharingDescriptor: async () => agyConnectedServiceStateSharingDescriptor,
   getConnectedServiceCredentialLifecycleDescriptor: async () => agyCredentialLifecycle,
   getConnectedServiceRuntimeAuthAdapter: async () => createAgyConnectedServiceRuntimeAuthAdapter(),
-  getAcpRuntimeTurnHooks: async () => ({ classifyAssistantTurnFailure: classifyAgyAssistantTurnFailure, onTurnFailure: reportAgyTurnFailure }),
+  getAcpRuntimeTurnHooks: async () => ({
+    classifyAssistantTurnFailure: classifyAgyAssistantTurnFailure,
+    onTurnFailure: reportAgyTurnFailure,
+    createToolCallSidechainResolver: (await import('./acp/agySubagentSidechains')).createAgySubagentSidechainResolver,
+  }),
   connectedServiceQuotaFetcherDescriptor: agyQuotaFetcherDescriptor,
   getSessionUsageLimitRecoveryControlAdapter: async () => agyUsageLimitRecoveryControlAdapter,
   resolveConnectedServiceSwitchContinuity: resolveAgyConnectedServiceSwitchContinuity,

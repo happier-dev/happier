@@ -27,6 +27,8 @@ export type CatalogDefinedAcpBackendOptions = AgentFactoryOptions & Readonly<{
   isAuthenticationSetupFailure?: AcpBackendOptions['isAuthenticationSetupFailure'];
   sessionModelAdapter?: AcpBackendOptions['sessionModelAdapter'];
   initialSessionModeId?: AcpBackendOptions['initialSessionModeId'];
+  /** Provider-owned transport policy; defaults to the catalog transport profile. */
+  transportHandler?: AcpBackendOptions['transportHandler'];
   launch?: CatalogLaunch | PrepareCatalogLaunch;
 }>;
 
@@ -71,7 +73,7 @@ export function createCatalogDefinedAcpBackend(
     permissionMode: options.permissionMode,
     getPermissionMode: options.getPermissionMode,
     providerTurnSource: options.providerTurnSource,
-    transportHandler: resolveAcpCatalogTransportHandler(config.transportProfile, agentId),
+    transportHandler: options.transportHandler ?? resolveAcpCatalogTransportHandler(config.transportProfile, agentId),
     declaredSessionLoadSupport: config.supportsLoadSession,
   });
 

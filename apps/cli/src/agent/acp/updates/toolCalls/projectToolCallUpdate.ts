@@ -182,7 +182,7 @@ export function projectToolCallUpdate(
 
   if (!wasActive) {
     ctx.clearIdleTimeout();
-    ctx.emit({ type: 'status', status: 'running' });
+    ctx.emit({ type: 'status', status: 'running', toolCallId });
     logger.debug(`[AcpBackend] Tool call started: ${toolCallId} (${kind}) from ${source}`);
   }
   const accepted = ctx.toolCalls.observe(patch, {
