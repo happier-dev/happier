@@ -259,7 +259,12 @@ describe('inline transcript workflow Run result', () => {
         expect(text).not.toContain('workflows.run.untitled');
     });
 
-    it.each(['review', 'permission'] as const)('opens the held %s from the exact-ID read without a worker notice', async (kind) => {
+    it.each([
+        { kind: 'review', preloaded: false },
+        { kind: 'permission', preloaded: false },
+        { kind: 'review', preloaded: true },
+        { kind: 'permission', preloaded: true },
+    ] as const)('opens the held $kind through the exact-ID read (preloaded: $preloaded)', async ({ kind, preloaded }) => {
         const invocationId = '1a8caff9-8a78-4ccd-834f-bcd497773024';
         const childSessionId = 'child-session';
         const body = await getResult('running');
@@ -277,8 +282,12 @@ describe('inline transcript workflow Run result', () => {
                         execution: { kind: 'session', sessionId: childSessionId, localInputId: 'child-input' } } : {}) },
             })),
         };
-        home.answer(serverId, STORAGE_ROUTE, { body: { ...body,
-            runs: body.runs.map(run => ({ ...run, attentionRequired: true, invocationAttentionRequired: true })),
+        const runs = body.runs.map(run => ({ ...run, attentionRequired: true, invocationAttentionRequired: true }));
+        if (preloaded) {
+            storage.getState().applyWorkflowRunListPage({ windowId: 'library', runs,
+                metadataByRunId: {}, mode: 'replace', nextCursor: null });
+        }
+        home.answer(serverId, STORAGE_ROUTE, { body: { ...body, runs,
             heldProgressByRunId: { [RUN_ID]: kind === 'review' ? fact : [fact] },
         } });
         const screen = await renderCardRow();

@@ -117,17 +117,19 @@ function MountedWorkflowRunReference(props: Readonly<{
     const readable = useTranscriptWorkflowRunCardsAvailable(props.serverId);
     const row = useWorkflowRun(readable ? runId : null);
     const summary = row?.summary ?? null;
-    const summaryKnown = summary !== null;
+    const needsExactSummary = summary === null
+        || (summary.invocationAttentionRequired && summary.heldStep === undefined);
     const notice = useTranscriptWorkflowRunNotice(transcriptSource.sessionId, props.serverId,
         readable && transcriptSource.kind === 'app' ? runId : null);
 
     React.useEffect(() => {
-        if (!readable || summaryKnown) return;
+        if (!readable || !needsExactSummary) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (lifetime === null) return;
         const controller = new AbortController();
         const retirement = lifetime.onRetire(() => controller.abort());
-        // One exact read by `runId`; the change stream owns every later update.
+        // Broad lists omit the held step. Read by runId when the card needs it.
+        // The change stream owns subsequent updates.
         // A failed read leaves the link truthful and the status unknown rather
         // than inventing a state, and the Account-change applier retries the
         // durable invalidation on its own cursor.
@@ -136,7 +138,7 @@ function MountedWorkflowRunReference(props: Readonly<{
             retirement.dispose();
             controller.abort();
         };
-    }, [readable, runId, summaryKnown]);
+    }, [readable, runId, needsExactSummary]);
 
     if (!readable) return null;
 
