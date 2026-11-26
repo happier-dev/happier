@@ -2845,6 +2845,13 @@ and credential variables are excluded from the native launch. If the Home
 address is unavailable, the terminal returns `requester_home_unavailable`
 before PTY spawn.
 
+For a fresh Agent command in a member terminal, Open and Restart also carry
+the admitted Machine ID into the CLI launch. The CLI consumes it once and
+requests `session.spawn_new` on that Machine through the signed Action owner
+with the member's Account. Session creation has its own admission and preserves
+its refusal. A local Machine association used by the member's CLI and control
+daemon does not select the new Session's execution target.
+
 The separated member's CLI and its autostarted daemon use the member's
 Happier home for writable install, tools and plugin state. The published
 CLI payload under `/opt` supplies the executable and bundled code. The

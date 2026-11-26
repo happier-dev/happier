@@ -22,6 +22,9 @@ import { HAPPIER_SESSION_CREATE_ORIGIN_ENV_KEY } from '@/session/shared/sessionC
 import { HAPPIER_SESSION_CREATE_MANAGER_ENV_KEY } from '@/session/shared/sessionCreateManager';
 import { HAPPIER_SESSION_CREATE_ROLES_ENV_KEY } from '@/session/shared/sessionCreateRoles';
 
+/** Member terminal routing hint. Session creation still requires its own signed admission. */
+export const TERMINAL_SESSION_MACHINE_ID_ENV_KEY = 'HAPPIER_TERMINAL_SESSION_MACHINE_ID';
+
 /** Daemon-issued, one-shot correlation for a terminal startup result. */
 export const HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY =
   'HAPPIER_SESSION_STARTUP_SPAWN_NONCE';

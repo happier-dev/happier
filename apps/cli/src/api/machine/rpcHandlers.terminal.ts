@@ -48,6 +48,7 @@ import { byteStreamHoldEndsAtMs, readByteStreamHeld } from '@/terminal/pty/byteS
 import { createNodePtyProvider } from '@/terminal/pty/provider';
 import { resolveTerminalShell } from '@/terminal/pty/shells';
 import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
+import { TERMINAL_SESSION_MACHINE_ID_ENV_KEY } from '@/session/runtime/control/sessionControlEnvironment';
 import { getSharedTerminalProcessRegistry, type TerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
 import {
   resolveDaemonTerminalLaunch,
@@ -705,14 +706,16 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   };
 
   const prepareTerminalNativeOperation = async (context: RpcHandlerContext, requesterIdentity: HostRequesterExecutionIdentity,
-    terminalKey: string, sessionId: string | undefined) => {
+    request: Pick<import('@happier-dev/protocol').DaemonTerminalEnsureRequest, 'terminalKey' | 'launch'>,
+    placement: ReturnType<typeof resolveTerminalPlacement>, sessionId: string | undefined) => {
     if (!params.deps?.nativeOperationRuntime) return undefined;
     let live = true;
-    // The terminal's existing retained identity owns this empty person-shell
-    // projection. It grants no Session MCP or selected Provider authority.
+    const machineId = placement === 'member' && !sessionId && request.launch?.kind === 'happier_cli'
+      ? context.machineAdmission?.machineId : undefined;
     const material: AgentLaunchOperationMaterialization = Object.freeze({
-      materializationKey: JSON.stringify(['terminal', sessionId ?? null, terminalKey]),
-      environment: Object.freeze({}), selectedMaterials: Object.freeze([]),
+      materializationKey: JSON.stringify(['terminal', sessionId ?? null, request.terminalKey]),
+      environment: Object.freeze(machineId ? { [TERMINAL_SESSION_MACHINE_ID_ENV_KEY]: machineId } : {}),
+      selectedMaterials: Object.freeze([]),
     });
     try {
       const input = { requesterIdentity, resolveRequesterIdentity: async () => requesterIdentity,
@@ -860,7 +863,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     try {
       if (placement !== 'person' && placement !== 'daemon') {
         if (!context) return unavailableIdentityTransport();
-        nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
+        nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data, placement, sessionId);
         if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {
           await nativeOperation?.dispose(); return unavailableIdentityTransport();
         }
@@ -1054,7 +1057,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     try {
       if (placement !== 'person' && placement !== 'daemon') {
         if (!context) return unavailableIdentityTransport();
-        nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
+        nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data, placement, sessionId);
         if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {
           await nativeOperation?.dispose(); return unavailableIdentityTransport();
         }

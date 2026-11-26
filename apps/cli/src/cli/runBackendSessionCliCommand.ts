@@ -59,6 +59,7 @@ import {
   reconcileAgentSessionScopedEnvironment,
   stripSessionControlEnvOverrides,
   stripSessionControlUnsetEnvKeys,
+  TERMINAL_SESSION_MACHINE_ID_ENV_KEY,
 } from '@/session/runtime/control/sessionControlEnvironment';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import type { HostPrivateLateSessionEnvironmentResolver } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
@@ -153,6 +154,8 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   return runInHostedSessionScope({}, () => withSessionRunnerOwnership(async () => {
     // This Session's process environment (the live `process.env` for a runner).
     const sessionEnvironment = sessionProcessEnvironment();
+    const terminalMachineId = sessionEnvironment[TERMINAL_SESSION_MACHINE_ID_ENV_KEY]?.trim();
+    delete sessionEnvironment[TERMINAL_SESSION_MACHINE_ID_ENV_KEY];
     let releaseForegroundAdmission: (() => void | Promise<void>) | null = null;
     let restoreForegroundRuntimeEnvironment: (() => void) | null = null;
     const foregroundHandoffComplete = Symbol('foregroundHandoffComplete');
@@ -498,8 +501,58 @@ Provider CLI Options:
           import('@/session/creation/resolveSessionCreationAgentTarget'),
         ]);
         await ensureDaemonRunningForSessionCommand();
+
+        const spawnAndAttach = async (machineId: string, attemptId: string): Promise<never> => {
+          const [{ requestDaemonSignedRootActionExecution }, { readAgentCatalogSnapshot },
+            { SessionSpawnNewInputV2Schema }, { SessionSpawnNewActionResultV1Schema }, { handleAttachCommand }] = await Promise.all([
+            import('@/daemon/controlClient'), import('@/agent/catalog/snapshot'),
+            import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2'),
+            import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1'), import('@/cli/commands/attach'),
+          ]);
+          const contribution = readAgentCatalogSnapshot().agentDefinitionsById.get(runtimeAuthorityAgentId);
+          const selectedAgentTarget = agentTarget ?? (contribution?.identity
+            ? { kind: 'agent' as const, identity: contribution.identity } : undefined);
+          if (!selectedAgentTarget) throw new Error('agent_contribution_unavailable');
+          const input = SessionSpawnNewInputV2Schema.parse({
+            creationKey: attemptId,
+            executionTarget: { serverId: configuration.activeServerId, machineId },
+            directory: { kind: 'path', path: directoryIntent }, agentTarget: selectedAgentTarget,
+            agentArgs: parsed.providerArgs,
+            ...(selectedProfile ? { profileId: selectedProfile.id } : {}),
+            ...(parsed.secretReferenceOverlay ? { secretReferenceOverlay: parsed.secretReferenceOverlay } : {}),
+            ...(modelSelection ? { modelSelection } : {}),
+            ...(resolved.permissionMode ? { permissionMode: resolved.permissionMode } : {}),
+            ...(resolved.sessionModeId ? { agentModeId: resolved.sessionModeId } : {}),
+            ...(directConnectedServices ? { connectedServices: directConnectedServices } : {}),
+            ...(initialAccess !== undefined ? { initialAccess } : {}),
+            ...(parsed.primaryTeamId !== undefined ? { primaryTeamId: parsed.primaryTeamId } : {}),
+            ...(parsed.teamCredentialBindings !== undefined ? { teamCredentialBindings: parsed.teamCredentialBindings } : {}),
+            ...(parsed.initialTitle ? { title: parsed.initialTitle } : {}),
+          });
+          const execution = await requestDaemonSignedRootActionExecution({ actionId: 'session.spawn_new', input,
+            surface: 'cli', actionRequestId: attemptId, target: { kind: 'machine', machineId } },
+          { ...(params.context.signal ? { signal: params.context.signal } : {}) });
+          if (!execution.ok) throw Object.assign(new Error(execution.error), { code: execution.errorCode });
+          if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json: false, result: execution.result })) {
+            throw foregroundHandoffComplete;
+          }
+          const result = SessionSpawnNewActionResultV1Schema.parse(execution.result);
+          if (result.type === 'error') {
+            if ('providerError' in result && result.providerError) throw createForegroundAdmissionError(result.providerError);
+            if ('launchError' in result && result.launchError) throw createForegroundAdmissionError(result.launchError);
+            const message = result.code === 'agent_cli_missing' ? AGENT_CLI_MISSING_PREVIEW : result.code;
+            throw Object.assign(new Error(message), { code: result.code });
+          }
+          if (result.type === 'pending') throw Object.assign(new Error('session_spawn_pending'), { code: 'outcome_unknown' });
+          await handleAttachCommand([result.sessionId], { terminalRuntime: params.context.terminalRuntime });
+          throw foregroundHandoffComplete;
+        };
+
         admitForegroundRuntime = async () => {
           const attemptId = randomUUID();
+          if (terminalMachineId && !normalizedExistingSessionId && !resume && !parsed.nativeForkSource) {
+            return await spawnAndAttach(terminalMachineId, attemptId);
+          }
           const admission = await admitDaemonForegroundAgentRuntime({
             v: 1,
             attemptId,
@@ -547,50 +600,7 @@ Provider CLI Options:
           });
           if (!admission.ok) {
             if (admission.sessionSpawnRequired) {
-              const [{ requestDaemonSignedRootActionExecution }, { readAgentCatalogSnapshot },
-                { SessionSpawnNewInputV2Schema }, { SessionSpawnNewActionResultV1Schema }, { handleAttachCommand }] = await Promise.all([
-                import('@/daemon/controlClient'), import('@/agent/catalog/snapshot'),
-                import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2'),
-                import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1'), import('@/cli/commands/attach'),
-              ]);
-              const contribution = readAgentCatalogSnapshot().agentDefinitionsById.get(runtimeAuthorityAgentId);
-              const selectedAgentTarget = agentTarget ?? (contribution?.identity
-                ? { kind: 'agent' as const, identity: contribution.identity } : undefined);
-              if (!selectedAgentTarget) throw new Error('agent_contribution_unavailable');
-              const input = SessionSpawnNewInputV2Schema.parse({
-                creationKey: attemptId,
-                executionTarget: { serverId: configuration.activeServerId, machineId: admission.sessionSpawnRequired.machineId },
-                directory: { kind: 'path', path: directoryIntent }, agentTarget: selectedAgentTarget,
-                agentArgs: parsed.providerArgs,
-                ...(selectedProfile ? { profileId: selectedProfile.id } : {}),
-                ...(parsed.secretReferenceOverlay ? { secretReferenceOverlay: parsed.secretReferenceOverlay } : {}),
-                ...(modelSelection ? { modelSelection } : {}),
-                ...(resolved.permissionMode ? { permissionMode: resolved.permissionMode } : {}),
-                ...(resolved.sessionModeId ? { agentModeId: resolved.sessionModeId } : {}),
-                ...(directConnectedServices ? { connectedServices: directConnectedServices } : {}),
-                ...(initialAccess !== undefined ? { initialAccess } : {}),
-                ...(parsed.primaryTeamId !== undefined ? { primaryTeamId: parsed.primaryTeamId } : {}),
-                ...(parsed.teamCredentialBindings !== undefined ? { teamCredentialBindings: parsed.teamCredentialBindings } : {}),
-                ...(parsed.initialTitle ? { title: parsed.initialTitle } : {}),
-              });
-              const execution = await requestDaemonSignedRootActionExecution({ actionId: 'session.spawn_new', input,
-                surface: 'cli', actionRequestId: attemptId,
-                target: { kind: 'machine', machineId: admission.sessionSpawnRequired.machineId } },
-              { ...(params.context.signal ? { signal: params.context.signal } : {}) });
-              if (!execution.ok) throw Object.assign(new Error(execution.error), { code: execution.errorCode });
-              if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json: false, result: execution.result })) {
-                throw foregroundHandoffComplete;
-              }
-              const result = SessionSpawnNewActionResultV1Schema.parse(execution.result);
-              if (result.type === 'error') {
-                if ('providerError' in result && result.providerError) throw createForegroundAdmissionError(result.providerError);
-                if ('launchError' in result && result.launchError) throw createForegroundAdmissionError(result.launchError);
-                const message = result.code === 'agent_cli_missing' ? AGENT_CLI_MISSING_PREVIEW : result.code;
-                throw Object.assign(new Error(message), { code: result.code });
-              }
-              if (result.type === 'pending') throw Object.assign(new Error('session_spawn_pending'), { code: 'outcome_unknown' });
-              await handleAttachCommand([result.sessionId], { terminalRuntime: params.context.terminalRuntime });
-              throw foregroundHandoffComplete;
+              return await spawnAndAttach(admission.sessionSpawnRequired.machineId, attemptId);
             }
             throw createForegroundAdmissionError(admission.error);
           }

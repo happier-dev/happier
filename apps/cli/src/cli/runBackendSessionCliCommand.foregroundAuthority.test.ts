@@ -69,7 +69,7 @@ type ForegroundAuthorityCase = Readonly<{
   prior: string | undefined; definitionId: string | undefined; missingCli: boolean; profileRouting?: boolean;
   disabled?: boolean; explicitProfile?: boolean; fileStoreAgent?: 'pi' | 'ohmypi'; hostedScope?: string;
   providerConnectionId?: string;
-  policyHandoff?: boolean | 'approval' | 'attach' | 'missing-cli' | 'fresh-directory';
+  policyHandoff?: boolean | 'approval' | 'attach' | 'missing-cli' | 'fresh-directory' | 'member-terminal';
   nativeForkPolicy?: 'directly' | 'sandbox';
   modelSelection?: 'native' | 'provider';
   diagnosticDebug?: Readonly<{ host: string | undefined; session: string | undefined }>;
@@ -84,6 +84,7 @@ describe('foreground CLI runner authority scope', () => {
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'approval' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'missing-cli' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'fresh-directory' },
+    { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'member-terminal' },
     { prior: undefined, definitionId: undefined, missingCli: false, profileRouting: false },
     { prior: '', definitionId: undefined, missingCli: false },
     { prior: 'previous-invocation', definitionId: undefined, missingCli: false },
@@ -144,7 +145,9 @@ describe('foreground CLI runner authority scope', () => {
     const requests: string[] = [];
     const boundaryErrors: unknown[] = [];
     let policySpawnInput: unknown;
+    let policySpawnTarget: unknown;
     const freshDirectory = policyHandoff === 'fresh-directory';
+    const memberTerminal = policyHandoff === 'member-terminal';
     const nativeHome = join(home, 'agent-home');
     const nativeRpc = new RpcHandlerManager({ scopePrefix: 'policy-machine', encryptionMode: 'plain', logger() {} });
     if (freshDirectory) registerSessionCreationDirectoryPreflightRpc({ rpcHandlerManager: nativeRpc });
@@ -196,6 +199,7 @@ describe('foreground CLI runner authority scope', () => {
           const root = JSON.parse(text);
           if (root.actionId !== 'session.spawn_new') throw new Error('Expected canonical Session spawn');
           policySpawnInput = root.input;
+          policySpawnTarget = root.target;
           if (policyHandoff === 'approval') return respond(200, { ok: true, result: {
             kind: 'approval_request_created', artifactId: 'foreground-spawn-approval', actionId: 'session.spawn_new',
           } });
@@ -428,13 +432,23 @@ describe('foreground CLI runner authority scope', () => {
           runtimeDescriptorV1: { v: 1 as const, agentId, agent: { definitionId: agentTarget.definitionId } } }) } : {}),
       });
       const endCodes: number[] = [];
-      const hosted = Boolean(fileStoreAgent || diagnosticDebug);
+      const hosted = Boolean(fileStoreAgent || diagnosticDebug || memberTerminal);
       const run = hosted ? runAddedHostedSession({ environment: { ...process.env, NODE_ENV: 'test',
+        ...(memberTerminal ? { HAPPIER_TERMINAL_SESSION_MACHINE_ID: 'signed-pty-machine' } : {}),
         ...(diagnosticDebug ? { DEBUG: diagnosticDebug.session } : {}) },
         workingDirectory: directory, end: code => { endCodes.push(code); } }, invoke) : invoke();
       if (hosted || policyHandoff === 'approval') await run;
       else await expect(run).rejects.toThrow('foreground-command-exit');
       expect(boundaryErrors).toEqual([]);
+      if (memberTerminal) {
+        expect(policySpawnInput).toMatchObject({ executionTarget: { serverId: 'foreground-fixture', machineId: 'signed-pty-machine' },
+          directory: { kind: 'path', path: directory }, agentArgs: ['--native-flag', 'native value'] });
+        expect(policySpawnTarget).toEqual({ kind: 'machine', machineId: 'signed-pty-machine' });
+        expect(requests).not.toContain(FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH);
+        expect(requests).not.toContain('/v1/sessions');
+        expect(vi.mocked(console.error).mock.calls.flat().join(' ')).toContain('policy-fixture-refusal');
+        return;
+      }
       if (nativeForkPolicy === 'sandbox') {
         expect(vi.mocked(console.error).mock.calls.flat().join(' ')).toContain('target_unavailable');
         expect(requests).not.toContain('/actions/root/execute');

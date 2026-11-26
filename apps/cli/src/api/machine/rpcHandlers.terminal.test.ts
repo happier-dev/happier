@@ -618,6 +618,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
           .resolves.toMatchObject({ ok: true, reused: false });
         for (const frame of frames.slice(-2)) {
           expect(frame.args).toEqual(['--server-url', homeApplicationUrl, 'codex']);
+          expect(frame.environment).toHaveProperty('HAPPIER_TERMINAL_SESSION_MACHINE_ID', 'machine');
           expect(frame.environment).not.toHaveProperty('HAPPIER_SERVER_URL');
           expect(frame.environment).not.toHaveProperty('HAPPIER_LOCAL_SERVER_URL');
           expect(frame.environment).not.toHaveProperty('HAPPIER_WEBAPP_URL');
