@@ -2330,7 +2330,11 @@ export function createAcpRuntime(params: {
         await b.setSessionConfigOption(activeSessionId, configId, value);
       }
     };
-    if (modelSetMethod === 'config_option') {
+    // A provider applying models through its model config option still uses session/set_model on a
+    // session that does not advertise that option (e.g. an older CLI that only lists legacy models).
+    const sessionAdvertisesModelOption = modelConfigOptionId !== null && (typeof b.getSessionConfigOptionsState !== 'function'
+      || (b.getSessionConfigOptionsState() ?? []).some((option) => option.id === modelConfigOptionId));
+    if (modelSetMethod === 'config_option' && sessionAdvertisesModelOption) {
       if (b.setSessionConfigOption && modelConfigOptionId) {
         await b.setSessionConfigOption(activeSessionId, modelConfigOptionId, resolvedModelId);
         await applyCompanionConfigUpdates();
