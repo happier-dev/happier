@@ -5,6 +5,8 @@
   "plugins.channels.prBinding.approval.number": "Pull request number",
   "plugins.channels.prBinding.approval.url": "Pull request URL",
   "plugins.channels.prBinding.approval.trigger": "Workflow trigger",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Pull request comment",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "CI check failed",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier couldn’t use this provider’s setup. Try again, or open Details to see why.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Search for it another way",
   "plugins.channels.surface.resolverUnsupportedDescription": "The provider can’t look up this kind of address. Enter it the way the provider names it.",

@@ -5,6 +5,8 @@
   "plugins.channels.prBinding.approval.number": "Numero della pull request",
   "plugins.channels.prBinding.approval.url": "URL della pull request",
   "plugins.channels.prBinding.approval.trigger": "Trigger del flusso di lavoro",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Commento alla pull request",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Controllo CI non riuscito",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier non è riuscito a usare la configurazione di questo provider. Riprova oppure apri Dettagli per vedere perché.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Cercalo in un altro modo",
   "plugins.channels.surface.resolverUnsupportedDescription": "Il provider non può cercare questo tipo di indirizzo. Inseriscilo come lo chiama il provider.",

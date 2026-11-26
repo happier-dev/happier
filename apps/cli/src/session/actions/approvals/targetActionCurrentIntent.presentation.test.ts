@@ -25,7 +25,10 @@ function visibleFacts(presentation: ReturnType<typeof describeApprovalRequestFie
     ? [[row.title, row.value]] : []);
 }
 
-it('shows the repository, pull request number and trigger as separate facts in a Channels attach approval', async () => {
+it.each([
+  ['prComment', 'Pull request comment'],
+  ['ciFailed', 'CI check failed'],
+] as const)('shows a Channels attach approval with the label for %s', async (triggerKind, triggerLabel) => {
   const binding = CHANNELS_MANIFEST.contributes?.actions?.find(({ id }) => id === SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1);
   if (!binding) throw new Error('Expected the Channels PR binding Action');
   const parsed = parsePluginManifest({
@@ -54,7 +57,7 @@ it('shows the repository, pull request number and trigger as separate facts in a
       input: SessionPullRequestBindingInputV1Schema.parse({
         kind: 'attach', sessionId: 'session-1',
         pullRequest: { repository: 'example/project', number: 4 },
-        target: { automationId: 'automation-1', triggerId: 'trigger-1', triggerRevision: 0, triggerKind: 'prComment' },
+        target: { automationId: 'automation-1', triggerId: 'trigger-1', triggerRevision: 0, triggerKind },
       }),
       policyFingerprint: 'b'.repeat(64), confirmation: action.confirmation,
     },
@@ -66,8 +69,9 @@ it('shows the repository, pull request number and trigger as separate facts in a
   expect(facts).toEqual(expect.arrayContaining([
     ['Repository', 'example/project'],
     ['Pull request number', '4'],
-    ['Workflow trigger', 'prComment'],
+    ['Workflow trigger', triggerLabel],
   ]));
+  expect(request.input).toMatchObject({ target: { triggerKind } });
   expect(facts.flat()).not.toContain('Target');
   expect(facts.flat()).not.toContain('Pull request');
   expect(request.summary).toBe('Change this session’s pull request binding?');

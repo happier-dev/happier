@@ -5,6 +5,8 @@
   "plugins.channels.prBinding.approval.number": "提取要求編號",
   "plugins.channels.prBinding.approval.url": "提取要求網址",
   "plugins.channels.prBinding.approval.trigger": "工作流程觸發程序",
+  "plugins.channels.prBinding.approval.triggerPrComment": "提取要求留言",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "CI 檢查失敗",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier 無法使用此提供者的設定。請再試一次，或開啟「詳細資訊」查看原因。",
   "plugins.channels.surface.resolverUnsupportedTitle": "換一種方式尋找",
   "plugins.channels.surface.resolverUnsupportedDescription": "提供者無法查詢這類位址。請依提供者的命名方式輸入。",

@@ -859,6 +859,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.prBinding.approval.repository": "Repositorio",
   "plugins.channels.prBinding.approval.title": "¿Cambiar la vinculación de la solicitud de cambios de esta sesión?",
   "plugins.channels.prBinding.approval.trigger": "Activador del flujo de trabajo",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Falló una comprobación de CI",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Comentario en la solicitud de cambios",
   "plugins.channels.prBinding.approval.url": "URL de la solicitud de cambios",
   "plugins.channels.prWatch.mode.address": "Resolver",
   "plugins.channels.prWatch.mode.addressDescription": "El agente corrige; tú apruebas los push y las respuestas.",

@@ -859,6 +859,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.prBinding.approval.repository": "Repozytorium",
   "plugins.channels.prBinding.approval.title": "Zmienić powiązanie zgłoszenia pull request z tą sesją?",
   "plugins.channels.prBinding.approval.trigger": "Wyzwalacz przepływu pracy",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Sprawdzenie CI nie powiodło się",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Komentarz do zgłoszenia pull request",
   "plugins.channels.prBinding.approval.url": "Adres URL zgłoszenia pull request",
   "plugins.channels.prWatch.mode.address": "Popraw",
   "plugins.channels.prWatch.mode.addressDescription": "Agent poprawia; ty zatwierdzasz pushe i odpowiedzi.",

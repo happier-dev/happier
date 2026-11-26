@@ -59,6 +59,8 @@ export function formatGovernanceApprovalSummary(context: ApprovalPresentationCon
 
 /** What a presenting app knows that an approval summary may use; every field is optional. */
 export type ApprovalPresentationContext = Readonly<{
+  /** Resolve the localized copy authored for a plugin confirmation. */
+  resolvePluginConfirmationText?: (text: import('../../plugins/actions/v2.js').PluginActionConfirmationInputFieldV2['title']) => string;
   /** The presenting host's catalog supplies declaration labels and units, never mutation policy. */
   readSettingDeclaration?: (anchor: string) => PortableSettingDeclarationV1 | null;
   /** Public labels captured for the exact Team admission operands. */

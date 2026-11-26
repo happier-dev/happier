@@ -5,6 +5,8 @@
   "plugins.channels.prBinding.approval.number": "拉取请求编号",
   "plugins.channels.prBinding.approval.url": "拉取请求网址",
   "plugins.channels.prBinding.approval.trigger": "工作流触发器",
+  "plugins.channels.prBinding.approval.triggerPrComment": "拉取请求评论",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "CI 检查失败",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier 无法使用此提供方的设置。请重试，或打开“详情”查看原因。",
   "plugins.channels.surface.resolverUnsupportedTitle": "换一种方式查找",
   "plugins.channels.surface.resolverUnsupportedDescription": "提供方无法查找这类地址。请按提供方的命名方式输入。",

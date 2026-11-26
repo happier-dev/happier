@@ -5,6 +5,8 @@
   "plugins.channels.prBinding.approval.number": "Número de la solicitud de cambios",
   "plugins.channels.prBinding.approval.url": "URL de la solicitud de cambios",
   "plugins.channels.prBinding.approval.trigger": "Activador del flujo de trabajo",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Comentario en la solicitud de cambios",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Falló una comprobación de CI",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier no pudo usar la configuración de este proveedor. Inténtalo de nuevo o abre Detalles para ver por qué.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Búscalo de otra forma",
   "plugins.channels.surface.resolverUnsupportedDescription": "El proveedor no puede buscar este tipo de dirección. Escríbela como la nombra el proveedor.",

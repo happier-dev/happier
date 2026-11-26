@@ -10,10 +10,11 @@ import {
 } from '@happier-dev/protocol/actions';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { HealthCheckSourceConfigV1Schema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
-import { t } from '@/text';
+import { getTranslationValue, t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { readVoiceSettingsDeclaration } from '@/voice/settings/voiceContributedSettingsDeclarations';
 
@@ -24,6 +25,11 @@ function workflowTriggerLabels(environmentName?: string | null): WorkflowTrigger
         disabled: t('common.disabled'),
         summarize: trigger => formatTriggerSummary(trigger, { eventEnvironmentName: environmentName }),
     };
+}
+
+function resolvePluginConfirmationText(text: NonNullable<TargetActionApprovalRequestV1['inputFields']>[number]['title']): string {
+    const translated = typeof text === 'string' ? undefined : getTranslationValue(text.key);
+    return resolvePluginLocalizedStringV2Text(text, typeof translated === 'string' ? translated : undefined);
 }
 
 export function readPluginEventTriggerApprovalSummary(input: WorkflowTriggerApprovalInput, environmentName?: string | null): string | null {
@@ -69,6 +75,7 @@ export function describeApprovalActionFields(input: Parameters<typeof describePr
 export function describeApprovalRequestFields(input: Parameters<typeof describeProtocolApprovalRequestFields>[0],
     environmentName?: string | null, automationName?: string | null) {
     const presentation = describeProtocolApprovalRequestFields(input, {
+        resolvePluginConfirmationText,
         readSettingDeclaration: readVoiceSettingsDeclaration,
         formatDataBytes: formatHappierDataBytes, workflowTriggerLabels: workflowTriggerLabels(environmentName),
     });
@@ -81,6 +88,7 @@ export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest 
     ReturnType<typeof resolveProtocolApprovalRequestApproveAdmission>;
 export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest | TargetActionApprovalRequestV1) {
     return resolveProtocolApprovalRequestApproveAdmission(request, {
+        resolvePluginConfirmationText,
         readSettingDeclaration: readVoiceSettingsDeclaration, workflowTriggerLabels: workflowTriggerLabels() });
 }
 

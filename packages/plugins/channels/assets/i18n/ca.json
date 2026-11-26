@@ -5,6 +5,8 @@
   "plugins.channels.prBinding.approval.number": "Número de la sol·licitud de canvis",
   "plugins.channels.prBinding.approval.url": "URL de la sol·licitud de canvis",
   "plugins.channels.prBinding.approval.trigger": "Activador del flux de treball",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Comentari a la sol·licitud de canvis",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Ha fallat una comprovació de CI",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier no ha pogut fer servir la configuració d’aquest proveïdor. Torna-ho a provar o obre Detalls per veure per què.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Cerca-ho d’una altra manera",
   "plugins.channels.surface.resolverUnsupportedDescription": "El proveïdor no pot cercar aquest tipus d’adreça. Escriu-la com l’anomena el proveïdor.",

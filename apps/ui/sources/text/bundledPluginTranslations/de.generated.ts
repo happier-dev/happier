@@ -859,6 +859,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.prBinding.approval.repository": "Repository",
   "plugins.channels.prBinding.approval.title": "Pull-Request-Verknüpfung dieser Sitzung ändern?",
   "plugins.channels.prBinding.approval.trigger": "Workflow-Auslöser",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "CI-Prüfung fehlgeschlagen",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Pull-Request-Kommentar",
   "plugins.channels.prBinding.approval.url": "Pull-Request-URL",
   "plugins.channels.prWatch.mode.address": "Beheben",
   "plugins.channels.prWatch.mode.addressDescription": "Der Agent behebt; du genehmigst Pushes und Antworten.",

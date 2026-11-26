@@ -3265,8 +3265,10 @@ retaining automated confirmation for attaching links and removing triggers.
 In 0.3 development source, `confirmation.inputFields` declares reviewed
 `{path, title}` operands. Each dot-separated path (with `[]` array segments)
 must resolve in the declared input schema; conditional union operands may be
-absent. Client fingerprint custody and daemon request custody pass the exact
-invocation input to the existing native/hosted Action confirmation owner. That owner
+absent. An optional `valueLabels` map gives an exact string operand a
+localized label while execution keeps the original operand. Client
+fingerprint custody and daemon request custody pass the exact invocation
+input to the existing native/hosted Action confirmation owner. That owner
 uses the same declared operand projection as Inbox Details for tap and spoken
 review. Explicit nulls and array structure stay visible after confidential
 input redaction.

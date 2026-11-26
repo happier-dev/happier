@@ -858,6 +858,8 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.channels.prBinding.approval.repository",
   "plugins.channels.prBinding.approval.title",
   "plugins.channels.prBinding.approval.trigger",
+  "plugins.channels.prBinding.approval.triggerCiFailed",
+  "plugins.channels.prBinding.approval.triggerPrComment",
   "plugins.channels.prBinding.approval.url",
   "plugins.channels.prWatch.mode.address",
   "plugins.channels.prWatch.mode.addressDescription",

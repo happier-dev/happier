@@ -859,6 +859,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.prBinding.approval.repository": "Репозиторий",
   "plugins.channels.prBinding.approval.title": "Изменить привязку запроса на слияние к этому сеансу?",
   "plugins.channels.prBinding.approval.trigger": "Триггер рабочего процесса",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Проверка CI не пройдена",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Комментарий к запросу на слияние",
   "plugins.channels.prBinding.approval.url": "URL запроса на слияние",
   "plugins.channels.prWatch.mode.address": "Исправлять",
   "plugins.channels.prWatch.mode.addressDescription": "Агент исправляет; вы одобряете пуши и ответы.",

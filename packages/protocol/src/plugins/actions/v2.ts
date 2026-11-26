@@ -232,6 +232,8 @@ const PluginActionConfirmationBodyV2Schema = createPluginActionConfirmationPrese
 export const PluginActionConfirmationInputFieldV2Schema = lazyZodSchema(() => z.strictObject({
   path: ActionInputPathSchema,
   title: PluginActionConfirmationTitleV2Schema,
+  /** An authored reading of exact string values. The admitted operand remains unchanged. */
+  valueLabels: z.optional(z.record(z.string(), PluginActionConfirmationTitleV2Schema)),
 }));
 export type PluginActionConfirmationInputFieldV2 = z.infer<typeof PluginActionConfirmationInputFieldV2Schema>;
 

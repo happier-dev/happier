@@ -5,6 +5,8 @@
   "plugins.channels.prBinding.approval.number": "プルリクエスト番号",
   "plugins.channels.prBinding.approval.url": "プルリクエストのURL",
   "plugins.channels.prBinding.approval.trigger": "ワークフローのトリガー",
+  "plugins.channels.prBinding.approval.triggerPrComment": "プルリクエストへのコメント",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "CI チェックの失敗",
   "plugins.channels.surface.providerSelectionInvalidDescription": "このプロバイダーの設定を Happier で使用できませんでした。もう一度試すか、「詳細」で理由を確認してください。",
   "plugins.channels.surface.resolverUnsupportedTitle": "別の方法で検索",
   "plugins.channels.surface.resolverUnsupportedDescription": "プロバイダーはこの種類のアドレスを検索できません。プロバイダーでの名前どおりに入力してください。",

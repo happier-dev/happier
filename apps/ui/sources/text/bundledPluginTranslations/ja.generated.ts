@@ -859,6 +859,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.prBinding.approval.repository": "リポジトリ",
   "plugins.channels.prBinding.approval.title": "このセッションのプルリクエストの関連付けを変更しますか？",
   "plugins.channels.prBinding.approval.trigger": "ワークフローのトリガー",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "CI チェックの失敗",
+  "plugins.channels.prBinding.approval.triggerPrComment": "プルリクエストへのコメント",
   "plugins.channels.prBinding.approval.url": "プルリクエストのURL",
   "plugins.channels.prWatch.mode.address": "対応",
   "plugins.channels.prWatch.mode.addressDescription": "エージェントが修正し、プッシュと返信はあなたが承認します。",

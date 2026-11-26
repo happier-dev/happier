@@ -859,6 +859,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.prBinding.approval.repository": "仓库",
   "plugins.channels.prBinding.approval.title": "更改此会话的拉取请求关联吗？",
   "plugins.channels.prBinding.approval.trigger": "工作流触发器",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "CI 检查失败",
+  "plugins.channels.prBinding.approval.triggerPrComment": "拉取请求评论",
   "plugins.channels.prBinding.approval.url": "拉取请求网址",
   "plugins.channels.prWatch.mode.address": "处理",
   "plugins.channels.prWatch.mode.addressDescription": "代理修复；推送和回复由你批准。",

@@ -5,6 +5,8 @@
   "plugins.channels.prBinding.approval.number": "Numéro de la pull request",
   "plugins.channels.prBinding.approval.url": "URL de la pull request",
   "plugins.channels.prBinding.approval.trigger": "Déclencheur du workflow",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Commentaire sur la pull request",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Échec d’une vérification CI",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier n’a pas pu utiliser la configuration de ce fournisseur. Réessayez ou ouvrez Détails pour savoir pourquoi.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Cherchez autrement",
   "plugins.channels.surface.resolverUnsupportedDescription": "Le fournisseur ne peut pas rechercher ce type d’adresse. Saisissez-la comme le fournisseur la nomme.",

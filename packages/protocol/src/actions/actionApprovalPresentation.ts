@@ -1742,7 +1742,7 @@ type TargetActionApprovalInputField = NonNullable<TargetActionApprovalRequestV1[
 export function projectTargetActionApprovalOperandRows(
   projection: NonNullable<ReturnType<typeof projectTargetActionApprovalInput>>,
   fields: readonly TargetActionApprovalInputField[],
-  resolveTitle: (title: TargetActionApprovalInputField['title']) => string = resolvePluginLocalizedStringV2Text,
+  resolveText: (text: TargetActionApprovalInputField['title']) => string = resolvePluginLocalizedStringV2Text,
 ): readonly Extract<ApprovalActionFieldRow, { kind: 'value' }>[] {
   return fields.flatMap(field => {
     const segments = field.path.split('.');
@@ -1753,15 +1753,18 @@ export function projectTargetActionApprovalOperandRows(
     })) return [];
     const values: unknown[] = [];
     visitSegments(projection.input, segments, 0, values);
-    const literal = formatApprovalFieldValues(values, { preserveStructuredValues: true });
+    const value = values.length === 1 ? values[0] : undefined;
+    const label = typeof value === 'string' && field.valueLabels && Object.hasOwn(field.valueLabels, value)
+      ? field.valueLabels[value] : undefined;
+    const literal = label === undefined ? formatApprovalFieldValues(values, { preserveStructuredValues: true }) : resolveText(label);
     const reference = values.length === 1 ? describeApprovalOperandReference(field.path, values[0]) : undefined;
     return literal === null ? [] : [{
-      kind: 'value', path: `input.${field.path}`, title: resolveTitle(field.title), value: literal, ...(reference ? { reference } : {}),
+      kind: 'value', path: `input.${field.path}`, title: resolveText(field.title), value: literal, ...(reference ? { reference } : {}),
     }];
   });
 }
 
-function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsRequest): ApprovalActionFieldsPresentation {
+function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsRequest, context?: ApprovalPresentationContext): ApprovalActionFieldsPresentation {
   const unavailable = (): ApprovalActionFieldsPresentation => {
     const details = { path: 'input', reason: 'missing_required_context' as const };
     return { rows: [{ kind: 'unrepresentable', ...details, title: 'Arguments' }], unrepresentable: details };
@@ -1784,7 +1787,7 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
     ? Object.entries(redacted).map(([key, value]) => ({ key, value }))
     : [{ key: '', value: redacted }];
   try {
-    const rows = confidentialRows.concat(projectTargetActionApprovalOperandRows(projection, request.inputFields ?? []));
+    const rows = confidentialRows.concat(projectTargetActionApprovalOperandRows(projection, request.inputFields ?? [], context?.resolvePluginConfirmationText));
     const hasDeclaredFacts = rows.length > confidentialPaths.length;
     for (const { key, value } of fields) {
       if (confidentialPaths.includes('') || confidentialPaths.includes(key)) continue;
@@ -1829,7 +1832,7 @@ export function describeApprovalRequestFields(
 ): ApprovalActionFieldsPresentation {
   // `'actionId' in request` would leave the target member as `& Record<'actionId', unknown>`.
   if (isTargetActionApprovalFieldsRequest(request)) {
-    return describeTargetActionApprovalFields(request);
+    return describeTargetActionApprovalFields(request, context);
   }
   const actionPresentation = describeApprovalActionFields({
     actionId: request.actionId,
@@ -1874,7 +1877,7 @@ export function resolveApprovalRequestApproveAdmission(
   request: ApprovalRequest | TargetActionApprovalRequestV1, context?: ApprovalPresentationContext,
 ): TargetActionApprovalApproveAdmission {
   if (!('actionId' in request)) {
-    const presentation = describeApprovalRequestFields(request);
+    const presentation = describeApprovalRequestFields(request, context);
     const origin = request.executionOriginV1;
     // Native Machine confirmation stays with the mounted press. Older builds
     // could leave a detached request in its place, without the admitted checks.

@@ -802,7 +802,14 @@ function createChannelsPlugin(): ChannelsPlugin {
             { path: 'pullRequest.repository', title: { key: 'plugins.channels.prBinding.approval.repository', fallback: 'Repository' } },
             { path: 'pullRequest.number', title: { key: 'plugins.channels.prBinding.approval.number', fallback: 'Pull request number' } },
             { path: 'pullRequestUrl', title: { key: 'plugins.channels.prBinding.approval.url', fallback: 'Pull request URL' } },
-            { path: 'target.triggerKind', title: { key: 'plugins.channels.prBinding.approval.trigger', fallback: 'Workflow trigger' } },
+            {
+              path: 'target.triggerKind',
+              title: { key: 'plugins.channels.prBinding.approval.trigger', fallback: 'Workflow trigger' },
+              valueLabels: {
+                prComment: { key: 'plugins.channels.prBinding.approval.triggerPrComment', fallback: 'Pull request comment' },
+                ciFailed: { key: 'plugins.channels.prBinding.approval.triggerCiFailed', fallback: 'CI check failed' },
+              },
+            },
           ],
         },
         hostAccess: ['account-storage'],

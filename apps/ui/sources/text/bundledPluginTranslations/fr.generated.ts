@@ -859,6 +859,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.prBinding.approval.repository": "Dépôt",
   "plugins.channels.prBinding.approval.title": "Modifier l’association de cette session à une pull request ?",
   "plugins.channels.prBinding.approval.trigger": "Déclencheur du workflow",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Échec d’une vérification CI",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Commentaire sur la pull request",
   "plugins.channels.prBinding.approval.url": "URL de la pull request",
   "plugins.channels.prWatch.mode.address": "Corriger",
   "plugins.channels.prWatch.mode.addressDescription": "L’agent corrige ; vous approuvez les push et les réponses.",

@@ -5,6 +5,8 @@
   "plugins.channels.prBinding.approval.number": "Номер запроса на слияние",
   "plugins.channels.prBinding.approval.url": "URL запроса на слияние",
   "plugins.channels.prBinding.approval.trigger": "Триггер рабочего процесса",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Комментарий к запросу на слияние",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Проверка CI не пройдена",
   "plugins.channels.surface.providerSelectionInvalidDescription": "Happier не удалось использовать настройку этого провайдера. Повторите попытку или откройте «Подробности», чтобы узнать причину.",
   "plugins.channels.surface.resolverUnsupportedTitle": "Найдите иначе",
   "plugins.channels.surface.resolverUnsupportedDescription": "Провайдер не умеет искать такой адрес. Введите его так, как его называет провайдер.",

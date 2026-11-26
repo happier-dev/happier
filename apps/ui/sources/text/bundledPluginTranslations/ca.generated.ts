@@ -859,6 +859,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.prBinding.approval.repository": "Repositori",
   "plugins.channels.prBinding.approval.title": "Vols canviar la vinculació de la sol·licitud de canvis d’aquesta sessió?",
   "plugins.channels.prBinding.approval.trigger": "Activador del flux de treball",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "Ha fallat una comprovació de CI",
+  "plugins.channels.prBinding.approval.triggerPrComment": "Comentari a la sol·licitud de canvis",
   "plugins.channels.prBinding.approval.url": "URL de la sol·licitud de canvis",
   "plugins.channels.prWatch.mode.address": "Resol",
   "plugins.channels.prWatch.mode.addressDescription": "L’agent corregeix; tu aproves els push i les respostes.",

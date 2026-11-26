@@ -859,6 +859,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.channels.prBinding.approval.repository": "存放庫",
   "plugins.channels.prBinding.approval.title": "要變更此工作階段的提取要求關聯嗎？",
   "plugins.channels.prBinding.approval.trigger": "工作流程觸發程序",
+  "plugins.channels.prBinding.approval.triggerCiFailed": "CI 檢查失敗",
+  "plugins.channels.prBinding.approval.triggerPrComment": "提取要求留言",
   "plugins.channels.prBinding.approval.url": "提取要求網址",
   "plugins.channels.prWatch.mode.address": "處理",
   "plugins.channels.prWatch.mode.addressDescription": "代理修復；推送和回覆由你核准。",
