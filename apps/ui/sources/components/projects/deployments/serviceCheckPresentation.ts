@@ -516,6 +516,7 @@ export function serviceCheckCauseText(cause: RetainedCheck['result']['cause'] | 
     cause.keywordMatched === false ? t(`${k}.causeKeywordMissing`) : null,
     cause.reason ?? null,
     t(cause.vantage === 'outside' ? `${k}.causeFromOutside` : `${k}.causeFromSameMachine`),
+    cause.remedy ?? null,
   ].filter((part): part is string => Boolean(part)).join(' · ');
 }
 

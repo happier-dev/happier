@@ -55,6 +55,7 @@ const NOW = Date.UTC(2026, 10, 15, 10, 0, 0);
 // LIVE-FID-1115: opening a Check whose recent results hold a failure crashed the app ("Happier UI theme is
 // unavailable") because a result's state word used the plugin-ui Status outside any plugin-ui scope.
 it('opens a Check with a recent failing result and says that result in words', async () => {
+  const remedy = 'Check that the service is listening and that its port is reachable from the selected observer.';
   const row = {
     kind: 'configuredCheck',
     key: 'check-1',
@@ -77,6 +78,10 @@ it('opens a Check with a recent failing result and says that result in words', a
             status: 'down',
             observedAt: NOW - 60_000,
             latencyMs: 4,
+            cause: {
+              kind: 'http', vantage: 'sameMachine', observerMachineId: 'observer',
+              reason: 'connection', requiredFact: 'reachableHealthEndpoint', remedy,
+            },
             evidence: { kind: 'none' },
           },
         },
@@ -93,6 +98,7 @@ it('opens a Check with a recent failing result and says that result in words', a
   );
   expect(result).toBeTruthy();
   expect(screen.getTextContent()).toContain('Down');
+  expect(screen.getTextContent()).toContain(remedy);
 });
 
 it.each([
