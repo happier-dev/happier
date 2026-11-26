@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import {
   deriveExternalSessionsAutoLinkSourcePolicyIdV1,
   ExternalSessionsAgentIdSchema,
@@ -63,6 +64,8 @@ import { createExternalSessionOperationExclusion } from '@/session/external/oper
 import { createExternalSessionPersistedTakeoverAdmissionOwner } from './persistedTakeoverAdmission';
 import { createDefaultExternalSessionTakeoverStartActionExecutor } from './takeoverStartAction';
 import { readExternalSessionOperationRecord, resolveExternalSessionOperationAccountScope } from './operationRecordStore';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 
 const fetchSessionByIdMock = vi.fn();
 const fetchSessionsPageMock = vi.fn();
@@ -73,7 +76,8 @@ const fetchAccountProfileMock = vi.fn();
 const fetchAccountEncryptionCurrentnessMock = vi.fn();
 const listSessionMarkersMock = vi.fn(async () => []);
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async importOriginal => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
   readStoredCredentials: (...args: unknown[]) => readCredentialsMock(...args),
 }));
 
@@ -490,6 +494,18 @@ async function materializeAuthorOnlyPlugin(pluginRoot: string): Promise<void> {
 describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', () => {
   let controllerOwnsRegistry = false;
 
+  beforeEach(() => {
+    readCredentialsMock.mockResolvedValue(null);
+    installAxiosRequestMethodAdapter();
+    // The authenticated Home publishes explicit default-on Account intent reads;
+    // admission, installed source custody and activation remain real.
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      const response = absentAccountPluginAvailabilityHttpResponse(String(url), body);
+      if (response) return response;
+      throw new Error(`Unexpected fixture HTTP request: ${new URL(String(url)).pathname}`);
+    });
+  });
+
   afterEach(async () => {
     vi.clearAllMocks();
     if (controllerOwnsRegistry) {
@@ -497,6 +513,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       const registry = pluginReloadController.getState().activeRegistry;
       if (registry) await retireAdmittedPluginRuntimeRegistry({ controller: pluginReloadController, registry });
     }
+    vi.restoreAllMocks();
   });
 
   afterAll(async () => {
@@ -1232,6 +1249,12 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
     );
     let unownedRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     try {
+      // The current-global source owner captures its authenticated Home when
+      // this registry is admitted, before any consumer activates the Agent.
+      readCredentialsMock.mockResolvedValue({
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      });
       await materializeAuxiliaryOnlyPlugin(pluginRoot);
       await seedCurrentLocalPathPluginFixture({
         happyHomeDir,
@@ -1258,10 +1281,6 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       const runtimeRegistry = unownedRegistry;
       unownedRegistry = null;
 
-      readCredentialsMock.mockResolvedValue({
-        token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
-      });
       fetchAccountEncryptionCurrentnessMock.mockResolvedValue({
         mode: 'plain', version: 1, signingKeyFingerprint: null,
         contentKeyFingerprint: null, updatedAt: 1,
