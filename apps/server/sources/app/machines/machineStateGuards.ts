@@ -1,7 +1,7 @@
 import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
-import { readMachineIrohEndpointAuthorityV1, MachineOperationProtocolCapabilitiesV1StoredReadSchema, type MachineOperationProtocolCapabilityNameV1, type MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { readMachineIrohEndpointAuthorityV1, type MachineOperationProtocolCapabilityNameV1, type MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 
 export type MachineAvailabilityState = "available" | "revoked" | "replaced" | "missing";
 
@@ -76,13 +76,10 @@ async function readCurrentMachineIrohEndpointAuthority(params: Readonly<{
         },
     });
     if (classifyMachineAvailabilityState(machine) !== "available" || machine === null) return null;
-    if (params.requiredCapability) {
-        const capabilities = MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse(machine.operationProtocolCapabilities);
-        if (!capabilities.success || !capabilities.data[params.requiredCapability]) return null;
-    }
     return readMachineIrohEndpointAuthorityV1({
         capabilities: machine.operationProtocolCapabilities,
         revision: machine.operationProtocolCapabilitiesRevision,
+        requiredCapability: params.requiredCapability,
     });
 }
 

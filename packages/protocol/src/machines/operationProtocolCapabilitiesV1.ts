@@ -130,10 +130,12 @@ export type MachineIrohEndpointAuthorityV1 = Readonly<{
 export function readMachineIrohEndpointAuthorityV1(input: Readonly<{
   capabilities: unknown;
   revision: unknown;
+  requiredCapability?: MachineOperationProtocolCapabilityNameV1;
 }>): MachineIrohEndpointAuthorityV1 | null {
   const capabilities = MachineOperationProtocolCapabilitiesV1StoredReadSchema.safeParse(input.capabilities);
   if (
     !capabilities.success
+    || (input.requiredCapability !== undefined && !capabilities.data[input.requiredCapability])
     || !Number.isInteger(input.revision)
     || (input.revision as number) < 1
     || !capabilities.data.irohMachineEndpoint

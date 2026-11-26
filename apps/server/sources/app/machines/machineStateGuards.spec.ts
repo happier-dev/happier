@@ -25,6 +25,24 @@ describe("readAvailableMachineIrohEndpointAuthority", () => {
         vi.resetModules();
     });
 
+    it("parses the retained capability projection once for a qualified endpoint", async () => {
+        const readEndpointLeaf = vi.fn(() => currentMachine.operationProtocolCapabilities.irohMachineEndpoint);
+        mocks.db.machine.findFirst.mockResolvedValue({
+            ...currentMachine,
+            operationProtocolCapabilities: {
+                ...currentMachine.operationProtocolCapabilities,
+                get irohMachineEndpoint() { return readEndpointLeaf(); },
+            },
+        });
+        const { readAvailableMachineIrohEndpointAuthority } = await import("./machineStateGuards");
+        await expect(readAvailableMachineIrohEndpointAuthority({
+            accountId: "account-1",
+            machineId: "machine-1",
+            requiredCapability: "providerBrokerIngress",
+        })).resolves.toEqual({ endpointId: "a".repeat(64), revision: 4 });
+        expect(readEndpointLeaf).toHaveBeenCalledTimes(1);
+    });
+
     it.each([
         {},
         { sessionFollow: { contextV1: false } },
