@@ -386,6 +386,18 @@ export async function trimArtifactRevisions(credentials: AuthCredentials, artifa
     return result;
 }
 
+/**
+ * The storage route's own refusals answer `{ error: <code> }` with 400 (cursor, kinds), 404 (Discussion) or 503 (size):
+ * the code is the typed cause and passes through unchanged. It carries no HTTP status, so no generic not-found mapping
+ * replaces it; a transient Home answer keeps the shared availability path.
+ */
+async function readStorageInventoryRefusal(response: Response): Promise<string | null> {
+    if (response.status !== 400 && response.status !== 404 && response.status !== 503) return null;
+    const payload: unknown = await response.json().catch(() => null);
+    const code = payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined;
+    return typeof code === 'string' && code !== '' && !readTransientAvailabilityFailure(code) ? code : null;
+}
+
 export async function fetchStorageInventory(credentials: AuthCredentials,
     opts: Pick<ArtifactApiOptions, 'request' | 'signal'> & { input?: StorageInventoryInputV1 } = {}) {
     throwIfAborted(opts.signal);
@@ -394,7 +406,11 @@ export async function fetchStorageInventory(credentials: AuthCredentials,
         ...(opts.signal ? { signal: opts.signal } : {}),
     }, { includeAuth: false, retry: 'none' });
     throwIfAborted(opts.signal);
-    if (!response.ok) throw await artifactHttpReadError(response, 'Storage inventory is unavailable', 'content_unavailable');
+    if (!response.ok) {
+        const refusal = await readStorageInventoryRefusal(response.clone());
+        if (refusal) throw new HappyError(refusal, false, { code: refusal });
+        throw await artifactHttpReadError(response, 'Storage inventory is unavailable', 'content_unavailable');
+    }
     const parsed = StorageInventoryV1Schema.safeParse(await response.json());
     throwIfAborted(opts.signal);
     if (!parsed.success) throw new HappyError('Artifact storage usage is unavailable', false, { code: 'content_unavailable' });
