@@ -9699,6 +9699,11 @@ For a deployed database, the read result identifies the Environment policy and
 its revision. Environment managers change that policy through
 `deployments.environments.update`. A Preview uses its template's policy.
 
+Generic Worktree capture reads by agents return `database_target_required`.
+An agent can read attributed capture through an exact Worktree database target
+when that database's own access policy allows reads. People can read the generic
+partition under the existing Worktree admission.
+
 The selected target's agent level is **None**, **Read**, **Read and write (asks
 first)** or **Read and write (no approval)**. The person must also have the
 corresponding access to the target. The existing approval resolver applies the
