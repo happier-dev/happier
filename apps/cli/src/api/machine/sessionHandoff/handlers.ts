@@ -350,7 +350,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     exportSessionBundle,
     prepareSessionBundleExport: params.exportSessionBundle
       ? async metadata => async () => await exportSessionBundle(metadata)
-      : async metadata => await prepareSessionHandoffAgentBundleExport({ metadata, activeServerDir: runtimeConfig.activeServerDir }),
+      : async (metadata, requester) => await prepareSessionHandoffAgentBundleExport({ metadata,
+        activeServerDir: runtimeConfig.activeServerDir, ...(requester ? { requester } : {}) }),
     buildStartPendingStatus,
     buildStartRecoveryStatus,
     buildPrepareJobRecord,

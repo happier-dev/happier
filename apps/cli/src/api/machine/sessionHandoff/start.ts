@@ -82,7 +82,11 @@ export type RegisterSessionHandoffStartRpcHandlerInput = Readonly<{
     agentBundle: SessionHandoffAgentBundle;
     targetPath: string;
   }>>;
-  prepareSessionBundleExport?: (metadata: Record<string, unknown>) => Promise<PreparedSessionHandoffAgentBundleExport>;
+  /** `requester` is the Account bound to this Session at admission; absent for the Machine's own Sessions. */
+  prepareSessionBundleExport?: (
+    metadata: Record<string, unknown>,
+    requester?: Readonly<{ accountId: string }>,
+  ) => Promise<PreparedSessionHandoffAgentBundleExport>;
   buildStartPendingStatus: (input: Readonly<{
     handoffId: string;
     sourceStopState: 'stopped' | 'already_inactive';
@@ -272,7 +276,11 @@ export function createSessionHandoffStartActionHandler(
     let preparedExport: PreparedSessionHandoffAgentBundleExport | undefined;
     if (request.stateTransfer !== 'existing' && params.prepareSessionBundleExport) {
       try {
-        preparedExport = await params.prepareSessionBundleExport(metadata);
+        // The admission owner already marked the custodian's own bootstrap (native credentials allowed).
+        const bound = context?.requesterSessionBootstrap;
+        const requester = bound?.getBoundSessionId() === request.sessionId && !bound.allowNativeAccountCredentials
+          ? bound.attribution : undefined;
+        preparedExport = await params.prepareSessionBundleExport(metadata, requester);
       } catch (error) {
         const failureCause = projectActionFailureCauseV1(error, 'session_handoff.source_export');
         logger.warnLocalFile('[session-handoff] source_export_failed', { catch: 'preparation',

@@ -3769,6 +3769,17 @@ runtime launch. The runner's published descriptor for the source Machine takes
 precedence over its daemon's startup snapshot. This lookup works independently
 of transcript follow. Older metadata without a recorded Claude root uses the
 daemon's configured root.
+Codex export likewise reads only the Codex home its runtime recorded at launch
+(`homePath` in the runtime descriptor). On a shared Machine a guest's Session
+records its own materialized home, so export never falls back to the daemon's
+home; a recorded home that is gone or unreadable is a source-export refusal
+that says so for the Session's Codex thread id. Older metadata without a
+recorded home uses the daemon's configured home. For a Session admitted for a
+requester Account other than the Machine custodian, the host also refuses an
+export whose files lie outside that Account's own requester roots, and that
+requester reads only the closed `Session handoff export failed: <code>`
+message; the Agent's own failure text goes to the Machine's daemon log, because
+it can describe a home the requester's metadata named.
 
 Claude native target import reports filesystem identity conflicts through the
 existing handoff diagnostic field. The diagnostic identifies the directory or

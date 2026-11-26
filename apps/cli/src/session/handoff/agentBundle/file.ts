@@ -98,6 +98,24 @@ async function projectBundleFiles(value: unknown): Promise<Readonly<{
   return { bundle: await visit(value, false), entries };
 }
 
+/** Every native source file an Agent bundle references, in the shape `projectBundleFiles` reads. */
+export function listSessionHandoffAgentBundleSourceFilePaths(value: unknown): string[] {
+  const paths: string[] = [];
+  const seen = new WeakSet<object>();
+  const visit = (current: unknown): void => {
+    const source = readSourceFile(current);
+    if (source) {
+      paths.push(source.filePath);
+      return;
+    }
+    if (!current || typeof current !== 'object' || seen.has(current)) return;
+    seen.add(current);
+    for (const item of Array.isArray(current) ? current : Object.values(current)) visit(item);
+  };
+  visit(value);
+  return paths;
+}
+
 async function appendFile(
   target: Awaited<ReturnType<typeof open>>,
   source: HandoffSourceFile,

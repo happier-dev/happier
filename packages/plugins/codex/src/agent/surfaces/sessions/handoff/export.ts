@@ -31,20 +31,52 @@ function resolveCodexHome(env: NodeJS.ProcessEnv): string {
 }
 
 /**
+ * The Codex home this Session's runtime recorded at launch. The runtime
+ * publishes the `CODEX_HOME` it actually ran with as the descriptor's
+ * `homePath`; on a shared Machine that is the Session's own materialized home,
+ * not the daemon's environment home.
+ */
+function readRecordedCodexLaunchHome(metadata: HandoffExportSessionMetadata): string | null {
+  const descriptor = metadata.runtimeDescriptorV1
+    ? readCanonicalCodexAgentRuntimeDescriptorV1(metadata.runtimeDescriptorV1)
+    : null;
+  return descriptor?.homePath ?? null;
+}
+
+async function requireRecordedCodexLaunchHome(codexHome: string, remoteSessionId: string): Promise<string> {
+  try {
+    if ((await stat(codexHome)).isDirectory()) return codexHome;
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    if (code === 'EACCES' || code === 'EPERM') {
+      throw new Error(`The Codex home recorded at launch for ${remoteSessionId} is not readable on this Machine`);
+    }
+  }
+  throw new Error(`The Codex home recorded at launch for ${remoteSessionId} no longer exists on this Machine`);
+}
+
+/**
  * An explicit linked source is EXCLUSIVE custody, not a ranked preference. The
  * session id alone does not identify bytes: the same id can exist in a second
  * Codex home, so appending the caller environment's `CODEX_HOME` after the
  * authoritative homes lets an unrelated home's same-id rollout be exported as
  * this session's transcript. When the linked source resolves to no home, or to
  * homes without this rollout, that is a typed export failure -- never a
- * substituted source. The environment home is the authority only when the
- * session carries no linked source at all.
+ * substituted source. Without a linked source, the home recorded at launch is
+ * equally exclusive. The environment home is the authority only for older
+ * metadata that carries neither.
  */
 async function resolveAuthoritativeCodexHomes(params: Readonly<{
   metadata: HandoffExportSessionMetadata;
+  remoteSessionId: string;
   env: NodeJS.ProcessEnv;
   activeServerDir: string;
 }>): Promise<string[]> {
+  const recordedHome = projectAgentExternalSessionSourceToCodex(params.metadata.externalSessionSource)
+    ? null
+    : readRecordedCodexLaunchHome(params.metadata);
+  if (recordedHome) return [await requireRecordedCodexLaunchHome(recordedHome, params.remoteSessionId)];
+
   const source = resolveCodexSource(params.metadata);
   if (!source || source.kind !== 'codexHome') {
     return [resolveCodexHome(params.env)];
