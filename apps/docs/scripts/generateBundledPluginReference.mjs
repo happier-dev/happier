@@ -218,17 +218,14 @@ title: What ships in the box
 description: Every plugin Happier bundles — agents, model providers, voice engines, source control and channels — generated from their projected manifests.
 ---
 
-Happier bundles ${plugins.length} plugins. That number is the clearest statement
-of how this version is built: coding agents, model providers, voice engines,
-version-control backends and hosting forges all use the plugin platform.
+The 0.3 development source bundles ${plugins.length} plugins. Each declares
+its contributions in a manifest that Happier can read for catalogs before
+loading plugin code.
 
-A bundled plugin declares contributions in the same cold manifest, projects
-into catalogs without executing code, and enters the same daemon slot and
-contribution owners as another admitted plugin. Its package custody is
-different: first-party bundled code loads from the exact CLI version root or a
-pinned runner snapshot, never from a managed third-party installation
-generation. Reading one is the most useful thing you can do before writing your
-own.
+On a development daemon, bundled plugins can run from admitted repository
+source. In a packaged runtime, Happier resolves bundled code from the
+running CLI version or the pinned runner snapshot. Managed third-party
+installations have their own package generations.
 
 ## The plugins
 

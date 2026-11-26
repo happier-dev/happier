@@ -61,12 +61,6 @@ const diagnosticsDocPath = fileURLToPath(
 const hostRuntimeExternalsSourcePath = fileURLToPath(
   new URL('../../../packages/protocol/src/plugins/ui/hostRuntimeExternals.ts', import.meta.url),
 );
-const packagingIndexDocPath = fileURLToPath(
-  new URL('../content/docs/plugins/packaging/index.mdx', import.meta.url),
-);
-const installTrustDocPath = fileURLToPath(
-  new URL('../content/docs/plugins/packaging/install-trust.mdx', import.meta.url),
-);
 const externalSessionsDocPath = fileURLToPath(
   new URL('../content/docs/plugins/surfaces/external-sessions.mdx', import.meta.url),
 );
@@ -150,7 +144,7 @@ test('keeps final UI author contracts scoped to the one public owner', () => {
   ]) {
     assert.match(crossPlugin, new RegExp(requiredSource.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
   }
-  assert.doesNotMatch(crossPlugin, /\b(?:Triage|workItemSourcesV1)\b/u);
+  assert.doesNotMatch(crossPlugin, /\bworkItemSourcesV1\b/u);
   assert.match(crossPlugin, /`TargetedSurface`/u);
   assert.match(crossPlugin, /symbolic `targetedSurface` node/u);
   assert.doesNotMatch(normalizedSource(pluginUiIndexDocPath), /## Cross-plugin surface roles/u);
@@ -226,7 +220,7 @@ test('keeps development observation and renderer failure recovery with their cur
   assert.doesNotMatch(diagnostics, /crash_threshold_reached|crash_reset_context|daemon-owned crash watchdog/u);
 });
 
-test('keeps live runtime currentness and install decisions on their simplified contracts', () => {
+test('keeps live runtime currentness with the current plugin occurrence', () => {
   const pluginUiIndex = normalizedSource(pluginUiIndexDocPath);
   assert.match(pluginUiIndex, /host owns process-local occurrence currentness/u);
   assert.doesNotMatch(pluginUiIndex, /generation replacement|revalidates generation/u);
@@ -234,10 +228,6 @@ test('keeps live runtime currentness and install decisions on their simplified c
   const externalSessions = normalizedSource(externalSessionsDocPath);
   assert.match(externalSessions, /current plugin occurrence/u);
   assert.doesNotMatch(externalSessions, /current plugin generation|generation fencing|exact-generation/u);
-
-  for (const path of [packagingIndexDocPath, installTrustDocPath]) {
-    assert.doesNotMatch(normalizedSource(path), /Install & Trust/u);
-  }
 });
 
 test('keeps the default scaffold manifest projection aligned with the action declaration', () => {

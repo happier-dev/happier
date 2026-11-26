@@ -4,15 +4,16 @@
  * Docs owns whether every published generated page is current.
  */
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { access } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
-
-import { ensureWorkspacePackagesBuiltByName as ensureWorkspacePackagesBuiltByNameDefault } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..', '..');
-const RENDERER = join(REPO, 'packages', 'protocol', 'dist', 'actions', 'pluginActionReference.js');
+const RENDERER = join(REPO, 'packages', 'protocol', 'src', 'actions', 'pluginActionReference.ts');
+
+const SOURCE_RUNTIME = join(REPO, 'packages', 'cli-common', 'registerSourceRuntime.mjs');
+const FEATURE_POLICY_GENERATOR = join(REPO, 'packages', 'protocol', 'scripts', 'generate-embedded-feature-policies.mjs');
 
 export const OUTPUT_PATH = join(
   HERE,
@@ -24,18 +25,24 @@ export const OUTPUT_PATH = join(
   'host-actions.mdx',
 );
 
-export async function renderPluginActionReferenceMarkdown({
-  rendererPath = RENDERER,
-  ensureWorkspacePackagesBuiltByName = ensureWorkspacePackagesBuiltByNameDefault,
-} = {}) {
-  await ensureWorkspacePackagesBuiltByName(REPO, ['@happier-dev/protocol'], {
-    includeDevDependencies: false,
-    publicationMode: 'live',
-    quiet: true,
-  });
-  // Earlier generators may have loaded an older Protocol graph. Read the
-  // refreshed build in its own module cache after preparation.
+export async function renderPluginActionReferenceMarkdown({ rendererPath = RENDERER } = {}) {
+  await access(rendererPath);
+  if (rendererPath === RENDERER) {
+    const { EMBEDDED_FEATURE_POLICIES_OUTPUT, writeEmbeddedFeaturePolicies } = await import(
+      pathToFileURL(FEATURE_POLICY_GENERATOR).href
+    );
+    try {
+      await access(join(REPO, EMBEDDED_FEATURE_POLICIES_OUTPUT));
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      await writeEmbeddedFeaturePolicies({ repoRoot: REPO });
+    }
+  }
+  // Use the authored workspace graph in a fresh process so earlier generators
+  // cannot supply stale Action specs from their module cache.
   return execFileSync(process.execPath, [
+    '--conditions=happier-source',
+    '--import', pathToFileURL(SOURCE_RUNTIME).href,
     '--input-type=module',
     '-e',
     'const renderer = await import(process.argv[1]); process.stdout.write(renderer.renderPluginActionReferenceMarkdown());',
