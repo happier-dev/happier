@@ -27,7 +27,8 @@ export class WorkflowActionError extends Error {
     readonly rawDetails: unknown;
 
     constructor(params: Readonly<{ message: string; rawCode: string | null; failure?: WorkflowActionFailureV1; rawDetails?: unknown; requestId?: string; approval?: ActionApprovalRequestCreatedResult }>) {
-        super(params.message);
+        // The Workflow presenter supplies the copy for closed Workflow codes.
+        super(isWorkflowOperationErrorCode(params.rawCode) ? params.rawCode : params.message);
         this.name = 'WorkflowActionError';
         this.rawCode = params.rawCode;
         this.failure = params.failure ?? null;
