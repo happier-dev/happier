@@ -6504,6 +6504,45 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); vi.unstubAllEnvs(); }
     });
 
+    it.each(['account', 'terminal'] as const)('admits the installed contributed Session Run Start child without borrowing other RPC purposes (%s)', async credential => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: credential,
+            authority: credential === 'account' ? 'present_user' : 'account_automation' });
+        const { app } = await createApp(fixture.team.id);
+        try {
+            const actionId = 'action.invoke';
+            // Real Home issuance and installation signing reproduce the live owner packet.
+            const authorization = await mint(app, fixture, actionId, { ...fixture.envelope,
+                requestId: crypto.randomUUID(), input: {
+                    action: { pluginId: 'qa.ship2.run-custody', localId: 'start-attached' },
+                    input: { sessionId: session.id } } }, token);
+            const target = authorization.binding.target;
+            const effectActionId = 'execution.run.start';
+            const requestId = crypto.randomUUID();
+            const params = { sessionId: session.id, instructions: 'Finite custody check', backendId: 'codex' };
+            const verify = async (method: string, privateKey = fixture.keyPair.secretKey) => {
+                const execution = { v: 1 as const, authorization, effectActionId, target,
+                    installationId: fixture.machine.installationId!,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                        effectActionId, target, installationId: fixture.machine.installationId!,
+                        event: SOCKET_RPC_EVENTS.CALL, method, requestId, params, privateKey }) };
+                const refusals: string[] = [];
+                const result = await verifyExternalActionMachineRpcExecution(execution, { method, requestId, params,
+                    onRefusal: phase => { refusals.push(phase); } });
+                return { result, refusals };
+            };
+            const method = `${session.id}:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`;
+            expect(await verify(method), actionId).toMatchObject({ refusals: [], result: {
+                binding: authorization.binding, effectActionId, principal: { accountId: fixture.account.id },
+                sessionRpcTarget: { sessionId: session.id, machineId: fixture.machine.id } } });
+            expect((await verify(`${session.id}:${SESSION_RPC_METHODS.EXECUTION_RUN_STOP}`)).result).toBeNull();
+            expect((await verify(SESSION_RPC_METHODS.EXECUTION_RUN_START)).result).not.toHaveProperty('sessionRpcTarget');
+            expect((await verify(method, tweetnacl.sign.keyPair().secretKey)).result).toBeNull();
+        } finally { await app.close(); }
+    });
+
     it('admits signed terminal contributed Session reads while retaining requester and root purpose isolation', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(),

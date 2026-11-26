@@ -1,6 +1,6 @@
 import { WIDGET_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
-import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1, SESSION_TURN_CANCEL_ACTION_ID_V1, isLiveAgentInventoryActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1, SESSION_TURN_CANCEL_ACTION_ID_V1, isLiveAgentInventoryActionIdV1, isContributedActionRoot } from '@happier-dev/protocol/actions/actionIds';
 import { TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { MACHINE_REMOVE_ACTION_ID_V1, MACHINE_REPLACEMENT_SET_ACTION_ID_V1, MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
@@ -1356,10 +1356,6 @@ async function hasCurrentExecutionMachineAdmission(
     // Restricted Runner admission is Session/credential-owned, not a persistent Machine grant.
     if (machine.kind === 'ephemeral_session_runner') return binding.accountId === machine.accountId;
     return true;
-}
-
-function isContributedActionRoot(actionId: string): boolean {
-    return actionId === 'action.invoke' || parseQualifiedPluginActionId(actionId) !== null;
 }
 
 function hasMatchingExecutionEffectFamily(rootActionId: string, effectActionId: string): boolean {
