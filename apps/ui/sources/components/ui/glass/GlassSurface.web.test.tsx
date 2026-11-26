@@ -340,8 +340,51 @@ describe('web glass material', () => {
         const screen = await renderScreen(scene('wallpaper'));
         const frosted = screen.findAll(hasBackdrop);
         expect(frosted).toHaveLength(1);
-        // The layer fills the padding box, so its clip follows the inner radius; nothing reaches past an in-flow card.
-        expect(String((flattenTestStyle(frosted[0]!.props.style) as Record<string, unknown>).clipPath)).toBe('inset(0px 0px 0px 0px round 13px 13px 13px 13px)');
+        // The clip follows the padding box's inner radius, cut back from the layer's reach (below).
+        expect(String((flattenTestStyle(frosted[0]!.props.style) as Record<string, unknown>).clipPath)).toMatch(/ round 13px 13px 13px 13px\)$/);
+    });
+    // Owner 2026-11-26 (desktop app, light): the Home-choice cards still showed grey ramps inside their left and right
+    // edges, gone under Solid. WebKit's blur samples past its layer's own box as empty, so a frosted layer reaches one
+    // blur radius past every edge and clips back to the surface; the visible frost then samples only the real backdrop.
+    it('reaches a frosted layer one blur radius past every edge and clips it back to the surface', async () => {
+        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const screen = await renderScreen(<GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
+            <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'wallpaper' }}>
+                <GlassSurface plane surfaceGroup="content" finishRole={null}>
+                    <GlassSurface testID="card" surfaceGroup="card" nested finishRole="card" style={{ borderRadius: 14, borderWidth: 1 }}>{null}</GlassSurface>
+                    <GlassSurface testID="solid" surfaceGroup="card" nested finishRole="card" noCoat style={{ borderRadius: 14 }}>{null}</GlassSurface>
+                </GlassSurface>
+                <GlassSurface testID="popover" surfaceGroup="floating" style={{ borderRadius: 12 }}>{null}</GlassSurface>
+            </GlassRuntimeEnvironmentProvider>
+        </GlassMaterialSettingsProvider>);
+        const layer = (id: string) => (flattenTestStyle(screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!
+            .findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!.props.style) ?? {}) as Record<string, unknown>;
+        // The reach is the radius the layer's own filter blurs by, so it follows the live blur setting.
+        const radiusOf = (style: Record<string, unknown>) => /^blur\((var\([^)]*\))\)/.exec(String(style.backdropFilter))?.[1];
+        const card = layer('card');
+        const cardRadius = radiusOf(card);
+        expect(cardRadius).toMatch(/^var\(--happier-glass-card-blur, \d+px\)$/);
+        for (const side of ['left', 'top', 'right', 'bottom']) expect(card[side]).toBe(`calc(-1 * ${cardRadius})`);
+        expect(card.clipPath).toBe(`inset(${cardRadius} ${cardRadius} ${cardRadius} ${cardRadius} round 13px 13px 13px 13px)`);
+        expect(card.pointerEvents).toBe('none');
+        // The reach is clipped by its own box, so it adds no scrollable overflow; the content beside it is never clipped.
+        const cardRoot = screen.findAll(node => typeof node.type === 'string' && node.props.testID === 'card')[0]!;
+        const cardLayer = cardRoot.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!;
+        const reachClip = cardRoot.findAll(node => typeof node.type === 'string' && node.children.includes(cardLayer))[0]!;
+        expect(flattenTestStyle(reachClip.props.style)?.overflow).toBe('clip');
+        expect(flattenTestStyle(cardRoot.props.style)?.overflow).toBeUndefined();
+        // Floating glass keeps the larger software-compositor reach on its right and bottom.
+        const popover = layer('popover');
+        const floatingRadius = radiusOf(popover);
+        const far = `max(${floatingRadius}, 96px)`;
+        expect([popover.left, popover.top, popover.right, popover.bottom]).toEqual([`calc(-1 * ${floatingRadius})`, `calc(-1 * ${floatingRadius})`, `calc(-1 * ${far})`, `calc(-1 * ${far})`]);
+        expect(popover.clipPath).toBe(`inset(${floatingRadius} ${far} ${far} ${floatingRadius} round 12px 12px 12px 12px)`);
+        // An unfrosted layer is the surface's own rounded box.
+        const solid = layer('solid');
+        expect([solid.left, solid.top, solid.right, solid.bottom, solid.clipPath].filter(value => value !== undefined && value !== 0)).toEqual([]);
+        expect(solid.borderRadius).toBe(14);
     });
     it('frosts Auto reading surfaces over a shown background and retains drafts through opaque overrides', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
@@ -1202,13 +1245,13 @@ describe('web glass material', () => {
         const layer = (id: string) => flattenTestStyle(screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!
             .findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!.props.style) ?? {};
         const popover = layer('popover');
-        const reachRight = -Number(popover.right);
-        const reachBottom = -Number(popover.bottom);
-        expect(reachRight).toBeGreaterThanOrEqual(96);
-        expect(reachBottom).toBeGreaterThanOrEqual(96);
-        // The extension is clipped back to the surface's own rounded box, so nothing frosts outside it.
-        expect(String((popover as Record<string, unknown>).clipPath)).toBe(`inset(0px ${reachRight}px ${reachBottom}px 0px round 12px 12px 12px 12px)`);
-        expect(Number(layer('card').right ?? 0)).toBe(0);
+        // The far edges reach at least the shortfall past the box, and the clip cuts that same reach back off.
+        expect(popover.right).toMatch(/^calc\(-1 \* max\(var\(--happier-glass-floating-blur, \d+px\), 96px\)\)$/);
+        expect(popover.bottom).toBe(popover.right);
+        const far = String(popover.right).slice('calc(-1 * '.length, -1);
+        expect(String((popover as Record<string, unknown>).clipPath).split(` ${far} ${far} `)).toHaveLength(2);
+        // An in-flow card reaches only its blur radius, never the shortfall.
+        expect(String(layer('card').right)).not.toContain('96px');
     });
 
     it('keeps a clipping floating surface from scrolling its frost reach into view (round 10: dialog header cut off on focus)', async () => {
@@ -1218,11 +1261,13 @@ describe('web glass material', () => {
             <GlassSurface testID="dialog" surfaceGroup="floating" style={{ borderRadius: 12, overflow: 'hidden' }}>{null}</GlassSurface>
             <GlassSurface testID="card" surfaceGroup="card" style={{ borderRadius: 12, overflow: 'hidden' }}>{null}</GlassSurface>
         </GlassMaterialSettingsProvider>);
-        const root = (id: string) => flattenTestStyle(screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!.props.style) ?? {};
-        // The frost layer reaches past the box; a hidden overflow would still let focus scroll the surface by that reach.
-        // Clipping without a scroll container keeps the same paint and nothing to scroll.
-        expect(root('dialog').overflow).toBe('clip');
-        expect(root('card').overflow).toBe('hidden');
+        // The frost layer reaches past the box; a hidden overflow would let focus scroll the surface by that reach.
+        // The reach sits inside its own clip, so the surface keeps its overflow and has nothing extra to scroll.
+        const root = (id: string) => screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!;
+        for (const id of ['dialog', 'card']) expect(flattenTestStyle(root(id).props.style)?.overflow).toBe('hidden');
+        const layer = root('dialog').findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!;
+        const holder = root('dialog').findAll(node => typeof node.type === 'string' && node.children.includes(layer))[0]!;
+        expect(flattenTestStyle(holder.props.style)?.overflow).toBe('clip');
     });
 
     it('lets secondary action ink sit on the containing translucent material instead of an opaque slab', async () => {

@@ -9,7 +9,7 @@ import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolv
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 import { shadowLevelStyle } from '@/shadowElevation';
 
-import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import { backdropBlurRadius, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { useReduceTransparency } from '@/hooks/ui/useReduceTransparency';
 
 import { drawsTintWithoutBlur, getBlurViewComponent, isNativeBlurAvailable } from './blurMaterial';
@@ -380,6 +380,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     // root: on the surface itself it would cut everything inside (a menu, tooltip or popover opened
     // from this surface) off the page, and that nested glass would blur an empty plane.
     const frosted = capability === 'webBlur' && props.plane !== true && !props.noCoat && !inheritsTranslucentMaterial;
+    const blurPx = props.blurIntensity === undefined ? GLASS_BLUR_RADIUS_PX[material.blur as keyof typeof GLASS_BLUR_RADIUS_PX] : Math.round(intensity / 5);
     const paint = props.noCoat ? { backgroundColor: layerPaint.background.color } : props.plane === true
         // The same CSS-to-RN-web boundary as the functional surface's backdrop below.
         ? { ...glassSurfacePlaneBackdropStyle(settings, group, theme.dark, effectiveEnvironment, props.atmosphereCoat),
@@ -390,7 +391,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         // tint); cast to the RN-web `ViewStyle` at this web boundary.
         ? createBackdropWebStyle({
             backgroundColor: layerPaint.background.color,
-            blurPx: props.blurIntensity === undefined ? GLASS_BLUR_RADIUS_PX[material.blur as keyof typeof GLASS_BLUR_RADIUS_PX] : Math.round(intensity / 5),
+            blurPx,
             surfaceGroup: group,
             backdropTone: inheritsTranslucentMaterial ? undefined : backdropTone,
         }) as unknown as ViewStyle
@@ -408,15 +409,12 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
             [`--happier-glass-${group}-blur`]: `${GLASS_BLUR_RADIUS_PX[material.blur as keyof typeof GLASS_BLUR_RADIUS_PX]}px`,
         } : null),
     } as unknown as ViewStyle;
-    const reachesPastEdges = frosted && group === 'floating';
-    // A clipping surface stays a clip, not a scroll container: its frost layer reaches past the box, and with a hidden
-    // overflow a focus or scroll-into-view scrolled the surface by that reach, cutting off a dialog's header (round 10).
-    const clipWithoutScrolling = reachesPastEdges && readSurfaceStyleProperty(props.style, 'overflow') === 'hidden'
-        ? { overflow: 'clip' } as unknown as ViewStyle : null;
+    const frost = frosted ? { blurRadius: backdropBlurRadius(group, blurPx), softwareShortfall: group === 'floating' } : undefined;
+    const materialLayer = <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style, frost), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />;
     return (
-        <View {...viewProps} style={[props.style, clipWithoutScrolling, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, controlLift, backedInkStyle, innerPaint]}>
+        <View {...viewProps} style={[props.style, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, controlLift, backedInkStyle, innerPaint]}>
             {/* Native View types omit RN-web's dataSet; this branch is the web boundary. */}
-            <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style, frosted, reachesPastEdges), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />
+            {frost ? <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, FROST_REACH_CLIP]}>{materialLayer}</View> : materialLayer}
             {controlEdge ? <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, materialShape, controlEdge]} /> : null}
             <GlassSurfaceGroupContext.Provider value={plane}>
                 <HappierMaterialRoleProvider {...materialPlane}>
@@ -453,18 +451,29 @@ export const renderPanelMaterialSurface: HappierMaterialSurfaceRender = input =>
  * Software-composited Chrome (headless QA browsers, machines without a GPU) frosts a backdrop only up to a constant
  * ~96 device px short of the layer's right and bottom edges above 1x device scale (FIN 11-13: list rows read through a
  * popover at 200 % text; measured at DPR 2 and 3, the layer box itself exact). GPU compositing is unaffected. A frosted
- * floating layer reaches that far past those edges and clips itself back to the surface, so its frost always covers the
- * whole surface; 96 CSS px covers 96 device px at every scale. Floating surfaces are few at once; in-flow cards stay exact.
+ * floating layer reaches at least that far past those edges, so its frost always covers the whole surface; 96 CSS px
+ * covers 96 device px at every scale. Floating surfaces are few at once; in-flow cards reach only their blur radius.
  */
 const SOFTWARE_BACKDROP_SHORTFALL_PX = 96;
+
+/**
+ * A frosted layer's reach past the surface is paint only: clipped by this box, it adds no scrollable overflow to the
+ * page (an in-flow card at a phone's edge widened its scroller by its reach) nor to a clipping surface, which a focus
+ * would otherwise scroll by that reach, cutting off a dialog's header (round 10). The clip holds only the layer, so
+ * the surface's content, focus rings and popovers are never cut.
+ */
+const FROST_REACH_CLIP = { overflow: 'clip' } as unknown as ViewStyle;
 
 /**
  * The layer fills the surface's padding box, so its corners follow the surface's inner radius. A frosted layer is
  * shaped by a clip of those corners rather than by its own rounding: WebKit (the desktop app) drew ink ramps inside
  * the left and top edges of rounded frosted cards and the composer on light, while clip-shaped frosted menus in the
- * same window stayed clean (owner screenshots 2026-11-16, GLASS-SURFACES-1116).
+ * same window stayed clean (owner screenshots 2026-11-16, GLASS-SURFACES-1116). WebKit's blur also samples past the
+ * layer's own box as empty, which turned the side edges of the light Home-choice cards grey (owner 2026-11-26); so the
+ * layer reaches one blur radius past every edge and the clip cuts it back to the surface, leaving only real backdrop
+ * inside the visible frost.
  */
-function webMaterialLayerShape(style: StyleProp<ViewStyle>, frosted = false, reachPastSoftwareShortfall = false): ViewStyle {
+function webMaterialLayerShape(style: StyleProp<ViewStyle>, frost?: Readonly<{ blurRadius: string; softwareShortfall: boolean }>): ViewStyle {
     const borderWidth = readSurfaceStyleProperty(style, 'borderWidth');
     const inset = typeof borderWidth === 'number' ? borderWidth : 0;
     // Unistyles styles retain non-enumerable geometry: flattening an array can
@@ -476,12 +485,13 @@ function webMaterialLayerShape(style: StyleProp<ViewStyle>, frosted = false, rea
         const radius = readSurfaceStyleProperty(style, key);
         if (typeof radius === 'number') radii[key] = Math.max(0, radius - inset);
     }
-    if (!frosted) return Object.assign(shape, radii);
+    if (!frost) return Object.assign(shape, radii);
     const corner = (key: (typeof WEB_CORNER_RADII)[number]) => radii[key] ?? radii.borderRadius ?? 0;
-    const reach = reachPastSoftwareShortfall ? SOFTWARE_BACKDROP_SHORTFALL_PX : 0;
+    const near = frost.blurRadius;
+    const far = frost.softwareShortfall ? `max(${near}, ${SOFTWARE_BACKDROP_SHORTFALL_PX}px)` : near;
     return {
         pointerEvents: 'none',
-        ...(reach > 0 ? { right: -reach, bottom: -reach } : null),
-        clipPath: `inset(0px ${reach}px ${reach}px 0px round ${corner('borderTopLeftRadius')}px ${corner('borderTopRightRadius')}px ${corner('borderBottomRightRadius')}px ${corner('borderBottomLeftRadius')}px)`,
+        left: `calc(-1 * ${near})`, top: `calc(-1 * ${near})`, right: `calc(-1 * ${far})`, bottom: `calc(-1 * ${far})`,
+        clipPath: `inset(${near} ${far} ${far} ${near} round ${corner('borderTopLeftRadius')}px ${corner('borderTopRightRadius')}px ${corner('borderBottomRightRadius')}px ${corner('borderBottomLeftRadius')}px)`,
     } as unknown as ViewStyle;
 }

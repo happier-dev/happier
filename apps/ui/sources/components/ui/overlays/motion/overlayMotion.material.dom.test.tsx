@@ -71,7 +71,8 @@ describe('web overlay material composition', () => {
             const material = container.querySelector<HTMLElement>('[data-testid="material"]')!;
             const elevation = container.querySelector<HTMLElement>('[data-testid="elevation"]')!;
             const frame = elevation.parentElement!;
-            const paint = Array.from(material.children).find(child => (child as HTMLElement).style.backdropFilter.includes('blur')) as HTMLElement;
+            const paint = Array.from(material.querySelectorAll<HTMLElement>(':scope > [data-happy-glass-backdrop], :scope > * > [data-happy-glass-backdrop]'))
+                .find(child => (child.style.backdropFilter ?? '').includes('blur'))!;
             expect(paint).toBeTruthy();
             // One run, on the frame: the material's own edge and fill (its ancestors of the paint) move with it.
             expect(runs.map(run => run.target)).toEqual([frame]);

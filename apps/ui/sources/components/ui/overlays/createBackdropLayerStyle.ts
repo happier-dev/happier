@@ -5,6 +5,17 @@ import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
 
 import { SCRIM_RAMP_UNDERLAP, scrimBandRamp, scrimBlurLayers, scrimHeldRamp, scrimRamp, type ScrimRamp } from './progressiveScrimFalloff';
 
+/**
+ * The CSS radius a backdrop blurs by. A material surface takes its group's live blur. A scrim (no group) keeps its own
+ * radius and only follows floating glass being switched off: the strong floating blur belongs to the popover, and a
+ * scrim inheriting it would blur the whole page behind every menu and dialog.
+ */
+export function backdropBlurRadius(surfaceGroup: GlassSurfaceGroup | undefined, blurPx: number): string {
+    return surfaceGroup
+        ? `var(--happier-glass-${surfaceGroup}-blur, ${blurPx}px)`
+        : `min(var(--happier-glass-floating-blur, ${blurPx}px), ${blurPx}px)`;
+}
+
 export function createBackdropWebStyle(params: Readonly<{
     backgroundColor: string;
     blurPx?: number;
@@ -21,13 +32,7 @@ export function createBackdropWebStyle(params: Readonly<{
     }
 
     const blurPx = typeof params.blurPx === 'number' ? params.blurPx : 12;
-    // A material surface takes its group's live blur. A scrim (no group) keeps its own radius and only
-    // follows floating glass being switched off: the strong floating blur belongs to the popover, and
-    // a scrim inheriting it would blur the whole page behind every menu and dialog.
-    const radius = params.surfaceGroup
-        ? `var(--happier-glass-${params.surfaceGroup}-blur, ${blurPx}px)`
-        : `min(var(--happier-glass-floating-blur, ${blurPx}px), ${blurPx}px)`;
-    const filter = [`blur(${radius})`, params.backdropTone].filter(Boolean).join(' ');
+    const filter = [`blur(${backdropBlurRadius(params.surfaceGroup, blurPx)})`, params.backdropTone].filter(Boolean).join(' ');
     return {
         WebkitBackdropFilter: filter,
         backdropFilter: filter,
