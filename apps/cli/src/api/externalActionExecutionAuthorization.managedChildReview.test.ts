@@ -9,6 +9,8 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { dispatchLocalManagedMachineAgentIsolation } from './externalActionExecutionAuthorization';
 import { readStoredCredentialsForServerId, removeStoredCredentialsForServerId, writeStoredCredentialsForServerId, updateSettings } from '@/persistence';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -42,6 +44,12 @@ it.each([
     const credentials = await readStoredCredentialsForServerId(profile);
     if (!credentials) throw new Error('Missing fixture credentials');
     const keyPair = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
+    // Own E2EE dispatch pins the installation key from authenticated Machine content.
+    const metadata = mode === 'e2ee' ? createMachineContentCodec({ encryptionMode: 'e2ee',
+        encryptionKey: secret, encryptionVariant: 'legacy' }).encodeStored(MachinePublishedMetadataV1Schema.parse({
+        host: 'guest', platform: 'linux', happyCliVersion: '0.3.0', homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier',
+        installationPublicKey: Buffer.from(keyPair.publicKey).toString('base64url'),
+    })) : null;
     const childAction = 'machines.agentIsolation.set';
     const target = { kind: 'machine' as const, machineId: scenario === 'other Machine' ? 'other' : 'guest' };
     const childInput = { serverId: 'srv_home', machineId: target.machineId, enabled: true, memberProvisioning: 'linuxUsersV1' as const,
@@ -82,7 +90,7 @@ it.each([
         const machine = { id: machineId, kind: 'persistent', active: true, installationId: machineId === 'controller' ? 'controller-installation' : 'guest-installation',
             installationPublicKey: Buffer.from(keyPair.publicKey).toString('base64'), revokedAt: null,
             replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
-            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+            metadata, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
             access: { custodian: { accountId: 'account', displayName: 'Account' }, role: 'manage', resourceMode: mode, accessState: 'ready' } };
         return { status: 200, data: url.includes('/v1/machines/') ? { machine } : [{ ...machine, metadata: undefined }] };
     });
@@ -134,18 +142,19 @@ it.each([
             target: { kind: 'machine', machineId: scenario === 'other confirmation Machine' ? 'other-controller' : 'controller' },
             inputDigest: computeActionInputApprovalDigestV1('machines.managed.acquire', parentInput) } };
     const result = await parent.execute('machines.managed.acquire', parentInput, context);
-    if (scenario === 'declared') {
-        expect(result, result.ok ? undefined : result.errorCode).toMatchObject({ ok: true });
+    if (scenario === 'other confirmation Machine' || scenario === 'other confirmation requester' || scenario === 'other request') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+        expect(childResult).toBeUndefined(); expect(asks).toEqual([]); expect(effects).toBe(0);
+    } else if (scenario === 'declared') {
+        expect(result, result.ok ? undefined : JSON.stringify(result)).toMatchObject({ ok: true });
         expect(childResult).toMatchObject({ ok: true, result: { kind: 'accepted', operationId: 'isolation' } });
         expect(asks).toEqual([]); expect(effects).toBe(1);
-    } else if (scenario === 'undeclared' || scenario === 'other confirmation Machine'
-        || scenario === 'other confirmation requester' || scenario === 'other request') {
-        expect(result, result.ok ? undefined : result.errorCode).toMatchObject({ ok: true });
+    } else if (scenario === 'undeclared') {
+        expect(result, result.ok ? undefined : JSON.stringify(result)).toMatchObject({ ok: true });
         expect(childResult).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: childAction } });
         expect(asks).toEqual([childAction]); expect(effects).toBe(0);
-        // This Account's own box decides the policy surface; without a box the
-        // authenticated terminal decides it, never a SOURCE stamp.
-        expect(askSurfaces).toEqual([scenario === 'undeclared' ? 'ui' : 'cli']);
+        // This Account's own box decides the policy surface, never a SOURCE stamp.
+        expect(askSurfaces).toEqual(['ui']);
     } else {
         expect(result).toMatchObject({ ok: false }); expect(asks).toEqual([]); expect(effects).toBe(0);
     }
