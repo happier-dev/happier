@@ -242,6 +242,30 @@ describe('ManagedOidcProviderEditorContent', () => {
         await act(async () => releaseSave({ body: { ...provider(5), displayName: 'Edited OIDC' } }));
     });
 
+    it('reports an unconfirmed provider save and keeps the draft after the response is lost', async () => {
+        networkResponse.mockResolvedValueOnce({ dispatchThenFail: true });
+        const onSaved = vi.fn(() => ({ kind: 'completed' as const }));
+        const screen = await renderScreen(
+            <ManagedOidcProviderEditorContent
+                scope={{ serverId, accountId: 'account-1' }}
+                owner={{ kind: 'home' }}
+                provider={provider(4)}
+                mutationsAvailable
+                onSaved={onSaved}
+            />,
+        );
+        await act(async () => {
+            screen.changeTextByTestId('identity-provider-name', 'Edited OIDC');
+        });
+
+        await screen.pressByTestIdAsync('identity-provider-save');
+
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('homeGovernance.errorOutcomeUnknown'));
+        expect(screen.findByTestId('identity-provider-name')?.props.value).toBe('Edited OIDC');
+        expect(harness.requestsFor('/v1/identity/providers/update')).toHaveLength(1);
+        expect(onSaved).not.toHaveBeenCalled();
+    });
+
     it('refreshes a server CAS conflict and waits for the newer revision before allowing retry', async () => {
         const onRefreshRequested = vi.fn();
         const onSaved = vi.fn(() => ({ kind: 'completed' as const }));

@@ -56,6 +56,7 @@ const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilit
 const { resetHomeSettingsEngineForTests } = await import('@/sync/engine/home/governance/homeSettingsEngine');
 const { resetHomeSettingsSnapshotsForTests } = await import('@/sync/store/home/governance/homeSettingsSnapshots');
 const { HomeAdministrationDataScreen } = await import('./HomeAdministrationDataScreen');
+const { Modal } = await import('@/modal');
 const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 
@@ -229,6 +230,67 @@ describe('HomeAdministrationDataScreen', () => {
             values: { [SESSIONS_MODE]: 'delete_inactive', [SESSIONS_DAYS]: 90 },
         });
         expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(1);
+    });
+
+    it.each([
+        { status: 403, body: { error: 'home_governance_forbidden' }, notice: 'homeGovernance.errorForbidden' },
+        {
+            status: 400,
+            body: { error: 'home_settings_invalid', key: USAGE_DAYS, reason: 'not_home_editable' },
+            notice: 'homeSettings.refused.notEditable',
+        },
+    ])('explains a refused retention write without adopting its draft', async ({ status, body, notice }) => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: dataProjection() });
+        harness.answer(home, SETTINGS_SET, { status, body });
+        const alert = vi.mocked(Modal.alertAsync);
+        alert.mockClear();
+        const screen = await renderData(home);
+        const days = 'home-retention:usageEvents.days';
+
+        await act(async () => { screen.changeTextByTestId(days, '90'); });
+        await act(async () => { screen.findByTestId(days)?.props.onSubmitEditing(); });
+
+        await waitForHomeGovernance(() => expect(alert).toHaveBeenCalledWith('homeGovernance.changeFailedTitle', notice));
+        expect(textUnder(screen.findByTestId('home-retention:usageEvents')))
+            .toContain('server.retention.deleteOlderThanDays(count=365)');
+        expect(screen.findByTestId(days)?.props.value).toBe('90');
+        expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(1);
+    });
+
+    it('reloads the current retention rule after a revision conflict before a new write', async () => {
+        const home = await addHome();
+        const initial = dataProjection();
+        harness.answer(home, SETTINGS_GET, { body: initial });
+        const screen = await renderData(home);
+        const days = 'home-retention:usageEvents.days';
+        const current = dataProjection({
+            revision: 6,
+            entries: initial.entries.map(entry => entry.key === USAGE_DAYS ? { ...entry, value: 180 } : entry),
+        });
+        harness.answer(home, SETTINGS_GET, { body: current });
+        harness.answer(home, SETTINGS_SET, { status: 409, body: { error: 'home_settings_revision_conflict' } });
+
+        await act(async () => { screen.changeTextByTestId(days, '90'); });
+        await act(async () => { screen.findByTestId(days)?.props.onSubmitEditing(); });
+
+        await waitForHomeGovernance(() => expect(screen.findByTestId(days)?.props.value).toBe('180'));
+        expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(1);
+
+        harness.answer(home, SETTINGS_SET, { body: {
+            ...current,
+            revision: 7,
+            entries: current.entries.map(entry => entry.key === USAGE_DAYS ? { ...entry, value: 90 } : entry),
+        } });
+        await act(async () => { screen.changeTextByTestId(days, '90'); });
+        await act(async () => { screen.findByTestId(days)?.props.onSubmitEditing(); });
+
+        await waitForHomeGovernance(() => expect(textUnder(screen.findByTestId('home-retention:usageEvents')))
+            .toContain('server.retention.deleteOlderThanDays(count=90)'));
+        expect(harness.requestsFor(SETTINGS_SET).map(request => request.input)).toMatchObject([
+            { expectedRevision: 5, values: { [USAGE_DAYS]: 90 } },
+            { expectedRevision: 6, values: { [USAGE_DAYS]: 90 } },
+        ]);
     });
 
     it('keeps System records closed until opened, and shows each dry-run count under its row', async () => {
