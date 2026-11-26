@@ -301,13 +301,6 @@ function MachineSetupRoot(
         {null}
       </ItemGroup>
       {attention}
-      <MachineSignInsSection
-        serverId={props.serverId}
-        machineId={props.machineId}
-        machineName={machine}
-        presented={presented}
-        editable={editable}
-      />
       {firstLoad ? (
         // The two sections a checked setup always shows, held in place: the presets one is titled by what is attached,
         // so its title waits too; each holds one row until it knows how many it has.
@@ -529,6 +522,15 @@ function MachineSetupRoot(
         </>
       )}
       {toolsSection}
+      {/* Last: which CLIs this Machine has is known only once each has reported, seconds after the sections above have
+          settled, so its rows land below them and move nothing (UI refinements ruling, delta check 22). */}
+      <MachineSignInsSection
+        serverId={props.serverId}
+        machineId={props.machineId}
+        machineName={machine}
+        presented={presented}
+        editable={editable}
+      />
     </View>
   );
 }

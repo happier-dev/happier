@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import type { MachineCliSignInRow } from '@/agents/machineAgents/signIn/useAgentSignIn';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -59,45 +60,54 @@ function row(
   };
 }
 
+type StatusAnswer = (agentId: string) => Promise<Record<string, unknown>>;
+
+/** One Home, one online Machine and its daemon: GitHub CLI plus the given Agents, statuses answered by `status`. */
+async function installSignInsMachine(status: StatusAnswer, agentsById: Record<string, { id: string; title: string }>) {
+  await home.reset();
+  boundary.rpc.mockReset();
+  const serverId = await home.addHome({ name: 'Sign-in', serverUrl: 'https://fixture.invalid', accountId: 'fixture-account' });
+  const { PLUGIN_MANIFEST: github } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+  const definition = github.contributes!.systemTools!.find(tool => tool.id === 'gh')!;
+  const toolId = `${github.id}/${definition.id}`;
+  const machineId = 'github-sign-in';
+  const machine = createMachineFixture({ id: machineId, activeAt: Date.now() });
+  const fixture = createPlainMachineRowFixture({ id: machineId, accountId: 'fixture-account', machine });
+  home.answer(serverId, '/v1/machines', { body: [fixture] });
+  home.answer(serverId, `GET /v1/machines/${machineId}`, { body: { machine: fixture } });
+  await publishMachineInventoryForTest({ serverId, accountId: 'fixture-account' }, [machine]);
+  await installOwnMachineApprovalReplayBoundary({ harness: home, serverId, accountId: 'fixture-account', machineId });
+  boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { agentId: string } }) => {
+    if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+      protocolVersion: 1, projection: { v: 2, generation: 1,
+        installedPackagesById: { [github.id]: {
+          id: github.id, displayName: github.displayName, version: github.version, enabled: true,
+          source: { kind: 'path', locator: '/fixture/github' }, occurrenceId: github.id,
+        } },
+        agentsById,
+        familiesById: { systemTools: { family: 'systemTools', entriesById: {
+          [toolId]: { id: toolId, pluginId: github.id, pluginVersion: github.version, definition },
+        } } },
+      },
+    };
+    if (method === 'daemon.agents.signIn.status') return await status(payload.agentId);
+    if (method === 'daemon.agents.signIn.prepare') return {
+      method: 'native', launch: { kind: 'agent_login', agentId: toolId },
+    };
+    if (method === 'daemon.terminal.ensure') return { ok: true, terminalId: 'github-login', reused: false };
+    throw new Error(`Unexpected fixture RPC ${method}`);
+  });
+  return { serverId, machineId, toolId };
+}
+
 describe('Machine sign-ins (E U4)', () => {
   it('starts one native GitHub terminal only after the shared-user warning is accepted', async () => {
-    await home.reset();
-    boundary.rpc.mockReset();
     boundary.confirm.mockReset();
     boundary.confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    const serverId = await home.addHome({ name: 'Sign-in', serverUrl: 'https://fixture.invalid', accountId: 'fixture-account' });
-    const { PLUGIN_MANIFEST: github } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
-    const definition = github.contributes!.systemTools!.find(tool => tool.id === 'gh')!;
-    const toolId = `${github.id}/${definition.id}`;
-    const machineId = 'github-sign-in';
-    const machine = createMachineFixture({ id: machineId, activeAt: Date.now() });
-    const fixture = createPlainMachineRowFixture({ id: machineId, accountId: 'fixture-account', machine });
-    home.answer(serverId, '/v1/machines', { body: [fixture] });
-    home.answer(serverId, `GET /v1/machines/${machineId}`, { body: { machine: fixture } });
-    await publishMachineInventoryForTest({ serverId, accountId: 'fixture-account' }, [machine]);
-    await installOwnMachineApprovalReplayBoundary({ harness: home, serverId, accountId: 'fixture-account', machineId });
-    boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
-      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
-        protocolVersion: 1, projection: { v: 2, generation: 1,
-          installedPackagesById: { [github.id]: {
-            id: github.id, displayName: github.displayName, version: github.version, enabled: true,
-            source: { kind: 'path', locator: '/fixture/github' }, occurrenceId: github.id,
-          } },
-          familiesById: { systemTools: { family: 'systemTools', entriesById: {
-            [toolId]: { id: toolId, pluginId: github.id, pluginVersion: github.version, definition },
-          } } },
-        },
-      };
-      if (method === 'daemon.agents.signIn.status') return {
-        installed: true, status: 'signedOut', checkedAt: Date.now(), nativeLogin: 'login_terminal',
-        signInScope: 'machineOwner', connectedServices: [],
-      };
-      if (method === 'daemon.agents.signIn.prepare') return {
-        method: 'native', launch: { kind: 'agent_login', agentId: toolId },
-      };
-      if (method === 'daemon.terminal.ensure') return { ok: true, terminalId: 'github-login', reused: false };
-      throw new Error(`Unexpected fixture RPC ${method}`);
-    });
+    const { serverId, machineId, toolId } = await installSignInsMachine(async () => ({
+      installed: true, status: 'signedOut', checkedAt: Date.now(), nativeLogin: 'login_terminal',
+      signInScope: 'machineOwner', connectedServices: [],
+    }), {});
     const starts = () => boundary.rpc.mock.calls.map(([request]) => request)
       .filter(request => request.method === 'daemon.agents.signIn.prepare');
     const terminalHost = { open: vi.fn() };
@@ -122,6 +132,35 @@ describe('Machine sign-ins (E U4)', () => {
       ]));
       await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls.map(([request]) => request.method))
         .toContain('daemon.terminal.ensure'));
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('lands every row together once the Machine has reported each CLI, holding its place until then', async () => {
+    const helperStatus = createDeferred<Record<string, unknown>>();
+    const statusOf = (installed: boolean) => ({ installed, status: 'signedOut', checkedAt: Date.now(),
+      nativeLogin: 'login_terminal', signInScope: 'machineOwner', connectedServices: [] });
+    const answered: string[] = [];
+    const { serverId, machineId, toolId } = await installSignInsMachine(async (agentId) => {
+      const answer = agentId === 'acme/helper' ? await helperStatus.promise : statusOf(true);
+      answered.push(agentId);
+      return answer;
+    }, { 'acme/helper': { id: 'helper', title: 'Helper' } });
+    const shown = (screen: Awaited<ReturnType<typeof renderScreen>>) => [toolId, 'acme/helper']
+      .filter(id => screen.findByTestId(`machine-setup-sign-in:${id}`) !== null);
+    const screen = await renderScreen(
+      <MachineSignInsSection serverId={serverId} machineId={machineId} machineName="Devbox" presented editable />,
+    );
+    try {
+      // GitHub CLI has answered; the Agent has not, so the count is not known and no row lands yet.
+      await waitForHomeGovernance(() => expect(answered).toContain(toolId));
+      await flushHookEffects();
+      expect(shown(screen)).toEqual([]);
+      expect(screen.findByTestId('machine-setup-sign-ins-loading')).not.toBeNull();
+      helperStatus.resolve(statusOf(true));
+      await waitForHomeGovernance(() => expect(shown(screen)).toEqual([toolId, 'acme/helper']));
+      expect(screen.findByTestId('machine-setup-sign-ins-loading')).toBeNull();
     } finally {
       await screen.unmount();
     }

@@ -300,8 +300,8 @@ export type MachineCliSignInRow = Readonly<{
   signIn: MachineAgentSignInSession;
 }>;
 const EMPTY_CLI_SIGN_INS: readonly MachineCliSignInRow[] = Object.freeze([]);
-type CliSignInsSnapshot = Readonly<{ items: readonly MachineCliSignInRow[]; pending: boolean }>;
-const EMPTY_CLI_SIGN_INS_SNAPSHOT: CliSignInsSnapshot = Object.freeze({ items: EMPTY_CLI_SIGN_INS, pending: false });
+type CliSignInsSnapshot = Readonly<{ items: readonly MachineCliSignInRow[]; pending: boolean; settledFor: string | null }>;
+const EMPTY_CLI_SIGN_INS_SNAPSHOT: CliSignInsSnapshot = Object.freeze({ items: EMPTY_CLI_SIGN_INS, pending: false, settledFor: null });
 const CLI_SIGN_IN_SECTIONS = ['agentsById', 'familiesById.systemTools'] as const;
 const SYSTEM_TOOL_SIGN_IN_SECTIONS = ['familiesById.systemTools'] as const;
 
@@ -338,6 +338,7 @@ export function useMachineCliSignIns(target: Readonly<{
     }));
   }, [binding, projection.inputs, serverId, serviceKey, target.machineId]);
   const held = React.useRef<CliSignInsSnapshot>(EMPTY_CLI_SIGN_INS_SNAPSHOT);
+  const projectionPhase = projection.phase;
   const subscribe = React.useCallback((listener: () => void) => {
     if (!target.presented || !binding) return () => {};
     for (const row of rows) {
@@ -359,8 +360,12 @@ export function useMachineCliSignIns(target: Readonly<{
       && (row.authentication.nativeLogin !== 'unsupported' || row.authentication.connectedServices.length > 0));
     // Settling an entirely absent catalog must still publish ready with no rows.
     const pending = rows.some(row => row.entry.authentication === null && row.entry.state.phase !== 'failed');
-    return held.current = retainDeep(held.current, { items, pending });
-  }, [binding, rows]);
+    // Which CLIs are installed is known only once each has reported, so the rows land together the first time: until
+    // then none are published and the section holds its place, instead of growing row by row as reports arrive.
+    const settledFor = held.current.settledFor === target.machineId
+      || (projectionPhase === 'ready' && !pending) ? target.machineId : null;
+    return held.current = retainDeep(held.current, { items: settledFor === null ? EMPTY_CLI_SIGN_INS : items, pending, settledFor });
+  }, [binding, projectionPhase, rows, target.machineId]);
   const snapshot = React.useSyncExternalStore(subscribe, read, read);
   const refresh = React.useCallback(async () => {
     if (!target.presented || !target.machineId || projection.phase !== 'ready') return;

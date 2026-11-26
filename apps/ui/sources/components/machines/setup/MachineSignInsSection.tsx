@@ -179,8 +179,8 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     }), { tag: 'MachineSignIns.useConnected' });
   }, [accounts, defaultAccounts, execution, props.machineId, props.serverId, router]);
   // The owner lists only CLIs installed on this Machine (512b12e307d); each row says what the Machine reported.
-  // While the Machine reports its CLIs the section holds one row's shape, so the rows that land replace it in place
-  // instead of pushing the page down. A Machine that reports none drops the held section.
+  // Until every CLI has reported, the owner publishes no rows and the section holds one row's shape; the rows then land
+  // together. A Machine that reports none drops the held section.
   if (rows.length === 0 && phase !== 'loading') return null;
   return <MachineSignInsList serverId={props.serverId} machineId={props.machineId} machineName={props.machineName}
     rows={rows} editable={props.editable} onSignIn={(row) => { void open(row); }} onUseConnected={useConnected} />;
