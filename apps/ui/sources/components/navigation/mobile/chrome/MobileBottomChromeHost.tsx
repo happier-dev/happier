@@ -127,7 +127,7 @@ function isBottomChromeStateSettled(
     return state.previous === null && isSameBottomChromeItem(state.current, resolvedChrome);
 }
 
-export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost() {
+export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost({ contentHidden = false }: Readonly<{ contentHidden?: boolean }>) {
     const pathname = usePathname();
     const anchorPathname = useSurfaceAnchorPathname(pathname);
     const router = useRouter();
@@ -530,14 +530,15 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
 
     // Where a detail host's bar will stand but the host has not mounted it yet (a slow Home delays it by seconds), its
     // room is reserved from the first frame: the composer's first top is its settled top, and the bar lands in it.
-    const reservedBarHeight = model.kind === 'detailPending' && presenter !== 'system' && !pageBarFolds
-        && isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience }) ? knownBarHeight : 0;
+    const reservedBarHeight = presenter !== 'system' && !pageBarFolds
+        && ((model.kind === 'detailPending' && isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience }))
+            || (contentHidden && resolvedChrome !== null)) ? knownBarHeight : 0;
     React.useLayoutEffect(() => {
         // A bar resolved but not yet drawn is measured in the commit that draws it, below.
-        if (presenter === 'system' || (!renderedChrome.current && !resolvedChrome)) {
+        if (contentHidden || presenter === 'system' || (!renderedChrome.current && !resolvedChrome)) {
             setBottomChromeHeight(reservedBarHeight);
         }
-    }, [presenter, renderedChrome.current, resolvedChrome, reservedBarHeight, setBottomChromeHeight]);
+    }, [contentHidden, presenter, renderedChrome.current, resolvedChrome, reservedBarHeight, setBottomChromeHeight]);
 
     // The bar's height reaches the composer's reservation in the commit that first draws the bar. A web layout
     // event arrives a task after paint, so a composer that waited for it painted once in the bar's place and then
@@ -548,7 +549,10 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         if (renderedChromeKey === null) return;
         const height = readLaidOutHeight(currentChromeNodeRef.current);
         if (height !== null) setBottomChromeHeight(height);
-    }, [renderedChromeKey, setBottomChromeHeight]);
+    }, [contentHidden, renderedChromeKey, setBottomChromeHeight]);
+
+    // The launch curtain hides portal content, not its route-owned geometry publisher.
+    if (contentHidden) return null;
 
     if (presenter === 'system') {
         return systemChrome ? <SystemMobileBottomChrome model={systemChrome.systemModel} hidden={resolvedChrome === null} /> : null;

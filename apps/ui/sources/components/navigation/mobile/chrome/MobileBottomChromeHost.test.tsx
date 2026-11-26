@@ -63,6 +63,7 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { InboxSummaryProvider } = await import('@/hooks/inbox/useInboxSummary');
 const { MainAppTabStateProvider } = await import('./MainAppTabStateProvider');
 const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+const { MobileBottomChromePortal } = await import('./MobileBottomChromePortal');
 const { PresentedSessionChromeFixture } = await import('@/dev/testkit/harness/presentedDetailChrome');
 const { MainAppTabBar } = await import('./bars/MainAppTabBar');
 const { PagePinnedBar } = await import('@/components/ui/layout/PagePinnedBar');
@@ -93,12 +94,12 @@ function MountedSession(props: Readonly<{ surface: SessionMobileSurface; termina
 function MeasurementReader() {
     return <Text testID="chrome-height">{useSessionCockpitBottomChromeHeight()}</Text>;
 }
-type HarnessProps = Readonly<{ mounted?: boolean; surface?: SessionMobileSurface; terminalAvailable?: boolean; detailsCount?: number; pageBar?: boolean }>;
-function Harness({ mounted = false, surface = 'chat', terminalAvailable = true, detailsCount = 0, pageBar = false }: HarnessProps) {
+type HarnessProps = Readonly<{ mounted?: boolean; surface?: SessionMobileSurface; terminalAvailable?: boolean; detailsCount?: number; pageBar?: boolean; portal?: boolean }>;
+function Harness({ mounted = false, surface = 'chat', terminalAvailable = true, detailsCount = 0, pageBar = false, portal = false }: HarnessProps) {
     return <runtime.Wrapper><MainAppTabStateProvider><SessionCockpitChromeRegistryProvider><InboxSummaryProvider>
         {mounted ? <MountedSession surface={surface} terminalAvailable={terminalAvailable} detailsCount={detailsCount} /> : null}
         {pageBar ? <PagePinnedBar testID="page-bar"><Text>bar</Text></PagePinnedBar> : null}
-        <PresentedSessionChromeFixture /><MeasurementReader /><MobileBottomChromeHost />
+        <PresentedSessionChromeFixture /><MeasurementReader />{portal ? <MobileBottomChromePortal /> : <MobileBottomChromeHost />}
     </InboxSummaryProvider></SessionCockpitChromeRegistryProvider></MainAppTabStateProvider></runtime.Wrapper>;
 }
 function enableCockpit() {
@@ -132,6 +133,48 @@ beforeEach(() => {
 });
 
 describe('MobileBottomChromeHost mounted chrome', () => {
+    it('reserves the Session inset while launch data is pending and keeps it when the portal bar arrives', async () => {
+        route.pathname = '/session/session-1'; enableCockpit();
+        // The HTML shell owns this initial class; no Home or Session publisher has mounted yet.
+        vi.stubGlobal('document', { body: null, documentElement: { classList: { contains: () => true, remove() {} } } });
+        const { finishLaunchCurtain } = await import('@/boot/launchCurtain');
+        try {
+            // A launch on a chrome-less route never gains a band; Home reserves its eventual bar
+            // without exposing portal content above the curtain. Exercise each as a fresh mount.
+            for (const entry of [
+                { pathname: '/new', width: 390, experience: 'cockpit', height: 56 },
+                { pathname: '/settings/account', width: 390, experience: 'cockpit', height: 0 },
+                { pathname: '/session/session-1', width: 390, experience: 'classic', height: 0 },
+                { pathname: '/session/session-1', width: 1440, experience: 'cockpit', height: 0 },
+                { pathname: '/', width: 390, experience: 'cockpit', height: 56 },
+            ] as const) {
+                route.pathname = entry.pathname; native.width = entry.width;
+                storage.setState(state => ({ settings: { ...state.settings, mobileWorkspaceExperienceV1: entry.experience } }));
+                const initial = await renderScreen(<Harness portal />);
+                expect(initial.findAllByType(MainAppTabBar)).toHaveLength(0);
+                expect(initial.findAllByType(SessionCockpitTabBar)).toHaveLength(0);
+                expect(initial.findHostByTestId('chrome-height')?.props.children, JSON.stringify(entry)).toBe(entry.height);
+                await initial.unmount();
+            }
+            route.pathname = '/session/session-1'; native.width = 390; enableCockpit();
+            const screen = await renderScreen(<Harness portal />, {
+                createNodeMock: element => element.props.testID === 'mobile-bottom-chrome-bar' ? { offsetHeight: 56 } : null,
+            });
+            expect(screen.findAllByType(SessionCockpitTabBar)).toHaveLength(0);
+            expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
+            await screen.update(<Harness portal mounted />);
+            expect(screen.findAllByType(SessionCockpitTabBar)).toHaveLength(0);
+            expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
+            await act(async () => finishLaunchCurtain());
+            expect(screen.findAllByType(SessionCockpitTabBar)).toHaveLength(1);
+            expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
+            await finishAnimations();
+            expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
+        } finally {
+            finishLaunchCurtain();
+            vi.unstubAllGlobals();
+        }
+    });
     // FIN N4: one bottom chrome at a time; the page's own bar wins and the shell's bar comes back after it.
     it('gives the bottom to a page\'s own pinned bar and takes it back when the bar leaves', async () => {
         const screen = await renderScreen(<Harness pageBar />);
@@ -210,7 +253,8 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         await screen.update(<Harness />);
         await finishAnimations();
         expect(screen.findByType(MainAppTabBar)).toBeTruthy();
-        expect(screen.findByTestId('tabbar-tab-sessions')?.props.selected).toBe(false);
+        expect(screen.findHostByTestId('tabbar-tab-sessions')).not.toBeNull();
+        expect(screen.findHostByTestId('tabbar-tab-sessions')?.props.current).toBeUndefined();
         expect(screen.findHostByTestId('tabbar-start-new-session')).toBeNull();
     });
     it('offers More from the bar itself on Sessions and on a tab with its own route', async () => {

@@ -10,7 +10,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { getPreferredLanguage, t } from '@/text';
 import { createAppStackScreenOptions, useAppStackUsesCustomHeader } from '@/components/navigation/createAppStackScreenOptions';
 import { useAuth } from '@/auth/context/AuthContext';
-import { useLaunchCurtainState } from '@/boot/launchCurtain';
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
 import { useRootStackRouteOptions } from '@/components/navigation/root/useRootStackRouteOptions';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
@@ -19,8 +18,7 @@ import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButt
 import { DefaultBackButton } from '@/components/navigation/Header';
 import { NavigationTitleChromeProvider } from '@/components/ui/layout/PageHeader';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
-import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
-import { tryRenderWebPortal } from '@/components/ui/popover/portal';
+import { MobileBottomChromePortal } from '@/components/navigation/mobile/chrome/MobileBottomChromePortal';
 import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/AuthenticatedAppRuntimeMounts';
 import { PresentationNoticeHost } from '@/components/sessions/presentation/PresentationNoticeHost';
 import { DesktopMainWindowRuntimes } from '@/desktop/DesktopMainWindowRuntimes';
@@ -99,21 +97,6 @@ function AuthenticatedAppRuntimeMountsGate({
             {isAuthenticated ? <PresentationNoticeHost /> : null}
         </>
     );
-}
-
-function MobileBottomChromeMountGate(): React.ReactElement | null {
-    // This web portal sits outside the curtain's stacking context. Release it with the curtain's fade.
-    if (useLaunchCurtainState() === 'up') return null;
-    // The retained navigator is hidden while the workspace owns the visible session.
-    // Keep its single bottom-chrome host visible and in the same React registry.
-    const chrome = <MobileBottomChromeHost />;
-    return <>{tryRenderWebPortal({
-        shouldPortalWeb: Platform.OS === 'web',
-        portalTargetOnWeb: 'body',
-        modalPortalTarget: null,
-        getBoundaryDomElement: () => null,
-        content: chrome,
-    }) ?? chrome}</>;
 }
 
 const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElement {
@@ -635,7 +618,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             </Stack>
             </NavigatorSafeAreaBleed>
             </NavigationTitleChromeProvider>
-            <MobileBottomChromeMountGate />
+            <MobileBottomChromePortal />
             </>
     );
 });
