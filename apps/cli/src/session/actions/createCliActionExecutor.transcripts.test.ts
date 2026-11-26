@@ -60,6 +60,7 @@ function createTranscriptExecutor(params: Partial<TranscriptExecutorTestParams>)
   return createCliActionExecutor({
     token: 'token-1',
     sessionId: 'session-1',
+    getCurrentSessionMetadata: () => ({}),
     ctx: { encryptionKey, encryptionVariant: 'dataKey' },
     transcriptStore: createTranscriptStore({}),
     ...params,
@@ -95,6 +96,7 @@ describe('createCliActionExecutor transcript actions', () => {
     }, context)).resolves.toEqual({
       ok: true,
       result: { ok: true, released: true },
+      automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
     });
     expect(unsubscribe).toHaveBeenCalledOnce();
 
@@ -104,6 +106,7 @@ describe('createCliActionExecutor transcript actions', () => {
     }, context)).resolves.toEqual({
       ok: true,
       result: { ok: true, released: false },
+      automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
     });
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
@@ -196,7 +199,7 @@ describe('createCliActionExecutor transcript actions', () => {
       _sessionId: string,
       _items: readonly TranscriptItem[],
     ) => ({ imported: 2, cursor: 'tail-import' }));
-    const executor = createCliActionExecutor({
+    const executor = createTranscriptExecutor({
       token: 'token-1',
       sessionId: 'session-1',
       mode: 'e2ee',
@@ -206,7 +209,7 @@ describe('createCliActionExecutor transcript actions', () => {
     } as TranscriptExecutorTestParams);
 
     const page = await executor.execute('transcript.page', {}, { surface: 'rpc', defaultSessionId: 'session-1' });
-    expect(page).toMatchObject({ ok: true });
+    expect(page, JSON.stringify(page)).toMatchObject({ ok: true });
     expect((page as { result: { items: readonly TranscriptItem[] } }).result.items.map((item) => item.content)).toEqual([
       plainContent,
       encryptedContent,
@@ -247,6 +250,7 @@ describe('createCliActionExecutor transcript actions', () => {
         errorCode: 'upgrade_required',
         message: 'Server upgrade required before transcript import.',
       },
+      automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
     });
 
     expect(writeTranscriptItems).toHaveBeenCalledOnce();
@@ -301,7 +305,7 @@ describe('createCliActionExecutor transcript actions', () => {
       _sessionId: string,
       _items: readonly TranscriptItem[],
     ) => ({ imported: 1, cursor: 'tail-import' }));
-    const executor = createCliActionExecutor({
+    const executor = createTranscriptExecutor({
       token: 'token-1',
       sessionId: 'session-1',
       mode: 'e2ee',

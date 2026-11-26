@@ -89,7 +89,11 @@ describe('CLI Workspace Sync relationship lifecycle composition', () => {
         ] as const;
 
         for (const [actionId, method, result] of cases) {
-          await expect(executor.execute(actionId, input, context)).resolves.toEqual({ ok: true, result });
+          await expect(executor.execute(actionId, input, context)).resolves.toEqual({
+            ok: true,
+            result,
+            automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
+          });
           expect(invoke).toHaveBeenLastCalledWith(method, { relationshipId }, {
             localActionContext: { surface: 'agent', authority: 'account_automation' },
           });

@@ -50,7 +50,7 @@ afterEach(() => {
 });
 
 describe('runtime Actions policy binding', () => {
-  it('requires an Artifact owner for durable Agent reads despite an injected Session confirmation', async () => {
+  it('uses the bound Session confirmation for its own Agent activity read', async () => {
     const sessionActionConfirmation = vi.fn(async () => ({ decision: 'reject' as const, isCurrent: () => true }));
     const executor = createCliActionExecutor({
       token: 'restricted-runtime-token', sessionId: 'session-a', mode: 'plain', ctx: null,
@@ -64,8 +64,11 @@ describe('runtime Actions policy binding', () => {
     });
     await expect(executor.execute('session.activity.get', { sessionId: 'session-a' }, {
       surface: 'agent', authority: 'account_automation', defaultSessionId: 'session-a',
-    })).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
-    expect(sessionActionConfirmation).not.toHaveBeenCalled();
+    })).resolves.toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    expect(sessionActionConfirmation).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: 'session.activity.get', sessionId: 'session-a',
+      input: { sessionId: 'session-a' },
+    }));
   });
 
   it('fails a scoped-runtime approval closed when the Session producer is unavailable', async () => {

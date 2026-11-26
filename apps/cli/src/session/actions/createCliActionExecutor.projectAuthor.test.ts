@@ -204,7 +204,8 @@ describe('public Project author Actions through the real CLI host', () => {
             const current = recovered.lease.captureNativeServiceLifecycle(instance, { root });
             if (current.kind !== 'ready') throw new Error(current.code);
             releases.push(current.release);
-            expect(await current.lifecycle.stop({ ...instance, nativeResourceId: 'another-resource' })).toEqual({ status: 'unsupported' });
+            await expect(current.lifecycle.stop({ ...instance, nativeResourceId: 'another-resource' }))
+                .rejects.toMatchObject({ code: 'native_adapter_reference_mismatch' });
             expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ phase: 'running' });
             expect(await current.lifecycle.inspect(instance)).toMatchObject({ phase: 'running' });
             expect(await current.lifecycle.stop(instance)).toEqual({ status: 'stopped' });
