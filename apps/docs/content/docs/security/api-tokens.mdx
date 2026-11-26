@@ -41,13 +41,14 @@ secret later. Choose full access or a limited grant covering the Actions,
 sessions and computers it needs. A limited grant can also restrict models,
 permission modes and websites. Content access is a separate choice.
 
-If a token's grant names specific Environments, select their app sources
-when you query or export Usage. Happier excludes sources outside the grant
-from usage and cost totals. Requests without a permitted app source and
-Actions that cannot use app sources, including Usage history and quota
-calendar exports, return `credential_scope_denied` with reason
-`environment_not_granted`. Tokens with Account-wide access can query
-usage across the Account.
+If a token's grant names specific Environments, Usage queries, accounting exports
+and private recaps default to the app sources in those Environments. When you
+select sources for a query or export, Happier includes only the sources in the
+grant. Selections that contain only sources outside the grant return
+`credential_scope_denied` with reason `environment_not_granted`. Actions that
+cannot use app sources, including Usage history and quota calendar exports,
+return the same error. Tokens with Account-wide access can query usage across
+the Account.
 
 Approvals are opt-in per token. Enabling them lets it decide tool-use prompts
 and requests in its granted targets, including requests it started itself.

@@ -181,6 +181,7 @@ export function projectApiTokenUsageQueryV1(grant: ApiTokenGrantV1 | undefined, 
 
   const allowedSources = new Set(environments.map(usageAppCallsSourceId));
   const queries = input.queries.flatMap(query => {
+    if (!query.sources.length) return [{ ...query, sources: [...allowedSources] }];
     const sources = query.sources.filter(source => allowedSources.has(source));
     if (!sources.length) return [];
     return [sources.length === query.sources.length ? query : { ...query, sources }];

@@ -4138,14 +4138,15 @@ follow context independently through the general input-field contract; metric
 and breakdown remain own values.
 
 For an admitted API-token invocation that names Environment targets,
-`apiTokenGrant` projects the usage read onto the requested app sources in
-those Environments. The reader and delivery both consume the projected queries.
+`apiTokenGrant` intersects an explicit usage source selection with the app sources
+in those Environments. An empty selection reads all app sources in the grant.
+The reader and delivery both consume the projected queries.
 The grant owner permits the Usage query, accounting export and private recap
 paths to use this projection. App calls can still read the public model price
 catalog under the Action grant. The grant owner refuses Usage Actions that
 cannot scope their Account evidence or effects to app sources, including
 history reads, quota calendar exports and Coach, before dispatch. Those Actions
-and queries without a permitted app source return `credential_scope_denied`
+and queries that select only sources outside the grant return `credential_scope_denied`
 with reason `environment_not_granted`.
 Tokens with Account-wide grants can access Usage across the Account.
 

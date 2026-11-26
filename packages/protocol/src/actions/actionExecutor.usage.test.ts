@@ -13,7 +13,7 @@ import { UsageModelPriceCatalogSchema } from '../usage/usageModelPriceSchemas.js
 import * as usageDelivery from '../usage/projectUsageQueryDelivery.js';
 import * as strictJson from '../plugins/contributions/strictJsonValue.js';
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
-import { USAGE_PRICE_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '../usage/usageActionIdsV1.js';
+import { USAGE_PRICE_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '../usage/usageActionIdsV1.js';
 
 const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
   tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
@@ -25,14 +25,15 @@ const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, agents
 describe('personal usage Action execution', () => {
   describe('API-token Environment usage scope', () => {
     const allowed = 'app_calls:staging';
+    const alsoAllowed = 'app_calls:preview';
     const outside = 'app_calls:production';
     const environmentGrant = ApiTokenGrantV1Schema.parse({
       ...API_TOKEN_FULL_GRANT_V1,
-      actions: { families: [], ids: [USAGE_QUERY_ACTION_ID_V1, USAGE_PRICE_ACTION_IDS.get] },
-      targets: { sessions: [], machines: ['machine-1'], environments: ['staging'] },
+      actions: { families: [], ids: [USAGE_QUERY_ACTION_ID_V1, USAGE_PRICE_ACTION_IDS.get, USAGE_PRIVATE_RECAP_ACTION_IDS.compose] },
+      targets: { sessions: [], machines: ['machine-1'], environments: ['staging', 'preview'] },
     });
 
-    function read(sources: string[], grant: ApiTokenGrantV1) {
+    function executeUsage(grant: ApiTokenGrantV1) {
       // Simulate the usage data transport with one priced event per read source.
       const queryUsage: NonNullable<ActionExecutorDeps['usageActions']>['query'] = async ({ queries }, _context, readChild) => {
         const modelIds = Object.keys(bundledUsageModelPriceCatalog.models).slice(0, 1);
@@ -41,18 +42,38 @@ describe('personal usage Action execution', () => {
         if (!prices.ok) return prices;
         return resolveUsagePageAggregation({ queries, accounting: queries.map(query => ({
           query, status: 'available', value: { ...accounting, totals: { ...accounting.totals,
-            eventCount: query.sources.length, cost: { ...accounting.totals.cost, reportedUsd: query.sources.length } } },
+            eventCount: query.sources.length, cost: { ...accounting.totals.cost, reportedUsd: query.sources.length },
+            tokens: { ...accounting.totals.tokens, input: query.sources.length, output: 0, total: query.sources.length } } },
         })) }, UsageModelPriceCatalogSchema.parse(prices.result));
       };
       const executor = createActionExecutor({ usageActions: { query: queryUsage,
         prices: { get: async () => bundledUsageModelPriceCatalog, refresh: async () => bundledUsageModelPriceCatalog },
       } } as ActionExecutorDeps);
-      return executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [{ sources }] }, {
-        surface: 'api',
-        externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
+      const context = {
+        surface: 'api' as const,
+        externalActionTarget: { kind: 'machine' as const, machineId: 'machine-1' },
         externalActionCredential: { accountId: 'account-1', principalId: 'account-1', credentialId: 'token-1', grant },
-      });
+      };
+      return (actionId: Parameters<typeof executor.execute>[0], input: unknown) => executor.execute(actionId, input, context);
     }
+
+    function read(sources: string[], grant: ApiTokenGrantV1) {
+      return executeUsage(grant)(USAGE_QUERY_ACTION_ID_V1, { queries: [{ sources }] });
+    }
+
+    it('defaults an empty source selection to the granted Environments', async () => {
+      expect(await read([], environmentGrant)).toMatchObject({ ok: true, result: { results: [
+        { shownQuery: { sources: [alsoAllowed, allowed] }, accounting: { totals: { eventCount: 2 } } },
+      ] } });
+    });
+
+    it('composes a private recap over the granted app sources', async () => {
+      const input = { query, selectedFields: ['tokens'] };
+      expect(await executeUsage(API_TOKEN_FULL_GRANT_V1)(USAGE_PRIVATE_RECAP_ACTION_IDS.compose, input))
+        .toMatchObject({ ok: true, result: { kind: 'composed' } });
+      expect(await executeUsage(environmentGrant)(USAGE_PRIVATE_RECAP_ACTION_IDS.compose, input))
+        .toMatchObject({ ok: true, result: { kind: 'composed', facts: { tokens: { total: 2 } } } });
+    });
 
     it('reads and prices only the granted Environment in a mixed-source query', async () => {
       expect(await read([allowed, outside], environmentGrant)).toMatchObject({ ok: true, result: { results: [
