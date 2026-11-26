@@ -2,7 +2,7 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionExecuteFailureSchema, FeaturesResponseSchema, REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL, type ActionExecutorContext, type ActionId } from '@happier-dev/protocol';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { DaemonLocalServiceLauncherStartResponseV1Schema, DaemonLocalServiceLauncherSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema,
     LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -67,7 +67,7 @@ function receivingMachineBoundary(response: unknown, actionId: ActionId = 'local
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
     const approvalActions: string[] = [];
     const { executor } = createCliActionExecutorHarness({ credentials, token: credentials.token, mode: 'plain', ctx: null,
-        sessionId: 'session-a', serverId: 'home-a', serverHttpBaseUrl: 'https://selected-home.example',
+        sessionId: 'session-a', serverId: 'home-a', serverIdentityId: 'srv_selected_home', serverHttpBaseUrl: 'https://selected-home.example',
         getCurrentSessionMetadata: () => ({ machineId: 'machine-a', path: '/accepted' }),
         actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(askFirst ? null : {
             v: 1, approvalWaivedSurfaces: { [actionId]: [surface] },
@@ -90,7 +90,8 @@ function receivingMachineBoundary(response: unknown, actionId: ActionId = 'local
     // The invoking CLI host has captured this exact Home/Machine and invocation
     // identity; none are fields of the semantic Action request or authority waiver.
     const context: ActionExecutorContext = { surface, authority: 'present_user', serverId: 'home-a',
-        runtimeAccountId: 'owner', actionRequestId: 'cli-service-invocation', defaultSessionId: 'session-a',
+        runtimeAccountId: 'owner', actionCaller: { kind: 'host' }, actionRequestId: 'cli-service-invocation', defaultSessionId: 'session-a',
+        defaultSessionMachineId: 'machine-a',
         externalActionTarget: { kind: 'machine', machineId: 'machine-a' } };
     return { executor, requests, get, context, approvalActions };
 }
@@ -170,8 +171,9 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
                 request: DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.parse({ machineId: 'machine-a', ...input }) })
             : await ui.revokeLocalServicePreviewViaMachineRpc({
                 request: DaemonLocalServicePreviewRevokeRequestV1Schema.parse({ machineId: 'machine-a', ...input }) });
-        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}`, reasonCode: errorCode });
         const typedFailure = ActionExecuteFailureSchema.parse(rawResponse);
+        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}`, reasonCode: errorCode,
+            failure: { ...typedFailure, error: errorCode } });
         // Before this correction, the lifecycle handler threw an uncoded Error
         // with this exact message. Keep the real RpcHandlerManager serializer as
         // the producer of that legacy response, rather than constructing its DTO.
@@ -180,7 +182,8 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
         const failureCause = { phase: 'rpc.handler', errorClass: 'Error', errorCode: null, httpStatus: null };
         expect(legacy).toEqual({ error: typedFailure.error, failureCause });
         uiPreviewRpc.mockResolvedValue(legacy);
-        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}`, reasonCode: 'action_failed', failureCause });
+        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}`, reasonCode: 'action_failed',
+            failure: { ok: false, errorCode: 'action_failed', error: 'action_failed', failureCause } });
         uiPreviewRpc.mockRejectedValue(new Error(typedFailure.error));
         expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}` });
         expect(registry.previewsById.get('registered-preview')?.resource).toEqual(registered.resource);
@@ -349,12 +352,21 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
             params: { v: 1, kind: 'targeted_action_rpc', input, target: { kind: 'machine', machineId: 'machine-a' }, defaultSessionId: 'session-a' } })]);
     });
     it('returns the default CLI approval Artifact without issuing a Machine effect', async () => {
-        const { executor, requests, get, context, approvalActions } = receivingMachineBoundary(null, 'localServices.launcher.start', true);
+        const workspace = { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/accepted' };
+        const snapshot = DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse({ protocolVersion: 1,
+            snapshot: { v: 1, machineId: 'machine-a', updatedAt: 1, targets: [] }, startReview: {
+                request: { machineId: 'machine-a', targetId: 'project-service:selected', workspace,
+                    declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'web' } } },
+                target: workspace, reviewedEffect: { command: 'serve web' }, reviewedEffectDigest: 'a'.repeat(64),
+                setup: { required: false, project: { serverId: 'home-a', projectId: 'project-a' },
+                    reviewedEffect: {}, reviewedEffectDigest: 'setup-effect' },
+            } });
+        const { executor, requests, get, context, approvalActions } = receivingMachineBoundary(snapshot, 'localServices.launcher.start', true);
         expect(await executor.execute('localServices.launcher.start', { machineId: 'machine-a', targetId: 'project-service:selected' }, context))
             .toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId: 'reviewed-service-approval', actionId: 'localServices.launcher.start' } });
         expect(approvalActions).toEqual(['localServices.launcher.start']);
-        expect(requests).toEqual([]);
-        expect(get).not.toHaveBeenCalled();
+        expect(requests).toEqual([expect.objectContaining({ method: `machine-a:${RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT}` })]);
+        expect(get).toHaveBeenCalled();
     });
     it('preserves a denied Copy receipt without reading or copying a destination', async () => {
         const denied = LocalServiceActionResultV1Schema.parse({ v: 1, requestId: 'copy-denied', action: 'copy_url',
