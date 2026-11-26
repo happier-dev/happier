@@ -3259,11 +3259,12 @@ function isRequesterOwnMachineRequest(verified: VerifiedExternalActionExecutionR
 }
 
 /**
- * A read-only Account root (its ActionSpec declares sideEffectClass 'read' and the effect is the
- * root itself) makes the GET reads its effect needs with the requester's own Account credential.
- * Every route still applies the requester's own access, so this equals the requester's bearer read,
- * decided once here instead of a purpose entry per route. API-token bindings keep their grant-scoped
- * purposes, and a foreign custodian Machine gains no read of the requester's resources here.
+ * A present-user read-only Account root (its ActionSpec declares sideEffectClass 'read' and the
+ * effect is the root itself) makes the GET reads its effect needs with the requester's own Account
+ * credential. Every route still applies the requester's own access, so this equals the requester's
+ * bearer read, decided once here instead of a purpose entry per route. Session, Workflow, terminal,
+ * and API-token bindings keep their narrower declared purposes, and a foreign custodian Machine
+ * gains no read of the requester's resources here.
  * (A contributed provider read stays isContributedRootEnvironmentRead: action.invoke is not a read
  * root, and that read adds the custodian's own Environment access.)
  */
@@ -3271,7 +3272,8 @@ function isAdmittedReadRootRequesterGet(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
     const binding = verified.binding;
     const root = ActionIdSchema.safeParse(binding.actionId);
-    if (!root.success || verified.effectActionId !== binding.actionId || !('authentication' in binding)
+    if (!root.success || verified.effectActionId !== binding.actionId
+        || verified.effectiveAuthority !== 'present_user'
         || !isRequesterOwnMachineRequest(verified)) return false;
     const spec = getActionSpec(root.data);
     return spec.sideEffectClass === 'read' && spec.executionPlacement === 'account'

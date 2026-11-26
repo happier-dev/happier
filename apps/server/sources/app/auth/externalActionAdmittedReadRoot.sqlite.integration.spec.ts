@@ -8,6 +8,8 @@ import {
     type ExternalActionRequestEnvelopeV1,
 } from '@happier-dev/protocol/actions';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -156,6 +158,144 @@ describe('admitted read-root requester reads', () => {
                     effectActionId: 'machines.roles.get', target: hosted.binding.target, installationId,
                     requestId: hosted.binding.requestId, method: 'GET', path, privateKey }) });
             expect(await signedBy(hostKeys.secretKey, fixture.machine.installationId!)).toBeNull();
+        } finally { await app.close(); }
+    });
+
+    it('refuses generic GET bypasses on Session-origin and terminal read-only Account roots while preserving declared purposes', async () => {
+        const fixture = await createFixture();
+        const homeId = await getOrCreateServerIdentityId();
+        const session = await db.session.create({ data: { accountId: fixture.account.id,
+            tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+        await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
+            sessionId: session.id, data: 'own-session-key' } });
+        const app = createApp(async () => fixture.machine.id);
+        const source = { machineId: fixture.machine.id, installationId: fixture.machine.installationId! };
+        const accountToken = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const terminalToken = await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        try {
+            const mintAndVerify = async (
+                opts: Readonly<{ actionId: string; input: ExternalActionRequestEnvelopeV1['input']; credential: string; withSessionOrigin: boolean }>,
+                method: string,
+                path: string,
+                body?: unknown,
+                routeInput?: unknown,
+            ) => {
+                const requestId = crypto.randomUUID();
+                const envelope = { v: 1, requestId, target: fixture.envelope.target, input: opts.input } satisfies ExternalActionRequestEnvelopeV1;
+                const origin = opts.withSessionOrigin ? SessionActionRpcOriginV1Schema.parse({ v: 1,
+                    caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
+                    sourceTurnId: 'automation-read-turn', callerPermissionMode: null, requestId }) : undefined;
+                const installationProof = origin ? signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
+                    payload: { version: 1, accountId: fixture.account.id, ...source, externalActionOrigin: {
+                        homeId, actionId: opts.actionId, requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } }) : undefined;
+                const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(opts.actionId),
+                    headers: { authorization: `Bearer ${opts.credential}` }, payload: { v: 1, machineId: fixture.machine.id, envelope,
+                        ...(origin ? { sessionActionOrigin: origin, sessionActionSource: source, installationProof } : {}) } });
+                expect(minted.statusCode, `${opts.actionId}: ${minted.body}`).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+                return verifyExternalActionDomainExecutionRequest({
+                    authorizationToken: authorization.token, effectActionId: opts.actionId,
+                    encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                    method, path, body,
+                    ...(routeInput === undefined ? {} : { routeInput }),
+                    resolveCurrentSessionMachine: async () => fixture.machine.id,
+                    machineSignature: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId: opts.actionId,
+                        target: authorization.binding.target, installationId: fixture.machine.installationId!,
+                        requestId: authorization.binding.requestId, method, path,
+                        ...(body === undefined ? {} : { body }), privateKey: fixture.keyPair.secretKey }),
+                });
+            };
+
+            const artifactId = 'env-artifact-1';
+            const headerRead = { artifactIds: [artifactId], projection: 'headers' };
+            for (const mode of [
+                { label: 'account+sessionActionOrigin', credential: accountToken, withSessionOrigin: true },
+                { label: 'terminal+sessionActionOrigin', credential: terminalToken, withSessionOrigin: true },
+                { label: 'standalone terminal', credential: terminalToken, withSessionOrigin: false },
+            ] as const) {
+                const envListInput = { serverId: homeId };
+                const envListSpec = getActionSpec('deployments.environments.list');
+                const envListRequest = bindHomeDomainHttpRequestV1({
+                    transport: envListSpec.serverTransport!, inputSchema: envListSpec.inputSchema, input: envListInput,
+                });
+                const envList = { actionId: 'deployments.environments.list', input: envListInput, ...mode };
+                expect(await mintAndVerify(envList, 'POST', '/v1/artifacts/read', headerRead),
+                    `${mode.label}: header-only projection stays admitted`).not.toBeNull();
+                expect(await mintAndVerify(envList, envListRequest.method, envListRequest.path, undefined, envListInput),
+                    `${mode.label}: declared serverTransport stays admitted`).not.toBeNull();
+                expect(await mintAndVerify(envList, 'GET', `/v1/artifacts/${artifactId}`),
+                    `${mode.label}: full Artifact GET must be refused`).toBeNull();
+                expect(await mintAndVerify(envList, 'GET', '/v1/account/profile'),
+                    `${mode.label}: unrelated Account GET must be refused`).toBeNull();
+            }
+
+            // Sibling read-only Account roots under automation authority cannot borrow generic GETs.
+            const usageQuery = { actionId: 'usage.query', input: { queries: [{ period: { startMs: 100, endMs: 200 } }] },
+                credential: accountToken, withSessionOrigin: true };
+            expect(await mintAndVerify(usageQuery, 'POST', '/v1/artifacts/read', headerRead),
+                'usage.query header-only projection stays admitted').not.toBeNull();
+            expect(await mintAndVerify(usageQuery, 'GET', `/v1/artifacts/${artifactId}`),
+                'usage.query full Artifact GET must be refused').toBeNull();
+            expect(await mintAndVerify(usageQuery, 'GET', '/v1/elsewhere'),
+                'usage.query unrelated GET must be refused').toBeNull();
+
+            const recapCompose = { actionId: 'usage.recap.compose', input: { source: { kind: 'public_profile' } },
+                credential: accountToken, withSessionOrigin: true };
+            expect(await mintAndVerify(recapCompose, 'GET', '/v1/account/public-profile/view'),
+                'usage.recap.compose safe-view GET stays admitted').not.toBeNull();
+            expect(await mintAndVerify(recapCompose, 'GET', `/v1/artifacts/${artifactId}`),
+                'usage.recap.compose Artifact GET must be refused').toBeNull();
+            expect(await mintAndVerify(recapCompose, 'GET', '/v1/account/public-profile'),
+                'usage.recap.compose owner profile GET must be refused').toBeNull();
+
+            const directoryInput = { v: 1, teamId: 'team-1', limit: 25 };
+            const directorySources = { actionId: 'teams.directory.sources.list', input: directoryInput,
+                credential: terminalToken, withSessionOrigin: true };
+            expect(await mintAndVerify(directorySources, 'GET', '/v1/teams/team-1/directory-sources?limit=25', undefined, directoryInput),
+                'teams.directory.sources.list declared GET stays admitted').not.toBeNull();
+            expect(await mintAndVerify(directorySources, 'GET', '/v1/teams/team-1/directory-sources?limit=25&view=census', undefined, directoryInput),
+                'teams.directory.sources.list extra query shape must be refused').toBeNull();
+            expect(await mintAndVerify(directorySources, 'GET', `/v1/artifacts/${artifactId}`),
+                'teams.directory.sources.list Artifact GET must be refused').toBeNull();
+
+            // Standalone terminal bindings (account_automation) do not inherit the present-user GET shortcut (RT3).
+            const rolesGet = { actionId: 'machines.roles.get', input: { machineId: fixture.machine.id },
+                credential: terminalToken, withSessionOrigin: false };
+            expect(await mintAndVerify(rolesGet, 'GET', `/v1/machines/${fixture.machine.id}`),
+                'standalone terminal machines.roles.get off-transport Machine GET must be refused').toBeNull();
+            expect(await mintAndVerify(rolesGet, 'GET', `/v1/artifacts/${artifactId}`),
+                'standalone terminal machines.roles.get Artifact GET must be refused').toBeNull();
+            expect(await mintAndVerify(rolesGet, 'GET', '/v1/account/profile'),
+                'standalone terminal machines.roles.get unrelated GET must be refused').toBeNull();
+
+            const widgetsCatalog = {
+                actionId: 'widgets.catalog.list',
+                input: { surface: { serverId: homeId, accountId: fixture.account.id, owner: { kind: 'sessionBoard', sessionId: session.id } } },
+                credential: terminalToken, withSessionOrigin: false,
+            };
+            expect(await mintAndVerify(widgetsCatalog, 'POST', '/v1/plugins/availability/materializations/read', {}),
+                'standalone terminal widgets.catalog.list declared materializations POST stays admitted').not.toBeNull();
+            expect(await mintAndVerify(widgetsCatalog, 'GET', '/v1/machines'),
+                'standalone terminal widgets.catalog.list off-transport Machine list GET must be refused').toBeNull();
+
+            const workflowValidate = {
+                actionId: 'workflow.validate',
+                input: { definition: { version: 1, defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } }, blocks: ['Review this'] } },
+                credential: terminalToken, withSessionOrigin: false,
+            };
+            expect(await mintAndVerify(workflowValidate, 'GET', '/v1/machines'),
+                'standalone terminal workflow.validate off-transport Machine list GET must be refused').toBeNull();
+
+            // Guard: present-user session.targets.resolve still cannot borrow the read-root GET shortcut for Session messages (RT5).
+            const targetsResolve = {
+                actionId: 'session.targets.resolve',
+                input: { target: { selector: 'workers' }, actionId: 'session.message.send' },
+                credential: accountToken, withSessionOrigin: false,
+            };
+            expect(await mintAndVerify(targetsResolve, 'GET', `/v2/sessions/${session.id}/messages`),
+                'present-user session.targets.resolve non-preparation messages GET must be refused').toBeNull();
         } finally { await app.close(); }
     });
 });
