@@ -216,6 +216,18 @@ describe('CodeRabbit native review contract (CLI 0.9.5 documented agent events)'
       error: { code: 'coderabbit_review_failed' } });
   });
 
+  it('preserves the installed CLI terminal error from a logged-out saved-prompt read', async () => {
+    // Real CodeRabbit 0.9.5 on linux-x64, 2026-11-26: `review --agent
+    // --uncommitted --dir <external fixture repository> --show-prompts`, empty
+    // selected account home. This read does not generate a review. Vendor
+    // diagnostic detail was omitted; no event or completion was added.
+    const captured = '{"type":"error","errorType":"review"}\n';
+    const result = await runFixture({ records: [], raw: captured, exitCode: 1 });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'coderabbit_review' } });
+    expect(result.output).toMatchObject({ reviewOutcome: 'failed', findings: [], error: { code: 'coderabbit_review' } });
+    expect(result.events.some(event => event.kind === 'run-complete')).toBe(false);
+  });
+
   it.each([false, true])('settles a rate limit once with recovery guidance and no retry (terminal present: %s)', async terminalPresent => {
     const result = await runFixture({ records: [{ type: 'error', errorType: 'rate_limit', message: 'Wait 4 minutes before retrying.' },
       ...(terminalPresent ? [complete] : [])], exitCode: 1 });
