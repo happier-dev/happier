@@ -421,6 +421,11 @@ function sourceProblemText(text: Translate, source: TriageUnavailableLinkSourceV
     });
 }
 
+function RelatedPullRequestFailureDetails({ failures }: { failures: TriageSessionLinkedEntriesNoticeV1['readFailures'] }) {
+    return failures?.map(failure => <PullRequestFailureDetails key={failure.sessionId}
+        codes={[failure.code]} requestId={failure.requestId} />);
+}
+
 /**
  * The sources a Session's links could not be read from, each named with why, as the quiet line over rows that
  * are still shown (never an empty state). One Refresh serves them all, so it sits on the first line only.
@@ -445,7 +450,7 @@ function UnavailableLinkSources(props: Readonly<{
                         requestId={props.notice.sources[index]?.diagnostic?.requestId} />
                 </Stack>
             ))}
-            {props.notice.readFailureCodes === undefined ? null : <PullRequestFailureDetails codes={props.notice.readFailureCodes} />}
+            <RelatedPullRequestFailureDetails failures={props.notice.readFailures} />
         </Stack>
     );
 }
@@ -714,7 +719,7 @@ function TriageSessionLinkedEntriesPanel(
                 {view.notice.sources.map((source, index) => <PullRequestFailureDetails key={index}
                     title={`${text('plugins.triage.surface.detail.tab.details', 'Details')}: ${source.label}`}
                     codes={[source.diagnostic?.code]} requestId={source.diagnostic?.requestId} />)}
-                {view.notice.readFailureCodes === undefined ? null : <PullRequestFailureDetails codes={view.notice.readFailureCodes} />}
+                <RelatedPullRequestFailureDetails failures={view.notice.readFailures} />
             </Screen>
         );
     }

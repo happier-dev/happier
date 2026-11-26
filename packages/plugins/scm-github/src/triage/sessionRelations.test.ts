@@ -159,7 +159,7 @@ describe('GitHub PR source relationship adapter', () => {
   it('projects a mixed read-set with one Channels call, leaving foreign and out-of-set links hidden', async () => {
     const state = fixture(() => ({ kind: 'sessionReadSet',
       result: { kind: 'relations', links: [state.relation, { ...state.relation, sessionId: 'outside' }],
-        failures: [{ sessionId: 'unreadable', code: 'channels_pr_link_connection_missing' }] },
+        failures: [{ sessionId: 'unreadable', code: 'channels_pr_link_connection_missing', requestId: 'pr-relation-request' }] },
       failures: [{ sessionId: 'refused', result: { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable' } }],
     }));
     const result = await readGithubTriageSessionLinks({ v: 1, instance: state.instance,
@@ -170,7 +170,7 @@ describe('GitHub PR source relationship adapter', () => {
       { sessionId: 'session-1', result: { kind: 'complete', links: [{ localRef: state.localRef, sessionId: 'session-1', linkedAtMs: 42 }] } },
       { sessionId: 'empty', result: { kind: 'complete', links: [] } },
       { sessionId: 'refused', result: { kind: 'failed', failure: { class: 'permission', code: 'session_target_unavailable' } } },
-      { sessionId: 'unreadable', result: { kind: 'failed', failure: { class: 'transient', code: 'channels_pr_link_connection_missing' } } },
+      { sessionId: 'unreadable', result: { kind: 'failed', failure: { class: 'transient', code: 'channels_pr_link_connection_missing', requestId: 'pr-relation-request' } } },
     ] });
   });
 

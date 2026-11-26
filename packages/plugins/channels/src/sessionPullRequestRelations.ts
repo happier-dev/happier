@@ -1,4 +1,4 @@
-import { isPluginError, PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError, readPluginErrorRequestIdV1, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
 import { SessionPullRequestBindingInputV1Schema, type SessionPullRequestBindingInputV1,
@@ -26,7 +26,7 @@ export async function readSessionPullRequestRelationsForInvocation(input: JsonVa
 }
 
 /** Exact source relationship reads use only the canonical retained connection/binding rows. */
-type SessionPullRequestRelationContext = PluginAccountStorageConsumerContext & Pick<PluginInvocationContext, 'signal'>
+type SessionPullRequestRelationContext = PluginAccountStorageConsumerContext & Pick<PluginInvocationContext, 'signal' | 'requestId'>
   & { services: Pick<PluginInvocationContext['services'], 'targetedContributions'> };
 type RelationRequest = Extract<SessionPullRequestBindingInputV1, { kind: 'readRelations' }> | SessionPullRequestRelationsInputV1;
 
@@ -62,7 +62,11 @@ export async function selectSessionPullRequestRelations(
     return matching;
   };
   const connections = new Map<string, boolean | PluginError>();
-  const failures = new Map<string, string>();
+  type RelationFailure = NonNullable<Extract<SessionPullRequestBindingResultV1, { kind: 'relations' }>['failures']>[number];
+  const failures = new Map<string, RelationFailure>();
+  const recordFailure = (sessionId: string, code: string, requestId = context.requestId) => {
+    failures.set(sessionId, { sessionId, code, ...(requestId === undefined ? {} : { requestId }) });
+  };
   const links: Array<Extract<SessionPullRequestBindingResultV1, { kind: 'relations' }>['links'][number]> = [];
   // The exact membership selector shares Collection paging across the admitted set.
   for (const { row, binding } of await readSessionPullRequestBindingRows({ collection, ...selection, signal: context.signal })) {
@@ -85,7 +89,7 @@ export async function selectSessionPullRequestRelations(
     if (matching === false) continue;
     if (matching !== true) {
       if (sessionId === undefined) throw matching;
-      failures.set(sessionId, matching.code);
+      recordFailure(sessionId, matching.code, readPluginErrorRequestIdV1(matching));
       continue;
     }
     if (binding.endpoint.kind !== 'githubPullRequest' || sessionId === undefined || pullRequest === undefined
@@ -96,7 +100,7 @@ export async function selectSessionPullRequestRelations(
       if (!selection.sessionIds || sessionId === undefined) {
         throw pluginError('channels_pr_link_identity_unavailable', 'The retained PR relationship has no exact authenticated identity.');
       }
-      failures.set(sessionId, 'channels_pr_link_identity_unavailable');
+      recordFailure(sessionId, 'channels_pr_link_identity_unavailable');
       continue;
     }
     if (pullRequestFilter !== undefined && (pullRequestFilter.repositoryId !== binding.endpoint.parentId || pullRequestFilter.number !== pullRequest.number)) continue;
@@ -105,7 +109,7 @@ export async function selectSessionPullRequestRelations(
   }
   context.signal.throwIfAborted();
   return { result: { kind: 'relations' as const, links,
-    ...(failures.size === 0 ? {} : { failures: [...failures].map(([sessionId, code]) => ({ sessionId, code })) }),
+    ...(failures.size === 0 ? {} : { failures: [...failures.values()] }),
   }, connectionIds };
 }
 

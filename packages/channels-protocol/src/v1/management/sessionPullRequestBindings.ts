@@ -188,6 +188,7 @@ export const SessionPullRequestBindingResultV1Schema = defineProtocolUnion([
     linkedAtMs: defineProtocolNumber({ integer: true, minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
   }, { policy: 'closed' })), failures: defineProtocolArray(defineProtocolObject({
     sessionId: SessionIdSchema, code: defineProtocolString({ minLength: 1 }),
+    requestId: defineProtocolString({ minLength: 1 }).optional(),
   }, { policy: 'closed' })).optional() }, { policy: 'closed' }),
 ]);
 export type SessionPullRequestBindingResultV1 = ReturnType<typeof SessionPullRequestBindingResultV1Schema.parse>;

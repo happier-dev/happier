@@ -141,7 +141,8 @@ async function readSessionLinks(input: unknown, signal: AbortSignal, execute: Re
     const relations = parsedRelations.success && parsedRelations.data.kind === 'relations' ? parsedRelations.data : undefined;
     const failures = new Map<string, TriageSourceSessionLinksSliceV1>();
     for (const failure of relations?.failures ?? []) failures.set(failure.sessionId, {
-      kind: 'failed', failure: { class: 'transient', code: failure.code },
+      kind: 'failed', failure: { class: 'transient', code: failure.code,
+        ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }) },
     });
     for (const [sessionId, code] of refusals) failures.set(sessionId, {
       kind: 'failed', failure: { class: 'permission', code },

@@ -30,7 +30,7 @@ export type TriageSessionLinkedEntryRowV1 = Readonly<{
 export type TriageSessionLinkedEntriesNoticeV1 = Readonly<{
     sources: readonly TriageUnavailableLinkSourceV1[];
     error?: PluginUiResourceProjectionSnapshot<unknown>['error'];
-    readFailureCodes?: readonly string[];
+    readFailures?: SessionPullRequestRelations['failures'];
 }>;
 
 export type TriageSessionLinkedEntriesViewV1 =
@@ -51,7 +51,7 @@ export function projectTriageSessionLinkedEntries(input: Readonly<{
     status: 'loading' | 'ready' | 'partial' | 'failed';
     lanes?: readonly TriageSourceSessionLinksLaneV1[];
     error?: PluginUiResourceProjectionSnapshot<unknown>['error'];
-    readFailureCodes?: readonly string[];
+    readFailures?: SessionPullRequestRelations['failures'];
     entries?: readonly TriageListRowV1[];
     workflowSubject?: (entryRef: TriageEntryRefV1) => TriageSourceWorkflowSubjectV1 | null;
     summaryBaseline?: TriageSessionLinkedEntrySummaryBaselineV1;
@@ -60,7 +60,7 @@ export function projectTriageSessionLinkedEntries(input: Readonly<{
     const failed = input.status === 'partial' || input.status === 'failed';
     const notice: TriageSessionLinkedEntriesNoticeV1 = { sources: projectTriageUnavailableLinkSources(input.lanes),
         ...(input.error === undefined ? {} : { error: input.error }),
-        ...(input.readFailureCodes?.length ? { readFailureCodes: input.readFailureCodes } : {}) };
+        ...(input.readFailures?.length ? { readFailures: input.readFailures } : {}) };
     if (input.links.length === 0 && !input.nativePullRequests?.length) {
         if (failed) return { kind: 'unavailable', notice };
         return input.status === 'ready' ? { kind: 'empty' } : { kind: 'loading' };
@@ -104,8 +104,11 @@ export function projectTriageSessionLinkedEntries(input: Readonly<{
 function sameNotice(left: TriageSessionLinkedEntriesNoticeV1 | null, right: TriageSessionLinkedEntriesNoticeV1 | null): boolean {
     if (left === null || right === null) return left === right;
     return left.error === right.error && left.sources.length === right.sources.length
-        && (left.readFailureCodes?.length ?? 0) === (right.readFailureCodes?.length ?? 0)
-        && (left.readFailureCodes?.every((code, index) => code === right.readFailureCodes?.[index]) ?? true)
+        && (left.readFailures?.length ?? 0) === (right.readFailures?.length ?? 0)
+        && (left.readFailures?.every((failure, index) => {
+            const other = right.readFailures?.[index];
+            return failure.sessionId === other?.sessionId && failure.code === other.code && failure.requestId === other.requestId;
+        }) ?? true)
         && left.sources.every((source, index) => source.label === right.sources[index]!.label
             && source.reason.key === right.sources[index]!.reason.key
             && source.diagnostic?.code === right.sources[index]!.diagnostic?.code

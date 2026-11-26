@@ -112,6 +112,15 @@ describe('registered GitHub PR source → native Channels relationships', () => 
       await state.put({ ...retained.value, 'updated-at': 43 }, { expectedRevision: retained.revision });
       expect(invalidated).toHaveBeenCalledOnce();
       await observation.dispose();
+      const retainedConnection = await state.get(connection.id);
+      if (retainedConnection === null) throw new Error('Missing retained Account connection');
+      await state.delete(connection.id, { expectedRevision: retainedConnection.revision });
+      await expect(core.invokeAction('session-pull-request-relations-v1', {
+        kind: 'readRelations', credentialRef: null, sessionIds: ['session-1'],
+      }, { surface: 'ui', requestId: 'pr-relation-request' })).resolves.toEqual({
+        kind: 'relations', links: [],
+        failures: [{ sessionId: 'session-1', code: 'channels_pr_link_connection_missing', requestId: 'pr-relation-request' }],
+      });
     } finally { await core.dispose(); }
   });
   it.each(['account', 'native'] as const)('reads and unlinks exact retained %s links with host-stamped callers', async mode => {

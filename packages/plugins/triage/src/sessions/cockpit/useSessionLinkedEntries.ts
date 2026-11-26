@@ -124,7 +124,7 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
         const projected = projectTriageSessionLinkedEntries({
             links: admitted?.links ?? [],
             nativePullRequests: admitted?.channels?.links,
-            readFailureCodes: admitted?.channels?.failures?.map(failure => failure.code),
+            readFailures: admitted?.channels?.failures,
             status: pending ? 'loading'
                 : readError !== undefined || (resource.value !== undefined && admitted === null) ? 'failed'
                     : admitted === null ? 'loading'

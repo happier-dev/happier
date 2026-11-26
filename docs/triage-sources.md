@@ -1241,7 +1241,10 @@ In unreleased 0.3, the Session PRs & Issues pane also reads retained PR
 relationships from Channels for the mounted Session. A linked PR outside the
 configured repositories shows its repository and number and opens at the forge.
 Configured sources still determine the Account-wide and source-scoped lists
-and supply richer details when available.
+and supply richer details when available. Related-PR refusals carry the optional
+originating request ID in the Channels relation result. The Session pane shows
+it beside the refusal code in Details. Use matching development declarations and
+readers for this closed result shape.
 
 ### Error-source writes (0.3 development source)
 
