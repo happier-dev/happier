@@ -8105,7 +8105,9 @@ retirement withdraws their input admission.
 
 ### Client-local Voice controls (development)
 
-Standalone realtime Voice advertises hot-path Actions directly. Discover other
+Standalone realtime Voice advertises hot-path Actions directly. Planning,
+delegation, and code-review launches retain their Voice bindings and full input
+schemas through discovery rather than occupying the default tool catalog. Discover other
 built-in Actions with `searchActionSpecs` and `getActionSpec`, then call the
 transport tool `action_execute` with `{actionId, input}`. It uses the same Voice
 Action executor, surface availability and approval policy as direct tools;
