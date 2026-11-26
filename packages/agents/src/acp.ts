@@ -88,6 +88,16 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
     mcpServers: 'pass',
     // agy 1.5.18 `ask_question` sends form elicitations; without the capability it prints the options as text.
     formElicitation: true,
+    // agy 1.5.18 always advertises default, accept-edits and plan; auto only on eligible accounts.
+    // It has no read-only or bypass mode: read-only keeps its asking mode, and yolo takes the most
+    // permissive advertised mode while the provider-enforced handler approves the remaining prompts.
+    permissionModeMapping: {
+      default: null,
+      'read-only': 'default',
+      'safe-yolo': ['auto', 'accept-edits'],
+      yolo: ['auto', 'accept-edits'],
+      plan: 'plan',
+    },
   },
   fx: {
     agentId: 'fx',
