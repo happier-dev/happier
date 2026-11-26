@@ -5,7 +5,7 @@ import type { Machine } from '@/api/types';
 import { isManagedOpaquePresetMachineV1, type ManagedControllerV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedErrorV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
-import { canPrepareManagedRetentionPolicy, hasSubmittedManagedRetentionEffect } from '@/machines/managed/managedRetentionPolicy';
+import { canPrepareManagedRetentionPolicy, hasEndedBoundSessionDeletion, hasSubmittedManagedRetentionEffect } from '@/machines/managed/managedRetentionPolicy';
 import { logger } from '@/ui/logger';
 import { MANAGED_MACHINE_POLICY_RETENTION_SATISFIED_ABORT,
     type createDaemonManagedMachineActionAdapter } from './managedMachineActionAdapter';
@@ -193,9 +193,10 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
             // admission-to-submission gap. Incumbent native completion stays
             // above; only Home-admitted retention custody may resume below.
             if (purpose.kind === 'retention' && !canPrepareRetention) continue;
-            // New unused retention needs registration and positive guest evidence.
-            // Only a policy-owned submitted Stop/Suspend continues without enrollment.
-            if (purpose.kind === 'retention' && machine.retention.kind === 'unused' && !continuesRetention) {
+            // Ordinary unused retention needs positive guest evidence. An ended bound Session
+            // authorizes Delete through Home, and a submitted policy effect already owns its continuation.
+            if (purpose.kind === 'retention' && machine.retention.kind === 'unused' && !continuesRetention
+                && !hasEndedBoundSessionDeletion(machine)) {
                 if (!machine.enrolledMachineId) continue;
                 // A requester guest has no custodian-readable private Machine
                 // state. Its exact registered RPC supplies readiness/activity;

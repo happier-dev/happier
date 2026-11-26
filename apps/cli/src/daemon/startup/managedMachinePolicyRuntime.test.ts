@@ -107,7 +107,7 @@ describe('daemon managed policy census transport', () => {
             expect(executions.slice(3, machineCount).every(entry => entry.signal?.aborted === false)).toBe(true);
         } finally { await runtime.stop(); await apiMachine.shutdown(); }
     });
-    it('observes bound sealed presets on connection and schedules their admitted wake or retention', async () => {
+    it('observes bound sealed presets and schedules archive deletion without guest enrollment', async () => {
         const controller = { machineId: 'controller', installationId: 'installation' };
         const retained = ManagedMachineV1Schema.parse({
             id: 'retained', homeId: 'home', custodianAccountId: 'owner', controller,
@@ -118,14 +118,27 @@ describe('daemon managed policy census transport', () => {
         });
         const asleep = ManagedMachineV1Schema.parse({ ...retained, id: 'asleep', enrolledMachineId: 'asleep-guest',
             desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
+        const fresh = ManagedMachineV1Schema.parse({ ...retained, id: 'fresh', enrolledMachineId: undefined,
+            acquisitionMode: 'resource-bound', retention: { kind: 'until-delete' },
+            creationScopeRetention: { effect: 'delete', source: { kind: 'session', sessionId: 'source' } },
+        });
+        const archived = ManagedMachineV1Schema.parse({ ...fresh, id: 'archived',
+            retention: { kind: 'unused', afterMs: 0, effect: 'delete' },
+            creationScopeRetention: { ...fresh.creationScopeRetention, endedAt: 1 },
+        });
+        const unused = ManagedMachineV1Schema.parse({ ...fresh, id: 'unused', creationScopeRetention: undefined,
+            retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' },
+        });
         const target = ManagedWakeTargetV1Schema.parse({ homeId: asleep.homeId, managedId: asleep.id,
             enrolledMachineId: asleep.enrolledMachineId, expectedIntentRevision: 1, controller, reason: 'admitted-work',
             origin: { kind: 'session-input', session: { homeId: asleep.homeId, sessionId: 'session' },
                 pendingRequestId: 'pending', requestedAt: 1 } });
         const observations: string[] = [];
         const scheduled = new Map<string, string>();
+        const loadMachine = vi.fn(async () => null);
         const runtime = createDaemonManagedMachinePolicyRuntime({
-            readCensus: async () => ({ machines: [retained, asleep], targets: [target] }),
+            readCensus: async () => ({ machines: [retained, asleep, fresh, archived, unused], targets: [target] }),
+            loadMachine,
             reconcileObservation: async machine => {
                 observations.push(machine.id);
                 return machine;
@@ -137,8 +150,9 @@ describe('daemon managed policy census transport', () => {
         });
         try {
             await runtime.notifyChanged();
-            expect(observations).toEqual([retained.id, asleep.id]);
-            expect(scheduled).toEqual(new Map([[retained.id, 'retention'], [asleep.id, 'accepted-input-start']]));
+            expect(observations).toEqual([retained.id, asleep.id, fresh.id, archived.id, unused.id]);
+            expect(scheduled).toEqual(new Map([[retained.id, 'retention'], [asleep.id, 'accepted-input-start'], [archived.id, 'retention']]));
+            expect(loadMachine).not.toHaveBeenCalled();
         } finally { await runtime.stop(); }
     });
 
