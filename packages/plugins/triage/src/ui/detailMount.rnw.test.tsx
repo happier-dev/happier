@@ -2546,8 +2546,11 @@ describe('opening a row into the source detail', () => {
             ...surfaceContext(), machineExecutionReady: false, machineConnectionPending: false,
         }); });
         await expect(shell.getByRole('button', row)).resolves.toBeDefined();
-        await expect(shell.getByText('Your sources could not be reached')).resolves.toBeDefined();
-        await expect(shell.getByText('Showing the last known list')).resolves.toBeDefined();
+        // The mounted host owns the outage band. The plugin keeps its retained rows
+        // and their age while the host reports that the Machine is unreachable.
+        await expect(shell.queryByText('Your sources could not be reached')).resolves.toBeUndefined();
+        await expect(shell.queryByText('Showing the last known list')).resolves.toBeUndefined();
+        expect(document.body.textContent).toMatch(/Updated (just now|.+ ago)/);
 
         hostTarget.ready = true;
         await act(async () => { await shell.updateSurface({ ...surfaceContext(), machineExecutionReady: true }); });
