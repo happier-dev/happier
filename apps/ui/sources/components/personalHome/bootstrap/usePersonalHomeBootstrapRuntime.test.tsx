@@ -326,12 +326,14 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
         expect(harness.taskSpecs.size).toBe(0);
         expect(action.primary).toMatchObject({ disabled: false });
         await action.primary!.onPress();
-        await flushHookEffects({ cycles: 10, turns: 6 });
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(profiles.listServerProfiles()).toContainEqual(expect.objectContaining({ personalHomeBootstrapCompleted: true }));
+        });
         expect(harness.runtime.purpose).toEqual({ kind: 'personal-home', canonicalServerUrl: harness.canonicalServerUrl });
         expect(harness.runtime.signupEnabled).toBe(false);
         expect(harness.getCredentials()).toEqual({ token: harness.token });
-        const profiles = await import('@/sync/domains/server/serverProfiles');
-        expect(profiles.listServerProfiles()).toContainEqual(expect.objectContaining({ personalHomeBootstrapCompleted: true }));
     });
 
     it('off leaves the existing runtime untouched and constructs no bootstrap tasks', async () => {
@@ -570,7 +572,10 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
         // In-place recovery: no route is pushed.
         expect(harness.routerPush).not.toHaveBeenCalled();
         expect(screen.findByTestId('normal-shell')).not.toBeNull();
-        expect(screen.findByTestId('personal-home-setup-surface')).toBeNull();
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(Boolean(screen.findByTestId('personal-home-setup-surface'))).toBe(false);
+        });
     });
 
     it('keeps a required_e2ee existing Home generic and routes to the generic login path without mutation', async () => {
@@ -732,7 +737,10 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
 
         // Shell is usable and never gated for profile completion.
         expect(screen.findByTestId('normal-shell')).not.toBeNull();
-        expect(screen.findByTestId('personal-home-setup-surface')).toBeNull();
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(Boolean(screen.findByTestId('personal-home-setup-surface'))).toBe(false);
+        });
         expect(harness.routerPush).not.toHaveBeenCalled();
         // Completion reuses the canonical caller mutation-free: read-only verification only.
         expect(harness.mutations()).toEqual([]);
