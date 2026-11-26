@@ -1,5 +1,99 @@
 # Changelog
 
+## Release 2026-11-25.1 - 2026-11-25
+
+<!-- happier-release-note-projections:v1
+{
+  "expo": { "message": "Take a photo to attach to a session, keep drafts and folders in order, and see current account usage and reset countdowns. Fixes cover Claude model changes, permissions and duplicate messages; session recovery and stopping; file editing; and reading replies aloud. Android notification actions need the new app, server and CLI. Install the new native app for this release, including the iOS 16 and 17 startup fix." },
+  "appStore": { "whatsNew": "Take a photo from the attachment menu in a new or existing session. Drafts show their own launch progress and explain save errors. Sessions started in a folder stay there, dragging preserves other groups, and imported conversations keep their original dates when the machine and server are updated. Account usage shows current readings and live reset countdowns. Permission buttons stay reachable on long requests, menus fit above the keyboard, and the new-session wizard scrolls clear of the composer. Claude keeps model changes, follows live permission changes and avoids duplicate or generated-context messages in the conversation. File editing keeps your keystrokes and shows saved content when you leave the editor. Markdown tables retain inline formatting and aligned columns, OpenCode groups consecutive thoughts, and reading replies aloud can begin after the first sentence. Your language choice survives restart and sync. This native update also fixes startup on iOS 16 and 17. Update the CLI and daemon on your machines for the Agent and recovery fixes." },
+  "playStore": { "whatsNew": "Take photos to attach to sessions. Fixes improve drafts, folders, account usage countdowns, permission cards, file editing and read-aloud. Android permission and question notifications now show action buttons with the new app, server and CLI. Claude fixes cover model changes, permissions and duplicate messages. Install this native update; update your machines too." }
+}
+-->
+
+Take a photo straight into a session, keep drafts and folders in order, and see current account usage with live reset countdowns. This release fixes Claude model changes, permissions and transcript duplication, makes session recovery and stopping more dependable, and improves file editing, tables and reading replies aloud.
+
+### Starting and sending
+
+- **Take a photo to attach:** the attachment menu on iOS and Android can open the camera in both new and existing sessions. If camera access is denied, the app explains what needs permission.
+- **See each draft start:** a draft's own row shows its background launch progress and any launch failure, without moving its trailing controls while the launch settles.
+- **Understand draft save errors:** open the Error badge to see whether the problem is local storage or encryption. The explanation stays open, follows the selected badge and updates when draft persistence changes.
+- **Choose what Send does while the Agent works:** one setting chooses Steer, Queue or Interrupt, with the supported behavior applied to the current Agent. Clear composer is hidden when the session is inactive.
+- **Keep the running Agent recognizable:** when you arm a different Agent for the next message, the picker still identifies the Agent running the current session.
+- **Pending messages settle cleanly:** a locally sent message is reconciled with the conversation when its pending state clears, instead of lingering as an extra entry.
+
+### Sessions and folders
+
+- **New session in folder keeps its folder:** sessions started from a folder are filed into that folder when the machine and workspace match, including launches from saved drafts.
+- **Reorder without disturbing other groups:** moving a session preserves ordering outside its group, pinned rows keep the right indentation, and a new drag refreshes its drop geometry.
+- **Find and recognize your projects:** custom names and colors appear on project groups without a directory path, work with collapse and search, and session IDs are searchable. Visible rows refresh when their session details change.
+- **Imported sessions keep their original dates:** importing a native conversation can preserve its original creation and update times instead of making old work look new. Update the CLI and server for this change.
+- **See why an approved request failed:** approval details and Activity show the execution failure reason.
+- **Agent-requested launches have an explicit limit:** an approval in the app cannot start a session requested by another Agent when it cannot apply that request's permission policy. It reports the failure; start the session manually instead.
+- **Stop reaches the session runner:** stopping a session tracks the reported runner's exit, including Windows terminal attachments, rather than relying on a launcher process. Terminal hangup also retires the runner on supported platforms.
+- **Reconnect and replay preserve the conversation:** completed streamed replies can be replayed after reconnect, and turns removed by rollback stay out of replay and fork context. A late completion from an older turn no longer replaces the session's latest turn.
+- **Failed turns stay failed:** invalid diagnostic details no longer prevent the terminal failure state from being saved, and old failed turns are no longer replayed from quarantined records.
+
+### Accounts and usage limits
+
+- **Current usage and reset countdowns:** account screens and the composer use the current reading for the selected account. Rings show remaining capacity, reset labels count down while visible, and hovering a badge does not change its size.
+- **Recover when quota returns:** Claude retains usage-window evidence through request failures, and recovery waits for the provider's reset evidence rather than guessing from a fallback time. Recovery keeps retrying while the turn or account-pool state catches up.
+- **A selected reset can take effect immediately:** recovery can redeem a reset before the account inventory has finished loading. Automatic recovery checks for sessions using the same native provider are staggered instead of all starting together.
+- **Clearer connected-account failures:** connection and OAuth errors explain network failures instead of only showing “Failed to fetch.” One-use authorization writes are not blindly replayed.
+
+### Claude
+
+- **Model changes stick:** a model selected after startup applies to Claude, and the chosen model is retained through local, offline and fast startup. It stays separate from reusable launch arguments, and model choices are published when the server connection attaches.
+- **Live permission changes apply within the turn:** switching permission mode no longer lets an earlier prompt snapshot override your new choice.
+- **Answer native questions and permissions reliably:** Claude's terminal reader recognizes scrolled prompts and question review screens that have no extra confirmation prose, and prefers a newer prompt over an older scrolled composer.
+- **Cleaner conversations:** prompts sent through the terminal are matched before their echoes arrive, generated context stays out of user messages, and the coding instructions are appended once. Local sessions publish their identity when the native transcript appears, and Direct sessions are identified from startup.
+- **Cleaner terminal output:** terminal character-set controls no longer appear as stray text, and the Python terminal relay honors the configured terminal name.
+
+### Reading and editing
+
+- **Tables keep their formatting:** inline links, code and emphasis render inside table cells, and streamed rows stay aligned to the same column grid.
+- **Refresh the whole open file tree:** refreshing updates every expanded directory, including nested folders.
+- **Saved files show the saved content:** leaving edit mode waits for the file refresh, so the viewer does not briefly show the old text. Typing and Escape inside the code editor stay with the editor instead of going to the session composer.
+- **Read replies aloud sooner:** supported buffered speech providers can begin after the first sentence rather than waiting for the whole message to be synthesized. Stop also cancels an in-progress audio download.
+- **Clearer tool entries:** Skill headers name the invoked skill, and consecutive OpenCode thoughts appear together in one Thinking entry. Root-session OpenCode V2 tool calls appear in the transcript.
+
+### Phone and desktop
+
+- **Android notifications show their actions:** permission and question requests use app-rendered action buttons when the new Android app, server and CLI are all installed. Devices without the new native support keep the existing notification delivery path.
+- **Permission decisions stay reachable:** long request details scroll inside their card while approval controls remain available.
+- **Menus fit where you open them:** native popovers account for an already-open keyboard; web popovers avoid clipping in nested dialogs and do not accidentally activate the row behind them.
+- **More room around the composer:** the new-session wizard scrolls clear of the input, composer icons are centered, and sidebar and overlay-panel resize handles are easier to reach on web and desktop.
+- **Your language choice survives restart and sync,** including accounts that use plaintext storage.
+- **iOS 16 and 17 can start again:** the new native build includes the startup dependency fix.
+- **Useful session diagnostics:** copied session debug information now includes the session name as well as its ID.
+
+### CLI and self-hosting
+
+- **Start-only titles stay start-only:** when an Agent may set only the initial session title, later title writes are refused. Manual renaming remains available, and ambiguous session-title requests retain their candidate session IDs in the error.
+- **Share selected machine environment variables:** set `HAPPIER_SESSION_FORWARD_ENV` to a comma-separated list of names in the daemon's environment. New sessions inherit those values; explicit Profile and session values take precedence. Restart the daemon after changing its environment.
+- **Reuse the machine's tool caches:** sessions inherit a configured Playwright browser cache, and tmux launches use the current cache environment. Claude also keeps the Linux user-session D-Bus address when supplied.
+- **Linux sessions use systemd-owned scopes** when the user service manager is available, rather than moving themselves between control groups.
+- **Herdr control works with Windows named pipes,** including case variations. Recorded Herdr panes can be stopped without first locating the Herdr executable. Windows CLI updates still require the manual update path.
+- **Managed CLI installs are recognized through their home-bin shortcuts,** so update diagnostics report the installation that owns the running CLI.
+- **Remote MCP connections can go direct:** ACP Agents that advertise HTTP or SSE support can connect directly to eligible managed endpoints. Endpoints with authentication, configured headers or environment, or credential/query/fragment-bearing URLs keep the stdio bridge; unsupported transports do too.
+- **Temporary MCP configuration is removed on normal process exit.**
+- **Clearer self-hosted diagnostics:** the server's version response includes its package version. Failed Account Settings refreshes back off instead of starting another refresh for every CLI operation, and session runners request updates for their own session to reduce unrelated event traffic.
+- **Current OpenCode install instructions:** the website uses the `@opencode/cli` package name.
+
+### Updating and compatibility
+
+- **Versions:** app 0.2.23; CLI, server and Stack 0.2.22.
+- **Install the new native app on iOS and Android.** The runtime changes from `0.2.12-native` to `0.2.13-native`; an OTA update for the new runtime does not update older native builds. The Android notification actions and iOS startup fix require the new native build.
+- **Update the CLI and daemon on your machines** for the Agent, recovery, environment and runner fixes. Windows users must use the manual CLI update instructions.
+- **Self-hosters must apply the server migration before running the new server.** It adds a push-token capability column with a default of false for existing devices. Android's updated action delivery needs the new native app, server and CLI together; an older participant uses the existing notification path. Keep the added column if rolling the server back.
+
+### App contributors
+
+Thanks to silas for filing new sessions into their folder; Dax Liniere for session dragging, account-aware usage display, imported session dates, connected-account error messages and OpenCode thought grouping; and Serge De Coster for starting read-aloud after the first sentence.
+
+### CLI contributors
+
+Thanks to Dax Liniere for Claude usage-window evidence, start-only title enforcement and staggering native-provider recovery checks; Denis Joubert for Windows Herdr named-pipe support; and sergedc for Claude model selection fixes.
+
 ## Release 2026-11-16.1 - 2026-11-16
 
 <!-- happier-release-note-projections:v1

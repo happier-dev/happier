@@ -6100,7 +6100,7 @@ export const pl: TranslationStructure = {
 	        waitingForRuntimeActivityNotice: 'Oczekiwanie na zakończenie aktywności środowiska',
 	        runtimeActivityUnknownNotice: 'Oczekiwanie na stan aktywności środowiska',
 	        waitingForRuntimeNotice: 'Oczekiwanie na ponowne połączenie środowiska',
-	        steerUnavailableWaitingForTurnNotice: 'Nie może teraz dołączyć do tej tury · zostanie wysłana po niej',
+	        steerUnavailableWaitingForTurnNotice: 'Nie można teraz wstawić do tej tury · zostanie wysłana po niej',
 	        nonSteerableNotice: "Bieżąca tura nie może przyjąć wstawienia po tej zmianie trybu. Wiadomość uruchomi się później albo użyj Wyślij teraz, aby przerwać.",
 	        steerBlockedTerminalDraftNotice: 'Oczekiwanie: szkic w polu tekstowym terminala blokuje dostarczenie. Wyczyść go w terminalu lub przerwij turę.',
 	        clearTerminalComposer: {
@@ -8580,11 +8580,11 @@ settingsSession: {
         title: "Wysyłanie wiadomości",
         footer: 'Wybierz, co się dzieje, gdy wysyłasz wiadomość, kiedy agent pracuje.',
         busySend: {
-          addToTurnTitle: 'Dodaj do bieżącej tury',
+          addToTurnTitle: 'Wstaw do bieżącej tury',
           addToTurnSubtitle: 'Agent od razu ją czyta i pracuje dalej, jak przy pisaniu w jego terminalu. Jeśli nie może jej przyjąć w trakcie tury, wiadomość czeka w Oczekujących do końca tury.',
-          waitForTurnTitle: 'Poczekaj na koniec tury',
+          waitForTurnTitle: 'Dodaj do kolejki do końca tury',
           waitForTurnSubtitle: 'Wiadomość zostaje w Oczekujących, gdzie możesz ją edytować lub zmienić kolejność, i zostanie wysłana po turze.',
-          interruptTitle: 'Zatrzymaj turę i wyślij',
+          interruptTitle: 'Przerwij i wyślij',
           interruptSubtitle: 'Zatrzymuje pracę agenta i od razu wysyła wiadomość.',
         },
         inactiveSessionsTitle: 'Nieaktywne sesje',

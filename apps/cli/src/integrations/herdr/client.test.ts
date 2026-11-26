@@ -22,7 +22,7 @@ vi.mock('node:child_process', async (importOriginal) => ({
   }),
 }));
 
-import { createHerdrClient, readHerdrCreatedWorkspaceTarget } from './client';
+import { createHerdrClient, readHerdrCreatedWorkspaceTarget, resolveHerdrSocketEndpoint } from './client';
 import { withHerdrApi } from './herdrApi.testkit';
 
 const launch = { label: 'work', cwd: '/tmp', argv: ['/managed/happier', 'claude'], env: {} };
@@ -32,6 +32,28 @@ const clientFor = (socketPath: string) => {
 };
 
 describe('Herdr client workspace placement', () => {
+  it('opens a Windows marker file on the named pipe Herdr actually listens on', () => {
+    const marker = 'C:\\Users\\a\\AppData\\Roaming\\herdr\\herdr.sock';
+    expect(resolveHerdrSocketEndpoint(marker, 'win32')).toBe(`\\\\.\\pipe\\${marker}`);
+    for (const prefix of ['pipe', 'PIPE', 'PiPe']) {
+      const qualified = `\\\\.\\${prefix}\\happier-herdr-test`;
+      expect(resolveHerdrSocketEndpoint(qualified, 'win32')).toBe(qualified);
+    }
+    expect(resolveHerdrSocketEndpoint('/tmp/herdr.sock', 'linux')).toBe('/tmp/herdr.sock');
+  });
+
+  it.skipIf(process.platform !== 'win32')('connects to the real named pipe from an unqualified Herdr endpoint', async () => {
+    await withHerdrApi(async api => {
+      // Herdr reports the namespaced name; Node's listener needs the qualified pipe address.
+      const marker = api.socketPath.slice('\\\\.\\pipe\\'.length);
+      const client = createHerdrClient({
+        binary: 'herdr', sessionName: 'work', socketPath: marker,
+        actionTimeoutMs: 1_000, startupTimeoutMs: 1_000,
+      });
+      await expect(client.readPane('managed')).resolves.toBe('ok');
+    }, { response: method => method === 'pane.read' ? { read: { text: 'ok' } } : undefined });
+  });
+
   it.skipIf(process.platform === 'win32')('serves and cleans up a socket fixture when TMPDIR exceeds the Unix socket path budget', async () => {
     const env = createEnvKeyScope(['TMPDIR']);
     let socketPath = '';

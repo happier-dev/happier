@@ -3,9 +3,9 @@
  *
  * Text is never measured: widths are estimated from glyph classes so the table lays out in one
  * native/CSS flex pass. Each column gets a `natural` width (widest cell on one line) and a `floor`
- * (narrowest readable width). Rendering gives every cell of a column `flexBasis: natural`,
- * `flexShrink: shrink` and `minWidth: floor`; because flex shrinks items in proportion to
- * `flexShrink × flexBasis`, each column gives up width in proportion to `natural - floor`, every
+ * (narrowest readable width). Rendering gives every cell of a column `width: natural` (its flex
+ * basis), `flexShrink: shrink` and `minWidth: floor`; because flex shrinks items in proportion to
+ * `flexShrink × basis`, each column gives up width in proportion to `natural - floor`, every
  * column reaches its floor at the same time, and rows stay aligned without any measurement.
  * Estimates only need to be close: a slightly narrow estimate wraps one more word, a slightly wide
  * one leaves a little padding.

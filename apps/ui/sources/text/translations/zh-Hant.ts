@@ -5311,7 +5311,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     minutes > 0
                         ? `等待目前工作完成 · 已執行 ${minutes} 分鐘`
                         : '等待目前工作完成',
-                steerUnavailableWaitingForTurnNotice: '暫時無法加入本輪 · 結束後傳送',
+                steerUnavailableWaitingForTurnNotice: '暫時無法引導本輪 · 結束後傳送',
                 deliveryBlockedReasons: {
                     terminalComposerDraft: '終端機輸入框中的草稿阻擋了遞送',
                     runtimeConfigBlocked: '執行階段設定阻擋了遞送',
@@ -7300,11 +7300,11 @@ settingsSession: {
             title: '訊息送出',
             footer: '選擇在代理工作時傳送訊息會發生什麼。',
             busySend: {
-              addToTurnTitle: '加入目前輪次',
+              addToTurnTitle: '引導目前輪次',
               addToTurnSubtitle: '代理會立即讀取並繼續工作，就像在它自己的終端機裡輸入一樣。如果它無法在輪次中途接收，訊息會在待傳送中等到本輪結束。',
-              waitForTurnTitle: '等本輪結束',
+              waitForTurnTitle: '加入佇列，等本輪結束',
               waitForTurnSubtitle: '將訊息留在待傳送中，你可以編輯或調整順序，本輪結束後再傳送。',
-              interruptTitle: '停止本輪並傳送',
+              interruptTitle: '中斷並傳送',
               interruptSubtitle: '停止代理目前的工作並立即傳送訊息。',
             },
             inactiveSessionsTitle: '非使用中的工作階段',
