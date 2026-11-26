@@ -50,6 +50,34 @@ async function fixture(mode: 'tauri' | 'native' = 'tauri') {
 }
 
 describe('local daemon service Actions through the native task owner', () => {
+    it('refuses explicit Settings refresh when the displayed Account differs from the Home credential', async () => {
+        const { serverId, manual } = await fixture();
+        storage.setState({ profileScope: { serverId, accountId: 'bob' },
+            profile: { ...storage.getState().profile, id: 'bob' } });
+        const { useLocalDaemonControl } = await import('@/components/settings/machines/localControl/useLocalDaemonControl');
+        const hook = await renderHook(() => useLocalDaemonControl({ runner: manual.runner, enabled: false }));
+        try {
+            await act(async () => { await hook.getCurrent().refreshStatus(); });
+            expect(manual.bridge.start).not.toHaveBeenCalled();
+            expect(hook.getCurrent().status).toBe(status);
+
+            await act(async () => {
+                storage.setState({ profileScope: { serverId, accountId: 'alice' },
+                    profile: { ...storage.getState().profile, id: 'alice' } });
+            });
+            let refresh!: Promise<string | null>;
+            await act(async () => { refresh = hook.getCurrent().refreshStatus(); });
+            await vi.waitFor(() => expect(manual.bridge.start).toHaveBeenCalledOnce());
+            const taskId = 'personal-home-task-1';
+            await act(async () => manual.emitResult(taskId, { protocolVersion: 1, taskId, ok: true,
+                data: { ...status, daemonRunning: false } }));
+            await expect(refresh).resolves.toBe(taskId);
+            expect(hook.getCurrent().status?.daemonRunning).toBe(false);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it.each([
         [true, 'cli.pathExposure.ensure.v1', { changed: true, shellReloadHint: null, failure: null }],
         [false, 'cli.pathExposure.remove.v1', { removed: true, failure: null }],

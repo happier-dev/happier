@@ -256,7 +256,7 @@ export function useLocalDaemonControl(options: Readonly<{
         if (taskId && spec) adoptLocalComputerSetup(runner, taskId, spec, setupApproval, readLocalDaemonStatusData);
     }, [runner, setupTask.activeTaskId, setupApproval]);
 
-    const refreshStatus = React.useCallback(async () => {
+    const loadInitialStatus = React.useCallback(async () => {
         if (isUnavailable) {
             return null;
         }
@@ -319,7 +319,7 @@ export function useLocalDaemonControl(options: Readonly<{
     }, [isUnavailable, runner, setLastStatus]);
 
     const runAction = React.useCallback(async (
-        actionId: 'machines.local.service.start' | 'machines.local.service.update' | 'machines.add.local.start',
+        actionId: 'machines.local.service.status' | 'machines.local.service.start' | 'machines.local.service.update' | 'machines.add.local.start',
         input: Readonly<{ reconsiderCli?: boolean; purpose?: 'relay_repair' }> = {},
     ): Promise<string | null> => {
         if (isUnavailable) {
@@ -346,6 +346,8 @@ export function useLocalDaemonControl(options: Readonly<{
             return null;
         }
     }, [activeServerSnapshot.serverId, appAccountId, executeAction, isUnavailable]);
+
+    const refreshStatus = React.useCallback(() => runAction('machines.local.service.status'), [runAction]);
 
     const startDaemonService = React.useCallback(async () => {
         await runAction('machines.local.service.start');
@@ -380,8 +382,8 @@ export function useLocalDaemonControl(options: Readonly<{
             return;
         }
         autoRefreshRequestedRef.current = true;
-        void refreshStatus().catch(() => {});
-    }, [options.enabled, isUnavailable, refreshStatus]);
+        void loadInitialStatus().catch(() => {});
+    }, [options.enabled, isUnavailable, loadInitialStatus]);
 
     React.useEffect(() => {
         const nextStatus = readLocalDaemonStatusData(statusSnapshot?.result ?? null);
