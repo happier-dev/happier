@@ -38,7 +38,10 @@ function createActionExecutor(deps: ActionExecutorDeps) {
         const input = ScmComparisonCaptureInputSchema.parse(args.input);
         const source = input.source ?? { kind: 'workingTree' as const };
         return { success: true, comparison: { id: input.comparisonId ?? comparisonId, source,
-          repository: { rootPath: input.cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+          repository: { rootPath: input.cwd }, endpoints: {}, inventory: { state: 'complete', files: [{
+            path: 'src/auth.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false,
+            evidence: { state: 'available', unifiedDiff: '' }, occurrences: [],
+          }], reasons: [] } },
           metadata: { source, sourceKey: input.comparisonId ?? comparisonId } };
       }
       if (deps.scmActionExecute) return deps.scmActionExecute(args);
