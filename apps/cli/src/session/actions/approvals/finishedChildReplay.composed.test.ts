@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import {
   AccountSettingsSchema, ApprovalRequestV2Schema, FeaturesResponseSchema, createActionExecutor,
@@ -17,9 +17,12 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { SessionMessageContentSchema, UserMessageSchema } from '@/api/types';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
+import { createCliActionDeps } from '../createCliActionDeps';
+import { createDeferredOutcomeDeliveryBoundary } from './deferredOutcomeDelivery.testkit';
 
 // Only authenticated HTTP and RPC boundaries are substituted. The CLI executor, its
 // executionRunGet adapter/service, strict codecs and approval replay stay real.
@@ -58,6 +61,14 @@ describe('finished child approval through the credentialed CLI replay owner', ()
             capabilities: { serverIdentity: { serverIdentityId: 'srv_finished_child' } } });
           const sessionId = 'c123456789012345678901234';
           const workspace = { machineId: 'machine', path: '/workspace' };
+          const origin = await createDeferredOutcomeDeliveryBoundary({ accountId: 'account', serverId,
+            serverIdentityId: 'srv_finished_child', machineId: 'machine', sessionId, sessionCrypto: { mode: 'plain', ctx: null },
+            callerAuthority: 'account_automation', readReceiver: () => originExecutor });
+          onTestFinished(() => origin.close());
+          const originExecutor = createActionExecutor(createCliActionDeps({ credentials, token, sessionId: '', mode: 'plain', ctx: null,
+            serverId, serverIdentityId: 'srv_finished_child', serverHttpBaseUrl: endpoint,
+            externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: origin.installation.secretKey,
+            machineAdmissionTransport: origin.machineAdmissionTransport }));
           let comment = ReviewCommentV1Schema.parse({ v: 1, id: 'comment', accountId: 'account', workspace, sessionId,
             anchor: { kind: 'file', filePath: 'a.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Original finding',
             bodyVersion: 1, edits: [], author: { kind: 'plugin', pluginId: 'acme.external-review' }, state: 'open', flags: {},
@@ -99,6 +110,13 @@ describe('finished child approval through the credentialed CLI replay owner', ()
           });
           vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
+            if (path === '/v1/machines/machine') return { status: 200, data: { machine: origin.machine } };
+            const prefix = `/v2/sessions/${sessionId}/messages/by-local-id/`;
+            if (path.startsWith(prefix)) {
+              const message = origin.readMessage(decodeURIComponent(path.slice(prefix.length)));
+              if (message) return { status: 200, data: { message } };
+              throw Object.assign(new axios.AxiosError('Message not found'), { response: { status: 404, data: { error: 'Message not found' } } });
+            }
             if (path === '/v1/account/profile') return { status: 200, data: { id: 'account' } };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
@@ -108,8 +126,17 @@ describe('finished child approval through the credentialed CLI replay owner', ()
             throw new Error(`Unexpected HTTP read: ${path}`);
           });
           let effects = 0;
+          const pendingInputs = new Map<string, ReturnType<typeof UserMessageSchema.parse>>();
           vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
             const path = new URL(String(url)).pathname;
+            if (path === `/v2/sessions/${sessionId}/pending`) {
+              const content = SessionMessageContentSchema.parse(input.content);
+              if (content.t !== 'plain') throw new Error('Expected plain outcome input');
+              const message = UserMessageSchema.parse(content.v);
+              const didWrite = !pendingInputs.has(input.localId);
+              pendingInputs.set(input.localId, message);
+              return { status: 200, data: { didWrite, message: { localId: input.localId } } };
+            }
             if (path === '/v1/artifacts/approval') {
               expect(input.expectedHeaderVersion).toBe(artifact.headerVersion);
               expect(input.expectedBodyVersion).toBe(artifact.bodyVersion);
@@ -138,7 +165,8 @@ describe('finished child approval through the credentialed CLI replay owner', ()
           const runReadsBeforeDecision = rpc.mock.calls.length;
           const decision = await decide();
           expect(decision, JSON.stringify(decision)).toMatchObject(
-            { ok: true, result: { status: 'executed', execution: { ok: true } } });
+            { ok: true, result: { status: 'executed', execution: { ok: true },
+              delivery: { status: 'accepted', localId: 'approval-result:approval' } } });
           // The approval owner no longer reads the Run to decide currentness.
           expect(rpc.mock.calls.length).toBe(runReadsBeforeDecision);
           expect(comment.body).toBe('Approved edit');
@@ -146,6 +174,10 @@ describe('finished child approval through the credentialed CLI replay owner', ()
           expect(effects).toBe(1);
           await decide();
           expect(effects).toBe(1);
+          expect([...pendingInputs.keys()]).toEqual(['approval-result:approval']);
+          expect(pendingInputs.get('approval-result:approval')).toMatchObject({ content: { type: 'text',
+            text: expect.stringContaining('"artifactId":"approval"') } });
+          expect(origin.replayArtifacts).toEqual([{ artifactId: 'approval' }]);
         });
       } finally {
         env.restore();
