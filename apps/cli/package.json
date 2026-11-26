@@ -146,7 +146,6 @@
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/transfers": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
-    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@stablelib/hex": "^2.0.1",
     "@types/cross-spawn": "^6.0.6",
@@ -182,6 +181,9 @@
     "tweetnacl": "^1.0.3",
     "ws-node": "npm:ws@^8.18.3",
     "zod": "4.6.7"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.8.1"
   },
   "devDependencies": {
     "@eslint/compat": "^1",
