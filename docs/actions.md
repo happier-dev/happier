@@ -4140,6 +4140,9 @@ and breakdown remain own values.
 For an admitted API-token invocation that names Environment targets,
 `apiTokenGrant` intersects an explicit usage source selection with the app sources
 in those Environments. An empty selection reads all app sources in the grant.
+The grant projection strips demand for quota, connected-account pools, Work,
+and Session or Activity evidence before the read. The response contains only
+accounting for the admitted app sources.
 The reader and delivery both consume the projected queries.
 The grant owner permits the Usage query, accounting export and private recap
 paths to use this projection. App calls can still read the public model price

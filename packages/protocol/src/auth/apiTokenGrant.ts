@@ -181,10 +181,13 @@ export function projectApiTokenUsageQueryV1(grant: ApiTokenGrantV1 | undefined, 
 
   const allowedSources = new Set(environments.map(usageAppCallsSourceId));
   const queries = input.queries.flatMap(query => {
-    if (!query.sources.length) return [{ ...query, sources: [...allowedSources] }];
-    const sources = query.sources.filter(source => allowedSources.has(source));
+    const sources = query.sources.length ? query.sources.filter(source => allowedSources.has(source)) : [...allowedSources];
     if (!sources.length) return [];
-    return [sources.length === query.sources.length ? query : { ...query, sources }];
+    // Project the requested evidence as well as the sources. Aggregation can
+    // derive Work and Activity sections even without a private source read.
+    return [{ ...query, sources, includeQuota: false, includeQuotaHistory: false, includeQuotaExactHistory: false,
+      includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+      includeCoach: false, includeActivity: false, includeMessageStats: false }];
   });
   return queries.length ? { ok: true, input: { queries } } as const : {
     ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',

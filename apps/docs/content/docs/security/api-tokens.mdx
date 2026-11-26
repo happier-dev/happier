@@ -44,7 +44,9 @@ permission modes and websites. Content access is a separate choice.
 If a token's grant names specific Environments, Usage queries, accounting exports
 and private recaps default to the app sources in those Environments. When you
 select sources for a query or export, Happier includes only the sources in the
-grant. Selections that contain only sources outside the grant return
+grant. In the development preview, the query omits quota, connected-account
+pools, Work, and Session or Activity evidence even when requested. Selections
+that contain only sources outside the grant return
 `credential_scope_denied` with reason `environment_not_granted`. Actions that
 cannot use app sources, including Usage history and quota calendar exports,
 return the same error. Tokens with Account-wide access can query usage across

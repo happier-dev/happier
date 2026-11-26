@@ -6,13 +6,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import tweetnacl from 'tweetnacl';
-import { API_TOKEN_FULL_GRANT_V1, createActionExecutor, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, createActionExecutor, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { enforceExternalActionResponseEnvelopeLimitV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectUsageAccountingSessionIds, projectUsageAccountingSessionMembership } from '@happier-dev/protocol/usage/usageAccountingMembership';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { usageAppCallsSourceId } from '@happier-dev/plugin-sdk/usage';
+import { USAGE_PRICE_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
@@ -47,6 +50,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/ca
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ConnectedServiceQuotaGetResultV1Schema, QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { createCliConnectedServiceAction } from '@/session/actions/connectedServiceActionDeps';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 const socketBoundary = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', () => ({ io: socketBoundary }));
@@ -90,6 +94,106 @@ function registerAccountingRoutes(app: FastifyInstance,
 }
 
 describe('CLI and MCP personal usage Account transport', () => {
+  it('returns only granted App calls when an Environment API token asks for quota, Work and Session evidence', async () => {
+    const app = fastify();
+    const ref = { service: { pluginId: 'example.usage', localId: 'quota' }, accountId: 'work' };
+    const group = QualifiedConnectedAccountGroupV4Schema.parse({
+      v: 1, ref: { service: ref.service, groupId: 'private-pool' }, incarnation: 'pool-lifetime', displayName: null,
+      policy: {}, activeConnectedAccountId: ref.accountId, generation: 1, runtimeStateRevision: 1, state: {},
+      createdAt: 100, updatedAt: 150, members: [{ v: 1, connectedAccountId: ref.accountId, state: {}, createdAt: 100, updatedAt: 150 }],
+    });
+    const requests: string[] = [];
+    app.addHook('onRequest', async request => { requests.push(request.url.split('?')[0]!); });
+    // The signed HTTP transport sends logical GETs as framed POSTs.
+    app.post('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture());
+    app.post('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+    app.post('/v1/account/profile', async () => ({
+      id: 'account', connectedAccountGroupsV4: [group], connectedAccountsV4: [{
+        ref, status: 'connected', authenticationModeId: null, revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: true, configurationRevision: '1', scopes: [],
+      }],
+    }));
+    app.post('/v1/account/usage/prices', async () => bundledUsageModelPriceCatalog);
+    registerAccountingRoutes(app, async () => response);
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage.test' });
+
+    const target = { kind: 'machine' as const, machineId: 'collector' };
+    const grant = ApiTokenGrantV1Schema.parse({
+      ...API_TOKEN_FULL_GRANT_V1,
+      actions: { families: [], ids: [USAGE_QUERY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, USAGE_PRICE_ACTION_IDS.get] },
+      targets: { sessions: [], machines: [target.machineId], environments: ['staging'] },
+    });
+    const externalActionCredential = { accountId: 'account', principalId: 'principal', credentialId: 'credential', grant };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1, token: 'home-minted-invocation', binding: {
+        ...externalActionCredential, serverIdentityId: 'home', custodianAccountId: 'account',
+        installationId: 'installation', machineId: target.machineId, actionId: USAGE_QUERY_ACTION_ID_V1,
+        requestId: 'request', requestEnvelopeDigest: 'A'.repeat(43), target,
+      },
+    });
+    const source = { kind: 'environment', serverId: 'home', environmentId: 'staging' };
+    const executor = createActionExecutor({
+      ...createUnavailableActionTransportDeps(),
+      ...createAccountServerActionDeps({
+        token: 'daemon-token', serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'http://usage.test',
+        externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair().secretKey,
+        externalActionMachineInstallationId: 'installation',
+      }),
+      deploymentAction: async () => ({ ok: true, nextCursor: null,
+        items: [createDeploymentEnvironmentHeaderV1({ id: 'staging', serverId: 'home', telemetryMachineId: target.machineId })] }),
+      routeHostChildAction: async ({ input }) => {
+        expect(input).toMatchObject({ input: { source, since: 100, until: 200 } });
+        return { ok: true, result: { ok: true, source, since: 100, until: 200,
+          items: [{ bucketStartMs: 0, provider: null, modelId: null, requestedModel: null, operation: null, callCount: 3,
+            tokens: response.totals.tokens, tokenCategories: response.totals.tokens, reportedCost: { amount: 3, currency: 'USD' },
+            firstSeenMs: 150, lastSeenMs: 150 }],
+          coverage: { callCount: 3, tokenCategoryCallCount: 3, reportedCostCallCount: 3, lostObservations: 0, reason: null },
+        } };
+      },
+    });
+    const requested = {
+      period: { startMs: 100, endMs: 200 }, sources: [], includeComparison: false,
+      includeQuota: true, includeQuotaHistory: true, includeSessionEvidence: true, includeWorkEvidence: true, includeActivity: true,
+    };
+    try {
+      const result = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [requested] }, {
+        surface: 'api', serverId: 'home', externalActionTarget: target, externalActionCredential,
+        externalActionExecutionAuthorization: authorization,
+      });
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      const { results } = UsageQueryBatchResultSchema.parse(result.result);
+      expect(results).toHaveLength(1);
+      const slice = results[0]!;
+      expect(slice, JSON.stringify({ sources: slice.sources, requests })).toMatchObject({
+        shownQuery: { sources: [usageAppCallsSourceId('staging')] },
+        accounting: { totals: { eventCount: 3 } },
+      });
+      for (const key of ['quota', 'pools', 'work', 'workSummary', 'mergedOutcomes', 'coach'] as const) {
+        expect(slice[key], key).toBeUndefined();
+      }
+      // The footprint can derive from App accounting alone. Session facts cannot.
+      if (slice.howYouWork) {
+        expect(slice.howYouWork).toMatchObject({
+          activity: null, collaboration: null, inputs: null, intervals: null, nightShift: null,
+          permissions: null, runLengths: null, steering: null, todayInParallel: null,
+        });
+      }
+      expect(slice.accounting?.activity).toBeUndefined();
+      expect(slice.accounting?.messageStats).toBeUndefined();
+      expect(slice.accounting?.sessionIds).toBeUndefined();
+      expect(slice.accounting?.sessionMembership).toBeUndefined();
+      expect(slice.sources.filter(row => row.source === 'work' || row.source === 'how_you_work')).toEqual([
+        { source: 'work', status: 'not_loaded' }, { source: 'how_you_work', status: 'not_loaded' },
+      ]);
+      expect(slice.sources.filter(row => /^(quota|selection)(:|$)/.test(row.source))).toEqual([]);
+      // The Account profile supplies a pool and quota source. Only the App accounting path may run.
+      expect(requests).toContain('/v1/account/profile');
+      expect(requests.filter(path => path === USAGE_SESSION_EVIDENCE_PATH || path.startsWith('/v2/usage/')
+        || path.includes('/provider-account-usage/'))).toEqual([]);
+      expect(socketBoundary).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+
   it.each([
     { state: 'absent', encryption: null },
     { state: 'invalid', encryption: { type: 'legacy' as const, secret: new Uint8Array(1) } },
