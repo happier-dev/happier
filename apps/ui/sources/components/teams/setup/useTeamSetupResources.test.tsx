@@ -209,6 +209,48 @@ it.each([
     } finally { await setup.unmount(); await scopeHook.unmount(); }
 });
 
+it('keeps the admitted Joined summary in place while Home refreshes it', async () => {
+    onTestFinished(await installRealActionExecutorModuleLoader());
+    const serverId = await homes.addHome({ name: 'Joined Home', serverUrl: 'https://joined-refresh.example.test',
+        serverIdentityId: 'srv_joined_refresh', accountId: 'member', currentAccount: true, teamsEnabled: true });
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'member' };
+    storage.getState().activateProfileScope(scope);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const address = { serverId: scope.serverId, teamId: 'joined-team' };
+    const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: address.teamId });
+    homes.answer(serverId, summary.path, { body: {
+        teamId: address.teamId, kinds: [{ kind: 'sessions', status: 'available', count: 1 }],
+    } });
+    homes.answer(serverId, '/v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
+    const { TeamJoinedSummaryForTeam } = await import('@/components/teams/join/TeamJoinedSummary');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { t } = await import('@/text');
+    const team = teamSummaryFixture({ id: address.teamId, policy: teamPolicyFixture({ managedDefaults: null }) });
+    homes.answer(serverId, '/v1/teams/get', { body: team });
+    const screen = await renderScreen(<TeamJoinedSummaryForTeam testID="joined-resources" scope={scope} teamId={address.teamId} />);
+    let finishRefresh!: () => void;
+    const respondAfter = new Promise<void>(resolve => { finishRefresh = resolve; });
+    try {
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('teams.join.summary.sessions', { count: 1 })));
+        const readsBeforeRefresh = homes.requestsFor(summary.path).length;
+        homes.answer(serverId, summary.path, { respondAfter, body: {
+            teamId: address.teamId, kinds: [{ kind: 'sessions', status: 'available', count: 2 }],
+        } });
+        await act(async () => publishHomeAccountChange(scope.serverId));
+        await waitForHomeGovernance(() => expect(homes.requestsFor(summary.path)).toHaveLength(readsBeforeRefresh + 1));
+        expect(screen.getTextContent()).toContain(t('teams.join.summary.sessions', { count: 1 }));
+        finishRefresh();
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('teams.join.summary.sessions', { count: 2 })));
+    } finally {
+        finishRefresh();
+        await screen.unmount();
+    }
+});
+
 it.each(['source_backend_unavailable', 'source_unavailable'] as const)(
     'keeps Team setup unknown until Sources settle and offers recovery for %s', async (failure) => {
         onTestFinished(await installRealActionExecutorModuleLoader());

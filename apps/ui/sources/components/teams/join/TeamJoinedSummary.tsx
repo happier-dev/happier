@@ -133,8 +133,8 @@ export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
     kinds, presetName, teamName: props.context.team.name,
     sourceNames: sourceRows.slice(0, NAMED_SOURCES).map((source) => source.name),
   }), [kinds, presetName, props.context.team.name, sourceRows]);
-  // The summary is shown whole once it answers, never row by row: one height change, not five.
-  if (status !== 'ready') return null;
+  // Keep the Home owner's retained rows at the same height while it refreshes them.
+  if (status !== 'ready' && status !== 'refreshing') return null;
   return <TeamJoinedSummaryView testID={props.testID} rows={rows} />;
 });
 
