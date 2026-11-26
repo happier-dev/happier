@@ -15,7 +15,7 @@ export const databaseReadAccessCreateApprovalFailure = {
 } as const;
 
 type Metadata = Pick<PluginActionContributionV2,
-    'title' | 'dangerLevel' | 'readOnly' | 'placementBindings' | 'confirmation' | 'confirmationWhen'
+    'title' | 'description' | 'dangerLevel' | 'readOnly' | 'placementBindings' | 'confirmation' | 'confirmationWhen'
     | 'approvalScope' | 'approvalInputCustody' | 'secretInputPaths' | 'operation'> & Readonly<{
         /** Owner-local operand metadata; the plugin declaration projection strips it. */
         automationSubject?: Readonly<{ kind: 'database'; field: 'target' }>;
@@ -34,7 +34,8 @@ const selectedExport = { ...read, approvalInputCustody: 'live_only',
 
 /** C6's one presentation/classification owner. Missing producers contribute no callable Action. */
 const databaseActionDeclarations = {
-    [database.DATABASE_TARGETS_LIST_ACTION_ID_V1]: { ...read, title: 'List databases' },
+    [database.DATABASE_TARGETS_LIST_ACTION_ID_V1]: { ...read, title: 'List databases',
+        description: 'List the database destinations visible from the selected worktree or Deployment Environment.' },
     [database.DATABASE_TARGETS_CONNECT_ACTION_ID_V1]: {
         ...write, dangerLevel: 'writesLocal', title: 'Connect database', placementBindings: ['primary'],
         confirmation: { title: 'Connect this database?' },
@@ -132,14 +133,22 @@ const databaseActionDeclarations = {
         confirmation: { title: 'Dismiss this database finding?' },
     },
     [database.DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1]: { ...read, title: 'Prepare database brief' },
-    [database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1]: { ...read, title: 'Read database capture status' },
-    [database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1]: { ...read, title: 'List captured queries' },
-    [database.DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1]: { ...read, title: 'Read captured query' },
-    [database.DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1]: { ...read, title: 'List captured traces' },
-    [database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1]: { ...read, title: 'Read captured trace' },
-    [database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1]: { ...read, title: 'List captured logs' },
-    [database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1]: { ...read, title: 'List captured endpoints' },
+    [database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1]: { ...read, title: 'Read database capture status',
+        description: 'Read the configured capabilities and retained capture coverage for the selected Environment or worktree.' },
+    [database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1]: { ...read, title: 'List captured queries',
+        description: 'Page through captured database query summaries within the requested source and time range.' },
+    [database.DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1]: { ...read, title: 'Read captured query',
+        description: 'Read the retained detail for one captured query or log record in the selected source.' },
+    [database.DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1]: { ...read, title: 'List captured traces',
+        description: 'Page through captured trace summaries within the requested source and time range.' },
+    [database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1]: { ...read, title: 'Read captured trace',
+        description: 'Read spans and capture details for one trace in the selected source.' },
+    [database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1]: { ...read, title: 'List captured logs',
+        description: 'Page through retained log summaries within the requested source and time range.' },
+    [database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1]: { ...read, title: 'List captured endpoints',
+        description: 'Read aggregated endpoint activity within the requested source and time range, or inspect one named endpoint.' },
     [database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1]: {
+        description: 'Delete the retained telemetry in the selected Environment or worktree capture partition.',
         ...write, dangerLevel: 'destructive', title: 'Clear capture', placementBindings: ['contextMenu'], approvalScope: 'environment',
         // One wording for the act everywhere it is offered (menu "Clear capture…"); the body says its consequence once.
         confirmation: {
@@ -149,6 +158,7 @@ const databaseActionDeclarations = {
         },
     },
     [database.DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1]: {
+        description: 'Change whether the selected worktree captures telemetry on its Machine.',
         ...write, dangerLevel: 'writesLocal', title: 'Change capture', placementBindings: ['secondary'],
         // Turning capture on (and retrying it) asks once, in the menu's words ("Turn on capture"); turning it off is
         // the person taking back what they turned on and asks nothing (DBW services item 8).
@@ -159,9 +169,11 @@ const databaseActionDeclarations = {
             confirmLabel: 'Turn on capture',
         },
     },
-    [database.TELEMETRY_METRICS_READ_ACTION_ID_V1]: { ...read, title: 'Read selected telemetry metrics' },
+    [database.TELEMETRY_METRICS_READ_ACTION_ID_V1]: { ...read, title: 'Read selected telemetry metrics',
+        description: 'Read a service’s selected measure and capture coverage over the requested Environment and time window.' },
     [database.TELEMETRY_COSTS_READ_ACTION_ID_V1]: { ...read, title: 'Read selected app LLM cost operands' },
-    [database.TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1]: { ...read, title: 'Check saved key flow' },
+    [database.TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1]: { ...read, title: 'Check saved key flow',
+        description: 'Evaluate the threshold of one saved key-flow check against its collector’s retained samples.' },
     [database.TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1]: { ...read, title: 'Compare retained deployment windows' },
     [database.TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1]: { ...read, title: 'Read regression check time' },
     [database.TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1]: { ...read, title: 'Read exception occurrences' },
