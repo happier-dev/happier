@@ -875,3 +875,237 @@ it('carries an actual Session start through Reviews, a human decision and a cold
         });
     }, { authentication: 'real' });
 });
+
+it('persists a mounted gutter comment through a cold PR read while keeping Viewed personal and comparison scoped', async () => {
+    const { act } = await import('react-test-renderer');
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+    const { captureAccountStoredContentCompatibilityForHttpRequest } = await import('@/app/clientCompatibility/accountStoredContentCompatibility');
+    const { decodeBase64StoredJsonContentEnvelope } = await import('../../../../../ui/sources/sync/encryption/base64StoredJsonContent');
+    const { ScmReviewedMarkInputSchema } = await import('@happier-dev/protocol/scm/reviewedMarks');
+    const { buildScmFileReviewUnits, buildScmReviewScopeId } = await import('@happier-dev/protocol/scm/comparisonOccurrences');
+    const { buildScmReviewedMarksKey } = await import('@happier-dev/protocol/scm/reviewedMarks');
+    const { createLocalScmRepositoryFixture } = await import('../../../../../cli/src/testkit/scm/scmBackendContractFixtures');
+    const { removeTempDir } = await import('../../../../../cli/src/testkit/fs/tempDir');
+    const { runWithScmAccountScope } = await import('../../../../../cli/src/scm/accountScope');
+    const { captureScmComparison } = await import('../../../../../cli/src/scm/comparisons/captureScmComparison');
+    const { executeScmActionOperation } = await import('../../../../../cli/src/scm/actions/executeScmActionOperation');
+    const { createCliScmReviewedMarkAction } = await import('../../../../../cli/src/scm/actions/executeScmReviewedMarkAction');
+    const { kvRoutes } = await import('@/app/api/routes/kv/kvRoutes');
+    const { ReviewChangesHost } = await import('../../../../../ui/sources/components/reviews/ReviewChangesHost');
+    const { WorkspaceScmReviewBody } = await import('../../../../../ui/sources/components/projects/scm/WorkspaceScmReviewBody');
+    const { CodeLineRow } = await import('../../../../../ui/sources/components/ui/code/view/CodeLineRow');
+    const { TextInput } = await import('../../../../../ui/sources/components/ui/text/Text');
+    const { pressTestInstanceAsync, flushHookEffects, renderHook } = await import('../../../../../ui/sources/dev/testkit');
+    const { resetReviewRunCommentsForTests } = await import('../../../../../ui/sources/sync/domains/reviews/comments/reviewRunComments');
+    const { createHomeHubArtifactHttpBoundary } = await import('../../../../../ui/sources/dev/testkit/harness/homeHubArtifactHttpBoundary');
+    const { restoreServerAccountForTest } = await import('../../../../../ui/sources/dev/testkit/harness/serverAccountConnectionHarness');
+    const { InjectedAuthProvider } = await import('../../../../../ui/sources/auth/context/AuthContext');
+    const { useScmReviewedMarks } = await import('../../../../../ui/sources/components/sessions/files/comparison/useScmReviewedMarks');
+    const { PluginUiProvider } = await import('@happier-dev/plugin-ui/advanced');
+    const { Button } = await import('@happier-dev/plugin-ui/components');
+    const { ArtifactView } = await import('../../../../../ui/sources/components/artifacts/ArtifactView');
+    const { ReviewCommentCard } = await import('../../../../../ui/sources/components/reviews/ReviewCommentCard');
+    const { router } = await import('expo-router');
+    const { GithubHappierReviewSummary } = await import('../../../../../../packages/plugins/scm-github/src/ui/detail/happierReviewSummary');
+    const { GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/scm-github/src/triage/contribution');
+    const { PLUGIN_MANIFEST: githubManifest } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+    const { createBoundPluginSurfaceController } = await import('../../../../../ui/sources/components/plugins/surfaces/boundPluginSurfaceController');
+    const { createCanonicalPluginReactNativeHostApiAdapter } = await import('../../../../../ui/sources/components/plugins/reactNative/hostApi');
+    const { createPluginSurfaceContextFixture } = await import('../../../../../ui/sources/dev/testkit/fixtures/pluginSurfaceContextFixture');
+    const { captureActiveServerAccountScopeLifetime } = await import('../../../../../ui/sources/sync/domains/scope/activeServerAccountScope');
+    const { readPluginAccountAvailability } = await import('../../../../../ui/sources/sync/domains/plugins/availability/projection');
+    const { getSyncSingleton } = await import('../../../../../ui/sources/sync/runtime/getSyncSingleton');
+    const { projectBundledPluginUiDeclaration } = await import('../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs');
+    const { installBundledPluginUiDeclarationsForTests } = await import('../../../../../ui/sources/dev/testkit/mocks/bundledPluginUiAssets');
+    const account = await db.account.upsert({ where: { id: 'alice' }, update: {}, create: { id: 'alice', encryptionMode: 'plain' } });
+    const other = await db.account.create({ data: { id: randomUUID(), encryptionMode: 'plain' } });
+    const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+    const otherToken = await createAccountTokenForTests(other.id, { kind: 'account', authority: 'present_user' });
+    const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-review-gutter-' });
+    const cwd = repository.rootPath;
+    try {
+        await writeFile(join(cwd, repository.trackedPath), 'const total = prices.reduce(add);\n');
+        await writeFile(join(cwd, 'package-lock.json'), '{"lockfileVersion":3}\n');
+        await withAuthenticatedTestApp(app => {
+            app.addHook('preHandler', async request => { captureAccountStoredContentCompatibilityForHttpRequest(request); });
+            registerReviewCommentRoutes(app); registerReviewReadRoutes(app); artifactsRoutes(app); registerAccountEncryptionRoutes(app); kvRoutes(app);
+        }, async app => {
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            await runWithServerHttpBaseUrl(origin, () => runWithScmAccountScope(account.id, async () => {
+                const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
+                const comparison = captured.comparison;
+                expect(comparison.inventory.files.map(file => file.path)).toEqual(expect.arrayContaining([repository.trackedPath, 'package-lock.json']));
+                const artifacts = createCredentialedAccountArtifactStore({ token, encryption: null });
+                const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(artifacts));
+                const reviewId = randomUUID();
+                const capture = { target: { kind: 'machine' as const, machineId: 'm1' }, input: { cwd, comparisonId: comparison.id, source: comparison.source } };
+                const binding = await records.start({ reviewId, title: 'Durable gutter review', subjectKind: 'repository', sourceKind: 'direct',
+                    reviewerIds: [], startedAt: Date.now(), comparisonCapture: capture });
+                await records.settle({ ...binding, outcome: 'completed', finishedAt: Date.now(), runs: [] });
+                const serverIdentityId = await getOrCreateServerIdentityId();
+                const machineCalls: Array<{ method: string; payload: unknown }> = [];
+                const executeScm = async (actionId: Parameters<typeof executeScmActionOperation>[0]['actionId'], input: unknown) =>
+                    executeScmActionOperation({ actionId, input, workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] },
+                        executeReviewedMarks: (evidence, request, reviewed) => createCliScmReviewedMarkAction({
+                            credentials: { token, encryption: null }, serverBaseUrl: origin,
+                            resolveAuthorizationHeaders: () => ({ Authorization: `Bearer ${token}` }),
+                            ...('id' in evidence ? { comparison: evidence } : { source: evidence }),
+                            ...('reset' in request ? { reset: true as const } : 'changeKeys' in request ? { changeKeys: request.changeKeys } : { changeRefs: request.changeRefs }), reviewed,
+                        }),
+                    });
+                // Only the Machine/Home transport is substituted; the admitted SCM owner
+                // captures, pages, reads evidence and writes the real per-Account KV route.
+                const homeBoundary = createHomeHubArtifactHttpBoundary(account.id);
+                const request = async (url: RequestInfo | URL, init?: RequestInit) => {
+                    const path = new URL(String(url)).pathname;
+                    if (path.startsWith('/v1/reviews/') || path.startsWith('/v1/artifacts') || path.startsWith('/v1/account/encryption') || path.startsWith('/v1/kv')) return fetch(url, init);
+                    return homeBoundary.request(url, init);
+                };
+                const openFixture = () => createSessionFilesViewFixture({ serverUrl: origin, rootPath: cwd, credentials: { token }, serverIdentityId,
+                    featureOverrides: { features: { plugins: { enabled: true, ui: { enabled: true,
+                        hostedWeb: { enabled: false }, reactNativeBundles: { enabled: true } } } } },
+                    settings: { featureToggles: { 'files.reviewComments': true } }, request,
+                    rpc: call => {
+                        machineCalls.push(call);
+                        if (call.method === RPC_METHODS.SCM_DIFF_FILE) return executeScm('scm.diff.file', call.payload);
+                        if (call.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return executeScm('scm.diffSummary.capture', call.payload);
+                        if (call.method === RPC_METHODS.SCM_DIFF_SUMMARY_REVIEWED_MARK) return executeScm('scm.diffSummary.reviewed.mark', ScmReviewedMarkInputSchema.parse(call.payload));
+                        return undefined;
+                    } });
+                const declaration = await projectBundledPluginUiDeclaration({ packageName: '@happier-dev/plugins-scm-github', packageVersion: githubManifest.version,
+                    manifest: githubManifest, artifactGraphs: [] });
+                if (!declaration) throw new Error('The authored PR renderer declaration is unavailable');
+                const restoreInventory = installBundledPluginUiDeclarationsForTests([declaration]);
+                try {
+                    let fixture = await openFixture();
+                    const body = 'Keep the addition in the captured total.';
+                    const mountChanges = async (selected = capture, active = true) => {
+                        const screen = await fixture.render(React.createElement(ReviewChangesHost, { reviewId, roundOrdinal: 1,
+                            scope: { serverId: fixture.scope.serverId, accountId: account.id }, capture: selected, comments: [], view: 'files',
+                            onSelectView() {}, onOpenComment() {}, active }));
+                        if (active) {
+                            await vi.waitFor(() => expect(screen.findAllByType(WorkspaceScmReviewBody)).toHaveLength(1));
+                            await act(async () => { screen.findByType(WorkspaceScmReviewBody).findAll(node => typeof node.props.onLayout === 'function')[0]
+                                ?.props.onLayout({ nativeEvent: { layout: { width: 900, height: 360 } } }); });
+                            await vi.waitFor(() => expect(screen.findAllByType(CodeLineRow).some(row => row.props.line.kind === 'add'), screen.getTextContent()).toBe(true));
+                        }
+                        return screen;
+                    };
+                    try {
+                        const hidden = await mountChanges(capture, false);
+                        await flushHookEffects({ cycles: 20 });
+                        expect(machineCalls).toEqual([]);
+                        await hidden.unmount();
+                        const screen = await mountChanges();
+                        try {
+                            const row = screen.findAllByType(CodeLineRow).find(item => item.props.line.kind === 'add');
+                            if (!row) throw new Error('The captured added line is not mounted');
+                            const hover = row.findAll(node => typeof node.type === 'string' && typeof node.props.onHoverIn === 'function')[0];
+                            if (!hover) throw new Error('The actual gutter row has no hover control');
+                            await act(async () => { hover.props.onHoverIn({}); });
+                            const gutter = row.findAll(node => typeof node.type === 'string' && node.props.testID === 'review-comment-line-affordance'
+                                && typeof node.props.onPress === 'function')[0];
+                            if (!gutter) throw new Error('The hovered line has no comment affordance');
+                            await act(async () => { await pressTestInstanceAsync(gutter); });
+                            await act(async () => { screen.findByType(TextInput).props.onChangeText(body); });
+                            expect(await db.reviewComment.count({ where: { reviewId } })).toBe(0);
+                            await screen.pressByTestIdAsync('review-comment-composer-save');
+                            await vi.waitFor(async () => expect(await db.reviewComment.count({ where: { reviewId } })).toBe(1));
+                            await screen.pressByTestIdAsync(`diff-file-menu:${repository.trackedPath}`);
+                            await screen.pressByTestIdAsync('diff-file-viewed');
+                            await vi.waitFor(async () => expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: account.id,
+                                key: buildScmReviewedMarksKey(buildScmReviewScopeId({ repositoryRootPath: cwd, source: comparison.source })) } } })).not.toBeNull());
+                        } finally { await screen.unmount(); }
+                        const scopeId = buildScmReviewScopeId({ repositoryRootPath: cwd, source: comparison.source });
+                        const marksKey = buildScmReviewedMarksKey(scopeId);
+                        const readMarks = async (bearer: string) => {
+                            const response = await fetch(`${origin}/v1/kv/${encodeURIComponent(marksKey)}`, { headers: { Authorization: `Bearer ${bearer}`, 'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) } });
+                            return { status: response.status, row: await response.json() };
+                        };
+                        await vi.waitFor(async () => expect((await readMarks(token)).status).toBe(200));
+                        const saved = await db.reviewComment.findFirstOrThrow({ where: { reviewId } });
+                        const ownerRecord = (await readMarks(token)).row;
+                        const expectedKeys = buildScmFileReviewUnits(comparison.inventory.files.find(file => file.path === repository.trackedPath)!).map(unit => unit.key);
+                        expect(decodeBase64StoredJsonContentEnvelope(ownerRecord.value)).toMatchObject({ t: 'plain', v: { reviewedChangeKeys: expectedKeys } });
+                        expect(JSON.parse(saved.authorJson)).toMatchObject({ kind: 'user', userId: account.id });
+                        expect(machineCalls.filter(call => call.method === RPC_METHODS.SCM_DIFF_FILE).every(call => !JSON.stringify(call.payload).includes('package-lock.json'))).toBe(true);
+                        expect(machineCalls.filter(call => call.method === RPC_METHODS.SCM_DIFF_FILE).length).toBeGreaterThan(0);
+                        await fixture.dispose(); standardCleanup(); resetReviewRunCommentsForTests();
+                        fixture = await openFixture();
+                        const reread = await mountChanges();
+                        try {
+                            await reread.pressByTestIdAsync(`diff-file-menu:${repository.trackedPath}`);
+                            expect(reread.findByTestId('diff-file-viewed')?.props.accessibilityState?.selected).toBe(true);
+                        } finally { await reread.unmount(); }
+                        await writeFile(join(cwd, repository.trackedPath), 'const total = prices.reduce(subtract);\n');
+                        const changed = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
+                        expect(changed.comparison.id).not.toBe(comparison.id);
+                        const changedKeys = buildScmFileReviewUnits(changed.comparison.inventory.files.find(file => file.path === repository.trackedPath)!).map(unit => unit.key);
+                        expect(changedKeys.some(key => expectedKeys.includes(key))).toBe(false);
+                        const nextComparison = await mountChanges({ ...capture, input: { ...capture.input, comparisonId: changed.comparison.id } });
+                        try {
+                            await nextComparison.pressByTestIdAsync(`diff-file-menu:${repository.trackedPath}`);
+                            expect(nextComparison.findByTestId('diff-file-viewed')?.props.accessibilityState?.selected).toBe(false);
+                        } finally { await nextComparison.unmount(); }
+                        await getSyncSingleton().refreshPluginAccountAvailability();
+                        const lifetime = captureActiveServerAccountScopeLifetime();
+                        if (!lifetime) throw new Error('Missing cold Account lifetime');
+                        const selected = await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution(githubManifest.id);
+                        if (selected.kind !== 'available') throw new Error(`PR entry unavailable: ${selected.code}`);
+                        const controller = createBoundPluginSurfaceController({ facts: { pluginId: githubManifest.id, contributionId: GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1,
+                            surfaceId: 'gutter-cold-pr', occurrenceId: selected.custodyId, placement: 'browserSurface', platform: 'web',
+                            accountExecutionOrigin: { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+                            serverId: lifetime.scope.serverId, accountLifetime: lifetime, interactionEnabled: true, daemonInteractionEnabled: false } });
+                        const surface = createPluginSurfaceContextFixture({ accountEncryptionMode: 'plain',
+                            mount: { kind: 'destination', destination: { pluginId: githubManifest.id, localId: GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 }, container: 'appPage' }, target: { kind: 'app' } });
+                        const native = createCanonicalPluginReactNativeHostApiAdapter({ surface, requestSurface: controller.surfaceContext,
+                            handleRequest: controller.hostApi.handleRequest, installedMethods: controller.installedMethods });
+                        const pr = await fixture.render(React.createElement(PluginUiProvider, { hostApi: native.api, context: surface }, React.createElement(GithubHappierReviewSummary, { reviewId })));
+                        try {
+                            // Gutter comments are comments, not structured finding rows. The
+                            // actual PR entry opens their existing Review rather than inventing a finding.
+                            await vi.waitFor(() => expect(pr.findAllByType(Button).some(button => button.props.title === 'Open review'), pr.getTextContent()).toBe(true));
+                            const open = pr.findAllByType(Button).find(button => button.props.title === 'Open review');
+                            if (!open) throw new Error('The PR entry has no Open review control');
+                            await act(async () => { await open.props.onPress(); });
+                            const route = new URL(String(vi.mocked(router.push).mock.calls.at(-1)?.[0]), origin);
+                            expect(decodeURIComponent(route.pathname)).toBe(`/artifacts/${reviewId}`);
+                            expect(route.searchParams.get('serverId')).toBe(fixture.scope.serverId);
+                            const row = await artifacts.read(reviewId);
+                            if (!row || typeof row.body !== 'string') throw new Error('The cold Review Artifact is unavailable');
+                            const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId,
+                                title: 'Durable gutter review', isDecrypted: true, header: row.header, body: row.body,
+                                ownerAccountId: account.id, access: 'owner', storageMode: 'plain', headerVersion: row.revision.headerVersion,
+                                bodyVersion: row.revision.bodyVersion, seq: 1, createdAt: 1, updatedAt: 1 };
+                            const reader = await fixture.render(React.createElement(ArtifactView, { artifactId: reviewId, artifact, presentation: 'page' }));
+                            try {
+                                await reader.pressByTestIdAsync('review-detail:tab:changes');
+                                await vi.waitFor(() => expect(reader.findAllByType(WorkspaceScmReviewBody)).toHaveLength(1));
+                                await act(async () => { reader.findByType(WorkspaceScmReviewBody).findAll(node => typeof node.props.onLayout === 'function')[0]
+                                    ?.props.onLayout({ nativeEvent: { layout: { width: 900, height: 360 } } }); });
+                                await vi.waitFor(() => expect(reader.findAllByType(ReviewCommentCard).map(card => card.props.comment.id), reader.getTextContent()).toContain(saved.id));
+                                expect(reader.getTextContent()).toContain(body);
+                                expect(await db.reviewComment.count({ where: { reviewId } })).toBe(1);
+                            } finally { await reader.unmount(); }
+                        } finally { await pr.unmount(); native.dispose(); controller.dispose(); }
+                        const ownerMarks = await readMarks(token);
+                        expect((await readMarks(otherToken)).status).toBe(404);
+                        await fixture.dispose(); standardCleanup();
+                        const otherBoundary = createHomeHubArtifactHttpBoundary(other.id);
+                        const otherConnection = await restoreServerAccountForTest({ serverUrl: origin, serverIdentityId, accountId: other.id, credentials: { token: otherToken },
+                            request: (url, init) => new URL(String(url)).pathname.startsWith('/v1/kv') ? fetch(url, init) : otherBoundary.request(url, init) });
+                        const otherMarks = await renderHook(() => useScmReviewedMarks({ comparison, host: null, serverId: otherConnection.serverId }), {
+                            wrapper: ({ children }) => React.createElement(InjectedAuthProvider, { credentials: otherConnection.credentials }, children),
+                        });
+                        try {
+                            await vi.waitFor(() => expect(otherMarks.getCurrent().pending).toBe(false));
+                            expect(otherMarks.getCurrent().record).toEqual({ v: 1, scopeId, reviewedChangeKeys: [] });
+                            expect(await readMarks(token)).toEqual(ownerMarks);
+                        } finally { await otherMarks.unmount(); await otherConnection.dispose(); }
+                    } finally { standardCleanup(); await fixture.dispose(); }
+                } finally { restoreInventory(); }
+            }));
+        }, { authentication: 'real' });
+    } finally { await removeTempDir(cwd); }
+});
