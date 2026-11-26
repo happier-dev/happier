@@ -28,6 +28,8 @@ import { encodeBase64 as encodeProtocolBase64 } from '@happier-dev/protocol/cryp
 import type { Server, Socket } from "socket.io";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as cliPersistence from '../../../../../../cli/src/persistence';
+import { reloadConfiguration } from '../../../../../../cli/src/configuration';
+import { updateMachineRegistration } from '../../../../../../cli/src/daemon/machineIdentity/machineRegistrationStore';
 import { logger as cliLogger } from '../../../../../../cli/src/ui/logger';
 import { bootstrapAccountSettingsContext } from '../../../../../../cli/src/settings/accountSettings/bootstrapAccountSettingsContext';
 import { runWithServerHttpBaseUrl } from '../../../../../../cli/src/api/client/serverHttpBaseUrl';
@@ -1151,13 +1153,21 @@ describe("external Action execution authorization", () => {
             // not a second read while spending an already-admitted signed root.
             // Replace only persistent DB IO; the real provider eligibility owner and HTTP handler run.
             const identityDelegate = db.accountIdentity;
-            const readIdentity = identityDelegate.findFirst.bind(identityDelegate);
-            const identityRead = vi.spyOn(identityDelegate, 'findFirst').mockImplementation(readIdentity)
-                .mockRejectedValueOnce(Object.assign(new Error('private connection details'), { code: 'P2024' }));
+            const readIdentity = identityDelegate.findFirst;
+            let identityReads = 0;
+            identityDelegate.findFirst = new Proxy(readIdentity, {
+                apply(target, receiver, args) {
+                    identityReads += 1;
+                    if (identityReads === 1) {
+                        throw Object.assign(new Error('private connection details'), { code: 'P2024' });
+                    }
+                    return Reflect.apply(target, receiver, args);
+                },
+            });
             try {
                 const failed = await app.inject(request);
                 expect(failed.statusCode, failed.body).toBe(503);
-                expect(identityRead).toHaveBeenCalledOnce();
+                expect(identityReads).toBe(1);
                 expect(JSON.stringify(failed.json())).not.toContain('private connection details');
                 const recovered = await app.inject(request);
                 expect(recovered.statusCode, recovered.body).toBe(200);
@@ -1170,7 +1180,7 @@ describe("external Action execution authorization", () => {
                     headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
                         method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
                 expect(verified.statusCode, verified.body).toBe(200);
-            } finally { identityRead.mockRestore(); }
+            } finally { identityDelegate.findFirst = readIdentity; }
         } finally { restoreEnv(envBefore); await app.close(); }
     });
 
@@ -2511,11 +2521,6 @@ describe("external Action execution authorization", () => {
     it('admits retained registry installation through the signed Account root and real target executor without exposing RPC', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const actionId = 'prompt_registry.install';
-        // Installation-local Settings are an OS persistence boundary. They
-        // identify this receiver, not an Action-input-selected destination.
-        const installationSettings = vi.spyOn(cliPersistence, 'readSettings').mockResolvedValue({
-            schemaVersion: cliPersistence.SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true, machineId: fixture.machine.id,
-        });
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
         const credentials = { token, encryption: null } as const;
         const homeId = await getOrCreateServerIdentityId();
@@ -2546,8 +2551,14 @@ describe("external Action execution authorization", () => {
                 return { ok: true, result: createExternalActionDaemonDispatchResponse(result.prepared) };
             } });
         const { app } = await createApp(fixture.team.id, false, undefined, dispatch, false, routes => registerPromptLibraryRoutes(routes));
+        const envBefore = snapshotEnv();
+        const fixtureHome = await mkdtemp(join(tmpdir(), 'happier-retained-registry-'));
         try {
             serverHttpBaseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
+            applyEnvValues({ HAPPIER_HOME_DIR: fixtureHome, HAPPIER_ACTIVE_SERVER_ID: 'registry-admission-profile',
+                HAPPIER_SERVER_URL: serverHttpBaseUrl });
+            reloadConfiguration();
+            await updateMachineRegistration(() => ({ machineId: fixture.machine.id }));
             const settings = await app.inject({ method: 'POST', url: '/v2/account/settings',
                 headers: { authorization: `Bearer ${token}`, ...currentAccountStoredContentCompatibilityHeaders }, payload: { expectedVersion: 0,
                     content: { t: 'plain', v: { actionsSettingsV1: { v: 1,
@@ -2573,7 +2584,14 @@ describe("external Action execution authorization", () => {
             expect(produced.execution, JSON.stringify(produced.execution)).toMatchObject({ ok: false, errorCode: 'invalid_source',
                 details: { registryStatus: { state: 'invalid_source' } } });
             expect(getActionSpec(actionId).surfaces.rpc).toBe(false);
-        } finally { installationSettings.mockRestore(); await app.close(); }
+        } finally {
+            try { await app.close(); }
+            finally {
+                restoreEnv(envBefore);
+                reloadConfiguration();
+                await rm(fixtureHome, { recursive: true, force: true });
+            }
+        }
     });
 
     it('runs native-confirmed own-UI setup through real Home preparation admission', async () => {
