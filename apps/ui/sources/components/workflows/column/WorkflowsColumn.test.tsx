@@ -104,6 +104,51 @@ function answerLists() {
     });
 }
 
+async function answerSavedAndAccountWorkflows() {
+    const [{ AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema },
+        { createWorkflowDefinitionFixture }] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'),
+        import('@happier-dev/protocol/automations/automationWorkflowRecipeV2'), import('@/dev/testkit/fixtures/workflowRunFixtures')]);
+    const definitionId = '10000000-0000-4000-8000-000000000071';
+    const inlineDefinition = createWorkflowDefinitionFixture({
+        defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
+        blocks: [{ kind: 'step', id: 'first', document: { text: 'Morning digest', references: [], attachments: [] },
+            input: [], result: { kind: 'text' } }],
+    });
+    const detail = AutomationDefinitionDetailSchema.parse({ id: 'digest', name: 'Morning digest', description: null, enabled: true,
+        workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
+        templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 5,
+        assignments: [{ machineId: 'm1', enabled: true, priority: 0, updatedAt: 1 }],
+        executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
+            workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition } },
+            triggerEvidence: null }),
+        triggers: [{ id: 't1', revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
+            triggerDefinitionEnvelope: null, nextRunAt: null,
+            schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } }],
+    });
+    const { executionRecipe: _privateRecipe, triggers, ...listItem } = detail;
+    const list = AutomationDefinitionListResponseSchema.parse({ automations: [{ ...listItem,
+        triggers: triggers.map(({ triggerDefinitionEnvelope: _privateEnvelope, ...trigger }) => trigger) }], nextCursor: null });
+    automationDefinitionResponse = async (url, init) => {
+        if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
+            const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+            const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
+            return Response.json({ automations: query.scope !== 'account_saved' ? [detail] : [], nextCursor: null });
+        }
+        return url.pathname === '/v3/automations' ? Response.json(list)
+            : url.pathname === '/v3/automations/digest' ? Response.json(detail) : undefined;
+    };
+    const answer = executeMock.getMockImplementation()!;
+    executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => {
+        if (actionId === 'workflow.definition.list') return Promise.resolve({ ok: true, result: { definitions: [{
+            kind: 'workflow-definition.v1', definitionId, metadata: { title: 'Release notes' }, updatedAt: 1,
+            revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available', stepCount: 1,
+            ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null,
+        }] } });
+        return answer(actionId, input);
+    });
+    return definitionId;
+}
+
 let previousStorageState = storage.getState();
 let boundary: Awaited<ReturnType<typeof installWorkflowActionHttpBoundary>> | undefined;
 let singleton: Awaited<ReturnType<typeof loadSyncSingletonForTests>> | undefined;
@@ -320,47 +365,7 @@ describe('WorkflowsColumn', () => {
         expect(routerPush).toHaveBeenCalledTimes(1);
     });
     it('lists saved and Account Workflows as one Library and opens each at its own target (Q7)', async () => {
-        const [{ AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema },
-            { createWorkflowDefinitionFixture }] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'),
-            import('@happier-dev/protocol/automations/automationWorkflowRecipeV2'), import('@/dev/testkit/fixtures/workflowRunFixtures')]);
-        const definitionId = '10000000-0000-4000-8000-000000000071';
-        const inlineDefinition = createWorkflowDefinitionFixture({
-            defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } },
-            blocks: [{ kind: 'step', id: 'first', document: { text: 'Morning digest', references: [], attachments: [] },
-                input: [], result: { kind: 'text' } }],
-        });
-        const detail = AutomationDefinitionDetailSchema.parse({ id: 'digest', name: 'Morning digest', description: null, enabled: true,
-            workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
-            templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 5,
-            assignments: [{ machineId: 'm1', enabled: true, priority: 0, updatedAt: 1 }],
-            executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
-                workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition } },
-                triggerEvidence: null }),
-            triggers: [{ id: 't1', revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
-                triggerDefinitionEnvelope: null, nextRunAt: null,
-                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } }],
-        });
-        const { executionRecipe: _privateRecipe, triggers, ...listItem } = detail;
-        const list = AutomationDefinitionListResponseSchema.parse({ automations: [{ ...listItem,
-            triggers: triggers.map(({ triggerDefinitionEnvelope: _privateEnvelope, ...trigger }) => trigger) }], nextCursor: null });
-        automationDefinitionResponse = async (url, init) => {
-            if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {
-                const { AutomationDefinitionDetailsRequestSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
-                const query = AutomationDefinitionDetailsRequestSchema.parse(JSON.parse(String(init.body)));
-                return Response.json({ automations: query.scope !== 'account_saved' ? [detail] : [], nextCursor: null });
-            }
-            return url.pathname === '/v3/automations' ? Response.json(list)
-                : url.pathname === '/v3/automations/digest' ? Response.json(detail) : undefined;
-        };
-        const answer = executeMock.getMockImplementation()!;
-        executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => {
-            if (actionId === 'workflow.definition.list') return Promise.resolve({ ok: true, result: { definitions: [{
-                kind: 'workflow-definition.v1', definitionId, metadata: { title: 'Release notes' }, updatedAt: 1,
-                revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available', stepCount: 1,
-                ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null,
-            }] } });
-            return answer(actionId, input);
-        });
+        const definitionId = await answerSavedAndAccountWorkflows();
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth,
             createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 40, 120, 40) }) });
         await vi.waitFor(() => expect(screen.findByTestId('workflows-column:library:account-trigger:digest')).not.toBeNull());
@@ -398,6 +403,22 @@ describe('WorkflowsColumn', () => {
         await vi.waitFor(() => expect(screen.findByTestId('workflows-column-trigger-popover')).not.toBeNull());
         // The Runs tab opened its table in main; the Account Workflow itself navigated nowhere.
         expect(routerPush.mock.calls.filter(([route]) => route !== '/workflows/runs')).toHaveLength(1);
+    });
+    it('answers a ?trigger= link with one settings popover when the column stands beside the Library home (R13 M12)', async () => {
+        await answerSavedAndAccountWorkflows();
+        routeState.params = { trigger: 'digest' };
+        const [{ WorkflowsDestinationIndex }, { TriggerPopover }] = await Promise.all([
+            import('../library/WorkflowsDestinationIndex'), import('../triggers/TriggerPopover')]);
+        const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+            <WorkflowsColumn />
+            <WorkflowsDestinationIndex />
+        </AppShellColumnContext.Provider>, { wrapper: TestAuth,
+            createNodeMock: () => ({ measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 40, 120, 40) }) });
+        const popovers = () => screen.findAllByType(TriggerPopover).filter(node => node.props.testID === 'workflows-column-trigger-popover');
+        await vi.waitFor(() => expect(popovers().length).toBeGreaterThan(0));
+        await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+        // Both hosts list the row; only the destination's Library home answers the link, so one popover opens.
+        expect(popovers()).toHaveLength(1);
     });
     it('demands definitions and summaries only for presented Definitions while a second reader stays current', async () => {
         const { useWorkflowLibraryView } = await import('../library/useWorkflowLibraryView');

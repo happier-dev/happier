@@ -365,8 +365,8 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
                 <CollectionListGroupLabel testID={`workflows-column:group:project:${group.key}`} title={group.title}
                     count={group.rows.length} first={sectioned.length === 0 && groupIndex === 0} />
                 {group.rows.map((row, index) => <CollectionRowOrder key={row.key} followed={index < group.rows.length - 1}
-                    precedesSelected={projectRowSelected(group.rows[index + 1], selectedDefinitionId, params.trigger)}>
-                    <ColumnRowWindow id={row.key} index={index} pinned={projectRowSelected(row, selectedDefinitionId, params.trigger)}>
+                    precedesSelected={projectRowSelected(group.rows[index + 1], selectedDefinitionId)}>
+                    <ColumnRowWindow id={row.key} index={index} pinned={projectRowSelected(row, selectedDefinitionId)}>
                         {row.group === 'fromPlugins' ? (
                             <WorkflowColumnRow row={row} title={row.plugin.title} fallbackLine={row.plugin.description ?? null}
                                 href={`/workflows/${encodeURIComponent(row.key)}`} testID={`workflows-column:plugin:${row.key}`}
@@ -376,7 +376,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
                             <ColumnDefinitionRow row={row} selected={selectedDefinitionId === row.definition.definitionId}
                                 href={row.openTarget.href} onOpen={openHref} />
                         ) : (
-                            <ColumnAccountWorkflowEntry row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId} />
+                            <ColumnAccountWorkflowEntry row={row} editor={accountEditor} />
                         )}
                     </ColumnRowWindow>
                 </CollectionRowOrder>)}
@@ -396,15 +396,15 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         {empty && !firstLoad && !libraryFailed && !accountFailed ? <EmptyState testID="workflows-column:library:empty"
             layout="line" title={t('workflows.destination.libraryEmpty')} /> : null}
         {visibleLibraryRows.map((row, index) => <CollectionRowOrder key={row.key} followed={index < visibleLibraryRows.length - 1}
-            precedesSelected={libraryRowSelected(visibleLibraryRows[index + 1], selectedDefinitionId, params.trigger)}>
+            precedesSelected={libraryRowSelected(visibleLibraryRows[index + 1], selectedDefinitionId)}>
         <ColumnRowWindow id={row.key} index={index}
-            pinned={libraryRowSelected(row, selectedDefinitionId, params.trigger)}>
+            pinned={libraryRowSelected(row, selectedDefinitionId)}>
             {'definition' in row ? (
                 <ColumnDefinitionRow row={row}
                     selected={selectedDefinitionId === row.definition.definitionId}
                     href={row.openTarget.href} onOpen={openHref} />
             ) : (
-                <ColumnAccountWorkflowEntry row={row} editor={accountEditor} deepLink={params.trigger === row.accountTrigger.automationId} />
+                <ColumnAccountWorkflowEntry row={row} editor={accountEditor} />
             )}
         </ColumnRowWindow></CollectionRowOrder>)}
         <WorkflowLibraryFreshness library={library} hasRows={!empty} />
@@ -415,7 +415,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         </View> : null}
         {accountEditor.popover}
         {/* A retained link to another Home's trigger keeps that Home's own list and editor. */}
-        {readSessionRouteServerId(params) ? <AccountTriggersSection /> : null}
+        {readSessionRouteServerId(params) ? <AccountTriggersSection answersLink={false} /> : null}
         {split.sharedWithYou.length > 0 ? <>
             <CollectionListGroupLabel testID="workflows-column:group:sharedWithYou" title={t('workflows.destination.sections.sharedWithYou')}
                 count={split.sharedWithYou.length} />
@@ -474,14 +474,18 @@ const ColumnDefinitionRow = React.memo(function ColumnDefinitionRow(props: Reado
         selected={props.selected} onPress={onPress} />;
 });
 
-/** An Account Workflow's Library entry: its settings anchor around the row, re-rendered only when the row changes. */
+/**
+ * An Account Workflow's Library entry: its settings anchor around the row, re-rendered only when the row changes.
+ * A `?trigger=` link opens on `/workflows`, whose Library home answers it; the column beside it never opens a
+ * second popover for the same link (R13 M12).
+ */
 const ColumnAccountWorkflowEntry = React.memo(function ColumnAccountWorkflowEntry(props: Readonly<{ row: AccountWorkflowLibraryRow;
-    editor: ReturnType<typeof useAccountWorkflowEditor>; deepLink: boolean }>) {
+    editor: ReturnType<typeof useAccountWorkflowEditor> }>) {
     const { row } = props;
     const renderRow = React.useCallback((open: () => void) => <WorkflowColumnRow row={row} title={row.name}
         testID={`workflows-column:library:${row.key}`} selected={false}
         dimmed={isAccountWorkflowOff(row) && !isAccountWorkflowReviewRequired(row)} onPress={open} />, [row]);
-    return <AccountWorkflowRowAnchor row={row} editor={props.editor} deepLink={props.deepLink}>{renderRow}</AccountWorkflowRowAnchor>;
+    return <AccountWorkflowRowAnchor row={row} editor={props.editor}>{renderRow}</AccountWorkflowRowAnchor>;
 });
 
 /**
@@ -577,17 +581,16 @@ const WorkflowsColumnRunsPage = React.memo(function WorkflowsColumnRunsPage(prop
 });
 
 /** Whether a row of a project group is the open one: a plugin workflow by its key, the others as Library rows. */
-function projectRowSelected(row: WorkflowLibraryItem | undefined, selectedDefinitionId: string | null, trigger: unknown): boolean {
+function projectRowSelected(row: WorkflowLibraryItem | undefined, selectedDefinitionId: string | null): boolean {
     if (row === undefined) return false;
-    return row.group === 'fromPlugins' ? selectedDefinitionId === row.key : libraryRowSelected(row, selectedDefinitionId, trigger);
+    return row.group === 'fromPlugins' ? selectedDefinitionId === row.key : libraryRowSelected(row, selectedDefinitionId);
 }
 
-/** Whether a Library row is the open one: its definition's page, or the account workflow a deep link opened. */
+/** Whether a Library row is the open one: its definition's page. An Account Workflow opens a popover, never a page. */
 function libraryRowSelected(
     row: Readonly<{ definition: Readonly<{ definitionId: string }> }> | Readonly<{ accountTrigger: Readonly<{ automationId: string }> }> | undefined,
     selectedDefinitionId: string | null,
-    trigger: unknown,
 ): boolean {
     if (row === undefined) return false;
-    return 'definition' in row ? selectedDefinitionId === row.definition.definitionId : trigger === row.accountTrigger.automationId;
+    return 'definition' in row && selectedDefinitionId === row.definition.definitionId;
 }

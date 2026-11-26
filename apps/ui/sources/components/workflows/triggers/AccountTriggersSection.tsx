@@ -68,7 +68,9 @@ const ACCOUNT_TRIGGER_QUERY = { scope: 'account_inline' } as const;
  * preview, each with its exact-Home read and editor scope. The active Home's Account Workflows are
  * Library rows (Q7), drawn by the Library itself through `useAccountWorkflowEditor`.
  */
-export const AccountTriggersSection = React.memo(function AccountTriggersSection(props: Readonly<{ first?: boolean }>) {
+export const AccountTriggersSection = React.memo(function AccountTriggersSection(props: Readonly<{ first?: boolean;
+    /** `false` beside the Library home, which answers a `?trigger=` link itself: one popover per link. */
+    answersLink?: boolean }>) {
     const params = useGlobalSearchParams<{ serverId?: string | string[] }>();
     const serverId = readSessionRouteServerId(params);
     const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
@@ -85,7 +87,7 @@ export const AccountTriggersSection = React.memo(function AccountTriggersSection
             {...(serverId ? { accountLifetime: displayBinding } : {})} /></WorkflowAccountLifetimeProvider>;
 });
 
-function AccountTriggersContent(props: Readonly<{ first?: boolean; accountLifetime?: ServerAccountScopeLifetime | null }>) {
+function AccountTriggersContent(props: Readonly<{ first?: boolean; answersLink?: boolean; accountLifetime?: ServerAccountScopeLifetime | null }>) {
     const read = useWorkflowTriggerSets(ACCOUNT_TRIGGER_QUERY, props.accountLifetime);
     return <AccountTriggersReadContent {...props} read={read} />;
 }
@@ -242,7 +244,7 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
         [pending, openRow, add, remove, toggle, popover, thenOptions.resolveWorkflowTitle, thenOptions.isWorkflowTitlePending]);
 }
 
-export function AccountTriggersReadContent(props: Readonly<{ first?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;
+export function AccountTriggersReadContent(props: Readonly<{ first?: boolean; answersLink?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;
     read: ReturnType<typeof useWorkflowTriggerSets> }>) {
     const { sets, status, retry: refresh } = props.read;
     const { pending, open: openRow, toggle, popover, resolveWorkflowTitle } = useAccountWorkflowEditor(props);
@@ -280,7 +282,7 @@ export function AccountTriggersReadContent(props: Readonly<{ first?: boolean; ac
                     multiple={sets.find((set) => set.automationId === row.automationId)!.triggers.length > 1}
                     pending={pending.has(row.automationId)}
                     reviewRequired={sets.find((set) => set.automationId === row.automationId)?.legacy?.lockedReason === 'review_required'}
-                    deepLink={params.trigger === row.automationId && rows.find((candidate) => candidate.automationId === row.automationId) === row}
+                    deepLink={props.answersLink !== false && params.trigger === row.automationId && rows.find((candidate) => candidate.automationId === row.automationId) === row}
                     onOpen={(anchor) => { void openRow(row, anchor); }}
                     onToggle={(next) => { void toggle(row, next); }}
                 />
