@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentNativeCleanupWarningV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
-import { lstat, realpath, rmdir } from 'node:fs/promises';
+import { lstat, readdir, realpath, rmdir } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentImageV1, type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentImageArchiveV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import { deriveDeploymentMemberVersionsV1, selectDeploymentRetainedPreviousV1 } from '@happier-dev/deployments';
@@ -129,6 +129,30 @@ async function pruneEmptySourceDirectory(path: string, nativeBindSources: readon
         if (absent(error) || error !== null && typeof error === 'object' && 'code' in error
             && (error.code === 'ENOTEMPTY' || error.code === 'EEXIST')) return;
         throw error;
+    }
+}
+
+/** Delete uses the same non-recursive directory removal as release retention.
+ * Files, symlinks and runtime data carved out by bind mounts keep their tree. */
+export async function retireEmptyOwnServerDeploymentEnvironment(input: Readonly<{
+    deploymentRoot: string; environmentInstanceId: string; assertCurrent(): Promise<void>;
+    readBindSources(): Promise<readonly string[]>;
+}>): Promise<void> {
+    try {
+        const path = join(await realpath(input.deploymentRoot), input.environmentInstanceId);
+        if (!(await lstat(path)).isDirectory()) return;
+        const nativeBindSources = await input.readBindSources();
+        const prune = async (directory: string): Promise<void> => {
+            if (nativeBindSources.some(mount => within(mount, directory))) return;
+            if (await realpath(directory) !== directory) return;
+            for (const entry of await readdir(directory, { withFileTypes: true })) {
+                if (entry.isDirectory()) await prune(join(directory, entry.name));
+            }
+            await pruneEmptySourceDirectory(directory, nativeBindSources, input.assertCurrent);
+        };
+        await prune(path);
+    } catch (error) {
+        if (!absent(error)) throw error;
     }
 }
 

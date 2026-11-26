@@ -3145,7 +3145,9 @@ other workloads alone. A confirmed failed first release drops its abandoned imag
 aliases after preserving recovery diagnostics. A receiver removes a verified copy
 archive after a known load outcome, while the holder keeps restore originals for
 the serving and rollback set. Environment Delete removes its owned images and
-acts on volumes only as approved in review.
+acts on volumes only as approved in review. Delete removes empty local Environment
+directories after native workload removal. Mounted paths, files and other
+nonempty directories are preserved.
 A native cleanup refusal preserves the operation outcome. The existing Action
 settlement can include optional Machine-scoped warning codes, which the Receipt
 shows beside the result. The warning is absent on settlements without a refusal

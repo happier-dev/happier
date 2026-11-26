@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -264,7 +264,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
             ];
         }
         const credentials = { token: 'test-token', encryption: null };
-        const observesRetirement = auditsImages || scenario === 'remote-already-absent'
+        const observesRetirement = imageInUse || scenario === 'local-native' || scenario === 'remote-already-absent'
             || scenario === 'remote-native' || caddyPrimary || scenario === 'remote-observation-denied' || scenario === 'remote-caddy-other-endpoint';
         let mounted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
         let observerStops = 0;
@@ -387,12 +387,25 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
             }
             const remoteJobs: string[] = [];
             let retainedImages: ReturnType<typeof resolveNativeComposeDeploymentImageReferences> | undefined;
+            let environmentRoot: string | undefined, emptyRelease: string | undefined, keptSource: string | undefined;
+            let foreignEmptyDirectory: string | undefined;
             let foreignEnvironmentTag: string | undefined;
             if (docker) {
                 const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
                     serverId: 'home', environmentId: environment.environment.id });
                 await mkdir(identity.deploymentRoot, { recursive: true });
                 if (auditsImages) {
+                    environmentRoot = join(identity.deploymentRoot, identity.environmentInstanceId);
+                    emptyRelease = join(environmentRoot, 'builds', 'expired-release', 'empty');
+                    foreignEmptyDirectory = join(identity.deploymentRoot, 'different-environment', 'kept');
+                    await mkdir(emptyRelease, { recursive: true });
+                    await mkdir(foreignEmptyDirectory, { recursive: true });
+                    if (imageInUse) {
+                        keptSource = join(environmentRoot, 'builds', 'kept', 'runtime-data');
+                        await mkdir(join(keptSource, '..'), { recursive: true });
+                        await writeFile(keptSource, 'runtime bytes');
+                        await symlink(foreignEmptyDirectory, join(environmentRoot, 'builds', 'redirected'), 'dir');
+                    }
                     const image = await docker.registerImage('web', 'retained');
                     const deploymentId = 'prior-release';
                     retainedImages = resolveNativeComposeDeploymentImageReferences({ environmentInstanceId: identity.environmentInstanceId,
@@ -401,7 +414,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                         deploymentId, image }).ownedTag;
                     const imageId = await docker.setImagePruneState(image.configDigest, { repoTags: [retainedImages.ownedTag,
                         retainedImages.activationRef, foreignEnvironmentTag, 'nginx:alpine'], repoDigests: [] });
-                    if (imageInUse) await docker.setImageContainerReference(imageId, 'running');
+                    if (imageInUse) await docker.setImageContainerReference(imageId, 'running', 'unrelated-project');
                 }
                 if (scenario !== 'remote-already-absent' && scenario !== 'remote-fleet-absent' && !reconcile && !afterTunnelRetirement) {
                     await docker.seedComposeGeneration(identity.projectName);
@@ -532,6 +545,15 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
             }
             if (docker) {
                 if (scenario === 'remote-unknown') expect(writes).toBe(0);
+                if (environmentRoot && emptyRelease && foreignEmptyDirectory) {
+                    if (scenario === 'local-remove-environment') {
+                        await expect(readdir(environmentRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+                    } else if (imageInUse) {
+                        await expect(readdir(emptyRelease)).rejects.toMatchObject({ code: 'ENOENT' });
+                        await expect(readFile(keptSource!, 'utf8')).resolves.toBe('runtime bytes');
+                    } else await expect(readdir(emptyRelease)).resolves.toEqual([]);
+                    await expect(readdir(foreignEmptyDirectory)).resolves.toEqual([]);
+                }
                 if (retainedImages && foreignEnvironmentTag) {
                     for (const reference of Object.values(retainedImages)) {
                         const stored = await docker.readPruneReference(reference);

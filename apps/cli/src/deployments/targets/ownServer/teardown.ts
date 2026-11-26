@@ -9,6 +9,8 @@ import { type DeploymentTeardownResourceV1 } from '@happier-dev/protocol/deploym
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { observeNativeCaddyRetainedNetwork } from '@happier-dev/cli-common/machineSetup';
 import { configuration } from '@/configuration';
+import { createNativeComposeIncumbentBindReader } from '@/daemon/local/services/launch/nativeComposeSharedData';
+import { logger } from '@/ui/logger';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
@@ -20,6 +22,7 @@ import { createDeploymentTeardownExecutor, DeploymentTeardownObservationSchema, 
 import type { DeploymentReceiptDispatchV1 } from '../../createCliDeploymentActionDeps';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
+import { retireEmptyOwnServerDeploymentEnvironment } from './releaseRetention';
 import { projectDeploymentException } from '../../deploymentFailure';
 import { admitOwnServerDeploymentTargetLink } from './ownServerTargetAdmission';
 import { readOwnServerTeardownVolumes, observeOwnServerTeardownVolumes, settleOwnServerTeardownVolumes } from './teardownVolumes';
@@ -160,6 +163,18 @@ export function createOwnServerTeardownForHost(host: Host) {
                         if (operation.step === 'removeTarget') await runtime.retireEnvironmentObservers({
                             homeServerIdentityId: identity.homeServerIdentityId, environmentId: operation.environmentId,
                         });
+                        if (removesImages(operation)) {
+                            try {
+                                await retireEmptyOwnServerDeploymentEnvironment({
+                                    deploymentRoot: runtime.deploymentRoot, environmentInstanceId: identity.environmentInstanceId,
+                                    assertCurrent: runtime.assertCurrent,
+                                    readBindSources: () => createNativeComposeIncumbentBindReader({ projectName: '', run }).bindSources(),
+                                });
+                            } catch (error) {
+                                logger.warnLocalFile('[Deployment] Empty Environment directory cleanup failed',
+                                    projectActionFailureCauseV1(error, 'deployment.teardown.empty_directories', { allowUnknownErrorCode: false }));
+                            }
+                        }
                         return { kind: 'proved' as const, ...(reason ? { reason } : {}), resources: operation.resources.map(resource => ({
                             resourceId: resource.id, disposition: resource.disposition === 'retain' ? 'retained' as const : 'absent' as const,
                         })) };
