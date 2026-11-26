@@ -660,6 +660,7 @@ const startEntrySessionResult = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         type: defineProtocolLiteral('opened'),
+        linkTag: triageIdentifier.optional(),
         sessionAddress: ActionSessionAddressV1Schema.optional(),
         deliveryResult: SessionMessageSendResultV1ProtocolSchema.optional(),
         sessionId: triageSessionId,
@@ -672,6 +673,7 @@ const startEntrySessionResult = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         /** Linked and delivered; the batch owner retained final navigation. */
         type: defineProtocolLiteral('linked'),
+        linkTag: triageIdentifier.optional(),
         sessionAddress: ActionSessionAddressV1Schema.optional(),
         deliveryResult: SessionMessageSendResultV1ProtocolSchema.optional(),
         sessionId: triageSessionId,
@@ -697,6 +699,7 @@ const startEntrySessionResult = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         /** Linked and delivered, but navigation failed. Retry re-opens. */
         type: defineProtocolLiteral('openPending'),
+        linkTag: triageIdentifier.optional(),
         failure: TriageNewSessionFailureV1Schema.optional(),
         sessionAddress: ActionSessionAddressV1Schema.optional(),
         deliveryResult: SessionMessageSendResultV1ProtocolSchema.optional(),

@@ -215,14 +215,14 @@ export type TriageEntrySessionStartResultV1 = (
         retryable: boolean;
     }>
     | Readonly<{ type: 'rejected'; reason: TriageEntrySessionRejectionReasonV1 }>
-) & Readonly<{ deliveryResult?: PluginActionResultById['session.message.send'] }>;
+) & Readonly<{ deliveryResult?: PluginActionResultById['session.message.send']; linkTag?: string }>;
 
 export type TriageEntrySessionDepsV1 = Readonly<{
     /** The composed source/corpus relationship owner supplied by the invocation. */
     linkSession: (input: Readonly<{
         entryRef: TriageEntryRefV1; display: TriageEntrySessionLinkDisplayV1;
         sessionId: string; sourceInstanceId?: string;
-    }>) => Promise<Readonly<{ status: 'linked' } | { status: 'failed'; failure?: TriageNewSessionFailureV1 }>>;
+    }>) => Promise<Readonly<{ status: 'linked'; linkTag?: string } | { status: 'failed'; failure?: TriageNewSessionFailureV1 }>>;
     execute: TriageSessionActionInvokerV1;
     onDeliveryFailure?: (detail: TriageSessionDeliveryFailureDetailV1) => void;
     /**
@@ -326,6 +326,7 @@ async function linkDeliverThenOpen(
         }
         requiredLinks.push(candidate);
     }
+    let linkTag: string | undefined;
     for (const requiredLink of requiredLinks) {
         const sourceInstanceId = input.delivery?.attachments.find((attachment) =>
             sameTriageEntryReference(attachment.entryRef, requiredLink.entryRef))?.sourceInstanceId;
@@ -348,18 +349,23 @@ async function linkDeliverThenOpen(
                 ...(input.settledDelivery === undefined ? {} : { delivery: input.settledDelivery }),
             };
         }
+        if (input.entryRef !== undefined && sameTriageEntryReference(requiredLink.entryRef, input.entryRef)) {
+            linkTag = link.linkTag;
+        }
     }
-    return await deliverThenOpen(deps, input);
+    return await deliverThenOpen(deps, input, linkTag);
 }
 
 /** Every linked start/retry shares the same delivery and final-navigation decision. */
 async function deliverThenOpen(
     deps: TriageEntrySessionDepsV1,
     input: LinkedSessionDeliveryInput,
+    linkTag?: string,
 ): Promise<TriageEntrySessionStartResultV1> {
     const requested = input.delivery;
     return completeSessionInputLifecycleV1({
-        context: { sessionId: input.sessionId, disposition: input.disposition, workspace: input.workspace },
+        context: { sessionId: input.sessionId, disposition: input.disposition, workspace: input.workspace,
+            ...(linkTag === undefined ? {} : { linkTag }) },
         ...(input.settledDelivery === undefined ? {} : { settledDelivery: input.settledDelivery }),
         ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
         ...(requested === undefined ? {} : { deliver: async () => {

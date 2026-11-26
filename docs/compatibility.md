@@ -61,6 +61,16 @@ labels on `conversation_turn.v1` turns.
 The label carries no identity, routing or authorization meaning. Channel and
 modality provenance, turn identities and wire epochs are unchanged.
 
+## Triage Start link receipt (unreleased 0.3)
+
+The closed Triage start result optionally carries the corpus writer’s
+acknowledged primary link tag beside the Session ID. The tag is output-only
+and grants no authority. Source-native relationship providers can acknowledge
+a link without a corpus tag. Existing results without a tag remain valid.
+Matching declarations, handlers and readers reload together at the 0.3 direct
+cut. The scoped `../0.2` frontier at `fc0e319f0ed` has no Triage plugin or
+Triage source protocol. No persisted field, migration or wire epoch changes.
+
 ## Initial Task relationship failure causes (unreleased 0.3)
 
 The closed Triage `tasks/create-v1` aggregate result optionally carries

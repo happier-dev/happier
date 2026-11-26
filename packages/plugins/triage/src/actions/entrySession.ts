@@ -150,6 +150,7 @@ function projectStartResult(
     };
     const sessionAddress = input.delivery?.returnResult === true && 'sessionId' in result && input.destination.kind === 'new'
         ? { sessionAddress: { serverId: input.destination.spawn.executionTarget.serverId, sessionId: result.sessionId } } : {};
+    const linkReceipt = result.linkTag === undefined ? {} : { linkTag: result.linkTag };
     switch (result.type) {
         case 'opened': {
             const review = reviewContinuationFor(input, result);
@@ -159,7 +160,7 @@ function projectStartResult(
             return {
                 v: 1,
                 type: result.type,
-                ...deliveryResult, ...sessionAddress,
+                ...deliveryResult, ...sessionAddress, ...linkReceipt,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
                 // The Message-send owner's verdict on the structured delivery,
@@ -176,7 +177,7 @@ function projectStartResult(
                 v: 1,
                 type: result.type,
                 ...(result.failure === undefined ? {} : { failure: result.failure }),
-                ...deliveryResult, ...sessionAddress,
+                ...deliveryResult, ...sessionAddress, ...linkReceipt,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
                 delivery: result.delivery,
@@ -191,7 +192,7 @@ function projectStartResult(
             return {
                 v: 1,
                 type: 'linked',
-                ...deliveryResult, ...sessionAddress,
+                ...deliveryResult, ...sessionAddress, ...linkReceipt,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
                 delivery: result.delivery,
@@ -583,7 +584,7 @@ export function createTriageStartEntrySessionActionHandler(): ActionHandler<
                     if (!isPluginError(error)) throw error;
                     return { status: 'failed', failure: error } as const;
                 });
-                if (result.status === 'linked') return { status: 'linked' };
+                if (result.status === 'linked') return result;
                 const failure = result.status === 'failed' ? projectTriageNewSessionFailureV1(result.failure) : undefined;
                 return { status: 'failed', ...(failure === undefined ? {} : { failure }) };
             },

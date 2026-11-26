@@ -1,5 +1,5 @@
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { JsonValue, PluginServices, PluginInvocationContext, PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { definePlugin, type JsonValue, type PluginServices, type PluginInvocationContext, type PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { SessionIdSchema, SessionStatusActionResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import type { StorageService } from '@happier-dev/plugin-sdk/storage';
@@ -10,6 +10,7 @@ import {
   TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1,
   TriageEntryRefV1Schema,
   TriageSourceDescriptorV1Schema,
+  TriageSourcesContributionProtocolV1,
   TriageSetFixPullRequestResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, expectTypeOf, it } from 'vitest';
@@ -59,13 +60,14 @@ import { linkEntryToSession } from './sessions/entrySessionLinks.js';
 import { testkitEntryRef } from './corpus/testkit/observations.test-support.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './internalTasks/configuration.js';
 import { readTriageComposerForgeEvidenceV1 } from './composer/attachmentValue.js';
+import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 } from './actions/configuredActionRunProtocol.js';
 
 async function withRegisteredPlugin(run: (fixture: Readonly<{
   plugin: PluginTestkit;
   corpus: ReturnType<typeof createTestkitCorpusCollections>;
   kv: ReturnType<typeof createTestkitAccountKv>;
 }>) => Promise<void>, module: Parameters<typeof createPluginTestkit>[0]['module'] = TRIAGE_PLUGIN,
-  actions?: PluginServices['actions']) {
+  actions?: PluginServices['actions'], contributor?: Readonly<{ plugin: PluginTestkit; descriptor: unknown }>) {
   const corpus = createTestkitCorpusCollections();
   const kv = createTestkitAccountKv();
   // Account storage is the network/database boundary. The existing testkits
@@ -89,13 +91,21 @@ async function withRegisteredPlugin(run: (fixture: Readonly<{
       return { ...snapshot, contributions: snapshot.contributions.map(entry => {
         const declaration = PLUGIN_MANIFEST.contributes.targetedPluginContributions.find(candidate =>
           candidate.id === entry.contributor.contributionId && candidate.target.pointId === point.id);
-        return { ...entry, descriptor: TriageSourceDescriptorV1Schema.parse(declaration?.descriptor),
+        if (declaration === undefined) return contributor === undefined ? entry : { ...entry, descriptor: contributor.descriptor };
+        return { ...entry, descriptor: TriageSourceDescriptorV1Schema.parse(declaration.descriptor),
           surfaces: declaration?.surfaces ?? {} };
       }) };
     },
     dispose: () => {},
   }) } as unknown as PluginServices['targetedContributions'];
-  plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module, services: { storage, targetedContributions, ...(actions === undefined ? {} : { actions }) } });
+  const services: { storage: StorageService; actions?: PluginServices['actions']; targetedContributions?: PluginServices['targetedContributions'] } =
+    { storage, ...(actions === undefined ? {} : { actions }) };
+  if (contributor === undefined) services.targetedContributions = targetedContributions;
+  plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module,
+    ...(contributor === undefined ? {} : { targetedContributionContributors: [contributor.plugin] }), services });
+  // External fixture handles come from SDK admission once the target exists.
+  // The same descriptor service is then available to the registered self-calls.
+  services.targetedContributions = targetedContributions;
   try {
     await run({ plugin, corpus, kv });
   } finally {
@@ -131,6 +141,69 @@ describe('Triage activation', () => {
       } finally { await caller.dispose(); }
     }, TRIAGE_PLUGIN, actions);
   });
+  it.each(['linked', 'spawnRefused'] as const)('returns the registered Agent Fix Start result (%s)', async mode => {
+    const fixture = createTriageSourceV1Fixture();
+    const configured = fixture.configuredInstance;
+    const { source, sourceInstanceId } = configured.instance;
+    const entryRef = { ...fixture.detailInput.observation.entryRef, kindId: 'issue', entryId: '173' };
+    const selected = { entryRef, sourceInstanceId };
+    const protocol = TriageSourcesContributionProtocolV1;
+    // The source is an external fixture. Account registration, exact read
+    // Actions, admitted operation handles, Session start and link writing are real.
+    const definition = definePlugin({ id: source.pluginId, version: '0.0.0', actions: {
+      discover: { title: 'Discover', surfaces: protocol.operations.listInstances.declaration.surfaces,
+        inputSchema: protocol.operations.listInstances.declaration.input.schema,
+        resultSchema: protocol.operations.listInstances.declaration.resultSchema, run: async () => fixture.listInstancesResult },
+      scan: { title: 'Scan', surfaces: protocol.operations.scan.declaration.surfaces,
+        inputSchema: protocol.operations.scan.declaration.input.schema,
+        resultSchema: protocol.operations.scan.declaration.resultSchema, run: async () => { throw new Error('Exact Start must not scan'); } },
+      get: { title: 'Get', surfaces: protocol.operations.get.declaration.surfaces,
+        inputSchema: protocol.operations.get.declaration.input.schema,
+        resultSchema: protocol.operations.get.declaration.resultSchema,
+        run: async (input) => ({ ...fixture.getResult, localRef: input.localRef }) },
+    }, ui: { renderers: [{ id: 'detail', kind: 'declarative', root: { kind: 'text', text: 'Source detail' } }] },
+    contributesTo: { 'happier.triage': { sources: { [source.localId]: protocol.contribute({
+      descriptor: fixture.descriptor, operations: { listInstances: protocol.operations.listInstances.bind('discover'),
+        scan: protocol.operations.scan.bind('scan'), get: protocol.operations.get.bind('get') },
+      surfaces: { detail: { renderer: 'detail' } },
+    }) } } } });
+    const contributor = await createPluginTestkit({ manifest: definition.manifest, module: definition });
+    const invoker = createTestkitActionInvoker({ spawn: [mode === 'spawnRefused'
+      ? { type: 'error', code: 'permission_denied', retryable: false } : spawnSuccess()] });
+    const actions = { execute: async (id: string, input: JsonValue) => {
+      if (id === 'projects.list') return { items: [], truncated: false };
+      if (id === 'session.spawn_new' || id === 'session.message.send' || id === 'session.open') {
+        return invoker.execute(id, PLUGIN_ACTION_INPUT_SCHEMAS[id].parse(input));
+      }
+      throw new Error(`Unexpected host Action ${id}`);
+    } } as unknown as PluginServices['actions'];
+    try {
+      await withRegisteredPlugin(async ({ plugin, corpus }) => {
+        const request = fixture.administrationInput;
+        if (request.kind !== 'create') throw new Error('Expected source setup fixture');
+        await administerConfiguredSourceInstance({ collections: corpus.collections, source, declaredPurpose: configured.binding.purpose,
+          request, nowMs: 1, mintSourceInstanceId: () => sourceInstanceId });
+        const result = await plugin.invokeAction(TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, { v: 1,
+          handoff: { task: 'fix', configuredActionId: TRIAGE_DEFAULT_FIX_ACTION_ID_V1,
+            context: { kind: 'entries', entries: [selected], destination: 'single' }, evidence: [{ kind: 'entry', entry: selected }],
+            sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' },
+          singleIntent: { kind: 'configured', launchMode: 'start' },
+          drafts: [{ ...TESTKIT_SPAWN_REQUEST, directory: { kind: 'path', path: '/workspace/project' } }],
+        }, { surface: 'agent', sessionId: 'requesting-session',
+          accountScope: { serverId: 'server-a', accountId: 'account-a' } });
+        expect(invoker.callsFor('session.spawn_new'), JSON.stringify(result)).toHaveLength(1);
+        const { rows } = await corpus.collections.sessionLinks.query({ index: 'by-session', prefix: ['session-a'], order: 'asc' });
+        if (mode === 'spawnRefused') {
+          expect(rows).toHaveLength(0);
+          expect(result).toMatchObject({ status: 'single', result: { type: 'creationFailed', failureCode: 'permission_denied' } });
+        } else {
+          expect(rows).toHaveLength(1);
+          expect(result).toMatchObject({ status: 'single', result: { type: 'opened', sessionId: 'session-a', linkTag: rows[0]!.rowId } });
+        }
+      }, TRIAGE_PLUGIN, actions, { plugin: contributor, descriptor: fixture.descriptor });
+    } finally { await contributor.dispose(); }
+  });
+
   it.each(['agent', 'mcp', 'cli'] as const)('returns own-Session links through the declared portable %s Action', async surface => {
     await withRegisteredPlugin(async ({ plugin, corpus }) => {
       const sessionId = SessionIdSchema.parse('source-links-session');
