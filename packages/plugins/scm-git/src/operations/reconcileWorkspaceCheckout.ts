@@ -1,4 +1,4 @@
-import { lstat, rename, rm } from 'node:fs/promises';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { join } from 'node:path';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
@@ -149,7 +149,7 @@ function isSafeNoopCheckoutFailure(stderr: string): boolean {
 
 async function pathExists(path: string): Promise<boolean> {
     try {
-        await lstat(path);
+        await readRepositoryFileSystem().lstat(path);
         return true;
     } catch {
         return false;
@@ -226,10 +226,10 @@ async function restoreGitAdminState(input: Readonly<{
 
     const nextGitPath = join(input.targetPath, '.git');
     if (await pathExists(nextGitPath)) {
-        await rm(nextGitPath, { recursive: true, force: true });
+        await readRepositoryFileSystem().rm(nextGitPath, { recursive: true, force: true });
     }
 
-    await rename(previousGitPath, nextGitPath);
+    await readRepositoryFileSystem().rename(previousGitPath, nextGitPath);
     const repairedTargetIdentity = await inspectGitCheckoutIdentity({ cwd: input.targetPath });
     if (!repairedTargetIdentity) {
         return;

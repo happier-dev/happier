@@ -1,5 +1,5 @@
 import { readCurrentBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
-import { readFile } from 'node:fs/promises';
+import { readRepositoryFileSystem } from './repositoryFileSystem.js';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { getScmCommandIndeterminateErrorCode, runScmCommand } from './runtime.js';
@@ -79,8 +79,7 @@ function toGitCommandPath(path: string): string {
 }
 
 async function readGitAdminFile(path: string): Promise<string> {
-    const fileSystem = readCurrentBackendRuntimeServices()?.repositoryFileSystem;
-    if (!fileSystem) return readFile(path, 'utf8');
+    const fileSystem = readRepositoryFileSystem();
     const addressedPath = fileSystem.commandPaths?.fromCommandPath(path) ?? path;
     return Buffer.from(await fileSystem.readFile(addressedPath)).toString('utf8');
 }

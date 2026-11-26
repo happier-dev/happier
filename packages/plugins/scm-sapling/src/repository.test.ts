@@ -5,22 +5,19 @@ import { runWithBackendRuntimeServices, type BackendRuntimeServices } from '@hap
 // The host command adapter is the OS/process boundary; keep the Sapling runtime real.
 const runScmCommandMock = vi.fn<BackendRuntimeServices['runCommand']>();
 
-const { statMock, readFileMock } = vi.hoisted(() => ({
-    statMock: vi.fn(),
-    readFileMock: vi.fn(),
-}));
-
-vi.mock('node:fs/promises', () => ({
+const statMock = vi.fn();
+const readFileMock = vi.fn();
+const mockRepositoryFileSystem = {
     lstat: statMock,
     readFile: readFileMock,
-}));
+} as unknown as NonNullable<BackendRuntimeServices['repositoryFileSystem']>;
 
 import { getSaplingSnapshot } from './repository';
 import { createSaplingScmBackendRegistration } from './backend';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 describe('sapling repository snapshot', () => {
-    it('throws when `sl status` fails instead of masking the repository as clean', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock }, async () => {
+    it('throws when `sl status` fails instead of masking the repository as clean', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock, repositoryFileSystem: mockRepositoryFileSystem }, async () => {
         runScmCommandMock.mockReset();
         runScmCommandMock.mockResolvedValueOnce({
             success: false,
@@ -54,7 +51,7 @@ describe('sapling repository snapshot', () => {
         ).rejects.toThrow('abort: status failed');
     }));
 
-    it('marks skipped untracked statistics and totals incomplete', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock }, async () => {
+    it('marks skipped untracked statistics and totals incomplete', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock, repositoryFileSystem: mockRepositoryFileSystem }, async () => {
         runScmCommandMock.mockReset();
         runScmCommandMock.mockResolvedValue({ success: true, stdout: '', stderr: '', exitCode: 0 });
         runScmCommandMock.mockResolvedValueOnce({ success: true, stdout: '? large.txt\n', stderr: '', exitCode: 0 });
@@ -64,7 +61,7 @@ describe('sapling repository snapshot', () => {
         expect.soft(snapshot.totals).toMatchObject({ isComplete: false });
     }));
 
-    it('marks tracked statistics incomplete when the diff command fails', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock }, async () => {
+    it('marks tracked statistics incomplete when the diff command fails', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock, repositoryFileSystem: mockRepositoryFileSystem }, async () => {
         runScmCommandMock.mockReset();
         runScmCommandMock.mockImplementation(async (input: { args: readonly string[] }) => ({
             success: input.args[0] !== 'diff',
@@ -80,7 +77,7 @@ describe('sapling repository snapshot', () => {
         expect.soft(snapshot.totals.isComplete).toBe(false);
     }));
 
-    it('captures pending line stats for diffable entries and untracked files', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock }, async () => {
+    it('captures pending line stats for diffable entries and untracked files', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock, repositoryFileSystem: mockRepositoryFileSystem }, async () => {
         runScmCommandMock.mockReset();
         statMock.mockReset();
         readFileMock.mockReset();
@@ -177,7 +174,7 @@ describe('sapling repository snapshot', () => {
         }]);
     }));
 
-    it('reports missing sapling executable as backend unavailable', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock }, async () => {
+    it('reports missing sapling executable as backend unavailable', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock, repositoryFileSystem: mockRepositoryFileSystem }, async () => {
         runScmCommandMock.mockReset();
         runScmCommandMock.mockResolvedValueOnce({
             success: false,
@@ -204,7 +201,7 @@ describe('sapling repository snapshot', () => {
         expect(result?.errorCode).toBe(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
     }));
 
-    it('reports sapling remote path read failures instead of masking them as no remotes', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock }, async () => {
+    it('reports sapling remote path read failures instead of masking them as no remotes', async () => runWithBackendRuntimeServices({ runCommand: runScmCommandMock, repositoryFileSystem: mockRepositoryFileSystem }, async () => {
         runScmCommandMock.mockReset();
         statMock.mockReset();
         readFileMock.mockReset();

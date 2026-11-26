@@ -1,5 +1,4 @@
-import { constants } from 'node:fs';
-import { access, lstat, realpath, unlink } from 'node:fs/promises';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { basename, isAbsolute, resolve } from 'node:path';
 
 import {
@@ -61,7 +60,8 @@ function containsTraversalSegment(rawPath: string): boolean {
 
 async function realpathIfExists(path: string): Promise<string | null> {
     try {
-        return await realpath(path);
+        const files = readRepositoryFileSystem();
+        return await files.realpath(files.commandPaths?.fromCommandPath(path) ?? path);
     } catch {
         return null;
     }
@@ -157,7 +157,10 @@ async function resolveGitIndexLockPath(context: ScmBackendContext): Promise<Lock
     return {
         ok: true,
         rawGitPath,
-        lockPath: isAbsolute(rawGitPath) ? resolve(rawGitPath) : resolve(context.cwd, rawGitPath),
+        lockPath: (() => {
+            const files = readRepositoryFileSystem();
+            return isAbsolute(rawGitPath) ? (files.commandPaths?.fromCommandPath(resolve(rawGitPath)) ?? resolve(rawGitPath)) : resolve(context.cwd, rawGitPath);
+        })(),
         absoluteGitDir: absoluteGitDirPath,
         commonDir,
     };
@@ -165,7 +168,8 @@ async function resolveGitIndexLockPath(context: ScmBackendContext): Promise<Lock
 
 async function pathExists(path: string): Promise<boolean> {
     try {
-        await access(path, constants.F_OK);
+        const files = readRepositoryFileSystem();
+        await files.lstat(files.commandPaths?.fromCommandPath(path) ?? path);
         return true;
     } catch {
         return false;
@@ -197,7 +201,8 @@ async function validateResolvedIndexLockPath(input: {
     }
 
     if (await pathExists(input.lockPath)) {
-        const lockStat = await lstat(input.lockPath);
+        const files = readRepositoryFileSystem();
+        const lockStat = await files.lstat(files.commandPaths?.fromCommandPath(input.lockPath) ?? input.lockPath);
         if (lockStat.isSymbolicLink()) {
             return invalidRequestResponse('Resolved Git index lock path must not be a symlink.');
         }
@@ -244,7 +249,8 @@ export async function gitRemoveIndexLock(input: {
     }
 
     try {
-        await unlink(resolved.lockPath);
+        const files = readRepositoryFileSystem();
+        await files.unlink(files.commandPaths?.fromCommandPath(resolved.lockPath) ?? resolved.lockPath);
     } catch (error) {
         if (error && typeof error === 'object' && (error as { code?: unknown }).code === 'ENOENT') {
             return {

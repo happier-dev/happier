@@ -17,9 +17,9 @@ import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { mapGitErrorCode } from '../remote.js';
 import { createGitWorkspaceCheckoutAtDefaultPath } from './materializeGitWorkspaceCheckout.js';
-import { lstat, rm, readFile } from 'node:fs/promises';
-import { basename, dirname, join, toNamespacedPath } from 'node:path';
-import { canonicalAbsolutePathsEqual, canonicalizePath, isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
+import { canonicalizeRepositoryPath, readRepositoryFileSystem } from '../repositoryFileSystem.js';
+import { basename, dirname, join } from 'node:path';
+import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { inspectGitCheckoutIdentity, resolveGitMainWorktreePath } from '../checkoutIdentity.js';
 import { parseGitWorktreeListPorcelain } from '../worktreeListParser.js';
 import { withGitWorktreeMutation } from './worktreeMutationQueue.js';
@@ -188,7 +188,7 @@ export async function gitWorktreeRemove(input: {
     return withGitWorktreeMutation(input.context.cwd, async () => {
         // Git removes the registered checkout behind a directory alias. Use
         // that same path for admission and for checking the removal result.
-        const path = await canonicalizePath(validatedPath.value);
+        const path = await canonicalizeRepositoryPath(validatedPath.value);
         input.context.assertFilesystemPathAuthorized?.(path);
         const before = await readPathIdentity(path);
         let missingWorktree: Parameters<NonNullable<ScmBackendContext['beforeFilesystemMutation']>>[0];
@@ -228,7 +228,8 @@ export async function gitWorktreeRemove(input: {
         let retainedEntry: string | null = null;
         if (identity) {
             try {
-                const lock = (await readFile(join(identity.gitDirPath, 'locked'), 'utf8')).trim();
+                const files = readRepositoryFileSystem();
+                const lock = Buffer.from(await files.readFile(files.commandPaths?.fromCommandPath(join(identity.gitDirPath, 'locked')) ?? join(identity.gitDirPath, 'locked'))).toString('utf8').trim();
                 if (lock.startsWith('happier-trash:')) retainedEntry = lock.slice('happier-trash:'.length);
             } catch { /* Ordinary worktrees are unlocked. */ }
         }
@@ -259,7 +260,7 @@ export async function gitWorktreeRemove(input: {
                 return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
                     error: `Worktree removal left an unverified path: ${path}`, stderr: result.stderr };
             }
-            await rm(toNamespacedPath(path), { recursive: true, force: true });
+            await readRepositoryFileSystem().rm(path, { recursive: true, force: true });
             after = await readPathIdentity(path);
             if (after) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, error: `Worktree path remains after removal: ${path}` };
             return { success: true, stdout: result.stdout, stderr: result.stderr };
@@ -284,7 +285,7 @@ export async function gitWorktreeRemove(input: {
 }
 
 async function readPathIdentity(path: string) {
-    try { return await lstat(toNamespacedPath(path), { bigint: true }); }
+    try { return await readRepositoryFileSystem().lstat(path); }
     catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null; throw error; }
 }
 

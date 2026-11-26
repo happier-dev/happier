@@ -1,5 +1,5 @@
 import { readUntrackedFileStats } from '@happier-dev/plugin-sdk/scm/backend';
-import { existsSync } from 'fs';
+import { readRepositoryFileSystem } from './repositoryFileSystem.js';
 import { join } from 'node:path';
 
 import type {
@@ -61,8 +61,17 @@ export async function detectSaplingRepo(input: { cwd: string }): Promise<ScmRepo
         };
     }
 
-    const rootPath = root.stdout.trim();
-    const mode = existsSync(join(rootPath, '.sl')) ? '.sl' : '.git';
+    const rawRootPath = root.stdout.trim();
+    const files = readRepositoryFileSystem();
+    const rootPath = files.commandPaths?.fromCommandPath(rawRootPath) ?? rawRootPath;
+    let hasSlDir = false;
+    try {
+        await files.stat(join(rootPath, '.sl'));
+        hasSlDir = true;
+    } catch {
+        hasSlDir = false;
+    }
+    const mode = hasSlDir ? '.sl' : '.git';
     return {
         isRepo: true,
         rootPath,

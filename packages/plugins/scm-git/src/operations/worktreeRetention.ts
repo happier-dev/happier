@@ -1,6 +1,6 @@
-import { lstat, readFile } from 'node:fs/promises';
+import { canonicalizeRepositoryPath, readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { dirname, join } from 'node:path';
-import { canonicalAbsolutePathsEqual, canonicalizePath, isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
+import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { SCM_OPERATION_ERROR_CODES, type ScmOperationErrorCode, type ScmWorktreeRetireRequest, type ScmWorktreeRemoveResponse } from '@happier-dev/plugin-sdk/scm';
 import { inspectGitCheckoutIdentity } from '../checkoutIdentity.js';
 import type { ScmBackendContext } from '../types.js';
@@ -16,7 +16,7 @@ function failure(error: string, errorCode: ScmOperationErrorCode = SCM_OPERATION
     return { success: false, error, errorCode };
 }
 async function absent(path: string): Promise<boolean> {
-    try { await lstat(path); return false; }
+    try { await readRepositoryFileSystem().lstat(path); return false; }
     catch (error) { if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return true; throw error; }
 }
 async function command(input: Input, args: string[]) {
@@ -35,20 +35,20 @@ async function completeMoved(input: Input, restoring: boolean): Promise<ScmWorkt
     const { worktreePath, targetPath, entryId } = input.request;
     if (!input.context.beforeFilesystemMutation)
         return failure('Interrupted worktree completion requires a trusted Trash identity guard', SCM_OPERATION_ERROR_CODES.INVALID_PATH);
-    const before = await lstat(targetPath);
+    const before = await readRepositoryFileSystem().lstat(targetPath);
     if (!before.isDirectory() || before.isSymbolicLink()) return failure('The completed worktree is not a directory', SCM_OPERATION_ERROR_CODES.INVALID_PATH);
     const identity = await inspectGitCheckoutIdentity({ cwd: targetPath });
     const repository = await inspectGitCheckoutIdentity({ cwd: input.context.cwd });
     if (await readGitRetentionKind(targetPath, input.context.cwd, restoring ? targetPath : worktreePath)) {
         await input.context.beforeFilesystemMutation();
-        const after = await lstat(targetPath);
+        const after = await readRepositoryFileSystem().lstat(targetPath);
         return await absent(worktreePath) && before.dev === after.dev && before.ino === after.ino
             ? { success: true } : failure('The completed checkout identity changed', SCM_OPERATION_ERROR_CODES.INVALID_PATH);
     }
     if (!identity || !repository || identity.gitDirPath === identity.commonDirPath
         || !canonicalAbsolutePathsEqual(identity.commonDirPath, repository.commonDirPath))
         return failure('The completed worktree is not owned by this repository', SCM_OPERATION_ERROR_CODES.INVALID_PATH);
-    const physicalTarget = await canonicalizePath(targetPath);
+    const physicalTarget = await canonicalizeRepositoryPath(targetPath);
     const listed = await command(input, ['worktree', 'list', '--porcelain', '-z']);
     if (!listed.success) return failure(listed.stderr);
     const registered = parseGitWorktreeListPorcelain({ worktreesOutput: listed.stdout, currentWorktreePath: null });
@@ -57,7 +57,10 @@ async function completeMoved(input: Input, restoring: boolean): Promise<ScmWorkt
         return failure('The completed worktree registration does not match the Trash operation');
     const expected = `happier-trash:${entryId}`;
     let lock: string | null;
-    try { lock = (await readFile(join(identity.gitDirPath, 'locked'), 'utf8')).trim(); }
+    try {
+        const files = readRepositoryFileSystem();
+        lock = Buffer.from(await files.readFile(files.commandPaths?.fromCommandPath(join(identity.gitDirPath, 'locked')) ?? join(identity.gitDirPath, 'locked'))).toString('utf8').trim();
+    }
     catch (error) {
         if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT')
             return failure('The completed worktree lock is unavailable');
@@ -65,7 +68,7 @@ async function completeMoved(input: Input, restoring: boolean): Promise<ScmWorkt
     }
     if (lock !== null && lock !== expected) return failure('The worktree lock belongs to another owner');
     await input.context.beforeFilesystemMutation();
-    const after = await lstat(targetPath);
+    const after = await readRepositoryFileSystem().lstat(targetPath);
     if (!await absent(worktreePath) || before.dev !== after.dev || before.ino !== after.ino || !after.isDirectory() || after.isSymbolicLink())
         return failure('The completed worktree identity changed', SCM_OPERATION_ERROR_CODES.INVALID_PATH);
     if ((restoring && lock === null) || (!restoring && lock === expected)) return { success: true };
@@ -82,9 +85,9 @@ async function move(input: Input, restoring: boolean): Promise<ScmWorktreeRemove
     if (await absent(worktreePath) && !await absent(targetPath)) return completeMoved(input, restoring);
     if (!await absent(targetPath)) return failure(`Restore destination is occupied: ${targetPath}`, SCM_OPERATION_ERROR_CODES.INVALID_PATH);
     if (await absent(dirname(targetPath))) return failure('The destination parent is missing', SCM_OPERATION_ERROR_CODES.INVALID_PATH);
-    const sourceInfo = await lstat(worktreePath, { bigint: true });
+    const sourceInfo = await readRepositoryFileSystem().lstat(worktreePath);
     if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) return failure('A worktree source must be a directory', SCM_OPERATION_ERROR_CODES.INVALID_PATH);
-    const physicalSource = await canonicalizePath(worktreePath);
+    const physicalSource = await canonicalizeRepositoryPath(worktreePath);
     const identity = await inspectGitCheckoutIdentity({ cwd: worktreePath });
     const repository = await inspectGitCheckoutIdentity({ cwd: input.context.cwd });
     if (await readGitRetentionKind(physicalSource, input.context.cwd, restoring ? targetPath : worktreePath)) {
@@ -106,7 +109,10 @@ async function move(input: Input, restoring: boolean): Promise<ScmWorktreeRemove
     const lockReason = `happier-trash:${entryId}`;
     if (restoring) {
         let locked: string;
-        try { locked = (await readFile(join(identity.gitDirPath, 'locked'), 'utf8')).trim(); }
+        try {
+            const files = readRepositoryFileSystem();
+            locked = Buffer.from(await files.readFile(files.commandPaths?.fromCommandPath(join(identity.gitDirPath, 'locked')) ?? join(identity.gitDirPath, 'locked'))).toString('utf8').trim();
+        }
         catch { return failure('The retired worktree lock is unavailable'); }
         if (locked !== lockReason) return failure('The retired worktree belongs to another Trash entry');
         await input.context.beforeFilesystemMutation?.();

@@ -1,4 +1,3 @@
-import { realpathSync } from 'node:fs';
 import path, { relative, sep } from 'node:path';
 
 import { ScmSelectedMutationPathSchema } from '@happier-dev/plugin-sdk/scm';
@@ -49,13 +48,7 @@ export function normalizePathspec(rawPath: string, cwd: string): { ok: true; pat
     if (!selectedPath.success) {
         return { ok: false, error: 'Path must identify a file or subdirectory' };
     }
-    const canonicalCwd = (() => {
-        try {
-            return realpathSync(path.resolve(cwd));
-        } catch {
-            return path.resolve(cwd);
-        }
-    })();
+    const canonicalCwd = path.resolve(cwd);
     const resolvedPath = path.resolve(canonicalCwd, rawPath);
     const rel = relative(canonicalCwd, resolvedPath);
     if (rel === '' || rel === '.') {

@@ -1,4 +1,4 @@
-import { lstat, rename, rm } from 'node:fs/promises';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { join } from 'node:path';
 
 import { inspectGitCheckoutIdentity, isGitLinkedWorktreeIdentity } from '../checkoutIdentity.js';
@@ -6,7 +6,7 @@ import { repairGitWorktreeAdminReference } from './repairGitWorktreeAdminReferen
 
 async function pathExists(path: string): Promise<boolean> {
     try {
-        await lstat(path);
+        await readRepositoryFileSystem().lstat(path);
         return true;
     } catch {
         return false;
@@ -56,10 +56,10 @@ export async function ensureGitWorktreeMaterialized(input: Readonly<{
 
     const targetGitPath = join(input.targetPath, '.git');
     if (await pathExists(targetGitPath)) {
-        await rm(targetGitPath, { recursive: true, force: true });
+        await readRepositoryFileSystem().rm(targetGitPath, { recursive: true, force: true });
     }
 
-    await rename(previousGitPath, targetGitPath);
+    await readRepositoryFileSystem().rename(previousGitPath, targetGitPath);
     await repairGitWorktreeAdminReference({
         identity: previousTargetIdentity,
         targetPath: input.targetPath,

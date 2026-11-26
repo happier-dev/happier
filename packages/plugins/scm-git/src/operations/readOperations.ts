@@ -15,7 +15,6 @@ import type {
   ScmHistoryEntriesResponse,
 } from '@happier-dev/plugin-sdk/scm';
 import { SCM_OPERATION_ERROR_CODES, ScmHistoryEntriesInputV1Schema, ScmHistoryEntriesResponseSchema } from '@happier-dev/plugin-sdk/scm';
-import { lstat, readFile, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -109,12 +108,15 @@ export async function gitBlameFile(input: {
     if (!normalized.ok) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH, error: normalized.error };
     const cwd = context.detection.rootPath ?? context.cwd;
     const signal = input.signal;
+    const files = readRepositoryFileSystem();
     try {
-        const root = await realpath(cwd);
+        const root = await files.realpath(cwd);
         const file = resolve(root, normalized.relativePath);
-        if (!isCanonicalAbsolutePathInsideRoot(root, await realpath(file))) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH, error: 'Blame path is outside the repository' };
-        if (!(await lstat(file)).isFile()) return { success: false, errorCode: 'unsupported_path', error: 'Blame requires a regular text file' };
-        const bytes = await readFile(file);
+        if (!isCanonicalAbsolutePathInsideRoot(root, await files.realpath(file))) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH, error: 'Blame path is outside the repository' };
+        const fileInfo = await files.lstat(file);
+        const isRegularFile = typeof fileInfo.isFile === 'function' ? fileInfo.isFile() : (!fileInfo.isDirectory() && !fileInfo.isSymbolicLink());
+        if (!isRegularFile) return { success: false, errorCode: 'unsupported_path', error: 'Blame requires a regular text file' };
+        const bytes = Buffer.from(await files.readFile(file));
         const hash = createHash('sha256').update(bytes).digest('hex');
         if (request.expectedHash && request.expectedHash !== hash) return { success: false, errorCode: 'stale_file' };
         if (bytes.includes(0)) return { success: false, errorCode: 'unsupported_path', error: 'Binary files have no line blame' };
@@ -140,7 +142,7 @@ export async function gitBlameFile(input: {
         }
         // The displayed bytes may have changed while Git was reading. Never
         // publish ranges against another version, even when no hash was supplied.
-        if (createHash('sha256').update(await readFile(file)).digest('hex') !== hash) return { success: false, errorCode: 'stale_file' };
+        if (createHash('sha256').update(Buffer.from(await files.readFile(file))).digest('hex') !== hash) return { success: false, errorCode: 'stale_file' };
         const response = reader.finish();
         if (!response.success) return response;
         let lines = bytes.length > 0 && bytes.at(-1) !== 10 ? 1 : 0;

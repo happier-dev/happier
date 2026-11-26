@@ -818,11 +818,14 @@ export type BackendRuntimeServices = Readonly<{
     /** Optional host operation: every path addresses the admitted workspace's filesystem. */
     repositoryFileSystem?: Readonly<{
         lstat(path: string): Promise<Readonly<{ dev: number; ino: number; birthtimeMs?: number;
-            isDirectory(): boolean; isSymbolicLink(): boolean }>>;
+            mtimeMs?: number; size?: number;
+            isFile?(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean }>>;
         realpath(path: string): Promise<string>;
+        readlink?(path: string): Promise<string>;
         readFile(path: string): Promise<Uint8Array>;
         writeFile(path: string, contents: Uint8Array): Promise<void>;
-        stat(path: string): Promise<Readonly<{ isDirectory(): boolean }>>;
+        stat(path: string): Promise<Readonly<{ isDirectory(): boolean; isFile?(): boolean;
+            size?: number; mtimeMs?: number }>>;
         commandPaths?: Readonly<{ toCommandPath(path: string): string; fromCommandPath(path: string): string }>;
         /** Exclusive files, durable writes, and metadata stay in the same workspace as commands. */
         filePublication?: Readonly<{

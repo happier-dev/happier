@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readRepositoryFileSystem } from './repositoryFileSystem.js';
 import { join } from 'node:path';
 import type { ScmWorktree, ScmWorktreeEnrichmentEntry } from '@happier-dev/plugin-sdk/scm';
 import { runScmCommand } from './runtime.js';
@@ -55,19 +55,28 @@ async function readFacts(path: string, timeoutMs: number): Promise<ScmWorktreeEn
     if (submodules.success) facts.hasSubmodules = submodules.stdout.split('\0').some(e => e.startsWith('160000 '));
     if (!identity) return facts;
     if (identity.headRevision) facts.headOid = identity.headRevision;
-    try {
-        facts.lockReason = (await readFile(join(identity.gitDirPath, 'locked'), 'utf8')).trim();
-        facts.isLocked = true;
-    } catch (error) {
-        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') facts.isLocked = false;
-    }
-    const [times, reflog, upstream, remoteHeads] = await Promise.all([
+    const files = readRepositoryFileSystem();
+    const addressedGitDirPath = files.commandPaths?.fromCommandPath(identity.gitDirPath) ?? identity.gitDirPath;
+    const [lockState, times, reflog, upstream, remoteHeads] = await Promise.all([
+        files.readFile(join(addressedGitDirPath, 'locked')).then(
+            (raw) => ({ isLocked: true as const, lockReason: Buffer.from(raw).toString('utf8').trim() }),
+            (error: unknown) => (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT'
+                ? { isLocked: false as const }
+                : null),
+        ),
         Promise.all(['HEAD', 'COMMIT_EDITMSG', 'ORIG_HEAD'].map(async name => {
-            try { return Math.floor((await stat(join(identity.gitDirPath, name))).mtimeMs); } catch { return undefined; }
+            try {
+                const info = await files.stat(join(addressedGitDirPath, name));
+                return typeof info.mtimeMs === 'number' ? Math.floor(info.mtimeMs) : undefined;
+            } catch { return undefined; }
         })), command(['reflog', '-1', '--date=unix', '--format=%gD']),
         identity.branchName ? command(['for-each-ref', '--format=%(upstream:short)%00%(upstream:track)', `refs/heads/${identity.branchName}`]) : Promise.resolve(null),
         command(['for-each-ref', '--format=%(refname:short)%09%(symref:short)', 'refs/remotes/*/HEAD']),
     ]);
+    if (lockState) {
+        facts.isLocked = lockState.isLocked;
+        if (lockState.isLocked) facts.lockReason = lockState.lockReason;
+    }
     if (reflog.success) {
         const value = /@\{(\d+)\}/u.exec(reflog.stdout);
         if (value) times.push(Number(value[1]) * 1000);

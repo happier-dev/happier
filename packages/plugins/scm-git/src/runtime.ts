@@ -1,4 +1,3 @@
-import { realpathSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import path from 'node:path';
 
@@ -81,13 +80,7 @@ function validateContainedPath(rawPath: string, cwd: string): { ok: true; relati
   if (!selectedPath.success) {
     return { ok: false, error: 'Path must identify a file or subdirectory' };
   }
-  const canonicalCwd = (() => {
-    try {
-      return realpathSync(path.resolve(cwd));
-    } catch {
-      return path.resolve(cwd);
-    }
-  })();
+  const canonicalCwd = path.resolve(cwd);
   const resolvedPath = path.resolve(canonicalCwd, rawPath);
   const rel = relative(canonicalCwd, resolvedPath);
   if (!isCanonicalAbsolutePathInsideRoot(canonicalCwd, resolvedPath)) {

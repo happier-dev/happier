@@ -90,7 +90,7 @@ describe('Git repository worktree status enrichment', () => {
             branch: { head: linked ? 'linked' : 'main' } } });
         expect(response.snapshot?.repo.worktrees.find(worktree => worktree.branch === 'main')?.isMain).toBe(true);
         // Real plugin → SDK → CLI process execution, including repository detection.
-        expect(observedCommands).toHaveLength(linked ? 9 : 8);
+        expect(observedCommands).toHaveLength(linked ? 8 : 7);
     });
 
     it.each([false, true])('reads repository facts without scanning the working copy (linked worktree: %s)', async (linked) => {

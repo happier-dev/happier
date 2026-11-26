@@ -1,10 +1,11 @@
 import { constants } from 'node:fs';
-import { access, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
+import { access, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, rmdir, stat, unlink, utimes, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { readCurrentBackendRuntimeServices, type BackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 type RepositoryFileSystem = NonNullable<BackendRuntimeServices['repositoryFileSystem']>;
 const standaloneFileSystem: RepositoryFileSystem = {
-    lstat, realpath, mkdir, mkdtemp, readdir, rename, rm, rmdir, unlink, readFile, writeFile, stat,
+    lstat, realpath, readlink, mkdir, mkdtemp, readdir, rename, rm, rmdir, unlink, readFile, writeFile, stat,
     filePublication: {
         async copyFileExclusive(from, to) {
             const { atime, mtime } = await stat(from);
@@ -45,4 +46,13 @@ export function readRepositoryFileSystem(): RepositoryFileSystem {
         code: 'BACKEND_UNAVAILABLE',
     });
     return services.repositoryFileSystem;
+}
+
+export async function canonicalizeRepositoryPath(targetPath: string): Promise<string> {
+    const resolved = resolve(targetPath);
+    try {
+        return await readRepositoryFileSystem().realpath(resolved);
+    } catch {
+        return resolved;
+    }
 }

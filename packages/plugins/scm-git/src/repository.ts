@@ -12,8 +12,11 @@ import { getScmCommandIndeterminateErrorCode, runScmCommand, type ScmExecResult 
 import { buildGitSnapshot } from './statusSnapshot.js';
 import { inspectGitCheckoutIdentity, resolveGitMainWorktreePath } from './checkoutIdentity.js';
 import { enrichGitWorktreesWithStatus, readWorktreeStatusEnrichmentForPaths } from './worktreeStatusEnricher.js';
-import { realpath } from 'node:fs/promises';
-import { readGitBranchOperationState } from './operations/branchOperationState.js';
+import { readRepositoryFileSystem } from './repositoryFileSystem.js';
+import {
+  readGitBranchOperationStateFromResolvedPaths,
+  resolveGitBranchOperationStatePaths,
+} from './operations/branchOperationState.js';
 import { parseGitStatusPorcelainV2Z } from './statusParser.js';
 import { parseGitWorktreeListPorcelain } from './worktreeListParser.js';
 import { inspectGitOrphanWorktree, readGitRetentionFacts, resolveGitRetainedWorktreeRepository } from './operations/worktreeRetentionFacts.js';
@@ -117,6 +120,10 @@ export async function detectGitRepo(input: { cwd: string; includeRetainedWorktre
     };
 }
 
+function hasMeaningfulTrackedChange(statusChar: string): boolean {
+    return statusChar !== ' ' && statusChar !== '.' && statusChar !== '?';
+}
+
 export async function getGitSnapshot(input: {
     context: ScmBackendContext;
     request?: Pick<ScmStatusSnapshotRequest, 'includeWorktreeStatus' | 'operationStateVersion' | 'detail'>;
@@ -127,69 +134,166 @@ export async function getGitSnapshot(input: {
     // A facts reader (checkout picker) reads root, branch, worktrees and remotes: answer from
     // ref queries and never walk the working copy (no status, numstat or untracked reads).
     const factsOnly = request?.detail === 'facts';
+    const noScan: ScmExecResult = { success: true, stdout: '', stderr: '', exitCode: 0 };
 
-    const statusResult = factsOnly ? await readGitBranchHeaderAsStatus(context.cwd) : await runScmCommand({
-        bin: 'git',
-        cwd: context.cwd,
-        args: ['status', '--porcelain=v2', '-z', '--branch', '--show-stash', '--untracked-files=all'],
-        timeoutMs: 10_000,
-    });
-    if (!statusResult.success) {
-        return {
-            success: false,
-            errorCode: (factsOnly ? getScmCommandIndeterminateErrorCode(statusResult) : null) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
-            error: statusResult.stderr || 'Failed to read repository status',
-        };
+    let statusResult: ScmExecResult;
+    let worktreesResult: ScmExecResult;
+    let remotesResult: ScmExecResult;
+    let remoteHeadRefsResult: ScmExecResult;
+    let includedResult: ScmExecResult = noScan;
+    let pendingResult: ScmExecResult = noScan;
+    let operationState: Awaited<ReturnType<typeof readGitBranchOperationStateFromResolvedPaths>> = null;
+    let upstreamOidResult: ScmExecResult | null = null;
+    let untrackedStatsByPath: Record<string, { pendingAdded: number; isBinary: boolean }> = {};
+    let mainWorktreePath: string | null = null;
+
+    if (factsOnly) {
+        // Dispatch all ref and repository-facts queries in one wave so placed
+        // workspaces pay a single channel round trip for `detail: 'facts'`.
+        const [
+            headResult,
+            branchResult,
+            upstreamResult,
+            countsResult,
+            worktrees,
+            remotes,
+            remoteHeadRefs,
+        ] = await Promise.all([
+            runScmCommand({ bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'] }),
+            runScmCommand({ bin: 'git', cwd: context.cwd, args: ['symbolic-ref', '--quiet', '--short', 'HEAD'] }),
+            runScmCommand({ bin: 'git', cwd: context.cwd, args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'] }),
+            runScmCommand({ bin: 'git', cwd: context.cwd, args: ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'] }),
+            runScmCommand({
+                bin: 'git',
+                cwd: repoRoot,
+                args: ['worktree', 'list', '--porcelain', '-z'],
+                timeoutMs: 10_000,
+            }),
+            runScmCommand({
+                bin: 'git',
+                cwd: repoRoot,
+                args: ['remote', '-v'],
+                timeoutMs: 10_000,
+            }),
+            runScmCommand({
+                bin: 'git',
+                cwd: repoRoot,
+                args: ['for-each-ref', '--format=%(refname:short)%09%(symref:short)', 'refs/remotes/*/HEAD'],
+                timeoutMs: 10_000,
+            }),
+        ]);
+        statusResult = buildGitBranchHeaderStatus({
+            head: headResult,
+            branch: branchResult,
+            upstream: upstreamResult,
+            counts: countsResult,
+        });
+        if (!statusResult.success) {
+            return {
+                success: false,
+                errorCode: getScmCommandIndeterminateErrorCode(statusResult) ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                error: statusResult.stderr || 'Failed to read repository status',
+            };
+        }
+        worktreesResult = worktrees;
+        remotesResult = remotes;
+        remoteHeadRefsResult = remoteHeadRefs;
+        mainWorktreePath = worktreesResult.success ? await resolveGitMainWorktreePath({
+            worktreesOutput: worktreesResult.stdout, currentWorktreePath: context.detection.rootPath,
+        }) : null;
+    } else {
+        // Wave 1: dispatch status together with all status-independent repository
+        // queries and operation-state path resolution.
+        const [
+            status,
+            worktrees,
+            remotes,
+            remoteHeadRefs,
+            statePathsResult,
+        ] = await Promise.all([
+            runScmCommand({
+                bin: 'git',
+                cwd: context.cwd,
+                args: ['status', '--porcelain=v2', '-z', '--branch', '--show-stash', '--untracked-files=all'],
+                timeoutMs: 10_000,
+            }),
+            runScmCommand({
+                bin: 'git',
+                cwd: repoRoot,
+                args: ['worktree', 'list', '--porcelain', '-z'],
+                timeoutMs: 10_000,
+            }),
+            runScmCommand({
+                bin: 'git',
+                cwd: repoRoot,
+                args: ['remote', '-v'],
+                timeoutMs: 10_000,
+            }),
+            runScmCommand({
+                bin: 'git',
+                cwd: repoRoot,
+                args: ['for-each-ref', '--format=%(refname:short)%09%(symref:short)', 'refs/remotes/*/HEAD'],
+                timeoutMs: 10_000,
+            }),
+            resolveGitBranchOperationStatePaths(context).then(
+                (paths) => ({ ok: true as const, paths }),
+                (error: unknown) => ({ ok: false as const, error }),
+            ),
+        ]);
+        if (!status.success) {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+                error: status.stderr || 'Failed to read repository status',
+            };
+        }
+        if (!statePathsResult.ok) {
+            throw statePathsResult.error;
+        }
+        statusResult = status;
+        worktreesResult = worktrees;
+        remotesResult = remotes;
+        remoteHeadRefsResult = remoteHeadRefs;
+
+        const parsedStatus = parseGitStatusPorcelainV2Z(statusResult.stdout ?? '');
+        const hasIncludedTrackedChanges = parsedStatus.files.some((entry) => hasMeaningfulTrackedChange(entry.index));
+        const hasPendingTrackedChanges = parsedStatus.files.some((entry) => hasMeaningfulTrackedChange(entry.workingDir));
+
+        // Wave 2: dispatch status-dependent reads (conditional numstats, parallel
+        // operation-state FS probes, upstream OID, untracked stats, main worktree proof).
+        [
+            includedResult,
+            pendingResult,
+            operationState,
+            upstreamOidResult,
+            untrackedStatsByPath,
+            mainWorktreePath,
+        ] = await Promise.all([
+            hasIncludedTrackedChanges ? runScmCommand({
+                bin: 'git',
+                cwd: context.cwd,
+                args: ['diff', '--cached', '--numstat', '-z'],
+                timeoutMs: 10_000,
+            }) : noScan,
+            hasPendingTrackedChanges ? runScmCommand({
+                bin: 'git',
+                cwd: context.cwd,
+                args: ['diff', '--numstat', '-z'],
+                timeoutMs: 10_000,
+            }) : noScan,
+            readGitBranchOperationStateFromResolvedPaths(context, statePathsResult.paths, parsedStatus.branch.oid),
+            parsedStatus.branch.upstream ? runScmCommand({
+                bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', '@{upstream}^{commit}'],
+            }) : null,
+            repoRoot && parsedStatus.notAdded.length > 0
+                ? readUntrackedFileStats(repoRoot, parsedStatus.notAdded) : {},
+            worktreesResult.success ? resolveGitMainWorktreePath({
+                worktreesOutput: worktreesResult.stdout, currentWorktreePath: context.detection.rootPath,
+            }) : null,
+        ]);
     }
 
-    const statusRaw = statusResult.stdout ?? '';
-    const parsedStatus = parseGitStatusPorcelainV2Z(statusRaw);
-    const noScan: ScmExecResult = { success: true, stdout: '', stderr: '', exitCode: 0 };
-    // These reads have no dependency on one another. Dispatch them together so a
-    // placed workspace does not pay a channel round trip between Git processes.
-    const [includedResult, pendingResult, worktreesResult, remotesResult, remoteHeadRefsResult,
-        operationState, upstreamOidResult, untrackedStatsByPath] = await Promise.all([
-        factsOnly ? noScan : runScmCommand({
-            bin: 'git',
-            cwd: context.cwd,
-            args: ['diff', '--cached', '--numstat', '-z'],
-            timeoutMs: 10_000,
-        }),
-        factsOnly ? noScan : runScmCommand({
-            bin: 'git',
-            cwd: context.cwd,
-            args: ['diff', '--numstat', '-z'],
-            timeoutMs: 10_000,
-        }),
-        runScmCommand({
-            bin: 'git',
-            cwd: repoRoot,
-            args: ['worktree', 'list', '--porcelain', '-z'],
-            timeoutMs: 10_000,
-        }),
-        runScmCommand({
-            bin: 'git',
-            cwd: repoRoot,
-            args: ['remote', '-v'],
-            timeoutMs: 10_000,
-        }),
-        runScmCommand({
-            bin: 'git',
-            cwd: repoRoot,
-            args: ['for-each-ref', '--format=%(refname:short)%09%(symref:short)', 'refs/remotes/*/HEAD'],
-            timeoutMs: 10_000,
-        }),
-        factsOnly ? null : readGitBranchOperationState(context, parsedStatus.branch.oid),
-        parsedStatus.branch.upstream && !factsOnly ? runScmCommand({
-            bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', '@{upstream}^{commit}'],
-        }) : null,
-        repoRoot && parsedStatus.notAdded.length > 0 && !factsOnly
-            ? readUntrackedFileStats(repoRoot, parsedStatus.notAdded) : {},
-    ]);
     const commandPaths = readCurrentBackendRuntimeServices()?.repositoryFileSystem?.commandPaths;
-    const mainWorktreePath = worktreesResult.success ? await resolveGitMainWorktreePath({
-        worktreesOutput: worktreesResult.stdout, currentWorktreePath: context.detection.rootPath,
-    }) : null;
 
     const baseSnapshot = buildGitSnapshot({
         projectKey: context.projectKey,
@@ -248,10 +352,14 @@ export async function getGitSnapshot(input: {
  * The porcelain v2 branch header (`# branch.oid/head/upstream/ab`) from ref queries alone, so the
  * canonical status parser builds the branch facts without a working-copy walk.
  */
-async function readGitBranchHeaderAsStatus(cwd: string): Promise<ScmExecResult> {
-    const head = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'] });
+function buildGitBranchHeaderStatus(input: Readonly<{
+    head: ScmExecResult;
+    branch: ScmExecResult;
+    upstream: ScmExecResult;
+    counts: ScmExecResult;
+}>): ScmExecResult {
+    const { head, branch, upstream, counts } = input;
     if (getScmCommandIndeterminateErrorCode(head)) return head;
-    const branch = await runScmCommand({ bin: 'git', cwd, args: ['symbolic-ref', '--quiet', '--short', 'HEAD'] });
     if (getScmCommandIndeterminateErrorCode(branch)) return branch;
     if (!head.success && !branch.success) {
         // Neither a commit nor a branch: not a readable repository state.
@@ -262,14 +370,14 @@ async function readGitBranchHeaderAsStatus(cwd: string): Promise<ScmExecResult> 
         `# branch.head ${branch.success ? branch.stdout.trim() : '(detached)'}`,
     ];
     if (branch.success) {
-        const upstream = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'] });
         if (getScmCommandIndeterminateErrorCode(upstream)) return upstream;
         if (upstream.success && upstream.stdout.trim()) {
             lines.push(`# branch.upstream ${upstream.stdout.trim()}`);
-            const counts = head.success ? await runScmCommand({ bin: 'git', cwd, args: ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'] }) : null;
-            if (counts && getScmCommandIndeterminateErrorCode(counts)) return counts;
-            const [ahead, behind] = counts?.success ? counts.stdout.trim().split(/\s+/) : [];
-            if (ahead !== undefined && behind !== undefined) lines.push(`# branch.ab +${ahead} -${behind}`);
+            if (head.success) {
+                if (getScmCommandIndeterminateErrorCode(counts)) return counts;
+                const [ahead, behind] = counts.success ? counts.stdout.trim().split(/\s+/) : [];
+                if (ahead !== undefined && behind !== undefined) lines.push(`# branch.ab +${ahead} -${behind}`);
+            }
         }
     }
     return { success: true, stdout: lines.map(line => `${line}\0`).join(''), stderr: '', exitCode: 0 };
@@ -281,7 +389,7 @@ async function canonicalizeWorktreePathForCompare(path: string): Promise<string>
         ? path
         : (path.endsWith('/') || path.endsWith('\\') ? path.slice(0, -1) : path);
     try {
-        return await realpath(trimmed);
+        return await readRepositoryFileSystem().realpath(trimmed);
     } catch {
         return trimmed;
     }

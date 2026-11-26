@@ -1,4 +1,4 @@
-import { rmSync } from 'fs';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import path from 'node:path';
 
 import type {
@@ -85,7 +85,7 @@ export async function saplingChangeDiscard(input: {
     for (const entry of removePaths) {
         const absolutePath = path.join(context.cwd, entry);
         try {
-            rmSync(absolutePath, { force: true, recursive: true });
+            await readRepositoryFileSystem().rm(absolutePath, { force: true, recursive: true });
         } catch (error) {
             return {
                 success: false,

@@ -8,7 +8,18 @@ import type { ScmBackendContext } from '../types.js';
 import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 
-type GitStatePaths = ReadonlyMap<string, string | null>;
+export type GitStatePaths = ReadonlyMap<string, string | null>;
+
+const BRANCH_OPERATION_STATE_PATHS = [
+    'rebase-merge',
+    'rebase-apply',
+    'MERGE_HEAD',
+    'MERGE_MSG',
+    'REBASE_HEAD',
+    'REVERT_HEAD',
+    'CHERRY_PICK_HEAD',
+    'sequencer/todo',
+] as const;
 
 async function resolveGitStatePaths(context: ScmBackendContext, statePaths: readonly string[]): Promise<GitStatePaths> {
     const result = await runScmCommand({
@@ -34,6 +45,10 @@ async function resolveGitStatePaths(context: ScmBackendContext, statePaths: read
 
 export async function resolveGitStatePath(context: ScmBackendContext, statePath: string): Promise<string | null> {
     return (await resolveGitStatePaths(context, [statePath])).get(statePath) ?? null;
+}
+
+export async function resolveGitBranchOperationStatePaths(context: ScmBackendContext): Promise<GitStatePaths> {
+    return resolveGitStatePaths(context, BRANCH_OPERATION_STATE_PATHS);
 }
 
 async function directoryExists(path: string): Promise<boolean> {
@@ -70,59 +85,124 @@ async function readResolvedStateFile(paths: GitStatePaths, name: string, format:
     return path ? readTrimmedFile(path, format) : null;
 }
 
-async function readMergeOperationState(context: ScmBackendContext, paths: GitStatePaths): Promise<ScmOperationState | null> {
-    const mergeHead = await readResolvedStateFile(paths, 'MERGE_HEAD');
-    if (!mergeHead) {
-        return null;
-    }
-
-    const sourceRef = parseMergeSourceRef(await readResolvedStateFile(paths, 'MERGE_MSG')) ?? mergeHead;
-    const mergeHeads = mergeHead.split(/\s+/);
-    const bases = mergeHeads.length === 1 ? await runScmCommand({ bin: 'git', cwd: context.cwd, args: ['merge-base', '--all', 'HEAD', mergeHeads[0]], timeoutMs: 10_000, env: buildScmNonInteractiveEnv() }) : null;
-    const baseOids = bases?.success ? bases.stdout.trim().split(/\s+/).filter(Boolean) : [];
+function finalizeOperationState(
+    state: ScmOperationState,
+    headOid: string | undefined,
+    conflicts: NonNullable<ScmOperationState['conflicts']>,
+): ScmOperationState {
     return {
-        kind: 'merge',
-        sourceRef,
-        ...(baseOids.length === 1 ? { baseOid: baseOids[0] } : {}),
-        canContinue: false,
-        canAbort: true,
+        ...state,
+        headOid,
+        conflicts,
+        unresolvedCount: conflicts.length,
+        canContinue: conflicts.length === 0,
+        canSkip: state.kind !== 'merge' && Boolean(state.replayCommit),
     };
 }
 
-async function readRebaseSourceRef(rebasePath: string): Promise<string | null> {
-    const ontoName = await readTrimmedFile(join(rebasePath, 'onto_name'));
-    if (ontoName && ontoName !== 'onto') return ontoName.replace(/^refs\/heads\//, '');
+export async function readGitBranchOperationStateFromResolvedPaths(
+    context: ScmBackendContext,
+    paths: GitStatePaths,
+    knownHeadOid?: string,
+): Promise<ScmOperationState | null> {
+    const rebaseMergePath = paths.get('rebase-merge') ?? null;
+    const rebaseApplyPath = paths.get('rebase-apply') ?? null;
+    // Probe all operation markers concurrently so remote workspaces do not pay
+    // 6 sequential channel round trips on every clean status snapshot.
+    const [
+        hasRebaseMerge,
+        hasRebaseApply,
+        mergeHead,
+        revertHead,
+        cherryPickHead,
+        sequencerTodo,
+    ] = await Promise.all([
+        rebaseMergePath ? directoryExists(rebaseMergePath) : false,
+        rebaseApplyPath ? directoryExists(rebaseApplyPath) : false,
+        readResolvedStateFile(paths, 'MERGE_HEAD'),
+        readResolvedStateFile(paths, 'REVERT_HEAD'),
+        readResolvedStateFile(paths, 'CHERRY_PICK_HEAD'),
+        readResolvedStateFile(paths, 'sequencer/todo'),
+    ]);
 
-    const headName = await readTrimmedFile(join(rebasePath, 'head-name'));
-    return headName ? headName.replace(/^refs\/heads\//, '') : null;
-}
-
-async function readRebaseOperationState(paths: GitStatePaths): Promise<ScmOperationState | null> {
-    for (const rebaseDirName of ['rebase-merge', 'rebase-apply'] as const) {
-        const rebasePath = paths.get(rebaseDirName);
-        if (!rebasePath || !(await directoryExists(rebasePath))) {
-            continue;
-        }
-        return {
+    // A rebase directory controls its replay even when another head marker remains.
+    const rebasePath = hasRebaseMerge ? rebaseMergePath : hasRebaseApply ? rebaseApplyPath : null;
+    if (rebasePath) {
+        const [ontoName, headName, rebaseHead, stoppedSha, originalCommit, onto, conflicts, headOid] = await Promise.all([
+            readTrimmedFile(join(rebasePath, 'onto_name')),
+            readTrimmedFile(join(rebasePath, 'head-name')),
+            readResolvedStateFile(paths, 'REBASE_HEAD'),
+            readTrimmedFile(join(rebasePath, 'stopped-sha')),
+            readTrimmedFile(join(rebasePath, 'original-commit')),
+            readTrimmedFile(join(rebasePath, 'onto')),
+            readGitConflictEntries(context),
+            knownHeadOid ?? readHeadOid(context),
+        ]);
+        const sourceRef = ontoName && ontoName !== 'onto'
+            ? ontoName.replace(/^refs\/heads\//, '')
+            : headName ? headName.replace(/^refs\/heads\//, '') : null;
+        return finalizeOperationState({
             kind: 'rebase',
-            sourceRef: await readRebaseSourceRef(rebasePath),
-            replayCommit: await readResolvedStateFile(paths, 'REBASE_HEAD') ?? await readTrimmedFile(join(rebasePath, 'stopped-sha')) ?? await readTrimmedFile(join(rebasePath, 'original-commit')) ?? undefined,
-            baseOid: await readTrimmedFile(join(rebasePath, 'onto')) ?? undefined,
+            sourceRef,
+            replayCommit: rebaseHead ?? stoppedSha ?? originalCommit ?? undefined,
+            baseOid: onto ?? undefined,
             canContinue: false,
             canAbort: true,
-        };
+        }, headOid, conflicts);
     }
 
-    return null;
+    if (mergeHead) {
+        const mergeHeads = mergeHead.split(/\s+/);
+        const [mergeMessage, bases, conflicts, headOid] = await Promise.all([
+            readResolvedStateFile(paths, 'MERGE_MSG'),
+            mergeHeads.length === 1
+                ? runScmCommand({ bin: 'git', cwd: context.cwd, args: ['merge-base', '--all', 'HEAD', mergeHeads[0]], timeoutMs: 10_000, env: buildScmNonInteractiveEnv() })
+                : null,
+            readGitConflictEntries(context),
+            knownHeadOid ?? readHeadOid(context),
+        ]);
+        const sourceRef = parseMergeSourceRef(mergeMessage) ?? mergeHead;
+        const baseOids = bases?.success ? bases.stdout.trim().split(/\s+/).filter(Boolean) : [];
+        return finalizeOperationState({
+            kind: 'merge',
+            sourceRef,
+            ...(baseOids.length === 1 ? { baseOid: baseOids[0] } : {}),
+            canContinue: false,
+            canAbort: true,
+        }, headOid, conflicts);
+    }
+
+    if (revertHead || cherryPickHead) {
+        const [conflicts, headOid] = await Promise.all([
+            readGitConflictEntries(context),
+            knownHeadOid ?? readHeadOid(context),
+        ]);
+        return finalizeOperationState({
+            kind: revertHead ? 'revert' : 'cherry_pick',
+            replayCommit: revertHead ?? cherryPickHead ?? undefined,
+            canContinue: false,
+            canAbort: true,
+        }, headOid, conflicts);
+    }
+
+    const step = sequencerTodo?.split(/\r?\n/).find((line) => /^(pick|revert)\s/.test(line));
+    if (!step) return null;
+    const [commit, conflicts, headOid] = await Promise.all([
+        runScmCommand({ bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', `${step.split(/\s+/)[1]}^{commit}`], timeoutMs: 10_000, env: buildScmNonInteractiveEnv() }),
+        readGitConflictEntries(context),
+        knownHeadOid ?? readHeadOid(context),
+    ]);
+    return finalizeOperationState({
+        kind: step.startsWith('revert ') ? 'revert' : 'cherry_pick',
+        replayCommit: commit.success ? commit.stdout.trim() : undefined,
+        canContinue: false,
+        canAbort: true,
+    }, headOid, conflicts);
 }
 
 export async function readGitBranchOperationState(context: ScmBackendContext, knownHeadOid?: string): Promise<ScmOperationState | null> {
-    const paths = await resolveGitStatePaths(context, ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'MERGE_MSG', 'REBASE_HEAD', 'REVERT_HEAD', 'CHERRY_PICK_HEAD', 'sequencer/todo']);
-    // A rebase directory controls its replay even when another head marker remains.
-    const state = (await readRebaseOperationState(paths)) ?? (await readMergeOperationState(context, paths)) ?? (await readReplayOperationState(context, paths));
-    if (!state) return null;
-    const conflicts = await readGitConflictEntries(context);
-    return { ...state, headOid: knownHeadOid ?? await readHeadOid(context), conflicts, unresolvedCount: conflicts.length, canContinue: conflicts.length === 0, canSkip: state.kind !== 'merge' && Boolean(state.replayCommit) };
+    const paths = await resolveGitBranchOperationStatePaths(context);
+    return readGitBranchOperationStateFromResolvedPaths(context, paths, knownHeadOid);
 }
 
 export async function readGitStateFile(context: ScmBackendContext, name: string, format: 'trimmed' | 'raw' = 'trimmed') {
@@ -132,17 +212,6 @@ export async function readGitStateFile(context: ScmBackendContext, name: string,
 async function readHeadOid(context: ScmBackendContext) {
     const result = await runScmCommand({ bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', 'HEAD'], timeoutMs: 10_000, env: buildScmNonInteractiveEnv() });
     return result.success ? result.stdout.trim() || undefined : undefined;
-}
-
-async function readReplayOperationState(context: ScmBackendContext, paths: GitStatePaths): Promise<ScmOperationState | null> {
-    const revertHead = await readResolvedStateFile(paths, 'REVERT_HEAD');
-    const pickHead = revertHead ? null : await readResolvedStateFile(paths, 'CHERRY_PICK_HEAD');
-    if (revertHead || pickHead) return { kind: revertHead ? 'revert' : 'cherry_pick', replayCommit: revertHead ?? pickHead ?? undefined, canContinue: false, canAbort: true };
-    const todo = await readResolvedStateFile(paths, 'sequencer/todo');
-    const step = todo?.split(/\r?\n/).find((line) => /^(pick|revert)\s/.test(line));
-    if (!step) return null;
-    const commit = await runScmCommand({ bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', `${step.split(/\s+/)[1]}^{commit}`], timeoutMs: 10_000, env: buildScmNonInteractiveEnv() });
-    return { kind: step.startsWith('revert ') ? 'revert' : 'cherry_pick', replayCommit: commit.success ? commit.stdout.trim() : undefined, canContinue: false, canAbort: true };
 }
 
 export async function readGitConflictEntries(context: ScmBackendContext): Promise<NonNullable<ScmOperationState['conflicts']>> {

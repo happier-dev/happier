@@ -9,10 +9,11 @@ import {
   type ScmRepositoryRemoveIndexLockRequest,
   type ScmRepositoryRemoveIndexLockResponse,
 } from '@happier-dev/plugin-sdk/scm';
-import { describe, expect, it, vi } from 'vitest';
+import { runWithBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import { describe, expect, it } from 'vitest';
 
 import { createGitBackend } from '../backend.js';
-import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
+import { createRealGitScmBackendRuntimeServices, runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import type { ScmBackend, ScmBackendContext } from '../types.js';
 
 const REAL_GIT_INDEX_LOCK_TEST_TIMEOUT_MS = 20_000;
@@ -317,52 +318,38 @@ describe('git remove index-lock operation', () => {
         const lockPath = join(raceDir, 'index.lock');
         await writeFile(lockPath, 'removed by another process');
         const context = makeContext(workspace);
+        const removeIndexLock = getRemoveIndexLockOperation();
         let unlinkRaceHit = false;
-        vi.resetModules();
-        vi.doMock('node:fs/promises', async () => {
-            const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-            return {
-                ...actual,
-                unlink: async (path: Parameters<typeof actual.unlink>[0]) => {
-                    if (path === lockPath) {
-                        unlinkRaceHit = true;
-                        await actual.unlink(path);
-                        throw Object.assign(new Error('simulated unlink race'), { code: 'ENOENT' });
-                    }
-                    return await actual.unlink(path);
+        const baseServices = createRealGitScmBackendRuntimeServices();
+        const baseFs = baseServices.repositoryFileSystem!;
+
+        const response = await withFakeGitPath(lockPath, join(workspace, '.git'), '.git', () =>
+            runWithBackendRuntimeServices({
+                ...baseServices,
+                repositoryFileSystem: {
+                    ...baseFs,
+                    unlink: async (path: string) => {
+                        if (path === lockPath) {
+                            unlinkRaceHit = true;
+                            await baseFs.unlink(path);
+                            throw Object.assign(new Error('simulated unlink race'), { code: 'ENOENT' });
+                        }
+                        return await baseFs.unlink(path);
+                    },
                 },
-            };
+            }, () => removeIndexLock({
+                context,
+                request: confirmedRequest(workspace),
+            })),
+        );
+
+        expect(response).toMatchObject({
+            success: true,
+            removed: false,
+            reason: 'absent',
         });
-
-        try {
-            const { createGitBackend: createGitBackendWithUnlinkRace } = await import('../backend.js');
-            const backend = createGitBackendWithUnlinkRace() as ScmBackend & {
-                removeIndexLock?: RemoveIndexLockOperation;
-            };
-            if (!backend.removeIndexLock) {
-                throw new Error('Git backend removeIndexLock operation is not registered');
-            }
-
-            const response = await withFakeGitPath(lockPath, join(workspace, '.git'), '.git', () =>
-                backend.removeIndexLock
-                    ? removeIndexLockWithRuntime(backend.removeIndexLock, {
-                        context,
-                        request: confirmedRequest(workspace),
-                    })
-                    : Promise.reject(new Error('Git backend removeIndexLock operation is not registered')),
-            );
-
-            expect(response).toMatchObject({
-                success: true,
-                removed: false,
-                reason: 'absent',
-            });
-            expect(unlinkRaceHit).toBe(true);
-            expect(existsSync(lockPath)).toBe(false);
-        } finally {
-            vi.doUnmock('node:fs/promises');
-            vi.resetModules();
-        }
+        expect(unlinkRaceHit).toBe(true);
+        expect(existsSync(lockPath)).toBe(false);
     }, REAL_GIT_INDEX_LOCK_TEST_TIMEOUT_MS);
 
     it('does not contain destructive Git repair commands or broad filesystem cleanup', () => {

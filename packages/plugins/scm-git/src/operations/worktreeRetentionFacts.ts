@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile } from 'node:fs/promises';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { basename, dirname, join } from 'node:path';
 import { canonicalAbsolutePathsEqual } from '@happier-dev/plugin-sdk/fs';
 import type { ScmWorktreeEnrichmentEntry } from '@happier-dev/plugin-sdk/scm';
@@ -14,7 +14,8 @@ type Retention = NonNullable<ScmWorktreeEnrichmentEntry['retention']>;
 /** Storage discovery uses the same orphan proof as retirement, without repairing registration. */
 export async function resolveGitRetainedWorktreeRepository(path: string): Promise<string | null> {
     try {
-        const contents = await readFile(join(path, '.git'), 'utf8');
+        const files = readRepositoryFileSystem();
+        const contents = Buffer.from(await files.readFile(files.commandPaths?.fromCommandPath(join(path, '.git')) ?? join(path, '.git'))).toString('utf8');
         const admin = resolveGitAdminPath(path, contents.trim());
         if (!admin) return null;
         const common = dirname(dirname(admin));
@@ -36,14 +37,17 @@ export async function resolveGitRetainedWorktreeRepository(path: string): Promis
 export async function inspectGitOrphanWorktree(path: string, commonDirPath: string, backReferenceBasePath = path): Promise<string | null> {
     try {
         const leaf = join(path, '.git');
-        const info = await lstat(leaf);
-        if (!info.isFile() || info.isSymbolicLink()) return null;
-        const contents = await readFile(leaf, 'utf8');
+        const files = readRepositoryFileSystem();
+        const addressedLeaf = files.commandPaths?.fromCommandPath(leaf) ?? leaf;
+        const info = await files.lstat(addressedLeaf);
+        const isRegularFile = typeof info.isFile === 'function' ? info.isFile() : (!info.isDirectory() && !info.isSymbolicLink());
+        if (!isRegularFile || info.isSymbolicLink()) return null;
+        const contents = Buffer.from(await files.readFile(addressedLeaf)).toString('utf8');
         const admin = resolveGitAdminPath(backReferenceBasePath, contents.trim());
         if (!admin) return null;
         if (!basename(admin) || !canonicalAbsolutePathsEqual(dirname(admin), join(commonDirPath, 'worktrees'))
             || canonicalAbsolutePathsEqual(admin, join(commonDirPath, 'worktrees'))) return null;
-        try { await lstat(admin); return null; }
+        try { await files.lstat(files.commandPaths?.fromCommandPath(admin) ?? admin); return null; }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return null; }
         const registered = await runScmCommand({ bin: 'git', cwd: commonDirPath,
             args: ['worktree', 'list', '--porcelain', '-z'], env: buildScmNonInteractiveEnv() });
@@ -107,7 +111,8 @@ export async function readGitRetentionFacts(path: string, repositoryPath: string
     for (const worktree of parseGitWorktreeListPorcelain({ worktreesOutput: listed.stdout, currentWorktreePath: null })) {
         if (!canonicalAbsolutePathsEqual(worktree.path, path)) losses.dependentWorktrees.push(worktree.path);
         // Missing/prunable dependents still appear in confirmation; they have no readable working files.
-        try { await lstat(worktree.path); }
+        const files = readRepositoryFileSystem();
+        try { await files.lstat(files.commandPaths?.fromCommandPath(worktree.path) ?? worktree.path); }
         catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; return undefined; }
         const status = await command(worktree.path, ['status', '--porcelain', '-z', '--untracked-files=all']);
         if (!status.success) return undefined;
