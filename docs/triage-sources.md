@@ -1004,8 +1004,11 @@ suggestion data, never implicit source or workspace authority. Optional create
 linking delegates to the incumbent `sessions/link-entry-v1` relationship Action
 only after confirmed creation (`tasks/link-v1` remains its public task alias). The
 aggregate reports the create and link phases separately, so a failed or unknown
-link never becomes a failed creation or authorizes another create. The created
-detail retains that partial outcome independently of task-status recovery;
+link never becomes a failed creation or authorizes another create. The
+aggregate also retains the existing typed invocation failure for a refused or
+unknown Session, error-origin or Review relationship write. The mounted partial
+outcome offers its ordinary failure Details before any relationship repair.
+The created detail retains that partial outcome independently of task-status recovery;
 the existing detail relationship read can resolve it by confirming the exact
 origin Session link.
 

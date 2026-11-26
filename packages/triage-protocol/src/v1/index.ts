@@ -55,11 +55,11 @@ export {
     TriageTaskFieldChoicesV1Schema, TriageTaskFieldsV1Schema, TriageTaskCreateFieldsV1Schema,
     TriageTaskCreateInputV1Schema, TriageTaskEditInputV1Schema, TriageTaskTransitionInputV1Schema,
     TriageTaskCreateConnectedAccountInputV1Schema, TriageTaskEditConnectedAccountInputV1Schema,
-    TriageTaskTransitionConnectedAccountInputV1Schema, TriageTaskWriteResultV1Schema,
+    TriageTaskTransitionConnectedAccountInputV1Schema, TriageTaskWriteResultV1Schema, TriageTaskWriteInvocationFailureV1Schema,
     TriageTaskTransitionFieldValuesV1Schema,
 } from './tasks.js';
 export type { TriageTaskFieldChoicesV1, TriageTaskFieldsV1, TriageTaskCreateFieldsV1, TriageTaskCreateInputV1, TriageTaskEditInputV1, TriageTaskTransitionInputV1, TriageTaskWriteResultV1, TriageTaskTransitionFieldValuesV1 } from './tasks.js';
-export type { TriageTaskWriteRefusedV1 } from './tasks.js';
+export type { TriageTaskWriteRefusedV1, TriageTaskWriteInvocationFailureV1 } from './tasks.js';
 export {
     INTERNAL_TASK_SOURCE_V1,
     internalTaskLocalRefV1,

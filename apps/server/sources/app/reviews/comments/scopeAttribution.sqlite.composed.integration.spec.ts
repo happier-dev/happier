@@ -1468,10 +1468,13 @@ it('repairs an HTTP-refused Review relationship from the mounted Task draft with
                     expect(createsBeforeRepair).toBe(2); // One positive control and the one requested Task.
                     const failed = results.at(-1) as { creation: { observation: { localRef: { entryId: string } } } };
                     const retainedId = failed.creation.observation.localRef.entryId;
+                    // The initial aggregate must retain the HTTP refusal before any relationship retry.
+                    await press('Details');
+                    await vi.waitFor(() => expect(screen.getTextContent()).toContain('collection_mutation_invalid'));
+                    expect(hostCalls.filter(id => id === 'tasks.internal.create')).toHaveLength(createsBeforeRepair);
                     // A refused Repair retains the owner's typed cause and the already-created Task.
                     refuseNextLink = true;
                     await press('Repair Review link');
-                    await press('Details');
                     await vi.waitFor(() => expect(screen.getTextContent()).toContain('collection_mutation_invalid'));
                     expect(created).toEqual([]);
                     expect(hostCalls.filter(id => id === 'tasks.internal.create')).toHaveLength(createsBeforeRepair);

@@ -502,7 +502,7 @@ export function TriageCreateTaskFields(props: Readonly<{
     return <Stack gap="none" style={TASK_DRAFT_FILL_STYLE}>
       <ScrollArea style={TASK_DRAFT_FILL_STYLE}><Stack gap="medium">
         {originContext}
-        <TaskWriteNotice result={write.result} sessionLink={write.sessionLink}
+        <TaskWriteNotice result={write.result} sessionLink={write.sessionLink} sessionLinkFailure={write.sessionLinkFailure}
           context={{ sourceName: chosen?.family, operation: 'create' }}
           sourceUrl={write.result?.kind === 'uncertain' ? write.result.observation?.locator.webUrl : undefined} />
         <Text variant="body" tone="secondary" value={text('plugins.triage.tasks.where.purpose', 'Where does it belong? It’s created there and stays there.')} />
@@ -670,7 +670,7 @@ export function TriageCreateTaskFields(props: Readonly<{
         {sessionTarget === undefined ? null : <Item title={text('plugins.triage.tasks.draft.linkSession', 'Link this Session')}
           accessory={<Toggle label={text('plugins.triage.tasks.draft.linkSession', 'Link this Session')} value={linkSession} onChange={setLinkSession}
             disabled={placeLocked} />} />}
-        <TaskWriteNotice result={write.result} sessionLink={write.sessionLink}
+        <TaskWriteNotice result={write.result} sessionLink={write.sessionLink} sessionLinkFailure={write.sessionLinkFailure}
           context={{ sourceName: chosen.family, operation: 'create' }}
           sourceUrl={write.result?.kind === 'uncertain' ? write.result.observation?.locator.webUrl : undefined} />
         {!unsupportedBody ? null : <TaskWriteNotice result={{ kind: 'refused', reason: 'unsupportedField' }} />}
@@ -865,7 +865,7 @@ export function TriageEditTaskScope(props: Readonly<{
     {properties.length === 0 ? null : <PropertyList items={properties} disabled={disabled}
       accessibilityLabel={text('plugins.triage.tasks.properties', 'Task properties')} testID={TRIAGE_TASK_PROPERTIES_TEST_ID_V1} />}
     {valuesNotice}
-    <TaskWriteNotice result={write.result} sessionLink={write.sessionLink} checking={write.checking} onCheckAgain={checkAgain}
+    <TaskWriteNotice result={write.result} sessionLink={write.sessionLink} sessionLinkFailure={write.sessionLinkFailure} checking={write.checking} onCheckAgain={checkAgain}
       context={{ sourceName: descriptor?.displayName, operation: 'edit', target: write.progress }}
       sourceUrl={selected.observation.locator.webUrl} />
   </Stack>;
@@ -928,7 +928,7 @@ export function TriageEditTaskScope(props: Readonly<{
         } }} />
       <Button title={text('plugins.triage.tasks.cancel', 'Cancel')} variant="secondary" disabled={write.busy} onPress={() => setEditing(false)} />
     </Form.Actions>
-    <TaskWriteNotice result={write.result} sessionLink={write.sessionLink} checking={write.checking} onCheckAgain={checkAgain}
+    <TaskWriteNotice result={write.result} sessionLink={write.sessionLink} sessionLinkFailure={write.sessionLinkFailure} checking={write.checking} onCheckAgain={checkAgain}
       context={{ sourceName: descriptor?.displayName, operation: 'edit', target: write.progress }}
       sourceUrl={selected.observation.locator.webUrl} />
   </Stack>;

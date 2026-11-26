@@ -9,6 +9,7 @@ import {
     TriageTaskCreateFieldsV1Schema,
     TriageTaskFieldsV1Schema,
     TriageTaskWriteResultV1Schema,
+    TriageTaskWriteInvocationFailureV1Schema,
     TriageTaskTransitionFieldValuesV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { TriageListKindIdV1Schema } from './listEntriesProtocol.js';
@@ -74,8 +75,11 @@ export const TriageCreateTaskActionResultV1Schema = defineProtocolUnion([
         kind: defineProtocolLiteral('createdAndLinkAttempted'),
         creation: TriageTaskWriteResultV1Schema,
         sessionLink: defineProtocolUnion([defineProtocolLiteral('linked'), defineProtocolLiteral('failed'), defineProtocolLiteral('unknown')]).optional(),
+        sessionLinkFailure: TriageTaskWriteInvocationFailureV1Schema.optional(),
         originErrorLink: defineProtocolUnion([defineProtocolLiteral('linked'), defineProtocolLiteral('failed'), defineProtocolLiteral('unknown')]).optional(),
+        originErrorLinkFailure: TriageTaskWriteInvocationFailureV1Schema.optional(),
         reviewLink: defineProtocolUnion([defineProtocolLiteral('linked'), defineProtocolLiteral('failed'), defineProtocolLiteral('unknown')]).optional(),
+        reviewLinkFailure: TriageTaskWriteInvocationFailureV1Schema.optional(),
     }, { policy: 'closed' }),
 ]);
 export type TriageCreateTaskActionResultV1 = ReturnType<typeof TriageCreateTaskActionResultV1Schema.parse>;

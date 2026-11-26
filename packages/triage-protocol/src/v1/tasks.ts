@@ -103,13 +103,17 @@ const taskWriteRefused = defineProtocolObject({
 /** A named result arm keeps the SDK-owned JSON type out of external declaration inference. */
 export interface TriageTaskWriteRefusedV1 extends ProtocolSchemaOutput<typeof taskWriteRefused> {}
 const taskWriteRefusedSchema: ProtocolComposableSchema<TriageTaskWriteRefusedV1> = taskWriteRefused;
+const taskWriteUncertainSchema = defineProtocolObject({
+    kind: defineProtocolLiteral('uncertain'), observation: observation.optional(), failure: TriageSourceFailureV1Schema.optional(),
+}, { policy: 'closed' });
+/** The existing invocation failure arms, shared by write and relationship settlement. */
+export const TriageTaskWriteInvocationFailureV1Schema = defineProtocolUnion([taskWriteRefusedSchema, taskWriteUncertainSchema]);
+export type TriageTaskWriteInvocationFailureV1 = ReturnType<typeof TriageTaskWriteInvocationFailureV1Schema.parse>;
 
 export const TriageTaskWriteResultV1Schema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('applied'), observation }, { policy: 'closed' }),
     taskWriteRefusedSchema,
-    defineProtocolObject({
-        kind: defineProtocolLiteral('uncertain'), observation: observation.optional(), failure: TriageSourceFailureV1Schema.optional(),
-    }, { policy: 'closed' }),
+    taskWriteUncertainSchema,
     defineProtocolObject({ kind: defineProtocolLiteral('failed'), failure: TriageSourceFailureV1Schema }, { policy: 'closed' }),
 ]);
 export type TriageTaskWriteResultV1 = ReturnType<typeof TriageTaskWriteResultV1Schema.parse>;

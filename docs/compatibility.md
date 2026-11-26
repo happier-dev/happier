@@ -1,5 +1,18 @@
 # Compatibility and version skew
 
+## Initial Task relationship failure causes (unreleased 0.3)
+
+The closed Triage `tasks/create-v1` aggregate result optionally carries
+`sessionLinkFailure`, `originErrorLinkFailure` and `reviewLinkFailure`, reusing
+the existing refused/uncertain Task write arms. Creation and relationship status
+remain separate; the cause adds no retry or mutation authority. Older results
+without these optional presentation fields remain valid. Matching Triage
+declarations, Account handlers and mounted readers reload together under the
+unpublished 0.3 direct cut; older strict development readers reject the added
+fields. No persisted record, migration or wire epoch changes. The scoped-clean
+`../0.2` frontier at `ba3670d22d5bb36b0c92f4bd627ef790f0ce03de` has neither the
+Triage plugin nor its source protocol package, so this adds no predecessor adapter.
+
 ## Execution Run runner selection (unreleased 0.3)
 
 Optional `runnerAgentTarget` extends Execution Run start and SDK Run open

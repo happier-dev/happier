@@ -156,12 +156,15 @@ export function createTriageCreateTaskActionHandler(): TriageDataActionHandler<T
         // A response-loss create is never replayed, and its uncertain observation cannot authorize a link.
         if (creation.kind !== 'applied' || input.linkSession === undefined && input.originError === undefined && input.originReview === undefined) return creation;
         const entryRef = { source: input.source, ...creation.observation.localRef };
-        const attemptLink = async (link: () => Promise<'linked' | 'failed' | 'unknown'>) => {
-            if (context.signal.aborted) return 'failed' as const;
+        const attemptLink = async (link: () => Promise<'linked' | 'failed' | 'unknown'>): Promise<{
+            status: 'linked' | 'failed' | 'unknown'; failure?: ReturnType<typeof triageTaskWriteInvocationFailureV1>;
+        }> => {
+            if (context.signal.aborted) return { status: 'failed' as const };
             try {
-                return await link();
+                return { status: await link() };
             } catch (error) {
-                return triageTaskWriteInvocationFailureV1(error).kind === 'refused' ? 'failed' as const : 'unknown' as const;
+                const failure = triageTaskWriteInvocationFailureV1(error);
+                return { status: failure.kind === 'refused' ? 'failed' as const : 'unknown' as const, failure };
             }
         };
         const linkSession = input.linkSession;
@@ -194,9 +197,12 @@ export function createTriageCreateTaskActionHandler(): TriageDataActionHandler<T
             return result.status === 'linked' ? 'linked' : 'failed';
         });
         return { kind: 'createdAndLinkAttempted', creation,
-            ...(sessionLink === undefined ? {} : { sessionLink }),
-            ...(originErrorLink === undefined ? {} : { originErrorLink }),
-            ...(reviewLink === undefined ? {} : { reviewLink }),
+            ...(sessionLink === undefined ? {} : { sessionLink: sessionLink.status,
+                ...(sessionLink.failure === undefined ? {} : { sessionLinkFailure: sessionLink.failure }) }),
+            ...(originErrorLink === undefined ? {} : { originErrorLink: originErrorLink.status,
+                ...(originErrorLink.failure === undefined ? {} : { originErrorLinkFailure: originErrorLink.failure }) }),
+            ...(reviewLink === undefined ? {} : { reviewLink: reviewLink.status,
+                ...(reviewLink.failure === undefined ? {} : { reviewLinkFailure: reviewLink.failure }) }),
         };
     };
 }

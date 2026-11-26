@@ -42,6 +42,7 @@ type TaskWriteSnapshot = Readonly<{
   rebaseFields: Readonly<Partial<TriageTaskFieldsV1>> | null;
   progress: string | null;
   sessionLink: 'linked' | 'failed' | 'unknown' | null;
+  sessionLinkFailure: TaskLinkFailure | null;
   linkSessionId: string | null;
   originErrorLink: 'linked' | 'failed' | 'unknown' | null;
   originErrorLinkFailure: TaskLinkFailure | null;
@@ -51,7 +52,7 @@ type TaskWriteSnapshot = Readonly<{
   originReview: TriageCreateTaskActionInputV1['originReview'] | null;
   createdEntryRef: TriageEntryRefV1 | null;
 }>;
-const IDLE: TaskWriteSnapshot = Object.freeze({ result: null, busy: false, checking: false, rebaseFields: null, progress: null, sessionLink: null, linkSessionId: null, originErrorLink: null, originErrorLinkFailure: null, originError: null, reviewLink: null, reviewLinkFailure: null, originReview: null, createdEntryRef: null });
+const IDLE: TaskWriteSnapshot = Object.freeze({ result: null, busy: false, checking: false, rebaseFields: null, progress: null, sessionLink: null, sessionLinkFailure: null, linkSessionId: null, originErrorLink: null, originErrorLinkFailure: null, originError: null, reviewLink: null, reviewLinkFailure: null, originReview: null, createdEntryRef: null });
 
 /** This is the mounted commit's state, shared by entry rather than by its row or detail renderer. */
 function createTaskWriteOperation() {
@@ -93,6 +94,9 @@ function createTaskWriteOperation() {
       let linkSessionId = snapshot.linkSessionId;
       let originErrorLink = snapshot.originErrorLink;
       let originError = snapshot.originError;
+      let sessionLinkFailure: TaskLinkFailure | null = null;
+      let originErrorLinkFailure: TaskLinkFailure | null = null;
+      let reviewLinkFailure: TaskLinkFailure | null = null;
       let reviewLink = snapshot.reviewLink;
       let originReview = snapshot.originReview;
       let createdEntryRef = snapshot.createdEntryRef;
@@ -103,11 +107,14 @@ function createTaskWriteOperation() {
         if (created?.kind === 'createdAndLinkAttempted') {
           result = created.creation;
           sessionLink = created.sessionLink ?? null;
+          sessionLinkFailure = created.sessionLinkFailure ?? null;
           const creation = TriageCreateTaskActionInputV1Schema.parse(input);
           linkSessionId = typeof creation.linkSession === 'string' ? creation.linkSession : null;
           originErrorLink = created.originErrorLink ?? null;
+          originErrorLinkFailure = created.originErrorLinkFailure ?? null;
           originError = creation.originError ?? null;
           reviewLink = created.reviewLink ?? null;
+          reviewLinkFailure = created.reviewLinkFailure ?? null;
           originReview = creation.originReview ?? null;
           createdEntryRef = result.kind === 'applied' ? { source: creation.source, ...result.observation.localRef } : null;
         }
@@ -124,7 +131,7 @@ function createTaskWriteOperation() {
       if (result.kind !== 'uncertain') intent = null;
       publish({ result, busy: false, checking: false, rebaseFields: null,
         progress: result.kind === 'uncertain' ? snapshot.progress : null, sessionLink, linkSessionId,
-        originErrorLink, originErrorLinkFailure: null, originError, reviewLink, reviewLinkFailure: null, originReview, createdEntryRef });
+        sessionLinkFailure, originErrorLink, originErrorLinkFailure, originError, reviewLink, reviewLinkFailure, originReview, createdEntryRef });
       // A slow aggregate refresh never holds the confirmed write or its UI hostage.
       if (result.kind === 'applied' || result.kind === 'uncertain') void Promise.resolve().then(onApplied).catch(() => {
         host.diagnostic({ code: 'triage_task_reread_unavailable', severity: 'warning',
