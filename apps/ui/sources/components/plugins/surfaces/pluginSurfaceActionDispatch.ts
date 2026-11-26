@@ -156,6 +156,7 @@ import {
     projectPluginActionFailure,
     clientActionPreparationFailure,
     projectClientActionInvocationFailure,
+    projectDaemonActionPreparationFailure,
     type PluginSurfaceActionDispatchOutcome,
 } from './actionFailure';
 export type { PluginSurfaceActionDispatchOutcome } from './actionFailure';
@@ -1229,7 +1230,7 @@ async function settleDaemonActionPresentUserIntent(
             isCurrent: () => input.isCurrent?.() !== false,
         });
         const prepared = invocation.prepare(settledInput ?? null);
-        if (prepared.kind === 'settled') return projectClientActionInvocationFailure(prepared.result, projectedAction, settledInput);
+        if (prepared.kind === 'settled') return projectDaemonActionPreparationFailure(prepared.result, projectedAction, settledInput, binding);
         normalizedInput = prepared.input;
     }
     const hostContext = input.hostAction?.context;
@@ -2752,7 +2753,7 @@ async function executeContributedAction(
                 declaration: projectedAction, inputSchema: schemas.result.inputSchema, occurrenceSignal: input.signal ?? new AbortController().signal,
                 isCurrent: () => input.isCurrent?.() !== false });
             const prepared = invocation.prepare(normalizedInput);
-            if (prepared.kind === 'settled') return projectClientActionInvocationFailure(prepared.result, projectedAction, normalizedInput);
+            if (prepared.kind === 'settled') return projectDaemonActionPreparationFailure(prepared.result, projectedAction, normalizedInput, binding);
             normalizedInput = prepared.input;
             daemonPreparedInput = { input: normalizedInput };
         }

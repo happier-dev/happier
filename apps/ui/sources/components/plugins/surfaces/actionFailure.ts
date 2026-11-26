@@ -1,6 +1,6 @@
 import { isPluginError, PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
-import type { ActionExecuteResult, ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteResult, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE,
     PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE,
@@ -13,6 +13,10 @@ import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon
 import type { PluginUiHostApiErrorPayloadV1, PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiActionProjection } from '@/sync/domains/plugins/ui/projection';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { t } from '@/text';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 import {
     createPluginSurfaceHostApiError,
@@ -184,4 +188,32 @@ export function projectClientActionInvocationFailure(
     if (metadata.failureCause) return metadata;
     return actionOutcomeUnknownFailure(result.code, declaration, input, metadata)
         ?? (result.status === 'unavailable' ? clientActionFailure(result.code, metadata) : metadata);
+}
+
+/** Retain the schema owner's public field paths and the Machine that supplied that schema. */
+export function projectDaemonActionPreparationFailure(
+    result: Exclude<PluginActionInvocationResult, Readonly<{ status: 'executed' }>>,
+    declaration: ActionEffectDeclaration,
+    input: unknown,
+    binding: Readonly<{ machineId: string; serverId?: string | null }>,
+): Failure {
+    if (result.status !== 'invalid' || !result.issues?.length) {
+        return projectClientActionInvocationFailure(result, declaration, input);
+    }
+    const { machineId, serverId } = binding;
+    const state = getStorage().getState();
+    const machine = serverId && state.profileScope && areServerProfileIdentifiersEquivalent(serverId, state.profileScope.serverId)
+        ? state.machineDisplayById[machineId] : undefined;
+    const path = result.issues[0]!.path.join('.');
+    const reason = t('pluginRuntime.invalidParameters');
+    return projectPluginActionFailure({
+        code: result.code,
+        message: t('errors.fieldError', { field: getMachineDisplayName(machine) ?? machineId,
+            reason: path ? t('errors.fieldError', { field: path, reason }) : reason }),
+        details: { machineId, issues: result.issues.map(({ code, path }) => ({ code, path: [...path] })) },
+        failureCause: projectActionFailureCauseV1({ code: result.code, name: 'TypeError' },
+            'action.input_validation', { allowUnknownErrorCode: true }),
+        effectAttempted: false,
+        actionHandlerInvocation: 'notStarted',
+    });
 }

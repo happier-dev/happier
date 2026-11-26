@@ -208,6 +208,10 @@ An unexpected handler exception returns a generic message with the typed failure
 cause. The daemon writes the exception message and first available stack frame to
 its local file log after invocation-scoped secret redaction.
 
+When a mounted surface rejects input against the bound daemon Action's schema,
+the App carries the selected Machine and schema issue codes and paths in the
+failure details. The failure cause identifies the input validation phase and the
+result records that the handler did not start. The App omits rejected values.
 
 The contributed Client Action reverse RPC carries the invoking host's optional
 `actionRequestId` as correlation. The answering App uses the same identity when

@@ -10749,6 +10749,45 @@ describe('present-user confirmation for daemon-target Actions', () => {
         expect(contributed).toHaveBeenCalledOnce();
     });
 
+    it('preserves the selected Machine and rejected publication field before asking for confirmation', async () => {
+        const pluginId = 'acme.reviews';
+        const localId = 'publish';
+        clientActionSchemasByQualifiedId.set(`${pluginId}/${localId}`, { inputSchema: {
+            type: 'object', properties: { publicationPlan: { type: 'object', properties: {
+                entries: { type: 'array', items: { type: 'object', properties: {
+                    snapshot: { type: 'object', properties: { fileLength: { type: 'integer' } }, required: ['fileLength'] },
+                }, required: ['snapshot'] } },
+            }, required: ['entries'] } }, required: ['publicationPlan'],
+        } });
+        const requestCurrentIntent = vi.fn(async ({ fingerprint }: Readonly<{ fingerprint: string }>) => ({
+            status: 'approved' as const, fingerprint,
+        }));
+        const execute = vi.fn<PluginSurfaceContributedActionTransport>(async () => ({
+            supported: true, result: { ok: true, result: { published: true } },
+        }));
+        const dispatch = (input: PluginUiJsonValueV1) => dispatchPluginSurfaceAction({
+            action: { pluginId, localId }, input,
+            resolveContributedAction: identity => PluginProjectedActionV2Schema.parse({
+                ...resolveConfirmedDaemonTargetAction(identity),
+                confirmation: { title: 'Publish?', inputFields: [{ path: 'publicationPlan.entries', title: 'Comments' }] },
+            }),
+            requestCurrentIntent, contributedAction: { machineId: 'machine-old', execute },
+        });
+        const invalid = { publicationPlan: { entries: [{ snapshot: {} }] } };
+        expect(await dispatch({ publicationPlan: { entries: [{ snapshot: { fileLength: 12 } }] } }))
+            .toEqual({ ok: true, result: { published: true } });
+        requestCurrentIntent.mockClear();
+        execute.mockClear();
+        expect(await dispatch(invalid)).toMatchObject({
+            ok: false, code: 'plugin_action_input_schema_invalid',
+            failureCause: { errorCode: 'plugin_action_input_schema_invalid', phase: 'action.input_validation' },
+            details: { machineId: 'machine-old', issues: [{ path: ['publicationPlan', 'entries', 0, 'snapshot', 'fileLength'] }] },
+            actionHandlerInvocation: 'notStarted',
+        });
+        expect(requestCurrentIntent).not.toHaveBeenCalled();
+        expect(execute).not.toHaveBeenCalled();
+    });
+
     it('sends a waived dangerous Action without asking or manufacturing present-user intent', async () => {
         const storage = getStorage();
         const previous = storage.getState();
