@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { readPiSessionHeader } from '@/backends/pi/directSessions/readPiSessionHeader';
 import { resolvePiAgentDir } from '@/backends/pi/directSessions/resolvePiAgentDir';
@@ -25,7 +26,9 @@ export async function resolvePiContinueSessionFile(params: Readonly<{
   const defaultDir = join(agentDir, 'sessions', formatPiSessionDirectoryForCwd(cwd));
   const configuredRaw = nonEmptyString(params.env.PI_CODING_AGENT_SESSION_DIR)
     ?? await readPiSettingsSessionDir({ agentDir, cwd });
-  const configuredDir = configuredRaw ? resolvePiPath(configuredRaw, cwd, params.env) : null;
+  const configuredDir = configuredRaw
+    ? resolvePiPath(configuredRaw.startsWith('file://') ? fileURLToPath(configuredRaw) : configuredRaw, cwd, params.env)
+    : null;
   const sessionDir = configuredDir ?? defaultDir;
   const filterCwd = configuredDir !== null && !isSamePath(configuredDir, defaultDir);
   const sessionFile = await findMostRecentPiSessionFile({ dir: sessionDir, cwd: filterCwd ? cwd : null, env: params.env });

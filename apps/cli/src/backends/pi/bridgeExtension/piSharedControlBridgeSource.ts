@@ -295,7 +295,7 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
       return { action: "handled" };
     }
     const prompt = pendingPrompt;
-    if (prompt && !prompt.inputSeen && event.source === "extension") {
+    if (prompt && dispatch === prompt && !prompt.inputSeen && event.source === "extension") {
       prompt.inputSeen = true;
       if (unstartedIdleInput) prompt.contested = true;
       return;
@@ -321,8 +321,9 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
     const message = event.message;
     if (pendingPrompt && message?.role === "user") {
       const ownStart = startedWebDispatch === pendingPrompt;
-      if (pendingPrompt.withdrawn ? ownStart : pendingPrompt.inputSeen) {
-        const accepted = pendingPrompt.withdrawn ? ownStart : !pendingPrompt.contested && !startedWebDispatch?.withdrawn;
+      if (pendingPrompt.withdrawn ? ownStart : pendingPrompt.inputSeen || pendingPrompt.contested) {
+        // Pi 1.5.2 awaits before_agent_start within the initiating prompt's async context.
+        const accepted = ownStart && (pendingPrompt.withdrawn || !pendingPrompt.contested);
         settlePendingPrompt(accepted);
         if (accepted) webMessage = message;
       }

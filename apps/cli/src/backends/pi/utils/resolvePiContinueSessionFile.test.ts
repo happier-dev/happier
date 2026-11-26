@@ -1,5 +1,6 @@
 import { mkdir, readdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -184,6 +185,19 @@ describe('resolvePiContinueSessionFile', () => {
       cwd,
       env: { ...env, PI_CODING_AGENT_SESSION_DIR: envDir },
     })).resolves.toBe(fromEnv);
+  });
+
+  it.each(['project settings', 'environment'] as const)('resolves a file URI session directory from %s', async (source) => {
+    const sessionDir = join(root, 'sessions with spaces');
+    const selected = await writeSession(sessionDir, 'mine.jsonl', { cwd, mtimeSec: 1_000 });
+    const uri = pathToFileURL(sessionDir).href;
+    if (source === 'project settings') {
+      await writeJson(join(cwd, '.pi', 'settings.json'), { sessionDir: uri });
+    }
+    await expect(resolvePiContinueSession({
+      cwd,
+      env: { HOME: home, ...(source === 'environment' ? { PI_CODING_AGENT_SESSION_DIR: uri } : {}) },
+    })).resolves.toEqual({ sessionDir, sessionFile: selected });
   });
 
   it('returns null when the session directory is missing, empty, or has no session for the cwd', async () => {

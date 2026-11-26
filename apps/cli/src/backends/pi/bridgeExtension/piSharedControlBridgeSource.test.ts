@@ -1,3 +1,4 @@
+import { AsyncResource } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
@@ -189,6 +190,16 @@ describe('Pi shared-control bridge (TUI mode)', () => {
       .toBeGreaterThan(calls);
   }
 
+  async function dispatchWebPrompt(bridge: Awaited<ReturnType<typeof startBridge>>, id: string, text: string) {
+    // Pi awaits input and before_agent_start within the native sendUserMessage call chain.
+    const dispatch = createDeferred<typeof bridge.emit>();
+    bridge.api.sendUserMessage.mockImplementationOnce(() => {
+      dispatch.resolve(AsyncResource.bind(bridge.emit));
+    });
+    await sendPrompt(bridge, id, text);
+    return dispatch.promise;
+  }
+
   async function roundTrip(bridge: Awaited<ReturnType<typeof startBridge>>, id: string) {
     bridge.runner.send({ id, type: 'get_state' });
     await expect.poll(() => bridge.runner.responses(id).length).toBe(1);
@@ -211,9 +222,10 @@ describe('Pi shared-control bridge (TUI mode)', () => {
       type: 'hello', v: 1, token: TOKEN, sessionId: 'pi-session-1', sessionFile: '/sessions/pi-session-1.jsonl',
     });
 
-    await sendPrompt(bridge, 'p1', 'hello');
+    const emitWeb = await dispatchWebPrompt(bridge, 'p1', 'hello');
     expect(bridge.api.sendUserMessage).toHaveBeenCalledExactlyOnceWith('hello', { expandPromptTemplates: true });
-    await bridge.emit('input', { source: 'extension', text: 'hello' });
+    await emitWeb('input', { source: 'extension', text: 'hello' });
+    await emitWeb('before_agent_start', { messageType: 'user' });
     await bridge.emit('agent_start');
     const webMessage = user('hello');
     await bridge.emit('message_start', { message: webMessage });
@@ -317,13 +329,14 @@ describe('Pi shared-control bridge (TUI mode)', () => {
     bridge.state.pendingMessages = false;
     expect(bridge.api.sendUserMessage).not.toHaveBeenCalled();
 
-    await sendPrompt(bridge, 'web-1', 'web');
+    const emitWeb = await dispatchWebPrompt(bridge, 'web-1', 'web');
     expect(bridge.api.sendUserMessage.mock.calls).toEqual([['web', { expandPromptTemplates: true }]]);
     bridge.runner.send({ id: 'busy-3', type: 'prompt', message: 'second' });
     await expect.poll(() => bridge.runner.responses('busy-3')[0]?.error).toBe(PI_SHARED_CONTROL_BUSY_ERROR);
     expect(bridge.api.sendUserMessage).toHaveBeenCalledTimes(1);
 
-    await bridge.emit('input', { source: 'extension', text: 'web' });
+    await emitWeb('input', { source: 'extension', text: 'web' });
+    await emitWeb('before_agent_start', { messageType: 'user' });
     bridge.state.idle = false;
     await bridge.emit('agent_start');
     await roundTrip(bridge, 'before-start');
@@ -355,8 +368,8 @@ describe('Pi shared-control bridge (TUI mode)', () => {
 
   it('A6: a contested start with identical text is indeterminate and mirrors the terminal message once', async () => {
     const bridge = await startBridge();
-    await sendPrompt(bridge, 'web-hi', 'hi');
-    await bridge.emit('input', { source: 'extension', text: 'hi' });
+    const emitWeb = await dispatchWebPrompt(bridge, 'web-hi', 'hi');
+    await emitWeb('input', { source: 'extension', text: 'hi' });
     await bridge.emit('input', { source: 'interactive', text: 'hi' });
     await bridge.emit('agent_start');
     const started = user('hi');
@@ -372,11 +385,29 @@ describe('Pi shared-control bridge (TUI mode)', () => {
     expect(userInputMarkers(bridge)).toEqual(['hi']);
   });
 
+  it('keeps an unrelated extension input visible when it starts before the web input hook', async () => {
+    const bridge = await startBridge();
+    await sendPrompt(bridge, 'web-race-extension', 'hi');
+    await bridge.emit('input', { source: 'extension', text: 'hi' });
+    await bridge.emit('before_agent_start', { messageType: 'user' });
+    await bridge.emit('agent_start');
+    const other = user('hi');
+    await bridge.emit('message_start', { message: other });
+    await bridge.emit('message_end', { message: other });
+    await bridge.emit('agent_settled', { aborted: false });
+    await roundTrip(bridge, 'sync');
+    expect(bridge.runner.responses('web-race-extension')[0]).toMatchObject({
+      success: false,
+      data: { outcome: PI_SHARED_CONTROL_INDETERMINATE_OUTCOME },
+    });
+    expect(userInputMarkers(bridge)).toEqual(['hi']);
+  });
+
   it('A6: a terminal idle start already in preflight contests the next web prompt', async () => {
     const bridge = await startBridge();
     await bridge.emit('input', { source: 'interactive', text: 'hi' });
-    await sendPrompt(bridge, 'web-race', 'hi');
-    await bridge.emit('input', { source: 'extension', text: 'hi' });
+    const emitWeb = await dispatchWebPrompt(bridge, 'web-race', 'hi');
+    await emitWeb('input', { source: 'extension', text: 'hi' });
     await bridge.emit('agent_start');
     const terminal = user('hi');
     await bridge.emit('message_start', { message: terminal });
@@ -389,8 +420,9 @@ describe('Pi shared-control bridge (TUI mode)', () => {
 
   it('A6: a web prompt accepted first, then terminal "hi", mirrors only the terminal message once', async () => {
     const bridge = await startBridge();
-    await sendPrompt(bridge, 'web-first', 'hi');
-    await bridge.emit('input', { source: 'extension', text: 'hi' });
+    const emitWeb = await dispatchWebPrompt(bridge, 'web-first', 'hi');
+    await emitWeb('input', { source: 'extension', text: 'hi' });
+    await emitWeb('before_agent_start', { messageType: 'user' });
     await bridge.emit('agent_start');
     const web = user('hi');
     await bridge.emit('message_start', { message: web });
@@ -407,8 +439,8 @@ describe('Pi shared-control bridge (TUI mode)', () => {
 
   it('A6: a web prompt still unresolved when the run settles is indeterminate', async () => {
     const bridge = await startBridge();
-    await sendPrompt(bridge, 'web-lost', 'hi');
-    await bridge.emit('input', { source: 'extension', text: 'hi' });
+    const emitWeb = await dispatchWebPrompt(bridge, 'web-lost', 'hi');
+    await emitWeb('input', { source: 'extension', text: 'hi' });
     await bridge.emit('agent_settled', { aborted: true });
     await expect.poll(() => bridge.runner.responses('web-lost')[0]?.data)
       .toEqual({ outcome: PI_SHARED_CONTROL_INDETERMINATE_OUTCOME });
@@ -505,8 +537,15 @@ describe('Pi shared-control bridge (TUI mode)', () => {
       success: false,
       data: { outcome: PI_SHARED_CONTROL_INDETERMINATE_OUTCOME },
     });
-    await sendPrompt(bridge, 'web-next', 'next');
-    expect(bridge.api.sendUserMessage).toHaveBeenLastCalledWith('next', { expandPromptTemplates: true });
+    const emitWeb = await dispatchWebPrompt(bridge, 'web-next', 'next');
+    await emitWeb('input', { source: 'extension', text: 'next' });
+    await emitWeb('before_agent_start', { messageType: 'user' });
+    await bridge.emit('agent_start');
+    await bridge.emit('message_start', { message: user('next') });
+    await expect.poll(() => bridge.runner.responses('web-next')[0]).toMatchObject({
+      success: true,
+      data: { disposition: 'started' },
+    });
   });
 
   it.each(['session_compact_failed', 'session_compact'] as const)('completes Stop after manual %s without agent_settled', async (event) => {
