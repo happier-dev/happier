@@ -64,7 +64,7 @@ type RunRow = ReturnType<typeof useWorkflowRun>;
 function useTriggerRunRow(
   runId: string,
   serverId: string | null | undefined,
-): Readonly<{ row: RunRow; scope: ServerAccountScope | null }> {
+): Readonly<{ row: RunRow; scope: ServerAccountScope | null; loading: boolean }> {
   const source = useSessionTranscriptSource();
   const activeScope = useActiveServerAccountScope();
   const workflowsAvailable = useWorkflowsAvailability().available;
@@ -75,6 +75,7 @@ function useTriggerRunRow(
     typeof serverId === 'string' &&
     areServerProfileIdentifiersEquivalent(activeScope.serverId, serverId);
   const row = useWorkflowRun(readable ? runId : null);
+  const [unreadable, setUnreadable] = React.useState<Readonly<{ runId: string; scope: ServerAccountScope }> | null>(null);
   const summaryTerminal = row?.summary
     ? isTerminalWorkflowRunState(row.summary.state)
     : false;
@@ -92,14 +93,18 @@ function useTriggerRunRow(
         if (controller.signal.aborted || !lifetime.isCurrent()) return;
         publishOpenedWorkflowRunDetail(detail, lifetime.scope);
       },
-      () => undefined,
+      () => {
+        if (!controller.signal.aborted && lifetime.isCurrent()) setUnreadable({ runId, scope: activeScope });
+      },
     );
     return () => {
       retirement.dispose();
       controller.abort();
     };
-  }, [detailCurrent, readable, runId, summaryTerminal]);
-  return { row: readable ? row : null, scope: readable ? activeScope : null };
+  }, [activeScope, detailCurrent, readable, runId, summaryTerminal]);
+  const loading = readable && row?.detail === undefined
+    && (unreadable?.runId !== runId || unreadable.scope !== activeScope);
+  return { row: readable ? row : null, scope: readable ? activeScope : null, loading };
 }
 
 /** Keep going's second opinion settles a Notify me node only when it disagreed (08 §3.1). */
@@ -130,7 +135,7 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
   const [expanded, setExpanded] = React.useState(false);
   const notifyLayoutMutation = useTranscriptRowLayoutMutation();
   const maxWidthStyle = useLayoutMaxWidthStyle();
-  const { row, scope } = useTriggerRunRow(props.run.runId, props.serverId);
+  const { row, scope, loading } = useTriggerRunRow(props.run.runId, props.serverId);
   const changeExpanded = React.useCallback(
     (next: boolean) => {
       notifyLayoutMutation({
@@ -155,6 +160,9 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
     | Readonly<Record<string, unknown>>
     | undefined;
   const summary = row?.summary ?? null;
+  const placeholder = <WorkflowRunFoldHeader runId={runId} disclosure={null} onOpen={null}
+    presentation={{ verb: t('common.loading'), details: [], meta: null, icon: null,
+      workflowName: null, trigger: null, runState: null }} />;
   const probeSecondOpinion =
     catalogRef === 'builtin:keep-going' &&
     inputs?.secondOpinion === true &&
@@ -181,9 +189,10 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
         summary?.origin.kind === 'automation' ? summary.origin.cause : null,
     });
     // A Review & converge that is still running is its round card (cards-T3); once it settles it folds.
-    if (catalogRef === REVIEW_AND_CONVERGE_CATALOG_REF && summary !== null && !isTerminalWorkflowRunState(summary.state)) {
+    if (catalogRef === REVIEW_AND_CONVERGE_CATALOG_REF && detail && summary
+      && !isTerminalWorkflowRunState(detail.run.state)) {
       return (
-        <View style={styles.container}>
+        <>
           <ReviewRoundCard
             runId={props.run.runId}
             serverId={props.serverId ?? null}
@@ -195,56 +204,54 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
             onOpen={open}
           />
           {props.run.turnCount > 0 ? <View style={styles.body}>{props.children}</View> : null}
-        </View>
+        </>
       );
     }
     // A zero-turn Run's linked Review is the existing Session summary; other Runs keep their ordinary fold.
     if (props.run.turnCount === 0) {
       return (
-        <View style={styles.container}>
-          <WorkflowRunReview runId={props.run.runId} scope={scope} enabled={scope !== null}
-            workflowFailureCode={summary?.errorCode}
-            fallback={<WorkflowRunFoldHeader runId={props.run.runId} disclosure={null}
-              presentation={presentation} onOpen={open} />}
-            footerAction={open ? <TextLinkButton testID="workflow-run-review:open-run" size="meta"
-              label={t('workflows.run.open')} onPress={open} /> : null} />
-        </View>
+        <WorkflowRunReview runId={props.run.runId} scope={scope} enabled={scope !== null}
+          workflowFailureCode={summary?.errorCode} workflowTranscript transcriptPlaceholder={placeholder}
+          fallback={<WorkflowRunFoldHeader runId={props.run.runId} disclosure={null}
+            presentation={presentation} onOpen={open} />}
+          footerAction={open ? <TextLinkButton testID="workflow-run-review:open-run" size="meta"
+            label={t('workflows.run.open')} onPress={open} /> : null} />
       );
     }
     return (
-      <View style={styles.container}>
-        <ExpandableItem
-          expanded={expanded}
-          onExpandedChange={changeExpanded}
-          showDivider={false}
-          reducedMotion={props.reducedMotion}
-          testID={`workflow-run-fold:${props.run.runId}`}
-          header={({ expanded: isExpanded, headerProps }) => (
-            <WorkflowRunFoldHeader
-              runId={props.run.runId}
-              disclosure={{ expanded: isExpanded, headerProps }}
-              presentation={presentation}
-              onOpen={open}
-            />
-          )}
-        >
-          <View style={styles.body}>{props.children}</View>
-        </ExpandableItem>
-      </View>
+      <ExpandableItem
+        expanded={expanded}
+        onExpandedChange={changeExpanded}
+        showDivider={false}
+        reducedMotion={props.reducedMotion}
+        testID={`workflow-run-fold:${props.run.runId}`}
+        header={({ expanded: isExpanded, headerProps }) => (
+          <WorkflowRunFoldHeader
+            runId={props.run.runId}
+            disclosure={{ expanded: isExpanded, headerProps }}
+            presentation={presentation}
+            onOpen={open}
+          />
+        )}
+      >
+        <View style={styles.body}>{props.children}</View>
+      </ExpandableItem>
     );
   };
   return (
     <View style={[styles.outer, maxWidthStyle]}>
-      {probeSecondOpinion ? (
-        <SecondOpinionOutcome
-          runId={props.run.runId}
-          serverId={props.serverId ?? null}
-        >
-          {renderHeader}
-        </SecondOpinionOutcome>
-      ) : (
-        renderHeader(false)
-      )}
+      <View style={styles.container}>
+        {loading ? placeholder : probeSecondOpinion ? (
+          <SecondOpinionOutcome
+            runId={props.run.runId}
+            serverId={props.serverId ?? null}
+          >
+            {renderHeader}
+          </SecondOpinionOutcome>
+        ) : (
+          renderHeader(false)
+        )}
+      </View>
     </View>
   );
 });
@@ -271,11 +278,7 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
   const flow = useSessionManagedWorkflowRunFlow(props.runId, props.serverId);
   // The linked Review's Findings so far, through the one list key the settled fold and Run page read.
   const reviewReadable = props.scope !== null;
-  const producedReview = useWorkflowRunProducedReview(props.runId, props.scope, reviewReadable);
-  // The card's state word already says the round stopped, beside Stop reviewing and Open run. A Review that
-  // failed with nothing found would only say it again ("couldn't finish"), so the card shows its Findings only.
-  const shownReview = producedReview !== null && !(producedReview.state === 'failed' && producedReview.counts.total === 0)
-    ? producedReview : null;
+  const shownReview = useWorkflowRunProducedReview(props.runId, props.scope, reviewReadable, true);
   // Every round records its first step (skipped on round one) and its panel.
   const roundsStarted = Math.max(flow?.runStates.get('verify')?.length ?? 0, flow?.runStates.get('panel')?.length ?? 0);
   const round = describeReviewAndConvergeRound(props.inputs, roundsStarted);
@@ -325,7 +328,8 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
             />
           )}
           {shownReview === null ? null : (
-            <WorkflowRunReview runId={props.runId} scope={props.scope} enabled={reviewReadable} testID={`${testID}-review`} />
+            <WorkflowRunReview runId={props.runId} scope={props.scope} enabled={reviewReadable}
+              workflowFailureCode={props.summary.errorCode} workflowTranscript testID={`${testID}-review`} />
           )}
         </>
       )}

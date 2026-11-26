@@ -21,6 +21,7 @@ import { WorkflowRunFold } from '@/components/sessions/transcript/turns/Workflow
 import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { publishOpenedWorkflowRunDetail } from '@/sync/engine/workflows/refreshWorkflowRun';
+import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { WorkflowRunGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 
 const effects = vi.hoisted(() => ({ push: vi.fn() }));
@@ -365,7 +366,7 @@ it('keeps a read-only transcript fold from looking up a private Review through t
   } finally { await screen.unmount(); }
 });
 
-function publishRunningReviewAndConverge(runId: string, state: 'running' | 'interrupted' = 'running'): void {
+function publishRunningReviewAndConverge(runId: string, state: 'running' | 'interrupted' | 'failed' = 'running'): void {
   const definition = createWorkflowDefinitionFixture();
   publishOpenedWorkflowRunDetail(WorkflowRunGetResultV1Schema.parse({
     run: createWorkflowRunSummaryFixture({ id: runId, state, origin: { kind: 'direct' } }),
@@ -379,7 +380,17 @@ function publishRunningReviewAndConverge(runId: string, state: 'running' | 'inte
   }), { serverId, accountId: 'alice' });
 }
 
-it('shows the Findings its linked Review already holds on a still-running Review & converge card', async () => {
+it.each(['running', 'failed'] as const)(
+  'shows Findings from a %s linked Review on the Review & converge card without a second failure sentence',
+  async (reviewState) => {
+  if (reviewState === 'failed') {
+    const failed = { ...review, state: 'failed', finishedAt: 3, counts: { total: 1, needsDecision: 0 } };
+    const needsYou = { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+      requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false };
+    homes.answer(serverId, 'POST /v1/reviews/list', { body: { items: [{ ...failed, needsYou }], cursor: null } });
+    homes.answer(serverId, 'POST /v1/reviews/get', { body: { review: failed,
+      human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [], needsYou } } });
+  }
   publishRunningReviewAndConverge('hunt-run');
   const source = { ...createTestSessionTranscriptSource({ serverId, navigate: vi.fn() }), kind: 'app' as const };
   let commits = 0;
@@ -397,6 +408,11 @@ it('shows the Findings its linked Review already holds on a still-running Review
     await waitForHomeGovernance(() =>
       expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.historyEarlierRuns', { count: 2 })));
     // Another Run's update does not reach this card: it reads only its own Run and its own linked Review.
+    if (reviewState === 'failed') {
+      await waitForHomeGovernance(() => expect(screen.getTextContent())
+        .toContain(t('reviewWalkthrough.detail.findingsCount', { count: 1 })));
+    }
+    expect(screen.getTextContent()).not.toContain(t('reviewWalkthrough.detail.glanceFailed'));
     const settled = commits;
     publishRunningReviewAndConverge('unrelated-run');
     await screen.update(fold);
@@ -404,9 +420,16 @@ it('shows the Findings its linked Review already holds on a still-running Review
   } finally { await screen.unmount(); }
 });
 
-it('states a stopped Review & converge round in its card header only, not again as a failed Review (R13)', async () => {
-  publishRunningReviewAndConverge('hunt-run', 'interrupted');
-  const failed = { ...review, state: 'failed', finishedAt: 3, counts: { total: 0, needsDecision: 0 } };
+it.each(['interrupted', 'failed'] as const)('waits for the %s Run facts before showing its transcript card', async (state) => {
+  const runId = `staged-${state}-run`;
+  const exactRead = Promise.withResolvers<void>();
+  homes.answer(serverId, 'POST /v3/automations/runs/workflow-storage', {
+    select: (input) => ({
+      status: 404, body: { error: 'not_found' },
+      ...((input as { operation?: string })?.operation === 'get' ? { respondAfter: exactRead.promise } : {}),
+    }),
+  });
+  const failed = { ...review, workflowRunId: runId, state: 'failed', finishedAt: 3, counts: { total: 0, needsDecision: 0 } };
   const needsYou = { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
     requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false };
   homes.answer(serverId, 'POST /v1/reviews/list', { body: { items: [{ ...failed, needsYou }], cursor: null } });
@@ -415,15 +438,28 @@ it('states a stopped Review & converge round in its card header only, not again 
   homes.answer(serverId, 'GET /v1/reviews/comments', { body: { items: [], cursor: null } });
   const source = { ...createTestSessionTranscriptSource({ serverId, navigate: vi.fn() }), kind: 'app' as const };
   const screen = await renderWithSessionTranscriptSource(
-    <WorkflowRunFold turnId="review-turn" run={{ runId: 'hunt-run', turnCount: 0 }} serverId={serverId}>{null}</WorkflowRunFold>, source);
-  try {
-    expect(screen.findHostByTestId('workflow-review-round:hunt-run')).not.toBeNull();
-    await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/reviews/list').length).toBeGreaterThan(0));
-    // Let the list answer reach the card (it would mount the Review summary and its read).
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1000)); });
-    // The card's state word, with Stop reviewing and Open run beside it, is the one statement; a Review
-    // that failed with nothing found adds no second "couldn't finish" under it.
-    expect(screen.getTextContent()).toContain(t('workflows.run.open'));
+    <WorkflowRunFold turnId="review-turn" run={{ runId, turnCount: 0 }} serverId={serverId}>{null}</WorkflowRunFold>, source);
+  const assertLoading = () => {
+    expect(screen.getTextContent()).toContain(t('common.loading'));
+    expect(screen.findHostByTestId(`workflow-review-round:${runId}`)).toBeNull();
+    expect(screen.findByTestId(`workflow-run-fold-open:${runId}`)).toBeNull();
     expect(screen.getTextContent()).not.toContain(t('reviewWalkthrough.detail.glanceFailed'));
-  } finally { await screen.unmount(); }
+  };
+  try {
+    assertLoading();
+    await act(async () => storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(
+      createWorkflowRunSummaryFixture({ id: runId, state, origin: { kind: 'direct' } }),
+    )]));
+    assertLoading();
+    await act(async () => publishRunningReviewAndConverge(runId, state));
+    const open = state === 'interrupted' ? `workflow-review-round:${runId}-open` : `workflow-run-fold-open:${runId}`;
+    await waitForHomeGovernance(() => expect(screen.findByTestId(open)).not.toBeNull());
+    await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/reviews/list').length).toBeGreaterThan(0));
+    expect(screen.findByTestId(open)).not.toBeNull();
+    expect(screen.findByTestId('review-summary:open')).toBeNull();
+    expect(screen.getTextContent()).not.toContain(t('reviewWalkthrough.detail.glanceFailed'));
+  } finally {
+    await screen.unmount();
+    exactRead.resolve();
+  }
 });

@@ -19,10 +19,12 @@ export function ReviewSummaryHost(props: Readonly<{
     onOpenReview?: () => void;
     footerAction?: ReviewSummaryProps['footerAction'];
     workflowFailureCode?: string | null;
+    workflowTranscript?: boolean;
 }>): React.ReactElement {
     const detail = useReviewDetail(props.reviewId, { scope: props.scope });
     const glance = projectReviewGlance(undefined, detail.data?.review ?? null,
-        { needsYou: detail.data?.human.needsYou, workflowFailureCode: props.workflowFailureCode });
+        { needsYou: detail.data?.human.needsYou, workflowFailureCode: props.workflowFailureCode,
+            workflowTranscript: props.workflowTranscript });
     const relevantServerIds = detail.scope ? [detail.scope.serverId] : [];
     if (!glance) return <HomeReachabilityGate variant="line" relevantServerIds={relevantServerIds}>
         {detail.error ? <ReviewReadFailure failure={detail.error} onRetry={detail.refresh} />

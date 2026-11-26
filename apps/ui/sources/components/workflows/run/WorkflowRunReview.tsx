@@ -32,9 +32,14 @@ function reviewEngineLabel(engineId: string): string {
  * The Review a Workflow run produced, through the Review owner's `workflowRunId` link; `null` for a run that produced
  * none of its own (another round of an existing one). The run page and its embedded summary read the same list key.
  */
-export function useWorkflowRunProducedReview(runId: string, scope: ServerAccountScope | null, enabled: boolean) {
-  const list = useReviewList({ workflowRunId: runId, limit: 1 }, { scope, enabled });
-  return list.items?.[0] ?? null;
+function readProducedReview(list: ReturnType<typeof useReviewList>, omitEmptyFailure: boolean) {
+  const review = list.items?.[0] ?? null;
+  return omitEmptyFailure && review?.state === 'failed' && review.counts.total === 0 ? null : review;
+}
+
+export function useWorkflowRunProducedReview(runId: string, scope: ServerAccountScope | null, enabled: boolean,
+  omitEmptyFailure = false) {
+  return readProducedReview(useReviewList({ workflowRunId: runId, limit: 1 }, { scope, enabled }), omitEmptyFailure);
 }
 
 /** The Review a Run produced, and whether its final output is that Review. */
@@ -89,13 +94,17 @@ export function WorkflowRunReview(
     testID?: string;
     /** A transcript fold retains its ordinary Run entry when this Run produced no Review. */
     fallback?: React.ReactNode;
+    /** The Run states the failure. Its transcript Review contributes findings and holds the slot while the link loads. */
+    transcriptPlaceholder?: React.ReactElement;
+    workflowTranscript?: boolean;
     footerAction?: React.ReactNode;
     /** The producing Run's retained cause, used only if the linked Review failed. */
     workflowFailureCode?: string | null;
   }>,
 ): React.ReactElement | null {
   const router = useRouter();
-  const review = useWorkflowRunProducedReview(props.runId, props.scope, props.enabled);
+  const list = useReviewList({ workflowRunId: props.runId, limit: 1 }, { scope: props.scope, enabled: props.enabled });
+  const review = readProducedReview(list, props.workflowTranscript === true);
   const reviewId = review?.reviewId ?? null;
   const comments = useReviewComments({
     scope: props.scope,
@@ -163,7 +172,12 @@ export function WorkflowRunReview(
       })),
     [roots],
   );
-  if (!reviewId) return <>{props.fallback}</>;
+  if (!reviewId) {
+    if (props.enabled && list.items === null && list.error === null && props.transcriptPlaceholder) {
+      return props.transcriptPlaceholder;
+    }
+    return <>{props.fallback}</>;
+  }
   const open = () =>
     router.push(
       artifactResourceRoute(
@@ -178,6 +192,7 @@ export function WorkflowRunReview(
         reviewId={reviewId}
         scope={props.scope}
         workflowFailureCode={props.workflowFailureCode}
+        workflowTranscript={props.workflowTranscript}
         subject={null}
         rows={rows}
         reviewers={reviewers}
