@@ -24,7 +24,7 @@ type Input = Readonly<{
  * never a reason to select the legacy HTTP credential reader. */
 export async function resolveQualifiedConnectedServiceCredentialSource(input: Input): Promise<(ConnectedServiceCredentialSourceResolution & Readonly<{ revisionSemantics: 'revisioned'; credentialRevision: ConnectedServiceCredentialRevisionV1 }>) | null> {
   const service = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(input.binding.serviceId);
-  if (!service) throw new ConnectedServiceCredentialResolutionError(input.binding);
+  if (!service) throw new ConnectedServiceCredentialResolutionError(input.binding, 'unknown');
   const material = await readQualifiedConnectedAccountCredentialMaterial({
     credentials: input.credentials,
     account: { service, accountId: input.binding.profileId },

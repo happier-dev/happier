@@ -204,13 +204,12 @@ describe('qualified first-party spawn credential authority', () => {
           sessionId: 'missing-requester-profile', purposes: binding.purposes, bindings: binding.bindings }),
       });
       const result = await admission.catch(error => {
-        expect(error).toMatchObject({ name: 'ConnectedServiceSpawnAuthGroupAuthorityError',
-          code: 'connected_service_auth_group_authority_active_profile_missing' });
+        expect(error).toMatchObject({ name: 'ConnectedServiceCredentialResolutionError', kind: 'confirmed_missing' });
         return buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'codex', error });
       });
       expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: expect.stringMatching(/select.*profile.*own Account/i),
-        errorDetail: { kind: 'launch_error', code: 'connected_service_auth_group_authority_active_profile_missing',
+        errorDetail: { kind: 'launch_error', code: 'connected_service_profile_missing',
           message: expect.stringMatching(/Workflow.*edit|edit.*Workflow/i) } });
       expect(JSON.stringify(result)).not.toContain('absent-private-profile');
     } finally { http.mockRestore(); }

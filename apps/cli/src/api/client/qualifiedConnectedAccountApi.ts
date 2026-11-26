@@ -682,6 +682,15 @@ export async function mutateQualifiedConnectedAccountCredentialV4(
     );
 }
 
+export class QualifiedConnectedAccountCredentialReadError extends HttpStatusError {
+    constructor(status: number, readonly kind: 'present_but_unusable' | 'unknown') {
+        super(status, kind === 'present_but_unusable'
+            ? 'connect_credential_unsupported_format'
+            : 'connected_account_credential_response_unrecognized');
+        this.name = 'QualifiedConnectedAccountCredentialReadError';
+    }
+}
+
 export async function readQualifiedConnectedAccountCredentialV4(
     params: Readonly<{
         token: string;
@@ -702,15 +711,18 @@ export async function readQualifiedConnectedAccountCredentialV4(
         {
             headers: requestHeaders(params.token, params.requestPurpose ?? 'connected-accounts:qualification'),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
-            validateStatus: (status) => status === 200 || status === 404,
+            validateStatus: (status) => status === 200 || status === 404 || status === 409,
             ...(params.signal ? { signal: params.signal } : {}),
         },
     );
-    if (response.status === 404) return null;
     if (response.status !== 200) {
-        throw new Error(
-            `Qualified Connected Account credential read returned ${response.status}`,
-        );
+        const code = z.object({ error: z.string() }).safeParse(response.data);
+        if (response.status === 404 && code.success && code.data.error === 'connect_credential_not_found') {
+            return null;
+        }
+        throw new QualifiedConnectedAccountCredentialReadError(response.status,
+            response.status === 409 && code.success && code.data.error === 'connect_credential_unsupported_format'
+                ? 'present_but_unusable' : 'unknown');
     }
     return parseQualifiedConnectedAccountReadResponse(QualifiedConnectedAccountCredentialSnapshotV4Schema,
         response.data,

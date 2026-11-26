@@ -9,6 +9,7 @@ import type { ConnectedServiceCredentialReconnectCauseV1 } from '@happier-dev/pr
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ApiClient } from '@/api/api';
 import type { StoredCredentials } from '@/persistence';
+import { ConnectedServiceCredentialResolutionError } from '@/cloud/connectedServices/connectedServiceCredentialResolutionErrors';
 import { createSpawnBindingAccountApi, type ConnectedServiceQualifiedAuthGroupApi } from './spawnBindingAccountApi';
 import type { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from './runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
 
@@ -404,17 +405,18 @@ async function readQualifiedSpawnProfile(params: Readonly<{
 }>): Promise<QualifiedConnectedAccountProfileV4 & { revisionSemantics: 'revisioned'; credentialRevision: ConnectedServiceCredentialRevisionV1 }> {
   const service = parseQualifiedPluginContributionKey(params.serviceId);
   if (!service) {
-    throw new ConnectedServiceSpawnAuthGroupAuthorityError({
-      kind: 'resolution_unavailable', serviceId: params.serviceId, groupId: '',
-    });
+    throw new ConnectedServiceCredentialResolutionError(params, 'unknown');
   }
   const listed = await params.api.listAccounts({ service });
   const profile = listed.accounts.find((candidate) => candidate.ref.accountId === params.profileId
     && candidate.ref.service.pluginId === service.pluginId
     && candidate.ref.service.localId === service.localId);
-  if (listed.service.pluginId !== service.pluginId || listed.service.localId !== service.localId
-    || !profile || profile.revisionSemantics !== 'revisioned') {
-    throw new ConnectedServiceSpawnAuthGroupAuthorityError({ kind: 'active_profile_missing', serviceId: params.serviceId, groupId: '' });
+  if (listed.service.pluginId !== service.pluginId || listed.service.localId !== service.localId) {
+    throw new ConnectedServiceCredentialResolutionError(params, 'unknown');
+  }
+  if (!profile) throw new ConnectedServiceCredentialResolutionError(params, 'confirmed_missing');
+  if (profile.revisionSemantics !== 'revisioned') {
+    throw new ConnectedServiceCredentialResolutionError(params, 'present_but_unusable');
   }
   if (profile.status === 'needs_reauth') {
     throw new ConnectedServiceSpawnProfileActionRequiredError({
@@ -680,11 +682,7 @@ async function resolveCredentialBindings(params: Readonly<{
       });
       assertQualifiedPurposeCredentialCompatibility({ snapshot: params.qualifiedPurposeBindingSnapshot, profile });
       if (!isQualifiedConnectedAccountProfileActiveV4(profile, params.nowMs)) {
-        throw new ConnectedServiceSpawnAuthGroupAuthorityError({
-          kind: 'resolution_failed',
-          serviceId: selection.serviceId,
-          groupId: '',
-        });
+        throw new ConnectedServiceCredentialResolutionError(selection, 'present_but_unusable');
       }
       credentialBindings.push({
         serviceId: selection.serviceId,

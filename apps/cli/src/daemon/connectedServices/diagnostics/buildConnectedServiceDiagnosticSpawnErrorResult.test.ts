@@ -277,13 +277,13 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
     });
   });
 
-  it('maps missing connected-service credentials to the reconnect-required spawn diagnostic', () => {
+  it('maps unusable connected-service credentials to the reconnect-required spawn diagnostic', () => {
     const result = buildConnectedServiceCredentialSpawnErrorResult({
       agentId: 'claude',
       error: new ConnectedServiceCredentialResolutionError({
         serviceId: 'claude-subscription',
         profileId: 'batiplus',
-      }),
+      }, 'present_but_unusable'),
     });
 
     expect(result).not.toBeNull();

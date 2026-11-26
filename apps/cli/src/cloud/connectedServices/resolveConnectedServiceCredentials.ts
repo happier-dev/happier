@@ -7,7 +7,7 @@ import type { ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialRevi
 export { ConnectedServiceCredentialBindingMismatchError, assertConnectedServiceCredentialRecordBinding } from '@happier-dev/protocol/connect/connectedServiceCredentialBinding';
 
 import type { ConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
-import type { readQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
+import { QualifiedConnectedAccountCredentialReadError, type readQualifiedConnectedAccountCredentialV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import type { StoredCredentials } from '@/persistence';
 import { resolveQualifiedConnectedServiceCredentialSource } from './resolveQualifiedConnectedServiceCredentials';
 import { ConnectedServiceStoredContentUnavailableError } from './connectedServiceStoredContentUnavailable';
@@ -50,9 +50,14 @@ export async function resolveConnectedServiceCredentialResolutions(params: Reado
   const accountMode = params.accountMode ?? await resolveConnectedServiceAccountMode(params.api, { signal: params.signal });
   for (const binding of params.bindings) {
     params.signal?.throwIfAborted();
-    const source = await resolveConnectedServiceCredentialSource({ ...params, binding, accountMode });
+    const source = await resolveConnectedServiceCredentialSource({ ...params, binding, accountMode }).catch((error: unknown) => {
+      if (error instanceof QualifiedConnectedAccountCredentialReadError) {
+        throw new ConnectedServiceCredentialResolutionError(binding, error.kind);
+      }
+      throw error;
+    });
     params.signal?.throwIfAborted();
-    if (!source) throw new ConnectedServiceCredentialResolutionError(binding);
+    if (!source) throw new ConnectedServiceCredentialResolutionError(binding, 'confirmed_missing');
     result.set(binding.serviceId, {
       record: source.record,
       providerOrganizationId: source.providerOrganizationId ?? null,

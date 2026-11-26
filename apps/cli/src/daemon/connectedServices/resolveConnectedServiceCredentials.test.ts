@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildConnectedServiceCredentialRecord, QualifiedConnectedAccountCredentialSnapshotV4Schema, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import { resolveConnectedServiceCredentialResolutions, ConnectedServiceCredentialResolutionError } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 
+import axios from '@/api/client/credentialAxios';
+import { buildConnectedServiceCredentialSpawnErrorResult } from './diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
+
 const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' };
 const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
 const record = buildConnectedServiceCredentialRecord({
@@ -95,6 +98,30 @@ describe('current qualified credential resolution of retained 0.2 data', () => {
 
   it('preserves typed missing-credential identity', async () => {
     await expect(resolve(null)).rejects.toBeInstanceOf(ConnectedServiceCredentialResolutionError);
+  });
+
+  it.each([
+    [{ error: 'connect_credential_not_found' }, 'confirmed_missing'],
+    [{ error: 'route_not_found' }, 'unknown'],
+  ] as const)('carries typed V4 credential absence through the spawn diagnostic', async (data, kind) => {
+    const http = vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 404, data });
+    try {
+      const admission = resolveConnectedServiceCredentialResolutions({
+        credentials: { token: 'fixture', encryption: null },
+        api: { getAccountEncryptionMode: async () => 'plain' },
+        bindings: [{ serviceId: 'openai-codex', profileId: 'work' }],
+      });
+      const error = await admission.catch((error: unknown) => error);
+      expect(error).toMatchObject({ kind, serviceId: 'openai-codex', profileId: 'work' });
+      const diagnostic = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'codex', error });
+      expect(diagnostic).toMatchObject({
+        errorDetail: { kind: 'launch_error', code: kind === 'confirmed_missing'
+          ? 'connected_service_profile_missing'
+          : 'connected_service_credential_resolution_unavailable' },
+      });
+    } finally {
+      http.mockRestore();
+    }
   });
 
   it('does not choose a scalar HTTP reader when account mode is unavailable', async () => {

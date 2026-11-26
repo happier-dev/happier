@@ -68,7 +68,7 @@ function readCredentialMissingSpawnError(error: unknown): ConnectedServiceCreden
   const record = readRecord(error);
   if (!record) return null;
   if (readString(record.name) !== 'ConnectedServiceCredentialResolutionError') return null;
-  if (readString(record.kind) !== 'missing_credential') return null;
+  if (readString(record.kind) !== 'present_but_unusable') return null;
   const serviceId = readString(record.serviceId);
   const profileId = readString(record.profileId);
   if (!serviceId || !profileId) return null;
@@ -120,6 +120,23 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
       errorMessage: message,
       errorDetail: { kind: 'launch_error', code, message },
     };
+  }
+  if (readStringField(authorityError, 'name') === 'ConnectedServiceCredentialResolutionError') {
+    const kind = readStringField(authorityError, 'kind');
+    if (kind === 'confirmed_missing' || kind === 'unknown') {
+      const code = kind === 'confirmed_missing'
+        ? 'connected_service_profile_missing'
+        : 'connected_service_credential_resolution_unavailable';
+      const message = kind === 'confirmed_missing'
+        ? 'The selected login is no longer available. Open Connected Accounts and select a profile in your own Account. For a Workflow, edit its Connected Account selection before starting a new Run.'
+        : 'Happier could not verify the selected login. Try again or choose a login in Connected Accounts.';
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: message,
+        errorDetail: { kind: 'launch_error', code, message },
+      };
+    }
   }
   const missingCredential = readCredentialMissingSpawnError(input.error);
   if (missingCredential) {

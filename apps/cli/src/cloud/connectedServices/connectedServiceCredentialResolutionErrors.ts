@@ -1,16 +1,18 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
 
 
 export type ConnectedServiceCredentialBinding = Readonly<{ serviceId: ConnectedServiceId; profileId: string }>;
 
 export class ConnectedServiceCredentialResolutionError extends Error {
   readonly name = 'ConnectedServiceCredentialResolutionError';
-  readonly kind = 'missing_credential' as const;
-  readonly serviceId: ConnectedServiceId;
+  readonly serviceId: ConnectedAccountServiceKey;
   readonly profileId: string;
 
-  constructor(binding: ConnectedServiceCredentialBinding & Readonly<{ kind?: 'missing_credential' }>) {
-    super(`Missing connected service credential (${binding.serviceId}/${binding.profileId})`);
+  constructor(
+    binding: Readonly<{ serviceId: ConnectedAccountServiceKey; profileId: string }>,
+    readonly kind: 'confirmed_missing' | 'present_but_unusable' | 'unknown',
+  ) {
+    super(`Connected Account credential resolution ${kind} (${binding.serviceId}/${binding.profileId})`);
     this.serviceId = binding.serviceId;
     this.profileId = binding.profileId;
   }
