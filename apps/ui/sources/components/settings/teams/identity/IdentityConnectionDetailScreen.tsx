@@ -44,6 +44,7 @@ import {
     identityConnectionMode,
     identityProviderKindLabel,
     identityProviderKindMark,
+    useIdentityConnectionReadFailure,
     workosConnectionStatusLabel,
     workosConnectionStrategyLabel,
     workosSetupSteps,
@@ -159,6 +160,10 @@ export const IdentityConnectionDetailContent = React.memo(function IdentityConne
         : teamIdentityConnectionPath({ serverId: props.scope.serverId, teamId: props.teamId }, props.connectionId),
     [props.scope.serverId, props.teamId, props.connectionId]);
     const { state, refresh } = useIdentityAdministration(props.scope, props.teamId, props.requestApproval, props.connectionId);
+    const presentReadFailure = useIdentityConnectionReadFailure(
+        props.teamId === null ? undefined : { serverId: props.scope.serverId, teamId: props.teamId },
+        refresh, 'identity-connection',
+    );
     const client = React.useMemo(
         () => createIdentityAdministrationClient(props.scope, {
             onApprovalPending: props.requestApproval,
@@ -378,7 +383,11 @@ export const IdentityConnectionDetailContent = React.memo(function IdentityConne
         ] : undefined}
     />;
     if (state.kind === 'loading') return <>{header}{props.conditionBanners}<ItemGroup><SurfaceStateCard testID="identity-connection-loading" kind="loading" size="line" title={t('common.loading')} accessibilitySemantics="status" /></ItemGroup></>;
-    if (state.kind === 'unavailable') return <>{header}{props.conditionBanners}<ItemGroup><SurfaceStateCard testID="identity-connection-unavailable" kind="error" size="line" title={identityAdministrationFailureMessage(state.failure.code)} diagnosticCode={state.failure.code} action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh, testID: 'identity-connection-retry' } : undefined} accessibilitySemantics="alert" /></ItemGroup></>;
+    if (state.kind === 'unavailable') {
+        const { title, diagnosticCode, action } = presentReadFailure(state.failure);
+        return <>{header}{props.conditionBanners}<ItemGroup><SurfaceStateCard testID="identity-connection-unavailable" kind="error" size="line" title={title} diagnosticCode={diagnosticCode} action={action} accessibilitySemantics="alert" /></ItemGroup></>;
+    }
+    const readFailure = state.failure ? presentReadFailure(state.failure) : null;
     if (!connection) return <>{header}{props.conditionBanners}<ItemGroup><SurfaceStateCard testID="identity-connection-not-found" kind="unavailable" size="line" title={t('teams.errors.notFound')} /></ItemGroup></>;
 
     const mode = identityConnectionMode(connection) === 'sign_in_time_groups' ? t('teams.authentication.mode.signInTimeGroups') : t('teams.authentication.mode.signInOnly');
@@ -688,7 +697,7 @@ export const IdentityConnectionDetailContent = React.memo(function IdentityConne
     return <>
         {header}
         {props.conditionBanners}
-        {state.stale ? <AttentionBanner testID="identity-connection-stale" title={t('teams.unavailable.offline')} description={t('teams.stale.label')} accessibilityLiveRegion="polite" action={{ label: t('common.retry'), onPress: refresh }} /> : null}
+        {readFailure ? <AttentionBanner testID="identity-connection-stale" title={readFailure.title} description={readFailure.unreachable ? t('teams.stale.label') : undefined} accessibilityLiveRegion="polite" action={readFailure.action} /> : null}
         {workosReturnRefreshing ? <ItemGroup><SurfaceStateCard testID="identity-workos-return-checking" kind="loading" size="line" title={t('identityAdministration.workosCheckSetup')} accessibilitySemantics="status" /></ItemGroup> : null}
         {isWorkos ? null : <SettingSection section={TEAM_IDENTITY_CONNECTION_SETTINGS.sectionRefs.configuration} answersFor={[TEAM_CONNECTION_SETTINGS.sectionRefs.groupMappings]}><ItemGroup title={connection.provider.displayName}>
             <Item testID="identity-connection-status" title={t('teams.authentication.detail.status')} detail={connectionStateLabel(connection.state)} showChevron={false} />

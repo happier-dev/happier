@@ -145,7 +145,9 @@ export function homeDomainFailureFromActionFailure(
         return withDetails({ kind: 'unsupported' as const, retryable: false, code: null });
     }
     const transportKind = HOME_DOMAIN_FAILURE_KINDS.find((kind) => code === `home_${kind}`);
-    if (transportKind) {
+    // The Home's typed `home_forbidden` overlaps the synthesized transport spelling.
+    // Validated wire details identify the Home's own refusal.
+    if (transportKind && parsedDetails?.code !== code) {
         return withDetails({
             kind: transportKind,
             retryable: transportKind === 'unreachable' || transportKind === 'unknown',

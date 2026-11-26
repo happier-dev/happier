@@ -7,7 +7,31 @@ import {
 import * as React from 'react';
 import { Icon } from '@/components/ui/icons/Icon';
 import { WorkosMark } from '@/components/settings/identity/WorkosMark';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { t } from '@/text';
+
+import { teamReadFailureLabel } from '../teamMutationPresentation';
+import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
+import type { IdentityAdministrationFailure } from './identityAdministrationState';
+
+/** The exact same connection read can populate a collection, detail, or setup page. */
+export function useIdentityConnectionReadFailure(
+    address: TeamAddress | undefined,
+    refresh: () => void,
+    testIDPrefix: string,
+) {
+    const resolveAction = useTeamReadFailureAction(address);
+    return (failure: IdentityAdministrationFailure) => {
+        const domain = failure.domainFailure ?? homeDomainFailureFromActionFailure({ errorCode: failure.code });
+        return {
+            title: domain.code === 'home_forbidden' ? t('homeGovernance.forbiddenBody') : teamReadFailureLabel(domain),
+            diagnosticCode: failure.code,
+            unreachable: domain.kind === 'unreachable',
+            action: resolveAction(domain, { onPress: refresh, testIDPrefix }),
+        };
+    };
+}
 
 export type IdentityConnectionMode = 'sign_in_only' | 'sign_in_time_groups';
 export type IdentityConnectionTestStatus = 'required' | 'stale' | 'current';

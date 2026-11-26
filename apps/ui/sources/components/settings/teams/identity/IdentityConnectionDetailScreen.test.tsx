@@ -98,6 +98,44 @@ beforeEach(async () => {
 });
 
 describe('IdentityConnectionDetailScreen test return', () => {
+    it.each([
+        { status: 403, body: { error: 'team_authentication_required' }, message: 'session.access.authenticationRequired', action: 'team', stale: false },
+        { status: 403, body: { error: 'team_forbidden' }, message: 'teams.errors.forbidden', action: null, stale: false },
+        { status: 404, body: { error: 'team_not_found' }, message: 'teams.errors.notFound', action: null, stale: false },
+        { status: 403, body: { error: 'team_forbidden', details: { reason: 'legacy_home_credential' } }, message: 'teams.errors.signInOutdated', action: 'home', stale: false },
+        { status: 503, body: { error: 'team_authentication_unavailable' }, message: 'teams.credentials.externalApi.authenticationUnavailable', action: null, stale: true },
+        { status: 503, body: { error: 'unavailable' }, message: 'teams.errors.loadFailed', action: 'retry', stale: false },
+    ] as const)('shows the settled identity connection read $body.error ($status)', async ({ status, body, message, action, stale }) => {
+        const ready = stale ? await renderDetail() : null;
+        harness.answer(serverId, listPath, { status, body });
+        harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageAuthentication: true }) }) });
+        const screen = ready ?? await renderScreen(<IdentityConnectionDetailScreen serverId={serverId} teamId="team-1" connectionId="connection-1" />);
+        if (ready) await publishConnection();
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t(message)));
+        expect(screen.findByTestId('identity-connection-retry') !== null).toBe(action === 'retry');
+        const signIn = screen.findByTestId('identity-connection-sign-in');
+        expect(signIn !== null).toBe(action === 'home' || action === 'team');
+        if (signIn) {
+            await screen.pressByTestIdAsync('identity-connection-sign-in');
+            const destination = new URL(String(routerPushMock.mock.lastCall?.[0]), 'https://happier.test');
+            expect(destination.pathname).toBe(action === 'home' ? '/settings/account' : '/teams/team-1/sign-in');
+            if (action === 'team') expect(destination.searchParams.get('serverId')).toBe(serverId);
+        }
+        if (action === 'retry') {
+            serveConnection();
+            await screen.pressByTestIdAsync('identity-connection-retry');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('identity-connection-status')).not.toBeNull());
+        }
+    });
+
+    it('shows the Home connection owner’s access refusal without Retry', async () => {
+        harness.answer(serverId, path('home.identity.connections.list'), { status: 403, body: { error: 'home_forbidden' } });
+        const screen = await renderScreen(<IdentityConnectionDetailContent scope={{ serverId, accountId: 'account-1' }} teamId={null} connectionId="connection-1" mutationsAvailable />);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('homeGovernance.forbiddenBody')));
+        expect(screen.findByTestId('identity-connection-retry')).toBeNull();
+        expect(screen.findByTestId('identity-connection-sign-in')).toBeNull();
+    });
+
     it('keeps a failed mapping read distinct from an empty mapping list', async () => {
         harness.answer(serverId, bindingPath, { status: 503, body: { error: 'home_unreachable' } });
         const screen = await renderDetail();

@@ -21,16 +21,12 @@ import {
   signInConnectionStatusTone,
 } from '@/components/settings/identity/signInConnectionStatus';
 import { useTeamManagerNames } from '@/hooks/teams/useTeamManagerNames';
-import { teamSignInReturnPath } from '@/components/teams/entry/teamSignInHome';
 import {
   SettingAnchor,
   SettingSection,
 } from '@/components/settings/shell/SettingRow';
 import { TEAM_AUTHENTICATION_SETTINGS } from './teamAuthenticationSettings';
-import {
-  identityAdministrationFailure,
-  identityAdministrationFailureMessage,
-} from '@/components/settings/identity/identityAdministrationFailure';
+import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { projectAuthEntryMethodCapabilities } from '@/auth/capabilities/authMethodCapabilities';
 import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
@@ -69,6 +65,7 @@ import {
   identityProviderKindMark,
   identityProviderKindLabel,
   teamIdentityConnectionStatus,
+  useIdentityConnectionReadFailure,
 } from './identityAdministrationPresentation';
 import { useIdentityAdministration } from './useIdentityAdministration';
 import {
@@ -117,6 +114,8 @@ const AuthorizedAuthenticationContent = React.memo(
       props.address.teamId,
       requestApproval,
     );
+    const presentReadFailure = useIdentityConnectionReadFailure(props.address, refresh, 'team-authentication');
+    const connectionFailure = state.kind !== 'loading' && state.failure ? presentReadFailure(state.failure) : null;
     const client = React.useMemo(
       () =>
         createIdentityAdministrationClient(props.scope, {
@@ -263,10 +262,6 @@ const AuthorizedAuthenticationContent = React.memo(
     // while admission edits wait for the server-owned applicability projection. Only the
     // connections section's body changes while the identity projection loads or fails.
     if (state.kind === 'loading' || state.kind === 'unavailable') {
-      const recovery =
-        state.kind === 'unavailable'
-          ? identityAdministrationFailure(state.failure.code).recovery
-          : null;
       return (
         <>
           {null}
@@ -286,31 +281,16 @@ const AuthorizedAuthenticationContent = React.memo(
           >
             {state.kind === 'loading' ? (
               <TeamConnectionsReserve team={props.context.team} />
-            ) : (
+            ) : connectionFailure ? (
               <SurfaceStateCard
                 testID="team-authentication-unavailable"
-                kind={recovery === 'team_authentication' ? 'warning' : 'error'}
+                kind={state.failure.code === 'team_authentication_required' ? 'warning' : 'error'}
                 size="line"
-                title={identityAdministrationFailureMessage(state.failure.code)}
-                action={
-                  recovery === 'team_authentication'
-                    ? {
-                        label: t('teams.entry.signInToTeam'),
-                        onPress: () =>
-                          router.push(
-                            teamSignInReturnPath({
-                              teamId: props.address.teamId,
-                              serverId: props.address.serverId,
-                            }),
-                          ),
-                      }
-                    : state.failure.retryable
-                      ? { label: t('common.retry'), onPress: refresh }
-                      : undefined
-                }
+                title={connectionFailure.title}
+                action={connectionFailure.action}
                 accessibilitySemantics="alert"
               />
-            )}
+            ) : null}
           </ItemGroup></SettingAnchor>
           {/* The directory is read on its own: it never waits on, or fails with, the connections. */}
           <DirectorySection scope={props.scope} address={props.address}
@@ -389,13 +369,13 @@ const AuthorizedAuthenticationContent = React.memo(
 
     return (
       <>
-        {state.stale ? (
+        {connectionFailure ? (
           <AttentionBanner
             testID="team-authentication-stale"
-            title={t('teams.unavailable.offline')}
-            description={t('teams.stale.label')}
+            title={connectionFailure.title}
+            description={connectionFailure.unreachable ? t('teams.stale.label') : undefined}
             accessibilityLiveRegion="polite"
-            action={{ label: t('common.retry'), onPress: refresh }}
+            action={connectionFailure.action}
           />
         ) : null}
         {/* Admission and accepted sign-in are Team policy, written through the

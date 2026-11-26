@@ -10,6 +10,7 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { createIdentityAdministrationClient } from './identityAdministrationClient';
 import { useIdentityAdministration } from './useIdentityAdministration';
+import { useIdentityConnectionReadFailure } from './identityAdministrationPresentation';
 import {
     eligibleProviderFixHref,
     eligibleProviderFixLabel,
@@ -43,6 +44,11 @@ export function IdentityWorkosSetupContent(props: Readonly<{
 }>) {
     const router = useRouter();
     const { state, refresh } = useIdentityAdministration(props.scope, props.teamId, props.requestApproval);
+    const presentReadFailure = useIdentityConnectionReadFailure(
+        props.teamId === null ? undefined : { serverId: props.scope.serverId, teamId: props.teamId },
+        refresh, 'identity-workos-read',
+    );
+    const readFailure = state.kind !== 'loading' && state.failure ? presentReadFailure(state.failure) : null;
     const client = React.useMemo(() => createIdentityAdministrationClient(props.scope, { onApprovalPending: props.requestApproval }), [props.scope.serverId, props.scope.accountId, props.requestApproval]);
     const [displayName, setDisplayName] = React.useState('');
     const [pending, setPending] = React.useState(false);
@@ -93,7 +99,7 @@ export function IdentityWorkosSetupContent(props: Readonly<{
     const recoveryViewer = useEligibleProviderRecoveryViewer(props.scope);
     // A connection that cannot be created is not offered as a form (craft: never show a form that
     // cannot succeed). The page says why in the Home's words and leads to the fix or names who can.
-    const blocked = state.kind === 'ready' && !eligible;
+    const blocked = state.kind === 'ready' && !eligible && !readFailure;
     const recovery = blocked && choice ? resolveEligibleProviderRecovery(choice, recoveryViewer) : null;
     const fix = recovery?.kind === 'fix_on_home' && choice
         ? { href: eligibleProviderFixHref(props.scope.serverId, choice, recovery.destination), label: eligibleProviderFixLabel(recovery.destination) }
@@ -142,8 +148,7 @@ export function IdentityWorkosSetupContent(props: Readonly<{
             />
         ) : /* Search for "Add connection" lands on the form its header primary submits. */ <SettingAnchor setting={settings.settings.create}><ItemGroup description={t('identityAdministration.workosNothingCreatedYet')}>
             {state.kind === 'loading' ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : null}
-            {state.kind === 'unavailable' ? <SurfaceStateCard kind="error" size="line" title={identityAdministrationFailureMessage(state.failure.code)} action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined} /> : null}
-            {state.kind === 'ready' && state.failure ? <SurfaceStateCard kind="error" size="line" title={identityAdministrationFailureMessage(state.failure.code)} action={state.failure.retryable ? { label: t('common.retry'), onPress: refresh } : undefined} /> : null}
+            {readFailure ? <SurfaceStateCard testID="identity-workos-read-failed" kind="error" size="line" title={readFailure.title} action={readFailure.action} accessibilitySemantics="alert" /> : null}
             <SettingRow setting={settings.settings.companyName} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="identity-workos-company-name" accessibilityLabel={t('identityAdministration.homeWorkosCompanyName')} value={displayName} editable={canCreate && !pending} onChangeText={setDisplayName} onSubmitEditing={() => void create()} autoCapitalize="words" />} />
             {failure ? <SurfaceStateCard testID="identity-workos-create-failure" kind="error" size="line" title={identityAdministrationFailureMessage(failure)} /> : null}
         </ItemGroup></SettingAnchor>}</SettingSection></>;

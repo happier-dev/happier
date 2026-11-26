@@ -245,6 +245,20 @@ describe('createHomeDomainActionExecutorForScope', () => {
     });
 
     it.each([
+        { body: { error: 'home_forbidden' }, code: 'home_forbidden' },
+        { body: { error: 'proxy_denied' }, code: null },
+    ])('distinguishes a typed Home authority denial from an untyped HTTP 403: $code', async ({ body, code }) => {
+        const { scope } = await scopeForNewHome('https://identity-denied.example');
+        runtimeFetchMock.mockResolvedValue(jsonResponse(body, 403));
+        const result = await createHomeDomainActionExecutorForScope(scope)({
+            actionId: 'home.identity.connections.list', input: { v: 1 }, context: { surface: 'ui', authority: 'present_user' },
+        });
+        expect(homeDomainFailureFromActionFailure(ActionExecuteFailureSchema.parse(result))).toMatchObject({
+            kind: 'forbidden', httpStatus: 403, retryable: false, code,
+        });
+    });
+
+    it.each([
         { status: 409, body: { error: 'username-taken' }, code: 'username-taken', retryable: false },
         { status: 429, body: {}, code: 'home_unknown', retryable: true },
     ])('round-trips actual HTTP $status without losing typed domain details', async ({ status, body, code, retryable }) => {
