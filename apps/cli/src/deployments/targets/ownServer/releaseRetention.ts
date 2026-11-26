@@ -1,7 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentImageV1, type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
+import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentImageV1, type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentImageArchiveV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import { deriveDeploymentMemberVersionsV1, selectDeploymentRetainedPreviousV1 } from '@happier-dev/deployments';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createNativeComposeIncumbentBindReader } from '@/daemon/local/services/launch/nativeComposeSharedData';
@@ -13,6 +13,8 @@ import { removeNativeComposeExitedDeploymentContainers,
     resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { removeStoragePath, readStoragePathIdentity } from '@/storage/trash/removeStoragePath';
+import { filesystemPathComparisonKey, isFilesystemPathAbsolute } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { retireOwnServerImageArchiveForHost } from './releaseProvenance';
 import { resolveContainedWorkspaceMaterializationPath } from '@/scm/workspace/workspaceMaterializationSafety';
 import { createDeploymentManifestInputReader, resolveDeploymentSourcePathForHost } from './exactCommitRelease';
 import { resolveRetainedDeploymentStageLogRootForHost, type OwnServerStageLogProvenance } from './stageLog';
@@ -95,7 +97,14 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
             ...resolveNativeComposeDeploymentImageReferences({ environmentInstanceId,
                 deploymentId: receipt.deployment.id, image }),
         })));
-    return { imageProtection, expiredImages, expiredDeploymentIds: expired.map(receipt => receipt.deployment.id),
+    const archiveKey = ({ holder }: OwnServerDeploymentImageArchiveV1) =>
+        JSON.stringify([holder.serverId, holder.machineId, holder.installationId, filesystemPathComparisonKey(holder.path,
+            isFilesystemPathAbsolute(holder.path, 'win32') && !isFilesystemPathAbsolute(holder.path, 'linux') ? 'win32' : 'linux')]);
+    const protectedArchives = new Set(input.receipts.filter(receipt => protectedIds.has(receipt.deployment.id))
+        .flatMap(receipt => (receipt.content.ownServer?.imageArchives ?? []).map(archiveKey)));
+    const expiredArchives = imageProtection.status === 'complete' ? expired.flatMap(receipt => receipt.content.ownServer?.imageArchives ?? [])
+        .filter(archive => !protectedArchives.has(archiveKey(archive))) : [];
+    return { imageProtection, expiredImages, expiredArchives, expiredDeploymentIds: expired.map(receipt => receipt.deployment.id),
         retainedPreviousDeploymentIds: previous.map(receipt => receipt.id),
         expiredSources: input.receipts.flatMap(receipt => receipt.content.ownServer?.sources ?? [])
         .filter(source => source.role === 'build' ? !unsettledIds.has(source.deploymentId) : !protectedIds.has(source.deploymentId)),
@@ -217,6 +226,8 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
         const sources = expired.expiredSources
             .filter(source => source.machineId === input.machineId && source.installationId === input.installationId);
         const logs = expired.expiredLogs.filter(({ log }) => log.machineId === input.machineId && log.installationId === input.installationId);
+        const archives = expired.expiredArchives.filter(({ holder }) => holder.serverId === homeServerIdentityId
+            && holder.machineId === input.machineId && holder.installationId === input.installationId);
         const retiredProjects = new Set(expired.expiredDeploymentIds.map(id => resolveNativeComposeCandidateProjectName(projectName, id)));
         const retiredImageReferences = new Set(expired.expiredImages.flatMap(({ ownedTag, activationRef }) => [ownedTag, activationRef]));
         if (expired.imageProtection.status === 'complete') {
@@ -225,7 +236,7 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                 retiredImageReferences.delete(activationRef);
             }
         } else retiredImageReferences.clear();
-        if (sources.length || logs.length || retiredProjects.size || retiredImageReferences.size) {
+        if (sources.length || logs.length || archives.length || retiredProjects.size || retiredImageReferences.size) {
             const runtime = await host.runtime.acquireRetention(input, recheck);
             try {
                 const run = async (args: readonly string[]) => {
@@ -256,6 +267,14 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                         const imageWarning = present === null ? 'image_observation_unavailable'
                             : await removeNativeComposeDeploymentImageReferences(present.filter(reference => retiredImageReferences.has(reference)), run);
                         if (imageWarning) logger.infoFile('[Deployment] Expired images were kept', { code: imageWarning });
+                    }
+                    for (const archive of archives) {
+                        try {
+                            await retireOwnServerImageArchiveForHost({ archive, deploymentRoot: runtime.deploymentRoot,
+                                environmentInstanceId, environmentId: snapshot.environment.environment.id, assertCurrent: runtime.assertCurrent });
+                        } catch (error) {
+                            if (!absent(error)) logger.infoFile('[Deployment] Expired image archive was kept', { code: 'image_archive_removal_failed' });
+                        }
                     }
                     const nativeBindSources = sources.length || logs.length
                         ? await createNativeComposeIncumbentBindReader({ projectName: '', run }).bindSources() : [];

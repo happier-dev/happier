@@ -113,20 +113,41 @@ export async function prepareOwnServerImageArchiveDestinationForHost(input: Read
     return target;
 }
 
-/** Dispose only the filesystem object delivered into the operation's verified receiving root. */
-export async function captureOwnServerImageArchiveDisposal(admission: ArchivePlacement, sha256: string): Promise<() => Promise<void>> {
+/** Dispose only the exact filesystem object in a verified deployment archive root. */
+export async function captureOwnServerImageArchiveDisposal(admission: ArchivePlacement, sha256: string,
+    assertCurrent?: () => Promise<void>,
+): Promise<() => Promise<void>> {
     const physical = await verifyArchiveRoot(admission, sha256);
     const identity = await readStoragePathIdentity(physical.path);
     if (identity.kind !== 'file') return custodyRequired();
     return async () => {
         await removeStoragePath(physical.path, { allowedRoot: physical.rootPath, expectedIdentity: identity,
             async beforeEffect() {
+                await assertCurrent?.();
                 const current = await verifyArchiveRoot(admission, sha256);
                 if (filesystemPathComparisonKey(current.path)
                     !== filesystemPathComparisonKey(physical.path)) return custodyRequired();
             },
         });
     };
+}
+
+/** A settled retention pass has already selected this archive for this native holder. */
+export async function retireOwnServerImageArchiveForHost(input: Readonly<{
+    deploymentRoot: string; environmentInstanceId: string; environmentId: string;
+    archive: OwnServerDeploymentImageArchiveV1; assertCurrent(): Promise<void>;
+}>): Promise<void> {
+    const { archive } = input;
+    const origin = readOwnServerImageArchiveOriginHint(archive);
+    if (origin.environmentId !== input.environmentId) return custodyRequired();
+    const placement = { deploymentRoot: input.deploymentRoot, environmentInstanceId: input.environmentInstanceId,
+        deploymentId: origin.deploymentId };
+    const target = resolveOwnServerImageArchivePathForHost(placement, archive.sha256);
+    if (filesystemPathComparisonKey(target.rootPath) !== filesystemPathComparisonKey(archive.holder.rootPath)
+        || filesystemPathComparisonKey(target.path) !== filesystemPathComparisonKey(archive.holder.path)) return custodyRequired();
+    await input.assertCurrent();
+    const dispose = await captureOwnServerImageArchiveDisposal(placement, archive.sha256, input.assertCurrent);
+    await dispose();
 }
 
 /** Holder-side filesystem admission consumes the verified parent receipt identity.

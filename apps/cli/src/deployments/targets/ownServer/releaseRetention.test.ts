@@ -16,6 +16,7 @@ import { resolveNativeComposeCandidateProjectName } from '@/daemon/local/service
 import { resolveDeploymentSourcePathForHost, resolveOwnServerDeploymentEnvironmentInstanceIdForHost, resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerSourceRetention, projectOwnServerDeploymentRetention, pruneOwnServerDeploymentSource } from './releaseRetention';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
+import { resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentRequest } from './ownServerDeploymentTarget';
 
@@ -42,10 +43,11 @@ it('keeps the serving image and History rollback window after successive native 
     const root = await mkdtemp(join(tmpdir(), 'happier-release-images-'));
     const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
     const originalSettingsFile = Object.getOwnPropertyDescriptor(configuration, 'settingsFile')!;
-    const { environment, link, receipt: initial } = retentionRecords();
+    const { environment, link, receipt: initial, approvedInputBasis } = retentionRecords();
     const history: DeploymentReceiptDetailV1[] = [];
     const imageIds: string[] = [];
     const departedProjects: string[] = [];
+    const archivePaths: string[] = [];
     let receipt = initial;
     try {
         const tools = await createOwnServerDockerBoundary(join(root, 'tools'));
@@ -89,6 +91,14 @@ it('keeps the serving image and History rollback window after successive native 
             history.push(receipt);
             link.activeDeploymentId = deploymentId;
             const image = receipt.content.images[0]!;
+            const archiveHash = createHash('sha256').update(deploymentId).digest('hex');
+            const archive = resolveOwnServerImageArchivePathForHost({ ...identity, deploymentId }, archiveHash);
+            await mkdir(archive.rootPath, { recursive: true });
+            await writeFile(archive.path, deploymentId);
+            archivePaths.push(archive.path);
+            receipt.content.ownServer = { approvedInputBasis, imageArchives: [{ sha256: archiveHash, image,
+                sizeBytes: deploymentId.length, holder: { ...archive, serverId: identity.homeServerIdentityId,
+                    machineId: 'machine-a', installationId: 'installation-a' } }] };
             const refs = resolveNativeComposeDeploymentImageReferences({ environmentInstanceId: identity.environmentInstanceId,
                 deploymentId, image });
             imageIds.push(await tools.setImagePruneState(image.configDigest, { repoTags: [refs.ownedTag, refs.activationRef], repoDigests: [] }));
@@ -111,6 +121,10 @@ it('keeps the serving image and History rollback window after successive native 
                 activeDeploymentId: deploymentId })).toMatchObject({ ok: true });
             expect([...(await tools.readPruneImageIds())].sort()).toEqual(imageIds.slice(-windowSize - 1).sort());
             for (const project of departedProjects) expect(await tools.readContainerIds(project)).toEqual([]);
+            for (const [releaseIndex, archive] of archivePaths.entries()) {
+                if (releaseIndex <= expiredIndex) await expect.soft(readFile(archive)).rejects.toMatchObject({ code: 'ENOENT' });
+                else await expect.soft(readFile(archive, 'utf8')).resolves.toBe(history[releaseIndex]!.deployment.id);
+            }
         }
     } finally {
         vi.restoreAllMocks(); vi.unstubAllEnvs();
