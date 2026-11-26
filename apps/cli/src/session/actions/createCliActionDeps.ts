@@ -22,9 +22,6 @@ import { openDeploymentReceiptForHost } from '@/deployments/readReceiptForHost';
 import { prepareCliDeploymentAlertDefaults } from './cliActionDeps/deploymentDefaults';
 import { createCliWorkspaceSyncActionDeps } from './cliActionDeps/workspaceSync';
 import { createDeploymentArtifactHeaderReader } from '@/deployments/readArtifactHeadersForHost';
-import { prepareCliManagedProvisionerAdmission } from '@/machines/managed/provisionerAdmission';
-import { prepareCliManagedMachinePresetAuthoring } from '@/machines/managed/presetAuthoring';
-import { prepareCliManagedMachineWake } from './cliActionDeps/managedMachineWake';
 import { prepareDeploymentTargetEnablementRetention } from '@/deployments/targetEnablementRetention';
 import { buildUnavailableSessionInputTargetFailureV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { resolveSessionInputTargetMachineId } from '@/session/services/sessionInputAdmissionIdentity';
@@ -46,8 +43,6 @@ import { createCliSessionStatusActionDeps } from '@/session/services/cliStatusAc
 import { createCliSessionHandoffActionDeps } from '@/session/handoff/cliActionDeps';
 import { SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import type { SessionWorkspaceReturnInputV1 } from '@happier-dev/protocol/actions/specs/session/projectFilesReturn';
-import { prepareEnrolledWorkspaceReturnChildren, prepareEnrolledWorkspaceReturn } from '@/workspaces/sync/enrolledWorkspaceReturn';
-import { projectManagedWorkspaceReturnFailure } from '@/workspaces/sync/managedWorkspaceReturn';
 import { readActionPrincipalAccountId } from './actionPrincipalAccount';
 import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
 import { createCliSessionLifecycleActionDeps } from '@/session/actions/lifecycle/cliActionDeps';
@@ -60,7 +55,6 @@ import { createCliTasksActionDeps } from './cliActionDeps/tasks';
 import { createCliPendingActionDeps } from '@/session/services/cliPendingActionDeps';
 import { createCliLocalServiceActionDeps } from './cliActionDeps/localServices';
 import { createCliSimulatorRuntimeActionExecute } from './cliActionDeps/simulator';
-import { prepareProjectServiceMoveChildren } from '@/daemon/local/services/actions/projectServiceMoveChildren';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { createCliControlActionDeps } from '@/session/services/cliControlActionDeps';
@@ -84,7 +78,6 @@ import { createCliProjectAdmission } from './cliActionDeps/projectAdmission';
 import { createCliMachineActionDeps } from './cliActionDeps/machine';
 import { createCliSettingsActionDeps } from './cliActionDeps/settings';
 import { createCliMessageActionDeps } from '@/session/services/cliMessageActionDeps';
-import { findTranscriptEncryptedMessageByLocalIdV2, isTranscriptSessionUnavailableError } from '@/api/session/transcriptMessageLookup';
 import { UserMessageSchema } from '@/api/types';
 import { buildApprovalDecisionResult } from '@happier-dev/protocol/actions/executor/approvalResults';
 import { createCliArtifactsActionDeps } from './cliActionDeps/artifacts';
@@ -124,7 +117,6 @@ import type { fetchSessionsQueryPage } from '@/session/transport/http/sessionsHt
 import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import { createCliNotificationActionDeps } from './cliActionDeps/notifications';
 import { createCliSubagentActionDeps } from './cliActionDeps/subagents';
-import { createSessionSubagentActivityReads } from '@/session/subagents/readSessionSubagentActivity';
 export { projectSessionInitialAccessEnvelopeHostErrorResult } from './cliActionDeps/sessionSpawnErrors';
 
 import { setModelFavoriteV1 } from '@happier-dev/protocol/providers/modelFavoritesV1';
@@ -141,7 +133,6 @@ import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { readCliMemoryInheritedContext, readCliMemoryScopeContext } from './readCliMemoryInheritedContext';
 import axios from '@/api/client/credentialAxios';
-import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { checkDeploymentTargetV1, readDeploymentTargetV1 } from '@happier-dev/deployments';
@@ -1252,6 +1243,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...(params.prepareDeploymentEnvironmentCreate ? { prepareDeploymentEnvironmentCreate: params.prepareDeploymentEnvironmentCreate } : {}),
     prepareHostReviewedChildren: async request => {
       if (request.actionId === SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1 && params.readRequesterWorkspaceScope) {
+        const [{ prepareEnrolledWorkspaceReturnChildren, prepareEnrolledWorkspaceReturn }, { projectManagedWorkspaceReturnFailure }] = await Promise.all([
+          import('@/workspaces/sync/enrolledWorkspaceReturn'), import('@/workspaces/sync/managedWorkspaceReturn'),
+        ]);
         const input = request.input as SessionWorkspaceReturnInputV1;
         try {
           const transport = await resolveTransportForSession(input.sessionId, request.context.signal,
@@ -1277,6 +1271,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
           } };
         } catch (error) { return projectManagedWorkspaceReturnFailure(error, 'workspace.return.prepare'); }
       }
+      const { prepareCliManagedMachinePresetAuthoring } = await import('@/machines/managed/presetAuthoring');
       const presetAuthoring = await prepareCliManagedMachinePresetAuthoring(request, {
         credentials: params.credentials, serverUrl: todoHomeBaseUrl,
       });
@@ -1290,6 +1285,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         openArtifact: openDeploymentArtifact, headers: resolveAccountStorageHeaders,
       }) : null;
       if (sourceMove) return sourceMove;
+      const { prepareCliManagedProvisionerAdmission } = await import('@/machines/managed/provisionerAdmission');
       const refusal = await prepareCliManagedProvisionerAdmission(request, {
         credentials: params.credentials, serverUrl: todoHomeBaseUrl,
         managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,
@@ -1299,7 +1295,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       const demand = request.machineRuntimeDemand;
       const usesAccountPending = request.actionId === 'session.message.send'
         && demand?.target.kind === 'session' && demand.target.sessionId === request.context.accountPendingSessionId;
-      const wake = usesAccountPending ? null : await prepareCliManagedMachineWake(request, {
+      const wake = usesAccountPending ? null : await (await import('./cliActionDeps/managedMachineWake')).prepareCliManagedMachineWake(request, {
         localMachineId, reviewManagedExecForRemoteDispatch: params.reviewManagedExecForRemoteDispatch,
         provisionerAccount: { token: params.token, credentials: params.credentials, serverUrl: todoHomeBaseUrl },
         managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,
@@ -1315,7 +1311,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       const workflow = await prepareWorkflowRunStartApproval(request, readEffectiveDeps?.() ?? actionDeps);
       if (workflow) return workflow;
       let prepared = request.actionId === 'projects.service.relocate'
-        ? await prepareProjectServiceMoveChildren({ request: ProjectServiceRelocateInputV1Schema.parse(request.input),
+        ? await (await import('@/daemon/local/services/actions/projectServiceMoveChildren')).prepareProjectServiceMoveChildren({ request: ProjectServiceRelocateInputV1Schema.parse(request.input),
             context: request.context, credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl,
             inspectSetup: workspace => projectDeps.projectDefinitionAction!({ actionId: 'projects.inspect',
               input: { workspace: { serverId: workspace.serverId, machineId: workspace.machineId,
@@ -1386,6 +1382,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
           return isActionExecuteFailure(result) ? result : DeploymentEnvironmentGetResultV1Schema.parse(result);
         },
         async readTarget() {
+          const { readCurrentContributionRegistry } = await import('@/agent/catalog/snapshot');
           const registry = readCurrentContributionRegistry();
           return { target: readDeploymentTargetV1({ kind: 'plugin', contribution: input.target }, registry.deploymentTargets),
             manifests: registry.activationTargets };
@@ -1906,6 +1903,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       const transport = await resolveTransportForSession(origin.caller.sessionId, context.signal,
         { context, actionId: 'session.message.send' }, { serverId: origin.serverId, sessionId: origin.caller.sessionId });
       if (!transport.ok) return { ok: false, errorCode: transport.code, error: transport.code, effectAttempted: false };
+      const { findTranscriptEncryptedMessageByLocalIdV2, isTranscriptSessionUnavailableError } = await import('@/api/session/transcriptMessageLookup');
       const retained = await findTranscriptEncryptedMessageByLocalIdV2({
         token: params.credentials.token, serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
         sessionId: transport.sessionId, localId: `approval-result:${artifactId}`,
@@ -2063,10 +2061,22 @@ export function createCliActionDeps(params: CliActionDepsParams,
     sessionActivityGet: awarenessDeps.sessionActivityGet,
     sessionRecentMessagesGet: transcriptDeps.sessionRecentMessagesGet,
 
-    ...createCliSubagentActionDeps(createSessionSubagentActivityReads({
-      credentials: params.credentials, withHome: withProjectHome, isSameActionHomeId, readServerFeaturesSnapshot,
-      readTransportSessionOwnerMetadata, resolveServerRequestHeaders,
-    })),
+    ...createCliSubagentActionDeps({
+      subagentsList: async (...args) => {
+        const { createSessionSubagentActivityReads } = await import('@/session/subagents/readSessionSubagentActivity');
+        return createSessionSubagentActivityReads({
+          credentials: params.credentials, withHome: withProjectHome, isSameActionHomeId, readServerFeaturesSnapshot,
+          readTransportSessionOwnerMetadata, resolveServerRequestHeaders,
+        }).subagentsList(...args);
+      },
+      subagentsGet: async (...args) => {
+        const { createSessionSubagentActivityReads } = await import('@/session/subagents/readSessionSubagentActivity');
+        return createSessionSubagentActivityReads({
+          credentials: params.credentials, withHome: withProjectHome, isSameActionHomeId, readServerFeaturesSnapshot,
+          readTransportSessionOwnerMetadata, resolveServerRequestHeaders,
+        }).subagentsGet(...args);
+      },
+    }),
     pluginsDevLoopAction: pluginAdministrationDeps.pluginsDevLoopAction,
     pluginSettingsAdministrationAction: pluginAdministrationDeps.pluginSettingsAdministrationAction,
     pluginPermissionGrantAction: pluginAdministrationDeps.pluginPermissionGrantAction,

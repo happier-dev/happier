@@ -67,17 +67,13 @@ import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machi
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 import { buildHostOnboardingInput } from './hostOnboardingInput';
 import { createTemplateHostOnboardingAdmissionTransport } from '@/api/session/templateHostOnboardingAdmission';
-import { resolveSessionSpawnManagedDefaults } from './resolveSessionSpawnManagedDefaults';
 import { resolveManagedAgentSandbox } from '@happier-dev/protocol/teams/managedDefaults';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
-import { agentSupportsSpawnConnectedServicesDefaults, requireSessionSpawnConnectedServicesPurposeCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 import { canReadPrivateSessionDefaults, createCliManagedSessionDefaultsContextLoader, readSessionCreationAccountSettingsContext } from './cliManagedSessionDefaultsContext';
-import { createPrepareSessionSpawnInput } from './prepareSessionSpawnInput';
-import { readSessionCreationAgentTarget, type ReadMachineAgentProjection } from './resolveSessionCreationAgentTarget';
+import type { ReadMachineAgentProjection } from './resolveSessionCreationAgentTarget';
 
 type SpawnActionDeps = Pick<ActionExecutorDeps, 'sessionSpawnNewDirectoryApprovalPreflight' | 'prepareSessionSpawnNewInput'>
   & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew'>>;
@@ -296,9 +292,12 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
     });
   };
   return {
-    prepareSessionSpawnNewInput: createPrepareSessionSpawnInput(params, {
-      serverId: projectHomeId, serverHttpBaseUrl: machineReferenceServerUrl,
-    }, { spawnConnectedServicesList, readMachineAgentProjection }),
+    prepareSessionSpawnNewInput: async (...args) => {
+      const { createPrepareSessionSpawnInput } = await import('./prepareSessionSpawnInput');
+      return createPrepareSessionSpawnInput(params, {
+        serverId: projectHomeId, serverHttpBaseUrl: machineReferenceServerUrl,
+      }, { spawnConnectedServicesList, readMachineAgentProjection })(...args);
+    },
     sessionSpawnNewDirectoryApprovalPreflight: async ({ input, context, signal }) => {
       if (!params.credentials) {
         return {
@@ -345,6 +344,12 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         : { type: 'not_required' as const, preparedTarget, presetPlacement };
     },
     sessionSpawnNew: async (input, continuation) => {
+      const [{ resolveSessionSpawnManagedDefaults }, { createAccountServerActionDeps },
+        { agentSupportsSpawnConnectedServicesDefaults, requireSessionSpawnConnectedServicesPurposeCatalog },
+        { readSessionCreationAgentTarget }] = await Promise.all([
+        import('./resolveSessionSpawnManagedDefaults'), import('@/api/accountServerActionDeps'),
+        import('@/session/services/spawnConnectedServicesDefaults'), import('./resolveSessionCreationAgentTarget'),
+      ]);
       const reviewedOpinionSpawn = input.context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start';
       if (!continuation && input.admittedInput && params.credentials
         && params.credentials.credentialProvenance !== 'api_token'

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
+import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents/managedToolsRoot';
 import { isCanonicalAbsolutePathInsideRoot, resolveCanonicalAbsolutePathComparisonIdentity, resolveHomeDirFromEnvironment } from '@happier-dev/cli-common/path';
 import type { PluginStorePaths } from './paths';
 

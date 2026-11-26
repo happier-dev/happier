@@ -1,6 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { readSessionStateFieldFromMetadata, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { createSessionStateFieldMetadataUpdater } from '@happier-dev/agents/session/state/metadataWriters';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createBotTemplateActionExecuteV1 } from '@happier-dev/protocol/bots/templates/botTemplateOperations';
@@ -11,7 +9,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import type { CliSessionActionTransport } from '@/session/transport/cliActionTransport';
-import { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
+import type { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
 import type { CliActionDepsParams } from './types';
 import type { PromptLibraryStackActionPortV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { readRequesterDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
@@ -90,6 +88,7 @@ export function createCliBotTemplateActionDeps(
         || raw.ownerAccountId !== undefined && raw.ownerAccountId !== ownerAccountId) return refuse('session_target_unavailable');
       const metadata = host.readTransportSessionOwnerMetadata(target);
       if (!metadata) return refuse('session_target_unavailable');
+      const { resolveAgentIdFromSessionMetadata } = await import('@happier-dev/agents');
       const agentId = resolveAgentIdFromSessionMetadata(metadata);
       return { metadata, revision: raw.metadataVersion,
         ...(typeof metadata.machineId === 'string' && agentId ? { executionTarget: { machineId: metadata.machineId, agentId } } : {}) };
@@ -124,7 +123,9 @@ export function createCliBotTemplateActionDeps(
           await store.reportTemplateAcceptedVersion(input, reportContext.signal, { authorizationHeaders });
         }, readSession: readOwnedSession, writeInstance: async (ref, instance, instanceContext) => {
         const credentials = params.credentials ?? refuse('not_authenticated');
+        const { createSessionStateFieldMetadataUpdater } = await import('@happier-dev/agents/session/state/metadataWriters');
         const updater = createSessionStateFieldMetadataUpdater('intent.templateInstance', instance, undefined, null);
+        const { updateSessionMetadataForTarget } = await import('@/session/services/updateSessionMetadataForTarget');
         const result = await updateSessionMetadataForTarget({ credentials, idOrPrefix: ref.sessionId,
           expectedSessionId: ref.sessionId,
           resolveAuthorizationHeaders: await metadataHeaders(instanceContext, 'template.instantiate'),
@@ -134,7 +135,9 @@ export function createCliBotTemplateActionDeps(
         if (!result.ok) refuse(result.code);
       }, updateInstance: async (ref, instance, expectedInstance, instanceContext) => {
         const credentials = params.credentials ?? refuse('not_authenticated');
+        const { createSessionStateFieldMetadataUpdater } = await import('@happier-dev/agents/session/state/metadataWriters');
         const updater = createSessionStateFieldMetadataUpdater('intent.templateInstance', instance, undefined, expectedInstance);
+        const { updateSessionMetadataForTarget } = await import('@/session/services/updateSessionMetadataForTarget');
         const result = await updateSessionMetadataForTarget({ credentials, idOrPrefix: ref.sessionId,
           expectedSessionId: ref.sessionId,
           resolveAuthorizationHeaders: await metadataHeaders(instanceContext, args.actionId),
@@ -145,11 +148,14 @@ export function createCliBotTemplateActionDeps(
       } },
       readSourceDraftRef: async source => {
         const { metadata } = await readOwnedSession(source);
+        const { readSessionStateFieldFromMetadata } = await import('@happier-dev/agents');
         return readSessionStateFieldFromMetadata(metadata, 'intent.templateDraftRef') ?? null;
       },
       writeSourceDraftRef: async (source, ref) => {
         const credentials = params.credentials ?? refuse('not_authenticated');
+        const { createSessionStateFieldMetadataUpdater } = await import('@happier-dev/agents/session/state/metadataWriters');
         const updater = createSessionStateFieldMetadataUpdater('intent.templateDraftRef', ref, undefined, null);
+        const { updateSessionMetadataForTarget } = await import('@/session/services/updateSessionMetadataForTarget');
         const result = await updateSessionMetadataForTarget({ credentials, idOrPrefix: source.sessionId,
           expectedSessionId: source.sessionId,
           resolveAuthorizationHeaders: await metadataHeaders(context, args.actionId),

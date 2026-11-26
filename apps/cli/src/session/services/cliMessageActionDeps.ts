@@ -18,7 +18,7 @@ import { SessionPendingMessageComposerAdmissionPrepareResponseV1Schema } from '@
 import { buildUploadedAttachment } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import type { projectSessionAttachmentInputV1 } from '@/session/attachments/projectRawIngressSessionAttachmentsV1';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { hasStoredSessionCredentialProvenance } from '@/persistence';
@@ -130,8 +130,7 @@ export function createCliMessageActionDeps(
     }) => {
       const pluginCaller = actionCaller?.kind === 'plugin' ? actionCaller : null;
       if (callerInputConstraints && typeof permissionModeOverride === 'string' && permissionModeOverride.trim()) {
-        const { parsePermissionIntentAlias } = await import("@happier-dev/agents");
-        const requestedMode = parsePermissionIntentAlias(permissionModeOverride.trim());
+        const requestedMode = parseAgentPermissionIntentV1Alias(permissionModeOverride.trim());
         if (!requestedMode || !isPermissionModeGrantedV1(callerInputConstraints, requestedMode)) {
           return { status: 'rejected' as const, code: 'session_input_invalid' as const };
         }
@@ -591,7 +590,7 @@ export function createCliMessageActionDeps(
         return { status: 'rejected' as const, code: 'session_input_untrusted_assertion' as const };
       }
       const workflowPermissionCeiling = normalizedPermissionModeOverride
-        ? parsePermissionIntentAlias(normalizedPermissionModeOverride) : workflowCaller?.authorization.admittedPermissionCeiling;
+        ? parseAgentPermissionIntentV1Alias(normalizedPermissionModeOverride) : workflowCaller?.authorization.admittedPermissionCeiling;
       if (workflowCaller && !workflowPermissionCeiling) {
         return { status: 'rejected' as const, code: 'session_input_invalid' as const };
       }

@@ -37,7 +37,6 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { readProjectServiceMoveReviewedStopInput } from '@/daemon/local/services/actions/projectServiceMoveChildren';
 import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import {
   createExternalActionAuthorizedRequestHeaders,
@@ -566,6 +565,7 @@ export async function callExactMachineRpc(params: Readonly<{
       const requester = reviewedMove ? readRequesterAccountActionTransportContext(reviewedMove) : null;
       if (reviewedMove && params.externalAction) {
         if (childFamily === 'service_move') {
+          const { readProjectServiceMoveReviewedStopInput } = await import('@/daemon/local/services/actions/projectServiceMoveChildren');
           const child = ActionIdSchema.safeParse(params.externalAction.effectActionId);
           const wrapper = TargetedActionRpcRequestV1Schema.safeParse(params.request);
           // Execution stamps Stop's derived confirmation nonce after review; the receiver

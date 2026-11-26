@@ -25,8 +25,6 @@ import { getActiveAccountSettingsSnapshotLifetimeToken, isActiveAccountSettingsS
 import { readPreparedAccountRoleOverrides } from '@/session/roles/sessionRoleContext';
 import type { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
-import { readCliSessionEngineBaselineV1 } from '../resolveCliAgentStartContextV1';
 import { hasReceivedWorkflowSessionRoleAuthority } from '../sessionRoleRpcOrigin';
 export function createCliRolesActionDeps(
   params: Pick<CliActionDepsParams, 'token' | 'credentials' | 'getCurrentResolvedRoles' | 'getCurrentSessionMetadata' | 'getCurrentSessionBackendTarget' | 'getCurrentAppliedChildSelection' | 'getSessionRoleContext' | 'getCurrentWorkspaceWrites' | 'prepareWorkspaceWritesPolicy' | 'readPluginRoles' | 'savedSecretOperationContext' | 'serverHttpBaseUrl' | 'sessionActionRpcTransport' | 'sessionId' | 'stageSessionStateMutation'>,
@@ -152,7 +150,8 @@ export function createCliRolesActionDeps(
         const readAppliedSelection = bound ? params.getCurrentAppliedChildSelection
           ?? params.getSessionRoleContext?.().readAppliedChildSelection : undefined;
         const target = readAppliedSelection
-          ? params.getCurrentSessionBackendTarget?.() ?? resolveBackendTargetFromSessionMetadata(metadata)
+          ? params.getCurrentSessionBackendTarget?.()
+            ?? (await import('@/session/backendTargets/resolveBackendTargetFromSessionMetadata')).resolveBackendTargetFromSessionMetadata(metadata)
           : baseline?.agentTarget;
         if (!target) throw new RoleActionRefusalV1('target_unavailable');
         const modelSelection = baseline?.modelSelection && ('ref' in baseline.modelSelection
@@ -162,6 +161,7 @@ export function createCliRolesActionDeps(
           ...(modelSelection ? { modelSelection } : {}),
         } : undefined;
         if (appliedChildSelection?.status !== 'applied') throw new RoleActionRefusalV1('target_unavailable');
+        const { readCliSessionEngineBaselineV1 } = await import('../resolveCliAgentStartContextV1');
         const { defaultEngine } = readCliSessionEngineBaselineV1({ backendTarget: target, appliedChildSelection });
         const effectiveDeps = readEffectiveDeps();
         if (!effectiveDeps.agentsBackendsList) throw new RoleActionRefusalV1('target_unavailable');

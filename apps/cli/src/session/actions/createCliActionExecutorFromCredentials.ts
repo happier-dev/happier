@@ -7,7 +7,6 @@ import { readDeploymentReadReceiverMachineId } from '@/deployments/deploymentRea
 import { createSessionFollowActionDeps, createSessionTrackedTargetCompatibilityDep } from '@/api/sessionFollowActionDeps';
 import { measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { randomUUID } from 'node:crypto';
-import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
 import { createOriginDaemonApprovalOutcomePublisher } from './approvals/publishOutcome';
 import { timeApprovalPhase, withApprovalActionTrace } from '@/daemon/externalActions/webLatencyTrace';
 import { createSessionReadStateActionDeps } from '@/api/sessionReadStateActionDeps';
@@ -28,8 +27,6 @@ import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE
 import { admitDeploymentRepositoryCaptureWorkspaceV1, DeploymentMoveToRepositoryInputV1Schema, resolveDeploymentMoveToRepositoryExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { resolveCurrentAccountAdministrationMachine, resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
-import { resolveSessionSpawnConnectedServices } from '@/session/creation/prepareSessionSpawnInput';
-import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { configuration } from '@/configuration';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { getDaemonMachineAdmissionTransport, getDaemonClientActionExecutor, getDaemonConfidentialSecretFillExecutor, getDaemonConfidentialActionInputsExecutor, MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
@@ -60,7 +57,6 @@ import { rejectMissingOrArchivedSessionInputV1, requiresMachineAdmissionForSessi
 export { resolveProtectedSessionInputActionTarget } from '@/session/services/sessionInputAdmissionIdentity';
 import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
-import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest, SessionSendMessageInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindCallerInput } from '@happier-dev/protocol/actions/actionExecutor';
@@ -533,6 +529,11 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     const target = daemonLocalMachineId ? encryptedDaemonTarget(params.credentials, daemonLocalMachineId) : projection.target;
     if (!connectedServicesAuthIntent || connectedServicesAuthIntent.kind === 'default') return { kind: 'ready', input, target };
     try {
+      const [{ DEFAULT_AGENT_ID }, { resolveSessionCreationAgentTarget }, { resolveSessionSpawnConnectedServices }] = await Promise.all([
+        import('@happier-dev/agents'),
+        import('@/session/creation/resolveSessionCreationAgentTarget'),
+        import('@/session/creation/prepareSessionSpawnInput'),
+      ]);
       const agentId = input.agentTarget
         ? resolveSessionCreationAgentTarget(input.agentTarget)?.agentId : DEFAULT_AGENT_ID;
       if (!agentId) throw createActionExecuteFailureError(actionFailure('target_unavailable'));
@@ -1183,18 +1184,21 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.externalActionMachineInstallationId
         ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId }
         : {}),
-      prepareSourceKeyAfterSet: createSessionFollowSourceKeyPreparationAfterSet({
-        credentials,
-        serverHttpBaseUrl: approvalServerApiUrl,
-        ...(serverIdentityId ? { serverIdentityId } : {}),
-        resolveServerFeaturesSnapshot,
-        ...(params.externalActionMachineRequestPrivateKey
-          ? { externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey }
-          : {}),
-        ...(params.externalActionMachineInstallationId
-          ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId }
-          : {}),
-      }),
+      prepareSourceKeyAfterSet: async input => {
+        const { createSessionFollowSourceKeyPreparationAfterSet } = await import('@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet');
+        return await createSessionFollowSourceKeyPreparationAfterSet({
+          credentials,
+          serverHttpBaseUrl: approvalServerApiUrl,
+          ...(serverIdentityId ? { serverIdentityId } : {}),
+          resolveServerFeaturesSnapshot,
+          ...(params.externalActionMachineRequestPrivateKey
+            ? { externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey }
+            : {}),
+          ...(params.externalActionMachineInstallationId
+            ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId }
+            : {}),
+        })(input);
+      },
     });
     const accountServerActionDeps = createAccountServerActionDeps({
       token: credentials.token,

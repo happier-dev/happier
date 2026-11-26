@@ -2,7 +2,6 @@ import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { readAdmittedAgentCatalogSnapshotForRequest, readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isLegacyConfiguredAcpFlavorCarrier } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import type { AccountProfile, ActionExecutorContext, ActionExecutorDeps, BackendTargetRefV2 } from '@happier-dev/protocol';
@@ -633,7 +632,9 @@ export function createCliActionInventoryDeps(params: Readonly<{
       };
     },
     deploymentSuggestionTargets: async () => {
-      const { listDeploymentTargetsV1, projectDeploymentSuggestionTargetsV1 } = await import('@happier-dev/deployments');
+      const [{ listDeploymentTargetsV1, projectDeploymentSuggestionTargetsV1 }, { readCurrentContributionRegistry }] = await Promise.all([
+        import('@happier-dev/deployments'), import('@/agent/catalog/snapshot'),
+      ]);
       const registry = readCurrentContributionRegistry();
       return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsV1(registry.deploymentTargets), registry.activationTargets);
     },
@@ -755,7 +756,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
     agentsBackendsList: async (args) => {
       const captured = await readAcpCatalogSnapshot();
       const agentCatalogSnapshot = params.getSessionRoleContext?.().readAgentCatalogSnapshot?.()
-        ?? await readAdmittedAgentCatalogSnapshotForRequest();
+        ?? await (await import('@/agent/catalog/snapshot')).readAdmittedAgentCatalogSnapshotForRequest();
       const items = await (await import('./buildAgentBackendInventoryItemsLazy')).buildAgentBackendInventoryItemsLazy({
         limit: args.limit,
         includeDisabled: (args as { includeDisabled?: boolean }).includeDisabled === true,
@@ -1103,6 +1104,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         (byServiceId[serviceId] ??= []).push(account);
         return byServiceId;
       }, {});
+      const { readCurrentContributionRegistry } = await import('@/agent/catalog/snapshot');
       const declaration = readCurrentContributionRegistry().agentDefinitionsById.get(agentId);
       const { projectAgentConnectedAccounts } = await import('@/plugins/projection/registry/projection/v2');
       const connectedAccounts = declaration ? projectAgentConnectedAccounts(declaration) : [];

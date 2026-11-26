@@ -6,7 +6,6 @@ import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionStoredContentEncryptionMode, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { SessionAgentStartSelectionResponseV1Schema } from './agentStartSelectionRpc';
 import type { ExecutionRunAppliedParentSelection } from '../../agent/runtime/bridges/executionRun/runtime/openInputs';
 import type { CliSessionActionTransport } from '../transport/cliActionTransport';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
@@ -113,6 +112,7 @@ export async function resolveCliActionCallerSession(params: Readonly<{
       const response = await params.callSessionRpcForTransport(transport,
         SESSION_RPC_METHODS.SESSION_AGENT_START_SELECTION_READ_V1, { turnId }, params.context.signal, null);
       params.context.signal?.throwIfAborted();
+      const { SessionAgentStartSelectionResponseV1Schema } = await import('./agentStartSelectionRpc');
       const parsed = SessionAgentStartSelectionResponseV1Schema.safeParse(response);
       if (!parsed.success || parsed.data.sessionId !== sessionId || parsed.data.turnId !== turnId) {
         return { status: 'unavailable' };

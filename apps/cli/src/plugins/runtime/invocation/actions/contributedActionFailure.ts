@@ -4,7 +4,7 @@ import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plug
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions';
-import { PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
+import { PluginError, readPluginErrorRequestIdV1 } from '@happier-dev/cli-common/plugins/errors';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 
 /** Preserve the public failure envelope across ordinary Action normalization. */

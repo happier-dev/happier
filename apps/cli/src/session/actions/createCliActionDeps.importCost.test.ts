@@ -71,13 +71,15 @@ it('constructs Action ports synchronously without loading unrelated executable f
     || /\/apps\/cli\/src\/daemon\/workflows\/(?:production|coordinator)\.ts$/.test(url)
     || /\/apps\/cli\/src\/providers\/connections\/runtimeServices\.ts$/.test(url)
     || /\/apps\/cli\/src\/agent\/catalog\/(?:snapshot|registry)\.ts$/.test(url)
-    || /\/apps\/cli\/src\/agent\/(?:runtime|tools)\//.test(url)
+    // Configuration shares this AsyncLocalStorage context; it imports no executable Agent runtime.
+    || (/\/apps\/cli\/src\/agent\/(?:runtime|tools)\//.test(url)
+      && !/\/apps\/cli\/src\/agent\/runtime\/lifecycle\/hostedSessionScope\.ts$/.test(url))
     || /\/apps\/cli\/src\/plugins\/projection\/registry\/(?:createResolvedContributionRegistry|resolveBuiltInContributions|resolvePluginContributions)\.ts$/.test(url)
     || /\/apps\/cli\/src\/plugins\/devLoop\/(?:installApprovalPreview|actions)\.ts$/.test(url)
     || /\/apps\/cli\/src\/registries\/createCliRegistryHost\.ts$/.test(url)
     || /\/apps\/cli\/src\/plugins\/store\/marketplace\/service\.ts$/.test(url)
     || /\/apps\/cli\/src\/session\/services\/createSpawnedSession\.ts$/.test(url));
-  expect(forbidden).toEqual([]);
+  expect(forbidden, JSON.stringify(forbidden, null, 2)).toEqual([]);
 });
 
 it('constructs the credentialed executor without loading unrelated Action family implementations or catalogs', () => {
@@ -93,5 +95,5 @@ it('constructs the credentialed executor without loading unrelated Action family
     || /\/api\/session\/transcriptQueries\.ts$/.test(url)
     || /\/session\/services\/spawnConnectedServicesDefaults\.ts$/.test(url)
     || /\/(?:executeAccountPluginAction|executeContributedAction)\.ts$/.test(url));
-  expect(unrelatedFamilies).toEqual([]);
+  expect(unrelatedFamilies, JSON.stringify(unrelatedFamilies, null, 2)).toEqual([]);
 });

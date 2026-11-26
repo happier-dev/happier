@@ -13,7 +13,6 @@ import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
-import { admitStoredComposeDefinition, normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { admitPreviewEnvironmentForHost, prepareProposedPreviewForkEligibilityForHost,
@@ -50,6 +49,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
     const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(host.credentials);
     return async (request: DeploymentEnvironmentContentPreparation): Promise<DeploymentEnvironmentContentPreparationResult> => {
         try {
+            const { admitStoredComposeDefinition, normalizeStoredComposeDefinitionInput } = await import('@/workspaces/projectSetup/nativeComposeSource');
             request.context.signal?.throwIfAborted();
             const open = (id: string) => runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => artifacts.read(id, {
                 signal: request.context.signal, prepareRecipients: false, includeSharedAudience: false,

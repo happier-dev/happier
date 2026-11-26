@@ -25,7 +25,6 @@ import { isBackupReceiverSetupChildOperandV1, readReviewedMachineRpcChildFamilyV
   type ReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
-import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
 import { projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { projectRelayedHomeAuthorizationFailure, SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
@@ -325,6 +324,7 @@ export async function isReviewedSessionAgentReadinessChild(input: Readonly<{
     ? template.success ? admitSessionSpawnNewActionInputV2(template.data.creation) : null
     : await readReviewedSessionSpawnInput(input);
   if (!root || root.executionTarget.machineId !== input.machineId) return false;
+  const { resolveSessionCreationAgentTarget } = await import('@/session/creation/resolveSessionCreationAgentTarget');
   const selected = resolveSessionCreationAgentTarget(root.agentTarget);
   if (!selected) return false;
   const agent = { agentId: selected.agentId,

@@ -452,6 +452,12 @@
       "import": "./dist/service/discovery/index.js",
       "default": "./dist/service/discovery/index.js"
     },
+    "./agents/managedToolsRoot": {
+      "happier-source": "./src/agents/managedToolsRoot.ts",
+      "types": "./dist/agents/managedToolsRoot.d.ts",
+      "import": "./dist/agents/managedToolsRoot.js",
+      "default": "./dist/agents/managedToolsRoot.js"
+    },
     "./agents": {
       "happier-source": "./src/agents/index.ts",
       "types": "./dist/agents/index.d.ts",

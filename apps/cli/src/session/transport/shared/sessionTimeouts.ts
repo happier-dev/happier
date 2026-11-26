@@ -1,4 +1,4 @@
-import { DEFAULT_SESSION_WAIT_IDLE_CONFIRM_MS } from '@happier-dev/session-core/transcript';
+import { DEFAULT_SESSION_WAIT_IDLE_CONFIRM_MS } from '@happier-dev/session-core/transcript/waitForSessionIdle';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 function readPositiveIntEnvMs(key: string, fallback: number): number {

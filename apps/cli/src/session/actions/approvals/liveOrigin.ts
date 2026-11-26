@@ -9,7 +9,6 @@ import { LIVE_CLI_APPROVAL_DECIDE_METHOD, readLiveCliApprovalOriginScope } from 
 import { ApprovalRequestConflict } from '@happier-dev/protocol/approvals/creation';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createUserScopedSocketConnection } from '@/api/session/sockets';
 import { resolveSessionControlSocketConnectTimeoutMs, resolveSessionControlSocketAckTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 
@@ -88,6 +87,7 @@ export function createLiveCliApprovalOrigin(params: Readonly<{
     let artifactId: string | null = null;
     let publishedRequest = request;
     let closed = false;
+    const { RpcHandlerManager } = await import('@/api/rpc/RpcHandlerManager');
     const manager = new RpcHandlerManager({ scopePrefix: originScope, encryptionMode: 'plain' });
     manager.registerHandler<unknown, ActionExecuteResult>(LIVE_CLI_APPROVAL_DECIDE_METHOD, async (input, transport) => {
       if (transport?.callerAuthority !== 'present_user' || transport.authorization || transport.callerInputAuthorization

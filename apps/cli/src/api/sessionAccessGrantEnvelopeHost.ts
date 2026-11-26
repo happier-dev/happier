@@ -10,7 +10,6 @@ import { getRandomBytes } from '@/api/encryption';
 import { openSessionDataEncryptionKeyForReseal } from '@/api/client/openSessionDataEncryptionKey';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
-import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
@@ -92,6 +91,7 @@ export async function recordSessionTeamShareStatement(params: Readonly<{
     });
     if (!session || session.encryptionMode === 'plain') return;
     if (!openSessionDataEncryptionKeyForReseal({ credential: params.credentials, session })) return;
+    const { updateSessionMetadataWithRetry } = await import('@/session/metadata/updateSessionMetadataWithRetry');
     await runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => updateSessionMetadataWithRetry({
       token: params.token,
       credentials: params.credentials,

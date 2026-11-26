@@ -45,15 +45,9 @@ import { MachinePoolWireInputSchemasV1, MachinePoolWireOutputSchemasV1, openMach
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, ManagedMetadataControlAdmissionOutputV1Schema, managedMachineActionEndpointPathV1, projectManagedMetadataControlResultV1, resolveManagedAcquireReviewV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
-import { executeCliManagedAccountDelete } from '@/machines/managed/accountDelete';
+import type { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
 import { openCliMachinePresetsForRequester } from '@/machines/managed/presetRequesterOpening';
-import { executeCliMachinePresetArchive } from '@/machines/managed/accountPresetArchive';
-import { executeCliManagedAccountResize } from '@/machines/managed/accountResize';
-import { executeCliManagedAccountInspect } from '@/machines/managed/accountInspect';
 import { isManagedControlAdmissionActionIdV1, MANAGED_DELETE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { readCliManagedAccountGuestDiagnostics } from '@/machines/managed/accountDiagnostics';
-import { executeCliManagedProvisionerList } from '@/machines/managed/provisionerDiscovery';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
@@ -1007,6 +1001,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (unavailable) return unavailable;
       if (actionId === 'machines.provisioners.list') {
         if (actionContext.externalActionCredential || actionContext.externalActionExecutionAuthorization) return externalTransportUnsupported(actionContext);
+        const { executeCliManagedProvisionerList } = await import('@/machines/managed/provisionerDiscovery');
         const result = await executeCliManagedProvisionerList({
           value: ManagedMachineActionInputSchemasV1['machines.provisioners.list'].parse(body),
           credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
@@ -1038,6 +1033,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         const machine = unwrapManagedMachineReadV1(ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(retained));
         if (!machine.controller) {
           try {
+            const { executeCliManagedAccountInspect } = await import('@/machines/managed/accountInspect');
             return await executeCliManagedAccountInspect({ machine, context: actionContext,
               credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
               serverUrl: serverHttpBaseUrl, signal, post });
@@ -1064,10 +1060,10 @@ export function createAccountServerActionDeps(input: Readonly<{
             serverUrl: serverHttpBaseUrl, signal,
             post };
           return actionId === MANAGED_RESIZE_ACTION_ID_V1
-            ? await executeCliManagedAccountResize({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_RESIZE_ACTION_ID_V1].parse(body) })
+            ? await (await import('@/machines/managed/accountResize')).executeCliManagedAccountResize({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_RESIZE_ACTION_ID_V1].parse(body) })
             : actionId === MANAGED_DELETE_ACTION_ID_V1
-            ? await executeCliManagedAccountDelete({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_DELETE_ACTION_ID_V1].parse(body) })
-            : await executeCliManagedAccountPower({ ...execution, body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body) });
+            ? await (await import('@/machines/managed/accountDelete')).executeCliManagedAccountDelete({ ...execution, body: ManagedMachineActionInputSchemasV1[MANAGED_DELETE_ACTION_ID_V1].parse(body) })
+            : await (await import('@/machines/managed/accountPower')).executeCliManagedAccountPower({ ...execution, body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body) });
         } catch (error) {
           if (error instanceof ManagedMachineControllerError) return error.toActionFailure(actionId);
           throw error;
@@ -1115,6 +1111,7 @@ export function createAccountServerActionDeps(input: Readonly<{
             credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
             serverHttpBaseUrl, signal });
         } else machine = output.machine;
+        const { readCliManagedAccountGuestDiagnostics } = await import('@/machines/managed/accountDiagnostics');
         const guestDiagnostics = await readCliManagedAccountGuestDiagnostics({ machine, context: actionContext,
           credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
           serverUrl: serverHttpBaseUrl, signal });
@@ -1122,7 +1119,7 @@ export function createAccountServerActionDeps(input: Readonly<{
       }
       return settleAccountServerActionHttpOutput({ data: response.data, outputSchema: ManagedMachineActionOutputSchemasV1[actionId], sideEffectClass: spec.sideEffectClass });
     },
-    machinePresetArchive: async request => executeCliMachinePresetArchive(request, {
+    machinePresetArchive: async request => (await import('@/machines/managed/accountPresetArchive')).executeCliMachinePresetArchive(request, {
       credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
       serverUrl: serverHttpBaseUrl, executingMachineId: input.machineId, transport: deps.machinePresetAction!,
       readPreparationCleanupHost: async ({ machineId, context, signal }) => {

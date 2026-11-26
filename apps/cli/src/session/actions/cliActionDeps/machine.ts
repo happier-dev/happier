@@ -4,7 +4,6 @@ import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from '.
 import axios from '@/api/client/credentialAxios';
 import { MachineCapabilityInstallInputSchema, MachineCapabilityInstallOutputSchema, MachineReplacementSetInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { parseCapabilitiesDetectResponse } from '@happier-dev/protocol/capabilities';
-import { buildMachineDetailsCapabilitiesDetectRequest } from '@happier-dev/agents';
 import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
@@ -129,6 +128,7 @@ export function createCliMachineActionDeps(
     machinePageAction: async ({ actionId, input, context }) => {
       if (actionId === MACHINE_CAPABILITIES_DETECT_ACTION_ID) {
         const { machineId, serverId } = input;
+        const { buildMachineDetailsCapabilitiesDetectRequest } = await import('@happier-dev/agents');
         const request = buildMachineDetailsCapabilitiesDetectRequest();
         if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
           return { ok: false, errorCode: 'daemon_transport_unavailable', error: 'An authenticated machine transport is required.' };

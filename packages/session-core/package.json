@@ -69,6 +69,13 @@
       "import": "./dist/live/index.js",
       "default": "./dist/live/index.js"
     },
+    "./transcript/waitForSessionIdle": {
+      "happier-source": "./src/transcript/waitForSessionIdle.ts",
+      "types": "./dist/transcript/waitForSessionIdle.d.ts",
+      "react-native": "./dist/transcript/waitForSessionIdle.js",
+      "import": "./dist/transcript/waitForSessionIdle.js",
+      "default": "./dist/transcript/waitForSessionIdle.js"
+    },
     "./transcript": {
       "happier-source": "./src/transcript/index.ts",
       "types": "./dist/transcript/index.d.ts",

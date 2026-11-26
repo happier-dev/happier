@@ -1,6 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure } from '@happier-dev/protocol/actions';
 import type { CliMachineActionCall } from './machineTransport';
-import { withMachineServiceControlTarget } from '@/daemon/local/services/launch/machineServiceTarget';
 import { controlNativeServiceForHost } from '@/daemon/local/services/launch/nativeServiceControl';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MACHINE_SERVICE_CONTROL_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
@@ -23,6 +22,7 @@ export function createMachineServiceControlAction(input: Readonly<{
       timeoutMs: null, ...(signal ? { signal } : {}),
     });
     if (!approvalScope) return { ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' };
+    const { withMachineServiceControlTarget } = await import('@/daemon/local/services/launch/machineServiceTarget');
     return withMachineServiceControlTarget({ request, machineId: input.directMachineId, serverId: input.serverId,
       approvalScope, ...(signal ? { signal } : {}), assertCurrent: () => input.assertCurrent(context) }, async handle => {
       if (handle.kind === 'environment') {

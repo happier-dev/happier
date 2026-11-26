@@ -1,4 +1,3 @@
-import { resolveSessionIdleWaitDurationMs } from '@happier-dev/session-core/transcript';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import type { readProjectAccountRows, ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
@@ -21,7 +20,6 @@ import type { CliProjectAdmission } from '@/session/actions/cliActionDeps/projec
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 import type { createCliMachineInventoryActionDeps } from '@/session/actions/cliActionDeps/machineInventory';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
-import { waitForPendingAcceptedSessionWorkspace } from '@/daemon/sessions/registerAcceptedSessionWorkspace';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionStatusGet' | 'sessionWorkStateGet' | 'sessionWaitIdle'>;
@@ -93,6 +91,7 @@ export function createCliSessionStatusActionDeps(
                   serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
                   isCurrent: async () => !await projectAccountAdmission(serverId ?? undefined, context)
                     && (await params.savedSecretOperationContext?.isCurrent(operationSignal) ?? true) } };
+            const { waitForPendingAcceptedSessionWorkspace } = await import('@/daemon/sessions/registerAcceptedSessionWorkspace');
             const pendingRegistration = waitForPendingAcceptedSessionWorkspace(resolvedSessionId, operationSignal);
             if (pendingRegistration) await pendingRegistration;
             // Source association belongs to the accepted Project, including its sibling checkouts.
@@ -196,7 +195,9 @@ export function createCliSessionStatusActionDeps(
 	      if (!params.credentials) {
 	        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
 	      }
-	      const { waitForSessionIdle } = await import("@/session/services/waitForSessionIdle");
+	      const [{ waitForSessionIdle }, { resolveSessionIdleWaitDurationMs }] = await Promise.all([
+          import("@/session/services/waitForSessionIdle"), import('@happier-dev/session-core/transcript'),
+        ]);
       return await waitForSessionIdle({
 	        credentials: params.credentials,
 	        idOrPrefix: sessionId,

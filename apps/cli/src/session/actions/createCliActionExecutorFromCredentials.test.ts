@@ -45,7 +45,7 @@ const {
     importHistoricalSessionTranscript: vi.fn(),
     createAccountServerActionDeps: vi.fn(() => ({})),
     replaceSessionVoiceInclusions,
-    createSessionFollowActionDeps: vi.fn(() => ({ replaceSessionVoiceInclusions })),
+    createSessionFollowActionDeps: vi.fn((_options: Parameters<typeof import('@/api/sessionFollowActionDeps').createSessionFollowActionDeps>[0]) => ({ replaceSessionVoiceInclusions })),
     createSessionTrackedTargetCompatibilityDep: vi.fn(() => ({})),
     createSessionFollowSourceKeyPreparationAfterSet: vi.fn(() => vi.fn()),
     readSettings: vi.fn(async () => ({ machineId: 'machine-active-home' })),
@@ -167,13 +167,18 @@ describe('createCliActionExecutorFromCredentials', () => {
     });
   });
 
-  it('composes Follow source-key preparation through the shared authenticated runtime owner', async () => {
+  it('loads Follow source-key preparation only when its authenticated port is used', async () => {
     const credentials = {
       token: 'token_test',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     await createCliActionExecutorFromCredentials({ credentials, serverId: 'home-b', serverApiUrl: 'https://home-b.example.test' })
       .execute('action.spec.get', { id: 'session.list' }, { surface: 'cli' });
+    expect(createSessionFollowSourceKeyPreparationAfterSet).not.toHaveBeenCalled();
+    const prepareSourceKeyAfterSet = createSessionFollowActionDeps.mock.calls.at(-1)?.[0].prepareSourceKeyAfterSet;
+    expect(prepareSourceKeyAfterSet).toBeDefined();
+    await prepareSourceKeyAfterSet!({ sourceSessionId: 'source-session', destinationSessionId: 'destination-session',
+      context: { surface: 'cli' } });
     expect(createSessionFollowSourceKeyPreparationAfterSet).toHaveBeenCalledWith({
       credentials,
       serverHttpBaseUrl: 'https://home-b.example.test',

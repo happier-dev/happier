@@ -1,6 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure } from '@happier-dev/protocol/actions';
 import type { CliMachineActionCall } from './machineTransport';
-import { withMachineServiceCommandTarget } from '@/daemon/local/services/launch/machineServiceTarget';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/exec/errors';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { readMachineRpcRequestDisposition } from '@/session/transport/rpc/machineRpc';
@@ -41,6 +40,7 @@ export function createMachineServiceExecAction(input: Readonly<{
       ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable',
     };
     const target = request.target;
+    const { withMachineServiceCommandTarget } = await import('@/daemon/local/services/launch/machineServiceTarget');
     return withMachineServiceCommandTarget({ request: {
       serverId: request.serverId, machineId: request.machineId,
       serviceId: target.serviceId, expectedGeneration: target.expectedGeneration,

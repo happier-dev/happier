@@ -11,8 +11,9 @@ import { UpdateContainerSchema, EphemeralUpdateSchema } from '@happier-dev/proto
 import type { UpdateContainer } from '@happier-dev/protocol/updates';
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { summarizeAgentState, waitForIdleObservation, type AgentStateSummary, type IdleSocketObserver, type SessionTurnActivity } from '@happier-dev/session-core/transcript';
-export { isIdle, summarizeAgentState, type AgentStateSummary } from '@happier-dev/session-core/transcript';
+import { summarizeAgentState, waitForIdleObservation, type AgentStateSummary, type IdleSocketObserver } from '@happier-dev/session-core/transcript/waitForSessionIdle';
+import type { SessionTurnActivity } from '@happier-dev/session-core/transcript';
+export { isIdle, summarizeAgentState, type AgentStateSummary } from '@happier-dev/session-core/transcript/waitForSessionIdle';
 import type { SessionEncryptionContext, SessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionControlWaitIdleConfirmMs } from '@/session/transport/shared/sessionTimeouts';
 

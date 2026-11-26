@@ -36,7 +36,6 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import type { ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
-import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { isFilesystemActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -146,6 +145,9 @@ export function createCliActionExecutor(params: CliActionExecutorParams): CliAct
 /** The final credentialed host reuses the core harness and its native ports. */
 export function createCliActionHost(params: CliActionExecutorParams):
   Omit<ReturnType<typeof createCliActionExecutorHarness>, 'executor'> & Readonly<{ executor: CliActionExecutor }> {
+  const followCredentials = params.credentials;
+  const followServerHttpBaseUrl = followCredentials
+    ? normalizeServerHttpBaseUrl(params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()) : undefined;
   const { projectWorkerAction: projectWorkerAccountAction, ...accountServerActionPorts } = params.accountServerActionDeps ?? {};
   const nativeManagedMachineAction = params.managedMachineAction;
   const accountManagedMachineAction = accountServerActionPorts.managedMachineAction;
@@ -428,21 +430,24 @@ export function createCliActionHost(params: CliActionExecutorParams):
         ...(params.externalActionMachineInstallationId
           ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId }
           : {}),
-        ...(params.credentials ? {
-          prepareSourceKeyAfterSet: createSessionFollowSourceKeyPreparationAfterSet({
-            credentials: params.credentials,
-            ...(params.serverHttpBaseUrl ? { serverHttpBaseUrl: params.serverHttpBaseUrl } : {}),
-            ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-            ...(params.resolveServerFeaturesSnapshot
-              ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }
-              : {}),
-            ...(params.externalActionMachineRequestPrivateKey
-              ? { externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey }
-              : {}),
-            ...(params.externalActionMachineInstallationId
-              ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId }
-              : {}),
-          }),
+        ...(followCredentials ? {
+          prepareSourceKeyAfterSet: async input => {
+            const { createSessionFollowSourceKeyPreparationAfterSet } = await import('@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet');
+            return createSessionFollowSourceKeyPreparationAfterSet({
+              credentials: followCredentials,
+              ...(followServerHttpBaseUrl ? { serverHttpBaseUrl: followServerHttpBaseUrl } : {}),
+              ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
+              ...(params.resolveServerFeaturesSnapshot
+                ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot }
+                : {}),
+              ...(params.externalActionMachineRequestPrivateKey
+                ? { externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey }
+                : {}),
+              ...(params.externalActionMachineInstallationId
+                ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId }
+                : {}),
+            })(input);
+          },
         } : {}),
       })),
       ...(params.sessionTrackedTargetCompatibilityDeps ?? {}),

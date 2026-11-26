@@ -1,6 +1,6 @@
 import type { RpcHandlerContext, RpcLocalActionContext } from '@/api/rpc/types';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectDaemonSpawnUnavailable, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { rethrowRequesterHomeReadFailure } from '../sessionEncryption/requesterCurrentness';
 import { isOriginalOwnAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';

@@ -14,7 +14,6 @@ import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, isDeploymentActionIdV1 } fr
 import { readDeploymentExecutionMachineOperandV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isManagedAccountNativeControlInvocationV1, readManagedProvisionerCredentialRootRoleV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
-import { resolveCliMachinePresetArchiveExecutionTarget } from '@/machines/managed/accountPresetArchive';
 import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import type { StoredCredentials } from '@/persistence';
@@ -40,6 +39,7 @@ export async function resolveManagedControlControllerTarget(input: Readonly<{
   signal?: AbortSignal;
 }>): Promise<Readonly<{ kind: 'machine'; machineId: string }> | null> {
   if (input.actionId === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1) {
+    const { resolveCliMachinePresetArchiveExecutionTarget } = await import('@/machines/managed/accountPresetArchive');
     const parsed = MachinePresetActionInputSchemasV1[MACHINE_PRESET_ARCHIVE_ACTION_ID_V1].safeParse(input.rawInput);
     return parsed.success ? await resolveCliMachinePresetArchiveExecutionTarget(parsed.data, {
       credentials: input.credentials, serverUrl: input.serverHttpBaseUrl, authorization: input.authorization, signal: input.signal,

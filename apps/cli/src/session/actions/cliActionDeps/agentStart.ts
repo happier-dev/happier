@@ -6,13 +6,11 @@ import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/pro
 import { type RoleSourceReader } from '@/session/roles/roleSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { resolveCliAgentStartContextV1 } from '../resolveCliAgentStartContextV1';
-import { readCliSessionEngineBaselineV1 } from '../resolveCliAgentStartContextV1';
 import { resolveCliActionCallerSession } from '../resolveCliActionCallerSession';
 import type { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readPreparedAccountRoleOverrides } from '@/session/roles/sessionRoleContext';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
-import { executionRunChildSelectionNeedsAppliedParent } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 
 export function createCliAgentStartContext(
   params: Pick<CliActionDepsParams, 'actionsSettingsProvider' | 'credentials' | 'getAgentStartRunCaller' | 'getCurrentAppliedChildSelection' | 'getCurrentTurnWorkDepth' | 'getSessionRoleContext' | 'readAgentStartPolicy' | 'resolveServerFeaturesSnapshot' | 'savedSecretOperationContext' | 'sessionId' | 'token' | 'workflowStepRoleDefaultEngine'>,
@@ -85,10 +83,12 @@ export function createCliAgentStartContext(
     const sessionRoleContext = !scopeOnly ? params.getSessionRoleContext?.() : undefined;
     const workflowStepRoleDefaultEngine = !scopeOnly && session.sessionId === params.sessionId
       && !params.getCurrentAppliedChildSelection && !sessionRoleContext ? params.workflowStepRoleDefaultEngine : undefined;
+    const { executionRunChildSelectionNeedsAppliedParent } = await import('@/agent/runtime/bridges/executionRun/runtime/openInputs');
     const needsAppliedParent = executionRunChildSelectionNeedsAppliedParent({
       lifecycle: 'attached', childSelection: options?.executionRunChildSelection,
     });
     const prepareStartReads = async () => {
+      const { readCliSessionEngineBaselineV1 } = await import('../resolveCliAgentStartContextV1');
       let appliedChildSelection: import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection | undefined;
       const readAppliedSelection = session.sessionId === params.sessionId
         ? params.getCurrentAppliedChildSelection ?? sessionRoleContext?.readAppliedChildSelection : session.readAppliedChildSelection;

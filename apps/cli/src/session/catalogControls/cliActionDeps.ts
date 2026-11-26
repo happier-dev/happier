@@ -1,4 +1,3 @@
-import { unavailableSessionCatalog } from '@happier-dev/session-core/state';
 import type { ResolvedSessionTransport } from '../actions/cliActionDeps/types';
 import type { CliActionDepsParams, CurrentMachineControlIdentity } from '../actions/cliActionDeps/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -30,6 +29,7 @@ export function createCliSessionCatalogActionDeps(
     operation: 'vendorPlugins' | 'skills',
     request: Readonly<{ cwd?: string }>,
   ): Promise<unknown> => {
+    const { unavailableSessionCatalog } = await import('@happier-dev/session-core/state');
     if (!params.credentials) {
       return unavailableSessionCatalog(operation, 'not_authenticated');
     }
