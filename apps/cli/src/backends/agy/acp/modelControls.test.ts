@@ -31,11 +31,26 @@ const LEGACY_MODELS = {
 async function writeAgyFixture(dir: string): Promise<string> {
   const script = writeAcpTestAgentScript({ dir, fileName: 'agy', source: `#!${process.execPath}
     const fs = require('node:fs');
+    const options = ${JSON.stringify(NATIVE_CONFIG_OPTIONS)};
     require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
       const request = JSON.parse(line);
       if (request.method?.startsWith('session/set_')) fs.appendFileSync(${JSON.stringify(join(dir, 'controls.jsonl'))}, JSON.stringify({ method: request.method, params: request.params }) + '\\n');
+      // Like agy, a model switch narrows the advertised thought levels to that model's (Flash: low..high).
+      if (request.method === 'session/set_config_option' && request.params.configId === 'model') {
+        options[0] = { ...options[0], currentValue: request.params.value };
+        const levels = request.params.value === 'gemini-3.8-flash' ? ['low', 'medium', 'high'] : ['low', 'medium', 'high', 'xhigh'];
+        options[1] = { ...options[1], options: levels.map(value => ({ value, name: value })) };
+      }
+      if (request.method === 'session/set_config_option' && request.params.configId === 'thought_level') {
+        if (!options[1].options.some(option => option.value === request.params.value)) {
+          process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, error: { code: -32602, message: 'unsupported thought level' } }) + '\\n');
+          return;
+        }
+        options[1] = { ...options[1], currentValue: request.params.value };
+      }
       const result = request.method === 'initialize' ? { protocolVersion: 1, agentInfo: { version: '1.5.18' } }
-        : request.method === 'session/new' ? { sessionId: 'new-session', models: ${JSON.stringify(LEGACY_MODELS)}, configOptions: ${JSON.stringify(NATIVE_CONFIG_OPTIONS)} }
+        : request.method === 'session/new' ? { sessionId: 'new-session', models: ${JSON.stringify(LEGACY_MODELS)}, configOptions: options }
+        : request.method === 'session/set_config_option' ? { configOptions: options }
         : {};
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
     });
@@ -63,22 +78,25 @@ describe.skipIf(process.platform === 'win32')('Antigravity model controls', () =
     });
   });
 
-  it('applies a saved effort-suffixed execution-run model as family plus effort', async () => {
+  it.each([
+    { modelId: 'gemini-4-neon-medium', applied: [['model', 'gemini-4-neon'], ['thought_level', 'medium']] },
+    // The effort is validated against the switched model's levels; an unoffered one keeps the current effort.
+    { modelId: 'gemini-3.8-flash-low', applied: [['model', 'gemini-3.8-flash'], ['thought_level', 'low']] },
+    { modelId: 'gemini-3.8-flash-xhigh', applied: [['model', 'gemini-3.8-flash']] },
+  ])('applies the saved effort-suffixed execution-run model $modelId as family plus an offered effort', async ({ modelId, applied }) => {
     await withTempDir('agy-models-', async dir => {
       const factory = resolveExecutionRunBackendFactory('agy');
       if (!factory) throw new Error('Expected the agy execution-run backend');
       const backend = factory({
-        cwd: dir, backendId: 'agy', modelId: 'gemini-4-neon-medium', permissionMode: 'default',
+        cwd: dir, backendId: 'agy', modelId, permissionMode: 'default',
         permissionHandler: { handleToolCall: async () => ({ decision: 'denied' }) },
         isolation: { env: { HAPPIER_AGY_PATH: await writeAgyFixture(dir) } },
       });
       try {
         await backend.startSession();
         const controls = (await readFile(join(dir, 'controls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-        expect(controls).toEqual([
-          { method: 'session/set_config_option', params: { sessionId: 'new-session', configId: 'model', value: 'gemini-4-neon' } },
-          { method: 'session/set_config_option', params: { sessionId: 'new-session', configId: 'thought_level', value: 'medium' } },
-        ]);
+        expect(controls.filter(control => control.method === 'session/set_config_option')
+          .map(control => [control.params.configId, control.params.value])).toEqual(applied);
       } finally { await backend.dispose(); }
     });
   });

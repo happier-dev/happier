@@ -3,12 +3,12 @@ import { createCatalogDefinedAcpBackend, type CatalogDefinedAcpBackendOptions } 
 import { createAgyBackgroundContinuationSource } from './agyBackgroundContinuationSource';
 import { resolveAgyAcpLaunch, resolveAgyMachineProfileDir } from './agyAcpLaunch';
 import { importLegacyAgyConversation } from './agyConversationStore';
-import { agySessionModelAdapter } from './modelControls';
+import { agySessionModelAdapter, withOfferedAgyThoughtLevels } from './modelControls';
 
 export type AgyAcpBackendOptions = CatalogDefinedAcpBackendOptions;
 
 export async function createAgyAcpBackend(options: AgyAcpBackendOptions): Promise<AgentBackend> {
-  return createCatalogDefinedAcpBackend('agy', {
+  return withOfferedAgyThoughtLevels(createCatalogDefinedAcpBackend('agy', {
     ...options,
     sessionModelAdapter: agySessionModelAdapter,
     launch: async ({ loadSessionId, resolveDefaultLaunch }) => {
@@ -26,5 +26,5 @@ export async function createAgyAcpBackend(options: AgyAcpBackendOptions): Promis
         providerTurnSource: createAgyBackgroundContinuationSource(),
       };
     },
-  });
+  }));
 }

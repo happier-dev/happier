@@ -1,4 +1,6 @@
 import type { AcpSessionModelAdapter, SessionConfigOption, SessionModelState } from '@/agent/acp/AcpBackend';
+import type { AgentBackend, SessionId } from '@/agent/core';
+import { logger } from '@/ui/logger';
 import { resolveAcpModelConfigOption } from '@/agent/acp/configOptionChoiceNormalization';
 import { applyObservedAcpModelOptions, isAcpModelScopedConfigOption } from '@/agent/acp/runtime/sessionModelsState';
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
@@ -60,7 +62,8 @@ export function resolveAgySessionModelConfigUpdate(params: Readonly<{
   if (!modelId) return null;
   const resolved = resolveFamily(modelId, listFamilies(findModelOption(params.configOptions)));
   if (!resolved) return { modelId };
-  return resolved.effort && hasThoughtLevel(params.configOptions)
+  // The family's own thought levels are known only after the switch; `withOfferedAgyThoughtLevels` checks them then.
+  return resolved.effort
     ? { modelId: resolved.family, configUpdates: [{ configId: THOUGHT_LEVEL_CONFIG_ID, value: resolved.effort }] }
     : { modelId: resolved.family };
 }
@@ -73,6 +76,31 @@ export function resolveAgySessionConfigOptionUpdate(params: Readonly<{
   return params.configId === REASONING_EFFORT_CONFIG_ID && hasThoughtLevel(params.configOptions)
     ? { configId: THOUGHT_LEVEL_CONFIG_ID, value: params.value }
     : { configId: params.configId, value: params.value };
+}
+
+type ThoughtLevelBackend = AgentBackend & Partial<{
+  setSessionConfigOption: (sessionId: SessionId, configId: string, value: string | number | boolean | null) => Promise<void>;
+  getSessionConfigOptionsState: () => ReadonlyArray<SessionConfigOption> | null;
+}>;
+
+/**
+ * Each model advertises its own thought levels, so a saved effort (from a `<family>-<effort>` id)
+ * is checked against the levels advertised after the family switch. A level the model does not
+ * offer keeps its current effort instead of failing the session.
+ */
+export function withOfferedAgyThoughtLevels(backend: AgentBackend): AgentBackend {
+  const target = backend as ThoughtLevelBackend;
+  const setSessionConfigOption = target.setSessionConfigOption?.bind(backend);
+  if (!setSessionConfigOption) return backend;
+  target.setSessionConfigOption = async (sessionId, configId, value) => {
+    const levels = target.getSessionConfigOptionsState?.()?.find((option) => option.id === THOUGHT_LEVEL_CONFIG_ID)?.options;
+    if (configId === THOUGHT_LEVEL_CONFIG_ID && levels && !levels.some((level) => level.value === value)) {
+      logger.infoFile(`[agy] Keeping the current thought level; the model does not offer ${String(value)}`);
+      return;
+    }
+    await setSessionConfigOption(sessionId, configId, value);
+  };
+  return backend;
 }
 
 export const agySessionModelAdapter: AcpSessionModelAdapter = {
