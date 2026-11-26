@@ -27,7 +27,8 @@ import { readProviderCliOverride } from '@/runtime/managedTools/providerCliResol
 import { isBun } from '@/utils/runtime';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { handleResumeCommand } from '@/cli/commands/resume';
-import { partitionProviderSessionArgs, type ProviderSessionArgPartitionResult } from '@/cli/providerSessionArgPartition';
+import type { ProviderSessionArgPartitionResult } from '@/cli/providerSessionArgPartition';
+import { partitionClaudeSessionArgs } from '@/backends/claude/cli/partitionClaudeSessionArgs';
 import { HAPPY_STARTING_MODE_UNIFIED } from '@/terminal/tmux/headlessTmuxArgs';
 import {
   overlayDirectConnectedServiceEnvironment,
@@ -167,13 +168,7 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
   const strippedArgs = stripHappyInternalSettingsFlag(args);
 
   const claudeWrapperFlags = extractClaudeWrapperFlags(strippedArgs);
-  const parsed = partitionProviderSessionArgs({
-    args: claudeWrapperFlags.argsWithoutWrapperFlags,
-    providerSubcommand: 'claude',
-    forwardModelFlag: true,
-    forwardResumeFlag: true,
-    yoloProviderArgs: ['--dangerously-skip-permissions'],
-  });
+  const parsed = partitionClaudeSessionArgs(claudeWrapperFlags.argsWithoutWrapperFlags);
 
   const options: StartOptions = buildClaudeStartOptionsFromParsedArgs(parsed, claudeWrapperFlags.jsRuntime);
   if (parsed.startingMode) {

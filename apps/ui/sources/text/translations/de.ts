@@ -5724,7 +5724,7 @@ export const de: TranslationStructure = {
 	            waitingForRuntimeActivityNotice: 'Wartet, bis die Runtime-Aktivität fertig ist',
 	            runtimeActivityUnknownNotice: 'Wartet auf den Status der Runtime-Aktivität',
 	            waitingForRuntimeNotice: 'Wartet, bis die Runtime sich wieder verbindet',
-	            steerUnavailableWaitingForTurnNotice: 'Kann diesem Durchgang gerade nicht beitreten · wird danach gesendet',
+	            steerUnavailableWaitingForTurnNotice: 'Kann diesen Durchgang gerade nicht steuern · wird danach gesendet',
 	            deliveryBlockedReasons: {
 	                terminalComposerDraft: 'Ein Entwurf im Terminal blockiert die Zustellung',
 	                runtimeConfigBlocked: 'Die Runtime-Einstellungen blockieren die Zustellung',
@@ -8148,11 +8148,11 @@ settingsSession: {
               title: 'Nachrichten senden',
               footer: 'Lege fest, was passiert, wenn du eine Nachricht sendest, während der Agent arbeitet.',
               busySend: {
-                addToTurnTitle: 'Zum laufenden Durchgang hinzufügen',
+                addToTurnTitle: 'In den laufenden Durchgang steuern',
                 addToTurnSubtitle: 'Der Agent liest sie sofort und arbeitet weiter, wie beim Tippen in seinem eigenen Terminal. Kann er sie gerade nicht annehmen, wartet die Nachricht in „Ausstehend“, bis der Durchgang endet.',
-                waitForTurnTitle: 'Warten, bis der Durchgang endet',
+                waitForTurnTitle: 'Einreihen, bis der Durchgang endet',
                 waitForTurnSubtitle: 'Die Nachricht bleibt in „Ausstehend“, wo du sie bearbeiten oder umsortieren kannst, und wird nach dem Durchgang gesendet.',
-                interruptTitle: 'Durchgang stoppen und senden',
+                interruptTitle: 'Unterbrechen und senden',
                 interruptSubtitle: 'Stoppt, was der Agent gerade tut, und sendet die Nachricht sofort.',
               },
               inactiveSessionsTitle: 'Inaktive Sitzungen',

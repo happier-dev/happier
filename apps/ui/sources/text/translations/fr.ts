@@ -5711,7 +5711,7 @@ export const fr: TranslationStructure = {
 	            waitingForRuntimeActivityNotice: 'En attente de la fin de l’activité du runtime',
 	            runtimeActivityUnknownNotice: 'En attente du statut d’activité du runtime',
 	            waitingForRuntimeNotice: 'En attente de la reconnexion du runtime',
-	            steerUnavailableWaitingForTurnNotice: 'Ne peut pas rejoindre ce tour pour l’instant · partira à la fin',
+	            steerUnavailableWaitingForTurnNotice: 'Impossible d’orienter ce tour pour l’instant · partira à la fin',
 	            deliveryBlockedReasons: {
 	                terminalComposerDraft: 'Un brouillon du terminal bloque la livraison',
 	                runtimeConfigBlocked: 'Les réglages du runtime bloquent la livraison',
@@ -8135,11 +8135,11 @@ settingsSession: {
               title: 'Envoi des messages',
               footer: 'Choisis ce qui se passe quand tu envoies un message pendant que l’agent travaille.',
               busySend: {
-                addToTurnTitle: 'L’ajouter au tour en cours',
+                addToTurnTitle: 'Orienter le tour en cours',
                 addToTurnSubtitle: 'L’agent le lit tout de suite et continue de travailler, comme si tu tapais dans son propre terminal. S’il ne peut pas le prendre en cours de tour, le message attend dans En attente jusqu’à la fin du tour.',
-                waitForTurnTitle: 'Attendre la fin du tour',
+                waitForTurnTitle: 'Mettre en attente jusqu’à la fin du tour',
                 waitForTurnSubtitle: 'Garde le message dans En attente, où tu peux le modifier ou le réordonner, et l’envoie à la fin du tour.',
-                interruptTitle: 'Arrêter le tour et envoyer',
+                interruptTitle: 'Interrompre et envoyer',
                 interruptSubtitle: 'Arrête ce que fait l’agent et envoie le message tout de suite.',
               },
               inactiveSessionsTitle: 'Sessions inactives',

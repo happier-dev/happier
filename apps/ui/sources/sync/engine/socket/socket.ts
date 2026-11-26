@@ -7,6 +7,7 @@ import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isSessionListViewportRowDemanded } from '@/sync/domains/session/listing/sessionListViewportDemand';
 import { buildPendingChangedSessionPatch } from './pendingChangedSessionPatch';
+import { hasUncommittedLocalOutboundProjection } from '@/sync/store/domains/pending';
 import { isSessionVisible } from '@/sync/domains/session/activeViewingSession';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import { normalizeSessionOrderingNumber, reconcileSessionSnapshot, resolveSessionPresence, shouldPreserveSessionRequestProjection } from '@/sync/domains/session/sessionLifecycleProjection';
@@ -1175,6 +1176,7 @@ export async function handleSocketUpdate(params: {
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onSessionVisible: (sessionId: string) => void;
+    onPendingQueueSettled?: (sessionId: string) => void;
     isSessionMessagesLoaded: (sessionId: string) => boolean;
     getSessionMaterializedMaxSeq: (sessionId: string) => number;
     markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
@@ -1212,6 +1214,7 @@ export async function handleSocketUpdate(params: {
         hydrateSessionById,
         applyMessages,
         onSessionVisible,
+        onPendingQueueSettled,
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
         markSessionMaterializedMaxSeq,
@@ -1255,6 +1258,7 @@ export async function handleSocketUpdate(params: {
         hydrateSessionById,
         applyMessages,
         onSessionVisible,
+        onPendingQueueSettled,
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
         markSessionMaterializedMaxSeq,
@@ -1325,6 +1329,7 @@ export async function handleUpdateContainer(params: {
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onSessionVisible: (sessionId: string) => void;
+    onPendingQueueSettled?: (sessionId: string) => void;
     isSessionMessagesLoaded: (sessionId: string) => boolean;
     getSessionMaterializedMaxSeq: (sessionId: string) => number;
     markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
@@ -1362,6 +1367,7 @@ export async function handleUpdateContainer(params: {
         hydrateSessionById,
         applyMessages,
         onSessionVisible,
+        onPendingQueueSettled,
         isSessionMessagesLoaded,
         getSessionMaterializedMaxSeq,
         markSessionMaterializedMaxSeq,
@@ -1624,6 +1630,9 @@ export async function handleUpdateContainer(params: {
             await settleReceivedSessionMessages(sessionId);
             if (!shouldContinue()) return;
             storage.getState().pruneServerPendingMessages(sessionId);
+            if (hasUncommittedLocalOutboundProjection(storage.getState(), sessionId)) {
+                onPendingQueueSettled?.(sessionId);
+            }
         }
     } else if (updateData.body.t === 'update-session') {
         const session = getSocketSessionApplyBase(updateData.body.id);

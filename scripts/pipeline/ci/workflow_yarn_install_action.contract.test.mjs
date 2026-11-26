@@ -45,3 +45,11 @@ test('GitHub workflows route dependency installs through the shared install-yarn
 
   assert.ok(sharedActionUseCount > 0, 'expected at least one workflow to use the shared install-yarn-dependencies action');
 });
+
+test('EAS local Android builds skip the ONNX Runtime CUDA download in their own dependency install', () => {
+  // EAS local builds install dependencies themselves, outside install-yarn-dependencies, on Linux x64 where
+  // onnxruntime-node fetches a CUDA archive that now returns 404 (release 2026-11-25.1).
+  const raw = fs.readFileSync(path.join(workflowsDir, 'build-ui-mobile-local.yml'), 'utf8');
+  const job = raw.slice(raw.indexOf('\n  build_android:'), raw.indexOf('\n    steps:', raw.indexOf('\n  build_android:')));
+  assert.match(job, /\n      ONNXRUNTIME_NODE_INSTALL_CUDA: skip(?:\n|$)/);
+});

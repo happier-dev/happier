@@ -60,6 +60,7 @@ export function ConnectedServiceCapacityAvatar(props: ConnectedServiceCapacityAv
     return (
         <CapacityRing
             testID={props.testID}
+            measures="remaining"
             rings={arcs}
             size={size}
             strokeWidth={3}

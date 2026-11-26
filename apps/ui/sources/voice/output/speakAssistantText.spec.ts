@@ -123,6 +123,82 @@ async function speak(text: string, tts: Record<string, unknown>, registerPlaybac
 }
 
 describe('speakAssistantText', () => {
+  describe('remote read-aloud', () => {
+    const first = 'Open example.com now.';
+    const second = 'The result is ready.';
+    const third = '- 5 is negative.';
+    const fourth = 'There is more to read.';
+    const last = 'This finishes the message.';
+    const longText = `Open https://example.com/${'a'.repeat(400)} now. ${second} ${third} ${fourth} ${last}`;
+
+    const readAloudSettings = {
+      voice: {
+        providerId: 'local_conversation',
+        adapters: { local_conversation: { tts: OPENAI_TTS, streaming: { ttsChunkChars: 64 } } },
+      },
+    };
+    const inputs = () => fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input);
+    const read = (text: string, registerPlaybackStopper = (_stop: () => void) => () => {}) =>
+      speakAssistantText({ text, purpose: 'read-aloud', settings: readAloudSettings, networkTimeoutMs: 15_000,
+        registerPlaybackStopper, onSpeaking: vi.fn() });
+
+    it('starts a long read with the first sentence and groups later sentences after cleaning the whole message', async () => {
+      fetchMock.mockImplementation(async () => new Response(new Uint8Array([1, 2])));
+
+      await expect(read(longText)).resolves.toBe(true);
+
+      expect(inputs()).toEqual([first, `${second} ${third} ${fourth}`, last]);
+      expect(playedSources).toHaveLength(3);
+    });
+
+    it('keeps a short multi-sentence read in one request', async () => {
+      fetchMock.mockResolvedValue(new Response(new Uint8Array([1, 2])));
+      await expect(read('Sure. Here is the answer.')).resolves.toBe(true);
+      expect(inputs()).toEqual(['Sure. Here is the answer.']);
+    });
+
+    it('aborts a response body after headers and skips the remaining batches', async () => {
+      let stopper: (() => void) | undefined;
+      let bodySignal: AbortSignal | null | undefined;
+      let finishBody: (() => void) | undefined;
+      fetchMock.mockImplementation(async (_url, init) => {
+        bodySignal = init?.signal;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            bodySignal?.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')), { once: true });
+            finishBody = () => {
+              controller.enqueue(new Uint8Array([1, 2]));
+              controller.close();
+            };
+          },
+        }));
+      });
+      const pending = read(longText, (stop) => { stopper = stop; return () => {}; });
+      try {
+        await vi.waitFor(() => expect(finishBody).toBeDefined());
+        stopper?.();
+        expect(bodySignal?.aborted).toBe(true);
+        await expect(pending).resolves.toBe(true);
+        expect(inputs()).toEqual([first]);
+        expect(playedSources).toHaveLength(0);
+      } finally {
+        if (!bodySignal?.aborted) finishBody?.();
+        await pending;
+      }
+    });
+
+    it('reports a later provider error once and skips the remaining batches', async () => {
+      fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([1, 2])));
+      fetchMock.mockResolvedValueOnce(new Response(null, { status: 500 }));
+
+      await expect(read(longText)).resolves.toBe(false);
+
+      expect(inputs()).toEqual([first, `${second} ${third} ${fourth}`]);
+      expect(playedSources).toHaveLength(1);
+      expect(getLocalVoiceState().error).toBe('tts_failed');
+    });
+  });
+
   it('speaks inline-code link labels as visible text while preserving literal links in code', async () => {
     await speak('See [`parser`](https://example.test/docs) and literal `[x](url)`.', { provider: 'device' });
     expect(speech.speak).toHaveBeenCalledWith('See parser and literal [x](url).', expect.anything());

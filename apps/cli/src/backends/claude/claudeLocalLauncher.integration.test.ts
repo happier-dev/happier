@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionClientPort } from '@/api/session/sessionClientPort';
-import type { PermissionMode } from '@/api/types';
+import type { Metadata, PermissionMode } from '@/api/types';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
@@ -35,7 +35,11 @@ vi.mock('node:child_process', async importOriginal => {
   return { ...actual, spawn: vi.fn(actual.spawn) };
 });
 
-type MetadataSnapshot = { permissionMode?: PermissionMode; permissionModeUpdatedAt?: number };
+type MetadataSnapshot = {
+  permissionMode?: PermissionMode;
+  permissionModeUpdatedAt?: number;
+  modelOverrideV1?: { v: 1; updatedAt: number; modelId: string | null };
+};
 type RpcHandler = (params?: unknown) => unknown | Promise<unknown>;
 type SessionFoundHookData = NonNullable<Parameters<Session['onSessionFound']>[1]>;
 type LocalLaunchOptions = Parameters<(typeof import('./claudeLocal'))['claudeLocal']>[0];
@@ -91,7 +95,7 @@ await import('./claudeLocalLauncher');
 
 type SessionClientStub = EventEmitter &
   SessionClientPort & {
-    getMetadataSnapshot?: () => MetadataSnapshot;
+    getMetadataSnapshot?: () => MetadataSnapshot | null;
   };
 
 type LocalHarness = {
@@ -164,7 +168,7 @@ function hookWithTranscript(transcriptPath: string): SessionFoundHookData {
 }
 
 function createLocalHarness(options?: {
-  metadataSnapshot?: MetadataSnapshot;
+  metadataSnapshot?: MetadataSnapshot | null;
   sessionId?: string;
   path?: string;
   providerTasks?: NonNullable<ConstructorParameters<typeof Session>[0]['runtimeActivityContributions']>['providerTasks'];
@@ -184,7 +188,7 @@ function createLocalHarness(options?: {
       sessionId: 'happy_sess_1',
       enqueueSessionTurn: async mutation => { turnMutations.push(mutation); },
     }),
-    getMetadataSnapshot: options?.metadataSnapshot ? vi.fn(() => options.metadataSnapshot) : undefined,
+    getMetadataSnapshot: options?.metadataSnapshot !== undefined ? vi.fn(() => options.metadataSnapshot) : undefined,
     waitForMetadataUpdate: vi.fn(async () => false),
     waitForPendingEligibilityUpdate: vi.fn(async () => false),
     popPendingMessage: vi.fn(async () => false),
@@ -268,7 +272,7 @@ describe('claudeLocalLauncher', () => {
     vi.useRealTimers();
   });
 
-  it('imports the first fresh local transcript after a provisional identity even when the replay baseline is unavailable', async () => {
+  it('imports the first fresh local transcript and publishes its provisional identity when the file arrives', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-local-provisional-baseline-'));
     const workspaceDir = join(dir, 'workspace');
     const configDir = join(dir, 'claude-config');
@@ -279,6 +283,10 @@ describe('claudeLocalLauncher', () => {
     env.patch({ CLAUDE_CONFIG_DIR: configDir, HAPPIER_CLAUDE_PATH: process.execPath });
     const stdinWasPaused = process.stdin.isPaused();
     const { session, client } = createLocalHarness({ path: workspaceDir });
+    let metadata: Metadata = {
+      path: workspaceDir, host: 'test', homeDir: dir, happyHomeDir: dir, happyLibDir: dir, happyToolsDir: dir,
+    };
+    vi.mocked(client.updateMetadata).mockImplementation(async update => { metadata = update(metadata); });
     session.onSessionFound('provisional-local', {
       hook_event_name: 'SessionStart', source: 'startup',
       transcript_path: join(projectDir, 'provisional-local.jsonl'),
@@ -301,6 +309,9 @@ describe('claudeLocalLauncher', () => {
       await spawned.promise;
       const freshId = 'fresh-local-session';
       const transcriptPath = join(projectDir, `${freshId}.jsonl`);
+      session.onSessionFound(freshId, { hook_event_name: 'SessionStart', source: 'startup', transcript_path: transcriptPath });
+      await session.drainCriticalMetadataWrites({ timeoutMs: 500 });
+      expect(metadata.claudeSessionId).toBeUndefined();
       await writeFile(transcriptPath, `${[
         { type: 'user', uuid: 'fresh-local-user', sessionId: freshId,
           timestamp: new Date().toISOString(),
@@ -309,10 +320,10 @@ describe('claudeLocalLauncher', () => {
           timestamp: new Date().toISOString(),
           message: { role: 'assistant', content: [{ type: 'text', text: 'First fresh local reply' }] } },
       ].map(row => JSON.stringify(row)).join('\n')}\n`);
-      session.onSessionFound(freshId, { hook_event_name: 'SessionStart', source: 'startup', transcript_path: transcriptPath });
       await vi.waitFor(() => {
         expect(client.sendClaudeSessionMessageCommitted).toHaveBeenCalledWith(expect.objectContaining({ uuid: 'fresh-local-user' }), expect.anything());
         expect(client.sendClaudeSessionMessageCommitted).toHaveBeenCalledWith(expect.objectContaining({ uuid: 'fresh-local-assistant' }), expect.anything());
+        expect(metadata).toMatchObject({ claudeSessionId: freshId, claudeTranscriptPath: transcriptPath });
       }, { timeout: 5_000 });
     } finally {
       child.emit('exit', 0, null);
@@ -565,6 +576,56 @@ describe('claudeLocalLauncher', () => {
 
     expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ type: 'exit', code: 0 });
+  });
+
+  it.each<{ state: string; snapshot: MetadataSnapshot | null; model: string | null }>([
+    { state: 'before attach', snapshot: null, model: 'claude-model-a' },
+    {
+      state: 'after a model change',
+      snapshot: { modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'claude-model-b' } },
+      model: 'claude-model-b',
+    },
+    {
+      state: 'after a reset to default',
+      snapshot: { modelOverrideV1: { v: 1, updatedAt: 456, modelId: null } },
+      model: null,
+    },
+  ])('uses the effective local launch model $state without storing it in shared args', async ({ snapshot, model }) => {
+    const { session } = createLocalHarness({ metadataSnapshot: snapshot });
+    session.claudeArgs = ['--verbose'];
+
+    let spawnedArgs: string[] | undefined;
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      spawnedArgs = opts.claudeArgs;
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const result = await claudeLocalLauncher(session, { startupModelId: 'claude-model-a' });
+
+    expect(mockClaudeLocal).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ type: 'exit', code: 0 });
+    expect(spawnedArgs).toEqual(model ? ['--verbose', '--model', model] : ['--verbose']);
+    // A later remote launch reuses session.claudeArgs, where any --model is a fixed override.
+    expect(session.claudeArgs).toEqual(['--verbose']);
+  });
+
+  it('keeps an explicit Claude Code --model passthrough instead of the session model', async () => {
+    const { session } = createLocalHarness({
+      metadataSnapshot: {
+        modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'claude-model-b' },
+      },
+    });
+    session.claudeArgs = ['--model=claude-model-c'];
+
+    let spawnedArgs: string[] | undefined;
+    mockClaudeLocal.mockImplementationOnce(async (opts: LocalLaunchOptions) => {
+      spawnedArgs = opts.claudeArgs;
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    await claudeLocalLauncher(session);
+
+    expect(spawnedArgs).toEqual(['--model=claude-model-c']);
   });
 
   it('preserves CLI bypass-permissions intent on the first local launch before metadata catches up', async () => {

@@ -6362,7 +6362,7 @@ localTailscale: {
 	        waitingForRuntimeActivityNotice: 'ランタイムの処理完了を待っています',
 	        runtimeActivityUnknownNotice: 'ランタイムのアクティビティ状態を待っています',
 	        waitingForRuntimeNotice: 'ランタイムの再接続を待っています',
-	        steerUnavailableWaitingForTurnNotice: '今はこのターンに参加できません · 終了後に送信されます',
+	        steerUnavailableWaitingForTurnNotice: '今はこのターンに挿入できません · 終了後に送信されます',
 	        nonSteerableNotice: "このモード変更後、現在のターンには挿入できません。次に実行されます。すぐに処理するには「今すぐ送信」を使って中断してください。",
 	        steerBlockedTerminalDraftNotice: '待機中: ターミナルの入力欄に未送信の下書きがあり配信できません。ターミナルで消去するか、ターンを中断してください。',
 	        clearTerminalComposer: {
@@ -8841,11 +8841,11 @@ settingsSession: {
       title: "メッセージ送信",
       footer: 'エージェントの作業中にメッセージを送ったときの動作を選びます。',
       busySend: {
-        addToTurnTitle: '現在のターンに追加',
+        addToTurnTitle: '現在のターンに挿入',
         addToTurnSubtitle: 'エージェントがすぐに読み取り、作業を続けます。ターミナルに直接入力するのと同じです。ターンの途中で受け取れない場合は、ターンが終わるまで保留中で待機します。',
-        waitForTurnTitle: 'ターンの終了を待つ',
+        waitForTurnTitle: 'ターン終了までキューに追加',
         waitForTurnSubtitle: 'メッセージを保留中に置き、編集や並べ替えをしたうえで、ターンが終わったら送信します。',
-        interruptTitle: 'ターンを止めて送信',
+        interruptTitle: '中断して送信',
         interruptSubtitle: 'エージェントの作業を止めて、すぐにメッセージを送信します。',
       },
       inactiveSessionsTitle: '非アクティブなセッション',

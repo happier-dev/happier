@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolveHostedImages } from './hosted-images.mjs';
 import { resolveOptionalDockerBuildArgs } from './resolve-build-args.mjs';
 import { resolveDockerTagSpec } from './resolve-tag-spec.mjs';
@@ -19,6 +20,10 @@ function fail(message) {
   console.error(message);
   process.exit(1);
 }
+
+// The build context is the candidate source (the working directory), but the trusted workflow-control checkout
+// that runs this script owns the Dockerfiles, so a resumed release can build an older candidate with fixed recipes.
+const CONTROL_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 const MULTIARCH_BUILDER_NAME = 'happier-multiarch';
 const MULTIARCH_BUILDER_FALLBACK_NAME = 'happier-multiarch-docker-container';
@@ -598,7 +603,7 @@ async function main() {
       'buildx',
       'build',
       '--file',
-      params.file,
+      join(CONTROL_ROOT, params.file),
       ...(params.target ? ['--target', params.target] : []),
       '--builder',
       builder,

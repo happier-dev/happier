@@ -81,11 +81,16 @@ function isSentenceEndAt(text: string, i: number, atEnd: boolean): boolean {
     return !/^(?:[A-Za-z]\.)+[A-Za-z]$/.test(word);
 }
 
-/** Keeps surrogate pairs and Markdown delimiter runs intact at a hard cut. */
-function avoidSurrogateSplit(text: string, index: number): number {
+function codePointBoundary(text: string, index: number): number {
     if (index <= 0 || index >= text.length) return index;
     const code = text.charCodeAt(index);
-    const end = code >= 0xdc00 && code <= 0xdfff ? index - 1 : index;
+    return code >= 0xdc00 && code <= 0xdfff ? index - 1 : index;
+}
+
+/** Keeps surrogate pairs and Markdown delimiter runs intact at a hard cut. */
+function avoidSurrogateSplit(text: string, index: number): number {
+    const end = codePointBoundary(text, index);
+    if (end <= 0 || end >= text.length) return end;
     // Keep a Markdown delimiter together, with its following character available to the
     // speech normalizer. This also covers a hard cut immediately after an opening delimiter.
     const marker = /[*_~`]/u.test(text[end - 1] ?? '') ? text[end - 1] : text[end];
@@ -105,7 +110,7 @@ function isCuttable(text: string, index: number, fences: FenceLayout): boolean {
     return spanContaining(fences.closed, index) === null;
 }
 
-function lastBoundaryIndex(text: string, maxChars: number, fences: FenceLayout, atEnd: boolean): number {
+function lastBoundaryIndex(text: string, maxChars: number, fences: FenceLayout, atEnd: boolean, speechReady = false): number {
     const limit = Math.min(text.length, maxChars);
 
     for (let i = limit - 1; i >= 0; i -= 1) {
@@ -122,7 +127,7 @@ function lastBoundaryIndex(text: string, maxChars: number, fences: FenceLayout, 
 
     const fence = spanContaining(fences.closed, limit);
     if (fence) return fence.start > 0 ? fence.start : fence.end + (isSentenceEndAt(text, fence.end, atEnd) ? 1 : 0);
-    const cut = avoidSurrogateSplit(text, limit);
+    const cut = speechReady ? codePointBoundary(text, limit) : avoidSurrogateSplit(text, limit);
     return cut > 0 ? cut : limit + 1;
 }
 
@@ -191,23 +196,50 @@ export function createTtsChunker(chunkChars: number): TtsChunker {
     };
 }
 
-/**
- * Splits already-normalized speech for sequential synthesis. Markdown-looking content is literal
- * here; only the raw assistant-delta chunker above protects Markdown spans.
- */
-export function splitSpeechSentences(text: string, maxChars: number): string[] {
-    const bounded = clampChunkChars(maxChars);
-    const parts: string[] = [];
-    let rest = text.trim();
-    const plainLayout: FenceLayout = { closed: [], openStart: null };
+const speechReadyLayout: FenceLayout = { closed: [], openStart: null };
 
-    while (rest.length > 0) {
-        const cut = firstSentenceEndIndex(rest, bounded, plainLayout)
-            ?? (rest.length <= bounded ? rest.length : lastBoundaryIndex(rest, bounded, plainLayout, true));
-        const part = rest.slice(0, cut).trim();
-        rest = rest.slice(cut).trim();
-        if (part) parts.push(part);
+function readUtf8Prefix(text: string, maxBytes: number, maxChars: number): { end: number; wordEnd: number } {
+    let end = 0;
+    let wordEnd = 0;
+    let bytes = 0;
+    for (const character of text) {
+        const point = character.codePointAt(0)!;
+        const size = point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
+        if (bytes + size > maxBytes || end + character.length > maxChars) break;
+        bytes += size;
+        end += character.length;
+        if (/\s/u.test(character)) wordEnd = end;
     }
+    return { end, wordEnd };
+}
 
-    return parts;
+/** Batches normalized speech for providers that buffer the entire response before playback. */
+export function batchSpeechForSynthesis(text: string, opts: {
+    grouping?: { maxChars: number; mode: 'early-start' | 'sentence' };
+    maxInputUtf8Bytes?: number;
+}): string[] {
+    const batches: string[] = [];
+    const target = opts.grouping?.maxChars;
+    const oneSentencePerBatch = opts.grouping?.mode === 'sentence';
+    let remaining = text.trim();
+    while (remaining) {
+        const bytePrefix = opts.maxInputUtf8Bytes === undefined ? null : readUtf8Prefix(remaining, opts.maxInputUtf8Bytes, target ?? remaining.length);
+        const hardEnd = bytePrefix?.end ?? remaining.length;
+        if (hardEnd === 0) throw new Error('tts_input_byte_limit_too_small');
+        const limit = Math.min(target ?? hardEnd, hardEnd);
+        let cut = remaining.length;
+        if (remaining.length > limit || oneSentencePerBatch) {
+            if (target === undefined) {
+                cut = bytePrefix?.wordEnd || hardEnd;
+            } else {
+                const first = oneSentencePerBatch || batches.length === 0
+                    ? firstSentenceEndIndex(remaining, limit, speechReadyLayout)
+                    : null;
+                cut = first ?? (remaining.length <= limit ? remaining.length : lastBoundaryIndex(remaining, limit, speechReadyLayout, true, true));
+            }
+        }
+        batches.push(remaining.slice(0, cut).trimEnd());
+        remaining = remaining.slice(cut).trimStart();
+    }
+    return batches;
 }

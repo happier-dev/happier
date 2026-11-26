@@ -44,20 +44,30 @@ describe('buildClaudeSubprocessEnv', () => {
     expect(baseEnv.CLAUDE_CODE_ENTRYPOINT).toBe('sdk-ts');
   });
 
-  it('preserves the runner’s session bus address while filtering unrelated inherited variables', () => {
+  it('preserves user session and cache defaults while filtering unrelated inherited variables', () => {
     const baseEnv = {
       DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/1000/bus',
       XDG_RUNTIME_DIR: '/run/user/1000',
+      XDG_CACHE_HOME: '/user/cache',
       PLAYWRIGHT_BROWSERS_PATH: '/ambient/cache',
     };
 
-    expect(buildClaudeSubprocessEnv({ baseEnv })).toEqual({
-      DBUS_SESSION_BUS_ADDRESS: baseEnv.DBUS_SESSION_BUS_ADDRESS,
-      XDG_RUNTIME_DIR: baseEnv.XDG_RUNTIME_DIR,
-    });
+    expect(buildClaudeSubprocessEnv({ baseEnv: { ...baseEnv, PRIVATE_VALUE: 'private' } })).toEqual(baseEnv);
     expect(buildClaudeSubprocessEnv({
-      baseEnv: { ...baseEnv, HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON: '["PLAYWRIGHT_BROWSERS_PATH"]' },
-    })).toEqual(baseEnv);
+      baseEnv: { ...baseEnv, EXTRA_TOOL_SETTING: 'selected', HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON: '["EXTRA_TOOL_SETTING"]' },
+      envOverlay: { PLAYWRIGHT_BROWSERS_PATH: '/profile/cache' },
+    })).toEqual({ ...baseEnv, EXTRA_TOOL_SETTING: 'selected', PLAYWRIGHT_BROWSERS_PATH: '/profile/cache' });
+  });
+
+  it('keeps refresh secrets out of a Windows child even when selected by the daemon', () => {
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+    expect(buildClaudeSubprocessEnv({
+      baseEnv: {
+        Path: 'C:\\Tools',
+        Claude_Code_Oauth_Refresh_Token: 'private',
+        HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON: '["CLAUDE_CODE_OAUTH_REFRESH_TOKEN"]',
+      },
+    })).toEqual({ Path: 'C:\\Tools' });
   });
 
   it('preserves only Claude\'s exact external sandbox assertion from the runner environment', () => {

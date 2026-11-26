@@ -66,11 +66,11 @@ From Discarded messages you can:
 
 Go to **Settings → Session → Message sending** and pick what happens when you send while the agent is working:
 
-- **Add it to the current turn (default):** the agent reads your message right away and keeps working, like typing into its own terminal. If the agent cannot take a message mid-turn, for example because the session does not support steering, the message waits in Pending until the turn ends and its row shows that it is waiting.
-- **Wait until the turn ends:** the message stays in Pending, where you can edit, reorder, or remove it, and is sent when the turn finishes. Use **Steer now** on a row to add one message to the turn anyway.
-- **Stop the turn and send:** Happier stops the current turn, then sends your message.
+- **Steer into the current turn (default):** the agent reads your message right away and keeps working, like typing into its own terminal. If the agent cannot take a message mid-turn, for example because the session does not support steering, the message waits in Pending until the turn ends and its row shows that it is waiting.
+- **Queue until the turn ends:** the message stays in Pending, where you can edit, reorder, or remove it, and is sent when the turn finishes. Use **Steer now** on a row to add one message to the turn anyway.
+- **Interrupt and send:** Happier stops the current turn, then sends your message.
 
-Every message is saved to Pending first, so it is not lost if the agent goes offline or is not ready yet. With **Add it to the current turn**, a message may appear in Pending for a moment before the agent picks it up.
+Every message is saved to Pending first, so it is not lost if the agent goes offline or is not ready yet. With **Steer into the current turn**, a message may appear in Pending for a moment before the agent picks it up.
 
 For a single message you can override the setting from the send button's menu (long-press or right-click): **Steer now**, **Queue**, or **Send now (interrupt)**.
 

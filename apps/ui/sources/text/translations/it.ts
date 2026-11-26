@@ -6434,7 +6434,7 @@ export const it: TranslationStructure = {
 	          waitingForRuntimeActivityNotice: 'In attesa che termini l’attività del runtime',
 	          runtimeActivityUnknownNotice: 'In attesa dello stato di attività del runtime',
 	          waitingForRuntimeNotice: 'In attesa che il runtime si riconnetta',
-	          steerUnavailableWaitingForTurnNotice: 'Non può unirsi a questo turno ora · verrà inviato alla fine',
+	          steerUnavailableWaitingForTurnNotice: 'Non può essere inserito in questo turno ora · verrà inviato alla fine',
 	          nonSteerableNotice: "Il turno corrente non può accettare inserimenti dopo questo cambio di modalità. Verrà eseguito dopo, oppure usa Invia ora per interrompere.",
 	          steerBlockedTerminalDraftNotice: 'In attesa: una bozza nel compositore del terminale blocca la consegna. Cancellala nel terminale o interrompi il turno.',
 	          clearTerminalComposer: {
@@ -8920,11 +8920,11 @@ settingsSession: {
         title: "Invio messaggi",
         footer: 'Scegli cosa succede quando invii un messaggio mentre l’agente lavora.',
         busySend: {
-          addToTurnTitle: 'Aggiungilo al turno corrente',
+          addToTurnTitle: 'Inserisci nel turno corrente',
           addToTurnSubtitle: 'L’agente lo legge subito e continua a lavorare, come scrivere nel suo terminale. Se non può accettarlo a metà turno, il messaggio attende in In sospeso fino alla fine del turno.',
-          waitForTurnTitle: 'Attendi la fine del turno',
+          waitForTurnTitle: 'Accoda fino alla fine del turno',
           waitForTurnSubtitle: 'Tiene il messaggio in In sospeso, dove puoi modificarlo o riordinarlo, e lo invia a fine turno.',
-          interruptTitle: 'Ferma il turno e invia',
+          interruptTitle: 'Interrompi e invia',
           interruptSubtitle: 'Ferma ciò che l’agente sta facendo e invia subito il messaggio.',
         },
         inactiveSessionsTitle: 'Sessioni inattive',

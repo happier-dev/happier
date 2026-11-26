@@ -147,6 +147,7 @@ import {
     type ServerAccountScope,
 } from './domains/scope/serverAccountScope';
 import { getPendingQueueWakeResumeOptions } from './domains/pending/pendingQueueWake';
+import { hasUncommittedLocalOutboundProjection } from './store/domains/pending';
 import {
     areAccountSettingsScopesEqual,
     createAccountSettingsScope,
@@ -3790,6 +3791,18 @@ class Sync {
             outboxScope,
             isOutboxScopeCurrent: ownerContext.isCurrent,
         });
+        this.requestTranscriptReconciliationForUncommittedLocalOutbound(sessionId, 'pending_snapshot');
+    }
+
+    private requestTranscriptReconciliationForUncommittedLocalOutbound(
+        sessionId: string,
+        source: 'pending_snapshot' | 'socket_pending_changed',
+    ): void {
+        if (!hasUncommittedLocalOutboundProjection(storage.getState(), sessionId)) return;
+        syncReliabilityTelemetry.record('sync.pending.localOutboundTranscriptReconciliationRequested', {
+            source,
+        });
+        this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
     }
 
     private rearmPendingOutboxForActiveScope = (): Promise<void> => {
@@ -8273,6 +8286,10 @@ class Sync {
               },
               applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages),
                 onSessionVisible: (sessionId) => this.onSessionVisible(sessionId),
+              onPendingQueueSettled: (sessionId) => this.requestTranscriptReconciliationForUncommittedLocalOutbound(
+                  sessionId,
+                  'socket_pending_changed',
+              ),
                 isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
                 getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
               markSessionMaterializedMaxSeq: (sessionId, seq) => this.markSessionMaterializedMaxSeq(sessionId, seq),
