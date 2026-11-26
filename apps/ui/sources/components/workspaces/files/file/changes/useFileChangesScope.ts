@@ -22,14 +22,15 @@ export function useFileChangesScope(params: Readonly<{
     view?: FileChangesScopeView;
     onChangesScopeChange: (scope: FileChangesScope) => void;
     initialChanges?: SessionScmReviewComparison;
+    readOnly?: boolean;
     latestTurnId?: string | null;
     knownComparison?: CaptureParams['knownComparison'];
     refreshLiveDiff?: () => void;
     filePath?: string;
 }>) {
     const selection = React.useMemo(() => resolveFileChangesScope({ storedScope: params.view?.changesScope, initialChanges: params.initialChanges,
-        sessionId: params.host.sessionId, latestTurnId: params.latestTurnId }),
-    [params.view?.changesScope, params.initialChanges, params.host.sessionId, params.latestTurnId]);
+        sessionId: params.host.sessionId, latestTurnId: params.latestTurnId, readOnly: params.readOnly }),
+    [params.view?.changesScope, params.initialChanges, params.host.sessionId, params.latestTurnId, params.readOnly]);
     const { current, selector, turnId } = selection;
     const options = React.useMemo(() => listFilesComparisonScopeOptions({ showTurnViewToggle: true,
         showTurnAgentReportedViewToggle: false, showTurnCheckpointViewToggle: false, showSessionViewToggle: true },
@@ -48,7 +49,7 @@ export function useFileChangesScope(params: Readonly<{
         else params.refreshLiveDiff?.();
     }, [selection.capture, params.refreshLiveDiff, captured.retry]);
     const live = !selection.capture;
-    return { options, current, setScope, selector, turnId, comparison: live ? null : captured.comparison,
+    return { options, current, setScope, selector, turnId, live, readOnly: selection.readOnly, comparison: live ? null : captured.comparison,
         loading: live ? false : captured.loading, error: live ? null : captured.error,
         refresh, refreshAfterAction: refresh };
 }

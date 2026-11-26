@@ -28,6 +28,10 @@ export const registeredWorkspaceRoutes: Readonly<Record<string, WorkspaceRouteRe
         moduleKey: './(app)/personalize.tsx', destinationId: 'personalize',
         catalogEntry: { titleKey: 'personalize.flowTitle', icon: 'gear', visibility: 'hidden' },
     },
+    'files/captured': {
+        moduleKey: './(app)/files/captured.tsx', destinationId: 'captured-file',
+        catalogEntry: { titleKey: 'files.pane.page.changes', icon: 'file-text', visibility: 'hidden' },
+    },
     'bot-template': {
         moduleKey: './(app)/bot-template.tsx', destinationId: 'bot-template',
         catalogEntry: { titleKey: 'botTemplates.title', icon: 'file-text', visibility: 'hidden' },

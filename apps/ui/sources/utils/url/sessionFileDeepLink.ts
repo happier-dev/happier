@@ -4,6 +4,8 @@ import { resolveProjectCockpitRouteFromPathname, resolveProjectRoutePathForSurfa
 import { WorkspaceFileOpenInputSchema, type WorkspaceFileOpenInput } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import { fileChangesComparisonOfScope } from '@/components/workspaces/files/file/changes/fileChangesScope';
 import { serializeScmReviewTarget } from './scmReviewTargetUrl';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 type ExpoLocalSearchParams = Readonly<Record<string, unknown>>;
 
@@ -28,6 +30,21 @@ function firstString(value: unknown): string | null {
 }
 
 export type WorkspaceFileLinkView = Readonly<Pick<WorkspaceFileOpenInput, 'view' | 'blame' | 'rootPath'> & { openAs?: 'preview' | 'pinned' }>;
+
+export type CapturedWorkspaceFileTarget = Readonly<{
+    scope: WorkspaceScopeBase;
+    path: string;
+    comparison: SessionScmReviewComparison;
+    comparisonSessionId?: string;
+}>;
+
+/** Machine-owned evidence has a File page even when no Session or Project owns the checkout. */
+export function buildCapturedWorkspaceFileLink(input: CapturedWorkspaceFileTarget): string {
+    const query = new URLSearchParams({ serverId: input.scope.serverId, machineId: input.scope.machineId,
+        rootPath: input.scope.rootPath, path: input.path, fileView: 'changes',
+        ...serializeScmReviewTarget({ comparison: input.comparison, evidenceSessionId: input.comparisonSessionId }) });
+    return `/files/captured?${query}`;
+}
 
 /** URL launch fields share the Action's view validator; unknown intent stays absent. */
 export function readWorkspaceFileLinkView(params: unknown): WorkspaceFileLinkView {

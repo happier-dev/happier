@@ -24,6 +24,7 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { Text } from '@/components/ui/text/Text';
 import { useCheckoutReachability, describeCheckoutUnreachable } from '@/components/workspaces/reachability/checkoutReachabilityModel';
 import { requestActiveReviewFileForComparison } from '@/components/workspaces/scm/review/activeReviewFile';
+import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import { Modal } from '@/modal';
 import { useScmReviewLimits } from '@/scm/review/useScmReviewLimits';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -190,6 +191,12 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
         if (props.onOpenFile) props.onOpenFile(path);
         else requestActiveReviewFileForComparison(identity, path, comparison);
     }, [comparison, identity, props.onOpenFile]);
+    const fileOpener = useWorkspaceFileOpener();
+    const openPhoneFile = React.useCallback((path: string) => {
+        if (props.onOpenFile) props.onOpenFile(path);
+        else void fileOpener.openCaptured({ scope: workspaceScope, path, comparison,
+            ...(sessionId ? { comparisonSessionId: sessionId } : {}) });
+    }, [comparison, fileOpener, props.onOpenFile, sessionId, workspaceScope]);
     const selectView = React.useCallback((view: SessionScmReviewView) => {
         if (view !== 'commits') props.onSelectView(view);
     }, [props.onSelectView]);
@@ -210,11 +217,13 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
             comparisonChrome={props.renderFileNotes ? { ...chrome, renderFileNotes: props.renderFileNotes } : chrome}
             host={host} comparisonSessionId={sessionId} serverId={serverId}
             workspaceScope={workspaceScope} activeReviewFile={activeReviewFile} marks={marks}
+            onOpenFile={openPhoneFile}
             reviewComments={props.comments}
             {...limits} page={index.page} onLoadMore={index.loadMore} loadingMore={index.loading} error={index.error}
             onRefresh={index.retry} onUpsertReviewCommentDraft={saveGutterComment} onReviewCommentError={reportCommentError} /> : null}
         renderWalkthrough={(context) => <ReviewChangesWalkthrough context={context} capture={capture} comparison={comparison}
-            scopeLabel={scopeLabel} serverId={serverId} machine={machine} onOpenFile={openFile} />} /></View>;
+            scopeLabel={scopeLabel} serverId={serverId} machine={machine}
+            onOpenFile={context.layout === 'phone' ? openPhoneFile : openFile} />} /></View>;
 }
 
 type ReviewChangesWalkthroughProps = Readonly<{

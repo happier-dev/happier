@@ -27,13 +27,15 @@ export function resolveFileChangesScope(input: Readonly<{
     initialChanges?: SessionScmReviewComparison;
     sessionId?: string | null;
     latestTurnId?: string | null;
+    readOnly?: boolean;
 }>) {
-    const current = readFileChangesScope(input.storedScope) ?? fileChangesScopeOfComparison(input.initialChanges)
+    const current = (input.readOnly ? null : readFileChangesScope(input.storedScope)) ?? fileChangesScopeOfComparison(input.initialChanges)
         ?? (input.sessionId ? { kind: 'session' as const } : { kind: 'workingTree' as const });
     const openingScope = fileChangesScopeOfComparison(input.initialChanges);
-    const selector = openingScope && JSON.stringify(openingScope) === JSON.stringify(current)
+    const selector = input.readOnly && input.initialChanges ? input.initialChanges : openingScope && JSON.stringify(openingScope) === JSON.stringify(current)
         ? input.initialChanges! : fileChangesComparisonOfScope(current);
     const turnId = current.kind === 'turn' ? current.turnId
         : openingScope?.kind === 'turn' ? openingScope.turnId : input.latestTurnId ?? null;
-    return { current, selector, capture: current.kind !== 'workingTree', turnId };
+    const capture = current.kind !== 'workingTree' || Boolean(selector.comparisonId);
+    return { current, selector, capture, readOnly: input.readOnly === true || (current.kind === 'workingTree' && capture), turnId };
 }

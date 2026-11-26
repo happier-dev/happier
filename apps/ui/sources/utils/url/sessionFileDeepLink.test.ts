@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionFileDeepLink, buildWorkspaceFileLink, readWorkspaceFileLinkView, parseSearchFileTarget, parseSessionFileDeepLinkAnchor } from './sessionFileDeepLink';
+import { buildCapturedWorkspaceFileLink, buildSessionFileDeepLink, buildWorkspaceFileLink, readWorkspaceFileLinkView, parseSearchFileTarget, parseSessionFileDeepLinkAnchor } from './sessionFileDeepLink';
+import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
 describe('sessionFileDeepLink', () => {
+    it('reloads a captured file without inventing a Session or Project and preserves its exact selector', () => {
+        const comparison = { kind: 'workingTree' as const, comparisonId: 'captured-original', savedResult: { cwd: '/unprojected', resultId: 'result-original' } };
+        const href = buildCapturedWorkspaceFileLink({ scope: { serverId: 'home', machineId: 'machine', rootPath: '/unprojected' }, path: 'src/a.ts', comparison });
+        const url = new URL(href, 'https://happier.test');
+        expect(url.pathname).toBe('/files/captured');
+        expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId: 'home', machineId: 'machine', rootPath: '/unprojected', path: 'src/a.ts' });
+        expect(parseSessionPaneUrlState({ ...Object.fromEntries(url.searchParams), details: 'file' })?.details)
+            .toMatchObject({ kind: 'file', path: 'src/a.ts', changes: comparison, view: 'changes' });
+        expect(href).not.toMatch(/sessionId|workspaceRefId/);
+    });
     it('retains a captured file base when a copied link is pasted into Search', () => {
         const href = buildWorkspaceFileLink({ target: { kind: 'session', sessionId: 'nested-session' }, path: 'nested/a.ts', rootPath: '/repo' });
         expect(parseSearchFileTarget(href)).toMatchObject({ path: 'nested/a.ts', rootPath: '/repo' });

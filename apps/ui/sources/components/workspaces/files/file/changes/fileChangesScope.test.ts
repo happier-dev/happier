@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { resolveFileChangesScope } from './fileChangesScope';
 
 describe('File Changes selection policy', () => {
+    it('keeps a read-only branch capture exact despite a retained live tab preference', () => {
+        const initialChanges = { kind: 'branch' as const, head: 'feature', base: 'main', comparisonId: 'captured-branch' };
+        expect(resolveFileChangesScope({ initialChanges, readOnly: true, storedScope: { kind: 'workingTree' } }))
+            .toMatchObject({ selector: initialChanges, capture: true, readOnly: true });
+    });
     it('uses session/project defaults and preserves an explicitly opened turn', () => {
         expect(resolveFileChangesScope({}).current).toEqual({ kind: 'workingTree' });
         expect(resolveFileChangesScope({ sessionId: 's' }).current).toEqual({ kind: 'session' });

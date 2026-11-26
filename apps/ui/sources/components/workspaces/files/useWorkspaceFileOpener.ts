@@ -19,6 +19,7 @@ import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPan
 import { areSessionAddressesEqual, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveFileDetailsRootPath, workspaceFileDetailsTabKey } from '@/components/appShell/panes/details/fileDetailsTab';
+import { buildCapturedWorkspaceFileLink, type CapturedWorkspaceFileTarget } from '@/utils/url/sessionFileDeepLink';
 
 export type WorkspaceFileOpenTarget = WorkspaceFileTarget & Readonly<{ path: string }>;
 export type WorkspaceFileOpenOrigin = Readonly<{
@@ -124,5 +125,12 @@ export function useWorkspaceFileOpener() {
         // Search from covering that typed refusal with a second generic error.
         return !result.ok && isActionTurnedOffErrorCode(result.errorCode) ? null : resolveWorkspaceUiActionOutcome(result);
     }, [canOpen, focusReturnOwner, instanceKey, openApproval, openInDetails, paneDispatch, paneRegion, phone]);
-    return React.useMemo(() => ({ open, canOpen }), [open, canOpen]);
+    const openCaptured = React.useCallback(async (target: CapturedWorkspaceFileTarget): Promise<boolean | null> => {
+        if (!canOpen) return false;
+        const result = await executeWorkspaceUiAction({ actionId: 'workspace.tabs.open', input: {
+            href: buildCapturedWorkspaceFileLink(target), mode: 'newTab',
+        } }, openApproval);
+        return !result.ok && isActionTurnedOffErrorCode(result.errorCode) ? null : resolveWorkspaceUiActionOutcome(result);
+    }, [canOpen, openApproval]);
+    return React.useMemo(() => ({ open, openCaptured, canOpen }), [open, openCaptured, canOpen]);
 }

@@ -200,6 +200,8 @@ type ChangedFilesReviewProps = {
         /** `facts.viewed`: the source's own Viewed count (GitHub), drawn beside the header's other coverage facts. */
         renderHeader: (coverage: ChangedFilesReviewCoverage, facts?: ChangedFilesReviewHeaderFacts) => React.ReactNode;
         indexPlacement: 'rail' | 'stream' | 'phone';
+        /** A captured file's phone destination; other layouts keep the review stream. */
+        onPhoneFilePress?: (path: string) => void;
         /** Where the files live, for the rail's tree (no listing is read). */
         rootPath?: string | null;
         /**
@@ -1838,7 +1840,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                         totalFiles={coverage.fileCount} listFooter={pagingFooter}
                         findModel={reviewFind}
                         rootPath={comparisonChrome?.rootPath ?? snapshot?.repo.rootPath ?? null}
-                        commentCountByPath={commentCountByPath} onFocusPath={focusFile} />
+                        commentCountByPath={commentCountByPath} onFocusPath={comparisonChrome?.onPhoneFilePress ?? focusFile} />
                 </Animated.View> : null}
             </View>
             {/* Find floats over the review body, under the comparison header (Find lab F1d), never behind it. */}

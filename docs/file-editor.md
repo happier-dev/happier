@@ -45,6 +45,13 @@ Review hunks come from the Protocol hunk engine; Keep/Discard and their content
 keys belong to the review owner. Diagnostics and blame use named decoration
 layers on the same handle. They do not create another editor or buffer store.
 
+In 0.3 development, a phone can also open a captured Review file as its own
+File page without a Session or Project. The shared file opener carries the
+Machine, repository root and exact comparison reference into the retained File
+viewer. Reload reads that same capture. This evidence-only page offers Changes
+and its reading controls; it does not read, edit, restore or share the current
+working file. Desktop Review keeps its changes stream.
+
 ### Markdown mode availability
 
 Reading Markdown uses the File header's Preview / Source choices. Editing uses

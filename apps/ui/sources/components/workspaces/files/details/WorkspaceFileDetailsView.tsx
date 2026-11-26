@@ -196,6 +196,8 @@ export type WorkspaceFileDetailsViewProps = Readonly<{
     initialView?: WorkspaceFileLinkView;
     /** The comparison the rendered tab was opened on (its link or opener). */
     initialChanges?: SessionScmReviewComparison;
+    /** A captured comparison page reads retained evidence without opening the working copy. */
+    evidenceOnly?: boolean;
     deepLinkAnchor?: WorkspaceFileDeepLinkAnchor | null;
     findSeed?: FileFindSeed | null;
     onFindSeedConsumed?: () => void;
@@ -642,6 +644,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const patchDetailsTabState = pane.patchDetailsTabState;
     const filePath = props.filePath;
     const scope = props.scope;
+    const evidenceOnly = props.evidenceOnly === true;
     const findSurfaceId = `file:${props.scopeId}:${filePath}`;
     const findRuntime = useFindSurfaceRuntime();
     const findFocusRoot = React.useRef<View | null>(null);
@@ -672,7 +675,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     }, [filePath, patchFileView]);
     const rememberReadingLine = React.useCallback((scrollLine: number) => patchFileView({ scrollLine }), [patchFileView]);
     const readingMemory = React.useMemo(() => ({ identity: `${props.scopeId}:${tabKey}`, line: fileView.scrollLine, active: isActive, remember: rememberReadingLine }), [props.scopeId, tabKey, fileView.scrollLine, isActive, rememberReadingLine]);
-    const persistedDraft = readWorkspaceFileEditorDraft(paneFacts?.tabState, editorAccountScope?.accountId ?? null);
+    const persistedDraft = evidenceOnly ? null : readWorkspaceFileEditorDraft(paneFacts?.tabState, editorAccountScope?.accountId ?? null);
     // Mirrors the editor state (declared below, after the content it needs) for the loader's diff request.
     const [diffWhileEditing, setDiffWhileEditing] = React.useState(persistedDraft?.isEditingFile === true);
     const persistDraft = React.useCallback((draft: WorkspaceFileDetailsPersistedDraft | null, options?: Readonly<{ persist?: boolean }>) => {
@@ -694,7 +697,8 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
 
     const scmCommitStrategy = useSetting('scmCommitStrategy');
     const scmDefaultDiffModeByBackend = useSetting('scmDefaultDiffModeByBackend');
-    const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
+    const scmWriteFeatureEnabled = useFeatureEnabled('scm.writeOperations');
+    const scmWriteEnabled = scmWriteFeatureEnabled && !evidenceOnly;
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
     const fileEditorFeatureEnabled = useFeatureEnabled('files.editor');
     const showLineNumbers = useSetting('showLineNumbers');
@@ -724,7 +728,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const snapshotSignature = React.useMemo(() => scmSnapshot ? buildScmFileDiffSnapshotSignature(scmSnapshot, fileEntry) : null, [scmSnapshot, fileEntry]);
 
     const [displayMode, setDisplayMode] = React.useState<FileDisplayMode>(() => (
-        fileView.mode === 'edit' || (fileView.mode === undefined && persistedDraft?.isEditingFile) ? 'file' : fileView.mode ?? (deepLinkAnchor?.source === 'file' ? 'file'
+        evidenceOnly ? 'diff' : fileView.mode === 'edit' || (fileView.mode === undefined && persistedDraft?.isEditingFile) ? 'file' : fileView.mode ?? (deepLinkAnchor?.source === 'file' ? 'file'
             : fileEntry ? 'diff' : hasRenderedTextPreview(resolveFileViewerKind({ path: filePath }).kind) ? 'markdown' : 'file')
     ));
     const requestedDisplayMode = fileView.mode ?? null;
@@ -791,7 +795,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         includeDiff: (displayMode === 'diff' && (scmSnapshot == null || fileEntry != null)) || (diffWhileEditing && fileEntry != null),
         includeFile: displayMode !== 'diff',
         snapshotSignature,
-        isActive,
+        isActive: isActive && !evidenceOnly,
         refreshFingerprint: `${lineSelectionFingerprint ?? 'none'}:${scmSnapshot?.fetchedAt ?? 'none'}`,
     });
     const recentActivation = React.useRef<string | null>(null);
@@ -968,19 +972,19 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     }, [fileView.mode, patchFileView]);
     const editorState = useWorkspaceFileEditorState({
         scope: scope ?? { serverId: 'unknown', machineId: 'unknown', rootPath: '/' },
-        accountId: editorAccountScope?.accountId ?? null, filePath, displayMode, active: isActive && destinationFocused,
+        accountId: editorAccountScope?.accountId ?? null, filePath, displayMode, active: isActive && destinationFocused && !evidenceOnly,
         fileText: fileContent?.isBinary || fileContent?.partial ? null : (fileContent?.content ?? null),
         fileHash: fileContent?.isBinary || fileContent?.partial ? null : (fileContent?.contentHash ?? null),
         encoding: fileContent?.encoding, unreachable: checkoutReachability.unreachable,
         fileWriteSupported, setFileWriteSupported,
-        fileEditorFeatureEnabled: fileEditorFeatureEnabled === true && !fileContent?.partial,
+        fileEditorFeatureEnabled: fileEditorFeatureEnabled === true && !fileContent?.partial && !evidenceOnly,
         filesEditorWebMonacoEnabled: filesEditorWebMonacoEnabled === true,
         filesEditorNativeCodeMirrorEnabled: filesEditorNativeCodeMirrorEnabled === true,
         filesEditorAutoSave: filesEditorAutoSave === true,
         filesEditorFormatOnSave,
         filesEditorChangeDebounceMs: typeof filesEditorChangeDebounceMs === 'number' ? filesEditorChangeDebounceMs : 0,
         mountedRef, refreshAll, readFileForSave, publishSavedFile, persistedDraft: persistedDraft ?? null, persistDraft,
-        initialEditing: fileView.mode === 'edit', onStopEditing: stopEditing,
+        initialEditing: !evidenceOnly && fileView.mode === 'edit', onStopEditing: stopEditing,
         panePersistenceFailed: pane.persistenceFailed, agentName: editorAttribution.agentName,
         requestApproval: approval.requestApproval,
     });
@@ -1059,7 +1063,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const isMarkdownFile = fileViewer.kind === 'markdown';
 
     React.useEffect(() => {
-        setDisplayMode(resolveFileDetailsDisplayMode({
+        setDisplayMode(evidenceOnly ? 'diff' : resolveFileDetailsDisplayMode({
             requestedMode: requestedDisplayMode,
             persistedEditing: isEditingFile || persistedDraft?.isEditingFile === true,
             deepLinkSource: deepLinkAnchor?.source ?? null,
@@ -1069,7 +1073,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
             knownChanged: fileEntry !== null,
             previewKind,
         }));
-    }, [requestedDisplayMode, deepLinkAnchor?.source, fileContent, hasRenderableDiff, isEditingFile, previewAvailable, persistedDraft?.isEditingFile, fileEntry, previewKind]);
+    }, [evidenceOnly, requestedDisplayMode, deepLinkAnchor?.source, fileContent, hasRenderableDiff, isEditingFile, previewAvailable, persistedDraft?.isEditingFile, fileEntry, previewKind]);
 
     const readBodyRef = React.useRef<View | null>(null);
     const changesBodyRef = React.useRef<View | null>(null);
@@ -1106,14 +1110,17 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const headerModelWriteSupported = fileWriteSupported || persistedDraft?.isEditingFile === true;
     // The model is a function of these facts alone; its modes feed the header and the view commands, which keep
     // one identity while the facts hold, so a render that changes none of them redraws neither.
-    const headerModel = React.useMemo(() => resolveFilePageHeaderModel({
-        kind: headerModelKind,
-        hasRenderableDiff: changesOffered, deleted: headerModelDeleted,
-        partial: headerModelPartial,
-        hasText: headerModelHasText,
-        writeSupported: headerModelWriteSupported,
-        editorAvailable: editorSurfaceEnabled,
-    }), [headerModelKind, changesOffered, headerModelDeleted, headerModelPartial, headerModelHasText, headerModelWriteSupported, editorSurfaceEnabled]);
+    const headerModel = React.useMemo(() => {
+        const model = resolveFilePageHeaderModel({
+            kind: headerModelKind,
+            hasRenderableDiff: changesOffered, deleted: headerModelDeleted,
+            partial: headerModelPartial,
+            hasText: headerModelHasText,
+            writeSupported: headerModelWriteSupported,
+            editorAvailable: editorSurfaceEnabled,
+        });
+        return evidenceOnly ? { ...model, modes: model.modes.filter(mode => mode.id === 'changes') } : model;
+    }, [evidenceOnly, headerModelKind, changesOffered, headerModelDeleted, headerModelPartial, headerModelHasText, headerModelWriteSupported, editorSurfaceEnabled]);
     const fileViewActionOwner = React.useRef<FileViewActionOwner | null>(null);
     const presentedDetailsFilePath = paneFacts?.presentedFilePath ?? null;
     const isDetailsFileSurface = props.openableContentViewer !== undefined || presentation === 'panel';
@@ -1127,10 +1134,11 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         mode: isEditorSelected ? 'edit' : headerModel.modes.find(option => option.displayMode === displayMode)?.id ?? 'view',
         changesScope: fileView.changesScope, blame: fileView.blame ?? false,
         availableModes: [...headerModel.modes.map(option => option.id), ...(headerModel.editUnavailableReason === null ? ['edit' as const] : [])],
-        blameAvailable: scmSnapshot?.capabilities?.readBlame === true,
-        changesScopeAvailable: scope !== null,
+        blameAvailable: !evidenceOnly && scmSnapshot?.capabilities?.readBlame === true,
+        changesScopeAvailable: !evidenceOnly && scope !== null,
         get search() { return codeIntelligence.search; },
         set: async patch => {
+            if (evidenceOnly && ((patch.mode !== undefined && patch.mode !== 'changes') || patch.changesScope !== undefined || patch.blame === true)) return false;
             if (patch.mode === 'edit') handleStartEditingFile();
             else if (patch.mode) {
                 const option = headerModel.modes.find(option => option.id === patch.mode);
@@ -1348,7 +1356,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const fileDetails = useFilePageDetailsActions({ path: filePath, kind: fileViewer.kind, kindLabel: t(fileViewer.labelKey as never) as string, language, content: fileContent });
     const effectiveWrapLines = fileView.wrap ?? wrapLinesInDiffs;
     const isBinaryContent = fileContent?.isBinary === true;
-    const offerWholeTurnRollback = useFileChangesRollback(isActive
+    const offerWholeTurnRollback = useFileChangesRollback(isActive && !evidenceOnly
         && (fileView.changesScope?.kind === 'turn' || (!fileView.changesScope && initialChanges?.kind === 'turnCheckpoint'))
         ? sessionAddress : null, scope.rootPath);
     // P5's Changes owner, once per page: the Changes body draws it, and its comparison arm is the only
@@ -1358,6 +1366,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         liveDiff: diffContent, refreshLiveDiff: onRefresh, view: fileView, onChangesScopeChange,
         liveDiffLoading: isDiffLoading || isLoading, liveDiffError: error,
         initialChanges,
+        readOnly: evidenceOnly,
         liveEntry: fileEntry,
         contentHash: fileContent?.contentHash ?? null,
         active: isActive && (displayMode === 'diff' || Boolean(fileEntry)),
@@ -1425,7 +1434,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         platform: Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : desktopHostKind() === 'tauri' ? 'tauri' : 'web',
         partial: Boolean(fileContent?.partial),
         blame: fileView.blame === true,
-        readBlame: scmSnapshot?.capabilities?.readBlame === true,
+        readBlame: !evidenceOnly && scmSnapshot?.capabilities?.readBlame === true,
         toggleWrap: !isBinaryContent && displayMode !== 'markdown' ? () => patchFileView({ wrap: !effectiveWrapLines }) : undefined,
         showInfo: fileDetails.showInfo,
         chooseBackground: fileDetails.chooseBackground,
@@ -1436,17 +1445,20 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         // Only a file the shown scope changed has Changes to open (the same predicate as Discard all changes).
         openChanges: changesReview.changed ? props.onOpenChanges : undefined,
         discardEdits: isEditingFile && editorDirty ? cancelEditingFile : undefined,
-        toggleBlame: scmSnapshot?.capabilities?.readBlame === true ? toggleBlame : undefined,
+        toggleBlame: !evidenceOnly && scmSnapshot?.capabilities?.readBlame === true ? toggleBlame : undefined,
         changes: fileEntry?.kind === 'deleted' ? undefined : changesReview.menuChanges,
         copyPath: share.copyPath ? intent => share.copyPath?.({ absolute: intent?.altKey === true }) : undefined,
         copyAbsolutePath: share.copyAbsolutePath,
-        copyLink: share.copyLink,
-        mentionInComposer: share.mentionInComposer,
-        saveAsArtifact: share.saveAsArtifact,
-        download: fileEntry?.kind !== 'deleted' ? () => share.download() : undefined,
-        shareFile: share.shareFile,
-        openInDefaultApp: share.openInDefaultApp,
-        originalFile: share.originalFile,
+        // These actions operate on the current file; a captured page only holds its comparison evidence.
+        ...(!evidenceOnly ? {
+            copyLink: share.copyLink,
+            mentionInComposer: share.mentionInComposer,
+            saveAsArtifact: share.saveAsArtifact,
+            download: fileEntry?.kind !== 'deleted' ? () => share.download() : undefined,
+            shareFile: share.shareFile,
+            openInDefaultApp: share.openInDefaultApp,
+            originalFile: share.originalFile,
+        } : {}),
         commands: codeIntelligence.menuCommands,
     };
     const menuActions = useRetainedMenuActions(buildFilePageMenuActions(menuContext, phonePage ? 'phone' : 'page',
@@ -1502,7 +1514,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
 
     const previewTooLarge = error === t('files.fileTooLargeToPreview');
     // Captured Changes owns its loading/error states; current working-tree reads serve other views.
-    const showingCapturedChanges = displayMode === 'diff' && changesReview.changesScope.kind !== 'workingTree';
+    const showingCapturedChanges = displayMode === 'diff' && !changesReview.live;
     const fatalError = !showingCapturedChanges && Boolean(error) && !previewTooLarge && !diffContent && !fileContent;
 
     // One preview identity for the body and the Media stage it opens (P2 §3.3): the stage reuses these bytes.

@@ -49,6 +49,8 @@ export type FileChangesReviewParams = Readonly<{
   view?: FileChangesScopeView;
   onChangesScopeChange: (scope: FileChangesScope) => void;
   initialChanges?: SessionScmReviewComparison;
+  /** Immutable evidence pages retain their opened comparison and offer no checkout mutations. */
+  readOnly?: boolean;
   active: boolean;
   /** The Session's Agent display name, for copy that names it. */
   agentName?: string | null;
@@ -101,13 +103,14 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     view: params.view,
     onChangesScopeChange: params.onChangesScopeChange,
     initialChanges: params.initialChanges,
+    readOnly: params.readOnly,
     latestTurnId,
     filePath: resolveMachineAbsolutePath({ ...scope, requestPath: filePath, pathKind: 'workspace_entry' }),
     refreshLiveDiff: params.refreshLiveDiff,
   });
   const current = changes.current;
   const captured = changes.comparison;
-  const live = current.kind === 'workingTree';
+  const live = changes.live;
   const capturedPath = captured ? resolvePathRelativeToRoot({
     path: resolveMachineAbsolutePath({ ...scope, requestPath: filePath, pathKind: 'workspace_entry' }),
     root: captured.repository.rootPath,
@@ -197,7 +200,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     contentHash: params.contentHash ?? null,
     host,
     serverId: scope.serverId,
-    onDiscard,
+    ...(changes.readOnly ? {} : { onDiscard }),
     writeUnavailableReason: reachability.unreachable ? t('walkthrough.notice.offlineA11y') : null,
     ...(sessionId || params.getAskTargetContext ? { onAsk } : {}),
     onOutOfDate: changes.refresh,
@@ -208,6 +211,11 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
       if (cursor.path === reviewPath) return;
       const rootPath = reviewRoot;
       if (params.onOpenFile) { params.onOpenFile(cursor.path, rootPath); return; }
+      if (params.readOnly && params.initialChanges) {
+        void opener.openCaptured({ scope: reviewScope, path: cursor.path, comparison: params.initialChanges,
+          ...(sessionId ? { comparisonSessionId: sessionId } : {}) });
+        return;
+      }
       if (sessionId) void opener.open({ kind: 'session', sessionId, serverId: scope.serverId, path: cursor.path },
         { ...(rootPath ? { rootPath } : {}), view: 'changes', changesScope: current, intent: 'preview' });
       else if (workspaceRefId) void opener.open({ kind: 'project', workspaceRefId, serverId: scope.serverId,
@@ -231,7 +239,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
     filePath: reviewPath,
     selector: changes.selector,
     comparison: captured,
-    changed,
+    changed: changed && !changes.readOnly,
     expectedHash: params.contentHash ?? null,
     deleted: capturedFile?.changeKind === 'deleted',
     hasUnsavedEdits: params.hasUnsavedEdits ?? (() => false),
@@ -268,22 +276,24 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
 
   const scopeTabs = React.useMemo(() => {
     const tabs: { id: FileChangesScopeKind; label: string }[] = [];
+    if (params.readOnly) return tabs;
     if (sessionId && turnId)
       tabs.push({ id: 'turn', label: t('hunkReview.scopeTurn') });
     if (sessionId)
       tabs.push({ id: 'session', label: t('hunkReview.scopeSession') });
     tabs.push({ id: 'workingTree', label: t('hunkReview.scopeUncommitted') });
     return tabs;
-  }, [sessionId, turnId]);
+  }, [sessionId, turnId, params.readOnly]);
   const selectScope = React.useCallback(
     (id: FileChangesScopeKind) => {
+      if (params.readOnly) return;
       if (id === 'turn') {
         if (turnId) changes.setScope({ kind: 'turn', turnId });
         return;
       }
       changes.setScope({ kind: id });
     },
-    [changes.setScope, turnId],
+    [changes.setScope, turnId, params.readOnly],
   );
 
   return {

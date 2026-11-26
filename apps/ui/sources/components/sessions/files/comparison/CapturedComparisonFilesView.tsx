@@ -40,6 +40,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
     sessionId?: string;
     reviewScopeKey?: string;
     comparisonChrome?: ReviewProps['comparisonChrome'];
+    onOpenFile?: (path: string) => void;
     maxFiles: number;
     maxChangedLines: number;
     initialCollapsedPaths?: readonly string[] | null;
@@ -105,8 +106,8 @@ export function CapturedComparisonFilesView(props: Readonly<{
                 changedSinceViewedCount={facts?.changedSinceViewedCount} />);
         return { renderBarLeading: () => null,
             indexPlacement: 'stream', ...props.comparisonChrome, rootPath: props.comparison.repository.rootPath, renderFileNotes,
-            renderHeader };
-    }, [props.comparison, props.comparisonChrome, renderFileNotes, theme.colors.text.secondary]);
+            renderHeader, onPhoneFilePress: props.onOpenFile ?? props.comparisonChrome?.onPhoneFilePress };
+    }, [props.comparison, props.comparisonChrome, props.onOpenFile, renderFileNotes, theme.colors.text.secondary]);
     const readEvidence = evidence.read;
     const fetchCapturedDiff = React.useCallback<NonNullable<ReviewProps['fetchUnifiedDiffForPath']>>(async ({ path }) => {
         const response = await readEvidence(path);

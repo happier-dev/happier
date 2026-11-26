@@ -14,6 +14,32 @@ let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>> | undefin
 afterEach(async () => { await standardCleanup(); await fixture?.dispose(); });
 
 describe('captured File changes path basis', () => {
+  it('keeps a sessionless pinned working-tree file on its captured diff after the checkout changes', async () => {
+    const comparison = ScmComparisonSchema.parse({ id: 'd'.repeat(64),
+      source: { kind: 'workingTree' }, repository: { rootPath: '/unprojected' }, endpoints: {},
+      inventory: { state: 'complete', reasons: [], files: [{ path: 'a.ts', changeKind: 'modified',
+        binary: false, generated: false, lockfile: false, occurrences: [],
+        evidence: { state: 'available', unifiedDiff: '@@ -1 +1 @@\n-original\n+captured\n' } }] } });
+    fixture = await createSessionFilesViewFixture({ rootPath: '/unprojected', rpc: request =>
+      request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE
+        ? { success: true, comparison, metadata: { sourceKey: comparison.id, source: comparison.source } }
+        : undefined });
+    const currentFixture = fixture;
+    let review: FileChangesReview | undefined;
+    function Probe() {
+      review = useFileChangesReview({ scope: currentFixture.scope, filePath: 'a.ts',
+        initialChanges: { kind: 'workingTree', comparisonId: comparison.id },
+        liveDiff: '@@ -1 +1 @@\n-captured\n+newer-checkout\n',
+        refreshLiveDiff: () => {}, onChangesScopeChange: () => {}, active: true });
+      return <>{review.unifiedDiff}</>;
+    }
+    const screen = await fixture.render(<Probe />);
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('+captured'));
+    expect(screen.getTextContent()).not.toContain('newer-checkout');
+    expect(review?.comparison?.id).toBe(comparison.id);
+    expect(review?.live).toBe(false);
+    expect(review?.menuChanges.discardAll).toBeUndefined();
+  });
   it.each([
     { root: '/repo', cwd: '/repo/nested', path: 'a.ts' },
     { root: '/Users/alice/repo', cwd: '/Users/alice/repo/nested/', path: 'a.ts' },
