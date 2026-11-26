@@ -779,7 +779,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           sourceRanges: [], magicDnsEnabled: null, state: 'unknown' as const })),
       };
     });
-    let observation: MachineReachabilityObservationV1;
+    let observation: MachineReachabilityObservationV1 = observed;
     try { observation = await deps.publish(verifiedPublicSsh
       ? { ...observed, management: { ...observed.management, publicSsh: verifiedPublicSsh } }
       : status === 'saved_not_enforced'
@@ -787,19 +787,21 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           management: { ...observed.management, publicSsh: prepared.observation.management.publicSsh } }
         : observed); }
     catch (error) {
-      // Publication is not native outcome authority. Keep an already known
-      // refusal or uncertainty, and never discard confirmed setup evidence.
       if (knownFailure) return knownFailure;
-      const code = status === 'outcome_unknown' ? failureCode ?? 'outcome_unknown'
-        : 'machine_reachability_publication_unavailable';
-      return { ok: false as const, errorCode: code, error: code,
-        failureCause: projectActionFailureCauseV1(error, 'machines.reachability.publication'),
-        effectAttempted: anyNativeEffectPossible || roleMayHaveChangedMembership || metadataOutcomeUnknown
-          || currentState.metadataVersion !== prepared.state.metadataVersion,
-        ...(firewallRecovery ? { details: { status: 'recoveryRequired' as const, recovery: firewallRecovery,
-          ...(setupApplied ? { setupOutcome: 'applied' as const } : {}),
-          remedy: 'Use the independent administrator console to inspect the saved firewall state before restoring access.' } }
-          : setupApplied ? { details: { setupOutcome: 'applied' } } : {}) };
+      // An admitted Join or Leave can move Home's route. Keep its native
+      // observation in the unknown receipt even when publication fails.
+      if (!roleMayHaveChangedMembership || status !== 'outcome_unknown') {
+        const code = status === 'outcome_unknown' ? failureCode ?? 'outcome_unknown'
+          : 'machine_reachability_publication_unavailable';
+        return { ok: false as const, errorCode: code, error: code,
+          failureCause: projectActionFailureCauseV1(error, 'machines.reachability.publication'),
+          effectAttempted: anyNativeEffectPossible || roleMayHaveChangedMembership || metadataOutcomeUnknown
+            || currentState.metadataVersion !== prepared.state.metadataVersion,
+          ...(firewallRecovery ? { details: { status: 'recoveryRequired' as const, recovery: firewallRecovery,
+            ...(setupApplied ? { setupOutcome: 'applied' as const } : {}),
+            remedy: 'Use the independent administrator console to inspect the saved firewall state before restoring access.' } }
+            : setupApplied ? { details: { setupOutcome: 'applied' } } : {}) };
+      }
     }
     if (knownFailure) return knownFailure;
     return { status, machineId: deps.target.machineId, ...currentState, observation,

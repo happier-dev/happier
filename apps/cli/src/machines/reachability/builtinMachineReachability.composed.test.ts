@@ -82,7 +82,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     expect(f.hostNative.firewallStages).toEqual([]);
   });
 
-  it('publishes observed membership after the one reconnect when reviewed leave loses confirmation', async () => {
+  it.each([false, true])('keeps the unknown Leave result after reconnect (publication unavailable: %s)', async publicationUnavailable => {
     const selected = builtin(false);
     const f = await journey('external', [], {
       authoredProvider: createDockerNetworkAuthoredProvider(false, true), providerSelection: selected, builtinTailscale: true,
@@ -113,7 +113,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
           dispose() {},
         }),
         publish: async observation => {
-          if (!connected) throw new Error('Synthetic disconnected Home transport');
+          if (!connected || publicationUnavailable) throw new Error('Synthetic disconnected Home transport');
           return deps.publish(observation);
         },
       },
