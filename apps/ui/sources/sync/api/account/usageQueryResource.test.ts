@@ -11172,9 +11172,11 @@ describe('usage query Work composition', () => {
           return readLinkedWork(request);
         } : refused);
       }
-      const stopBatch = batch.subscribe(() => {}, false);
       try {
-        await expect.poll(() => batch.getSnapshot().pending).toBe('idle');
+        // Equal admissions ordinarily share the first Work answer. Refresh
+        // deliberately asks the Machine again to exercise withdrawal.
+        await batch.refresh();
+        expect(batch.getSnapshot().pending).toBe('idle');
         await expect.poll(() => scmTransport.mock.calls.length).toBe(state === 'failed' ? 2 : 3);
         expect(workSource(read(batch))?.unreadSessions).toEqual(state === 'failed' ? { failed: 1 } : { not_entitled: 1 });
         expect(read(batch).accounting?.totals).toEqual(prior.accounting?.totals);
@@ -11218,6 +11220,8 @@ describe('usage query Work composition', () => {
         const action = UsageQueryBatchResultSchema.parse(response.result).results[0]!;
         expect(action.accounting?.totals).toMatchObject(value.totals);
         if (state === 'refused') {
+          // The sibling has already acquired its own refusal. The exact
+          // Action can now reuse that settled answer.
           assertWithdrawn(action);
         } else if (recovered) {
           expect(action.work?.outcomes).toHaveLength(1);
@@ -11227,8 +11231,8 @@ describe('usage query Work composition', () => {
         } else {
           assertRetained(action, firstReadAt);
         }
-        expect(scmTransport).toHaveBeenCalledTimes(state === 'failed' ? 2 : state === 'recovered on Action' ? 3 : 4);
-      } finally { ownReplacement.resolve(); stopBatch(); }
+        expect(scmTransport).toHaveBeenCalledTimes(state === 'failed' ? 2 : state === 'recovered on wake' ? 4 : 3);
+      } finally { ownReplacement.resolve(); }
     } finally { stop(); }
   });
 
@@ -11643,6 +11647,77 @@ describe('usage query Work composition', () => {
       account.dispose();
       clock.mockRestore();
     }
+  });
+
+  it('reuses the settled page Work and its read time in an equal mounted exact Action', async () => {
+    const machineId = 'work-exact-action-machine';
+    const contribution = { ...workContribution, machineId };
+    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json({
+      ...value, contributions: [contribution],
+    }) : undefined);
+    const scope = captured.accountLifetime.scope;
+    const { sessionId, turnId } = contribution;
+    storage.getState().applySessions([createSessionFixture({ id: sessionId, active: true, serverId: scope.serverId,
+      metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' },
+    })]);
+    const firstReadAt = Date.now();
+    await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+      id: machineId, accountId: 'account-a', machine: { active: true, activeAt: firstReadAt, presenceProtocolVersion: 1 },
+    })]);
+    let now = firstReadAt;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const checkpoint = { sessionId, turnId, repositoryKey: 'repo', checkpointRef: 'checkpoint/turn',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' as const };
+    scmTransport.mockImplementation(async request => workBatch(request, {
+      status: 'partial', pullRequestsRead: true,
+      evidence: [{ ...checkpoint, pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
+        baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+      number: 1, title: 'Linked', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'open' } }],
+      branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/feature', headSha: checkpoint.commitSha } }],
+    }));
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, session: sessionId,
+      includeQuota: false, includeQuotaHistory: false, includeComparison: false, includeSessionEvidence: false,
+      includeTranscriptEvidence: false, includeWorkEvidence: true, includeCoach: false, workProjection: 'detail' });
+    const queries = [query, normalizeUsageQuery({ ...query, includeWorkEvidence: false })];
+    const page = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries }) });
+    const stop = page.subscribe(() => {}, true);
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+    const pageSlice = () => {
+      const content = page.getSnapshot().value;
+      return content && decodeUsageQueryResource(content).results.find(slice => slice.key === getUsageQueryKey(query));
+    };
+    const workDate = (slice: ReturnType<typeof pageSlice>) => slice?.sources.find(source => source.source === 'work')?.asOfMs;
+    try {
+      await expect.poll(() => [page.getSnapshot().subscription, page.getSnapshot().pending, workDate(pageSlice())])
+        .toEqual(['live', 'idle', firstReadAt]);
+      expect(scmTransport).toHaveBeenCalledTimes(1);
+      now += 500;
+      const response = await executor.execute('usage.query', { queries: [query] }, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, usageQueryReadiness: 'public_profile',
+      });
+      if (!response.ok) throw new Error(response.errorCode);
+      const action = UsageQueryBatchResultSchema.parse(response.result).results[0];
+      expect(action.key).toEqual(pageSlice()?.key);
+      expect(action.work?.outcomes).toEqual(pageSlice()?.work?.outcomes);
+      expect(action.accounting?.totals.tokens.total).toBe(pageSlice()?.accounting?.totals.tokens.total);
+      expect(action.accounting?.totals.eventCount).toBe(pageSlice()?.accounting?.totals.eventCount);
+      expect([scmTransport.mock.calls.length, workDate(action), workDate(pageSlice())])
+        .toEqual([1, firstReadAt, firstReadAt]);
+      const sameKey = await executor.execute('usage.query', { queries }, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, usageQueryReadiness: 'public_profile',
+      });
+      if (!sameKey.ok) throw new Error(sameKey.errorCode);
+      const sameSlice = UsageQueryBatchResultSchema.parse(sameKey.result).results.find(slice => slice.key === getUsageQueryKey(query));
+      expect([scmTransport.mock.calls.length, workDate(sameSlice)]).toEqual([1, firstReadAt]);
+      const unequal = await executor.execute('usage.query', {
+        queries: [normalizeUsageQuery({ ...query, period: { startMs: 0, endMs: 1100 } })],
+      }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, usageQueryReadiness: 'public_profile' });
+      if (!unequal.ok) throw new Error(unequal.errorCode);
+      const unequalSlice = UsageQueryBatchResultSchema.parse(unequal.result).results[0];
+      expect([scmTransport.mock.calls.length, workDate(unequalSlice)]).toEqual([2, firstReadAt + 500]);
+    } finally { stop(); account.dispose(); clock.mockRestore(); }
   });
 
   it.each(['unavailable', 'refused'] as const)('keeps the mounted Work count unknown when a refresh returns %s', async failure => {
