@@ -26,6 +26,7 @@ import { describeActionOperationStatusLabel, resolveActionOperationStatus } from
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedObservationDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
 import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 /** Only durable allocation/enrollment observations; task stages are supplied by their operation owner. */
 export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineFullV1; handlers?: ManagedLifecycleHandlers;
@@ -168,6 +169,11 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         onPress: props.handlers.reinstall, testID: 'managed-machine.installation-retry' }
         : checkNow && !stateRowChecks ? { label: t('managedMachines.inspect.checkNow'), onPress: checkNow,
             testID: 'managed-machine.installation-check', busy: props.checking === true } : undefined;
+    const reviewHeldApproval = operationCard && !failure && heldAsk && props.reviewApproval
+        ? () => props.reviewApproval?.(heldAsk.artifactId) : undefined;
+    useCurrentUiContextLocalCommands(reviewHeldApproval
+        ? [{ key: 'managed-machine.installation-review', title: t('approvals.review'), invoke: reviewHeldApproval }]
+        : []);
     return <>
         {setup?.state === 'failed' ? <ItemGroup>
             <Item title={t('managedMachines.creation.setupFailed', { name: machine.launch.name })} titleLines={0}
@@ -194,8 +200,8 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 accessoryLayout={prompt && props.answerPrompt ? 'adaptive' : undefined}
                 subtitleLeading={!prompt && !heldAsk && status?.tone === 'active' ? <ActivitySpinner size="small"
                     accessibilityElementsHidden importantForAccessibility="no" /> : undefined}
-                rightElement={heldAsk && props.reviewApproval ? <RoundButton title={t('approvals.review')} display="secondary" size="small"
-                    testID="managed-machine.installation-review" onPress={() => props.reviewApproval?.(heldAsk.artifactId)} />
+                rightElement={reviewHeldApproval ? <RoundButton title={t('approvals.review')} display="secondary" size="small"
+                    testID="managed-machine.installation-review" onPress={reviewHeldApproval} />
                 : reviewHostKey ? <RoundButton title={t('approvals.review')} display="secondary" size="small"
                     testID="managed-machine.installation-prompt-review" onPress={reviewHostKey} />
                 : prompt && props.answerPrompt ? <View style={setupActions}>

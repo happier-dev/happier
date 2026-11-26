@@ -31,6 +31,23 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { ManagedMachineDetail } from './ManagedMachineDetail';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+
+function ApprovalCommandPublication() {
+    const commands = useCurrentUiContextComposedCommands();
+    const enrichment = React.useMemo(() => ({ commands }), [commands]);
+    usePublishCurrentUiContext(enrichment);
+    return null;
+}
+function ApprovalCommandPage({ children }: React.PropsWithChildren) {
+    return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+        <ApprovalCommandPublication />{children}
+    </CurrentUiContextCommandsProvider>;
+}
 
 /** Pages render under the app shell, which owns the Account's one Investigate owner (D5). */
 const renderScreen: typeof renderTestScreen = (element, options = {}) => {
@@ -4471,6 +4488,97 @@ describe('managed Machine detail', () => {
             retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage,
         });
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.disabled).toBe(true);
+    });
+    it('opens a stored pending Delete from its mounted Review control and withdraws the settled command', async () => {
+        const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const home = await createPlainArtifactHomeFixture('https://delete-approval.test', { accountId: 'owner' });
+        onTestFinished(() => home.dispose());
+        const machine: ManagedMachineFullV1 = { id: 'delete-machine', homeId: 'managed-delete-home', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Ask resource', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
+            resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native-id' } },
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const request = StoredApprovalRequestSchema.parse({ v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'session' }, requestedSurface: 'agent',
+            actionId: 'machines.managed.delete', actionArgs: { homeId: machine.homeId, managedId: machine.id, when: 'now',
+                expectedRevision: 1, intent: 'delete', reviewedDependencies: true }, summary: 'Delete managed resource' });
+        const artifact = { id: 'delete-ask', header: buildApprovalRequestArtifactHeaderV1(request), title: null,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, isDecrypted: true as const, draft: false };
+        await act(async () => storage.getState().addArtifact(artifact));
+        const surface = <ApprovalCommandPage><ManagedMachineSections machine={machine} serverId={home.home.id} current={false}
+            executeAction={createFrontDoorActionExecute(createDefaultActionExecutor())} onChanged={() => {}} onDenied={() => {}} /></ApprovalCommandPage>;
+        const screen = await renderMountedCurrentUiContext(surface);
+        expect(screen.findByTestId('managed-machine.approval')).not.toBeNull();
+        const executor = createDefaultActionExecutor();
+        const readCommands = async () => {
+            const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+            if (!read.ok) throw new Error('Expected delete approval context');
+            return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+        };
+        const inventory = await readCommands();
+        expect(inventory.map(command => command.title)).toEqual([t('approvals.review')]);
+        const navigation = (await import('expo-router')).router;
+        const expectedRoute = `/inbox/approvals/delete-ask?serverId=${encodeURIComponent(home.home.id)}`;
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+            { commandId: inventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(navigation.push).toHaveBeenLastCalledWith(expectedRoute);
+        await act(async () => screen.tree.findAllByType(AttentionBanner)
+            .find(node => node.props.testID === 'managed-machine.approval')!.props.action.onPress());
+        expect(navigation.push).toHaveBeenLastCalledWith(expectedRoute);
+        const settled = StoredApprovalRequestSchema.parse({ ...request, status: 'rejected', updatedAtMs: 2,
+            decision: { kind: 'reject', decidedAtMs: 2 } });
+        await act(async () => storage.getState().updateArtifact({ ...artifact, headerVersion: 2, bodyVersion: 2,
+            header: buildApprovalRequestArtifactHeaderV1(settled) }));
+        expect(screen.findByTestId('managed-machine.approval')).toBeNull();
+        expect(await readCommands()).toEqual([]);
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: inventory[0]!.id }, { surface: 'agent' }))
+            .toMatchObject({ ok: false });
+        await screen.unmount();
+    });
+
+    it('publishes the held installer Ask only while its actual Review control is rendered', async () => {
+        const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const home = await createPlainArtifactHomeFixture('https://installer-approval.test');
+        onTestFinished(() => home.dispose());
+        const target = home.home;
+        const machine: ManagedMachineFullV1 = { id: 'held-machine', homeId: target.id, custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Ask resource', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
+            resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: { resourceId: 'native-id' } },
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const navigation = (await import('expo-router')).router;
+        const executor = createDefaultActionExecutor();
+        const screen = await renderMountedCurrentUiContext(<ApprovalCommandPage />);
+        const readCommands = async () => {
+            const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+            if (!read.ok) throw new Error('Expected installer approval context');
+            return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+        };
+        const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'held-ask', revision: 1,
+            actionId: 'machines.managed.acquire', state: 'running', scope: { accountId: 'owner', machineId: 'controller' },
+            title: 'Create Ask resource', createdAt: 1, startedAt: 2, cancellation: 'supported',
+            progress: { kind: 'phase', phase: 'bootstrap', label: 'Waiting', approval: { kind: 'approval_request_created', artifactId: 'installation-ask', actionId: 'machines.managed.acquire' } },
+            domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller,
+                bootstrapTask: { id: 'installer', taskKind: 'remote.ssh.bootstrapMachine.v1' } } };
+        const reviewApproval = (id: string) => navigation.push(`/inbox/approvals/${id}`);
+        const progress = (enabled: boolean) => <ApprovalCommandPage><ManagedCreationProgress machine={machine}
+            operation={{ serverId: target.id, snapshot: operation, observation: 'available', isUnavailableProjection: false }}
+            {...(enabled ? { reviewApproval } : {})} /></ApprovalCommandPage>;
+        await screen.update(progress(true));
+        expect(screen.findByTestId('managed-machine.installation-review')).not.toBeNull();
+        const heldInventory = await readCommands();
+        expect(heldInventory.map(command => command.title)).toEqual([t('approvals.review')]);
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+            { commandId: heldInventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(navigation.push).toHaveBeenLastCalledWith('/inbox/approvals/installation-ask');
+        await screen.pressByTestIdAsync('managed-machine.installation-review');
+        expect(navigation.push).toHaveBeenLastCalledWith('/inbox/approvals/installation-ask');
+        await screen.update(progress(false));
+        expect(screen.findByTestId('managed-machine.installation-review')).toBeNull();
+        expect(await readCommands()).toEqual([]);
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: heldInventory[0]!.id }, { surface: 'agent' }))
+            .toMatchObject({ ok: false });
+        await screen.unmount();
     });
     it.each(providerRefusalCases)('shows the typed Keep-passive policy failure and technical details (%s)', async refusal => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-keep-timeout.test', scope: 'tab' });

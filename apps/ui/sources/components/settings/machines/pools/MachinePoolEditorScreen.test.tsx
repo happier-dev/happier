@@ -28,6 +28,24 @@ import { resetMachinePoolSyncRuntimeForTests } from '@/sync/engine/machines/mach
 import { FocusReturnProvider } from '@/keyboard/focusReturn';
 import { machinePoolSettingsRowTestId } from '../sections/MachinePoolsSection';
 import { t } from '@/text';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+
+function ApprovalCommandPublication() {
+    const commands = useCurrentUiContextComposedCommands();
+    const enrichment = React.useMemo(() => ({ commands }), [commands]);
+    usePublishCurrentUiContext(enrichment);
+    return null;
+}
+function ApprovalCommandPage({ children }: React.PropsWithChildren) {
+    return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+        <ApprovalCommandPublication />{children}
+    </CurrentUiContextCommandsProvider>;
+}
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -350,6 +368,43 @@ describe('MachinePoolEditorScreen', () => {
         setRuntimeFetch((url, init) => boundaries.request(String(url), init));
         await getServerFeaturesSnapshot({ serverId: boundaries.serverId, force: true });
         await act(async () => publishBoundaryState());
+    });
+
+    it('opens the same pending pool approval by press and opaque command and retires the hidden address', async () => {
+        // Terminal provenance has Account automation authority in UI; Ask creates the ordinary durable request.
+        const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-a', session: 'terminal-test' })).toString('base64url')}.test` };
+        vi.mocked(TokenStorage.getCredentialsForServerUrl).mockResolvedValue(credentials);
+        Reflect.set(sync, 'credentials', credentials);
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        requireUiApproval(['machines.pools.create']);
+        const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
+        const screen = await renderMountedCurrentUiContext(<ApprovalCommandPage><MachinePoolEditorScreen serverId={boundaries.serverId} /></ApprovalCommandPage>);
+        await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Build farm'));
+        await screen.pressByTestIdAsync('settings.machinePools.editor.save');
+        await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.approval')).not.toBeNull());
+        expect(boundaries.create).not.toHaveBeenCalled();
+        const executor = createDefaultActionExecutor();
+        const readCommands = async () => {
+            const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+            if (!read.ok) throw new Error('Expected pool approval context');
+            return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+        };
+        const inventory = await readCommands();
+        expect(inventory.map(command => command.title)).toEqual([t('approvals.details')]);
+        await screen.pressByTestIdAsync('settings.machinePools.editor.approval');
+        const expectedRoute = boundaries.push.mock.lastCall?.[0];
+        expect(expectedRoute).toContain('/inbox/approvals/');
+        expect(expectedRoute).toContain(`serverId=${encodeURIComponent(boundaries.serverId)}&completionHref=${encodeURIComponent('/settings/machines')}`);
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+            { commandId: inventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(boundaries.push.mock.lastCall?.[0]).toBe(expectedRoute);
+        await screen.update(<ApprovalCommandPage />);
+        expect(await readCommands()).toEqual([]);
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: inventory[0]!.id }, { surface: 'agent' }))
+            .toMatchObject({ ok: false });
+        await screen.unmount();
     });
 
     it('honors the pool Delete waiver without a second UI confirmation', async () => {

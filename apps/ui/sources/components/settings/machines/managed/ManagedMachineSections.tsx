@@ -99,6 +99,7 @@ import { presentConnectSheet } from '@/components/settings/connectedServices/set
 import { isOpenedManagedMachinePresetV1, prepareManagedMachineResizeInputForSnapshot, readManagedMachinePresetImageRevision } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { isMachineImageOlderThanPreset, readPresetPreparedSummary } from './presetPreparationPresentation';
 import { useMachinePresets } from './useMachinePresets';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 type Execute = FrontDoorActionExecute;
 type ManagedSectionActionId = ManagedMachineActionIdV1 | 'machines.managed.bootstrap.respond';
@@ -272,6 +273,14 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const pendingDeleteApprovalId = approvalPresentation?.kind === 'delete' ? approvalPresentation.artifactId : null;
     const openApproval = (artifactId: string) => router.push(
         `/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(props.serverId)}` as never);
+    const approvalAction = pendingDeleteApprovalId
+        ? { label: t('approvals.review'), onPress: () => openApproval(pendingDeleteApprovalId) }
+        : approvalPresentation?.kind === 'generic' && approvalPresentation.artifactId !== startApprovalId
+            ? { label: t('approvals.details'), onPress: () => openApproval(approvalPresentation.artifactId) }
+            : null;
+    useCurrentUiContextLocalCommands(approvalAction && pendingDeleteApprovalId
+        ? [{ key: 'managed-machine.approval', title: approvalAction.label, invoke: approvalAction.onPress }]
+        : []);
     const approvalRequestRef = React.useRef(approval.requestApproval);
     approvalRequestRef.current = approval.requestApproval;
     const [policyRead, setPolicyRead] = React.useState<Awaited<ReturnType<typeof readManagedMachinePolicyParent>>
@@ -891,10 +900,10 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         {pendingDeleteApprovalId
             ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
                 title={resolveActionTitle('machines.managed.delete', null)} description={t('approvals.waitingForYou')}
-                action={{ label: t('approvals.review'), onPress: () => openApproval(pendingDeleteApprovalId) }} />
+                action={approvalAction} />
             : approvalPresentation?.kind === 'generic' && approvalPresentation.artifactId !== startApprovalId ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
                 title={t('approvals.title')} description={t('approvals.status.open')}
-                action={{ label: t('approvals.details'), onPress: () => openApproval(approvalPresentation.artifactId) }} />
+                action={approvalAction} />
             : null}
         <ManagedCreationProgress machine={machine} operation={operation} setupRecovery={setupRecovery} provider={providerName}
             enrolledMachine={creationContext.enrolledMachine} asleepWake={creationContext.asleepWake} title={machineName}

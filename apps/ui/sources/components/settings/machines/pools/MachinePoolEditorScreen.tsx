@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Pressable, View } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
@@ -553,6 +554,17 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
     const cancelAction: PageHeaderPrimaryAction | null = isNew
         ? { testID: 'settings.machinePools.editor.cancel', title: t('common.cancel'), onPress: leave }
         : null;
+    const openApproval = approvalId ? () => {
+        const completion = `&completionHref=${encodeURIComponent('/settings/machines')}`;
+        const deleteFocusTarget = pendingDeleteFocusTargetRef.current;
+        const focus = deleteFocusTarget && props.poolId
+            ? `&completionFocusFrom=${encodeURIComponent(machinePoolSettingsRowTestId(props.serverId, props.poolId))}&completionFocusTo=${encodeURIComponent(deleteFocusTarget)}`
+            : '';
+        router.push(`/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(props.serverId)}${completion}${focus}`);
+    } : undefined;
+    useCurrentUiContextLocalCommands(openApproval
+        ? [{ key: 'settings.machinePools.editor.approval', title: t('approvals.details'), invoke: openApproval }]
+        : []);
     return <>
         <ItemList keyboardShouldPersistTaps="handled">
             <SettingsPageHeader
@@ -618,14 +630,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                 testID="settings.machinePools.editor.approval"
                 title={t('approvals.title')}
                 subtitle={approvalArtifactError ? t('approvals.loadError') : approvalPending ? t('approvals.status.open') : t('approvals.details')}
-                onPress={() => {
-                    const completion = `&completionHref=${encodeURIComponent('/settings/machines')}`;
-                    const deleteFocusTarget = pendingDeleteFocusTargetRef.current;
-                    const focus = deleteFocusTarget && props.poolId
-                        ? `&completionFocusFrom=${encodeURIComponent(machinePoolSettingsRowTestId(props.serverId, props.poolId))}&completionFocusTo=${encodeURIComponent(deleteFocusTarget)}`
-                        : '';
-                    router.push(`/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(props.serverId)}${completion}${focus}`);
-                }}
+                onPress={openApproval}
             /></ItemGroup> : null}
             {readOnly ? <>
                 <ItemGroup title={t('machinePresets.audience')}>
