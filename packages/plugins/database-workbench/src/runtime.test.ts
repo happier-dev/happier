@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { Client } from 'pg';
 import { definePlugin, PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import { createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { ResourcesService } from '@happier-dev/plugin-sdk/resources';
@@ -184,8 +185,9 @@ describe('semantic database Action runtime', () => {
             if (started) await run(join(postgresBinaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-m', 'immediate', '-w', 'stop']);
             if (directory) await rm(directory, { recursive: true, force: true });
         });
-        it('settles the Workbench size and statements reads through the runtime', async () => {
-            const warnings: unknown[] = [];
+        it('settles native size and statements reads when the observation catalog is unavailable', async () => {
+            // The optional Event catalog is a host boundary. The SDK still owns its unsettled disposition.
+            const readSourceCatalog = vi.fn(async () => { throw new PluginError({ code: 'plugin_service_unavailable' }); });
             const runtime = createDatabaseRuntime({ async admit() {}, async resolve(input) {
                 return { descriptor: { ...descriptor, engine: 'postgresql' }, connection: await openManualDatabaseConnection({
                     target, secretValue, access: input.access, signal: input.context.signal,
@@ -193,7 +195,7 @@ describe('semantic database Action runtime', () => {
             } });
             const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', displayName: 'Database', actions: createDatabaseActions(runtime) });
             const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: {
-                logger: { debug() {}, info() {}, error() {}, diagnostic() {}, warn(_message, fields) { warnings.push(fields); } },
+                actions: { execute: readSourceCatalog } as ActionsService,
             } });
             // A native Action always carries the routed Machine and invocation identity.
             const identity = { requesterAccount: { accountId: 'alice' }, chosenMachine: { machineId: 'machine', installationId: 'installation' },
@@ -212,8 +214,9 @@ describe('semantic database Action runtime', () => {
                         selection: { order: 'totalTime', page: { rows: 50, offset: 0 } } } }, invocation))
                         .toMatchObject({ ok: true, operation: 'stats.read', observation: { status: 'available' } });
                 }
-                // The finding side effect stays observable without failing the completed read.
-                expect(warnings).toEqual([{ code: 'plugin_service_unavailable' }, { code: 'plugin_service_unavailable' }]);
+                expect(readSourceCatalog).toHaveBeenCalledTimes(6);
+                expect(readSourceCatalog).toHaveBeenLastCalledWith('automation.event.sources.list',
+                    expect.objectContaining({ transport: { kind: 'checkpointedPull' } }), expect.anything());
             } finally { await kit.dispose(); }
         });
         it('preserves native settlement when connection cleanup rejects', async () => {
