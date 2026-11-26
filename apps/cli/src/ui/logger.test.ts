@@ -156,6 +156,25 @@ describe('logger', () => {
         expect(content).toContain('[TEST] still muted by the second owner');
     });
 
+    it('keeps append failure diagnostics off the console until the provider releases it', async () => {
+        process.env.DEBUG = '1';
+        const { logger } = await import('@/ui/logger');
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        // A directory at the log path causes a real append failure.
+        mkdirSync(logger.getLogPath(), { recursive: true });
+        const release = logger.muteConsole('provider terminal');
+        try {
+            logger.flushSync();
+            expect(errorSpy).not.toHaveBeenCalled();
+            release();
+            logger.flushSync();
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to append to log file'), expect.any(Error));
+        } finally {
+            release();
+            errorSpy.mockRestore();
+        }
+    });
+
     it('durably records sanitized fatal errors without serializing argv or env fields', async () => {
         const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
         const error = Object.assign(

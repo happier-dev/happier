@@ -643,7 +643,7 @@ class Logger {
   private handleFileWriteError(error: unknown): void {
     // Never throw from logging: log files are best-effort and should not break the CLI.
     // When DEBUG is set, surface the first write failure for easier debugging.
-    if (process.env.DEBUG && !this.hasLoggedFileWriteError) {
+    if (process.env.DEBUG && !this.hasLoggedFileWriteError && this.consoleMuteHolders.size === 0) {
       writeConsoleErrorBestEffort('[DEV MODE ONLY] Failed to append to log file:', error)
       this.hasLoggedFileWriteError = true
     }
