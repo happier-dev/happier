@@ -53,8 +53,8 @@ vi.mock('expo-router', async () =>
     (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/session/ordinary-open' }).module);
 vi.mock('@react-navigation/native', async () =>
     (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock({ renderInitialNavigatorScreen: true }));
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+vi.mock('react-native-safe-area-context', async () => ({
+    ...await (await import('@/dev/testkit/mocks/safeAreaContext')).createSafeAreaContextMock(),
     useSafeAreaFrame: () => ({ x: 0, y: 0, width: 1400, height: 900 }),
 }));
 

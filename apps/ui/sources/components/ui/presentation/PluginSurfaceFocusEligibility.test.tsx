@@ -123,4 +123,19 @@ describe('PluginSurfaceFocusEligibility', () => {
         await screen.update(tree(true, { value: 'second' }));
         expect(screen.findByType('PresentedProbe').props.value).toBe('second');
     });
+    it('keeps what was presented when the hide and a value change arrive in the same update', async () => {
+        const Presented = React.memo(function Presented(props: Readonly<{ source: { value: string } }>) {
+            return React.createElement('PresentedProbe', { value: usePresentedValue(props.source.value) });
+        });
+        const tree = (presented: boolean, value: string) => <PluginSurfaceFocusEligibilityProvider active={presented}>
+            <Presented source={{ value }} />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(tree(true, 'expanded'));
+        // A retained tab's own inputs change as it hides (it stops being current): the hide wins.
+        await screen.update(tree(false, 'withdrawn'));
+        expect(screen.findByType('PresentedProbe').props.value).toBe('expanded');
+        // Shown again in one update with its current value: that value is presented on that render.
+        await screen.update(tree(true, 'current'));
+        expect(screen.findByType('PresentedProbe').props.value).toBe('current');
+    });
 });

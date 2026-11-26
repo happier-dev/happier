@@ -61,24 +61,31 @@ function useEligibilityProviders(value: PluginSurfaceFocusEligibility | null, pr
 }
 
 /**
- * A stable signal that follows `value` after each commit. Its owner renders with the value; readers of the
- * signal do not.
+ * A stable signal that follows `value`. Its owner renders with the value; readers of the signal do not.
+ * `get` answers with the value this owner is rendering, so a reader that renders in the same pass (a
+ * retained tab whose own inputs change as it hides) reads the fact it renders under; listeners are
+ * notified once the owner commits it.
  */
 export function useBooleanSignal(value: boolean): LayoutPresentationSignal {
     const [signal] = React.useState(() => {
         let current = value;
+        let notified = value;
         const listeners = new Set<() => void>();
         return {
             get: () => current,
             subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-            set: (next: boolean) => {
-                if (next === current) return;
+            render: (next: boolean) => { current = next; },
+            commit: (next: boolean) => {
                 current = next;
+                if (next === notified) return;
+                notified = next;
                 for (const listener of [...listeners]) listener();
             },
         };
     });
-    React.useLayoutEffect(() => signal.set(value), [value, signal]);
+    signal.render(value);
+    // Every commit re-asserts its value: a render React set aside must not leave its value behind.
+    React.useLayoutEffect(() => signal.commit(value));
     return signal;
 }
 
