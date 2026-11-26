@@ -3,14 +3,11 @@ import { verifyExternalActionApprovalInputV1 } from '../externalActionExecutionA
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '../../sessions/messages/sessionPendingExecutionRunMachineAdmissionV2.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { ActionExecutorContext } from './types.js';
-import { readDeploymentRoleRootInputV1 } from './deploymentRoleChild.js';
-import { PROJECT_SETUP_SET_ACTION_ID_V1 } from '../projectActionIdsV1.js';
-import { isProjectSetupSetChildInputV1 } from '../../projects/projectSetupSetV1.js';
 
 const rootActionIds = ['scm.diffSummary.refine', 'scm.diffSummary.addOutputs', 'scm.diffSummary.discuss'] as const;
 type RootActionId = typeof rootActionIds[number];
 
-function readRootActionId(actionId: string): RootActionId | undefined {
+export function readScmRefineRootActionIdV1(actionId: string): RootActionId | undefined {
   return rootActionIds.find(id => id === actionId);
 }
 
@@ -27,7 +24,7 @@ export function bindScmRefineSavedSessionV1(input: Readonly<{
   sign: NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>;
 }>): ExternalActionExecutionAuthorizationV1 {
   const { authorization, sessionId } = input;
-  const actionId = readRootActionId(authorization.binding.actionId);
+  const actionId = readScmRefineRootActionIdV1(authorization.binding.actionId);
   if (!actionId
     || authorization.binding.target.kind === 'session' && authorization.binding.target.sessionId !== sessionId) {
     throw new TypeError('Saved Session input does not match its admitted SCM root');
@@ -43,7 +40,7 @@ export function bindScmRefineSavedSessionV1(input: Readonly<{
 /** The host's original saved-scope signature is independent of later packet signatures. */
 export function verifyScmRefineSavedSessionV1(authorization: ExternalActionExecutionAuthorizationV1, publicKey: string | Uint8Array): boolean {
   const saved = authorization.scmRefineSession;
-  const actionId = readRootActionId(authorization.binding.actionId);
+  const actionId = readScmRefineRootActionIdV1(authorization.binding.actionId);
   if (!actionId || !saved) return false;
   const signed = savedSessionSigningInput(authorization, saved.sessionId, actionId);
   return verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token,
@@ -62,7 +59,7 @@ export function isScmRefineInputPurposeV1(input: Readonly<{
 }>): boolean {
   const { authorization } = input;
   const saved = authorization.scmRefineSession;
-  return readRootActionId(authorization.binding.actionId) !== undefined && input.effectActionId === 'session.message.send'
+  return readScmRefineRootActionIdV1(authorization.binding.actionId) !== undefined && input.effectActionId === 'session.message.send'
     && saved !== undefined && input.sessionId === saved.sessionId
     && input.machineId === authorization.binding.machineId
     && input.localId === authorization.binding.requestId
@@ -81,25 +78,6 @@ export function isScmRefineInputRpcPurposeV1(execution: ExternalActionMachineRpc
   return pending.success && pending.data.sessionId === execution.target.sessionId
     && isScmRefineInputPurposeV1({ authorization: execution.authorization, effectActionId: execution.effectActionId,
       ...pending.data, machineId: pending.data.targetMachineId });
-}
-
-/** Only an actual host child can spend the parent; possessing its carrier does not authorize direct sends. */
-export function readHostRootInputCredentialActionV1(actionId: string, input: unknown,
-  context: ActionExecutorContext, hostInternal: boolean): RootActionId | typeof PROJECT_SETUP_SET_ACTION_ID_V1
-    | NonNullable<ReturnType<typeof readDeploymentRoleRootInputV1>>['actionId'] | null {
-  if (hostInternal && context.projectSetupSetRootInput
-    && context.externalActionExecutionAuthorization?.binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1
-    && isProjectSetupSetChildInputV1(context.projectSetupSetRootInput, actionId, input,
-      context.externalActionExecutionAuthorization.binding.serverIdentityId)) return PROJECT_SETUP_SET_ACTION_ID_V1;
-  const deployment = readDeploymentRoleRootInputV1(context, actionId, input, hostInternal);
-  if (deployment) return deployment.actionId;
-  const authorization = context.externalActionExecutionAuthorization;
-  const data = readRecord(input);
-  return hostInternal && authorization && isScmRefineInputPurposeV1({ authorization, effectActionId: actionId,
-    sessionId: data.sessionId, machineId: context.defaultSessionMachineId
-      ?? (context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId : undefined),
-    localId: data.localId, requestedAction: data.requestedAction, recipient: data.recipient })
-    ? readRootActionId(authorization.binding.actionId) ?? null : null;
 }
 
 /** SCM's private callback carries only the root bound by its admitted saved-result owner. */

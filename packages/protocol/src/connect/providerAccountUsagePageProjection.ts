@@ -2,7 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ProviderAccountUsageRecordIdSchema, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageHistoryWitnessV1, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
 import { ProviderAccountSubscriptionV1Schema } from './accountSubscription.js';
-import { deriveProviderAccountUsageDayQuotaHistoryV1, type ProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
+import { deriveProviderAccountUsageDayQuotaHistoryV1, type ProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummaryModel.js';
 import { ConnectedServiceQuotaMeterV1Schema, ConnectedServiceQuotaMeterDetailsV1Schema } from './connectedServiceSchemas.js';
 import type { ConnectedServiceQuotaGetResultV1 } from './providerAccountUsageHistorySchemasV1.js';
 import { deriveProviderAccountUsageEarlierWindowCurves, hasProviderAccountUsageWitnessedReset,

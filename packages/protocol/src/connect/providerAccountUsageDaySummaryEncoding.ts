@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ProviderAccountUsageSnapshotV1Schema, PROVIDER_ACCOUNT_USAGE_DAY_MS } from './providerAccountUsagePrimitives.js';
-import { ProviderAccountUsageDaySummaryV1Schema, ProviderAccountUsageDaySummaryWindowV1Schema, type ProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
+import { ProviderAccountUsageDaySummaryV1Schema, ProviderAccountUsageDaySummaryWindowV1Schema, type ProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummaryModel.js';
 import { PackedProviderAccountUsagePageProjectionV1Schema, packProviderAccountUsagePageProjectionV1,
   unpackProviderAccountUsagePageProjectionV1 } from './providerAccountUsagePageProjection.js';
 

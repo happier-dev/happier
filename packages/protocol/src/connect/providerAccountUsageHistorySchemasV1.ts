@@ -7,7 +7,7 @@ import { UsagePacingTargetsV1Schema } from '../account/settings/usagePacingPrefe
 import { PendingResetStartReadinessV1Schema } from '../sessions/pending/pendingResetStartReadinessV1.js';
 import { PendingResetStartsReadResultV1Schema } from '../sessions/pending/pendingRequestedActionV1.js';
 import { ProviderAccountUsagePageProjectionDemandV1Schema, ProviderAccountUsagePageProjectionCoverageV1Schema, PackedProviderAccountUsagePageProjectionV1Schema } from './providerAccountUsagePageProjection.js';
-import { ProviderAccountUsageDaySummaryV1Schema } from './providerAccountUsageDaySummary.js';
+import { ProviderAccountUsageDaySummaryV1Schema } from './providerAccountUsageDaySummaryModel.js';
 
 // New operation envelopes and their nested range/cursor identities are closed.
 // pageSize is caller-selected paging, with no retention horizon or invented cap.

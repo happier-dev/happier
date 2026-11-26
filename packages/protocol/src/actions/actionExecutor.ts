@@ -37,7 +37,8 @@ import { dispatchSessionOrganizationAppearance } from './executor/session/organi
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3, readProjectSourceProfileChange } from './executor/projects/dispatch.js';
 import { admitPresentUserConfirmationV1, bindPresentUserActionConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
-import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
+import { withScmRefineInputAuthorizationV1 } from './executor/scmRefineInputPurpose.js';
+import { readHostRootInputCredentialActionV1 } from './executor/hostRootInputCredentialAction.js';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildRoleV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 import { describeTeamSetupBatch, runTeamSetupBatch } from './executor/teamSetup.js';

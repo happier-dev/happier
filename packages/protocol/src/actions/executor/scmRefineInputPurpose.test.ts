@@ -3,7 +3,8 @@ import nacl from 'tweetnacl';
 import { API_TOKEN_FULL_GRANT_V1 } from '../../auth/apiTokenGrant.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from '../externalActionApi.js';
 import { signExternalActionApprovalInputV1 } from '../externalActionExecutionAuthorization.js';
-import { bindScmRefineSavedSessionV1, readHostRootInputCredentialActionV1, verifyScmRefineSavedSessionV1 } from './scmRefineInputPurpose.js';
+import { bindScmRefineSavedSessionV1, verifyScmRefineSavedSessionV1 } from './scmRefineInputPurpose.js';
+import { readHostRootInputCredentialActionV1 } from './hostRootInputCredentialAction.js';
 import type { ActionExecutorContext } from './types.js';
 
 describe('Refine root input purpose', () => {
