@@ -3,8 +3,8 @@ import { createServer, type Server, type Socket } from 'node:net';
 
 import { createAgentLocalControlState } from '@/agent/localControl/createAgentLocalControlState';
 import type { RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { buildPiBridgeExtensionSource } from '@/backends/pi/bridgeExtension/piBridgeExtensionSource';
 import { attachPiRpcJsonlLineReader } from '@/backends/pi/rpc/attachPiRpcJsonlLineReader';
 import {
@@ -157,6 +157,7 @@ export function createPiSharedTerminalHost(params: Readonly<{
   const sockets = new Set<Socket>();
 
   let launched = false;
+  let launching: Promise<PiSharedTerminalProcess> | null = null;
   let pi: PiSharedTerminalProcess | null = null;
   // Held from launch until Pi exits: Pi's TUI owns the screen, so the runner prints nothing.
   let releaseConsole: (() => void) | null = null;
@@ -175,18 +176,18 @@ export function createPiSharedTerminalHost(params: Readonly<{
   let boundSessionId: string | null = null;
   let fenced = false;
   let session: PiSharedTerminalSession | null = null;
-  let published: Readonly<{ session: PiSharedTerminalSession; remoteWritable: boolean }> | null = null;
+  let publication: Readonly<{ session: PiSharedTerminalSession; remoteWritable: boolean }> | null = null;
 
   let disposed = false;
   let disposePromise: Promise<void> | null = null;
 
-  const publish = (target: PiSharedTerminalSession): void => {
+  const publish = async (target: PiSharedTerminalSession): Promise<void> => {
     const remoteWritable = !fenced;
-    if (published?.session === target && published.remoteWritable === remoteWritable) return;
-    published = { session: target, remoteWritable };
-    void updateAgentStateBestEffort(
-      target,
-      (state) => ({
+    if (publication?.session === target && publication.remoteWritable === remoteWritable) return;
+    const attempt = { session: target, remoteWritable };
+    publication = attempt;
+    try {
+      await target.updateAgentState((state) => ({
         ...state,
         localControl: createAgentLocalControlState({
           attached: true,
@@ -195,10 +196,11 @@ export function createPiSharedTerminalHost(params: Readonly<{
           canAttach: false,
           canDetach: false,
         }),
-      }),
-      '[pi]',
-      'shared_terminal_local_control',
-    );
+      }));
+    } catch (error) {
+      if (publication === attempt) publication = null;
+      logger.debug('[pi] Failed to publish shared terminal local control (non-fatal)', serializeAxiosErrorForLog(error));
+    }
   };
 
   const updateFence = (next: boolean): void => {
@@ -207,7 +209,7 @@ export function createPiSharedTerminalHost(params: Readonly<{
     logger.infoFile(`[pi] Shared terminal ${fenced ? 'left' : 'returned to'} the bound Pi session`);
     if (!session) return;
     if (fenced) session.sendAgentMessage('pi', { type: 'message', message: SESSION_FENCE_NOTICE });
-    publish(session);
+    void publish(session);
   };
 
   const rejectHelloWaiters = (error: Error): void => {
@@ -322,7 +324,7 @@ export function createPiSharedTerminalHost(params: Readonly<{
       socket.destroy();
     };
     attachPiRpcJsonlLineReader(socket, (line) => {
-      if (refused) return;
+      if (refused || disposed) return;
       if (authenticated) {
         handleFrame(authenticated, line);
         return;
@@ -380,6 +382,10 @@ export function createPiSharedTerminalHost(params: Readonly<{
         filename: 'happier-pi-tools-bridge.mjs',
         contents: buildPiBridgeExtensionSource(),
       });
+      if (disposed) {
+        await artifact.cleanup();
+        throw bridgeUnavailable();
+      }
       retainedArtifacts.push(artifact.cleanup);
       return artifact.path;
     })();
@@ -443,35 +449,47 @@ export function createPiSharedTerminalHost(params: Readonly<{
   const channelHost: PiRpcChannelHost = {
     kind: 'attached',
     open: async (spec, options) => {
-      // Artifacts named in a live Pi's argv stay until that Pi exits (it re-reads them on `/reload`).
-      if (options?.retainArtifacts) retainedArtifacts.push(options.retainArtifacts);
       if (disposed) {
-        // Disposal already released what it held; nothing will launch with these.
-        void releaseArtifacts();
+        // Nothing will launch with these artifacts. Leave a pending Pi's files to disposal.
+        await options?.retainArtifacts?.();
         throw bridgeUnavailable();
       }
+      // Artifacts named in a live Pi's argv stay until that Pi exits (it re-reads them on `/reload`).
+      if (options?.retainArtifacts) retainedArtifacts.push(options.retainArtifacts);
       if (attached || opening) throw new Error('Pi shared terminal already has an attached backend');
       opening = true;
       try {
         if (!launched) {
           launched = true;
           await ensureListening();
+          if (disposed) throw bridgeUnavailable();
           awaitingHello = true;
+          const ready = connection && !connection.closed
+            ? Promise.resolve(bindChannel(connection))
+            : waitForHello(options?.signal);
+          // Hello can settle while launch is still pending. Observe rejection immediately.
+          void ready.catch(() => undefined);
           releaseConsole = logger.muteConsole('the Pi terminal');
           try {
-            pi = await launch(spec);
+            launching = launch(spec);
+            pi = await launching;
           } catch (error) {
             // Pi never took the terminal; the failed session start ends the runner with this error.
             releaseConsole();
             piExit = { code: null, signal: null };
             awaitingHello = false;
             rejectHelloWaiters(bridgeUnavailable());
+            connection?.socket.destroy();
             throw error;
+          } finally {
+            launching = null;
           }
           pi.whenExited.then(
             (exit) => onPiExited({ code: exit.code, signal: exit.signal }),
             () => onPiExited({ code: null, signal: null }),
           );
+          if (disposed) throw bridgeUnavailable();
+          return await ready;
         }
         if (connection && !connection.closed) return bindChannel(connection);
         if (!awaitingHello || piExit) throw bridgeUnavailable();
@@ -492,7 +510,7 @@ export function createPiSharedTerminalHost(params: Readonly<{
     ensureBridgeExtension,
     publishLocalControl: (target) => {
       session = target;
-      publish(target);
+      void publish(target);
     },
     dispose: () => {
       disposePromise ??= (async () => {
@@ -500,15 +518,23 @@ export function createPiSharedTerminalHost(params: Readonly<{
         awaitingHello = false;
         rejectHelloWaiters(bridgeUnavailable());
         for (const socket of sockets) socket.destroy();
-        server?.close();
-        if (pi && !piExit) {
+        const closing = (async () => {
+          // Let a pending listen settle before closing, including a failed bind.
+          await listening?.catch(() => undefined);
+          const listener = server;
+          if (listener) await new Promise<void>((resolve) => listener.close(() => resolve()));
+        })();
+        const process = pi ?? await launching?.catch(() => null);
+        if (process && !piExit) {
           try {
-            await pi.terminate();
+            await process.terminate();
           } catch (error) {
             logger.infoFile('[pi] Shared terminal Pi could not be terminated', error);
           }
         }
+        await bridgeExtension?.catch(() => undefined);
         await releaseArtifacts();
+        await closing;
       })();
       return disposePromise;
     },
