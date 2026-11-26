@@ -29,6 +29,8 @@ declare module '*.plan.mjs' {
     env: Record<string, string>;
   };
 
+  // The sanitizer removes only Docker's version override and preserves Node's environment fields.
+  export function sanitizeDockerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
   export function sanitizeDockerEnv(env: Record<string, string | undefined> | null | undefined): Record<string, string | undefined>;
   export function buildDbContainerPlan(params: { db: ExtendedDbProvider; name?: string | null }): DbContainerPlan;
   export function parseDockerPortLine(line: string): { host: string; port: number };
