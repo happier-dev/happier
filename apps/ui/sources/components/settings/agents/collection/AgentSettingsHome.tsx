@@ -309,7 +309,7 @@ const NeedsYouRow = React.memo(function NeedsYouRow(
       testID={`settings-agents-home.needs.${row.key}`}
       title={row.entry.title}
       description={
-        props.machineLabel
+        props.machineLabel && row.entry.capabilities?.sessions
           ? t('capabilities.agentsHome.needsSignIn', {
               machine: props.machineLabel,
             })

@@ -40,6 +40,7 @@ const { AppPaneProvider } = await import('@/components/appShell/panes/AppPanePro
 const { AgentDetailHeader } = await import('./detail/AgentDetailHeader');
 const { useSettingPreview } = await import('@/sync/store/settingsPreview');
 const { useConnectedAccountPurposeDefaults } = await import('@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults');
+const { CapabilityRow } = await import('@/components/capabilities/row/CapabilityRow');
 
 afterEach(async () => { standardCleanup(); navigation.params = {}; navigation.pathname = '/settings/agents'; navigation.push.mockClear(); navigation.replace.mockClear(); daemon.reset(); await account.reset(); vi.unstubAllGlobals(); });
 
@@ -91,6 +92,36 @@ it.each(['none', 'offline'] as const)('keeps the Agents root reachable with %s M
     await screen.pressByTestIdAsync('settings-agents-collection.all');
     expect(navigation.replace).toHaveBeenCalledWith('/(app)/settings/agents');
     expect(daemon.state.requests).toHaveLength(0);
+});
+
+it.each(['codex', 'coderabbit'] as const)('keeps Overview sign-in repair without attributing Sessions to an execution-only Agent: %s', async agentId => {
+    const declaration = BUNDLED_CANONICAL_AGENT_DECLARATIONS[agentId];
+    if (!declaration) throw new Error(`Missing bundled declaration ${agentId}`);
+    const { serverId, accountId } = await account.restore({ serverIdentityId: 'srv_agent_overview', machines: [
+        createMachineFixture({ id: 'overview-machine', activeAt: Date.now(), metadata: {
+            ...createMachineFixture().metadata!, displayName: 'Overview Machine',
+            agentInventory: { checkedAt: 1, installedAgentIds: [agentId] },
+        } }),
+    ] });
+    await account.selectMachine(serverId, 'overview-machine', MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents);
+    const screen = await renderInCollectionLayout(<AppPaneProvider><AgentSettingsIndex /></AppPaneProvider>, 'split');
+    await vi.waitFor(() => expect(screen.findHostByTestId('settings-agents-home')).not.toBeNull());
+    await act(async () => machineAgentInventoryStore.publish(serverAccountScopedResourceKey({
+        serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId,
+    }, 'machine-agents', 'overview-machine'), { status: 'ready', lastCheckedAt: 2, items: [{
+        agentId, title: agentId, installed: true, version: '1.0.0', latestVersion: null,
+        update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'login_terminal' },
+        platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [],
+    }] }));
+    const row = () => screen.findAllByType(CapabilityRow).find(node => node.props.testID === `settings-agents-home.needs.${agentId}`);
+    await vi.waitFor(() => expect(row()).toBeDefined());
+    expect(Boolean(row()?.props.description)).toBe(agentId === 'codex');
+    await screen.pressByTestIdAsync(`settings-agents-home.needs.${agentId}.fix`);
+    const destination = navigation.push.mock.calls.at(-1)?.[0];
+    expect(typeof destination).toBe('string');
+    const opened = new URL(destination, 'https://happier.test');
+    expect(opened.pathname).toBe(`/(app)/settings/agents/${agentId}`);
+    expect(opened.searchParams.get('pluginId')).toBe(declaration.identity.pluginId);
 });
 
 it('keeps Agent preference previews live without rendering for unrelated settings arrivals', async () => {

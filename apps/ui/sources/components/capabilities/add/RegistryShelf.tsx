@@ -59,8 +59,9 @@ export function resolveRegistryShelfUnavailable(
 const shelfHost: RegistryShelfHost = {
   Section: ({ children, ...input }) => <ItemGroup {...input}>{children}</ItemGroup>,
   BrowseAll: SectionActionButton,
-  Row: Item,
-  Scope: CoreCollectionScope,
+  // Core presentation can import this shelf while these modules are linking.
+  get Row() { return Item; },
+  get Scope() { return CoreCollectionScope; },
   Unavailable: RegistrySourcesUnavailable,
 };
 
