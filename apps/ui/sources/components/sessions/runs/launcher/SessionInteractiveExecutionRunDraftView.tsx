@@ -297,6 +297,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     const choosingReviewWorkspace = intent === 'review' && props.sessionId === null && !props.workspace && !props.comparisonReview;
     const reviewMachines = useMachineListForServer(serverId ?? '', choosingReviewWorkspace);
     const selectingReviewInput = props.reviewSelectionProjection !== undefined;
+    const runtimeSessionId = selectingReviewInput ? null : props.sessionId;
     const credentialSelectionOnly = props.reviewSelectionProjection === 'executionRunLaunch';
     const launcher = useExecutionRunLaunchContext(props.sessionId, serverId, workspace);
     const { session, accountBinding, accountLifetime, exactSettings, settings, profileCatalogReady, acpCatalogSnapshot, enabledAgentIds, defaultBackend,
@@ -304,28 +305,28 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     const [mountedComposerRef, setMountedComposerRef] = React.useState<Extract<ComposerRefV1, { kind: 'participantMessage' | 'newSession' }> | null>(null);
     const initialComposerFocusApplied = React.useRef(false);
     const sessionLaunchability = useSessionExecutionRunLaunchability(
-        props.sessionId ?? '',
-        session,
+        runtimeSessionId ?? '',
+        runtimeSessionId === null ? null : session,
         serverId,
     );
     const { state: machineCapabilitiesState } = useMachineCapabilitiesCache({
         machineId,
         enabled: Boolean(machineId),
         ...(serverId ? { serverId } : {}),
-        request: { requests: [{ id: 'tool.executionRuns', ...(props.sessionId ? { params: { sessionId: props.sessionId } } : {}) }] },
+        request: { requests: [{ id: 'tool.executionRuns', ...(runtimeSessionId ? { params: { sessionId: runtimeSessionId } } : {}) }] },
     });
     const executionRunsEnabled = useFeatureEnabled('execution.runs', { scopeKind: 'spawn', serverId });
     const detachedProtocol = useDetachedExecutionRunProtocolSupport(
-        props.sessionId === null && executionRunsEnabled === true && machineReachable ? machineId : null,
+        runtimeSessionId === null && executionRunsEnabled === true && machineReachable ? machineId : null,
         accountBinding?.scope ?? null,
     );
-    const canLaunchExecutionRuns = props.sessionId === null
+    const canLaunchExecutionRuns = runtimeSessionId === null
         ? executionRunsEnabled === true && machineReachable && detachedProtocol?.ok === true
         : sessionLaunchability.canLaunchExecutionRuns;
-    const launchUnavailableReason = props.sessionId === null
+    const launchUnavailableReason = runtimeSessionId === null
         ? executionRunsEnabled !== true ? 'notEnabled' : !machineReachable ? 'machineOffline' : null
         : sessionLaunchability.launchUnavailableReason;
-    const executionRunsBackends = props.sessionId === null
+    const executionRunsBackends = runtimeSessionId === null
         ? extractExecutionRunsBackendsFromMachineCapabilitiesState(machineCapabilitiesState) ?? {}
         : sessionLaunchability.executionRunsBackends;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({

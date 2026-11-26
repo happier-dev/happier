@@ -827,24 +827,54 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedWorkflowStarts).toEqual([]);
         expect(home.requests.slice(requestsBeforeSave).filter(request => request.method !== 'GET')).toEqual([]);
     });
-    it('returns a sheet-hosted Review selection through its footer without starting a Review', async () => {
+    it.each([
+        { name: 'detached Agent', sessionId: null, active: false, reviewers: [{ kind: 'engine' as const, engineId: 'claude' }] },
+        { name: 'active Session Agent', sessionId: 'session_1', active: true, reviewers: [{ kind: 'engine' as const, engineId: 'claude' }] },
+        { name: 'stopped Session Agent', sessionId: 'session_1', active: false, reviewers: [{ kind: 'engine' as const, engineId: 'claude' }] },
+        { name: 'active Session person-only', sessionId: 'session_1', active: true, reviewers: [
+            { kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'alice' }, required: true },
+        ] },
+        { name: 'stopped Session person-only', sessionId: 'session_1', active: false, reviewers: [
+            { kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'alice' }, required: true },
+        ] },
+    ])('returns a sheet-hosted Review selection through its footer without starting a Review ($name)', async ({ sessionId, active, reviewers }) => {
+        if (sessionId !== null) getStorage().setState(state => ({ sessions: { session_1: {
+            ...state.sessions.session_1!, active,
+        } } }));
         let footer: React.ReactNode = null;
         const onLaunchSelection = vi.fn();
-        await mount({ intent: 'review', sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },
+        await mount({ intent: 'review', sessionId, workspace: { machineId: 'machine_1', cwd: '/repo' },
             reviewSelectionProjection: 'composition', onLaunchSelection,
             sheet: { onFooterChange: next => { footer = next; }, onCancel: vi.fn() },
-            initialActionInput: { cwd: '/earlier-folder', reviewers: [{ kind: 'engine', engineId: 'claude' }] } });
+            initialActionInput: { cwd: '/earlier-folder', reviewers } });
         await waitFor(() => expect(composer().isSendDisabled).toBe(false));
         const footerScreen = await renderScreen(<>{footer}</>);
         expect(footerScreen.findByTestId('review-start-footer-start')).toBeNull();
         // A folder the person chooses leads the body, as on a phone; the footer holds only a fixed place.
-        expect(footerScreen.findByTestId('run-start-where-chips')).toBeNull();
-        expect(screen.findByTestId('run-start-machine-row')).not.toBeNull();
+        if (sessionId === null) {
+            expect(footerScreen.findByTestId('run-start-where-chips')).toBeNull();
+            expect(screen.findByTestId('run-start-machine-row')).not.toBeNull();
+        }
         await footerScreen.pressByTestIdAsync('review-start-footer-use-selection');
         await waitFor(() => expect(onLaunchSelection).toHaveBeenCalledWith(expect.objectContaining({
-            kind: 'reviewComposition', input: expect.objectContaining({ cwd: '/repo', target: { kind: 'detached' } }),
+            kind: 'reviewComposition', input: expect.objectContaining({ reviewers,
+                ...(sessionId === null ? { cwd: '/repo', target: { kind: 'detached' } } : { cwd: '/earlier-folder', sessionId }) }),
         })));
+        if (sessionId !== null) expect(onLaunchSelection.mock.calls[0]?.[0].input).not.toHaveProperty('target');
         expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
+        expect(emittedHumanReviewerRequests).toEqual([]);
+        expect(outbound).toEqual([]);
+    });
+
+    it('keeps an actual Review start unavailable on a stopped Session without resumable state', async () => {
+        getStorage().setState(state => ({ sessions: { session_1: { ...state.sessions.session_1!, active: false } } }));
+        await mount({ intent: 'review', initialActionInput: { reviewers: [{ kind: 'engine', engineId: 'claude' }] } });
+        await settle();
+        expect(composer().isSendDisabled).toBe(true);
+        expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
+        expect(outbound).toEqual([]);
     });
 
     it('adds an independently configured panel member through the shared runner model picker', async () => {
@@ -2214,7 +2244,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             start: input => createDefaultActionExecutor().execute('review.start', input,
                 { defaultSessionId: 'session_1', serverId, expectedAccountId: 'account_1' }),
         });
-        expect(emittedHumanReviewerRequests).toHaveLength(1);
+        expect(emittedHumanReviewerRequests, JSON.stringify(outcome)).toHaveLength(1);
         expect(emittedStarts).toEqual([]);
         expect(emittedWorkflowStarts).toEqual([]);
         expect(outcome).toEqual({ ok: true, comparisonId: capturedBranchComparisonId,
