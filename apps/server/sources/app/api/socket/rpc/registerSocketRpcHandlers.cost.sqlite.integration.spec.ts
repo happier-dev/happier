@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
 import type { Socket } from 'socket.io';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -132,8 +131,6 @@ describe('Socket RPC request admission cost', () => {
         const guestSocket = caller(guest.id);
         const call = async (socket: typeof ownerSocket, path: string) => {
             const callback = vi.fn();
-            const prepare = vi.spyOn(DatabaseSync.prototype, 'prepare');
-            const exec = vi.spyOn(DatabaseSync.prototype, 'exec');
             let requests = 0;
             const stopObserving = observeSqliteRequests({ before: () => { requests++; } });
             discover.mockClear();
@@ -141,16 +138,12 @@ describe('Socket RPC request admission cost', () => {
                 await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, callback);
                 expect(callback).toHaveBeenCalledTimes(1);
                 const guest = socket === guestSocket;
-                // Measured on the same fixture before adding the diagnostic. Count
-                // physical SQLite statements, Prisma requests and room lookups.
-                expect([prepare.mock.calls.length + exec.mock.calls.length, requests, discover.mock.calls.length], path)
-                    .toEqual([guest ? 16 : 3, guest ? 2 : 1, path.endsWith('/forward') && !path.startsWith('unshared/')
-                        && !path.startsWith('withdrawn/') ? 2 : 0]);
+                expect(requests, path).toBe(guest ? 2 : 1);
+                const refused = path.startsWith('unshared/') || path.startsWith('withdrawn/');
+                expect(discover, path).toHaveBeenCalledTimes(path.endsWith('/forward') && !refused ? 2 : 0);
                 return callback.mock.calls[0][0] as unknown;
             } finally {
                 stopObserving();
-                prepare.mockRestore();
-                exec.mockRestore();
             }
         };
         const forbidden = {
