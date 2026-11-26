@@ -171,8 +171,10 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
 }>) {
     const { capture, comparison, identity, scope } = props;
     const { machineId } = capture.target;
-    const { cwd, sessionId } = capture.input;
+    const { cwd } = capture.input;
+    const sessionId = resolveReviewSourceSessionIdV1(capture);
     const { serverId } = scope;
+    const hydration = useHydrateSession(sessionId ?? '', 'ReviewChangesHost', { serverId, hydrateMessages: false });
     const host: ScmDiffSummaryHost = React.useMemo(() => ({ machineId }), [machineId]);
     const machine = React.useMemo(() => ({ machineId, basePath: cwd }), [machineId, cwd]);
     const workspaceScope = React.useMemo(() => ({ serverId, machineId, rootPath: cwd }), [serverId, machineId, cwd]);
@@ -180,7 +182,8 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
     const [indexPageSize, setIndexPageSize] = React.useState<number | null>(null);
     const activeReviewFile = React.useMemo(() => ({ key: identity, presented: true, externalLifecycle: true }), [identity]);
     const index = useCapturedScmComparison({ host, comparisonSessionId: sessionId, machine, identity: machine,
-        serverId, comparison, active: props.view === 'files' && !reachability.unreachable, indexPageSize });
+        serverId, comparison, active: props.view === 'files' && !reachability.unreachable
+            && (!sessionId || hydration.kind === 'available'), indexPageSize });
     const marks = useScmReviewedMarks({ host, serverId, comparisonSessionId: sessionId, comparison: props.view === 'files' ? index.comparison : null,
         observation: 'keyed' });
     const limits = useScmReviewLimits();
@@ -208,7 +211,11 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
     const unavailable = reachability.unreachable ? describeCheckoutUnreachable(reachability) : index.error;
     const excerpts = <ReviewEvidenceExcerpts comments={props.comments} onOpenComment={props.onOpenComment} />;
     if (reachability.unreachable) return <ReviewChangesUnavailable reason={unavailable} comments={props.comments} onOpenComment={props.onOpenComment} />;
-    const filesState = index.comparison ? null : unavailable ? <>
+    const filesState = index.comparison ? null : sessionId && hydration.kind === 'missing' ? <>
+        <SurfaceStateCard size="line" kind="unavailable" title={t('session.access.unavailable')}
+            action={{ label: t('common.retry'), onPress: hydration.retry }} />
+        {excerpts}
+    </> : unavailable ? <>
         <SurfaceStateCard size="line" kind="error" title={unavailable} action={{ label: t('common.retry'), onPress: index.retry }} />
         {excerpts}
     </> : <SurfaceStateCard kind="loading" title={t('common.loading')} />;
@@ -247,7 +254,6 @@ function ReviewChangesWalkthrough(props: ReviewChangesWalkthroughProps) {
 }
 
 function SessionReviewChangesWalkthrough(props: ReviewChangesWalkthroughProps & Readonly<{ sessionId: string }>) {
-    useHydrateSession(props.sessionId, 'ReviewChangesWalkthrough', { serverId: props.serverId, hydrateMessages: false });
     const bound = useSessionScmDiffSummaryBinding({ sessionId: props.sessionId, serverId: props.serverId,
         comparison: props.comparison, output: 'walkthrough' });
     return <ReviewChangesWalkthroughView {...props} bound={bound} />;

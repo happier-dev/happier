@@ -97,12 +97,28 @@ it.each([
 });
 
 
-it('reads only the opened pinned comparison, preserves its failure, and does no hidden Machine work', async () => {
-    fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE
+it.each([
+    { source: { kind: 'workingTree' }, initiallyMissing: false },
+    { source: { kind: 'session', sessionId: 'source-session' }, initiallyMissing: false },
+    { source: { kind: 'session', sessionId: 'source-session' }, initiallyMissing: true },
+] as const)(
+    'reads only the opened pinned $source.kind comparison, preserves its failure, and does no hidden Machine work (missing=$initiallyMissing)', async ({ source, initiallyMissing }) => {
+    const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
+    const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+    let capturedSession: typeof fixture.session | null = null;
+    const sessions = createSessionMetadataHttpBoundary(() => capturedSession ? { [capturedSession.id]: capturedSession } : {});
+    fixture = await createSessionFilesViewFixture({ rootPath: '/repo',
+        request: createSessionReadBatchFetchBoundary(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            return source.kind === 'session' && (path === `/v2/sessions/${source.sessionId}` || path === `/v1/sessions/${source.sessionId}/turns`)
+                ? sessions.handle(url, init) : null;
+        }),
+        rpc: request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE
         ? { success: false, error: 'Captured comparison no longer available', errorCode: 'DIFF_UNAVAILABLE' } satisfies ScmComparisonCaptureOutput : undefined });
+    if (source.kind === 'session' && !initiallyMissing) capturedSession = { ...fixture.session, id: source.sessionId };
     const { ReviewChangesHost } = await import('./ReviewChangesHost');
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
-    const capture = { target: { kind: 'machine', machineId: 'm1' }, input: { cwd: '/repo', comparisonId: 'a'.repeat(64), source: { kind: 'workingTree' } } } satisfies ReviewRoundComparisonCaptureV1;
+    const capture = { target: { kind: 'machine', machineId: 'm1' }, input: { cwd: '/repo', comparisonId: 'a'.repeat(64), source } } satisfies ReviewRoundComparisonCaptureV1;
     const props = { reviewId: 'review-1', roundOrdinal: 1, scope: { serverId: fixture.scope.serverId, accountId: 'alice' },
         capture, comments: [], view: 'files', onSelectView() {}, onOpenComment() {} } as const;
     const screen = await fixture.render(<ReviewChangesHost {...props} active={false} />);
@@ -115,10 +131,17 @@ it('reads only the opened pinned comparison, preserves its failure, and does no 
         screen.findAllByType(WorkspaceScmReviewBody)[0]?.findAll(node => typeof node.props.onLayout === 'function')[0]
             ?.props.onLayout({ nativeEvent: { layout: { width: 900, height: 360 } } });
     });
+    if (source.kind === 'session' && initiallyMissing) {
+        await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).some(card => card.props.kind === 'unavailable'), screen.getTextContent()).toBe(true));
+        expect(captures()).toHaveLength(0);
+        capturedSession = { ...fixture.session, id: source.sessionId };
+        await act(async () => screen.findAllByType(SurfaceStateCard).find(card => card.props.kind === 'unavailable')?.props.action.onPress());
+    }
     await vi.waitFor(() => expect(screen.findAllByType(WorkspaceScmReviewBody)).toHaveLength(1));
     await measureViewport();
     await vi.waitFor(() => expect(captures(), screen.findAllByType(SurfaceStateCard).map(card => card.props.title).join('; ')).toHaveLength(1));
-    expect(captures()[0]?.payload).toMatchObject({ comparisonId: capture.input.comparisonId, cwd: '/repo', source: { kind: 'workingTree' } });
+    expect(captures()[0]?.payload).toMatchObject({ comparisonId: capture.input.comparisonId, cwd: '/repo', source });
+    if (source.kind === 'session') expect(captures()[0]?.payload).toMatchObject({ sessionId: source.sessionId });
     await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).some(card => card.props.title === 'Captured comparison no longer available'),
         screen.findAllByType(SurfaceStateCard).map(card => card.props.title).join('; ')).toBe(true));
     expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT)).toEqual([]);
