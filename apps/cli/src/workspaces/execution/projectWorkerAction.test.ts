@@ -355,8 +355,9 @@ describe('exact target worker status Action', () => {
       expect(wrongEdge).not.toHaveProperty('result.lastCleanSyncAtMs');
       controllerRead.mockRejectedValueOnce(new Error('External controller observation unavailable'));
       const unavailable = await executor.execute('projects.worker.status', input, context);
+      // A failed controller read cannot establish that the copy is missing.
       expect(unavailable).toMatchObject({ ok: true,
-        result: { eligible: false, explanation: 'worker_copy_missing' } });
+        result: { eligible: false, explanation: 'unavailable' } });
       expect(unavailable).not.toHaveProperty('result.lastCleanSyncAtMs');
       expect(launched).toBe(false);
       expect(admission.dependencies()).toMatchObject([{ operationId: 'queued-clean-work', state: 'queued' }]);
@@ -488,7 +489,8 @@ describe('exact target worker status Action', () => {
     expect(graphRetired).toBe(true);
     expect(writes).toBe(1);
     if (settlement === 'retired') {
-      expect(settledDefinition).toEqual({ ok: true, result: { status: 'retired' } });
+      expect(settledDefinition).toMatchObject({ ok: true, result: { status: 'retired' },
+        automationNotices: [expect.objectContaining({ code: 'action_automations_not_checked' })] });
       if (!settledDefinition.ok) throw new Error('Retirement did not settle');
       assertActionOutputContract('projects.worker.copy.retire', settledDefinition.result);
     } else {
