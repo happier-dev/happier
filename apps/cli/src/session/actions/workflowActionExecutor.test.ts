@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createWorkflowDefinitionActions } from './workflowDefinitions';
 import { createWorkflowActionExecutor } from './workflowActionExecutor';
+import { createWorkflowRunActionOwner } from './workflowRunActions';
+import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 const interchange = createWorkflowDefinitionActions({ artifactStore: createAccountArtifactStore({
   credentials: { token: 'workflow-fixture', encryption: null }, getAccountEncryptionMode: async () => 'plain',
@@ -146,20 +148,31 @@ describe('workflow Action host', () => {
   });
 
   it('fails the whole family closed before parsing or invoking an owner', async () => {
-    const definitions = { ...interchangePorts,
-      list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), edit: vi.fn(), delete: vi.fn(),
-    };
-    const runs = { execute: vi.fn() };
+    const storageExecute = vi.fn(async () => { throw new Error('unexpected_workflow_storage'); });
+    const runs = createWorkflowRunActionOwner({
+      storage: { execute: storageExecute }, definitions: interchange,
+      resolveAccountId: async () => 'account-1',
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+    });
     const execute = createWorkflowActionExecutor({
       isWorkflowFeatureEnabled: async () => false,
-      definitions,
+      definitions: interchange,
       runs,
     });
 
-    await expect(execute({ actionId: 'workflow.run.start', input: null as never, context: {} }))
-      .resolves.toEqual({ ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' });
-    expect(runs.execute).not.toHaveBeenCalled();
-    expect(Object.values(definitions).every((owner) => !vi.isMockFunction(owner) || owner.mock.calls.length === 0)).toBe(true);
+    const { error: _message, ...failure } = WorkflowActionFailureV1Schema.parse(
+      await execute({ actionId: 'workflow.run.start', input: null as never, context: {} }));
+    expect(failure).toEqual({
+      ok: false,
+      errorCode: 'content_unavailable',
+      failureCause: {
+        phase: 'workflow.run.start',
+        errorClass: 'Error',
+        errorCode: null,
+        httpStatus: null,
+      },
+    });
+    expect(storageExecute).not.toHaveBeenCalled();
   });
 
   it('resolves one trusted ingress context for validate, inline start, create, and update', async () => {

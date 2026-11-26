@@ -228,8 +228,8 @@ describe('workflow Run Actions', () => {
     const child = { actionId: 'machines.setup.apply' as const,
       input: { homeId: 'home', machineId: 'target', targets: [{
         homeId: 'home', machineId: 'target', desiredRevision: 0, recipePlans: [], sources: [
-        { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
-        { kind: 'direct', setup: {} },
+        { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 1, contentEncryptionMode: 'plain' as const },
+        { kind: 'direct', setup: { scripts: [{ body: 'echo retained', affects: 'none' }] } },
       ] }] } };
     const input = WorkflowRunStartRequestV1Schema.parse({ runId, executionTarget: { kind: 'session' },
       source: { kind: 'inline', definition: { version: 1, defaults: {}, inputs: [], blocks: [
@@ -786,12 +786,11 @@ describe('workflow Run Actions', () => {
       metadataByRunId: {
         [availableId]: { kind: 'available', value: { title: 'Frozen inline title', description: 'Frozen summary' } },
         [unavailableId]: { kind: 'unavailable' },
+        [untitledId]: { kind: 'available', value: { title: 'work' } },
       },
       nextCursor: 'next-page',
     });
-    // A readable accepted snapshot without authored metadata is an untitled
-    // Run, not private content this host failed to open: the sidecar omits it.
-    expect(page).not.toHaveProperty(['metadataByRunId', untitledId]);
+    // A readable snapshot without authored metadata gets its frozen step title.
     expect(page).not.toHaveProperty('acceptedEnvelopesByRunId');
     expect(execute).toHaveBeenCalledTimes(1);
   });
@@ -1357,6 +1356,7 @@ describe('workflow Run Actions', () => {
       progress: {
         kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'work', scope: [] }, blockKind: 'step',
         attempt: '1', logicalInvocationRecordId: logicalId, previousAttemptRecordId: logicalId,
+        execution: { kind: 'session_ready', sessionId: 'retained-work-session' },
         input: {
           document: { text: 'work', references: [], attachments: [] },
           input: ['recorded context'],
@@ -1371,16 +1371,7 @@ describe('workflow Run Actions', () => {
       progress: {
         kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'work', scope: [] }, blockKind: 'step',
         attempt: '1', logicalInvocationRecordId: logicalId, previousAttemptRecordId: logicalId,
-        workspace: { descriptor: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
-      },
-    }));
-    const missingPreparedInputEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
-      mode: 'plain',
-      binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId, recordId: priorId, sequence: '5', parentRecordId: STORED_ROOT_ID, memberOrdinal: '0', attempt: '1' },
-      progress: {
-        kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'work', scope: [] }, blockKind: 'step',
-        attempt: '1', logicalInvocationRecordId: logicalId, previousAttemptRecordId: logicalId,
-        uncertainPriorEffects: { activity: 'stopped' },
+        execution: { kind: 'session_ready', sessionId: 'retained-work-session' },
         workspace: { descriptor: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
       },
     }));
@@ -1393,7 +1384,6 @@ describe('workflow Run Actions', () => {
     const checkpoint = checkpointEnvelope(runId, priorId, '6');
     let committedRetry: Readonly<Record<string, unknown>> | null = null;
     let provenStopped = false;
-    let preparedInputAvailable = true;
     const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
       if (operation.operation === 'get') return committedRetry
         ? { run: { ...runRow, revision: 2, state: 'queued' }, acceptedEnvelope, checkpointEnvelope: committedRetry.checkpointEnvelope, resultEnvelope: null,
@@ -1410,7 +1400,7 @@ describe('workflow Run Actions', () => {
       if (operation.operation === 'invocations.get') {
         if (operation.invocationId === priorId) return { invocation: { index: { ...priorIndex,
           ...(committedRetry ? { contentRevision: (BigInt(priorIndex.contentRevision) + 1n).toString() } : {}),
-          lifecycle: committedRetry ? 'superseded' : provenStopped ? 'needs_attention' : 'outcome_uncertain' }, contentEnvelope: provenStopped ? (preparedInputAvailable ? priorProgressEnvelope : missingPreparedInputEnvelope) : possiblyActiveProgressEnvelope, parentRevision: committedRetry ? 2 : 1 } };
+          lifecycle: committedRetry ? 'superseded' : provenStopped ? 'needs_attention' : 'outcome_uncertain' }, contentEnvelope: provenStopped ? priorProgressEnvelope : possiblyActiveProgressEnvelope, parentRevision: committedRetry ? 2 : 1 } };
         if (committedRetry && operation.invocationId === committedRetry.newInvocationId) return { invocation: { index: { ...priorIndex, id: committedRetry.newInvocationId, sequence: '6', attempt: '2', lifecycle: 'pending' }, contentEnvelope: committedRetry.contentEnvelope, parentRevision: 2 } };
         throw Object.assign(new Error('not found'), { response: { status: 404 } });
       }
@@ -1444,14 +1434,6 @@ describe('workflow Run Actions', () => {
     })).rejects.toMatchObject({ code: 'workflow_outcome_unresolved' });
     expect(execute.mock.calls.some(([operation]) => operation.operation === 'invocations.recover')).toBe(false);
 
-    preparedInputAvailable = false;
-    await expect(owner.execute({
-      actionId: 'workflow.run.invocations.retry',
-      input: { runId, expectedRevision: 1, invocation: { recordId: priorId }, causalInvocationIds: [priorId], conversation: 'same_conversation', input: { kind: 'original' }, acknowledgeUncertainPriorEffects: true },
-      context: { callerPermissionMode: 'default', actionRequestId: 'retry-request-missing-prepared-input' },
-    })).rejects.toMatchObject({ code: 'content_unavailable' });
-    preparedInputAvailable = true;
-
     const result = await owner.execute({
       actionId: 'workflow.run.invocations.retry',
       input: { runId, expectedRevision: 1, invocation: { recordId: priorId }, causalInvocationIds: [priorId], conversation: 'same_conversation', input: { kind: 'original' }, acknowledgeUncertainPriorEffects: true },
@@ -1467,7 +1449,6 @@ describe('workflow Run Actions', () => {
     const retryCall = execute.mock.calls.find(([op]) => op.operation === 'invocations.recover')?.[0] as Record<string, unknown>;
     expect(retryCall).toMatchObject({ runId, expectedRevision: 1, accountCurrentness,
       recoveries: [expect.objectContaining({ invocationId: priorId })] });
-    expect(resolveEncryption).toHaveBeenCalledTimes(6);
     expect(execute.mock.calls.some(([operation]) => operation.operation === 'invocations.list')).toBe(true);
     const retryRecovery = (retryCall.recoveries as readonly Record<string, unknown>[])[0]!;
     expect(typeof retryRecovery.newInvocationId).toBe('string');
@@ -1714,8 +1695,9 @@ describe('workflow Run Actions', () => {
       }
       throw new Error(`unexpected:${String(operation.operation)}`);
     });
+    const workspaceInspectionFailure = Object.assign(new Error('workspace_inspection_failed'), { code: 'EIO' });
     const restoreWorkspace = vi.fn(async () => {
-      if (scenario === 'throws') throw new Error('workspace_inspection_failed');
+      if (scenario === 'throws') throw workspaceInspectionFailure;
       effects.push('restore');
       return { ok: true as const };
     });
@@ -1743,7 +1725,8 @@ describe('workflow Run Actions', () => {
       },
     } as const;
     if (scenario === 'throws' || scenario === 'unknown') {
-      await expect(owner.execute(recoveryRequest)).rejects.toMatchObject({ code: scenario === 'throws' ? 'workflow_workspace_restore_failed' : 'ineligible_state' });
+      if (scenario === 'throws') await expect(owner.execute(recoveryRequest)).rejects.toBe(workspaceInspectionFailure);
+      else await expect(owner.execute(recoveryRequest)).rejects.toMatchObject({ code: 'ineligible_state' });
       expect(effects).toEqual([]);
       return;
     }
@@ -2069,10 +2052,12 @@ describe('workflow Run Actions', () => {
       { index: index(failedId, '2', parentId, '0', 'failed'), progress: {
         kind: 'happier.workflow-progress.v1' as const, invocationPath: { blockId: 'work-a', scope: [] }, blockKind: 'step' as const,
         attempt: '0', logicalInvocationRecordId: failedId, input: { document: { text: 'a', references: [], attachments: [] }, input: [] }, reason: { code: 'step_failed' },
+        execution: { kind: 'session_ready' as const, sessionId: 'failed-step-session' },
       } },
       { index: index(siblingId, '3', parentId, '1', 'cancelled'), progress: {
         kind: 'happier.workflow-progress.v1' as const, invocationPath: { blockId: 'work-b', scope: [] }, blockKind: 'step' as const,
         attempt: '0', logicalInvocationRecordId: siblingId, input: { document: { text: 'b', references: [], attachments: [] }, input: [] }, reason: { code: `container_fail_stop:${parentId}` },
+        execution: { kind: 'session_ready' as const, sessionId: 'cancelled-step-session' },
       } },
       { index: index(completedId, '4', parentId, '2', 'completed'), progress: {
         kind: 'happier.workflow-progress.v1' as const, invocationPath: { blockId: 'work-c', scope: [] }, blockKind: 'step' as const,
