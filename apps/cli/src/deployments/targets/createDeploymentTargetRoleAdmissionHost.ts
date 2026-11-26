@@ -10,7 +10,7 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { StoredCredentials } from '@/persistence';
@@ -54,7 +54,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
     readCurrentMachineId(): string | null;
 }>): Promise<DeploymentTargetRoleAdmissionHost | null> {
     const authorization = context.externalActionExecutionAuthorization;
-    const requester = readRequesterAccountActionContext(authorization);
+    const requester = readRequesterAccountActionTransportContext(authorization);
     const captured = config.accountExecution;
     if (authorization ? !requester || !authorization.requesterHttpProjection || !authorization.requesterAccountProjection
         : context.externalActionCredential || context.rpcSessionAuthorization || !captured) return null;
@@ -66,7 +66,8 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
     const credentialOwnerAccountId = credentials ? readAccountIdFromToken(credentials.token) : null;
     if (!credentials || !serverId || !serverHttpBaseUrl || !machineId || !credentialOwnerAccountId
         || projection && projection.accountId !== credentialOwnerAccountId) return null;
-    const saved = requester?.savedSecretOperationContext ?? captured?.savedSecretOperationContext;
+    const requesterOperation = readRequesterAccountActionContext(authorization);
+    const saved = authorization ? requesterOperation?.savedSecretOperationContext : captured?.savedSecretOperationContext;
     const assertCurrent = async (current: ActionExecutorContext) => {
         current.signal?.throwIfAborted();
         if (saved && (saved.credentials.token !== credentials.token || !await saved.isCurrent(current.signal))) return refuse('authorityChanged');
@@ -81,7 +82,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
         await assertCurrent(current);
         if (projection) {
             const signed = await projection.createRequestHeaders({ ...request,
-                effectActionId: requester?.deploymentChild?.actionId ?? authorization!.binding.actionId,
+                effectActionId: requesterOperation?.deploymentChild?.actionId ?? authorization!.binding.actionId,
                 ...(current.signal ? { signal: current.signal } : {}) });
             return signed ? { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...signed } : null;
         }
