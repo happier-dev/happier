@@ -6493,8 +6493,11 @@ its native stopped state before capturing the final backup. Only the selected so
 and restored. Current destination health precedes the reviewed Connect change;
 the app deploy and health check follow that change. When the settled restore
 reports that amcheck is missing, the existing Workflow review card presents
-that warning after the current destination health check. The Run applies the
-Connect change only after a person completes the review. Source data stays
+that warning after the current destination health check. That review is the
+integrity decision; the cutover's own approval follows as a separate decision. A
+saved approval choice can waive the cutover Ask but never this review, which is a
+Workflow hold and not an Action. The Run applies the Connect change only after a
+person completes the review. Source data stays
 retained unless the person explicitly supplies a separate resource-retirement
 request.
 
