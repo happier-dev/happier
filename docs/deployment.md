@@ -6470,8 +6470,12 @@ midnight refreshes on its next existing read or push.
 ## Database Move Workflow (0.3 development)
 
 The data-safe Move starter uses the existing Workflow Run and Action owners.
-It stops each reviewed source writer and observes its native stopped state before
-capturing the final backup. Only the selected source's final snapshot is verified
+Move review accepts only a destination whose data Machine already runs the source
+Environment (same Machine and installation). The copy reads the source backup
+repository with credentials sealed only for the source's own installations, so a
+destination on another Machine is refused at review as `source_machine_required`
+before any writer is stopped. It stops each reviewed source writer and observes
+its native stopped state before capturing the final backup. Only the selected source's final snapshot is verified
 and restored. Current destination health precedes the reviewed Connect change;
 the app deploy and health check follow that change. When the settled restore
 reports that amcheck is missing, the existing Workflow review card presents

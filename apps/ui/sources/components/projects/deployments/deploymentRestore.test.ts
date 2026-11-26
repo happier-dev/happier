@@ -25,12 +25,28 @@ describe('database copy restore operands', () => {
     const destination = { ...base, runtimeTargetLink: null,
       targetLinks: [{ targetLink, content: { providerIdentity: { providerAccountId: 'organization', providerResourceId: 'project',
         providerEnvironment: 'main' }, providerEnvironment: { kind: 'native' as const, selection: { branchId: 'main' } } } }] };
-    expect(deploymentDatabaseMoveDestination(destination)).toEqual({ kind: 'unavailable', reason: 'unsupported' });
+    expect(deploymentDatabaseMoveDestination(destination, { runtimeTargetLink: createDeploymentTargetLinkHeaderV1() }))
+      .toEqual({ kind: 'unavailable', reason: 'unsupported' });
     // A verified source capture cannot turn an undeclared provider import into native restore operands.
     expect(deploymentRestoreOperands({ ...base, runtimeTargetLink: base.targetLinks[0]!.targetLink },
       { deploymentId: 'source-deploy', restoreBackupId: 'snapshot', takenAtMs: 1,
         service: 'postgres', database: 'shop', versionLabel: null },
       { detail: destination, service: 'database', database: 'shop', backupOperationId: 'verified-source-backup' })).toBeNull();
+  });
+
+  it('refuses at review a destination whose data Machine does not already run the source Environment', () => {
+    // The copy reads the source repository with credentials sealed only for the source's own Machines.
+    const source = { runtimeTargetLink: createDeploymentTargetLinkHeaderV1() };
+    const member = source.runtimeTargetLink.members[0]!;
+    const base = { ...createDeploymentEnvironmentDetailV1(), databaseMoveCandidate: true };
+    const on = (machineId: string, installationId: string) => ({ ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1({
+      id: 'destination-link', machines: [machineId], members: [{ ...member, machineId, installationId }] }) });
+    expect(deploymentDatabaseMoveDestination(on('other-machine', 'other-installation'), source))
+      .toEqual({ kind: 'unavailable', reason: 'source_machine_required' });
+    expect(deploymentDatabaseMoveDestination(on(member.machineId, 'other-installation'), source))
+      .toEqual({ kind: 'unavailable', reason: 'source_machine_required' });
+    const sameMachine = { ...base, runtimeTargetLink: createDeploymentTargetLinkHeaderV1({ id: 'destination-link' }) };
+    expect(deploymentDatabaseMoveDestination(sameMachine, source)).not.toEqual({ kind: 'unavailable', reason: 'source_machine_required' });
   });
 
   it('addresses the destination while retaining the source capture identity', () => {

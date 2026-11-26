@@ -2811,7 +2811,10 @@ describe('built-in deployment Workflow step walks', () => {
         expect(detailObservations).toMatchObject([{ kind: 'service', state: 'stopped', phase: 'stopped' }]);
     });
 
-    it.skip.each(['plain', 'e2ee'] as const)('pending: restore the verified Data Move backup, cut over and verify the app (%s)', async mode => {
+    // Pending by ruling (ORCH-TOP 2026-11-26): this fixture restores on a different Machine from the source. The copy can
+    // only read the source repository on a Machine sealed for the source's credentials, so Move review refuses it
+    // (`source_machine_required`) before anything stops. It stays here until cross-Machine credential delivery exists.
+    it.skip.each(['plain', 'e2ee'] as const)('pending cross-Machine credential delivery: restore the verified Data Move backup, cut over and verify the app (%s)', async mode => {
         const { outcome, leaves, asks, settlements, detailObservations } = await walkStatefulDataMove(mode);
         expect(outcome.state, JSON.stringify({ leaves, asks, settlements, detailObservations })).toBe('succeeded');
         expect(leaves).toMatchObject([
