@@ -31,7 +31,9 @@ import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transc
 import { resolvePendingMessagesPresentation } from './pendingMessageVisualState';
 import { TranscriptRowLayoutMutationProvider } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 import { estimateTranscriptRowHeightFromContent } from '@/components/sessions/transcript/measurement/estimateTranscriptRowHeightFromCache';
-import { PENDING_QUEUE_TOP_INSET_PX } from './pendingQueueContentClipping';
+import { PENDING_QUEUE_SCROLL_PADDING_TOP_PX, PENDING_QUEUE_TOP_INSET_PX, estimatePendingFollowNoticeBodyHeightPx } from './pendingQueueContentClipping';
+import { SESSION_MESSAGE_PROVENANCE_META_KEY, buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { getDeviceType } from '@/utils/platform/responsive';
 import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions';
 
 // Native presentation and confirmation are the only replaced UI boundaries.
@@ -208,6 +210,29 @@ describe('pending transcript local delivery custody', () => {
         const estimated = estimateTranscriptRowHeightFromContent({ platformIsWeb: true, toolCallsGroupChromeVariant: 'feed_background',
             getMessageById: () => null, item: { kind: 'pending-queue', id: 'pending-queue', pendingMessages: folded, discardedMessages: [] } });
         expect(screen.findHostByTestId('pendingMessages.scroll')?.props.style.height).toBe(estimated! - PENDING_QUEUE_TOP_INSET_PX);
+    });
+    // A lone host line (a decided approval's result) is not a message bubble: its queue holds no empty band under it,
+    // so the composer's status line sits a row's rhythm below it (design review R4 §2, about 84 px before).
+    it('sizes a lone host line\'s queue from the line, not from a message bubble', async () => {
+        const { provenance } = buildTrustedHostSessionInputAdmissionV1('mcp');
+        const hostLine: PendingMessage = { id: 'host-line', localId: 'approval-result:artifact-1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', pendingDeliveryStatus: 'server_queued', text: 'Approved',
+            rawRecord: { role: 'user', content: { type: 'text', text: 'Approved' }, meta: { [SESSION_MESSAGE_PROVENANCE_META_KEY]: provenance } } };
+        expect(resolvePendingMessagesPresentation([hostLine]).shownRows[0]?.isHostInput).toBe(true);
+        const serverId = getActiveServerSnapshot().serverId;
+        const screen = await renderScreen(<AppSessionTranscriptSourceProvider sessionId={sessionId} serverId={serverId}>
+            <PendingMessagesTranscriptBlock sessionId={sessionId} serverId={serverId} pendingMessages={[hostLine]} discardedMessages={[]} />
+        </AppSessionTranscriptSourceProvider>);
+        const height = screen.findHostByTestId('pendingMessages.scroll')?.props.style.height;
+        if (getDeviceType() === 'phone') {
+            // The status reads under the line: the block and the transcript's estimate of it agree.
+            const estimated = estimateTranscriptRowHeightFromContent({ platformIsWeb: true, toolCallsGroupChromeVariant: 'feed_background',
+                getMessageById: () => null, item: { kind: 'pending-queue', id: 'pending-queue', pendingMessages: [hostLine], discardedMessages: [] } });
+            expect(height).toBe(estimated! - PENDING_QUEUE_TOP_INSET_PX);
+        } else {
+            // The status reads at the line's own end: the queue is the line's height.
+            expect(height).toBe(PENDING_QUEUE_SCROLL_PADDING_TOP_PX + estimatePendingFollowNoticeBodyHeightPx(false));
+        }
     });
     it('does not mutate a server queue row while its local direct send is still awaiting acknowledgement', async () => {
         const localId = 'local-direct-action-message';

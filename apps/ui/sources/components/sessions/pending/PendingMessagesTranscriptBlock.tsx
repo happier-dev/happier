@@ -50,12 +50,14 @@ import {
     resolvePendingMessagesPresentation,
     resolvePendingMessageContentPresentation,
     sessionDeliversHeldInputByResume,
+    type PendingMessagePresentation,
     type PendingMessagesPresentationByRecipient,
 } from './pendingMessageVisualState';
 import {
     clampsPendingMessageLines,
     PENDING_QUEUE_TOP_INSET_PX,
     PENDING_QUEUE_SCROLL_PADDING_TOP_PX,
+    estimatePendingFollowNoticeBodyHeightPx,
     estimatePendingFollowNoticeHeightPx,
     resolvePendingFollowNoticePullUpPx,
     resolvePendingMessageGapPx,
@@ -605,8 +607,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         // nothing that reads or delivers the content is offered until the real text arrives.
         const isContentLoading = message.pendingDecryption?.kind === 'loading';
         const isHostFollowInput = presentation.isHostInput;
-        // A host line without a source to open says its delivery state on its own line, not on a line of its own.
-        const hostStatusInline = isHostFollowInput && !presentation.followInput && !presentation.hostOnboarding;
+        const hostStatusInline = hostStatusReadsInline(presentation, phone);
         // A new Bot's first-run seed is the host's line: the person never copies, edits or resends it as their words,
         // and a delivery that cannot run is the Session's failure, said once by its delivery presenter.
         const isHostOnboarding = presentation.hostOnboarding;
@@ -1063,6 +1064,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         menuHangsFromBubble,
         openMenuKey,
         pendingQueueDeliveryTiming,
+        phone,
         pendingQueueForegroundState,
         pendingQueueRuntimeActivity,
         pendingQueueRuntimeReachable,
@@ -1272,9 +1274,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         typeof scrollContentHeightPx === 'number' && Number.isFinite(scrollContentHeightPx) && scrollContentHeightPx > 0
             ? Math.trunc(scrollContentHeightPx)
             : 0;
-    const estimatedPendingContentHeightPx = pendingPresentation.shownRows.some(row => row.followInput)
+    // A host line is sized from its own anatomy, never from a message bubble's floor: the floor left an empty band
+    // under a lone approval result (about 84 px from the line to the composer's status line).
+    const estimatedPendingContentHeightPx = pendingPresentation.shownRows.some(row => row.isHostInput)
         ? PENDING_QUEUE_SCROLL_PADDING_TOP_PX + pendingPresentation.shownRows.reduce((height, row) => height
-            + (row.followInput ? estimatePendingFollowNoticeHeightPx(row, isWeb, pendingCount > 1)
+            + (row.isHostInput ? (hostStatusReadsInline(row, phone) ? estimatePendingFollowNoticeBodyHeightPx(row.needsYou)
+                : estimatePendingFollowNoticeHeightPx(row, isWeb, pendingCount > 1))
                 + resolvePendingMessageGapPx({ isLastInScrollContent: row.index === lastShownPendingIndex && discardedCount === 0 })
                 : reorderEstimatedRowHeightPx), 0)
         : pendingPresentation.shownRows.length * reorderEstimatedRowHeightPx;
@@ -1582,6 +1587,17 @@ function IconAction(props: {
  * discarded state), so queue→commit changes nothing but the status. Its parts own the padding so the message's
  * press target fills the bubble. A host notice has no bubble and stays a plain event row.
  */
+/**
+ * A host line without a source to open says its delivery state at its own end, on the line it describes. A phone has
+ * no room beside the line: there the status reads under it, at the queue's edge, as a notice's does.
+ */
+function hostStatusReadsInline(
+    row: Pick<PendingMessagePresentation, 'isHostInput' | 'followInput' | 'hostOnboarding'>,
+    phone: boolean,
+): boolean {
+    return row.isHostInput && !row.followInput && !row.hostOnboarding && !phone;
+}
+
 function PendingUtteranceSurface(props: Readonly<{
     isHostFollowInput: boolean;
     /** A host line whose status reads at its end: the line takes the row's width up to it. */
