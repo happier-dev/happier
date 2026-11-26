@@ -21,7 +21,7 @@ import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPan
 import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 import { createSessionBoardDetailsTab, createSessionCommitDetailsTab, createSessionDiscussionDetailsTab } from './details/sessionDetailsTabBuilders';
 import { createWorkspaceFileDetailsTab } from '@/components/appShell/panes/details/fileDetailsTab';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -318,7 +318,9 @@ describe('SessionDetailsPanel browser product mount', () => {
         } finally {
             await boundary.transport.destroy();
         }
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now() })]);
+        storage.getState().applyMachines([createHydratedPlainMachineFixture({
+            id: 'machine-1', accountId: 'account-a', machine: { activeAt: Date.now(), presenceProtocolVersion: 1 },
+        })]);
         const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
         expect(await resolveServerCredentialAccountScope(runtime.serverId)).toMatchObject({
             kind: 'bound', scope: { serverId: runtime.serverIdentityId, accountId: 'account-a' },
@@ -369,15 +371,18 @@ describe('SessionDetailsPanel browser product mount', () => {
         const controller = caller.createRequestController(() => {});
         const currentMachine = storage.getState().machines['machine-1'];
         if (!currentMachine) throw new Error('Expected the current Session Machine');
-        await act(async () => storage.getState().applyMachines([{ ...currentMachine, active: false }]));
+        await act(async () => storage.getState().applyMachineActivityUpdates([
+            { id: currentMachine.id, active: false, activeAt: Date.now() },
+        ]));
         await flushHookEffects();
-        // An inactive Session RPC target is unavailable; it must not retain resource authority.
-        expect(readProjected()).toMatchObject({ phase: 'unavailable', interactionEnabled: false, machineId: null });
+        // Offline retains display attribution and the admitted catalog, without resource authority.
+        expect(readProjected()).toMatchObject({ phase: 'retainedOffline', interactionEnabled: false,
+            machineId: 'machine-1', pluginUiProjection: { generation: 9 } });
         expect(caller.lifetime.isCurrent()).toBe(true);
         expect(readMounted()?.callerHostedHtmlRuntime?.admittedHostMethods).not.toEqual(expect.arrayContaining(['readResource', 'watchResource']));
         await expect(controller.handleRequest({
             requestId: 'offline-resource', method: 'readResource', payload: { resource: { pluginId: 'acme.review', localId: 'status' } },
-        })).rejects.toThrow('caller_surface_retired');
+        })).rejects.toThrow('plugin_resource_not_found');
         controller.dispose();
         const session = storage.getState().sessions.s1;
         const access = session.access;

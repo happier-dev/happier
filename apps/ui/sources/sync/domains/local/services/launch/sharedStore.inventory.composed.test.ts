@@ -95,7 +95,9 @@ it('parks each qualified launcher projection independently of broad Machine obse
                 }) };
             }
             if (request.payload.observationOnly) observations.push({ scopes: request.payload.launcherScopes ?? [], signal: request.signal });
-            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
+            // `base` is daemon-local delta input, never part of the snapshot wire reply.
+            const { base: _base, ...reply } = await routes.watchSnapshot({ ...request.payload, signal: request.signal });
+            return { protocolVersion: 1, ...reply };
         }
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) return {
             protocolVersion: 1, snapshot: { v: 1, machineId: 'machine-a', updatedAt: 1_000, targets: [] },
@@ -156,7 +158,8 @@ it('keeps mounted Machine observation enrolled across 75 material inventory repl
     rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; observationOnly?: boolean }; signal: AbortSignal }) => {
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
             if (request.payload.observationOnly) observationSignals.push(request.signal);
-            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
+            const { base: _base, ...reply } = await routes.watchSnapshot({ ...request.payload, signal: request.signal });
+            return { protocolVersion: 1, ...reply };
         }
         return { protocolVersion: 1, snapshot: registry.getSnapshot() };
     });
@@ -199,9 +202,10 @@ it.each(['observation', 'snapshot'] as const)('releases producer demand after a 
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
             signals.push(request.signal);
             const reply = routes.watchSnapshot({ ...request.payload, signal: request.signal });
-            return { protocolVersion: 1, ...await (failCurrentTransport
+            const { base: _base, ...result } = await (failCurrentTransport
                 && Boolean(request.payload.observationOnly) === (failedRequest === 'observation')
-                ? Promise.race([reply, failure.promise]) : reply) };
+                ? Promise.race([reply, failure.promise]) : reply);
+            return { protocolVersion: 1, ...result };
         }
         return { protocolVersion: 1, snapshot: registry.getSnapshot() };
     });
