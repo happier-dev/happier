@@ -87,6 +87,7 @@ export const CODERABBIT_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
+            nonInteractiveStatusProbe: true,
             missingCredentialState: 'unknown',
             loginLaunches: [{ kind: 'primary', args: ['auth', 'login'] }],
           },

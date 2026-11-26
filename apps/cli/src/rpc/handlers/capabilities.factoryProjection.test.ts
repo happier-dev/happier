@@ -1,5 +1,9 @@
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { projectMachineAgentsDetectResponse, resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { resolveAgentRoutingId } from '@happier-dev/agents';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { reloadConfiguration } from '@/configuration';
 import { createFirstConversationAgentFixture } from '@/daemon/testkit/firstConversationAgent.testkit';
@@ -7,7 +11,12 @@ import { createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntime
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { registerCapabilitiesHandlers } from './capabilities';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createMachineAgentInventoryPublication, type MachineAgentInventoryObservation } from '@/capabilities/snapshots/machineAgentInventory';
+import type { CapabilitiesDetectRequest } from '@/capabilities/types';
+import { bindProcessLogger, Logger } from '@/ui/logger';
+import { createCliCapabilitiesService, registerCapabilitiesHandlers } from './capabilities';
 import { createFilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 
 const environment = createEnvKeyScope(['HAPPIER_HOME_DIR']);
@@ -30,9 +39,10 @@ afterEach(async () => { await fixtures.at(-1)?.lease.release(); });
 async function setup(
     executeNativeRpc: NonNullable<Parameters<typeof createFilesystemEffectAdmission>[0]>['executeNativeRpc'],
     resolveContributes?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['resolveContributes'],
+    runtimeOptions?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['runtimeOptions'],
 ) {
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-        plugins: [createFirstConversationAgentFixture('FACTORY_PROJECTION')], resolveContributes });
+        plugins: [createFirstConversationAgentFixture('FACTORY_PROJECTION')], resolveContributes, runtimeOptions });
     fixtures.push(fixture);
     environment.patch({ HAPPIER_HOME_DIR: fixture.happyHomeDir });
     reloadConfiguration();
@@ -83,6 +93,102 @@ it('removes native sign-in identity from Use capability replies without mutating
     expect(await detect({ requests: [request.requests[0]!] }, { ...requester,
         machineAdmission: { ...requester.machineAdmission!, role: 'manage' },
     })).toEqual(response);
+});
+
+it('publishes only typed CodeRabbit readiness to a Use guest and retained Machine inventory after a private native auth response', async () => {
+    let request: CapabilitiesDetectRequest = {};
+    let native: Awaited<ReturnType<typeof createCliCapabilitiesService>> | undefined;
+    // Substitute only the OS-user RPC transport. The receiving capability service,
+    // registered CodeRabbit auth hook and executable launch below remain real.
+    const { fixture, detect } = await setup(async input => {
+        expect(input.method).toBe(RPC_METHODS.CAPABILITIES_DETECT);
+        if (!native) throw new Error('Native fixture service is not ready');
+        // The native RPC wire is untyped; its real service receives the handler's normalized request.
+        return native.detect(input.input as CapabilitiesDetectRequest);
+    }, happyHomeDir => resolveMergedContributionRegistry({ happyHomeDir,
+        pluginIds: ['acme.project-launch', 'happier.review.coderabbit'] }),
+    { pluginIds: ['acme.project-launch', 'happier.review.coderabbit'] });
+    const coderabbitId = resolveAgentRoutingId('happier.review.coderabbit/coderabbit', fixture.registry.contributes.agents);
+    if (!coderabbitId) throw new Error('Registered CodeRabbit Agent is unavailable');
+    const capabilityId = `cli.${coderabbitId}` as const;
+    request = { bypassCache: true, requests: [{ id: capabilityId,
+        params: { includeLoginStatus: true, includeVersion: true } }] };
+    const bin = join(fixture.happyHomeDir, 'native-bin');
+    mkdirSync(bin);
+    const payload = join(bin, 'auth.json');
+    const calls = join(bin, 'calls.jsonl');
+    const script = join(bin, 'coderabbit.cjs');
+    const privateValues = ['custodian-coderabbit@example.invalid', 'custodian-private-organization',
+        'coderabbit-private-token-4371', 'raw-auth-private-marker-8192'];
+    writeFileSync(script, `const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args) + '\\n');
+if (args.join(' ') === '--version') process.stdout.write('0.9.5');
+else if (args.join(' ') === 'auth status --agent') {
+  const output = fs.readFileSync(${JSON.stringify(payload)}, 'utf8');
+  process.stdout.write(output);
+  process.stderr.write(${JSON.stringify(privateValues[3])});
+  process.exitCode = JSON.parse(output).fixtureExitCode;
+} else process.exitCode = 23;
+`);
+    writeExecutableShimSync({ dir: bin, fileName: process.platform === 'win32' ? 'coderabbit.cmd' : 'coderabbit',
+        contents: process.platform === 'win32' ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+            : `#!/bin/sh\nexec '${process.execPath.replace(/'/g, `'\\''`)}' '${script.replace(/'/g, `'\\''`)}' "$@"\n` });
+    const observations: MachineAgentInventoryObservation[] = [];
+    const publish = createMachineAgentInventoryPublication();
+    let published: ReturnType<typeof publish>;
+    const log = new Logger({ logFilePath: join(bin, 'native.log'), allowDangerousRemoteLogging: false,
+        pruneCurrentProcessLogs: false });
+    const restoreLogger = bindProcessLogger(log);
+    try {
+        native = await runAddedHostedSession({ environment: { ...process.env,
+            HOME: fixture.happyHomeDir, USERPROFILE: fixture.happyHomeDir,
+            PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`, HAPPIER_LOG_LEVEL: 'debug' },
+            workingDirectory: fixture.happyHomeDir, end() {} }, () => createCliCapabilitiesService({
+                observeCliSnapshot: async observation => {
+                    observations.push(observation);
+                    published = publish(observation, published);
+                },
+            }));
+        const scenarios = [
+            { authenticated: true, exitCode: 0, isLoggedIn: true, signIn: 'signedIn', readiness: 'ready',
+                authStatus: { state: 'logged_in', method: 'unknown' } },
+            { authenticated: false, exitCode: 0, isLoggedIn: false, signIn: 'signedOut', readiness: 'needsSignIn',
+                authStatus: { state: 'logged_out', reason: 'missing_credentials' } },
+            { authenticated: true, exitCode: 1, isLoggedIn: null, signIn: 'unknown', readiness: 'unknown',
+                authStatus: { state: 'unknown', reason: 'probe_failed' } },
+        ];
+        for (const scenario of scenarios) {
+            writeFileSync(payload, JSON.stringify({ type: 'status', phase: 'auth', authenticated: scenario.authenticated,
+                fixtureExitCode: scenario.exitCode,
+                user: { email: privateValues[0] }, organization: privateValues[1],
+                token: privateValues[2], rawOutput: privateValues[3] }));
+            const response = await detect(request, requester);
+            expect(response, JSON.stringify(response)).toMatchObject({ protocolVersion: 1, results: { [capabilityId]: { ok: true, data: {
+                available: true, isLoggedIn: scenario.isLoggedIn,
+                signIn: { status: scenario.signIn },
+                authStatus: { ...scenario.authStatus, source: 'command', checkedAt: expect.any(Number) },
+            } } } });
+            const inventory = projectMachineAgentsDetectResponse({ agents: [{ agentId: coderabbitId, title: 'CodeRabbit' }], response });
+            expect(inventory.items).toHaveLength(1);
+            expect(inventory.unavailable ?? []).toEqual([]);
+            expect(resolveMachineAgentExecutionStateV1(inventory.items[0]!)).toBe(scenario.readiness);
+            expect(published).toEqual({ checkedAt: expect.any(Number), installedAgentIds: [coderabbitId] });
+            log.flushSync();
+            const retained = JSON.stringify({ response, inventory, observations, published });
+            const diagnostics = readFileSync(log.logFilePath, 'utf8');
+            expect(diagnostics.length).toBeGreaterThan(0);
+            for (const value of privateValues) {
+                expect(retained).not.toContain(value);
+                expect(diagnostics).not.toContain(value);
+            }
+        }
+        const invocations: unknown[] = readFileSync(calls, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        expect(invocations.filter(args => JSON.stringify(args) === JSON.stringify(['auth', 'status', '--agent']))).toHaveLength(scenarios.length);
+        expect(invocations.every(args => JSON.stringify(args) === JSON.stringify(['--version'])
+            || JSON.stringify(args) === JSON.stringify(['auth', 'status', '--agent']))).toBe(true);
+        expect(observations).toHaveLength(scenarios.length);
+    } finally { restoreLogger(); }
 });
 
 it.each([
