@@ -1,3 +1,4 @@
+import { logger } from '@/ui/logger';
 import { isActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveSessionHandoffLocalDirectory } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
 import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
@@ -273,8 +274,14 @@ export function createSessionHandoffStartActionHandler(
       try {
         preparedExport = await params.prepareSessionBundleExport(metadata);
       } catch (error) {
-        return { ok: false, errorCode: 'source_export_failed', error: error instanceof Error ? error.message : 'Failed to prepare session handoff export',
-          failureCause: projectActionFailureCauseV1(error, 'session_handoff.source_export', { allowUnknownErrorCode: true }),
+        const failureCause = projectActionFailureCauseV1(error, 'session_handoff.source_export');
+        logger.warnLocalFile('[session-handoff] source_export_failed', { catch: 'preparation',
+          errorClass: failureCause.errorClass, errorCode: failureCause.errorCode,
+          ...('nativeErrorCode' in failureCause ? { nativeErrorCode: failureCause.nativeErrorCode } : {}),
+          ...(context?.transportRequestId ? { requestId: context.transportRequestId } : {}),
+        });
+        return { ok: false, errorCode: 'source_export_failed', effectAttempted: false, error: error instanceof Error ? error.message : 'Failed to prepare session handoff export',
+          failureCause,
           ...(isActionExecuteFailure(error) && error.details !== undefined ? { details: error.details } : {}),
         } as const;
       }
@@ -355,7 +362,12 @@ export function createSessionHandoffStartActionHandler(
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to export session handoff state';
-      const failureCause = projectActionFailureCauseV1(error, 'session_handoff.source_export', { allowUnknownErrorCode: true });
+      const failureCause = projectActionFailureCauseV1(error, 'session_handoff.source_export');
+      logger.warnLocalFile('[session-handoff] source_export_failed', { catch: 'export',
+        errorClass: failureCause.errorClass, errorCode: failureCause.errorCode,
+        ...('nativeErrorCode' in failureCause ? { nativeErrorCode: failureCause.nativeErrorCode } : {}),
+        ...(context?.transportRequestId ? { requestId: context.transportRequestId } : {}),
+      });
       const errorCode = error !== null && typeof error === 'object' && 'code' in error
         && error.code === 'SESSION_DIRECTORY_MISSING' ? error.code : 'source_export_failed';
       const failure = {

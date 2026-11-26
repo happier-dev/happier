@@ -1,3 +1,4 @@
+import { logger } from '@/ui/logger';
 import { describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
@@ -90,6 +91,45 @@ const enabledServerFeaturesSnapshot = {
 };
 
 describe('session handoff start — source-derived transcript-storage authority', () => {
+  it.each([{ catchSite: 'preparation', native: true }, { catchSite: 'preparation', native: false }, { catchSite: 'export', native: true }, { catchSite: 'export', native: false }])('carries export exceptions from $catchSite (native=$native)', async ({ catchSite, native }) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-source-cause-'));
+    const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+    try {
+        // Stand-in only for the native Agent export boundary; orchestration and stores stay real.
+        const exportSessionBundle = async () => { throw native
+          ? new TypeError('Native export refused', { cause: Object.assign(new Error('read refused'), { code: 'EACCES' }) })
+          : new Error('Native export failed'); };
+        const sourceExportStore = createSessionHandoffSourceExportStore({ activeServerDir });
+        const handler = createSessionHandoffStartActionHandler({
+          activeServerDir, createUuid: () => 'cause-test',
+          loadSessionMetadata: async () => ({ path: activeServerDir, machineId: 'machine-source', externalSessionV1: VALID_LINK }),
+          machineTransferChannelPresent: true, directPeerTransfer: undefined,
+          resolveServerFeaturesSnapshot: () => enabledServerFeaturesSnapshot,
+          stopSessionForHandoff: async () => 'stopped',
+          prepareJobStore: createSessionHandoffPrepareTargetJobStore({ activeServerDir }), sourceExportStore,
+          ...(catchSite === 'preparation' ? { prepareSessionBundleExport: async () => {
+            await exportSessionBundle(); return exportSessionBundle;
+          } } : {}),
+          prepareStartedState: async callInput => prepareStartedState({ activeServerDir, callInput,
+            sourceExportStore, exportSessionBundle, directPeerTransfer: undefined, buildStartPendingStatus }),
+          exportSessionBundle, buildStartPendingStatus, buildStartRecoveryStatus, buildPrepareJobRecord, invalidRequest,
+          sessionOperationExclusion: createExternalSessionOperationExclusion({ activeServerDir, ownerId: 'cause-test' }),
+          retainSessionOperationClaim: () => undefined, releaseSessionOperationClaim: async () => undefined,
+        });
+        const result = await handler({ sessionId: 'session', sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+          sessionStorageMode: 'direct', preferredTransportStrategies: ['server_routed_stream'] });
+        expect(result).toMatchObject({ ok: false, errorCode: 'source_export_failed',
+          error: native ? 'Native export refused' : 'Native export failed',
+          failureCause: { phase: 'session_handoff.source_export', errorClass: native ? 'TypeError' : 'Error',
+            errorCode: native ? 'EACCES' : null, httpStatus: null },
+          ...(catchSite === 'preparation' ? { effectAttempted: false } : { status: { status: 'awaiting_recovery' } }),
+        });
+        expect(log).toHaveBeenCalledWith('[session-handoff] source_export_failed', expect.objectContaining({
+          catch: catchSite, errorClass: native ? 'TypeError' : 'Error', errorCode: native ? 'EACCES' : null,
+        }));
+    } finally { log.mockRestore(); await rm(activeServerDir, { recursive: true, force: true }); }
+  });
+
   it('retains the native export diagnostics when preparation refuses before Stop', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-early-export-'));
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
