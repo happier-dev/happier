@@ -523,7 +523,8 @@ describe('canonical review Run comments', () => {
     });
   });
 
-  it.each(['deleted', 'renamed'] as const)('uses the before side when the comparison path was %s', async (change) => {
+  it.each([{ change: 'deleted', fileOnly: false }, { change: 'renamed', fileOnly: false },
+    { change: 'renamed', fileOnly: true }] as const)('uses the before side when the comparison path was %j', async ({ change, fileOnly }) => {
     return runWithScmAccountScope('account', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-before-' });
     repositories.push(fixture.rootPath);
@@ -538,9 +539,11 @@ describe('canonical review Run comments', () => {
       return { status: 200, data: { comment: commentForCreate(body), replayed: false } };
     });
     const result = await service().materialize({ run: { ...run(), launch: { cwd: fixture.rootPath },
-      intentInput: { comparisonId: captured.comparison.id } }, findings: [{ ...findings[0], filePath: fixture.trackedPath }], reviewedFingerprint: null });
+      intentInput: { comparisonId: captured.comparison.id } }, findings: [{ ...findings[0], filePath: fixture.trackedPath,
+        ...(fileOnly ? { startLine: undefined } : {}) }], reviewedFingerprint: null });
     expect(result).toMatchObject({ status: 'materialized', failures: [] });
-    expect(requests).toMatchObject([{ anchor: { kind: 'line', filePath: fixture.trackedPath, line: 1, side: 'before' },
+    expect(requests).toMatchObject([{ anchor: fileOnly ? { kind: 'file', filePath: fixture.trackedPath }
+      : { kind: 'line', filePath: fixture.trackedPath, line: 1, side: 'before' },
       snapshot: { kind: 'text', source: 'diffSide', selectedLines: [original.split(/\r?\n/)[0]], diffContext: { side: 'before' } } }]);
     });
   });

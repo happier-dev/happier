@@ -1,5 +1,6 @@
 import type { CodeLinesExternalScrollView } from '@/components/ui/code/view/CodeLinesViewCore';
 import * as React from 'react';
+import { View } from 'react-native';
 
 import type { ChangedFilesReviewLineTarget } from './ChangedFilesReviewNavigation';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -10,6 +11,9 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 import type { ChangedFilesReviewHunkReviewSource } from './changedFilesReviewHunkReviewSource';
 import type { CapturedFileByPath } from '@/components/sessions/files/comparison/useCapturedFileByPath';
+import { ReviewCommentCard } from '@/components/reviews/ReviewCommentCard';
+import { ReviewFindingAnchor, ReviewFindingAnchorContext } from '@/components/reviews/ReviewFindingAnchor';
+import { buildReviewCommentLabels } from '@/components/reviews/sessionSurfaceLabels';
 
 const EMPTY_REVIEW_COMMENT_DRAFTS: readonly ReviewCommentDraft[] = [];
 const EMPTY_REVIEW_COMMENTS: readonly ReviewCommentV1[] = [];
@@ -57,6 +61,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         lineTarget,
     } = input;
     const flat = input.flat === true;
+    const openFinding = React.useContext(ReviewFindingAnchorContext);
     const hunkReviewSource = input.hunkReviewSource;
     const currentPathByPreviousPath = React.useMemo(() => new Map(
         [...(input.capturedFileByPath?.values() ?? [])].flatMap(file => file.previousPath ? [[file.previousPath, file.path] as const] : []),
@@ -65,7 +70,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         const result = new Map<string, ReviewCommentV1[]>();
         for (const comment of input.reviewComments ?? []) {
             if (comment.parentCommentId || !('filePath' in comment.anchor)) continue;
-            const path = 'side' in comment.anchor && comment.anchor.side === 'before'
+            const path = comment.anchor.kind === 'file' || ('side' in comment.anchor && comment.anchor.side === 'before')
                 ? currentPathByPreviousPath.get(comment.anchor.filePath) ?? comment.anchor.filePath
                 : comment.anchor.filePath;
             const comments = result.get(path);
@@ -100,7 +105,8 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         const fileReviewCommentDrafts = reviewCommentDraftsByDiffFilePath.get(path)
             ?? EMPTY_REVIEW_COMMENT_DRAFTS;
         const imageCompare = fileFacts.imageCompare ?? null;
-        return (
+        const fileComments = commentsByPath.get(path) ?? EMPTY_REVIEW_COMMENTS;
+        const block = (
             <ChangedFilesReviewDiffBlock
                 theme={theme}
                 sessionId={sessionId}
@@ -114,7 +120,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 onRetryDiff={input.onRetryDiff}
                 reviewCommentsEnabled={reviewCommentsEnabled === true}
                 reviewCommentDrafts={fileReviewCommentDrafts}
-                reviewComments={commentsByPath.get(path) ?? EMPTY_REVIEW_COMMENTS}
+                reviewComments={fileComments}
                 onUpsertReviewCommentDraft={onUpsertReviewCommentDraft}
                 onDeleteReviewCommentDraft={onDeleteReviewCommentDraft}
                 onReviewCommentError={onReviewCommentError}
@@ -131,6 +137,12 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 hunkReviewSource={hunkReviewSource}
             />
         );
+        const fileNotes = fileComments.filter(comment => comment.anchor.kind === 'file');
+        if (fileNotes.length === 0) return block;
+        const labels = buildReviewCommentLabels();
+        return <View>{fileNotes.map(comment => openFinding && comment.finding
+            ? <ReviewFindingAnchor key={comment.id} comment={comment} onOpen={openFinding} />
+            : <ReviewCommentCard key={comment.id} comment={comment} serverId={workspaceScope?.serverId} labels={labels} />)}{block}</View>;
     }, [
         diffStateSource,
         flat,
@@ -148,6 +160,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         onUpsertReviewCommentDraft,
         reviewCommentDraftsByDiffFilePath,
         commentsByPath,
+        openFinding,
         input.capturedFileByPath,
         reviewCommentsEnabled,
         sessionId,
