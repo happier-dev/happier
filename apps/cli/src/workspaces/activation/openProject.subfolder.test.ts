@@ -558,4 +558,140 @@ describe('openProject with a subfolder the repository lacks', () => {
       materialization: { kind: 'attach' } } as OpenProjectInputV1)).toMatchObject({ kind: 'opened', directory: checkout });
     expect(rows.length).toBeGreaterThan(0);
   });
+
+  it('batches workspace-ref and project-organization mutation, falls back on org conflict, deduplicates machine reads, and skips redundant accepted-workspace reads', async () => {
+    const fixture = await realpath(await mkdtemp(join(tmpdir(), 'happier-open-rank6-')));
+    temporaryRoots.push(fixture);
+    const folderA = join(fixture, 'folder-a');
+    const folderB = join(fixture, 'folder-b');
+    const copyTarget = join(fixture, 'copy-target');
+    await mkdir(folderA, { recursive: true });
+    await mkdir(folderB, { recursive: true });
+    await writeFile(join(folderA, 'hello.txt'), 'hello');
+    await writeFile(join(folderB, 'hello.txt'), 'hello-b');
+    const serverId = 'srv_test_home';
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`, encryption: null };
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    const machineReads: string[] = [];
+    const postPaths: string[] = [];
+    const readKinds: string[] = [];
+    const mutatedKinds: string[] = [];
+    let failOrgBatchOnce = false;
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.includes('/v1/machines/')) machineReads.push(url.slice(url.lastIndexOf('/') + 1));
+      return await plainAccountRead(url);
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (url: string, body?: unknown) => {
+      const path = new URL(url).pathname;
+      postPaths.push(path);
+      if (path.endsWith('/project-rows/read') && body && typeof body === 'object') {
+        const key = (body as { key?: { kind?: string } }).key;
+        if (typeof key?.kind === 'string') readKinds.push(key.kind);
+      }
+      if (path.endsWith('/project-rows/mutate') && body && typeof body === 'object' && 'mutations' in body
+        && Array.isArray((body as { mutations?: unknown[] }).mutations)) {
+        for (const m of (body as { mutations: Array<{ key?: { kind?: string } }> }).mutations) {
+          if (typeof m.key?.kind === 'string') mutatedKinds.push(m.key.kind);
+        }
+      }
+      const orgMut = failOrgBatchOnce && path.endsWith('/mutate') && body && typeof body === 'object' && 'mutations' in body
+        && Array.isArray((body as { mutations?: unknown[] }).mutations)
+        ? (body as { mutations: Array<{ key?: { kind?: string } }> }).mutations.find(m => m.key?.kind === 'project-organization')
+        : undefined;
+      if (orgMut?.key) {
+        failOrgBatchOnce = false;
+        return { status: 200, data: { status: 'conflict', key: orgMut.key, revision: 0 } };
+      }
+      return await http(url, body);
+    });
+    const registry = createScmBackendRegistry([]);
+    const machineAdmission = (machineId: string) => ({
+      machineId, installationId: 'installation', actorAccountId: 'account', custodianAccountId: 'account',
+      role: 'manage' as const, encryptionMode: 'plain' as const,
+    });
+    const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
+      machineAdmission: machineAdmission('source'), verifyMachineAdmissionCurrent: async () => true };
+    const runtime = { serverId, machineId: 'source', serverHttpBaseUrl: 'https://home.example',
+      accountId: 'account', registry, readCredentials: async () => credentials };
+
+    // Case A: local attach batches workspace-ref + project-organization into 1 /mutate and skips workspace-ref /read.
+    const openedA = await openProject({ serverId, machineId: 'source', source: { kind: 'folder', path: folderA },
+      materialization: { kind: 'attach' } }, runtime, context);
+    expect(openedA).toMatchObject({ kind: 'opened', directory: folderA });
+    expect(postPaths.filter(p => p.endsWith('/project-rows/mutate'))).toHaveLength(1);
+    expect(readKinds.filter(k => k === 'workspace-ref')).toHaveLength(0);
+    expect(readKinds.filter(k => k === 'project-organization')).toHaveLength(1);
+    expect(rows.some(r => r.key.kind === 'workspace-ref')).toBe(true);
+    expect(rows.some(r => r.key.kind === 'project-organization')).toBe(true);
+
+    // Case B: project-organization conflict during batched /mutate falls back cleanly without failing workspace-ref acceptance.
+    postPaths.length = 0;
+    readKinds.length = 0;
+    failOrgBatchOnce = true;
+    const openedB = await openProject({ serverId, machineId: 'source', source: { kind: 'folder', path: folderB },
+      materialization: { kind: 'attach' } }, runtime, context);
+    expect(openedB).toMatchObject({ kind: 'opened', directory: folderB });
+    expect(postPaths.filter(p => p.endsWith('/project-rows/mutate'))).toHaveLength(3); // 1 org-conflicted batch + 1 workspace-ref retry + 1 listOpenedProject fallback
+    expect(rows.filter(r => r.key.kind === 'workspace-ref')).toHaveLength(2);
+    expect(rows.filter(r => r.key.kind === 'project-organization')).toHaveLength(2);
+
+    // Case C: sync open deduplicates readWorkspaceSyncChildMachineFacts (at most 1 GET /v1/machines/target),
+    // deduplicates acceptDestination via publishedPreDispatch (1 /mutate), and skips redundant accepted-workspace /read.
+    if (openedA.kind !== 'opened') throw new Error('expected openedA');
+    machineReads.length = 0;
+    postPaths.length = 0;
+    readKinds.length = 0;
+    mutatedKinds.length = 0;
+    const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const contentPolicy = { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) };
+    const targetRequest = OpenProjectInputV1Schema.parse({ serverId, machineId: 'target',
+      source: { kind: 'workspace', workspaceId: openedA.workspace.workspaceId, checkout: openedA.workspace },
+      materialization: { kind: 'sync', targetPath: copyTarget, workspaceAction: { kind: 'copy_once', contentPolicy } } });
+    const operationId = 'rank6-sync-dedupe';
+    const envelope = { v: 1 as const, requestId: operationId, target: { kind: 'machine' as const, machineId: 'target' }, input: targetRequest };
+    const admitted = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-test-root', binding: {
+      accountId: 'account', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      serverIdentityId: serverId, actionId: 'projects.open', machineId: 'target', installationId: 'installation',
+      custodianAccountId: 'account', requestId: operationId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      target: envelope.target, workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(operationId),
+        sourceWorkspaceRefId: openedA.workspace.workspaceId, source: machineAdmission('source') },
+    } });
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: size => new Uint8Array(size) });
+    Object.defineProperty(admitted, 'requesterAccountProjection', { value: {
+      accountId: 'account', serverId, accountEncryptionMode: 'plain', projectAccountRowCipher: cipher,
+      resolveMachineContentEncryptionContext: () => ({ encryptionMode: 'plain' }), isCurrent: async () => true,
+    } });
+    const keyPair = tweetnacl.sign.keyPair();
+    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted, serverId,
+      serverIdentityId: serverId, serverHttpBaseUrl: 'https://home.example', target: envelope.target,
+      installationId: 'installation', privateKey: keyPair.secretKey, rootAdmitted: true, isCurrent: async () => true });
+    if (!authorization) throw new Error('expected authorization');
+    const sourceRouting = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId, accountServerId: serverId,
+      sourceMachineId: 'source', sourceRootPath: folderA, originalActionEnvelope: envelope,
+      sourceContext: { machineAdmission: machineAdmission('source'), callerAuthority: 'present_user', workspaceWrites: 'allow' } });
+    const method = `source:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+    const sourceExecution = WorkspaceSyncSourceExecutionV1Schema.parse({ method, requestId: 'admitted-rank6-call', params: targetRequest,
+      externalActionExecution: createExternalActionMachineRpcExecution({ context: { externalActionExecutionAuthorization: admitted,
+        externalActionTarget: envelope.target }, effectActionId: 'projects.open', installationId: 'installation',
+        method, requestId: 'admitted-rank6-call', params: targetRequest, workspaceSyncSourceRouting: sourceRouting, privateKey: keyPair.secretKey }) });
+    const targetResult = await openProject(targetRequest, {
+      serverId, machineId: 'target', serverHttpBaseUrl: 'https://home.example', accountId: 'account', registry,
+      readCredentials: async () => credentials,
+      workspaceSyncAdapter: {} as never,
+      callWorkspaceSource: async () => {
+        await mkdir(copyTarget, { recursive: true });
+        await writeFile(join(copyTarget, 'hello.txt'), 'hello');
+        return { kind: 'materialized' };
+      },
+    }, {
+      signal: new AbortController().signal, callerAuthority: 'present_user',
+      machineAdmission: machineAdmission('target'), verifyMachineAdmissionCurrent: async () => true,
+      callerInputAuthorization: authorization, workspaceSyncSourceExecution: sourceExecution,
+    });
+    expect(targetResult).toMatchObject({ kind: 'opened', directory: copyTarget });
+    expect(machineReads.filter(id => id === 'target')).toHaveLength(1);
+    expect(mutatedKinds.filter(k => k === 'workspace-ref')).toHaveLength(1);
+    expect(readKinds.filter(k => k === 'workspace-ref')).toHaveLength(0);
+  });
 });
