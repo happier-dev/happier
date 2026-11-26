@@ -253,7 +253,8 @@ describe('saved deployment preview Workflow composition', () => {
             previewTemplateEnvironmentId: current.detail.environment.id, previewRepositoryId: 'repository-1',
             previewPullRequestId: event.id, previewTargetLinkId: current.detail.content.previewTemplate!.runtimeTargetLinkId });
         current.input.readTargetLink = async () => { throw new Error('Existing PR data must be reused'); };
-        const result = await resolvePreviewWorkflowForHost({ ...current.input, event: { ...event, action }, readExistingPreview: async () => ({ environment: child }) });
+        const result = await resolvePreviewWorkflowForHost({ ...current.input, event: { ...event, action },
+            readServingHead: async () => 'a'.repeat(40), readExistingPreview: async () => ({ environment: child }) });
         expect(result.kind).toBe('available');
         if (result.kind !== 'available') throw new Error(result.reason);
         expect(result.definition.blocks).toHaveLength(1);
@@ -261,6 +262,12 @@ describe('saved deployment preview Workflow composition', () => {
         if (deploy?.kind !== 'action') throw new Error('Expected the ordinary Deploy Action');
         expect(deploy.actionId).toBe('deployments.deploy');
         expect(await bindings(deploy.input)).toMatchObject({ environmentId: 'existing-child', targetLinkId: 'existing-runtime', sha: event.headSha });
+    });
+
+    it('skips a synchronize delivery for the head its preview is already serving', async () => {
+        const current = fixture(neon);
+        expect(await resolvePreviewWorkflowForHost({ ...current.input, event: { ...event, action: 'synchronize' },
+            readServingHead: async () => event.headSha })).toEqual({ kind: 'skipped', reason: 'already_deployed' });
     });
 
     it('creates a fresh request identity when a deleted PR child reopens at the same head', async () => {
@@ -313,7 +320,8 @@ describe('saved deployment preview Workflow composition', () => {
         const current = fixture(neon);
         current.input.readTargetLink = async () => { throw new Error('Data must not be read'); };
         const result = await resolvePreviewWorkflowForHost({ ...current.input, event: { ...event,
-            headRepository: { ...repository, repository: 'someone/widgets' } } });
+            action: 'synchronize', headRepository: { ...repository, repository: 'someone/widgets' } },
+            readServingHead: async () => { throw new Error('Refuse the fork before reading a deployment'); } });
         expect(result).toEqual({ kind: 'refused', reason: 'deployment_access_denied' });
     });
 

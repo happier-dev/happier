@@ -30,6 +30,8 @@ const githubWebhookId = () => z.string().check(z.regex(/^[1-9][0-9]*$/u));
 export const ManagedPluginWebhookRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('register'), ...githubWebhookOperands(),
     publicUrl: PluginWebhookPublicUrlV1Schema, signingSecret: z.string().check(z.minLength(1)) }),
+  z.strictObject({ kind: z.literal('subscribePullRequests'), ...githubWebhookOperands(), hookId: githubWebhookId() }),
+  z.strictObject({ kind: z.literal('unsubscribePullRequests'), ...githubWebhookOperands(), hookId: githubWebhookId() }),
   z.strictObject({ kind: z.literal('remove'), ...githubWebhookOperands(), hookId: githubWebhookId() }),
 ]));
 export type ManagedPluginWebhookRequestV1 = z.infer<typeof ManagedPluginWebhookRequestV1Schema>;

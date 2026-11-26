@@ -8,8 +8,7 @@ import {
     type ManagedPluginWebhookResultV1,
 } from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
 import {
-    GITHUB_EVENT_SETUP_ACTIONS_V1,
-    GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1,
+    readManagedGithubRepositoryEventV1,
 } from '@happier-dev/protocol/automations/event-setup-result';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -33,9 +32,10 @@ export function registerManagedRepositoryHookFromHome(input: Readonly<{
             if (context?.authorization?.kind !== SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.MANAGED_PLUGIN_WEBHOOK_SERVER_ORIGIN) return unavailable;
             const { signal } = context;
             const { binding, storedDefinitionEnvelope } = request;
-            if (binding.triggerKind !== 'pluginEvent'
-                || binding.eventRef.pluginId !== GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId
-                || binding.eventRef.localId !== GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1) return unavailable;
+            if (binding.triggerKind !== 'pluginEvent') return unavailable;
+            const event = readManagedGithubRepositoryEventV1(binding.eventRef);
+            if (!event || (request.kind === 'subscribePullRequests' || request.kind === 'unsubscribePullRequests')
+                && event !== 'pull_request') return unavailable;
             try {
                 const credentials = await input.readCredentials();
                 if (!credentials) return unavailable;
@@ -58,7 +58,7 @@ export function registerManagedRepositoryHookFromHome(input: Readonly<{
                 const lease = await acquireExecutableAuthoritativePluginRuntimeRegistryLease({ signal });
                 try {
                     return await lease.registry.targetActionInvocations.writeManagedGithubRepositoryHook({
-                        request, source, machineId: context.authorization.machineId, signal,
+                        request, source, event, machineId: context.authorization.machineId, signal,
                     });
                 } finally {
                     await lease.release();

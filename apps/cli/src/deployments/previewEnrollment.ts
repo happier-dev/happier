@@ -5,7 +5,8 @@ import type { DeploymentPreviewTemplateV1 } from '@happier-dev/protocol/deployme
 import { DeploymentEnvironmentUpdateResultV1Schema, type DeploymentEnvironmentUpdateInputV1, type DeploymentPreviewEnrollmentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
+import { PluginEventAutomationSetupResultV1Schema, readGithubRepositoryIdFromEventSourceV1,
+    readManagedGithubRepositoryEventV1 } from '@happier-dev/protocol/automations/event-setup-result';
 import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -27,7 +28,7 @@ type UpdateInput = Pick<DeploymentEnvironmentUpdateInputV1, 'environmentId' | 'm
 type UpdateSuccess = Extract<z.infer<typeof DeploymentEnvironmentUpdateResultV1Schema>, { ok: true }>;
 const preparedEdit = Symbol('previewEnrollmentEdit');
 type PreparedContext = ActionExecutorContext & { [preparedEdit]?: Readonly<{
-    environmentId: string; policy: DeploymentPreviewTemplateV1 | null;
+    environmentId: string; policy: DeploymentPreviewTemplateV1;
     controllerMachineId: DeploymentEnvironmentDetailV1['environment']['controllerMachineId'];
 }> };
 type WatcherOptions = NonNullable<UpdateSuccess['previewWatcher']>;
@@ -116,13 +117,15 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
         },
         async prepare(input: UpdateInput, context: ActionExecutorContext) {
             if (input.mode === 'preview') return null;
-            const policy = input.patch?.previewTemplate;
-            if (policy === undefined) return null;
+            const patch = input.patch?.previewTemplate;
+            if (patch === undefined) return null;
             const environment = await host.readEnvironment({ environmentId: input.environmentId, context });
             const previous = environment.content.previewTemplate;
-            if (!policy?.enabled && !previous?.enabled
-                && (!policy || !previous || sameScmHostingRepositoryIdentity(policy.repository, previous.repository))) return null;
-            const forkEligibility = policy?.enabled && policy.forkPreviews === 'approveEachCommit'
+            // Removing the template disables the same listener as the explicit off switch.
+            const policy = patch ?? (previous && { ...previous, enabled: false });
+            if (!policy || !policy.enabled && !previous?.enabled
+                && (!previous || sameScmHostingRepositoryIdentity(policy.repository, previous.repository))) return null;
+            const forkEligibility = policy.enabled && policy.forkPreviews === 'approveEachCommit'
                 ? await prepareProposedPreviewForkEligibilityForHost({ serverId: host.serverId, patch: input.patch }, environment,
                     policy.runtimeTargetLinkId, request => host.listEnvironments(request, context)) : undefined;
             // The existing prepared-context continuation retains the accepted private edit
@@ -136,7 +139,6 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                 { action: 'workflow.trigger.list' as const, role: TRIGGER_ROLE },
                 { action: 'workflow.trigger.update' as const, role: TRIGGER_ROLE },
             ];
-            if (!policy) return { children: [], prepareExecutionContext };
             // Retained lifecycle sources may need the receipt sibling added after
             // an earlier partial enrollment, including while new previews are disabled.
             const enabledChildren = [...children, { action: 'workflow.trigger.add' as const, role: TRIGGER_ROLE }];
@@ -168,7 +170,9 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                     return { children: [
                         ...setupChildren,
                         ...(receiptEvent ? [{ action: receiptEvent.setupAction.identity, role: SETUP_ROLE }] : []), ...enabledChildren,
-                    ], prepareExecutionContext };
+                    ], prepareExecutionContext,
+                        ...(policy.enabled && readManagedGithubRepositoryEventV1(event.event.identity) === 'pull_request'
+                            ? { requiredByPolicy: true as const } : {}) };
                 }) ?? (policy.enabled ? refusal('source_unavailable') : { children: enabledChildren, prepareExecutionContext });
             } catch (error) {
                 if (policy.enabled) return { ok: false as const, ...normalizeActionExecutorThrownError(error, 'deployment.preview.update_preparation') };
@@ -183,7 +187,6 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                 const enrollment = await (async (): Promise<DeploymentPreviewEnrollmentV1> => {
                     const policy = edit.policy;
                     // Existing listeners keep receiving PR-close events for already-created children.
-                    if (!policy) return { status: 'disabled' };
                     if (!context.hostReviewedChild) return unavailable('credential_scope_denied');
                     const invoke = context.hostReviewedChild.invoke;
                     const listed = await invoke({ action: 'workflow.trigger.list', role: TRIGGER_ROLE, input: { scope: 'account_inline' } });
@@ -215,13 +218,17 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                             sourceConfig: configured.sourceConfig, displayLabel: configured.displayLabel,
                             observationTransport: { kind: 'checkpointedPull' as const, watcherMaterializationRef: watcher },
                             filter: null, maximumObservationAgeMs: null };
+                        const managedGithubRepositoryId = policy.enabled
+                            && readManagedGithubRepositoryEventV1(trigger.eventRef) === 'pull_request'
+                            ? readGithubRepositoryIdFromEventSourceV1(configured.sourceInstanceId) : undefined;
+                        const managedWebhook = managedGithubRepositoryId === undefined ? {} : { managedGithubRepositoryId };
                         const existing = sets[0];
                         const current = existing?.triggers.find(item => item.kind === 'pluginEvent');
                         if (existing && !current) return unavailable();
                         const written = existing && current
                             ? await invoke({ action: 'workflow.trigger.update', role: TRIGGER_ROLE, input: normalizeStrictJsonValue({
                                 automationId: existing.automationId, triggerId: current.id, expectedRevision: existing.revision,
-                                patch: { enabled: true, trigger } }) })
+                                patch: { enabled: true, trigger, ...managedWebhook } }) })
                             : await invoke({ action: 'workflow.trigger.add', role: TRIGGER_ROLE, input: normalizeStrictJsonValue({
                                 project: { machineId: host.machineId, directory: '~' }, executionTarget: { kind: 'detached_run' },
                                 deploymentPreview: { serverId: host.serverId, environmentId: input.environmentId },
@@ -233,7 +240,7 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                                         environmentId: { kind: 'literal', value: input.environmentId },
                                     },
                                 }] } },
-                                trigger: { ...trigger, enabled: true } }) });
+                                ...managedWebhook, trigger: { ...trigger, enabled: true } }) });
                         if (!written.ok) return refused(written);
                         const statusActionRef = source.scmPullRequestLifecycle?.previewStatusActionRef;
                         if (statusActionRef) {

@@ -1412,6 +1412,67 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     expect(http.request).toHaveBeenCalledTimes(1);
   });
 
+  it.each([0, 1, 3])('uses one existing Events poll and one exact head read per live Preview (%i)', async liveCount => {
+    const def = definition({ automationId: 'preview-heads', sourceSelectorId: sourceSelectorA,
+      eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle });
+    const source = { ...def, deploymentPreview: { serverId: 'srv_preview', environmentId: 'preview-template' } };
+    const checkpoints = createCheckpointCollection([checkpointRow({ automationId: source.automationId,
+      sourceSelectorId: source.sourceSelectorId, eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle })]);
+    const oldSha = 'a'.repeat(40);
+    const headSha = 'b'.repeat(40);
+    const repo = { kind: 'github', deployment: 'https://github.com', repository: 'acme/widgets' };
+    const reference = (id: string) => ({ contentArtifactId: id, contentHeaderVersion: 1, contentBodyVersion: 1 });
+    const number = (index: number) => 40 + index;
+    const id = (index: number) => String(900 + index);
+    const live = Array.from({ length: liveCount }, (_, i) => i);
+    const admissions: AutomationEventAdmitInput[] = [];
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [source]);
+      if (action === 'automation.event.source.status.report') return {};
+      if (action === 'automation.event.admit') { admissions.push(AutomationEventAdmitInputV1Schema.parse(input));
+        return { results: [{ kind: 'admitted', runId: 'preview-run', checkpointSafe: true }] }; }
+      if (action === 'deployments.environments.list') {
+        expect(input).toEqual({ serverId: 'srv_preview', previewTemplateEnvironmentId: 'preview-template' });
+        // The extra child has no serving release. Its private content and PR must stay unread.
+        return { ok: true, nextCursor: null, coverage: 'complete',
+          items: [...live, liveCount].map(i => ({ id: `env-${i}`, purpose: 'preview', serverId: 'srv_preview',
+            previewTemplateEnvironmentId: 'preview-template', previewPullRequestId: id(i),
+            runtimeTargetLinkId: `link-${i}`, previewTargetLinkId: 'template-link', projectSourceId: 'source',
+            ...reference(`env-${i}`) })),
+          servingDeployments: live.map(i => ({ id: `deploy-${i}`, environmentId: `env-${i}`, targetLinkId: `link-${i}`,
+            operation: 'deploy', state: 'succeeded', ...reference(`deploy-${i}`) })) };
+      }
+      if (action === 'deployments.receipts.get') {
+        const address = input as { deploymentId: string };
+        const i = Number(address.deploymentId.split('-').at(-1));
+        expect(live).toContain(i);
+        expect(input).toEqual({ serverId: 'srv_preview', environmentId: `env-${i}`, deploymentId: `deploy-${i}`,
+          projection: 'previewHead' });
+        return { ok: true, previewHead: { templateEnvironmentId: 'preview-template', repository: repo,
+          pullRequestId: id(i), pullRequestNumber: number(i), deployedSha: oldSha } };
+      }
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const http = { request: vi.fn(async ({ url }: { url: string }) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith('/events')) return { status: 304, headers: {}, body: new Uint8Array() };
+      const i = Number(path.split('/').at(-1)) - 40;
+      expect(live).toContain(i);
+      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ id: Number(id(i)),
+        number: number(i), state: i === 2 ? 'closed' : 'open', author_association: 'MEMBER',
+        user: { id: 99, login: 'octocat', type: 'User' },
+        head: { sha: i === 1 ? oldSha : headSha, ref: 'preview', repo: { id: 77, full_name: 'acme/widgets' } },
+        base: { ref: 'main', repo: { id: 77, full_name: 'acme/widgets' } } })) };
+    }) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    await observer.runCycle(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http })));
+    expect(http.request.mock.calls.map(([request]) => new URL(request.url).pathname)).toEqual([
+      '/repos/acme/widgets/events', ...live.map(i => `/repos/acme/widgets/pulls/${number(i)}`),
+    ]);
+    expect(admissions).toHaveLength(liveCount ? 1 : 0);
+    if (liveCount) expect(admissions[0]?.payload).toMatchObject({ pullRequest: { action: 'synchronize', headSha } });
+  });
+
   it.each(['own', 'fork'] as const)('admits the captured %s repository Events API PR through the checkpointed observer', async kind => {
     const source = definition({ automationId: 'lifecycle', sourceSelectorId: sourceSelectorA,
       eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle });

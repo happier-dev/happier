@@ -1,4 +1,4 @@
-import { GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 } from '@happier-dev/plugin-sdk/events';
+import { GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1, GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 } from '@happier-dev/plugin-sdk/events';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { ScmHostingPullRequestLifecycleActionV1ProtocolSchema, ScmHostingPullRequestLifecycleV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import { TriagePullRequestReviewTargetV1Schema, type TriagePullRequestReviewTargetV1 } from '@happier-dev/triage-protocol/v1';
@@ -15,7 +15,7 @@ export const GITHUB_AUTOMATION_EVENT_LOCAL_IDS = Object.freeze({
   issueOpened: 'automation/issue-opened-v1',
   pullRequestMerged: 'automation/pull-request-merged-v1',
   pullRequestOpened: 'automation/pull-request-opened-v1',
-  pullRequestLifecycle: 'automation/pull-request-lifecycle-v1',
+  pullRequestLifecycle: GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1,
   push: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1,
   checksCompleted: 'automation/pull-request-checks-completed-v1',
   checksFailed: 'automation/pull-request-checks-failed-v1',
@@ -164,7 +164,7 @@ export const GITHUB_CHECKS_SNAPSHOT_SCHEMA = {
 
 export const GITHUB_AUTOMATION_EVENT_CATALOG = Object.freeze([
   Object.freeze({ kind: 'pullRequestLifecycle' as const, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle,
-    title: 'GitHub pull request lifecycle changed', description: 'A pull request opened, reopened, synchronized, closed or merged. Synchronize requires webhook delivery.',
+    title: 'GitHub pull request lifecycle changed', description: 'A pull request opened, reopened, synchronized, closed or merged.',
     payloadSchema: payloadSchema({ pullRequest: GithubPullRequestLifecycleV1Schema.jsonSchema,
       reviewTarget: TriagePullRequestReviewTargetV1Schema.jsonSchema }, ['pullRequest', 'reviewTarget']),
   }),

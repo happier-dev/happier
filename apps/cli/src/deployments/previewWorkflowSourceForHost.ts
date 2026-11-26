@@ -11,6 +11,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
 import type { StoredCredentials } from '@/persistence';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { openDeploymentReceiptForHost } from './readReceiptForHost';
 import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { readDeploymentTargetV1 } from './targets/deploymentTargetCatalog';
 import { resolvePreviewWorkflowForHost, type PreviewLifecycleEventForHost, type PreviewTemplateRefForHost } from './previewWorkflowForHost';
@@ -42,7 +43,9 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
         }, open, assertCurrent: async () => { input.signal?.throwIfAborted(); },
     });
     const readEnvironments = async (selection: Omit<DeploymentEnvironmentListInputV1, 'serverId' | 'cursor'>) => {
-        const environments: Extract<ReturnType<typeof DeploymentEnvironmentListResultV1Schema.parse>, { ok: true }>['items'] = [];
+        type Page = Extract<ReturnType<typeof DeploymentEnvironmentListResultV1Schema.parse>, { ok: true }>;
+        const environments: Page['items'] = [];
+        const serving: NonNullable<Page['servingDeployments']> = [];
         let cursor: string | undefined;
         do {
             const result = await input.executor.execute('deployments.environments.list', { ...selection,
@@ -51,14 +54,19 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
             const page = DeploymentEnvironmentListResultV1Schema.parse(result.result);
             if (!page.ok) throw createActionExecuteFailureError({ ok: false, errorCode: page.error, error: page.error });
             environments.push(...page.items);
+            serving.push(...page.servingDeployments ?? []);
             cursor = page.nextCursor ?? undefined;
         } while (cursor);
-        return environments;
+        return { environments, serving };
     };
-    const readChildren = (includeDeleted = false) => readEnvironments({ previewRepository: input.event.baseRepository,
-        previewPullRequestIds: [input.event.id], previewTemplateEnvironmentId: input.templateRef.environmentId,
-        ...(includeDeleted ? { includeDeleted: true } : {}) });
-    const readCompanions = (environmentId: string) => readEnvironments({ previewCompanionOfEnvironmentId: environmentId });
+    let activeChildPage: ReturnType<typeof readEnvironments> | undefined;
+    const childSelection = { previewRepository: input.event.baseRepository,
+        previewPullRequestIds: [input.event.id], previewTemplateEnvironmentId: input.templateRef.environmentId };
+    const readActiveChildren = () => activeChildPage ??= readEnvironments(childSelection);
+    const readChildren = async (includeDeleted = false) => (await (includeDeleted
+        ? readEnvironments({ ...childSelection, includeDeleted: true }) : readActiveChildren())).environments;
+    const readCompanions = async (environmentId: string) =>
+        (await readEnvironments({ previewCompanionOfEnvironmentId: environmentId })).environments;
     let selectedTemplate: Awaited<ReturnType<typeof readEnvironment>> | undefined;
     const readInvocations = async (request: Readonly<{ runId: string; cursor?: string }>) => {
         const result = await input.executor.execute('workflow.run.invocations.list', { ...request, includeContent: true }, context);
@@ -86,6 +94,18 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
         readNativeDataPlacements: request => preparePreviewNativeDataPlacementsForHost({ ...request, context }, {
             credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
         }),
+        readServingHead: async () => {
+            const { environments, serving } = await readActiveChildren();
+            const child = environments[0];
+            const deployment = child && serving.find(receipt => receipt.environmentId === child.id
+                && receipt.targetLinkId === child.runtimeTargetLinkId && receipt.state === 'succeeded'
+                && receipt.operation !== 'teardown');
+            if (!deployment) return null;
+            const { content: { sourceIntent } } = await openDeploymentReceiptForHost(deployment, context, {
+                open, assertCurrent: async () => { input.signal?.throwIfAborted(); },
+            });
+            return sourceIntent?.kind === 'repository' ? sourceIntent.sha : null;
+        },
         readExistingPreview: async () => {
             const existing = (await readChildren())[0];
             if (!existing) return null;

@@ -57,6 +57,7 @@ const GITHUB_PLUGIN_MANIFEST_PATH = resolve(
     "packages/plugins/scm-github/.happier-plugin/plugin.json",
 );
 
+const PREVIEW_LIFECYCLE_EVENT = "automation/pull-request-lifecycle-v1";
 const SERVER_IDENTITY_ID = "srv_githubAccountEndpoint1";
 const PUBLIC_SERVER_URL = "https://happier.example";
 const MACHINE_ID = "github-endpoint-machine";
@@ -264,6 +265,25 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
         ]);
     });
 
+    it('keeps the private Home exception confined to Preview saves', async () => {
+        harness.resetEnv({
+            HANDY_MASTER_SECRET: "github-account-endpoint-master-secret",
+            HAPPIER_SERVER_IDENTITY_ID: SERVER_IDENTITY_ID,
+            HAPPIER_PUBLIC_SERVER_URL: "https://127.0.0.1:8443",
+        });
+        const { admitManagedRepositoryWebhookSaves } = await import('./settleManagedRepositoryWebhookSaves');
+        const managedGithubRepositoryId = ROUTING_SOURCE_INSTANCE_ID.split(':').at(-1)!;
+        const preview = { triggerId: randomUUID(), managedGithubRepositoryId, trigger: {
+            kind: 'pluginEvent', eventRef: { pluginId: MANIFEST.pluginId, localId: PREVIEW_LIFECYCLE_EVENT },
+        } };
+        const push = { triggerId: randomUUID(), managedGithubRepositoryId, trigger: {
+            kind: 'pluginEvent', eventRef: { pluginId: MANIFEST.pluginId, localId: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 },
+        } };
+        await expect(admitManagedRepositoryWebhookSaves({}, [preview])).resolves.toBeNull();
+        await expect(admitManagedRepositoryWebhookSaves({}, [preview, push]))
+            .rejects.toThrow('github_webhook_home_unreachable');
+    });
+
     it("refuses managed GitHub push without saving a polling trigger on a private Home", async () => {
         harness.resetEnv({
             HANDY_MASTER_SECRET: "github-account-endpoint-master-secret",
@@ -408,6 +428,18 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
                 registration = { url: body.config.url, secret: body.config.secret };
                 return { status: 201, headers: {}, body: new TextEncoder().encode(JSON.stringify({ id: Number(hookId) })) };
             }
+            if (request.method === "PATCH") {
+                expect(path).toBe(`/repos/fixture/example/hooks/${hookId}`);
+                const body = JSON.parse(new TextDecoder().decode(request.body));
+                if ('add_events' in body) {
+                    expect(body).toEqual({ add_events: ['pull_request'] });
+                    writes.push('PATCH add');
+                    return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ id: Number(hookId), events: ['push', 'pull_request'] })) };
+                }
+                expect(body).toEqual({ remove_events: ['pull_request'] });
+                writes.push('PATCH remove');
+                return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ id: Number(hookId), events: ['push'] })) };
+            }
             if (request.method === "DELETE") {
                 expect(path).toBe(`/repos/fixture/example/hooks/${hookId}`);
                 writes.push(request.method);
@@ -427,7 +459,7 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
                 services: { http, connectedAccounts: { getBinding: async () => null, materialize, materializeListedAccount: materialize } },
             }, operation.kind === "register"
                 ? { kind: "register", ...source, publicUrl: operation.publicUrl, signingSecret: operation.signingSecret }
-                : { kind: "remove", ...source, hookId: operation.hookId });
+                : { kind: operation.kind, ...source, hookId: operation.hookId });
         };
         const setup = { accountId, automationId, triggerId, triggerRevision: 0, repositoryId, publicBaseUrl: PUBLIC_SERVER_URL, forward };
         const readTrigger = () => db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } });
@@ -452,9 +484,46 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
         })).resolves.toMatchObject({ kind: "accepted" });
         const promoted = await readTrigger();
         expect(promoted).toMatchObject({ observationTransport: "durablePush", webhookEndpointId: trigger.webhookEndpointId });
+        // The same retained hook serves push and the admitted Preview. Other
+        // Account ids and ordinary PR-event Automations cannot change it.
+        const previewId = 'preview-workflow';
+        const previewTrigger = AutomationTriggerIdSchema.parse('preview-trigger');
+        const previewSelector = AutomationSourceSelectorIdV1Schema.parse(randomUUID());
+        const previewEventRef = { ...eventRef, localId: PREVIEW_LIFECYCLE_EVENT };
+        const previewEnvelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            mode: 'plain',
+            binding: { v: 1, automationId: previewId, triggerId: previewTrigger, triggerRevision: 0, triggerKind: 'pluginEvent',
+                eventRef: previewEventRef, sourceSelectorId: previewSelector },
+            definition: { v: 1, sourceInstanceId: ROUTING_SOURCE_INSTANCE_ID, sourceConfig, displayLabel: repository.full_name,
+                filter: null, maximumObservationAgeMs: null },
+        });
+        await db.automation.create({ data: {
+            id: previewId, accountId, name: 'Preview PR', enabled: true, templateCiphertext: '{}',
+            triggers: { create: { id: previewTrigger, kind: 'pluginEvent', enabled: true, revision: 0,
+                sourceSelectorId: previewSelector, sourceContractVersion: 1, eventPluginId: previewEventRef.pluginId,
+                eventLocalId: previewEventRef.localId, observationTransport: 'checkpointedPull',
+                watcherMachineId: MACHINE_ID, watcherMachineInstallationId: MACHINE_INSTALLATION_ID,
+                watcherMaterializationId: MATERIALIZATION_ID, watcherPluginId: MANIFEST.pluginId,
+                webhookEndpointId: null, observationStartsAt: null, definitionEnvelope: JSON.stringify(previewEnvelope) } },
+        } });
+        const previewSetup = { ...setup, automationId: previewId, triggerId: previewTrigger };
+        await expect(registerManagedPluginWebhookForEndpoint(previewSetup)).resolves.toMatchObject({ kind: 'polling' });
+        await db.automation.update({ where: { id: previewId }, data: { deploymentPreviewRole: 'preview_admission' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await expect(registerManagedPluginWebhookForEndpoint({ ...previewSetup, accountId: stranger.id }))
+            .resolves.toMatchObject({ kind: 'polling' });
+        await expect(registerManagedPluginWebhookForEndpoint(setup)).resolves.toEqual({ kind: 'webhook' });
+        expect(writes).toEqual(['POST', 'POST']);
+        await expect(registerManagedPluginWebhookForEndpoint(previewSetup)).resolves.toEqual({ kind: 'webhook' });
+        expect(await db.automationTrigger.findUniqueOrThrow({ where: { id: previewTrigger } }))
+            .toMatchObject({ observationTransport: 'durablePush', webhookEndpointId: trigger.webhookEndpointId });
+        const previewConsumer = await db.automationTrigger.delete({ where: { id: previewTrigger } });
+        await expect(removeUnusedManagedRepositoryWebhook({ accountId, consumer: previewConsumer, forward }))
+            .resolves.toEqual({ kind: 'retained' });
+        expect(writes).toEqual(['POST', 'POST', 'PATCH add', 'PATCH remove']);
         await db.automationTrigger.delete({ where: { id: triggerId } });
         await expect(removeUnusedManagedRepositoryWebhook({ accountId, consumer: promoted, forward })).resolves.toEqual({ kind: "removed" });
-        expect(writes).toEqual(["POST", "POST", "DELETE"]);
+        expect(writes).toEqual(["POST", "POST", "PATCH add", "PATCH remove", "DELETE"]);
     });
 
     it("keeps every readiness projection unconfirmed until a verified delivery proves the provider was configured", async () => {

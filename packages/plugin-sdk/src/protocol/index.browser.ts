@@ -118,7 +118,7 @@ export { ProtocolDeploymentCorrelationV1Schema } from './deployment.js';
 export { ProtocolDeploymentDeploySemanticInputV1Schema } from './deployment.js';
 export { ProtocolDeploymentEnvironmentGetResultV1Schema } from './accountNotice.js';
 export { ProtocolDeploymentEnvironmentHeaderV1Schema } from './deploymentHeaders.js';
-export { ProtocolDeploymentPreviewProvenanceV1Schema } from './deployment.js';
+export { ProtocolDeploymentPreviewProvenanceV1Schema, deploymentPreviewHeadNeedsRedeployV1 } from './deployment.js';
 export { ProtocolDeploymentReceiptHeaderV1Schema } from './deploymentHeaders.js';
 export { ProtocolDeploymentReceiptOperationV1Schema } from './deploymentHeaders.js';
 export { ProtocolDeploymentSecretBindingSourceV1Schema } from './deployment.js';

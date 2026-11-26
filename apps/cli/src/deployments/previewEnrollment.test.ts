@@ -25,6 +25,7 @@ import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountA
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -224,6 +225,55 @@ it('enrolls from the saved template, reuses its exact trigger, and retains PR-cl
         expect(await f.save(false)).toMatchObject({ ok: true, previewEnrollment: { status: 'disabled' } });
         expect(f.saved[0]?.enabled).toBe(true);
         expect(f.saved[1]?.enabled).toBe(true);
+    } finally { await f.app.close(); }
+});
+
+it('detaches the managed hook and retains the exact terminal listener when a template is removed', async () => {
+    const f = await fixture();
+    try {
+        expect(await f.save(true)).toMatchObject({ ok: true, previewEnrollment: { status: 'enrolled' } });
+        const set = f.saved.find(candidate => candidate.context?.deploymentPreview?.environmentId === f.environment.environment.id);
+        if (!set) throw new Error('Expected the enrolled Preview Workflow');
+        f.calls.length = 0;
+        expect(await f.save(null)).toMatchObject({ ok: true, previewEnrollment: { status: 'disabled' } });
+        const detach = f.calls.find(call => call.actionId === 'workflow.trigger.update'
+            && WorkflowTriggerUpdateRequestV1Schema.parse(call.input).automationId === set.automationId);
+        expect(detach?.input).toMatchObject({ automationId: set.automationId, patch: { enabled: true,
+            trigger: { kind: 'pluginEvent', observationTransport: { kind: 'checkpointedPull' } },
+        } });
+        expect(WorkflowTriggerUpdateRequestV1Schema.parse(detach?.input).patch.managedGithubRepositoryId).toBeUndefined();
+    } finally { await f.app.close(); }
+});
+
+it('requires explicit review before enabling the GitHub hook even with a saved UI waiver', async () => {
+    const f = await fixture();
+    try {
+        const actionId = 'deployments.environments.update';
+        const input = { serverId: 'home', environmentId: f.environment.environment.id, expectedRevision: 3,
+            contentArtifactId: f.environment.environment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1,
+            patch: { previewTemplate: f.environment.content.previewTemplate! } };
+        const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'owner',
+            actionsSettings: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(undefined), actionId,
+                surface: 'ui', approvalRequired: false }) } as const;
+        const effect = vi.fn(async () => ({ ok: true as const, environmentId: input.environmentId, revision: 4 }));
+        const confirm = vi.fn(async () => false);
+        const deploymentAction = async (id: string) => id === 'deployments.environments.get'
+            ? { ok: true, environment: f.environment.environment, targetLinks: [] }
+            : effect();
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+            prepareHostReviewedChildren: async request => request.actionId === actionId
+                ? await f.enrollment.prepare(input, request.context) : null,
+            deploymentAction,
+            resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(deploymentAction),
+            presentUserActionConfirmation: confirm,
+        });
+        const outcome = await executor.execute(actionId, input, context);
+        expect(outcome).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+        expect(confirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ actionId, preview: expect.objectContaining({
+            summary: expect.stringContaining('Happier also receives pull request events from this repository'),
+        }) }));
+        expect(effect).not.toHaveBeenCalled();
     } finally { await f.app.close(); }
 });
 

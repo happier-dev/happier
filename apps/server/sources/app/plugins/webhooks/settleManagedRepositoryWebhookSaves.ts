@@ -1,4 +1,4 @@
-import { readManagedGithubWebhookHomeUrlV1 } from '@happier-dev/protocol/automations/event-setup-result';
+import { readManagedGithubRepositoryEventV1, readManagedGithubWebhookHomeUrlV1 } from '@happier-dev/protocol/automations/event-setup-result';
 
 import { AutomationValidationError } from '@/app/automations/automationValidation';
 import type { ForwardManagedPluginWebhookOperation } from '@/app/api/socket/managedPluginWebhookDispatcher';
@@ -16,14 +16,23 @@ async function readWebhookAddress(request: object) {
     return readManagedGithubWebhookHomeUrlV1(projectHomeIngressReachability({ env, access }));
 }
 
-type ManagedRepositoryWebhookMutation = Readonly<{ triggerId: string; managedGithubRepositoryId?: string }>;
+type ManagedRepositoryWebhookMutation = Readonly<{
+    triggerId: string;
+    managedGithubRepositoryId?: string;
+    trigger?: Readonly<{ kind: string; eventRef?: Readonly<{ pluginId: string; localId: string }> }>;
+}>;
 
 export async function admitManagedRepositoryWebhookSaves(
     request: object, mutations: readonly ManagedRepositoryWebhookMutation[],
 ): Promise<string | null> {
-    if (!mutations.some(item => item.managedGithubRepositoryId !== undefined)) return null;
+    const requested = mutations.filter(item => item.managedGithubRepositoryId !== undefined);
+    if (!requested.length) return null;
     const publicBaseUrl = await readWebhookAddress(request);
-    if (!publicBaseUrl) throw new AutomationValidationError('github_webhook_home_unreachable');
+    // Preview setup prefers a reachable hook. An unreachable Home keeps the saved observer.
+    if (!publicBaseUrl && requested.some(item => !item.trigger?.eventRef
+        || readManagedGithubRepositoryEventV1(item.trigger.eventRef) !== 'pull_request')) {
+        throw new AutomationValidationError('github_webhook_home_unreachable');
+    }
     return publicBaseUrl;
 }
 

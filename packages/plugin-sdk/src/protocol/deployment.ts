@@ -24,6 +24,7 @@ import { readDeploymentDomainServingUrlV1 as canonicalReadDomainServingUrl,
     selectPublicTelemetryCollectorDomainV1 as canonicalSelectPublicTelemetryCollectorDomain } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import type { ProtocolComposableSchema } from './protocolFacade.js';
 
+export { deploymentPreviewHeadNeedsRedeployV1 } from '@happier-dev/protocol/deployments/deploymentPreviewProvenanceV1';
 export type { DeploymentPreviewProvenanceV1, DeploymentSourceIntentV1 };
 export type { DeploymentArtifactContentReferenceV1, DeploymentArtifactReadFailureV1, OpenedDeploymentArtifactV1 }
     from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';

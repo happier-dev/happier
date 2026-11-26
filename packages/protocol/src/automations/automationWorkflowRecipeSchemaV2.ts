@@ -4,7 +4,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
-import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
+import { DeploymentEnvironmentRefV1Schema, DeploymentPreviewTemplateRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import {
   WorkflowRoleOverridesV1Schema,
   WorkflowResolvedInputsV1Schema,
@@ -116,7 +116,7 @@ export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.
   inlineDefinition: zMini.optional(WorkflowDefinitionV1Schema),
   deploymentTriggers: z.optional(z.array(AutomationDeploymentTriggerV1Schema)),
   /** Preview lifecycle source; the claimant reads current saved template intent. */
-  deploymentPreview: z.optional(z.pick(DeploymentEnvironmentRefV1Schema, { serverId: true, environmentId: true })),
+  deploymentPreview: z.optional(DeploymentPreviewTemplateRefV1Schema),
   /** Host-produced person consent; never an authored trigger operand. */
   actionApprovals: z.optional(z.array(z.strictObject({
     triggerId: AutomationTriggerIdSchema,

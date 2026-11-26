@@ -14,3 +14,8 @@ export const DeploymentPreviewProvenanceV1Schema = lazyZodSchema(() => z.strictO
 }));
 export type DeploymentPreviewProvenanceV1 = z.infer<typeof DeploymentPreviewProvenanceV1Schema>;
 export const DeploymentPreviewProvenanceV1ProtocolSchema = projectZodProtocolSchema(DeploymentPreviewProvenanceV1Schema);
+
+/** Shared for received and polled head observations. An unserved head still needs a deployment. */
+export function deploymentPreviewHeadNeedsRedeployV1(servingSha: string | null, observedSha: string): boolean {
+    return servingSha?.toLowerCase() !== observedSha.toLowerCase();
+}

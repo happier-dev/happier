@@ -10,3 +10,6 @@ export const DeploymentEnvironmentRefV1Schema = lazyZodSchema(() => z.strictObje
   previewRole: z.optional(z.enum(['preview_admission', 'preview_cleanup'])),
 }));
 export type DeploymentEnvironmentRefV1 = z.infer<typeof DeploymentEnvironmentRefV1Schema>;
+
+export const DeploymentPreviewTemplateRefV1Schema = lazyZodSchema(() =>
+  z.pick(DeploymentEnvironmentRefV1Schema, { serverId: true, environmentId: true }));

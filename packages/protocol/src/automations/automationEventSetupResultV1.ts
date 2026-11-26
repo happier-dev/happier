@@ -13,8 +13,16 @@ import {
 import type { PluginJsonSchemaV2 } from '../plugins/contributions/publicTypes.js';
 import { embedProtocolJsonSchema } from '../plugins/actions/protocolComposableSchema.js';
 
-/** The existing GitHub push Event can gain managed delivery after its polling trigger commits. */
+/** Managed repository subscriptions are derived from the saved Event identity. */
 export const GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 = 'automation/repository-pushed-v1';
+export const GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1 = 'automation/pull-request-lifecycle-v1';
+
+export function readManagedGithubRepositoryEventV1(eventRef: Readonly<{ pluginId: string; localId: string }>): 'push' | 'pull_request' | null {
+  if (eventRef.pluginId !== GITHUB_EVENT_SETUP_ACTIONS_V1.pluginId) return null;
+  if (eventRef.localId === GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1) return 'push';
+  if (eventRef.localId === GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1) return 'pull_request';
+  return null;
+}
 
 /** A configured HTTPS ingress is a candidate. GitHub delivery establishes readiness. */
 export function readManagedGithubWebhookHomeUrlV1(

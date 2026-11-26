@@ -486,7 +486,8 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                 watcherPluginId: true,
                 watcherMaterializationId: true,
                 definitionEnvelope: true,
-                automation: { select: { templateCiphertext: true, templateVersion: true } },
+                automation: { select: { templateCiphertext: true, templateVersion: true,
+                    deploymentEnvironmentId: true, deploymentPreviewRole: true } },
             },
         });
         const pageRows = rows.slice(0, input.pageSize);
@@ -601,6 +602,8 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
             if (observationOnly && observationOnly.templateVersion !== row.automation.templateVersion) fail("definition_content_unavailable");
             return AutomationEventStoredDefinitionProjectionV1Schema.parse({
                 ...(observationOnly ? { observationOnly: { kind: "observationOnly" } } : {}),
+                ...(row.automation.deploymentPreviewRole === 'preview_admission' && row.automation.deploymentEnvironmentId
+                    ? { deploymentPreview: { serverId: serverIdentityId, environmentId: row.automation.deploymentEnvironmentId } } : {}),
                 automationId: row.automationId,
                 triggerId: row.id,
                 triggerRevision: row.revision,

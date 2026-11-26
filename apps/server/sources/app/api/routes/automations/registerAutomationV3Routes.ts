@@ -1,3 +1,4 @@
+import { GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 import { removeUnusedManagedRepositoryWebhook, type DeletedManagedWebhookConsumer } from "@/app/plugins/webhooks/removeUnusedManagedRepositoryWebhook";
 import { admitManagedRepositoryWebhookSaves, settleManagedRepositoryWebhookSaves } from "@/app/plugins/webhooks/settleManagedRepositoryWebhookSaves";
 import { AutomationTriggerEventDeclarationsRequestSchema, AutomationTriggerEventDeclarationsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
@@ -128,7 +129,11 @@ function collectManagedWebhookRemovals(app: Fastify, accountId: string) {
     const consumers = new Map<string, DeletedManagedWebhookConsumer>();
     return {
         onDeletedWebhookConsumer(consumer: DeletedManagedWebhookConsumer) {
-            if (consumer.webhookEndpointId) consumers.set(consumer.webhookEndpointId, consumer);
+            if (!consumer.webhookEndpointId) return;
+            const previous = consumers.get(consumer.webhookEndpointId);
+            if (!previous || consumer.eventLocalId === GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1) {
+                consumers.set(consumer.webhookEndpointId, consumer);
+            }
         },
         async finish() {
             let unavailable: string | undefined;

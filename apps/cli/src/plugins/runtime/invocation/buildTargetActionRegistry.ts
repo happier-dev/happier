@@ -698,6 +698,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         async writeManagedGithubRepositoryHook(input: Readonly<{
             request: ManagedPluginWebhookRequestV1;
             source: NonNullable<ReturnType<typeof readGithubManagedRepositoryHookSource>>;
+            event: 'push' | 'pull_request';
             machineId: string;
             signal: AbortSignal;
         }>): Promise<ManagedPluginWebhookResultV1> {
@@ -746,8 +747,9 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     plugin: { id: pluginId, version: registration.pluginVersion }, requestId: request.operationId,
                     invokedAtMs: Date.now(), signal, services,
                 }, request.kind === 'register'
-                    ? { kind: 'register', ...source, publicUrl: request.publicUrl, signingSecret: request.signingSecret }
-                    : { kind: 'remove', ...source, hookId: request.hookId });
+                    ? { kind: 'register', ...source, publicUrl: request.publicUrl,
+                        signingSecret: request.signingSecret, includePullRequests: input.event === 'pull_request' }
+                    : { kind: request.kind, ...source, hookId: request.hookId });
             } finally {
                 purpose.dispose();
                 if (request.kind === 'register') params.completeDiagnosticScope?.(diagnostic);

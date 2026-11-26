@@ -1,4 +1,4 @@
-import { readGithubRepositoryIdFromEventSourceV1 } from '@happier-dev/protocol/automations/event-setup-result';
+import { GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1, readGithubRepositoryIdFromEventSourceV1, readManagedGithubRepositoryEventV1 } from '@happier-dev/protocol/automations/event-setup-result';
 import type { ManagedPluginWebhookRequestV1 } from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
 
 import type { ForwardManagedPluginWebhookOperation } from '@/app/api/socket/managedPluginWebhookDispatcher';
@@ -35,14 +35,19 @@ export async function removeUnusedManagedRepositoryWebhook(params: Readonly<{
             },
         });
         if (!endpoint || !isManagedGithubEndpointKey(endpoint.ensureIdempotencyKey)) return { kind: 'retained' };
-        const otherConsumer = await db.automationTrigger.findFirst({
-            where: { webhookEndpointId: endpoint.id, deletedAt: null, automation: { accountId, deletedAt: null } },
+        const remaining = { webhookEndpointId: endpoint.id, deletedAt: null,
+            automation: { accountId, deletedAt: null } };
+        const otherConsumer = await db.automationTrigger.findFirst({ where: remaining, select: { id: true } });
+        const event = consumer.eventPluginId && consumer.eventLocalId
+            ? readManagedGithubRepositoryEventV1({ pluginId: consumer.eventPluginId, localId: consumer.eventLocalId }) : null;
+        if (otherConsumer && (event !== 'pull_request' || await db.automationTrigger.findFirst({
+            where: { ...remaining, eventPluginId: consumer.eventPluginId, eventLocalId: GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1,
+                enabled: true, automation: { ...remaining.automation, enabled: true, deploymentPreviewRole: 'preview_admission' } },
             select: { id: true },
-        });
-        if (otherConsumer) return { kind: 'retained' };
-
-        const operationId = `${endpoint.id}:remove:${endpoint.revision}`;
-        const removeRemoteHook = async () => {
+        }))) return { kind: 'retained' };
+        const kind = otherConsumer ? 'unsubscribePullRequests' : 'remove';
+        const operationId = `${endpoint.id}:${kind}:${endpoint.revision}`;
+        const removeRemoteSubscription = async () => {
             if (endpoint.providerRepositoryHookId === null) return undefined;
             const repositoryId = endpoint.sourceInstanceId && readGithubRepositoryIdFromEventSourceV1(endpoint.sourceInstanceId);
             const binding = readAutomationTriggerDefinitionBinding({
@@ -56,17 +61,20 @@ export async function removeUnusedManagedRepositoryWebhook(params: Readonly<{
                 raw: consumer.definitionEnvelope, mode: endpoint.account.encryptionMode, binding,
             });
             if (envelope.kind !== 'available') return 'endpoint_unavailable';
-            const operation: Extract<ManagedPluginWebhookRequestV1, { kind: 'remove' }> = {
-                kind: 'remove', endpointId: endpoint.id, repositoryId, hookId: endpoint.providerRepositoryHookId,
+            const operation: Extract<ManagedPluginWebhookRequestV1, { kind: typeof kind }> = {
+                kind, endpointId: endpoint.id, repositoryId, hookId: endpoint.providerRepositoryHookId,
                 operationId, materializationId: endpoint.targetMaterializationId, binding, storedDefinitionEnvelope: envelope.envelope,
             };
             const result = await params.forward({ target: {
                 accountId, machineId: endpoint.targetMachineId, installationId: endpoint.targetMachineInstallationId,
             }, operation });
-            if (result.kind === 'removed') return undefined;
+            if (kind === 'remove' && result.kind === 'removed'
+                || kind === 'unsubscribePullRequests' && result.kind === 'registered'
+                    && result.hookId === endpoint.providerRepositoryHookId) return undefined;
             return result.kind === 'unavailable' ? result.code : 'github_webhook_result_invalid';
         };
-        const removalError = await removeRemoteHook().catch(() => 'github_webhook_removal_unconfirmed');
+        const removalError = await removeRemoteSubscription().catch(() => 'github_webhook_removal_unconfirmed');
+        if (otherConsumer) return removalError ? unavailable(removalError) : { kind: 'retained' };
         // A failed provider write can leave a visible hook in GitHub. Home still
         // retires the route once its last consumer is gone.
         await revokePluginWebhookEndpointV1({

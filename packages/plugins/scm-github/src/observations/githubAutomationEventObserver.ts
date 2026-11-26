@@ -84,6 +84,7 @@ import { parseGithubDeploymentMonitoringSourceConfig } from './githubProviderCon
 import { publishGithubDeploymentReviewNoticesV1 } from '../actions/deploymentNotices.js';
 import { GithubDeploymentMonitorCursorV1Schema, type GithubDeploymentMonitorCursorV1 } from '../actions/deploymentReviewProtocol.js';
 import { readGithubDeploymentReviewCandidateV1, projectGithubDeploymentReviewCandidateV1, type GithubDeploymentReviewCandidateV1 } from './githubDeploymentMonitor.js';
+import { readGithubPreviewHeadUpdates } from './githubPreviewHeadUpdates.js';
 import { GithubCiReadError } from '../actions/reads.js';
 import type { GithubDeploymentWebhookWakeV1 } from '../webhookAction.js';
 import {
@@ -124,6 +125,7 @@ type GithubAutomationObservedSourceV1 = Readonly<{
   definition: GithubObservedSourceDefinitionV1;
   credentialRef: ConnectedAccountActionFormSelectionV1 | null;
   repository: GithubRepositorySourceConfigV1;
+  previewTemplate?: GithubAutomationEventSourceDefinitionV1['deploymentPreview'];
   checks?: NonNullable<GithubAutomationRepositoryEventSourceConfigV1['checks']>;
   deploymentReview?: NonNullable<GithubAutomationRepositoryEventSourceConfigV1['deploymentReview']>;
   /** The existing watcher or endpoint target is the single monitoring placement. */
@@ -315,6 +317,8 @@ function parseObservedSource(
     credentialRef: sourceConfig.credentialRef,
     repository: sourceConfig.repository,
     ...(sourceConfig.checks ? { checks: sourceConfig.checks } : {}),
+    ...(definition.eventRef.localId === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle && definition.deploymentPreview
+      ? { previewTemplate: definition.deploymentPreview } : {}),
     ...(sourceConfig.deploymentReview ? { deploymentReview: sourceConfig.deploymentReview } : {}),
     materializationRef,
     daemonMaterializationRef: materializationRequestKey(materializationRef),
@@ -975,7 +979,8 @@ type GithubGroupCheckpointReadV1 = Readonly<{
   checkpoint: Promise<StoredCheckpointRowV1 | null>;
 }>;
 type GithubGroupProviderCandidateV1 =
-  | Readonly<{ kind: 'repository'; polled: GithubRepositoryEventsPollResultV1<GithubRepositoryEventFactsV1> }>
+  | Readonly<{ kind: 'repository'; polled: GithubRepositoryEventsPollResultV1<GithubRepositoryEventFactsV1>;
+    previewHeads: PromiseSettledResult<Awaited<ReturnType<typeof readGithubPreviewHeadUpdates>>> }>
   | Readonly<{ kind: 'checks'; surface: Awaited<ReturnType<typeof readGithubPullRequestChecks>> }>
   | Readonly<{ kind: 'deployment'; candidate: GithubDeploymentReviewCandidateV1 }>;
 
@@ -1024,8 +1029,12 @@ async function readGroupProviderCandidate(input: Readonly<{
   const cursors = eligible.map(member => member.row ? loadCheckpoint({ source: member.source, row: member.row }).cursor : null);
   const cursor = cursors[0] ?? null;
   const agreed = cursor?.etag !== null && cursor?.etag !== undefined && cursors.every(value => value?.etag === cursor.etag);
-  return { kind: 'repository', polled: await pollRepositoryEvents({ context: input.context, source, cursor: agreed ? cursor : null, client,
-  }) };
+  const polled = await pollRepositoryEvents({ context: input.context, source, cursor: agreed ? cursor : null, client });
+  const [previewHeads] = await Promise.allSettled([readGithubPreviewHeadUpdates({
+    context: input.context, client, repository: source.repository,
+    templates: eligible.flatMap(member => member.row && member.source.previewTemplate ? [member.source.previewTemplate] : []),
+  })] as const);
+  return { kind: 'repository', polled, previewHeads };
 }
 
 async function runObservedSource(input: Readonly<{
@@ -1249,13 +1258,26 @@ async function runObservedSource(input: Readonly<{
       return sourceCycleResult(input.sourceKey, nextEligibleAt);
     }
 
+    const previewHeads = candidate.previewHeads;
+    const previewObservations = input.source.previewTemplate && previewHeads.status === 'fulfilled'
+      ? (previewHeads.value.get(JSON.stringify([input.source.previewTemplate.serverId, input.source.previewTemplate.environmentId])) ?? [])
+        .map(update => {
+          const observation = normalizeGithubAutomationEvent({ kind: 'pullRequestLifecycle', repository: input.source.repository,
+            pullRequest: update.pullRequest });
+          return {
+            ...observation, sourceInstanceId: input.source.definition.sourceInstanceId,
+            sourceContractVersion: input.source.definition.sourceContractVersion,
+            occurrenceId: update.occurrenceId, occurredAt: observedAtMs, observationReceivedAt: observedAtMs, observedDelta: 1,
+          };
+        })
+      : [];
     if (polled.kind === 'notModified') {
       const checkpoint = reuseGithubRepositoryEventsCheckpointOnNotModified(existing.cursor, observedAtMs);
       // A 304 is still a completed observation. Its new continuity horizon
       // must be CAS-persisted even when no template field changed.
       const retained = existing;
       const disposition = await processCheckpointedPluginEventAttemptV1({
-        context: input.context, definitions: [input.source.definition], observations: [], complete: true, isCurrent: input.isDefinitionCurrent,
+        context: input.context, definitions: [input.source.definition], observations: previewObservations, complete: true, isCurrent: input.isDefinitionCurrent,
         save: async () => { await collection.put(createCheckpointRow({
           source: input.source, cursor: checkpoint,
           lastContiguousOccurrenceId: retained.row.value.payload.lastContiguousOccurrenceId,
@@ -1264,6 +1286,7 @@ async function runObservedSource(input: Readonly<{
       });
       if (disposition.kind !== 'checkpointSafe') return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
       input.context.signal.throwIfAborted();
+      if (input.source.previewTemplate && previewHeads.status === 'rejected') throw previewHeads.reason;
       await reportSourceStatus({
         context: input.context,
         source: input.source,
@@ -1296,7 +1319,7 @@ async function runObservedSource(input: Readonly<{
       return sourceCycleResult(input.sourceKey, nextEligibleAt);
     }
 
-    const observations: PluginEventObservationV1[] = classified.observations
+    const observations: PluginEventObservationV1[] = [...classified.observations
       .flat()
       .filter(observation => observation.eventRef.localId === input.source.definition.eventRef.localId)
       .map(observation => ({
@@ -1304,7 +1327,7 @@ async function runObservedSource(input: Readonly<{
         sourceContractVersion: input.source.definition.sourceContractVersion,
         occurrenceId: observation.occurrenceId, occurredAt: observation.occurredAtMs,
         observationReceivedAt: observedAtMs, observedDelta: 1, payload: observation.payload,
-      }));
+      })), ...previewObservations];
     const retained = existing;
     const disposition = await processCheckpointedPluginEventAttemptV1({
       context: input.context, definitions: [input.source.definition], observations, complete: true, isCurrent: input.isDefinitionCurrent,
@@ -1315,6 +1338,7 @@ async function runObservedSource(input: Readonly<{
       }), { expectedRevision: retained.row.revision, signal: input.context.signal }); },
     });
     if (disposition.kind !== 'checkpointSafe') return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
+    if (input.source.previewTemplate && previewHeads.status === 'rejected') throw previewHeads.reason;
     await reportSourceStatus({
       context: input.context,
       source: input.source,

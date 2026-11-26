@@ -1,3 +1,4 @@
+import { DeploymentPreviewTemplateRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import * as zMini from '../zodRuntimePolicy.js';
 import { AutomationEventAdmitDefinitionSelectorV1Schema } from './automationEventAdmissionSelectorV1.js';
 export { AutomationEventAdmitDefinitionSelectorV1Schema, type AutomationEventAdmitDefinitionSelectorV1 } from './automationEventAdmissionSelectorV1.js';
@@ -81,6 +82,7 @@ export type AutomationEventSourceObservationTransportV1 = z.infer<
 >;
 
 export const AutomationEventSourceDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
+  deploymentPreview: z.optional(DeploymentPreviewTemplateRefV1Schema),
   subject: z.optional(AutomationSubjectV1Schema),
   observationOnly: z.optional(AutomationObservationOnlyIntentV1Schema),
   automationId: asProtocolZod(AutomationIdV1Schema),

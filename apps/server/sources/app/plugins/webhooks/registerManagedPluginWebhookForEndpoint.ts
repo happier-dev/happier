@@ -1,6 +1,6 @@
 import type { ManagedPluginWebhookRequestV1 } from '@happier-dev/protocol/plugins/webhooks/managedRepositoryWebhookRpcV1';
 import {
-    GITHUB_EVENT_SETUP_ACTIONS_V1, GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1,
+    GITHUB_EVENT_SETUP_ACTIONS_V1, readManagedGithubRepositoryEventV1,
     type ManagedGithubRepositoryHookSaveResultV1,
 } from '@happier-dev/protocol/automations/event-setup-result';
 
@@ -43,7 +43,7 @@ export async function registerManagedPluginWebhookForEndpoint(
     const triggerWhere = {
         id: input.triggerId, automationId: input.automationId, revision: input.triggerRevision,
         deletedAt: null, kind: 'pluginEvent' as const,
-        eventPluginId: pluginId, eventLocalId: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1,
+        eventPluginId: pluginId,
         automation: { accountId: input.accountId, deletedAt: null },
     };
     try {
@@ -51,9 +51,14 @@ export async function registerManagedPluginWebhookForEndpoint(
         const admitted = await inTx(async (tx) => {
             const trigger = await tx.automationTrigger.findFirst({
                 where: triggerWhere,
-                include: { automation: { select: { account: { select: { encryptionMode: true } } } } },
+                include: { automation: { select: { deploymentPreviewRole: true, account: { select: { encryptionMode: true } } } } },
             });
-            if (!trigger) return { kind: 'result', result: polling('endpoint_unavailable') } as const;
+            const eventLocalId = trigger?.eventLocalId;
+            const subscription = eventLocalId && readManagedGithubRepositoryEventV1({ pluginId, localId: eventLocalId });
+            if (!trigger || !eventLocalId || !subscription
+                || (subscription === 'pull_request' && trigger.automation.deploymentPreviewRole !== 'preview_admission')) {
+                return { kind: 'result', result: polling('endpoint_unavailable') } as const;
+            }
             if (trigger.observationTransport === 'durablePush') {
                 return { kind: 'result', result: { kind: 'webhook' } } as const;
             }
@@ -80,7 +85,7 @@ export async function registerManagedPluginWebhookForEndpoint(
                 return { kind: 'result', result: polling('target_unavailable') } as const;
             }
             const event = await resolveCurrentAutomationEventContributionTx({
-                tx, accountId: input.accountId, pluginId, eventLocalId: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1,
+                tx, accountId: input.accountId, pluginId, eventLocalId,
                 version: target.pluginVersion, machineId: target.materialization.machineId,
                 machineInstallationId: target.machineInstallationId,
             });
@@ -93,15 +98,48 @@ export async function registerManagedPluginWebhookForEndpoint(
                 return { kind: 'result', result: polling('endpoint_unavailable') } as const;
             }
             const sourceInstanceId = `github:repository:${input.repositoryId}`;
+            const endpointKey = managedGithubEndpointKey(input.repositoryId);
+            if (subscription === 'pull_request') {
+                // The registered endpoint retains its delivery Machine. The exact
+                // Preview trigger's watcher opens its own reviewed credential for PATCH.
+                const existing = await tx.pluginWebhookEndpoint.findFirst({
+                    where: { accountId: input.accountId, ensureIdempotencyKey: endpointKey,
+                        pluginId, webhookContributionId: webhookContribution.localId, sourceInstanceId,
+                        enabled: true, revokedAt: null, releasedAt: null,
+                        route: { enabled: true, revokedAt: null }, providerRepositoryHookId: { not: null } },
+                    select: { id: true, revision: true, targetMachineId: true, targetMaterializationId: true,
+                        targetMachineInstallationId: true, targetPluginVersion: true, providerRepositoryHookId: true },
+                });
+                if (existing?.providerRepositoryHookId) {
+                    if (!existing.targetMachineId || !existing.targetMaterializationId) {
+                        return { kind: 'result', result: polling('target_unavailable') } as const;
+                    }
+                    const deliveryTarget = await resolveCurrentPluginWebhookTargetTxV1({
+                        tx, serverIdentityId, accountId: input.accountId,
+                        target: { pluginId, machineId: existing.targetMachineId, materializationId: existing.targetMaterializationId },
+                    });
+                    if (!deliveryTarget || deliveryTarget.machineInstallationId !== existing.targetMachineInstallationId
+                        || deliveryTarget.pluginVersion !== existing.targetPluginVersion) {
+                        return { kind: 'result', result: polling('target_unavailable') } as const;
+                    }
+                    return { kind: 'subscribePullRequests', endpoint: existing, target, binding,
+                        storedDefinitionEnvelope: envelope.envelope, hookId: existing.providerRepositoryHookId } as const;
+                }
+            }
             const ensured = await ensurePluginWebhookEndpointV1({
                 tx, accountId: input.accountId, contribution, target, publicBaseUrl: input.publicBaseUrl, managed: true,
                 input: { webhookContribution, targetMaterialization: target.materialization, sourceInstanceId,
-                    setup: { kind: 'accountEndpointV1' }, idempotencyKey: managedGithubEndpointKey(input.repositoryId) },
+                    setup: { kind: 'accountEndpointV1' }, idempotencyKey: endpointKey },
             });
             const endpoint = await tx.pluginWebhookEndpoint.findUniqueOrThrow({
                 where: { id: ensured.webhookEndpointId },
                 select: { id: true, revision: true, routeId: true, providerRepositoryHookId: true, providerConfirmedAt: true },
             });
+            // A concurrent push registration can finish between the lookup and the ensure.
+            if (subscription === 'pull_request' && endpoint.providerRepositoryHookId !== null) {
+                return { kind: 'subscribePullRequests', endpoint, target, binding,
+                    storedDefinitionEnvelope: envelope.envelope, hookId: endpoint.providerRepositoryHookId } as const;
+            }
             const linked = await tx.automationTrigger.updateMany({
                 where: { ...triggerWhere, observationTransport: 'checkpointedPull',
                     OR: [{ webhookEndpointId: null }, { webhookEndpointId: endpoint.id }] },
@@ -120,6 +158,40 @@ export async function registerManagedPluginWebhookForEndpoint(
                 publicUrl: ensured.publicUrl } as const;
         }, { isolationLevel: 'Serializable' });
         if (admitted.kind === 'result') return admitted.result;
+
+        if (admitted.kind === 'subscribePullRequests') {
+            const { endpoint, target, binding, storedDefinitionEnvelope, hookId } = admitted;
+            const result = await input.forward({
+                target: { accountId: input.accountId, machineId: target.materialization.machineId,
+                    installationId: target.machineInstallationId },
+                operation: { kind: 'subscribePullRequests', endpointId: endpoint.id, repositoryId: input.repositoryId,
+                    operationId: `${endpoint.id}:subscribePullRequests:${input.triggerId}:${input.triggerRevision}`,
+                    materializationId: target.materialization.materializationId, binding, storedDefinitionEnvelope, hookId },
+            });
+            if (result.kind === 'unavailable') return polling(result.code);
+            if (result.kind !== 'registered' || result.hookId !== hookId) return polling('github_webhook_result_invalid');
+            return await inTx(async tx => {
+                const current = await tx.pluginWebhookEndpoint.findFirst({
+                    where: { id: endpoint.id, accountId: input.accountId, revision: endpoint.revision,
+                        enabled: true, revokedAt: null, providerRepositoryHookId: hookId },
+                    select: { providerConfirmedAt: true },
+                });
+                if (!current) return polling('endpoint_unavailable');
+                const verified = current.providerConfirmedAt !== null;
+                const linked = await tx.automationTrigger.updateMany({
+                    where: { ...triggerWhere, observationTransport: 'checkpointedPull',
+                        OR: [{ webhookEndpointId: null }, { webhookEndpointId: endpoint.id }] },
+                    data: verified
+                        ? { webhookEndpointId: endpoint.id, observationTransport: 'durablePush', observationStartsAt: new Date(),
+                            watcherMachineId: null, watcherMachineInstallationId: null, watcherMaterializationId: null, watcherPluginId: null }
+                        : { webhookEndpointId: endpoint.id },
+                });
+                if (linked.count !== 1) return polling('endpoint_unavailable');
+                if (!verified) return { kind: 'pendingVerification' };
+                await ensureAutomationEventCatalogStateTx({ tx, accountId: input.accountId, projectionChanged: true });
+                return { kind: 'webhook' };
+            }, { isolationLevel: 'Serializable' });
+        }
 
         // Read from the endpoint's credential owner only after it and the attachment commit.
         const [credential] = await readPluginWebhookVerificationCredentialsV1({ routeId: admitted.endpoint.routeId });

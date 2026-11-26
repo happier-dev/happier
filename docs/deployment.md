@@ -1092,7 +1092,14 @@ editor uses the same eligible Connected Account inventory as Deploy on push.
 It uses a sole connection automatically and lets you choose among several.
 The reviewed update binds the exact chosen account to the watcher setup Action.
 Account labels and references are available during setup. Credential material
-stays with the Connected Account owner.
+stays with the Connected Account owner. The review explains that a reachable Home
+also receives pull request events for the selected repository. The next reviewed
+Preview save adds that subscription to the product-managed repository hook and
+preserves its push subscription. Disabling previews removes that subscription
+when no other Preview uses it. Signed pull request updates use the existing
+durable Automation receiver. A Home GitHub cannot reach compares the heads of
+open PRs that have a serving Preview against their serving Receipts in the
+existing repository poll. A changed head deploys the exact new commit.
 
 Agents can read options using `deployments.environments.update` with
 `mode: "preview"`, `previewWatcher: "options"` and the proposed enabled

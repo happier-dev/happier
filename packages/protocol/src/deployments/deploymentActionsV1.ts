@@ -126,7 +126,7 @@ export { DeploymentPreviewTemplateV1Schema, DeploymentPreviewDataSelectionV1Sche
   type DeploymentPreviewTemplateV1, type DeploymentPreviewDataSelectionV1 } from './deploymentPreviewTemplateV1.js';
 export { DeploymentIngressV1Schema, type DeploymentIngressV1 } from './storedAppInputV1.js';
 import { DeploymentTargetManagedRetentionV1Schema } from './storedAppInputV1.js';
-import { DeploymentStoredDefinitionV1Schema, DeploymentSourceMethodV1Schema, DeploymentSourceIntentV1Schema } from './storedAppInputV1.js';
+import { DeploymentStoredDefinitionV1Schema, DeploymentSourceMethodV1Schema, DeploymentSourceIntentV1Schema, DeploymentRepositorySourceIntentV1Schema } from './storedAppInputV1.js';
 import { DeploymentPrepareInputV1Schema, DeploymentPrepareResultV1Schema } from './deploymentPreparationV1.js';
 import { DeploymentMoveToRepositoryInputV1Schema, DeploymentMoveToRepositoryResultV1Schema } from './deploymentMoveToRepositoryV1.js';
 export * from './deploymentMoveToRepositoryV1.js';
@@ -570,7 +570,7 @@ export type DeploymentEnvironmentControllerResultV1 = z.infer<typeof DeploymentE
 export const DeploymentReceiptGetInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...home, environmentId: z.optional(DeploymentIdentifierV1Schema), deploymentId: DeploymentIdentifierV1Schema,
   /** Open exact private evidence on the Account host; never forwarded to metadata storage. */
-  projection: z.optional(z.literal('investigation')),
+  projection: z.optional(z.enum(['investigation', 'previewHead'])),
 }));
 /** Observe an already-issued provider deployment; the host reads its retained identity and custody. */
 export const DeploymentReceiptObserveInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -607,6 +607,14 @@ export const DeploymentReceiptGetResultV1Schema = lazyZodSchema(() => z.union([
     failureSummary: z.optional(z.nullable(DeploymentReceiptFailureSummaryV1Schema)),
     /** Account-opened native evidence; absent from server metadata reads. */
     investigation: z.optional(DeploymentReceiptInvestigationV1Schema),
+    /** Exact live Preview facts opened by the Account host with its admitted read. */
+    previewHead: z.optional(z.strictObject({
+      templateEnvironmentId: DeploymentIdentifierV1Schema,
+      repository: ScmHostingRepositoryIdentityV1Schema,
+      pullRequestId: DeploymentIdentifierV1Schema,
+      pullRequestNumber: z.number().check(z.int(), z.positive()),
+      deployedSha: DeploymentRepositorySourceIntentV1Schema.shape.sha,
+    })),
     cancellationConsequence: z.optional(DeploymentCancellationConsequenceV1Schema),
     /** Admitted read-time presentation fact. Absent on older readers, never inferred by clients. */
     cancellable: z.optional(z.boolean()) }), DeploymentActionFailureV1Schema,

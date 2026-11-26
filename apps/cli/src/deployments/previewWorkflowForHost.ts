@@ -3,7 +3,7 @@ import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1, Deplo
 import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { ScmHostingPullRequestLifecycleV1 } from '@happier-dev/protocol';
 import { WorkflowDefinitionV1Schema, type WorkflowActionFieldBindingV1, type WorkflowBlock, type WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
-import { DeploymentPreviewProvenanceV1Schema } from '@happier-dev/protocol/deployments/deploymentPreviewProvenanceV1';
+import { DeploymentPreviewProvenanceV1Schema, deploymentPreviewHeadNeedsRedeployV1 } from '@happier-dev/protocol/deployments/deploymentPreviewProvenanceV1';
 import type { DeploymentPreviewDataSelectionV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
@@ -35,6 +35,7 @@ export type PreviewWorkflowForHostInput = Readonly<{
     readExistingPreview?(input: Readonly<{ templateRef: PreviewTemplateRefForHost; event: PreviewLifecycleEventForHost }>): Promise<Readonly<{
         environment: DeploymentEnvironmentHeaderV1; nativeData?: 'ready' | 'incomplete'; domainRevision?: number;
     }> | null>;
+    readServingHead?(): Promise<string | null>;
     readCloseDefinition?(input: Readonly<{ templateRef: PreviewTemplateRefForHost; event: PreviewLifecycleEventForHost }>): Promise<WorkflowDefinitionV1 | null>;
 }>;
 export type PreviewWorkflowForHostResult = Readonly<{ kind: 'available'; definition: WorkflowDefinitionV1 }>
@@ -72,6 +73,10 @@ export async function resolvePreviewWorkflowForHost(input: PreviewWorkflowForHos
         if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string')
             return { kind: 'refused', reason: error.code };
         throw error;
+    }
+    if (input.event.action === 'synchronize' && input.readServingHead
+        && !deploymentPreviewHeadNeedsRedeployV1(await input.readServingHead(), input.event.headSha)) {
+        return { kind: 'skipped', reason: 'already_deployed' };
     }
     const requestKey = `preview-${createHash('sha256').update(JSON.stringify([
         input.templateRef.serverId, template.environment.id, input.event.id, input.event.headSha, input.occurrenceKey,

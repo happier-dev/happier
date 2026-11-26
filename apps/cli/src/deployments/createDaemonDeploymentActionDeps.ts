@@ -53,7 +53,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import {
     DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1,
-    DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema, DeploymentReceiptResultV1Schema,
+    DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema, DeploymentReceiptResultV1Schema, hasDeploymentReceiptContentV1,
     DeploymentTransitionInputV1Schema, computeDeploymentTransitionRequestDigestV1, signMachineInstallationProof,
     type ActionExecutorContext, type ActionExecutorDeps, type DeploymentDomainHeaderV1, type DeploymentTargetLinkHeaderV1,
     DeploymentDeployInputV1Schema, DeploymentTeardownInputV1Schema, DeploymentTeardownPreparedInputV1Schema, type DeploymentDeployInputV1,
@@ -1939,6 +1939,27 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const detail = DeploymentReceiptGetResultV1Schema.parse(result);
                     if (!detail.ok || projection === undefined && (detail.deployment.state === 'queued'
                         || detail.deployment.state === 'succeeded' || detail.deployment.state === 'running_unverified')) return detail;
+                    if (projection === 'previewHead') {
+                        // This read never exposes the stored Environment or Receipt body to the caller.
+                        const serving = detail.deployment;
+                        if (serving.state !== 'succeeded' || serving.operation === 'teardown' || !hasDeploymentReceiptContentV1(serving)) return detail;
+                        const child = await readDeploymentEnvironmentForHost({ environmentId: serving.environmentId, context }, {
+                            readMetadata: readEnvironmentMetadata, open, assertCurrent,
+                        });
+                        const preview = child.content.previewProvenance;
+                        if (!preview || child.environment.purpose !== 'preview' || child.environment.deletedAtMs !== undefined
+                            || child.environment.runtimeTargetLinkId !== serving.targetLinkId
+                            || !child.targetLinks.some(link => link.id === serving.targetLinkId && link.activeDeploymentId === serving.id)
+                            || child.environment.previewTemplateEnvironmentId !== preview.templateEnvironmentId
+                            || child.environment.previewPullRequestId !== preview.pullRequestId) return detail;
+                        const { sourceIntent } = (await openReceipt(serving, context)).content;
+                        if (sourceIntent?.kind !== 'repository' || !sourceIntent.sha
+                            || sourceIntent.projectSourceId !== child.environment.projectSourceId) return detail;
+                        return DeploymentReceiptGetResultV1Schema.parse({ ...detail,
+                            previewHead: { templateEnvironmentId: preview.templateEnvironmentId, repository: preview.repository,
+                                pullRequestId: preview.pullRequestId, pullRequestNumber: preview.pullRequestNumber,
+                                deployedSha: sourceIntent.sha } });
+                    }
                     return await readDeploymentReceiptActionFactsV1(detail, { ...address, projection },
                         deployment => openReceipt(deployment, context));
                 } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }

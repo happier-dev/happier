@@ -197,7 +197,7 @@ export { projectNativeJsonValueForTransport, isStrictPluginJsonValue } from './s
 /** Fresh exact Artifact reads for feature handoffs; stored operands are not grants. */
 export { ProtocolArtifactGetOutputV1Schema } from './artifact.js';
 export {
-    ProtocolDeploymentPreviewProvenanceV1Schema,
+    ProtocolDeploymentPreviewProvenanceV1Schema, deploymentPreviewHeadNeedsRedeployV1,
     ProtocolDeploymentSourceIntentV1Schema,
     ProtocolDeploymentControllerAvailabilityV1Schema,
     DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE,

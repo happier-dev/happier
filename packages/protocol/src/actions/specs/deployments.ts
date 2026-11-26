@@ -362,6 +362,15 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       technicalInputPaths: ['requestKey', 'targetLinkId', 'contentArtifactId', 'contentHeaderVersion', 'contentBodyVersion',
         ...(id === deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 ? ['deploymentId', 'restoreBackupId'] : []),
         ...(id === deploymentActionIds.DEPLOYMENT_PROMOTE_ACTION_ID_V1 ? ['destinationContent'] : [])] } } : {}),
+    ...(id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 ? { approvalPresentation: {
+      summary: (input: unknown) => {
+        const parsed = DeploymentActionInputSchemasV1[deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1].safeParse(input);
+        const preview = parsed.success ? parsed.data.patch?.previewTemplate : undefined;
+        return parsed.success && parsed.data.mode !== 'preview' && preview?.enabled && preview.repository.kind === 'github'
+          ? 'When GitHub can reach this Home, Happier also receives pull request events from this repository if previews are enabled.'
+          : null;
+      },
+    } } : {}),
     // A link names its Home; the Environment, target declaration, provider operands and pinned content only route
     // the request. A create reads through the host's review, an association through its summary.
     ...(isDeploymentTargetLinkActionIdV1(id) ? { approvalPresentation: {

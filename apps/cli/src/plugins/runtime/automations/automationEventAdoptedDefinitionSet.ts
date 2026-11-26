@@ -383,6 +383,8 @@ function projectionMatchesStoredDefinition(
     || definition.sourceSelectorId !== storedDefinition.sourceSelectorId
     || definition.sourceContractVersion !== storedDefinition.sourceContractVersion
     || definition.observationOnly?.kind !== storedDefinition.observationOnly?.kind
+    || definition.deploymentPreview?.serverId !== storedDefinition.deploymentPreview?.serverId
+    || definition.deploymentPreview?.environmentId !== storedDefinition.deploymentPreview?.environmentId
   ) {
     return false;
   }

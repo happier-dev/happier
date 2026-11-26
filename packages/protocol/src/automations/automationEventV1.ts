@@ -1,3 +1,4 @@
+import { DeploymentPreviewTemplateRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import * as zMini from '../zodRuntimePolicy.js';
 import { ExternalActionRequestIdV1Schema } from '../actions/externalActionHttpError.js';
 import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
@@ -833,6 +834,7 @@ export function isSameAutomationEventDeclarationReleaseV1(
  * exact materialization; it is not a public Action result or SDK surface.
  */
 export const AutomationEventStoredDefinitionProjectionV1Schema = lazyZodSchema(() => z.strictObject({
+  deploymentPreview: z.optional(DeploymentPreviewTemplateRefV1Schema),
   observationOnly: z.optional(AutomationObservationOnlyIntentV1Schema),
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
