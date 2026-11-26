@@ -40,7 +40,7 @@ import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actio
 import {
     WorkflowRunStartRequestV1Schema} from '@happier-dev/protocol/workflows/actionsV1';
 import {
-    WorkflowActionFailureV1Schema, WorkflowRunOriginV1Schema} from '@happier-dev/protocol/workflows/workflowProgressV1';
+    WORKFLOW_OPERATION_PROBLEM_COPY_V1, WorkflowActionFailureV1Schema, WorkflowRunOriginV1Schema} from '@happier-dev/protocol/workflows/workflowProgressV1';
 import {
     WorkflowTriggerWriteResultV1Schema,
     WorkflowTriggerUpdateRequestV1Schema} from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -1772,7 +1772,7 @@ describe('UI Workflow Action front door', () => {
             hook = await renderHook(() => useSessionTriggers(sessionId));
             await waitForHomeGovernance(() => expect(hook!.getCurrent()).toMatchObject({ status: 'ready',
                 observationFailure: { code: 'contributed_action_unavailable', phase: 'observe', retryable: false },
-                sets: [], pullRequestLinks: [] }));
+                sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' } }));
             const queryCount = () => runtimeFetch.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/plugins/data/query').length;
             const settledReads = queryCount();
             await act(async () => publishActivePluginCollectionChanges([{
@@ -1815,6 +1815,7 @@ describe('UI Workflow Action front door', () => {
                     declarationReady: published, value: { ...defaults,
                         pluginUiProjection: published ? settledProjection : null,
                         phase: published ? 'current' : 'establishing', hasEstablishingMembers: !published,
+                        accountCensusPending: !published,
                         interactionEnabled: published, serverId: h.account.serverId, accountLifetime: h.account.accountLifetime,
                         clientExecutableActivation: { status: published ? 'ready' : 'establishing' },
                     }, children: React.createElement(CurrentUiContextBridge, { publisher: null, reader,
@@ -2909,7 +2910,7 @@ describe('UI Workflow Action front door', () => {
             await expect(h.createUiWorkflowAction({ account: h.account, transport: h.transport })({
                 actionId: 'workflow.run.get', input: { runId }, context: h.context,
             })).resolves.toEqual({
-                ok: false, errorCode: 'content_unavailable', error: 'content_unavailable',
+                ok: false, errorCode: 'content_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.content_unavailable.text,
                 failureCause: { phase: 'workflow.run.get', errorClass: 'Error', errorCode: null, httpStatus: null },
             });
             // The authorized read supplies the Run owner's mode and opaque
