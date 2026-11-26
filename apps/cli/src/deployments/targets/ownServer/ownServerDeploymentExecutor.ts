@@ -26,6 +26,7 @@ import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_
     DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createNativeComposeLifecycle, type NativeComposeActivatedProject, type NativeComposeEnvironmentProject, type NativeComposeProjectRender } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { normalizeNativeComposePlatform } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
+import { DeploymentNativeCleanupWarningV1Schema, type DeploymentNativeCleanupWarningV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { produceEnvironmentProjectServices } from '@/daemon/local/services/launch/projectDeclarations';
 import { restoreOwnServerDeploymentServices } from './restoreOwnServerDeploymentServices';
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError, type MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -1552,7 +1553,11 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 }
                 const projected = failure(uncertain ? 'outcome_unknown' : code, error);
                 const receiptFailure = projectDeploymentReceiptFailure(projected, input.phase === 'restore' ? 'restore' : 'activate');
-                const written = await stage(failed, { ...receiptFailure, code });
+                const imageCleanup = DeploymentNativeCleanupWarningV1Schema.safeParse({
+                    machineId: host.machineId, code: native?.nativeImageCleanupWarning,
+                }).data;
+                const written = await stage(failed, { ...receiptFailure, code,
+                    ...(imageCleanup ? { nativeCleanupWarnings: [imageCleanup] } : {}) });
                 if (!written.ok) return written;
                 if (!cleanupFailure) return projected;
                 return { ...projected, details: {
@@ -1592,6 +1597,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 request.context.signal ?? host.signal ?? new AbortController().signal);
             const result = await executeOwnServerRollout(host.dispatchMember ? host : { ...host, dispatchMember: executeMember }, request, snapshot);
             let settled: Parameters<typeof publishSettlementNotice>[2];
+            const nativeCleanupWarnings: DeploymentNativeCleanupWarningV1[] = [];
             // Local success cannot authorize retention. Reopen the settled
             // aggregate and its current uniform pointer before dispatching it.
             // Notice admission consumes this same fresh pair without reopening Source access.
@@ -1613,6 +1619,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                 activeDeploymentId: link.activeDeploymentId };
                             const cleaned = host.dispatchRetention ? await host.dispatchRetention(child) : await retain(child);
                             if (!cleaned.ok) logger.infoFile('[Deployment] Source retention did not complete', { code: cleaned.errorCode });
+                            else if (cleaned.nativeCleanupWarnings) nativeCleanupWarnings.push(...cleaned.nativeCleanupWarnings);
                         }
                     }
                 } catch (error) { logger.infoFile('[Deployment] Source retention did not complete', { code: codeOf(error) }); }
@@ -1630,6 +1637,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     environmentId: settled.receipt.deployment.environmentId, targetLinkId: settled.receipt.deployment.targetLinkId,
                     deploymentId: settled.receipt.deployment.id, failure: knownFailure,
                     logsAvailable: projectDeploymentReceiptFactsV1(settled.receipt).logs.length > 0,
+                    ...(nativeCleanupWarnings.length ? { nativeCleanupWarnings } : {}),
                     ...(!result.ok && cleanupFailed ? { cleanupFailure: { code: result.errorCode, phase: 'cleanup',
                         ...(result.failureCause ? { failureCause: result.failureCause } : {}) } } : {}),
                 });
@@ -1639,7 +1647,10 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     ...(typeof knownFailure.effectAttempted === 'boolean' ? { effectAttempted: knownFailure.effectAttempted } : {}) };
             }
             const previewCleanup = settled?.receipt.content.ownServer?.previewCleanup;
-            return result.ok && result.state === 'succeeded' && previewCleanup ? { ...result, previewCleanup } : result;
+            return result.ok ? { ...result,
+                ...(result.state === 'succeeded' && previewCleanup ? { previewCleanup } : {}),
+                ...(nativeCleanupWarnings.length ? { nativeCleanupWarnings } : {}),
+            } : result;
         } catch (error) { return failure(failureCode(error, request.context.signal?.aborted === true), error); }
     }
     return Object.freeze({ review, execute, reviewMember, executeMember, retain, restore, backup });

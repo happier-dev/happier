@@ -6,13 +6,22 @@ import { DeploymentStateV1Schema } from './deploymentStateV1.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureFactsV1.js';
 import { DeploymentPreviewCleanupV1Schema } from './deploymentTeardownVolumesV1.js';
 
+/** Native cleanup is secondary to the operation outcome and names the affected Machine. */
+export const DeploymentNativeCleanupWarningV1Schema = lazyZodSchema(() => z.strictObject({
+  machineId: DeploymentIdentifierV1Schema,
+  code: z.enum(['container_observation_unavailable', 'container_removal_failed', 'image_observation_unavailable',
+    'image_removal_failed', 'image_archive_removal_failed']),
+}));
+export type DeploymentNativeCleanupWarningV1 = z.infer<typeof DeploymentNativeCleanupWarningV1Schema>;
+
 /** Accepted deployment outcomes shared by semantic parents and storage transports. */
 export const DeploymentReceiptAcceptedResultV1Schema = lazyZodSchema(() => {
   const result = { ok: z.literal(true), environmentId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema };
   return z.union([
     z.strictObject({ ...result, deploymentId: DeploymentIdentifierV1Schema,
       deploymentRevision: DeploymentRevisionV1Schema, state: DeploymentStateV1Schema,
-      environmentRemoved: z.optional(z.literal(true)), previewCleanup: z.optional(DeploymentPreviewCleanupV1Schema) }),
+      environmentRemoved: z.optional(z.literal(true)), previewCleanup: z.optional(DeploymentPreviewCleanupV1Schema),
+      nativeCleanupWarnings: z.optional(z.array(DeploymentNativeCleanupWarningV1Schema)) }),
     z.strictObject({ ...result, kind: z.literal('pending'), actionOperationId: DeploymentIdentifierV1Schema,
       operation: z.optional(ActionOperationAddressV1Schema) }),
   ]);

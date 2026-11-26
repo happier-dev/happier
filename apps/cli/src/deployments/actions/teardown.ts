@@ -8,6 +8,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import type { DeploymentTeardownEnvironmentPartialDetailsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { projectDeploymentTransitionOutcomeUnknownForHost } from '../deploymentTransitionResult';
 import { projectDeploymentReceiptFailure } from '../deploymentFailure';
+import { DeploymentNativeCleanupWarningV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import type { DeploymentReceiptDispatchV1 } from '../createCliDeploymentActionDeps';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentTransition } from '../targets/ownServer/ownServerDeploymentTarget';
 
@@ -39,6 +40,15 @@ export type DeploymentTeardownBoundary = Readonly<{
 }>;
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+
+function projectNativeCleanupWarnings(proofs: readonly DeploymentTeardownStepProofV1[]) {
+    const nativeCleanupWarnings = proofs.flatMap(proof => {
+        if (proof.step !== 'removeTarget' || proof.state !== 'succeeded' || !proof.reason) return [];
+        const parsed = DeploymentNativeCleanupWarningV1Schema.safeParse({ machineId: proof.machineId, code: proof.reason });
+        return parsed.success ? [parsed.data] : [];
+    });
+    return nativeCleanupWarnings.length ? { nativeCleanupWarnings } : {};
+}
 
 /** A known failed step may retry under the same admitted receipt. Unknown
  * effects retain their state until the resource owner proves completion. */
@@ -103,7 +113,8 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
             || (selected && selected.id !== link.id && intent.machines.some(member => selected.machines.includes(member.machineId)))) return failure('deployment_conflict');
         const result = (): DeploymentReceiptResultV1 => ({ ok: true, environmentId: receipt.deployment.environmentId,
             revision: environment.environment.revision, deploymentId: receipt.deployment.id,
-            deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state });
+            deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state,
+            ...projectNativeCleanupWarnings(intent.proofs) });
         if (receipt.deployment.state === 'succeeded' || receipt.deployment.state === 'cancelled') return result();
         const resumed = await resumeDeploymentTeardownReceiptForHost({ request, receipt, writeTransition: host.writeTransition });
         if (resumed && !resumed.ok) return resumed;
@@ -159,7 +170,7 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
             }
             // Committed removal makes the Environment unreadable. The signed
             // transition response is the final outcome, including its removal fact.
-            if (state === 'succeeded') return response;
+            if (state === 'succeeded') return { ...response, ...projectNativeCleanupWarnings(proofs) };
             receipt = await read();
             return null;
         };

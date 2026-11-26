@@ -1,4 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { DeploymentNativeCleanupWarningV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentImageV1, type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentImageArchiveV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
@@ -236,6 +237,7 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                 retiredImageReferences.delete(activationRef);
             }
         } else retiredImageReferences.clear();
+        const warnings = new Set<DeploymentNativeCleanupWarningV1['code']>();
         if (sources.length || logs.length || archives.length || retiredProjects.size || retiredImageReferences.size) {
             const runtime = await host.runtime.acquireRetention(input, recheck);
             try {
@@ -261,19 +263,19 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                     kind: input.request.actionId, ...(input.request.context.signal ? { signal: input.request.context.signal } : {}) },
                     keys: [{ kind: 'dockerEngine', dockerEndpoint: engine.id }], settleNative: runtime.settleNative }, async () => {
                     const containerWarning = retiredProjects.size ? await removeNativeComposeExitedDeploymentContainers({ projects: retiredProjects, run }) : null;
-                    if (containerWarning) logger.infoFile('[Deployment] Expired containers were kept', { code: containerWarning });
+                    if (containerWarning) warnings.add(containerWarning);
                     if (retiredImageReferences.size) {
                         const present = await readNativeComposeDeploymentImageReferences(environmentInstanceId, run);
                         const imageWarning = present === null ? 'image_observation_unavailable'
                             : await removeNativeComposeDeploymentImageReferences(present.filter(reference => retiredImageReferences.has(reference)), run);
-                        if (imageWarning) logger.infoFile('[Deployment] Expired images were kept', { code: imageWarning });
+                        if (imageWarning) warnings.add(imageWarning);
                     }
                     for (const archive of archives) {
                         try {
                             await retireOwnServerImageArchiveForHost({ archive, deploymentRoot: runtime.deploymentRoot,
                                 environmentInstanceId, environmentId: snapshot.environment.environment.id, assertCurrent: runtime.assertCurrent });
                         } catch (error) {
-                            if (!absent(error)) logger.infoFile('[Deployment] Expired image archive was kept', { code: 'image_archive_removal_failed' });
+                            if (!absent(error)) warnings.add('image_archive_removal_failed');
                         }
                     }
                     const nativeBindSources = sources.length || logs.length
@@ -300,6 +302,7 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
             } finally { await runtime.release(); }
         }
         return { ok: true as const, environmentId: snapshot.environment.environment.id, revision: snapshot.environment.environment.revision,
-            deploymentId: snapshot.receipt.deployment.id, deploymentRevision: snapshot.receipt.deployment.revision, state: snapshot.receipt.deployment.state };
+            deploymentId: snapshot.receipt.deployment.id, deploymentRevision: snapshot.receipt.deployment.revision, state: snapshot.receipt.deployment.state,
+            ...(warnings.size ? { nativeCleanupWarnings: [...warnings].map(code => ({ machineId: input.machineId, code })) } : {}) };
     } };
 }

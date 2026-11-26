@@ -58,6 +58,50 @@ describe('failed deployment migration recovery', () => {
   beforeEach(async () => { await homes.reset(); triage.runs.length = 0; triage.readGate = null; triage.editorOpens.length = 0; });
   afterEach(standardCleanup);
 
+  it('shows a native cleanup warning beside the successful Receipt outcome', async () => {
+    const { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+    const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+    const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+    const homeId = `srv_${'a'.repeat(32)}`;
+    const accountId = 'account-owner';
+    const serverId = await homes.addHome({ name: 'Cleanup', serverUrl: 'https://receipt-cleanup.test',
+      serverIdentityId: homeId, accountId, currentAccount: true });
+    const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: homeId }) });
+    const machineId = 'cleanup-test-machine';
+    const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+      environmentId: environment.environment.id, actionOperationId: 'cleanup-warning-operation',
+      acceptedExecution: { v: 1, controller: { machineId, installationId: 'installation' } },
+    }) });
+    const controller = createDeploymentReadControllerV1({ scope: { serverId: homeId, accountId, projectSourceId: 'source-app' }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: environment }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: receipt.deployment.actionOperationId,
+      revision: 1, actionId: DEPLOYMENT_DEPLOY_ACTION_ID_V1, state: 'succeeded', scope: { accountId, machineId },
+      title: 'Deploy', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
+      result: { ok: true, environmentId: environment.environment.id, revision: 1, deploymentId: receipt.deployment.id,
+        deploymentRevision: receipt.deployment.revision, state: 'succeeded',
+        nativeCleanupWarnings: [{ machineId, code: 'image_removal_failed' }] } });
+    actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
+    try {
+      const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} environmentId={environment.environment.id}
+        deploymentId={receipt.deployment.id} environmentName="Production" demand={{ mounted: true, visible: true, focused: true }}
+        accountId={accountId} serverId={serverId} readLogs={null} onBack={() => {}} rollback={null}
+        cancel={null} deploy={null} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+      const banner = 'project-deployments.receipt.cleanupWarning';
+      await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.receipt.outcome.succeeded'), value => value !== null); });
+      expect(screen.findByTestId(banner)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${banner}.details`);
+      expect(screen.getTextContent()).toContain('image_removal_failed');
+      await screen.unmount();
+    } finally {
+      controller.retire();
+      actionOperationStore.reset();
+    }
+  });
+
   it('names the Home that could not complete the deploy and retries its reviewed revision', async () => {
     const { t } = await import('@/text');
     const homeId = `srv_${'a'.repeat(32)}`;

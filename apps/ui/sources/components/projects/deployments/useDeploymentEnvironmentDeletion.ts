@@ -10,6 +10,7 @@ import { readDeploymentActionError, readDeploymentActionResult, type DeploymentA
 import { useReceiptRead } from './useDeploymentReads';
 import { deploymentManagedRetention, type DeploymentRetentionChoiceValue } from './DeploymentRetentionChoice';
 import type { DeploymentTeardownVolumesV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentNativeCleanupWarningV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import type { DeploymentRuntimeReinstallV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 /** Only the target-membership Actions: a page passes the subset it holds. */
@@ -19,7 +20,7 @@ export type DeploymentEnvironmentDeleteChoice = Readonly<{ kind: 'detachKeepRunn
 export type DeploymentTargetUnlinkChoice = Readonly<{ kind: 'detachKeepRunning' }>
     | Readonly<{ kind: 'afterTeardown'; deploymentId?: string }>;
 export type DeploymentEnvironmentDeletionOutcome = DeploymentActionOutcome
-    | Readonly<{ kind: 'deleted'; detached: boolean }>
+    | Readonly<{ kind: 'deleted'; detached: boolean; nativeCleanupWarnings?: readonly DeploymentNativeCleanupWarningV1[] }>
     | Readonly<{ kind: 'unlinked'; targetLinkId: string; detached: boolean }>
     | Readonly<{ kind: 'linked'; targetLinkId: string }>
     | Readonly<{ kind: 'reinstalled'; targetLinkId: string; replacedTargetLinkId: string }>;
@@ -166,7 +167,9 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
                 ...(options?.removeEnvironment === false ? {} : { removeEnvironment: true as const }) },
             { ...invoked, confirmed: true });
             if (torn.ok && 'environmentRemoved' in torn && torn.environmentRemoved === true) {
-                return { kind: 'deleted', detached: false };
+                return { kind: 'deleted', detached: false,
+                    ...('nativeCleanupWarnings' in torn && torn.nativeCleanupWarnings?.length
+                        ? { nativeCleanupWarnings: torn.nativeCleanupWarnings } : {}) };
             }
             if (torn.ok && 'detached' in torn) return { kind: 'started' };
             return readDeploymentActionResult(torn, 'refused');

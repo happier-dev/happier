@@ -120,6 +120,20 @@ it('keeps the serving image and History rollback window after successive native 
                 settledTargetLinkRevision: link.revision, settledDeploymentRevision: receipt.deployment.revision,
                 activeDeploymentId: deploymentId })).toMatchObject({ ok: true });
             expect([...(await tools.readPruneImageIds())].sort()).toEqual(imageIds.slice(-windowSize - 1).sort());
+            if (index === windowSize + 3) {
+                const expired = history[0]!;
+                const expiredImage = await tools.registerImage('app', 'in-use-expired');
+                expired.content.images = [expiredImage];
+                const reference = resolveNativeComposeDeploymentImageReferences({ environmentInstanceId: identity.environmentInstanceId,
+                    deploymentId: expired.deployment.id, image: expiredImage }).ownedTag;
+                const nativeId = await tools.setImagePruneState(expiredImage.configDigest, { repoTags: [reference], repoDigests: [] });
+                await tools.setImageContainerReference(nativeId, 'running', 'unrelated-persistent-project');
+                expect(await retention.retain({ request, machineId: 'machine-a', installationId: 'installation-a',
+                    settledTargetLinkRevision: link.revision, settledDeploymentRevision: receipt.deployment.revision,
+                    activeDeploymentId: deploymentId })).toMatchObject({ ok: true,
+                    nativeCleanupWarnings: [{ machineId: 'machine-a', code: 'image_removal_failed' }] });
+                expect(await tools.readPruneReference(reference)).toBe(nativeId);
+            }
             for (const project of departedProjects) expect(await tools.readContainerIds(project)).toEqual([]);
             for (const [releaseIndex, archive] of archivePaths.entries()) {
                 if (releaseIndex <= expiredIndex) await expect.soft(readFile(archive)).rejects.toMatchObject({ code: 'ENOENT' });

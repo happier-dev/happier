@@ -112,6 +112,7 @@ import {
   type DeploymentOutcomeController,
   type DeploymentRecoveryTarget,
 } from './deploymentActionOutcome';
+import { Modal } from '@/modal';
 import { DeploymentExecutionFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { createDeploymentActions } from './deploymentActions';
 import { prepareDeploymentSourceCheckout } from './prepareDeploymentSourceCheckout';
@@ -743,7 +744,14 @@ export const DeploymentEnvironmentDetail = React.memo(
           onHistory: () => onNavigate({ tab: 'history', section: null }) },
         onApproval: review.request,
         onDone: (outcome) => {
-          if (outcome.kind === 'deleted') onDeleted?.();
+          if (outcome.kind !== 'deleted') return;
+          if (outcome.nativeCleanupWarnings?.length) {
+            Modal.alert(t('projects.deployments.receipt.cleanupWarningTitle'),
+              t('projects.deployments.receipt.cleanupWarningBody', {
+                machines: [...new Set(outcome.nativeCleanupWarnings.map(warning => machineName(warning.machineId)))].join(', '),
+              }));
+          }
+          onDeleted?.();
         },
       });
     };

@@ -15,6 +15,8 @@ type ReceiptCopy = Readonly<{
   policyDescription: string;
   missingSecrets: (params: { names: string }) => string;
   cancelStopped: string;
+  cleanupWarningTitle: string;
+  cleanupWarningBody: (params: { machines: string }) => string;
   headlinePromoting: (params: { sha: string }) => string;
   headlinePromoted: (params: { sha: string }) => string;
   headlinePromoteFailed: (params: { sha: string }) => string;
@@ -55,6 +57,8 @@ type ReceiptCopy = Readonly<{
 
 export const deploymentReceiptTranslations = {
   "en": {
+    cleanupWarningTitle: "Cleanup incomplete",
+    cleanupWarningBody: ({ machines }) => `Some deployment artifacts remain on ${machines}. Check storage on the affected Machines.`,
     homeStorageUnavailable: "This Home is temporarily unavailable.",
     platformDomainRequired: "Add a Domain in the Environment to reach this deployment.",
     publicAddressFailed: "Deployed, but the public address did not answer",
@@ -107,6 +111,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancel deploy",
   },
   "fr": {
+    cleanupWarningTitle: "Nettoyage incomplet",
+    cleanupWarningBody: ({ machines }) => `Des éléments du déploiement restent sur ${machines}. Vérifiez le stockage des Machines concernées.`,
     homeStorageUnavailable: "Ce Home est temporairement indisponible.",
     platformDomainRequired: "Ajoutez un domaine dans l’environnement pour accéder à ce déploiement.",
     publicAddressFailed: "Déploiement effectué, mais l’adresse publique n’a pas répondu",
@@ -159,6 +165,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Annuler le déploiement",
   },
   "de": {
+    cleanupWarningTitle: "Bereinigung unvollständig",
+    cleanupWarningBody: ({ machines }) => `Auf ${machines} sind Bereitstellungsartefakte verblieben. Prüfe den Speicher der betroffenen Maschinen.`,
     homeStorageUnavailable: "Dieses Home ist vorübergehend nicht verfügbar.",
     platformDomainRequired: "Füge in der Umgebung eine Domain hinzu, um dieses Deployment zu erreichen.",
     publicAddressFailed: "Bereitgestellt, aber die öffentliche Adresse hat nicht geantwortet",
@@ -211,6 +219,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Bereitstellung abbrechen",
   },
   "es": {
+    cleanupWarningTitle: "Limpieza incompleta",
+    cleanupWarningBody: ({ machines }) => `Quedan artefactos del despliegue en ${machines}. Comprueba el almacenamiento de las máquinas afectadas.`,
     homeStorageUnavailable: "Este Home no está disponible temporalmente.",
     platformDomainRequired: "Añade un dominio en el entorno para acceder a este despliegue.",
     publicAddressFailed: "Desplegado, pero la dirección pública no respondió",
@@ -263,6 +273,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancelar despliegue",
   },
   "it": {
+    cleanupWarningTitle: "Pulizia incompleta",
+    cleanupWarningBody: ({ machines }) => `Su ${machines} restano artefatti del deployment. Controlla lo spazio di archiviazione delle macchine interessate.`,
     homeStorageUnavailable: "Questo Home non è temporaneamente disponibile.",
     platformDomainRequired: "Aggiungi un dominio nell’ambiente per raggiungere questa distribuzione.",
     publicAddressFailed: "Distribuzione completata, ma l’indirizzo pubblico non ha risposto",
@@ -315,6 +327,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Annulla distribuzione",
   },
   "pt": {
+    cleanupWarningTitle: "Limpeza incompleta",
+    cleanupWarningBody: ({ machines }) => `Ainda há artefatos da implantação em ${machines}. Verifique o armazenamento das máquinas afetadas.`,
     homeStorageUnavailable: "Este Home está temporariamente indisponível.",
     platformDomainRequired: "Adicione um domínio no ambiente para acessar esta implantação.",
     publicAddressFailed: "Implantado, mas o endereço público não respondeu",
@@ -367,6 +381,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancelar implantação",
   },
   "ca": {
+    cleanupWarningTitle: "Neteja incompleta",
+    cleanupWarningBody: ({ machines }) => `Encara queden artefactes del desplegament a ${machines}. Comprova l’emmagatzematge de les màquines afectades.`,
     homeStorageUnavailable: "Aquest Home no està disponible temporalment.",
     platformDomainRequired: "Afegeix un domini a l’entorn per accedir a aquest desplegament.",
     publicAddressFailed: "Desplegat, però l’adreça pública no ha respost",
@@ -419,6 +435,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Cancel·la el desplegament",
   },
   "pl": {
+    cleanupWarningTitle: "Niepełne czyszczenie",
+    cleanupWarningBody: ({ machines }) => `Na ${machines} pozostały artefakty wdrożenia. Sprawdź pamięć masową tych maszyn.`,
     homeStorageUnavailable: "Ten Home jest chwilowo niedostępny.",
     platformDomainRequired: "Dodaj domenę w środowisku, aby uzyskać dostęp do tego wdrożenia.",
     publicAddressFailed: "Wdrożono, ale adres publiczny nie odpowiedział",
@@ -471,6 +489,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Anuluj wdrożenie",
   },
   "ru": {
+    cleanupWarningTitle: "Очистка не завершена",
+    cleanupWarningBody: ({ machines }) => `На ${machines} остались артефакты развёртывания. Проверьте хранилище этих машин.`,
     homeStorageUnavailable: "Этот Home временно недоступен.",
     platformDomainRequired: "Добавьте домен в окружении, чтобы открыть это развёртывание.",
     publicAddressFailed: "Развёрнуто, но публичный адрес не ответил",
@@ -523,6 +543,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "Отменить развёртывание",
   },
   "ja": {
+    cleanupWarningTitle: "クリーンアップが未完了です",
+    cleanupWarningBody: ({ machines }) => `${machines} にデプロイの成果物が残っています。対象マシンのストレージを確認してください。`,
     homeStorageUnavailable: "このホームは一時的に利用できません。",
     platformDomainRequired: "このデプロイにアクセスするには、環境にドメインを追加してください。",
     publicAddressFailed: "デプロイ済みですが、公開アドレスが応答しませんでした",
@@ -575,6 +597,8 @@ export const deploymentReceiptTranslations = {
     cancelAnyway: "デプロイをキャンセル",
   },
   "zh-Hans": {
+    cleanupWarningTitle: "清理未完成",
+    cleanupWarningBody: ({ machines }) => `${machines} 上仍有部署产物。请检查相关机器的存储空间。`,
     homeStorageUnavailable: "此 Home 暂时不可用。",
     platformDomainRequired: "请在环境中添加域名以访问此部署。",
     publicAddressFailed: "已部署，但公开地址未响应",

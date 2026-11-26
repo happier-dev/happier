@@ -213,6 +213,8 @@ describe('teardown operation custody', () => {
             teardown: { reason: 'manual', targetLinkRevision: link.revision, machines, resources: [],
                 proofs: machines.flatMap(member => DEPLOYMENT_TEARDOWN_STEPS_V1.map(step => ({
                     ...member, step, state: 'succeeded' as const, resources: [],
+                    ...(step === 'removeTarget' && member.machineId === machines[0]?.machineId
+                        ? { reason: 'image_removal_failed' } : {}),
                 }))) } } });
         let removed = false;
         // Home persistence is the boundary: after committed deletion its receipt
@@ -237,7 +239,8 @@ describe('teardown operation custody', () => {
             receipt: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'running' },
             context: { surface: 'cli', operationAcceptance: { operationId: 'remove-operation', accept() {} } } });
-        expect(result).toMatchObject(accepted ? { ok: true, state: 'succeeded', environmentRemoved: true }
+        expect(result).toMatchObject(accepted ? { ok: true, state: 'succeeded', environmentRemoved: true,
+            nativeCleanupWarnings: [{ machineId: link.machines[0], code: 'image_removal_failed' }] }
             : { ok: false, errorCode: 'deployment_conflict', details: { environmentId: environment.environment.id,
                 step: 'removeEnvironment', partial: true, requiredFact: 'environmentRemoval', remedy: expect.any(String) } });
         expect(removed).toBe(accepted);

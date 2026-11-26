@@ -9,6 +9,11 @@ import type {
 } from '@happier-dev/deployments';
 import { isDeploymentRollbackSourceEligibleV1, type DeploymentMachineResultV1 } from '@happier-dev/deployments/contracts/v1';
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentStateV1';
+import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
+import { DeploymentExecutionFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -181,11 +186,37 @@ export const DeploymentReceiptDetail = React.memo(
     const receiptActors = React.useMemo(() => [opened?.facts.actor ?? null], [opened?.facts.actor]);
     const [actorPresentation] = useDeploymentActorPresentations({ actors: receiptActors,
       scope: props.lifetime?.scope ?? NO_ACTOR_SCOPE, accountLifetime: props.lifetime ?? null, active: props.lifetime != null });
-    const machineIds = React.useMemo(
-      () => opened?.content.machines ?? [],
-      [opened?.content.machines],
+    const cleanupAddress = opened && props.demand.visible && props.demand.focused
+      ? { serverId: props.serverId, operationId: opened.deployment.actionOperationId } : null;
+    const operationSummary = useActionOperation(cleanupAddress);
+    const summary = operationSummary?.snapshot;
+    const scopeMatches = summary && summary.scope.accountId === props.accountId
+      && summary.scope.machineId === opened?.deployment.acceptedExecution?.controller.machineId;
+    // Read the owner's full settlement only for this visible Receipt. The
+    // Account list deliberately omits terminal payloads.
+    const operation = useActionOperation(cleanupAddress, scopeMatches && summary
+      && (summary.state === 'succeeded' || summary.state === 'failed')
+      && isDeploymentActionIdV1(summary.actionId) && summary.scope.machineId && props.lifetime
+      ? { machineId: summary.scope.machineId, actionId: summary.actionId, lifetime: props.lifetime }
+      : undefined);
+    const warnings = React.useMemo(() => {
+      if (!operation || !scopeMatches || !opened || !isDeploymentActionIdV1(operation.snapshot.actionId)) return [];
+      const result = readActionOperationTerminalResultV1(operation.snapshot);
+      if (!result) return [];
+      const settlement = result.ok ? DeploymentReceiptAcceptedResultV1Schema.safeParse(result.result).data
+        : DeploymentExecutionFailureDetailsV1Schema.safeParse(result.details).data;
+      return settlement && 'deploymentId' in settlement && settlement.deploymentId === opened.deployment.id
+        && settlement.environmentId === props.environmentId ? settlement.nativeCleanupWarnings ?? [] : [];
+    }, [opened, operation, props.environmentId, scopeMatches]);
+    const nativeCleanupWarnings = React.useMemo(
+      () => [...(opened?.facts.failure?.nativeCleanupWarnings ?? []), ...warnings],
+      [opened?.facts.failure?.nativeCleanupWarnings, warnings],
     );
-    const machineNames = useMachineDisplayNamesById(machineIds);
+    const machineIds = React.useMemo(
+      () => [...new Set([...(opened?.content.machines ?? []), ...nativeCleanupWarnings.map(warning => warning.machineId)])],
+      [opened?.content.machines, nativeCleanupWarnings],
+    );
+    const machineNames = useMachineDisplayNamesById(machineIds, { serverId: props.serverId });
     const { theme } = useUnistyles();
     const onBack = props.onBack;
     const backControl = usePageBackControl('project-deployments.receipt.back', onBack);
@@ -657,6 +688,17 @@ export const DeploymentReceiptDetail = React.memo(
                 serving={serving}
                 platform={platform}
                 onOpenDomains={props.onOpenRecoveryDestination ? () => props.onOpenRecoveryDestination?.('domains') : undefined}
+              />
+            ) : null}
+            {nativeCleanupWarnings.length ? (
+              <AttentionBanner
+                testID="project-deployments.receipt.cleanupWarning"
+                tone="warning"
+                title={t('projects.deployments.receipt.cleanupWarningTitle')}
+                description={t('projects.deployments.receipt.cleanupWarningBody', {
+                  machines: [...new Set(nativeCleanupWarnings.map(warning => machineName(warning.machineId)))].join(', '),
+                })}
+                details={[...new Set(nativeCleanupWarnings.map(warning => `${machineName(warning.machineId)} · ${warning.code}`))]}
               />
             ) : null}
             {showInvestigationOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}

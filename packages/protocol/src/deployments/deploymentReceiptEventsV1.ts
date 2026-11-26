@@ -60,6 +60,7 @@ export const DeploymentReceiptFailureV1Schema = lazyZodSchema(() => z.strictObje
   failureCause: z.optional(ActionFailureCauseV1Schema),
   nativeCompose: DeploymentFailureRecoveryV1Schema.shape.nativeCompose,
   nativeActivation: DeploymentFailureRecoveryV1Schema.shape.nativeActivation,
+  nativeCleanupWarnings: z.optional(z.array(receiptResult.DeploymentNativeCleanupWarningV1Schema)),
   effectAttempted: z.optional(z.boolean()),
 }));
 export type DeploymentReceiptFailureV1 = z.infer<typeof DeploymentReceiptFailureV1Schema>;
@@ -113,6 +114,7 @@ export const DeploymentExecutionFailureDetailsV1Schema = lazyZodSchema(() => z.s
   serverId: id, environmentId: id, targetLinkId: id, deploymentId: id,
   failure: DeploymentReceiptFailureV1Schema,
   logsAvailable: z.optional(z.boolean()),
+  nativeCleanupWarnings: z.optional(z.array(receiptResult.DeploymentNativeCleanupWarningV1Schema)),
   cleanupFailure: z.optional(z.strictObject({ ...DeploymentReceiptFailureV1Schema.shape, phase: z.literal('cleanup') })),
 }));
 export type DeploymentExecutionFailureDetailsV1 = z.infer<typeof DeploymentExecutionFailureDetailsV1Schema>;

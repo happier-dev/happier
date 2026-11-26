@@ -3138,7 +3138,16 @@ fence, preserving mounted paths, modified application files, shared data and oth
 After a successful settlement, the native Compose runtime removes images and
 exited containers of releases outside the Environment’s serving, rollback, and
 in-flight set. It removes only Happier’s exact image tags and leaves volumes and
-other workloads alone.
+other workloads alone. A confirmed failed first release drops its abandoned image
+aliases after preserving recovery diagnostics. A receiver removes a verified copy
+archive after a known load outcome, while the holder keeps restore originals for
+the serving and rollback set. Environment Delete removes its owned images and
+acts on volumes only as approved in review.
+A native cleanup refusal preserves the operation outcome. The existing Action
+settlement can include optional Machine-scoped warning codes, which the Receipt
+shows beside the result. The warning is absent on settlements without a refusal
+and remains readable on a failed Receipt through the existing private failure
+facts.
 The latest attempt's operation log remains available for investigation even when
 its failed release's source and images expire. Once another attempt becomes latest,
 the older log follows the existing active and retained-release policy.
