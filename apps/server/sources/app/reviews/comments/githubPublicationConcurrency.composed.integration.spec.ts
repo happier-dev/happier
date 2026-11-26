@@ -3,7 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, encodePlainMachineStoredContent } from '@happier-dev/protocol';
-import { ReviewCommentCreateResponseV1Schema, type ReviewCommentPublicationPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { buildReviewCommentPublicationEntryV1, ReviewCommentCreateResponseV1Schema, ReviewCommentListResponseV1Schema,
+    ReviewCommentTransitionResponseV1Schema, type ReviewCommentPublicationPlanV1 } from '@happier-dev/protocol/reviews/comments/actions';
+import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
 import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPublicationTransportResponseV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { db } from '@/storage/db';
@@ -24,6 +26,7 @@ import { updateMachineRegistration } from '../../../../../cli/src/daemon/machine
 import { readOrCreateInstallationIdentity } from '../../../../../cli/src/daemon/identity/store';
 import { withConfiguredDaemonTestHome } from '../../../../../cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createCliActionExecutorFromCredentials } from '../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
+import { createCliReviewCommentActionExecutorFromCredentials } from '../../../../../cli/src/agent/reviews/comments/executor';
 import { registerAccountHomeHttp } from '../../../../../cli/src/session/actions/widgetApproval.testkit';
 import { createActionSettingsProvider } from '../../../../../cli/src/settings/actionsSettingsProvider';
 import { resetInMemoryAccountSettingsContextForTests } from '../../../../../cli/src/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -197,7 +200,7 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
             const reviewId = randomUUID();
             await db.artifact.create({ data: { id: reviewId, accountId: owner.id, kind: 'v1:other:review.v1',
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'review.v1' })),
-                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({})),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '' })),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
             await db.reviewMetadata.create({ data: { artifactId: reviewId, subjectKind: 'comparison', sourceKind: 'direct',
                 state: 'completed', currentRoundOrdinal: 1, startedAt: new Date(1), finishedAt: new Date(2) } });
@@ -249,6 +252,8 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
             const registries: ReturnType<typeof createTargetActionInvocationRegistry>[] = [];
             const admittedFixtures: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>>[] = [];
             try {
+                const pullRequestUrl = pullRequestBody().html_url;
+                if (typeof pullRequestUrl !== 'string') throw new Error('Missing canonical pull-request fixture URL');
                 const createFinding = async (body: string, filePath: string) => {
                     const response = await app.inject({ method: 'POST', url: '/v1/reviews/comments', headers: ownerHeaders, payload: {
                         reviewId, anchor: { kind: 'line', filePath, line: 7 }, body,
@@ -258,19 +263,37 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
                             source: 'diffSide', isUncommitted: false, isUntracked: false, truncated: false,
                             hasBidiControls: false, likelyMinified: false,
                             diffContext: { side: 'after', baseSha: OBSERVED_BASE, headSha: OBSERVED_HEAD } },
-                        authorIntent: 'open', clientMutationId: randomUUID(),
+                        authorIntent: 'propose', linkedRefs: [{ kind: 'pullRequest', url: pullRequestUrl }], clientMutationId: randomUUID(),
                     } });
                     expect(response.statusCode, response.body).toBe(200);
                     return ReviewCommentCreateResponseV1Schema.parse(response.json()).comment;
                 };
                 const selected = await createFinding('Selected finding: check the caller before dispatch.', 'selected.ts');
                 const excluded = await createFinding('Unselected private finding must stay in Happier.', 'unselected.ts');
+                const ignored = await createFinding('Ignored finding must never enter this publication.', 'ignored.ts');
+                const commentAction = createCliReviewCommentActionExecutorFromCredentials({ credentials });
+                const ignoredTransition = ReviewCommentTransitionResponseV1Schema.parse(await runWithServerHttpBaseUrl(base,
+                    () => commentAction('reviews.comments.transition', buildReviewTriageTransitionRequestV1({ comment: ignored,
+                        decision: 'reject', clientMutationId: randomUUID() }))));
+                expect(ignoredTransition.comment).toMatchObject({ id: ignored.id, state: 'dismissed', reviewTriageStatus: 'reject' });
+                // This is the exact candidate query owned by useReviewCommentProposalsForEntry.
+                // Home applies the state selection; the publication caller does not filter human decisions.
+                const candidates = ReviewCommentListResponseV1Schema.parse(await runWithServerHttpBaseUrl(base,
+                    () => commentAction('reviews.comments.list', { reviewId, states: ['proposed'], taxonomyIds: [],
+                        includeHistory: false, limit: 200 })));
+                expect(candidates.items.map(comment => comment.id).sort()).toEqual([selected.id, excluded.id].sort());
+                expect(candidates.items.every(comment => comment.linkedRefs?.some(ref => ref.kind === 'pullRequest'
+                    && ref.url === pullRequestUrl))).toBe(true);
+                const selectedIds = [selected.id];
+                const entries = candidates.items.filter(comment => selectedIds.includes(comment.id)).map(comment => {
+                    if (typeof comment.body !== 'string' || !comment.snapshot) throw new Error('Missing publishable candidate content');
+                    return buildReviewCommentPublicationEntryV1({ ...comment, body: comment.body, snapshot: comment.snapshot });
+                });
                 const plan: ReviewCommentPublicationPlanV1 = {
                     target: { providerId: 'github', configuredAccountId: CONFIGURED_ACCOUNT.accountId, subtarget: null,
                         entryRef: { sourceId: `${GITHUB_PLUGIN_ID}/github-forge`, ...PULL_REQUEST_REF } },
                     baseRevision: OBSERVED_BASE, headRevision: OBSERVED_HEAD,
-                    entries: [{ happierCommentId: selected.id, expectedServerRevision: selected.serverRevision,
-                        anchor: selected.anchor, snapshot: selected.snapshot, body: selected.body }],
+                    entries,
                     verdict: { kind: 'comment', body: 'Publish the selected finding.' },
                 };
                 const manifest = normalizePluginManifestV2(GITHUB_MANIFEST);
@@ -409,9 +432,11 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
                 const sent = JSON.stringify(readRecordedJsonBody(approved.writes[0]!));
                 expect(sent).not.toContain(excluded.body);
                 expect(sent).not.toContain('unselected.ts');
+                expect(sent).not.toContain(ignored.body);
+                expect(sent).not.toContain('ignored.ts');
                 expect(await db.reviewCommentPublicationCorrelation.findMany({ where: { accountId: recipient.id },
                     select: { commentId: true }, orderBy: { commentId: 'asc' } })).toEqual([{ commentId: null }, { commentId: selected.id }]);
-                expect(await db.reviewComment.count({ where: { reviewId } })).toBe(2);
+                expect(await db.reviewComment.count({ where: { reviewId } })).toBe(3);
                 const successfulClaims = [...claimStatuses];
                 await grant('view');
                 const view = await attempt('approve');
