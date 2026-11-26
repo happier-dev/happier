@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -259,9 +259,17 @@ it('admits retention once across unrelated edits and refuses a changed active re
             environmentInstanceId: resolveOwnServerDeploymentEnvironmentInstanceIdForHost(homeServerIdentityId, environment.environment.id),
             deploymentId: 'old', materializationRole: 'build' as const };
         const sourceRoot = resolveDeploymentSourcePathForHost(placement);
-        await mkdir(sourceRoot, { recursive: true });
-        const manifestEntries = Array.from({ length: 256 }, (_, index) => file(`input-${index}`, 'source'));
-        const writeSources = async () => { for (const entry of manifestEntries) await writeFile(join(sourceRoot, entry.relativePath), 'source'); };
+        await mkdir(sourceRoot, { recursive: true, mode: 0o700 });
+        await mkdir(join(sourceRoot, 'nested'));
+        const manifestEntries = [{ kind: 'directory' as const, relativePath: 'nested' },
+            ...Array.from({ length: 256 }, (_, index) => file(`nested/input-${index}`, 'source'))];
+        const writeSources = async () => {
+            await mkdir(sourceRoot, { recursive: true });
+            await mkdir(join(sourceRoot, 'nested'), { recursive: true });
+            for (const entry of manifestEntries) {
+                if (entry.kind === 'file') await writeFile(join(sourceRoot, entry.relativePath), 'source');
+            }
+        };
         await writeSources();
         const source: OwnServerDeploymentSourceV1 = { machineId: 'machine-a', installationId: 'installation-a', deploymentId: 'old', role: 'build',
             rootFingerprint: await computeWorkspaceSyncRootFingerprint(await realpath(sourceRoot)), manifestFingerprint: 'manifest', sharedBinds: [], manifestEntries };
@@ -269,11 +277,44 @@ it('admits retention once across unrelated edits and refuses a changed active re
         old.deployment = { ...old.deployment, id: 'old', requestedAtMs: 1 };
         const logRoot = resolveDeploymentSourcePathForHost({ deploymentRoot: placement.deploymentRoot,
             environmentInstanceId: placement.environmentInstanceId, deploymentId: 'old' });
-        await mkdir(join(logRoot, '.happier'), { recursive: true });
+        await mkdir(join(logRoot, '.happier'), { recursive: true, mode: 0o700 });
         await writeFile(join(logRoot, '.happier/deploy.log'), 'redacted builder output');
         await writeFile(join(logRoot, '.happier/foreign'), 'foreign bytes');
         old.content.ownServer = { approvedInputBasis, sources: [source], stageLogs: [{ machineId: 'machine-a', installationId: 'installation-a',
             relativePath: '.happier/deploy.log' }] };
+        const pending = createDeploymentReceiptDetailV1();
+        pending.deployment = { ...pending.deployment, id: 'pending', state: 'outcome_unknown', requestedAtMs: 3 };
+        const referenced = createDeploymentReceiptDetailV1();
+        referenced.deployment = { ...referenced.deployment, id: 'pending-predecessor', requestedAtMs: 2 };
+        pending.deployment.predecessorDeploymentId = referenced.deployment.id;
+        const putLog = async (record: DeploymentReceiptDetailV1) => {
+            const path = join(resolveDeploymentSourcePathForHost({ ...placement,
+                deploymentId: record.deployment.id, materializationRole: undefined }), '.happier', 'deploy.log');
+            await mkdir(join(path, '..'), { recursive: true, mode: 0o700 });
+            await writeFile(path, record.deployment.id);
+            return { path, log: { machineId: 'machine-a', installationId: 'installation-a',
+                relativePath: '.happier/deploy.log' as const } };
+        };
+        const putArchive = async (record: DeploymentReceiptDetailV1) => {
+            const id = record.deployment.id;
+            const sha256 = createHash('sha256').update(id).digest('hex');
+            const archive = resolveOwnServerImageArchivePathForHost({ ...placement, deploymentId: id }, sha256);
+            await mkdir(archive.rootPath, { recursive: true });
+            await writeFile(archive.path, id);
+            return { sha256, image: receipt.content.images[0]!, sizeBytes: id.length,
+                holder: { ...archive, serverId: homeServerIdentityId, machineId: 'machine-a', installationId: 'installation-a' } };
+        };
+        const older = createDeploymentReceiptDetailV1();
+        older.deployment = { ...older.deployment, id: 'older', requestedAtMs: 0 };
+        const olderLog = await putLog(older);
+        older.content.ownServer = { approvedInputBasis, stageLogs: [olderLog.log] };
+        const pendingLog = await putLog(pending);
+        const referencedLog = await putLog(referenced);
+        const oldArchive = await putArchive(old);
+        const referencedArchive = await putArchive(referenced);
+        old.content.ownServer.imageArchives = [oldArchive, referencedArchive];
+        pending.content.ownServer = { approvedInputBasis, stageLogs: [pendingLog.log] };
+        referenced.content.ownServer = { approvedInputBasis, stageLogs: [referencedLog.log] };
         let environmentBodies = 0, receiptBodies = 0, historyReads = 0, headerReads = 0;
         let advanceUnrelatedRevision = true;
         const host: OwnServerDeploymentTargetHostInput = {
@@ -288,7 +329,10 @@ it('admits retention once across unrelated edits and refuses a changed active re
                 }
                 return structuredClone({ environment: environment.environment, deployment: receipt.deployment, link });
             },
-            async *readBuildHistory() { historyReads++; yield structuredClone(receipt); yield structuredClone(old); },
+            async *readBuildHistory() {
+                historyReads++;
+                for (const row of [receipt, old, older, pending, referenced]) yield structuredClone(row);
+            },
             async writeTransition() { throw new Error('Terminal retention has no receipt writer'); },
             runtime: createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'unused-by-retention', encryption: null },
                 resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const),
@@ -309,8 +353,14 @@ it('admits retention once across unrelated edits and refuses a changed active re
         expect(await retention.retain(input)).toMatchObject({ ok: true });
         expect({ environmentBodies, receiptBodies, historyReads }).toEqual({ environmentBodies: 1, receiptBodies: 1, historyReads: 1 });
         expect(headerReads).toBe(1);
-        await expect(readFile(join(sourceRoot, 'input-255'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readdir(sourceRoot)).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(readFile(join(logRoot, '.happier/deploy.log'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readdir(join(olderLog.path, '../..'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readdir(join(logRoot, '..'))).resolves.toHaveLength(3);
+        await expect(readFile(pendingLog.path, 'utf8')).resolves.toBe('pending');
+        await expect(readFile(referencedLog.path, 'utf8')).resolves.toBe('pending-predecessor');
+        await expect(readFile(oldArchive.holder.path)).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(readFile(referencedArchive.holder.path, 'utf8')).resolves.toBe('pending-predecessor');
         expect(await readFile(join(logRoot, '.happier/foreign'), 'utf8')).toBe('foreign bytes');
         const listings = (await tools.readInvocations()).filter(value => value.args[0] === 'ps');
         expect(listings.filter(value => value.args.includes('status=exited'))).toHaveLength(1);
@@ -320,12 +370,12 @@ it('admits retention once across unrelated edits and refuses a changed active re
             keys: [{ kind: 'dockerEngine', dockerEndpoint: 's0-docker-engine' }] }, async () => {
             await expect(retention.retain(input)).rejects.toMatchObject({ code: 'effect_in_progress' });
         });
-        expect(await readFile(join(sourceRoot, 'input-0'), 'utf8')).toBe('source');
+        expect(await readFile(join(sourceRoot, 'nested/input-0'), 'utf8')).toBe('source');
         // A new phase observes the new serving release before retiring any bytes.
         link.activeDeploymentId = 'new-serving-release';
         await expect(retention.retain(input)).rejects.toMatchObject({ code: 'deployment_conflict' });
-        expect(await readFile(join(sourceRoot, 'input-0'), 'utf8')).toBe('source');
-        expect(await readFile(join(sourceRoot, 'input-1'), 'utf8')).toBe('source');
+        expect(await readFile(join(sourceRoot, 'nested/input-0'), 'utf8')).toBe('source');
+        expect(await readFile(join(sourceRoot, 'nested/input-1'), 'utf8')).toBe('source');
     } finally {
         vi.restoreAllMocks(); vi.unstubAllEnvs();
         Object.defineProperty(configuration, 'happyHomeDir', originalHome);

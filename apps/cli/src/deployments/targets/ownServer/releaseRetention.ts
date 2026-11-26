@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentNativeCleanupWarningV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, realpath, rmdir } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentImageV1, type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentImageArchiveV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import { deriveDeploymentMemberVersionsV1, selectDeploymentRetainedPreviousV1 } from '@happier-dev/deployments';
@@ -15,7 +15,7 @@ import { removeNativeComposeExitedDeploymentContainers,
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { removeStoragePath, readStoragePathIdentity } from '@/storage/trash/removeStoragePath';
 import { filesystemPathComparisonKey, isFilesystemPathAbsolute } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { retireOwnServerImageArchiveForHost } from './releaseProvenance';
+import { readOwnServerImageArchiveOriginHint, retireOwnServerImageArchiveForHost } from './releaseProvenance';
 import { resolveContainedWorkspaceMaterializationPath } from '@/scm/workspace/workspaceMaterializationSafety';
 import { createDeploymentManifestInputReader, resolveDeploymentSourcePathForHost } from './exactCommitRelease';
 import { resolveRetainedDeploymentStageLogRootForHost, type OwnServerStageLogProvenance } from './stageLog';
@@ -103,14 +103,33 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
             isFilesystemPathAbsolute(holder.path, 'win32') && !isFilesystemPathAbsolute(holder.path, 'linux') ? 'win32' : 'linux')]);
     const protectedArchives = new Set(input.receipts.filter(receipt => protectedIds.has(receipt.deployment.id))
         .flatMap(receipt => (receipt.content.ownServer?.imageArchives ?? []).map(archiveKey)));
-    const expiredArchives = imageProtection.status === 'complete' ? expired.flatMap(receipt => receipt.content.ownServer?.imageArchives ?? [])
-        .filter(archive => !protectedArchives.has(archiveKey(archive))) : [];
+    // Exact archive custody is independent of shared Docker image aliases.
+    const expiredArchives = [...protectedIds].every(id => receiptsById.has(id))
+        ? expired.flatMap(receipt => receipt.content.ownServer?.imageArchives ?? [])
+            .filter(archive => {
+                if (protectedArchives.has(archiveKey(archive))) return false;
+                try { return !protectedIds.has(readOwnServerImageArchiveOriginHint(archive).deploymentId); }
+                catch { return true; } // Let the native retirement owner report malformed custody.
+            })
+        : [];
     return { imageProtection, expiredImages, expiredArchives, expiredDeploymentIds: expired.map(receipt => receipt.deployment.id),
         retainedPreviousDeploymentIds: previous.map(receipt => receipt.id),
         expiredSources: input.receipts.flatMap(receipt => receipt.content.ownServer?.sources ?? [])
         .filter(source => source.role === 'build' ? !unsettledIds.has(source.deploymentId) : !protectedIds.has(source.deploymentId)),
         expiredLogs: input.receipts.filter(receipt => !protectedIds.has(receipt.deployment.id) && receipt.deployment.id !== latest?.deployment.id)
             .flatMap(receipt => (receipt.content.ownServer?.stageLogs ?? []).map(log => ({ deploymentId: receipt.deployment.id, log }))) };
+}
+
+async function pruneEmptySourceDirectory(path: string, nativeBindSources: readonly string[], assertRoot: () => Promise<void>) {
+    if (nativeBindSources.some(mount => within(mount, path) || within(path, mount))) return;
+    try {
+        await assertRoot();
+        if (await realpath(path) === path && (await lstat(path)).isDirectory()) await rmdir(path);
+    } catch (error) {
+        if (absent(error) || error !== null && typeof error === 'object' && 'code' in error
+            && (error.code === 'ENOTEMPTY' || error.code === 'EEXIST')) return;
+        throw error;
+    }
 }
 
 async function pruneOperationLog(input: Readonly<{ physicalRoot: string; log: OwnServerStageLogProvenance;
@@ -126,6 +145,7 @@ async function pruneOperationLog(input: Readonly<{ physicalRoot: string; log: Ow
             await input.assertRoot();
             if (!await owned()) refuse('changed_since_review');
         } });
+        await pruneEmptySourceDirectory(dirname(selected), input.nativeBindSources, input.assertRoot);
         return 'removed';
     } catch (error) {
         if (absent(error)) return 'absent';
@@ -134,8 +154,8 @@ async function pruneOperationLog(input: Readonly<{ physicalRoot: string; log: Ow
     }
 }
 
-/** Only unchanged manifest leaves can enter Storage's deletion fence. No
- * directory, mount subtree, shared data or manifest-external file is removed. */
+/** Retire unchanged manifest leaves and empty manifest directories without
+ * removing mount subtrees, shared data or manifest-external files. */
 export async function pruneOwnServerDeploymentSource(input: Readonly<{
     deploymentRoot: string; environmentInstanceId: string; source: OwnServerDeploymentSourceV1;
     nativeBindSources: readonly string[]; assertCurrent(): Promise<void>;
@@ -154,11 +174,14 @@ export async function pruneOwnServerDeploymentSource(input: Readonly<{
     };
     await assertRoot();
     const unchanged = await createDeploymentManifestInputReader({ rootPath: physical, manifest: source.manifestEntries, followSourceSymlinks: false });
-    const removed: string[] = [], kept: string[] = [];
+    const removed: string[] = [], kept: string[] = [], directories: string[] = [];
     for (const entry of source.manifestEntries) {
-        if (entry.kind === 'directory') continue;
         const selected = resolveContainedWorkspaceMaterializationPath({ workspaceRoot: physical, candidatePath: entry.relativePath,
             errorMessage: 'Deployment source entry escaped its owner' });
+        if (entry.kind === 'directory') {
+            directories.push(selected);
+            continue;
+        }
         if (input.nativeBindSources.some(mount => within(mount, selected) || within(selected, mount))) {
             kept.push(entry.relativePath); continue;
         }
@@ -189,6 +212,10 @@ export async function pruneOwnServerDeploymentSource(input: Readonly<{
         if (result === 'removed') removed.push(log.relativePath);
         if (result === 'kept') kept.push(log.relativePath);
     }
+    for (const directory of directories.sort((a, b) => b.length - a.length)) {
+        await pruneEmptySourceDirectory(directory, input.nativeBindSources, assertRoot);
+    }
+    await pruneEmptySourceDirectory(physical, input.nativeBindSources, assertRoot);
     return { removed, kept };
 }
 
@@ -221,8 +248,6 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
             targetLinkId: snapshot.link.id, environment: snapshot.environment, context: input.request.context })) {
             if (receipt.deployment.environmentId === input.request.input.environmentId && lineage.has(receipt.deployment.targetLinkId)) history.push(receipt);
         }
-        // An unsettled/unknown aggregate cannot authorize source retirement.
-        if (history.some(receipt => !isDeploymentSettledV1(receipt.deployment.state))) return refuse('outcome_unknown');
         const expired = projectOwnServerDeploymentRetention({ ...snapshot, serverId: homeServerIdentityId, receipts: history });
         const sources = expired.expiredSources
             .filter(source => source.machineId === input.machineId && source.installationId === input.installationId);
@@ -295,7 +320,9 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                                 await runtime.assertCurrent();
                                 if (await resolveRetainedDeploymentStageLogRootForHost(placement) !== physicalRoot) refuse('deployment_source_unavailable');
                             };
-                            await pruneOperationLog({ physicalRoot, log, nativeBindSources, assertRoot });
+                            if (await pruneOperationLog({ physicalRoot, log, nativeBindSources, assertRoot }) === 'removed') {
+                                await pruneEmptySourceDirectory(physicalRoot, nativeBindSources, runtime.assertCurrent);
+                            }
                         } catch (error) { if (!absent(error)) throw error; }
                     }
                 });

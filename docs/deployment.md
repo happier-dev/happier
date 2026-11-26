@@ -3132,9 +3132,12 @@ the closed, log-only directory out of the runtime releases so the same receipt
 and cursor can still read it. The normal log retention policy applies there too. The native Compose adapter
 records repeated Volume/Network progress notifications once per resource transition
 and command; ordinary diagnostics, application bytes and separate build/runtime
-source progress remain unchanged. Cleanup removes only unchanged
-manifest leaves and that pinned log under the source-root and native storage deletion
-fence, preserving mounted paths, modified application files, shared data and other runtime bytes.
+source progress remain unchanged. Cleanup removes unchanged manifest leaves, the
+pinned log, and emptied manifest or log directories. It preserves mounted paths,
+modified application files, shared data and other runtime bytes. Unsettled
+Receipts protect their own and referenced release artifacts while unrelated
+source, log and archive cleanup proceeds. Shared Docker aliases still require
+complete image custody before removal.
 After a successful settlement, the native Compose runtime removes images and
 exited containers of releases outside the Environment’s serving, rollback, and
 in-flight set. It removes only Happier’s exact image tags and leaves volumes and
