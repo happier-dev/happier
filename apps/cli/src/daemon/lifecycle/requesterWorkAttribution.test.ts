@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 
-import { canUseLocalRuntimeAccount, isRequesterLaunchAdmissionCurrent } from './requesterWorkAttribution';
+import { canUseLocalRuntimeAccount, canUseLocalRuntimeReviewAccount, isRequesterLaunchAdmissionCurrent } from './requesterWorkAttribution';
 
 it('retains independent API credential and caller scope alongside original own Account custody', async () => {
   const binding = {
@@ -18,11 +18,17 @@ it('retains independent API credential and caller scope alongside original own A
       approve: false, origins: [], models: null, permissionModes: null, create: null }),
   };
   const context = { externalActionExecutionAuthorization: authorization, runtimeAccountId: 'owner' };
-  expect(await canUseLocalRuntimeAccount(context, 'owner', 'home')).toBe(true);
-  expect(await canUseLocalRuntimeAccount({ ...context, externalActionCredential: credential }, 'owner', 'home')).toBe(false);
-  expect(await canUseLocalRuntimeAccount({ ...context, callerInputAuthorization:
-    ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-home-caller', binding: { ...binding, ...credential } }),
-  }, 'owner', 'home')).toBe(false);
+  const workflowAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-home-workflow',
+    binding: { ...binding, authentication: { kind: 'account', tokenEpoch: 1 },
+      workflowActionOrigin: { runId: 'workflow', requestId: 'request' } } });
+  for (const canUseAccount of [canUseLocalRuntimeAccount, canUseLocalRuntimeReviewAccount]) {
+    expect(await canUseAccount(context, 'owner', 'home')).toBe(true);
+    expect(await canUseAccount({ ...context, externalActionCredential: credential }, 'owner', 'home')).toBe(false);
+    expect(await canUseAccount({ ...context, callerInputAuthorization:
+      ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-home-caller', binding: { ...binding, ...credential } }),
+    }, 'owner', 'home')).toBe(false);
+    expect(await canUseAccount({ ...context, externalActionExecutionAuthorization: workflowAuthorization }, 'owner', 'home')).toBe(false);
+  }
 });
 
 it('denies borrowing the runtime Account for another Account’s attributed work', async () => {

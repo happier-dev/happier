@@ -99,7 +99,11 @@ import { bindDiscussionDraftReply } from '@/discussions/bindDiscussionDraftReply
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
-import { readStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
+import { readStoredCredentialsForServerId, writeStoredCredentialsForServerId, updateSettings } from '@/persistence';
+import { createDaemonSessionAccountActionAuthorizationPreparer } from '@/daemon/startup/createDaemonSessionAccountActionAuthorizationPreparer';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
 import * as daemonControlHttp from '@/daemon/controlHttp';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { executeAppliedDaemonPluginActionWithController } from '@/plugins/daemon/controlRoutes';
@@ -351,7 +355,7 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   accountRelease = false, accountCurrentProcess = true,
   clientAction?: Awaited<ReturnType<typeof admittedClientActionFixture>>,
   accountMachine?: Readonly<{ sessionMachineId: string; executionRunTargetMachineId?: string }>,
-  clientActionExecute?: ActionExecutorDeps['clientActionExecute']) {
+  clientActionExecute?: ActionExecutorDeps['clientActionExecute'], registerArtifacts?: (app: Fastify) => void) {
   storage.state.sessionId = sessionId;
   storage.state.bound = true;
   storage.state.publisherBound = true;
@@ -445,7 +449,8 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     machine: { id: (request.params as { machineId: string }).machineId },
   }));
   const authoredAccount = accountRelease ? await registerAuthoredAccountActionRelease(app, storage.account.id) : null;
-  if (!authoredAccount) app.get('/v1/artifacts', { preHandler: app.authenticate }, async () => []);
+  if (registerArtifacts) registerArtifacts(app);
+  else if (!authoredAccount) app.get('/v1/artifacts', { preHandler: app.authenticate }, async () => []);
   if (authoredAccount) app.get('/v1/account/encryption', { preHandler: app.authenticate }, async () => ({ mode: 'plain', updatedAt: 1 }));
   app.get('/v1/account/entity-rows/acp', { preHandler: app.authenticate }, async () =>
     AcpCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
@@ -595,6 +600,110 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     omitCallerWorkspace: () => { callerWorkspaceMissing = true; },
     close: async () => { restore(); await app.close(); } };
 }
+
+it('admits an owner cross-Session Review apply through the canonical Session issuer and real Home', async () => {
+  await withTempDir('owner-session-review-apply-', async homeDir => {
+    const previousEnv = process.env;
+    process.env = { ...previousEnv, HAPPIER_HOME_DIR: homeDir };
+    reloadConfiguration();
+    const f = await fixture(1, undefined, false, false, true, undefined, undefined, undefined,
+      app => { registerPlainArtifactRoutes(app, storage.account.id); });
+    const installed = { version: 1 as const, installationId: storage.state.installationId, createdAt: 1,
+      publicKey: Buffer.from(installation.publicKey).toString('base64url'),
+      privateKey: Buffer.from(installation.secretKey).toString('base64url') };
+    vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installed);
+    const features = FeaturesResponseSchema.parse({ features: {},
+      capabilities: { serverIdentity: { serverIdentityId: storage.state.homeId } } });
+    vi.stubGlobal('fetch', async () => Response.json(features));
+    // Persisted credentials, Installation and Home HTTP/DB are boundaries. The
+    // Session origin, signed mint, custody projection and CLI guard remain real.
+    await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [serverId]: {
+      id: serverId, name: 'Home', serverUrl: serverHttpBaseUrl, webappUrl: serverHttpBaseUrl,
+      createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+      homeConnectionDescriptor: { v: 1, homeServerIdentityId: storage.state.homeId,
+        canonicalServerUrl: serverHttpBaseUrl, revision: 1, endpoints: [{ kind: 'https', url: serverHttpBaseUrl }] },
+    } } }));
+    const terminalCredentials = { token: await auth.createToken(storage.account.id, undefined,
+      { kind: 'terminal', authority: 'account_automation' }), encryption: null };
+    await writeStoredCredentialsForServerId(serverId, terminalCredentials);
+    const credentials = await readStoredCredentialsForServerId(serverId);
+    if (!credentials) throw new Error('Expected the persisted owner sign-in');
+    f.app.addHook('onSend', async (request, _reply, payload) => request.url === `/v1/machines/${storage.state.machineId}`
+      ? JSON.stringify({ machine: MachinePublishedRowV1Schema.parse({ id: storage.state.machineId,
+        installationId: storage.state.installationId, managedMachineRef: null, metadata: null, metadataVersion: 0,
+        daemonState: null, daemonStateVersion: 0, access: { custodian: { accountId: storage.account.id, displayName: 'Owner' },
+          role: 'manage', resourceMode: 'plain', accessState: 'ready' } }) }) : payload);
+    f.app.get('/v1/artifacts/missing-review', { preHandler: f.app.authenticate }, async (_request, reply) =>
+      reply.code(404).send({ error: 'not_found' }));
+    f.app.get('/v1/account/encryption', { preHandler: f.app.authenticate }, async () => ({ mode: 'plain', updatedAt: 1 }));
+    const prepare = createDaemonSessionAccountActionAuthorizationPreparer({ credentials,
+      requesterRuntime: null, serverHttpBaseUrl, serverId, machineId: storage.state.machineId,
+      externalActionAccountId: storage.account.id,
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: storage.state.homeId, machineId: storage.state.machineId }),
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }),
+      isSessionCallerCurrent: async () => true, isRuntimeCurrent: () => true, readTrackedSessionAttribution: () => undefined });
+    const executor = createCliActionExecutor({ token: credentials.token, credentials,
+      sessionId: '', mode: 'plain', ctx: null, serverId, serverIdentityId: storage.state.homeId,
+      serverHttpBaseUrl, actionsSettingsProvider: f.actionsSettingsProvider,
+      externalActionMachineRequestPrivateKey: installation.secretKey,
+      externalActionMachineInstallationId: storage.state.installationId });
+    let admittedContext: Parameters<typeof executor.execute>[2];
+    const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl,
+      token: credentials.token, credentials, machineId: storage.state.machineId,
+      prepareExternalActionAuthorization: prepare, createExecutor: () => ({ execute: (id, input, context) => {
+        admittedContext = context;
+        return executor.execute(id, input, context);
+      } }) });
+    try {
+      const outcome = await execute(f.operation('review.apply', { sessionId: childId, reviewId: 'missing-review' }),
+        { sessionId, isCurrent: async () => true });
+      expect(admittedContext?.sessionActionOrigin, JSON.stringify({ outcome, observations: f.observations }))
+        .toMatchObject({ caller: { kind: 'session', sessionId }, sourceTurnId: 'turn' });
+      // The Session's ordinary Ask default remains active. The installed host
+      // signs and persists it; admission does not silently waive consent.
+      expect(outcome, JSON.stringify({ outcome, observations: f.observations }))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'review.apply' } });
+      // The same admitted custody opens the Review port. Its real HTTP miss
+      // discriminates credential admission without sending a Session message.
+      const services = await executor.resolveReviewServices!(admittedContext);
+      expect(services.comments).toBeTypeOf('function');
+      await expect(services.comments!({ actionId: 'reviews.comments.list', input: { reviewId: 'missing-review' } }))
+        .rejects.toMatchObject({ code: 'review_comment_encryption_material_unavailable' });
+      expect(f.observations.some(row => row.path === '/v1/artifacts/missing-review')).toBe(true);
+      if (!admittedContext?.externalActionExecutionAuthorization || !admittedContext.sessionActionOrigin) {
+        throw new Error('Expected the real Session issuer custody');
+      }
+      const admitted = admittedContext;
+      const rawAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(admitted.externalActionExecutionAuthorization);
+      const restrictedCredential = { accountId: storage.account.id, principalId: storage.account.id,
+        credentialId: '00000000-0000-4000-8000-000000000001',
+        grant: ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: ['reviews.comments.list'] },
+          targets: { sessions: [], machines: [storage.state.machineId] }, approve: false,
+          origins: [], models: null, permissionModes: null, create: null }) };
+      const deniedContexts: Array<NonNullable<typeof admittedContext>> = [
+        { ...admitted, externalActionExecutionAuthorization: rawAuthorization },
+        { ...admitted, sessionActionOrigin: { ...admitted.sessionActionOrigin,
+          caller: { kind: 'session', sessionId: childId } } },
+        { ...admitted, rpcSessionAuthorization: { kind: 'session.write', sessionId } },
+        { ...admitted, externalActionCredential: restrictedCredential },
+      ];
+      const readsBeforeDenials = f.observations.filter(row => row.path === '/v1/artifacts/missing-review').length;
+      for (const context of deniedContexts) {
+        await expect(executor.execute('review.apply', { sessionId: childId, reviewId: 'missing-review' }, context))
+          .resolves.toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+        await expect(executor.resolveReviewServices!(context)).resolves.toEqual({});
+      }
+      const foreignToken = await auth.createToken('other-account', undefined, { kind: 'terminal', authority: 'account_automation' });
+      const foreignExecutor = createCliActionExecutor({ token: foreignToken, credentials: { token: foreignToken, encryption: null },
+        sessionId: '', mode: 'plain', ctx: null, serverId, serverIdentityId: storage.state.homeId,
+        serverHttpBaseUrl, actionsSettingsProvider: f.actionsSettingsProvider });
+      await expect(foreignExecutor.execute('review.apply', { sessionId: childId, reviewId: 'missing-review' }, admitted))
+        .resolves.toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+      await expect(foreignExecutor.resolveReviewServices!(admitted)).resolves.toEqual({});
+      expect(f.observations.filter(row => row.path === '/v1/artifacts/missing-review')).toHaveLength(readsBeforeDenials);
+    } finally { await f.close(); process.env = previousEnv; reloadConfiguration(); }
+  });
+});
 
 it('lists internal Tasks through the Session agent Account provider', async () => {
   const f = await fixture();

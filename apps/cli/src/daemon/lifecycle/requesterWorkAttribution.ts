@@ -4,6 +4,8 @@ import { isPluginError } from '@happier-dev/plugin-sdk';
 import { projectDaemonSpawnUnavailable, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { rethrowRequesterHomeReadFailure } from '../sessionEncryption/requesterCurrentness';
 import { isOriginalOwnAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountActionTransportContext } from '../sessionEncryption/requesterAccountActionContext';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 export { RequesterWorkAttributionV1Schema, RequesterWorkAttributionStoredReadV1Schema,
   type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
@@ -84,6 +86,37 @@ export async function canUseLocalRuntimeAccount(
     if (authorization && (!isOriginalOwnAccountActionCustody(authorization.binding)
       || authorization.binding.accountId !== localAccountId)) return false;
   }
+  return await canUseAttributedRuntimeAccount(context, localAccountId, serverId);
+}
+
+/** Review ports can consume the Session issuer's admitted own-Account custody.
+ * Bare Session transport/origin and another Account never lend local credentials. */
+export async function canUseLocalRuntimeReviewAccount(
+  context: (ActionExecutorContext & Pick<RpcHandlerContext, 'callerInputAuthorization'>) | undefined,
+  localAccountId: string | null,
+  serverId?: string,
+): Promise<boolean> {
+  if (!context?.sessionActionOrigin) return await canUseLocalRuntimeAccount(context, localAccountId, serverId);
+  const { externalActionExecutionAuthorization, callerInputAuthorization, sessionActionOrigin, ...independentAuthority } = context;
+  if (!localAccountId || carriesNonLocalRequesterAuthority(independentAuthority)) return false;
+  const authorizations = [externalActionExecutionAuthorization, callerInputAuthorization].filter(authorization => authorization !== undefined);
+  if (authorizations.length === 0) return false;
+  for (const authorization of authorizations) {
+    const custody = readRequesterAccountActionTransportContext(authorization);
+    const binding = authorization.binding;
+    if (custody?.authorization !== authorization
+      || binding.accountId !== localAccountId || binding.custodianAccountId !== localAccountId
+      || !('authentication' in binding)
+      || binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal'
+      || binding.workflowActionOrigin
+      || !sameStrictJsonValue(sessionActionOrigin, binding.sessionActionOrigin)) return false;
+  }
+  return await canUseAttributedRuntimeAccount(context, localAccountId, serverId);
+}
+
+async function canUseAttributedRuntimeAccount(
+  context: Parameters<typeof canUseLocalRuntimeAccount>[0], localAccountId: string, serverId?: string,
+): Promise<boolean> {
   const attributedAccountId = projectRpcRequesterWorkAttribution(context, context?.serverId ?? serverId)?.accountId
     ?? context?.runtimeAccountId;
   return (attributedAccountId === undefined || attributedAccountId === localAccountId)

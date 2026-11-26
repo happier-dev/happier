@@ -52,7 +52,7 @@ import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readRetainedVerifiedExternalActionRequester, retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { canUseLocalRuntimeAccount } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { canUseLocalRuntimeReviewAccount } from '@/daemon/lifecycle/requesterWorkAttribution';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0]
   & CliTranscriptActionExecutorOptions
@@ -203,7 +203,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
   const runtimeAccountId = readAccountIdFromToken(params.token) ?? undefined;
   const requesterPrivateEffectAuthorityFailure = async (actionId: ActionId, input: unknown, context: ActionExecutorContext | undefined) => {
     if ((ACTION_ID_FAMILIES_V1.review_comments.some(id => id === actionId) || actionId === 'review.apply')
-      && !await canUseLocalRuntimeAccount(context, runtimeAccountId ?? null, params.serverId)) {
+      && !await canUseLocalRuntimeReviewAccount(context, runtimeAccountId ?? null, params.serverId)) {
       // The raw comment port spends this executor's Account credentials. Machine
       // placement or requester attribution cannot lend that Account to a guest.
       return { ok: false as const, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
@@ -645,7 +645,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
     observeRecordedApprovalExecution: harness.observeRecordedApprovalExecution,
     prepareSessionSpawnNewInput: harness.deps.prepareSessionSpawnNewInput,
     resolveReviewServices: async context => {
-      if (!await canUseLocalRuntimeAccount(context, runtimeAccountId ?? null, params.serverId)) return {};
+      if (!await canUseLocalRuntimeReviewAccount(context, runtimeAccountId ?? null, params.serverId)) return {};
       const resolvedContext = await resolveContext(context);
       if (!resolvedContext) return {};
       const comments = harness.deps.reviewCommentAction;
