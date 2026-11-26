@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import type { TeamErrorCodeV1 } from '../../teams/errors.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { ResourceTeamShareScopeV1Schema } from '../../teams/resourceGrantAccessV1.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';

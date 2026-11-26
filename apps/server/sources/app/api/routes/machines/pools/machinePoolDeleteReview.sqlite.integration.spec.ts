@@ -34,7 +34,7 @@ describe('Machine Pool delete consent through the Action and Home (SQLite)', () 
         const keyPair = tweetnacl.sign.keyPair();
         const machine = await db.machine.create({ data: {
             id: crypto.randomUUID(), accountId: owner.id, installationId: crypto.randomUUID(),
-            installationPublicKey: keyPair.publicKey,
+            installationPublicKey: Buffer.from(keyPair.publicKey),
             metadata: encodePlainMachineStoredContent({ host: 'controller', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier' }),
             metadataVersion: 1, dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
