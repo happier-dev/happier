@@ -10,6 +10,7 @@ import { SessionTranscriptGetResultSchema } from '@happier-dev/protocol/actions/
 import { SessionInputHandoffInputV1Schema, SessionInputHandoffResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputHandoffV1';
 import { SessionInputResultGetResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputResultV1';
 import { SessionArchiveActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionPendingWithdrawResultV1Schema } from '@happier-dev/protocol/sessions/control/pendingWithdrawV1';
 import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
   DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
@@ -33,6 +34,8 @@ import { listPendingQueueV2DeliveryStatusesFromServer } from '../../../../apps/c
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS } from '../../src/testkit/fakeClaude';
+import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
+import { releaseFakeClaudeRuntimeContinuityTurn, waitForFakeClaudeRuntimeContinuityEffect } from '../../src/testkit/providers/fakeClaudeContinuity';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
 
@@ -41,7 +44,13 @@ const run = createRunDirs({ runLabel: 'core' });
 // The positive delivery is the G1 control. Setup/registration failures before
 // that marker are prerequisites, never evidence for a negative behavior RED.
 it('P4-F8-known-good-brief-delivery', async () => {
-  const fixture = await startDatabaseWorkbenchInsightsFixture({ testDir: run.testDir('dbw-insights-f8') });
+  const testDir = run.testDir('dbw-insights-f8');
+  const releaseFile = join(testDir, 'release-active-turn');
+  const claude = await createIsolatedFakeClaudeControlShim({ testDir, captureEnvironmentKeys: [],
+    logFullStdin: false, scenario: 'daemon-runtime-continuity', runtimeContinuityReleaseFile: releaseFile });
+  const fixture = await startDatabaseWorkbenchInsightsFixture({ testDir, daemonEnv: {
+    NODE_ENV: process.env.NODE_ENV, HAPPIER_CLAUDE_PATH: claude.executablePath,
+  } });
   try {
     const session = await fixture.assertKnownGoodSessionControl(fixture.owner, fixture.machine);
     async function sessionUserMessages() {
@@ -476,6 +485,65 @@ it('P4-F8-known-good-brief-delivery', async () => {
       // baseline still held by the caller rather than a daemon sample registry.
       await verifyTarget();
 
+      const pendingStatuses = () => runWithServerHttpBaseUrl(fixture.server.baseUrl, () =>
+        listPendingQueueV2DeliveryStatusesFromServer({
+          token: fixture.owner.credentials.token, sessionId: session.sessionId,
+        }));
+      async function queueBrief(marker: string) {
+        const request = { ...input, idempotencyKey: `dbw-f8-${marker}`,
+          input: { ...input.input, text: `${input.input.text}\n${marker}` } };
+        const sent = await send(request);
+        if (sent.kind !== 'sendResult' || sent.result.status !== 'accepted') {
+          throw new Error(`F8 ${marker} did not accept the exact brief into Pending`);
+        }
+        const { localId } = sent.result;
+        return { localId, request };
+      }
+
+      const hold = 'DAEMON_RUNTIME_CONTINUITY_HOLD_F8';
+      const activeTurn = await fixture.owner.execute('session.message.send', {
+        sessionId: session.sessionId, message: hold, reply: 'none',
+      });
+      expect(activeTurn).toMatchObject({ ok: true, result: { status: 'accepted' } });
+      try {
+        await waitForFakeClaudeRuntimeContinuityEffect({ logPath: claude.logPath, promptMarker: hold });
+        const busy = await queueBrief('F8_BUSY_BRIEF');
+        expect((await pendingStatuses()).find(row => row.localId === busy.localId))
+          .toMatchObject({ requestedAction: { kind: 'enqueue' }, deliveryStatus: { status: 'queued' } });
+        expect((await sessionUserMessages()).some(item => item.text?.includes('F8_BUSY_BRIEF'))).toBe(false);
+      } finally {
+        await releaseFakeClaudeRuntimeContinuityTurn(releaseFile);
+      }
+      await waitFor(async () => (await sessionUserMessages()).filter(item => item.text?.includes('F8_BUSY_BRIEF')).length === 1,
+        { context: 'The busy brief reaches the same Session once after the turn ends', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS });
+      console.info('P4-F8-busy-brief passed');
+
+      await fixture.machine.daemon.stop();
+      await waitFor(() => ui.isMachineActive(fixture.machine.target.machineId) === false,
+        { context: 'Home projects the selected Machine offline' });
+      const offline = await queueBrief('F8_OFFLINE_BRIEF');
+      const offlineStatus = (await pendingStatuses()).find(row => row.localId === offline.localId)?.deliveryStatus;
+      expect(offlineStatus, JSON.stringify(offlineStatus)).toMatchObject({
+        status: 'blocked', reason: 'session_input_target_unavailable',
+      });
+      expect((await sessionUserMessages()).some(item => item.text?.includes('F8_OFFLINE_BRIEF'))).toBe(false);
+      console.info('P4-F8-offline-custody passed');
+      expect(await send(offline.request)).toMatchObject({
+        kind: 'sendResult', result: { status: 'alreadyAccepted', localId: offline.localId },
+      });
+      async function withdraw(localId: string) {
+        const arrival = await fixture.owner.executeAsPerson('session.pending.withdraw', { sessionId: session.sessionId, localId });
+        if (!arrival.ok) throw new Error(`Pending withdrawal refused (${arrival.errorCode})`);
+        return SessionPendingWithdrawResultV1Schema.parse(arrival.result);
+      }
+      expect(await withdraw(offline.localId)).toEqual({ outcome: 'removed' });
+      expect(await withdraw(randomUUID())).toEqual({ outcome: 'delivery_unknown' });
+      expect((await pendingStatuses()).some(row => row.localId === offline.localId)).toBe(false);
+      await fixture.machine.restart();
+      expect((await sessionUserMessages()).some(item => item.text?.includes('F8_OFFLINE_BRIEF'))).toBe(false);
+      console.info('P4-F8-offline-withdraw passed');
+
+      const beforeArchive = await sessionUserMessages();
       const archive = await fixture.owner.execute('session.archive', { sessionId: session.sessionId });
       if (!archive.ok) throw new Error(`F8 archive setup refused (${archive.errorCode})`);
       expect(SessionArchiveActionResultV1Schema.parse(archive.result))
@@ -483,7 +551,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
       expect(await send({ ...input, idempotencyKey: 'dbw-f8-archived-brief' })).toMatchObject({
         kind: 'sendResult', result: { status: 'rejected', code: 'session_input_target_unavailable' },
       });
-      expect(await deliveredMessages()).toEqual(messages);
+      expect(await sessionUserMessages()).toEqual(beforeArchive);
     } finally {
       await ui.close();
     }
