@@ -152,7 +152,7 @@ describe('TeamMemberAddScreen search', () => {
         await waitForTestId(screen, 'team-member-add-search-unavailable');
 
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-member-add-search-retry');
-        expect(screen.getTextContent()).toContain('teams.errors.forbidden');
+        expect(screen.getTextContent()).toContain('errors.permissionDenied');
     });
 });
 

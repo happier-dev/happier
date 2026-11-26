@@ -507,7 +507,7 @@ describe('TeamMembersScreen', () => {
         await waitForTestId(screen, 'team-members-unavailable');
 
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-members-retry');
-        expect(screen.getTextContent()).toContain('teams.errors.forbidden');
+        expect(screen.getTextContent()).toContain('errors.permissionDenied');
     });
 
     it('explains the invalid Members cursor and opens the roster again from its first page', async () => {

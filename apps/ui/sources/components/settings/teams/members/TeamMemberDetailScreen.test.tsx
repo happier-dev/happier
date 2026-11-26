@@ -410,7 +410,7 @@ describe('TeamMemberDetailScreen current membership', () => {
         await waitForTestId(screen, 'team-member-unavailable');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-member-identity');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-member-retry');
-        expect(screen.getTextContent()).toContain('teams.errors.forbidden');
+        expect(screen.getTextContent()).toContain('errors.permissionDenied');
     });
 
 });
@@ -596,7 +596,7 @@ describe('TeamMemberDetailScreen effective Groups', () => {
     });
 
     it.each([
-        { status: 403, label: 'teams.errors.forbidden' },
+        { status: 403, label: 'errors.permissionDenied' },
         { status: 404, label: 'teams.unavailable.updateRequired' },
     ])('explains an initial Group read refusal ($status) without offering an ineffective retry', async ({ status, label }) => {
         const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({}) }));

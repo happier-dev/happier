@@ -506,7 +506,7 @@ describe('TeamGroupDetailScreen', () => {
         const screen = await renderGroupDetail(serverId);
         await waitForTestId(screen, 'team-group-unavailable');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-group-unavailable-action');
-        expect(screen.getTextContent()).toContain('teams.errors.forbidden');
+        expect(screen.getTextContent()).toContain('errors.permissionDenied');
     });
 
     it.each([
@@ -810,7 +810,7 @@ describe('TeamGroupDetailScreen', () => {
             { code: 'team_authentication_unavailable', status: 503, label: 'teams.credentials.externalApi.authenticationUnavailable' },
             { code: 'team_authentication_required', status: 403, label: 'session.access.authenticationRequired', recovery: '/teams/team-1/sign-in' },
             { code: 'team_forbidden', status: 403, label: 'teams.errors.signInOutdated', details: { reason: 'legacy_home_credential' }, recovery: '/settings/account' },
-            { code: 'team_forbidden', status: 403, label: 'teams.errors.forbidden' },
+            { code: 'team_forbidden', status: 403, label: 'errors.permissionDenied' },
         ] as const)('presents $code once without a futile retry', async (refusal) => {
             const serverId = await addManagedHome();
             harness.answer(serverId, GROUP_GET_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, memberCount: 0 }) });

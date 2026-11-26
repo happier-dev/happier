@@ -29,6 +29,13 @@ describe('teamReadFailureLabel', () => {
         expect(teamReadFailureAction(failure, { onPress: vi.fn() }, vi.fn())).toBeUndefined();
         expect(teamMutationFailureLabel(failure)).toBe(message);
     });
+
+    it('describes denied access on a read without calling it a change', () => {
+        const failure = { kind: 'forbidden', retryable: false, code: 'team_forbidden' } as const;
+        expect(teamReadFailureLabel(failure)).toBe('errors.permissionDenied');
+        expect(teamReadFailureAction(failure, { onPress: vi.fn() }, vi.fn())).toBeUndefined();
+        expect(teamMutationFailureLabel(failure)).toBe('teams.errors.forbidden');
+    });
 });
 
 describe('a Team read the person turned off in Settings, Actions', () => {

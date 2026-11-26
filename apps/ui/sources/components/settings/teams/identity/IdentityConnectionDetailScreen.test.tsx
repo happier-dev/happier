@@ -100,7 +100,7 @@ beforeEach(async () => {
 describe('IdentityConnectionDetailScreen test return', () => {
     it.each([
         { status: 403, body: { error: 'team_authentication_required' }, message: 'session.access.authenticationRequired', action: 'team', stale: false },
-        { status: 403, body: { error: 'team_forbidden' }, message: 'teams.errors.forbidden', action: null, stale: false },
+        { status: 403, body: { error: 'team_forbidden' }, message: 'errors.permissionDenied', action: null, stale: false },
         { status: 404, body: { error: 'team_not_found' }, message: 'teams.errors.notFound', action: null, stale: false },
         { status: 403, body: { error: 'team_forbidden', details: { reason: 'legacy_home_credential' } }, message: 'teams.errors.signInOutdated', action: 'home', stale: false },
         { status: 503, body: { error: 'team_authentication_unavailable' }, message: 'teams.credentials.externalApi.authenticationUnavailable', action: null, stale: true },

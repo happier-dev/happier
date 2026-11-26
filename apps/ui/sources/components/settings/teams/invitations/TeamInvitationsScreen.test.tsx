@@ -245,7 +245,7 @@ describe('TeamInvitationsScreen', () => {
             .toContain(new Intl.DateTimeFormat('de', { day: 'numeric', month: 'short', year: 'numeric' }).format(expiresAt));
     });
     it.each([
-        { status: 403, label: 'teams.errors.forbidden' },
+        { status: 403, label: 'errors.permissionDenied' },
         { status: 404, label: 'teams.unavailable.updateRequired' },
     ])('explains an invitation read refusal ($status) without offering an ineffective retry', async ({ status, label }) => {
         const serverId = await addManagedHome();

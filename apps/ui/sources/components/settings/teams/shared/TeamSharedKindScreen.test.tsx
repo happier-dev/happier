@@ -153,7 +153,7 @@ afterEach(async () => {
 
 describe('Team shared kind list', () => {
   it.each([
-    { code: 'permission_denied', status: 403, message: 'teams.errors.forbidden', signIn: false },
+    { code: 'permission_denied', status: 403, message: 'errors.permissionDenied', signIn: false },
     { code: 'invalid_request', status: 400, message: 'homeGovernance.invalidRead', signIn: false },
     { code: 'team_authentication_required', status: 403, message: 'session.access.authenticationRequired', signIn: true },
     { code: 'team_authentication_unavailable', status: 503, message: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
@@ -322,7 +322,7 @@ describe('Team shared kind list', () => {
 
   it.each([
     { status: 400, error: 'invalid_team_input', message: 'homeGovernance.invalidRead' },
-    { status: 403, error: 'team_forbidden', message: 'teams.errors.forbidden' },
+    { status: 403, error: 'team_forbidden', message: 'errors.permissionDenied' },
     { status: 404, error: 'team_not_found', message: 'teams.errors.notFound' },
     { status: 404, error: 'teams_unavailable', message: 'teams.unavailable.disabled' },
   ] as const)('says why the Team summary was refused with $error without retrying', async ({ status, error, message }) => {
@@ -366,7 +366,7 @@ describe('Team shared kind list', () => {
   it.each([
     { kind: 'sessions', reason: 'audience', message: 'session.collaboration.unavailable', action: false },
     { kind: 'machinePools', reason: 'not_found', message: 'machinePools.unavailable', action: false },
-    { kind: 'machinePresets', reason: 'permission_denied', message: 'teams.errors.forbidden', action: false },
+    { kind: 'machinePresets', reason: 'permission_denied', message: 'errors.permissionDenied', action: false },
     { kind: 'projectSources', reason: 'source_unavailable', message: 'projects.sources.unavailable', action: false },
     ...(['projectDocuments', 'prompts', 'workflows', 'reviews', 'otherArtifacts'] as const).map((kind) => ({
       kind, reason: 'source_unavailable', message: 'projects.sources.unavailable', action: false,
@@ -375,7 +375,7 @@ describe('Team shared kind list', () => {
     { kind: 'discussions', reason: 'discussion_not_found', message: 'errors.permissionDenied', action: false },
     { kind: 'discussions', reason: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: false },
     { kind: 'discussions', reason: 'team_authentication_required', message: 'session.access.authenticationRequired', action: true },
-    { kind: 'savedSecrets', reason: 'forbidden', message: 'teams.errors.forbidden', action: false },
+    { kind: 'savedSecrets', reason: 'forbidden', message: 'errors.permissionDenied', action: false },
     { kind: 'savedSecrets', reason: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: false },
     { kind: 'savedSecrets', reason: 'team_authentication_required', message: 'session.access.authenticationRequired', action: true },
     { kind: 'credentials', reason: 'feature_disabled', message: 'teams.credentials.errors.featureDisabled', action: false },

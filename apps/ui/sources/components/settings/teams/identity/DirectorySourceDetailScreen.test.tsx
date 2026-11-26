@@ -162,7 +162,7 @@ describe('DirectorySourceDetailScreen through real Home governance', () => {
         it.each([
             { status: 403, code: 'team_authentication_required', message: 'session.access.authenticationRequired', action: 'sign-in' },
             { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: null },
-            { status: 403, code: 'team_forbidden', message: 'teams.errors.forbidden', action: null },
+            { status: 403, code: 'team_forbidden', message: 'errors.permissionDenied', action: null },
             { status: 404, code: 'team_not_found', message: 'teams.errors.notFound', action: null },
             { status: 404, code: 'directory_source_not_found', message: 'identityAdministration.errorMissing', action: null },
             { status: 404, code: 'teams_unavailable', message: 'teams.unavailable.disabled', action: null },

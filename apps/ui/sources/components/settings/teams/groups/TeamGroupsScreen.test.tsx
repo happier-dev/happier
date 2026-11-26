@@ -324,7 +324,7 @@ describe('TeamGroupsScreen', () => {
         await waitForTestId(screen, 'team-groups-unavailable');
 
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-groups-retry');
-        expect(screen.getTextContent()).toContain('teams.errors.forbidden');
+        expect(screen.getTextContent()).toContain('errors.permissionDenied');
     });
 
     it.each([

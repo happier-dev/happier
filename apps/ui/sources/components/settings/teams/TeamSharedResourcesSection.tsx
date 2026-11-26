@@ -261,7 +261,7 @@ function sharedResourceCountFailureLabel(
     case 'audience': return t('session.collaboration.unavailable');
     case 'not_found': return row.kind === 'machinePools' ? t('machinePools.unavailable') : teamReadFailureLabel(failure);
     case 'permission_denied':
-    case 'forbidden': return t('teams.errors.forbidden');
+    case 'forbidden': return t('errors.permissionDenied');
     case 'source_unavailable': return t('projects.sources.unavailable');
     case 'discussions_unavailable': return t('session.collaboration.discussion.unavailable');
     case 'discussion_not_found': return t('errors.permissionDenied');

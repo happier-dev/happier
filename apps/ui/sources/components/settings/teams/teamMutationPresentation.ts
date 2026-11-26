@@ -31,6 +31,7 @@ export function teamReadFailureLabel(failure: HomeDomainFailure<string> | Scoped
     if (failure.code === 'invalid_team_cursor') return t('teams.errors.listCursorExpired');
     const refusal = teamRefusalLabel({ ...failure, code: failure.code ?? null });
     if (refusal) return refusal;
+    if (failure.kind === 'forbidden') return t('errors.permissionDenied');
     if (failure.kind === 'unknown' || failure.kind === 'invalid') return t('teams.errors.loadFailed');
     return teamFailureKindLabel(failure.kind);
 }
