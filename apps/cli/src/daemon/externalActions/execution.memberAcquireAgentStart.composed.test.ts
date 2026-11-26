@@ -10,13 +10,14 @@ import {
   EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
   EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+  parseExternalActionDaemonDispatchResult,
   parseExternalActionDaemonDispatchResultV1,
   projectExternalActionApprovalDecisionAdmissionV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
 import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalExecutionV2Schema, ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
@@ -44,11 +45,12 @@ import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/conne
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { fixture as nativeFixture, pendingEnrollmentGuestRoleSource, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
-import { ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcceptedV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, ManagedGetOutputV1Schema, ManagedInstallationCapabilityRequestV1Schema,
+  ManagedInstallationServerOriginV1Schema, managedMachineActionEndpointPathV1, readManagedInstallationPurposeV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
-import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { projectManagedMachinePresetForRecipientV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { createCliPayloadFixture } from '../../../../../packages/cli-common/src/systemTasks/testkit/createCliPayloadFixture';
 
 const boundary = vi.hoisted(() => ({
@@ -124,6 +126,7 @@ vi.mock('@/session/transport/rpc/sessionRpc', async (importOriginal) => {
 
 const homeId = 'srv_member_acquire_agent_start';
 const homeUrl = 'https://member-home.test';
+const sessionHomeUrl = 'https://session-home.test';
 const controllerServerId = 'controller-session-home';
 const OWNER_MACHINE_ID = 'owner-machine';
 
@@ -156,6 +159,8 @@ type AcquireCase = Readonly<{
   /** Home's acquire routing refuses this member (for example, the delegation was withdrawn). */
   routingRefused?: true;
   guestEnrollment?: true;
+  /** Exercise the requester daemon’s operation read and automatic pairing. */
+  automaticSignIn?: true;
   guestPairingLifetimeMs?: number;
   /** The member's Session runs on a Machine another person holds custody of, as a Use guest. */
   sessionHost?: 'custodian machine';
@@ -262,6 +267,10 @@ async function runMemberAcquire(acquire: AcquireCase) {
       return Response.json(
         FeaturesResponseSchema.parse({
           features: {},
+          ...(acquire.automaticSignIn && url.pathname === '/v1/features/authenticated' ? { homeConnectionDescriptor: {
+            v: 1, homeServerIdentityId: homeId, canonicalServerUrl: sessionHomeUrl, revision: 1,
+            endpoints: [{ kind: 'https', url: sessionHomeUrl }],
+          } } : {}),
           capabilities: { serverIdentity: { serverIdentityId: homeId },
             // Home's guest CLI source, which the owner's controller reads before acquiring.
             ...(acquire.delegated ? { guestCli: { source: acquire.guestEnrollment ? 'home-payload' : 'public-release', line: '0.3', channel: 'stable' } } : {}) },
@@ -277,6 +286,15 @@ async function runMemberAcquire(acquire: AcquireCase) {
   const controllerSteps: string[] = [];
   const controllerReports: unknown[] = [];
   const requesterOccurrences: unknown[] = [];
+  /** Guest-installation answers Home forwarded to the owner's controller, with the Account that sent each. */
+  const installationAnswers: unknown[] = [];
+  /** Pairing approvals Home received, with the Account that sent each. */
+  const pairingApprovals: string[] = [];
+  /** Everything the owner's controller process received from the member's side. */
+  const controllerReceived: unknown[] = [];
+  const delegatedPresetContent = sealManagedMachinePresetContentV1({ presetId: 'team-preset', mode: 'plain', content: { v: 1, name: 'Guest',
+    launch: { provider: { pluginId: 'acme.project-launch', localId: delegatedComputePlugin().provisionerId },
+      schemaVersion: 1, name: 'guest', choices: {} } } });
   let managed: ReturnType<typeof ManagedMachineV1Schema.parse> | undefined;
   let retainedPresetContent: ReturnType<typeof sealManagedMachinePresetContentV1>['content'] | undefined;
   let receiverManager: Awaited<ReturnType<typeof createReceivingControllerDaemon>>['manager'] | undefined;
@@ -389,6 +407,17 @@ async function runMemberAcquire(acquire: AcquireCase) {
       return { status: 200, data: acquire.routingRefused ? { kind: 'refused', code: 'permission_denied' }
         : { kind: 'resolved', controller, controllerAccess: { custodian: { accountId: 'owner' },
           installationPublicKey: h.f.installation.publicKey.replace(/=+$/u, '') } } };
+    // The requester's own Account read of the guest row it enrolls.
+    if (acquire.automaticSignIn && managed && account === 'requester' && path === managedMachineActionEndpointPathV1('machines.managed.get')) {
+      const presetContent = projectManagedMachinePresetForRecipientV1({ content: retainedPresetContent ?? delegatedPresetContent.content,
+        recipients: delegatedPresetContent.recipients, recipientAccountId: account });
+      return { status: 200, data: ManagedGetOutputV1Schema.parse({ machine: managed, presetContent }) };
+    }
+    // Home's pairing response: the approving Account's own sign-in seals the guest's credential.
+    if (path === '/v1/auth/response') {
+      pairingApprovals.push(String(account));
+      return { status: 200, data: { success: true } };
+    }
     // Home's managed-row routes the owner's controller reaches after it opens the relayed root.
     if (acquire.delegated && path.startsWith('/v1/machines/managed/controller/')) {
       const step = path.slice('/v1/machines/managed/controller/'.length);
@@ -398,14 +427,11 @@ async function runMemberAcquire(acquire: AcquireCase) {
         preset: { id: 'team-preset', revision: 1, contentEncryptionMode: 'plain' }, controller, allocation: 'unsubmitted',
         creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
-      const presetContent = sealManagedMachinePresetContentV1({ presetId: 'team-preset', mode: 'plain', content: { v: 1, name: 'Guest',
-        launch: { provider: { pluginId: 'acme.project-launch', localId: delegatedComputePlugin().provisionerId },
-          schemaVersion: 1, name: 'guest', choices: {} } } });
-      if (step === 'admit') return { status: 200, data: { machine: managed, presetContent, replayed: false } };
+      if (step === 'admit') return { status: 200, data: { machine: managed, presetContent: delegatedPresetContent, replayed: false } };
       if (step === 'current') return { status: 200, data: { machine: managed } };
       if (step === 'enrollment-context') return { status: 200, data: { machine: managed } };
       if (step === 'context') return { status: 200, data: { machine: managed, requestId: mints.at(-1)?.envelope.requestId,
-        presetContent: retainedPresetContent ? { ...presetContent, content: retainedPresetContent } : presetContent } };
+        presetContent: retainedPresetContent ? { ...delegatedPresetContent, content: retainedPresetContent } : delegatedPresetContent } };
       if (step === 'submit') {
         ManagedControllerSubmitInputV1Schema.parse(args[1]);
         managed = ManagedMachineV1Schema.parse({ ...managed, allocation: 'may-exist' });
@@ -438,18 +464,47 @@ async function runMemberAcquire(acquire: AcquireCase) {
         actionId: 'machines.managed.acquire', envelope: body.envelope, executionAuthorization: authorization,
         principal: { accountId: 'requester', authority: 'account_automation', authentication: { kind: 'terminal', tokenEpoch: 0 } },
         placement: { machineId: OWNER_MACHINE_ID, target: body.envelope.target } })));
+      controllerReceived.push(dispatch);
       const result = await receiverManager.handleRequest({ method: `${OWNER_MACHINE_ID}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
         params: dispatch, authorization: ACTION_API_SERVER_ORIGIN,
         // Home's public managed admission for the admitted member (its delegation fact stays server-side).
         machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner', machineId: OWNER_MACHINE_ID,
           installationId: controller.installationId, role: 'manage', encryptionMode: 'plain' } }, undefined, 'authenticated_home_socket');
       homeRelayResults.push(result);
-      const parsed = parseExternalActionDaemonDispatchResultV1(result);
+      const parsed = parseExternalActionDaemonDispatchResult(result);
       return parsed?.kind === 'response' ? { status: 200, data: JSON.parse(parsed.prepared.body) }
         : { status: 503, data: { error: 'unavailable' } };
     }
     if (path.endsWith('/execution-authorization/verify'))
       return { status: 200, data: { ok: true } };
+    // Home's requester operation read: it mints a read root for the member's own operation on the
+    // owner's controller and relays the sealed read to that Machine.
+    if (acquire.automaticSignIn && path === '/v1/actions/action.operations.get/execution-authorization') {
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(JSON.stringify(args[1])));
+      return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'member-operation-read',
+        requesterOperationReadInstallationPublicKey: h.f.installation.publicKey.replace(/=+$/u, ''),
+        binding: { accountId: 'requester', custodianAccountId: 'owner', serverIdentityId: homeId,
+          authentication: { kind: 'terminal', tokenEpoch: 0 }, accountEncryptionMode: 'plain', machineId: request.machineId,
+          installationId: controller.installationId, requesterOperationRead: true, actionId: 'action.operations.get',
+          requestId: request.envelope.requestId, target: request.envelope.target,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } }) };
+    }
+    if (acquire.automaticSignIn && path === '/v1/actions/action.operations.get') {
+      const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(JSON.stringify(args[1])));
+      if (!receiverManager || !body.executionAuthorization) return { status: 503, data: { error: 'unavailable' } };
+      const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(JSON.parse(JSON.stringify({
+        actionId: 'action.operations.get', envelope: body.envelope, executionAuthorization: body.executionAuthorization,
+        principal: { accountId: 'requester', authority: 'account_automation', authentication: { kind: 'terminal', tokenEpoch: 0 } },
+        placement: { machineId: OWNER_MACHINE_ID, target: body.envelope.target } })));
+      controllerReceived.push(dispatch);
+      const result = await receiverManager.handleRequest({ method: `${OWNER_MACHINE_ID}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+        params: dispatch, authorization: ACTION_API_SERVER_ORIGIN,
+        machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner', machineId: OWNER_MACHINE_ID,
+          installationId: controller.installationId, role: 'manage', encryptionMode: 'plain' } }, undefined, 'authenticated_home_socket');
+      const parsed = parseExternalActionDaemonDispatchResult(result);
+      return parsed?.kind === 'response' ? { status: 200, data: JSON.parse(parsed.prepared.body) }
+        : { status: 503, data: { error: 'unavailable' } };
+    }
     if (path !== '/v1/actions/machines.managed.acquire/execution-authorization')
       return await homeWrite(...args);
     // Home signs the origin the source host sends; this boundary echoes it into the root.
@@ -512,6 +567,20 @@ async function runMemberAcquire(acquire: AcquireCase) {
     controllerMachine = receiver.machine;
     boundary.relay = async packet => {
       const call = packet as SocketRpcRequestPayload;
+      const installation = ManagedInstallationCapabilityRequestV1Schema.safeParse(call.params);
+      if (acquire.automaticSignIn && installation.success && managed) {
+        // Home's managed installation forwarder: it admits the requester's exact purpose on the
+        // retained row and stamps it for the custodian controller's socket only.
+        const requestId = mints.find(mint => mint.machineId === OWNER_MACHINE_ID)?.envelope.requestId;
+        const origin = ManagedInstallationServerOriginV1Schema.parse({ kind: 'machine.managedInstallation.serverOrigin',
+          actorAccountId: 'requester', custodianAccountId: 'owner',
+          purpose: { ...readManagedInstallationPurposeV1(installation.data.params), requestId } });
+        installationAnswers.push(installation.data.params);
+        const forwarded = { ...installation.data, params: { ...installation.data.params, requestId } };
+        controllerReceived.push(forwarded);
+        return await receiver.manager.handleRequest({ method: call.method, params: forwarded, authorization: origin },
+          undefined, 'authenticated_home_socket');
+      }
       relayed.push(call);
       atDelivery.push({ homeRequests: homeRequests.length, artifacts: artifacts.size });
       const result = await receiver.deliver(call, { actorAccountId: 'requester', role: 'manage' });
@@ -619,7 +688,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
     });
   };
   return { h, credentials, controller, outcome, paths, homeRequests, mints, relayed, delivered, atDelivery, homeRelayed, homeRelayResults, controllerSteps, controllerReports, approve, receiverManager,
-    approvals, readApproval, controllerRequests, requesterOccurrences, retry };
+    approvals, readApproval, controllerRequests, requesterOccurrences, retry, installationAnswers, pairingApprovals, controllerReceived };
 }
 
 // Ruling O-MACH 2026-11-24 13:42Z (S-IDENTITY step 5a) moves the requester's
@@ -915,6 +984,53 @@ it.each(['pending', 'expired'] as const)('delivers the %s sign-in occurrence fro
       }]));
     expect(await readTerminal()).toEqual(terminal);
   }
+  expect(run.approvals('owner')).toEqual([]);
+}, 180_000);
+
+// Owner ruling 2026-11-26: the member's approval of the acquire, or their "allow" setting, covers signing the
+// guest into their Account. The member's own daemon answers exactly that operation's sign-in question with its
+// own sign-in; the owner's controller receives only the answer.
+it.each(['ask', 'allow'] as const)("a member's Agent acquire under %s signs its guest into the member's Account from the member's own daemon, with no second question and nothing of the member's sign-in on the owner's controller", async memberPolicy => {
+  const run = await runMemberAcquire({ controller: 'owner machine', namesController: false, memberPolicy,
+    delegated: true, guestEnrollment: true, automaticSignIn: true });
+  expect(run.approvals('requester')).toHaveLength(memberPolicy === 'ask' ? 1 : 0);
+  let controllerResult: unknown;
+  if (memberPolicy === 'ask') {
+    const [ask] = run.approvals('requester');
+    const decision = await run.approve(ask!.id);
+    if (decision.kind !== 'response' || decision.response.v !== 1 || !decision.response.execution.ok) {
+      throw new Error('The member’s approval did not return an execution');
+    }
+    const result = decision.response.execution.result as { status?: unknown; execution?: unknown };
+    expect(result.status).toBe('executed');
+    controllerResult = ApprovalExecutionV2Schema.parse(result.execution).result;
+  } else {
+    expect(run.outcome).toMatchObject({ ok: true, result: { outcome: { ok: true } } });
+    await vi.waitFor(() => expect(run.homeRelayResults).toHaveLength(1), { timeout: 60_000 });
+    const relayed = parseExternalActionDaemonDispatchResultV1(run.homeRelayResults[0]);
+    if (relayed?.kind !== 'response' || !relayed.prepared.response.execution.ok) {
+      throw new Error('The controller did not accept the member’s acquire');
+    }
+    controllerResult = relayed.prepared.response.execution.result;
+  }
+  const accepted = ManagedAcceptedV1Schema.parse(controllerResult);
+  expect(accepted.managedId).toBe('delegated-guest');
+  expect(accepted.operation).toBeDefined();
+  const operationId = accepted.operation!.operationId;
+  // Nobody in the test answers the question: the member's daemon does, for this operation only.
+  await vi.waitFor(() => expect(run.installationAnswers).toEqual([
+    expect.objectContaining({ homeId, managedId: accepted.managedId, operationId, expectedPromptKind: 'auth.approveRemoteProvisioning',
+      delivery: { kind: 'terminalPairing' } }),
+    expect.objectContaining({ homeId, managedId: accepted.managedId, operationId, expectedPromptKind: 'auth.approveRemoteProvisioning',
+      answer: { approved: true } }),
+  ]), { timeout: 60_000 });
+  expect(run.approvals('requester')).toHaveLength(memberPolicy === 'ask' ? 1 : 0);
+  // The member's own sign-in approved the guest's pairing at Home.
+  expect(run.pairingApprovals).toEqual(['requester']);
+  await vi.waitFor(() => expect(run.requesterOccurrences).toContainEqual(expect.objectContaining({ operationId, state: 'answered' })));
+  // The owner's controller never received the member's credential token.
+  expect(JSON.stringify(run.controllerReceived)).not.toContain(run.credentials.token);
+  expect(run.homeRequests.filter(request => request.endsWith('POST /v1/auth/response'))).toEqual(['requester POST /v1/auth/response']);
   expect(run.approvals('owner')).toEqual([]);
 }, 180_000);
 

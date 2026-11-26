@@ -1437,6 +1437,13 @@ resolveServerFeaturesSnapshot?: () =>
           } finally { await lease.release(); }
         },
         managedMachineAction: managedPolicyAction?.managedMachineAction ?? nativeManagedMachineAdapter,
+        // Once the acquire returns, its sign-in follow belongs to this installed daemon's Account,
+        // even though the finite approval request has released its private credential context.
+        managedAcquireSignInCustody: {
+          credentials: params.credentials,
+          signal: shutdownCancellationDomains.daemonWorkSignal,
+          isCurrent: async () => sameStoredCredentials(params.credentials, await readStoredCredentialsForServerId(params.serverId)),
+        },
         acquireSessionIsolationSandbox: nativeManagedMachineAdapter.acquireSessionIsolationSandbox,
         acquireWorkflowPlacement: nativeManagedMachineAdapter.acquireWorkflowPlacement,
         machinePresetPrepare: nativeManagedMachineAdapter.preparePreset,

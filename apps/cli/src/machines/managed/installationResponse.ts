@@ -98,7 +98,7 @@ export function createCliManagedInstallationRespond(params: Readonly<{
  */
 export async function answerAdmittedManagedAcquireSignIn(params: Readonly<{
     credentials: StoredCredentials; serverId: string; serverIdentityId: string; serverUrl: string;
-    acquireInput: unknown; acquireResult: unknown;
+    acquireInput: unknown; acquireResult: unknown; signal: AbortSignal;
     /** The requester-scoped operation read this daemon's executor already uses. */
     readOperation(request: RequesterOperationRequestV1): Promise<ActionExecuteResult | null>;
 }>): Promise<void> {
@@ -109,7 +109,7 @@ export async function answerAdmittedManagedAcquireSignIn(params: Readonly<{
     const admitted = { homeId: input.data.selection.homeId, managedId: accepted.data.managedId,
         operationId: accepted.data.operation.operationId };
     const machine = await readManagedMachine({ credentials: params.credentials, serverHttpBaseUrl: params.serverUrl,
-        homeId: admitted.homeId, managedId: admitted.managedId });
+        homeId: admitted.homeId, managedId: admitted.managedId, signal: params.signal });
     // Only a guest enrolling this Account under someone else's custody asks this requester.
     if (!machine.controller || machine.enrollmentAccountId !== accountId || machine.custodianAccountId === accountId) return;
     const address = { serverId: params.serverIdentityId, machineId: machine.controller.machineId,
@@ -132,7 +132,7 @@ export async function answerAdmittedManagedAcquireSignIn(params: Readonly<{
             const answered = await approveManagedMachineEnrollment({ prompt,
                 correlation: { ...admitted, serverId: params.serverId, operationId: admitted.operationId, taskId },
                 respond: answer => respond(answer, { surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
-                    runtimeAccountId: accountId, serverId: params.serverId, serverIdentityId: params.serverIdentityId }) });
+                    runtimeAccountId: accountId, serverId: params.serverId, serverIdentityId: params.serverIdentityId, signal: params.signal }) });
             if (answered && typeof answered === 'object' && 'ok' in answered && answered.ok === false) {
                 logger.warn('[managed] The admitted acquire could not sign its guest in', {
                     managedId: admitted.managedId, operationId: admitted.operationId, errorCode: (answered as { errorCode?: unknown }).errorCode });

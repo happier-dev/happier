@@ -101,6 +101,12 @@ type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>
     deploymentRestore?: ActionExecutorDeps['deploymentRestore'];
     projectReadinessRead?: ActionExecutorDeps['projectReadinessRead'];
     managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
+    /** Installed Account custody for a background acquire sign-in after its invocation ends. */
+    managedAcquireSignInCustody?: Readonly<{
+      credentials: StoredCredentials;
+      signal: AbortSignal;
+      isCurrent(): Promise<boolean>;
+    }>;
     receivingMachineSetupPlan?: CliReceivingMachineSetupPlan;
     machineReachabilityAction?: ActionExecutorDeps['machineReachabilityAction'];
     /** Receiving daemon's native Stop effect, after requester policy and scope admission. */
@@ -200,17 +206,26 @@ export function createCliActionHost(params: CliActionExecutorParams):
   // Owner ruling 2026-11-26: the approval of this Account's own acquire, or its "allow" setting,
   // covers signing the new guest in. This daemon answers that one question with its own sign-in.
   function answerAdmittedAcquireSignIn(input: unknown, result: unknown, context: ActionExecutorContext): void {
-    const credentials = params.credentials;
+    const custody = params.managedAcquireSignInCustody;
+    const serverId = params.serverId;
     const serverIdentityId = params.serverIdentityId ?? context.serverIdentityId;
     const root = context.externalActionExecutionAuthorization?.binding;
     // A relayed acquire another Account admitted is that Account's to answer, never this daemon's.
-    if (!credentials || !params.serverId || !serverIdentityId || root && root.accountId !== readAccountIdFromToken(credentials.token)) return;
+    if (!custody || params.credentials?.token !== custody.credentials.token || !serverId || !serverIdentityId
+      || root && root.accountId !== readAccountIdFromToken(custody.credentials.token)) return;
+    // The invocation may hold a requester-scoped copy. Only the installed daemon lends sign-in material.
+    const { credentials, signal, isCurrent } = custody;
     const serverUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
-    void answerAdmittedManagedAcquireSignIn({ credentials, serverId: params.serverId, serverIdentityId, serverUrl,
-      acquireInput: input, acquireResult: result,
-      readOperation: operation => executeOriginalAccountRequesterOperation({ operation, credentials, serverIdentityId,
-        serverHttpBaseUrl: serverUrl, requestId: randomUUID(), authority: 'account_automation', isCurrent: params.isCredentialCurrent }),
-    }).catch(error => logger.warn('[managed] Following the admitted acquire sign-in failed', error));
+    void (async () => {
+      if (signal.aborted || !await isCurrent() || signal.aborted) return;
+      await answerAdmittedManagedAcquireSignIn({ credentials, serverId, serverIdentityId, serverUrl, signal,
+        acquireInput: input, acquireResult: result,
+        readOperation: operation => executeOriginalAccountRequesterOperation({ operation, credentials, serverIdentityId,
+          serverHttpBaseUrl: serverUrl, requestId: randomUUID(), authority: 'account_automation', isCurrent, signal }),
+      });
+    })().catch(error => {
+      if (!signal.aborted) logger.warn('[managed] Following the admitted acquire sign-in failed', error);
+    });
   }
   const personalSavedSecretActionExecute = params.personalSavedSecretActionExecute ?? (params.credentials && accountServerActionPorts.homeDomainAction
     ? createCliPersonalSavedSecretActionExecute({ credentials: params.credentials, home: accountServerActionPorts.homeDomainAction,

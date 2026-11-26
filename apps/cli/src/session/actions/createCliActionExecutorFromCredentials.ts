@@ -897,6 +897,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   /** Receives the exact dispatch boundary for Home-owned HTTP Actions. */
   onAccountServerRequestIssued?: () => void;
   onApprovalRequested?: Parameters<typeof createCliActionExecutor>[0]['onApprovalRequested'];
+  managedAcquireSignInCustody?: Parameters<typeof createCliActionExecutor>[0]['managedAcquireSignInCustody'];
   /**
    * Stored-content material this composition already holds for one exact
    * Session, for a host whose credentials carry no Account encryption material.
@@ -1316,6 +1317,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       token: credentials.token,
       credentials,
       ...(params.readCredentials ? { isCredentialCurrent: async () => sameStoredCredentials(credentials, await readCurrentCredentials()) } : {}),
+      ...(params.managedAcquireSignInCustody ? { managedAcquireSignInCustody: params.managedAcquireSignInCustody } : {}),
       ...(prepareApprovalExecutionOriginContext ? { prepareApprovalExecutionOriginContext } : {}),
       ...(params.requesterSessionBootstrap ? { requesterSessionBootstrap: params.requesterSessionBootstrap } : {}),
       ...(savedSecretOperationContext ? { savedSecretOperationContext } : {}),
