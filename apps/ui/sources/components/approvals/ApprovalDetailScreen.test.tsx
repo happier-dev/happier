@@ -2429,6 +2429,7 @@ describe('ApprovalDetailScreen', () => {
     currentArtifact = { ...base, header: buildTargetActionApprovalArtifactHeaderV1(request), body: JSON.stringify(request) };
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+    await screen.pressByTestIdAsync('approvals.technical-details.header');
     expect(readRenderedText(screen)).toContain(JSON.stringify(input.prepareReviewWorkspaceSelection));
     expect(screen.findByTestId('approvals.approve')?.props.disabled).toBe(false);
     await screen.pressByTestIdAsync('approvals.approve');
@@ -3756,6 +3757,7 @@ describe('ApprovalDetailScreen', () => {
     const screen = await renderScreen(
       <ApprovalDetailScreen artifactId="artifact-1" />,
     );
+    await screen.pressByTestIdAsync('approvals.technical-details.header');
     const text = readRenderedText(screen);
 
     expect(text).toContain('Team ID');
