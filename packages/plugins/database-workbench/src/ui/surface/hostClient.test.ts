@@ -17,7 +17,7 @@ import type { PluginUiHostApi, ResourceContent } from '@happier-dev/plugin-sdk/u
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 import { createHostWorkbenchClient } from './hostClient.js';
 import { workbenchTargetKey, createWorkbenchInstance } from '../workbench.js';
-import { createDatabaseConnectionResourceRuntime } from '../../resources.js';
+import { createDatabaseConnectionResourceRuntime, type DatabaseOperationExecution } from '../../resources.js';
 import { openManualDatabaseConnection } from '../../connection.js';
 import { databaseOperationActions } from '../../operationActions.js';
 import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
@@ -181,7 +181,9 @@ it('retains each mounted target demand and refreshes both workbenches from produ
         expect(subscriptionId).toBeDefined();
         expect(input.subscriptionId, 'read invokes the already admitted mounted demand').toBe(subscriptionId);
         readInvocations.push(input.operation);
-        return projectNativeJsonValueForTransport(await producer.invoke!(input, { signal: options.signal }));
+        // The Action runtime projects the private held-demand execution to its public result.
+        const execution = await producer.invoke!(input, { signal: options.signal }) as DatabaseOperationExecution;
+        return projectNativeJsonValueForTransport(execution.result);
       },
       setUnsavedChanges: async () => {},
     });
@@ -205,6 +207,7 @@ it('retains each mounted target demand and refreshes both workbenches from produ
   try {
     const pages = instances.flatMap(instance => ['first', 'second'].map(name => instance.page({ ...instance.local.get('location'), relation: { schema: 'main', name } })));
     await Promise.all(pages.map(page => page.demand()));
+    for (const page of pages) expect(page.get().data?.rows[0]?.cells[1]).toMatchObject({ value: 'before' });
     const before = [...readInvocations];
     const held = pages.map(page => page.get().data);
     for (const { producer } of producers) await producer.notify!({ target: { ...target, savedSecretId: 'unrelated' } });
@@ -217,10 +220,14 @@ it('retains each mounted target demand and refreshes both workbenches from produ
         statements: [{ sql: "UPDATE first SET label='after';", parameters: [] }, { sql: "UPDATE second SET label='after';", parameters: [] }] }))
         .toMatchObject({ ok: true });
     } finally { await write.close(); }
-    for (const { producer } of producers) {
-      await producer.notify!({ target, relation: { schema: 'main', name: 'first' } });
-      await producer.notify!({ target, relation: { schema: 'main', name: 'second' } });
-    }
+    for (const { producer } of producers) await producer.notify!({ target, relation: { schema: 'main', name: 'first' } });
+    await vi.waitFor(async () => {
+      await Promise.all(pages.map(page => page.demand()));
+      for (const index of [0, 2]) expect(pages[index]?.get().data?.rows[0]?.cells[1]).toMatchObject({ value: 'after' });
+    });
+    for (const index of [1, 3]) expect(pages[index]?.get().data).toBe(held[index]);
+    expect(readInvocations.slice(before.length).sort()).toEqual(['relation.structure', 'relation.structure', 'rows.read', 'rows.read']);
+    for (const { producer } of producers) await producer.notify!({ target, relation: { schema: 'main', name: 'second' } });
     await vi.waitFor(async () => {
       await Promise.all(pages.map(page => page.demand()));
       for (const page of pages) expect(page.get().data?.rows[0]?.cells[1]).toMatchObject({ value: 'after' });
