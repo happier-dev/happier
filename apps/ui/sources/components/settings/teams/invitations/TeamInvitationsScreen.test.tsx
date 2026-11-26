@@ -28,6 +28,8 @@ const promptSpy = vi.hoisted(() => vi.fn(async () => modalChoice.promptAnswer));
 const languageMock = vi.hoisted(() => ({ current: 'en' }));
 const shareTextSafeMock = vi.hoisted(() => vi.fn(async () => 'shared' as const));
 const sharingAvailableMock = vi.hoisted(() => ({ current: true }));
+const announceForAccessibility = vi.hoisted(() => vi.fn());
+const accessibilityPlatform = vi.hoisted(() => ({ current: 'web' }));
 const virtualizedBoundary = vi.hoisted(() => ({
     props: null as Record<string, unknown> | null,
     mountLimit: Number.POSITIVE_INFINITY,
@@ -62,6 +64,13 @@ vi.mock('@react-navigation/native', async () => {
 
 installSettingsViewCommonModuleMocks({
     storage: 'real',
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Platform: { get OS() { return accessibilityPlatform.current; } },
+            AccessibilityInfo: { announceForAccessibility },
+        });
+    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ getPreferredLanguage: () => languageMock.current });
@@ -366,6 +375,29 @@ describe('TeamInvitationsScreen', () => {
         expect(modalBoundary.confirmations).toHaveLength(1);
     });
 
+    it('announces the accepted state when acceptance won the race with revocation', async () => {
+        modalChoice.press = 'teams.invitations.revoke';
+        const serverId = await addManagedHome();
+        harness.answer(serverId, INVITATIONS_LIST_PATH, {
+            body: { items: [teamInvitationRowFixture()], nextCursor: null, emailDelivery: 'available', linkDelivery: 'available' },
+        });
+        harness.answer(serverId, INVITATION_REVOKE_PATH, {
+            body: teamInvitationRowFixture({ state: 'accepted' }),
+        });
+
+        const screen = await renderInvitations(serverId);
+        await waitForTestId(screen, 'team-invitations-row:invitation-1');
+        announceForAccessibility.mockClear();
+        accessibilityPlatform.current = 'ios';
+        try {
+            await screen.pressByTestIdAsync('team-invitations-row:invitation-1');
+            await vi.waitFor(() => expect(announceForAccessibility).toHaveBeenCalledWith('teams.invitations.stateAccepted'));
+            expect(announceForAccessibility).not.toHaveBeenCalledWith('teams.invitations.stateRevoked');
+        } finally {
+            accessibilityPlatform.current = 'web';
+        }
+    });
+
     it('keeps the Waiting description once a revoke has moved its row to Finished', async () => {
         modalChoice.press = 'teams.invitations.revoke';
         const serverId = await addManagedHome();
@@ -618,11 +650,14 @@ describe('TeamInvitationsScreen', () => {
         });
     });
 
-    it('retries an email-bound invitation without reproducing the address behind its mask', async () => {
+    it.each([
+        { recipientEmailMask: 'a•••@example.com', notice: 'teams.invitations.deliveryUnknown' },
+        { recipientEmailMask: null, notice: 'teams.invitations.linkUnavailableRow' },
+    ])('reports $notice for a replacement with no returned URL', async ({ recipientEmailMask, notice }) => {
         const serverId = await addManagedHome();
         harness.answer(serverId, INVITATIONS_LIST_PATH, {
             body: {
-                items: [teamInvitationRowFixture({ recipientEmailMask: 'a•••@example.com' })],
+                items: [teamInvitationRowFixture({ recipientEmailMask })],
                 nextCursor: null,
                 emailDelivery: 'available',
                 linkDelivery: 'available',
@@ -630,8 +665,8 @@ describe('TeamInvitationsScreen', () => {
         });
         harness.answer(serverId, INVITATION_REISSUE_PATH, {
             body: {
-                previous: teamInvitationRowFixture({ state: 'revoked' }),
-                replacement: teamInvitationRowFixture({ id: 'invitation-2' }),
+                previous: teamInvitationRowFixture({ state: 'revoked', recipientEmailMask }),
+                replacement: teamInvitationRowFixture({ id: 'invitation-2', recipientEmailMask }),
                 joinUrl: null,
             },
         });
@@ -654,7 +689,7 @@ describe('TeamInvitationsScreen', () => {
         });
         await vi.waitFor(() => {
             const rendered = screen.getTextContent();
-            expect(rendered).toContain('teams.invitations.deliveryUnknown');
+            expect(rendered).toContain(notice);
             expect(rendered).not.toContain('teams.invitations.bearerUnavailable');
         });
     });

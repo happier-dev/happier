@@ -368,4 +368,23 @@ describe('HomeAdministrationEmailScreen', () => {
         });
         expect(harness.requestsFor(MAIL_TEST)[0]?.input).toEqual({ to: 'ada@example.com' });
     });
+
+    it('shows an unconfirmed outcome when the test send response is lost', async () => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: homeSettingsProjectionFixture() });
+        harness.answer(home, MAIL_GET, { body: homeMailDeliveryReadinessFixture() });
+        harness.answer(home, MAIL_TEST, { dispatchThenFail: true });
+
+        const screen = await renderEmail(home);
+        await act(async () => {
+            screen.changeTextByTestId('home-email-test-to', 'ada@example.com');
+        });
+        await screen.pressByTestIdAsync('home-email-test-send');
+
+        await waitForHomeGovernance(() => {
+            const notice = textUnder(screen.findByTestId('home-email-test-refused'));
+            expect(notice).toContain('homeGovernance.errorOutcomeUnknownTitle');
+            expect(notice).not.toContain('homeGovernance.email.testFailed');
+        });
+    });
 });

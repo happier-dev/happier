@@ -171,17 +171,18 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
     /** Presents the replacement this exact live invocation answered with. */
     const settleReissue = React.useCallback((value: TeamInvitationReissueResultV1) => {
         reissueRequestIdentity.current = null;
-        // `null` means the bearer went only to the mail boundary — not a failure.
         setFreshJoinUrl(value.joinUrl);
-        if (value.joinUrl === null) {
+        if (value.joinUrl !== null) {
+            announceAccessibilityMessage(t('teams.invitations.reissueNotice'));
+        } else if (value.replacement.recipientEmailMask === null) {
+            publishNotice(t('teams.invitations.linkUnavailableRow'));
+        } else {
             const delivery = value.replacement.lastEmailDelivery;
             publishNotice(delivery?.status === 'sent'
                 ? t('teams.invitations.deliverySent')
                 : delivery?.status === 'failed'
                     ? t('teams.invitations.deliveryFailed')
                     : t('teams.invitations.deliveryUnknown'));
-        } else {
-            announceAccessibilityMessage(t('teams.invitations.reissueNotice'));
         }
         void invitations.reload();
     }, [invitations.reload, publishNotice]);
@@ -226,6 +227,11 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
         addGroup('finished', finished);
         return segments;
     }, [invitations.rows, now]);
+
+    const settleRevoke = React.useCallback((row: TeamInvitationRowV1) => {
+        announceAccessibilityMessage(resolveTeamInvitationPresentation(row, Date.now()).stateLabel);
+        void invitations.reload();
+    }, [invitations.reload]);
 
     /** Runs one row's action: the chooser a press opens, or the retry "Send again" asks for directly. */
     const act = React.useCallback<InvitationRowAction>(async (target, preset) => {
@@ -274,14 +280,7 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
                         scope: context.scope,
                         address: context.address,
                         invitationId: target.id,
-                        // An approved revocation is the
-                        // same revocation, so it is
-                        // announced and re-read here
-                        // rather than left unmentioned.
-                        onApprovalSucceeded: () => {
-                            announceAccessibilityMessage(t('teams.invitations.stateRevoked'));
-                            void invitations.reload();
-                        },
+                        onApprovalSucceeded: settleRevoke,
                         onApprovalFailed: (code) =>
                             publishNotice(teamMutationFailureLabel({ kind: 'unknown', code, retryable: false })),
                     });
@@ -301,13 +300,10 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
                     // vocabulary says so; the reload
                     // below shows what the Home holds.
                     publishNotice(teamMutationFailureLabel(outcome.failure));
+                    void invitations.reload();
                 } else {
-                    // The row leaving Waiting for Finished is the visible confirmation; a
-                    // notice would sit in the Waiting description long after it stopped
-                    // being news. Only assistive technology needs the outcome said.
-                    announceAccessibilityMessage(t('teams.invitations.stateRevoked'));
+                    settleRevoke(outcome.value);
                 }
-                void invitations.reload();
                 return;
             }
 
@@ -376,7 +372,7 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
         } finally {
             rowActionInFlightRef.current = false;
         }
-    }, [context.scope, context.address, context.requestApproval, invitations.reload, publishNotice, settleReissue]);
+    }, [context.scope, context.address, context.requestApproval, invitations.reload, publishNotice, settleReissue, settleRevoke]);
 
     const language = getPreferredLanguage();
     const firstSegmentKey = invitationSegments[0]?.key ?? null;

@@ -306,6 +306,8 @@ const EmailTestSection = React.memo(function EmailTestSection(props: Readonly<{
     const [invalid, setInvalid] = React.useState(false);
     const sending = state.kind === 'sending';
     const disabled = props.unsaved || !context.mutationsAvailable || sending;
+    const refusedNotice = state.kind === 'refused' ? homeGovernanceFailureNotice(state.failure) : null;
+    const deliveryUnconfirmed = state.kind === 'refused' && state.failure.kind === 'outcome_unknown';
 
     const send = React.useCallback(async () => {
         const parsed = HomeMailDeliveryTestInputV1Schema.safeParse({ to });
@@ -384,14 +386,14 @@ const EmailTestSection = React.memo(function EmailTestSection(props: Readonly<{
                     reason={testFailureLabel(state.result.reason)}
                 />
             ) : null}
-            {state.kind === 'refused' ? (
+            {refusedNotice ? (
                 <SurfaceStateCard
                     testID="home-email-test-refused"
                     size="line"
                     kind="error"
                     accessibilitySemantics="alert"
-                    title={t('homeGovernance.email.testFailed')}
-                    reason={homeGovernanceFailureNotice(state.failure).body}
+                    title={deliveryUnconfirmed ? refusedNotice.title : t('homeGovernance.email.testFailed')}
+                    reason={deliveryUnconfirmed ? t('homeGovernance.email.testSentDetail') : refusedNotice.body}
                 />
             ) : null}
         </ItemGroup>
