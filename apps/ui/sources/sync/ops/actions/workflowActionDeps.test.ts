@@ -329,6 +329,8 @@ afterEach(() => { runtimeFetch.mockReset(); machineRpc.mockReset(); clearDaemonM
 async function installPullRequestProjection(h: Awaited<ReturnType<typeof createHarness>>, sessionId: string, publishProjection = true, version?: string) {
     const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-channels/manifest');
     const { activate } = await import('@happier-dev/plugins-channels/happier-plugin-ui/channels-account-runtime');
+    const { PLUGIN_MANIFEST: githubManifest } = await import('@happier-dev/plugins-scm-github/manifest');
+    const { activate: activateGithub } = await import('@happier-dev/plugins-scm-github/happier-plugin-ui/github-account-runtime');
     if (!h.account.serverIdentityId) throw new Error('Channels fixture requires a Home identity before Account capture');
     const contribution = PLUGIN_MANIFEST.contributes?.accountCollections?.find((entry) => entry.id === 'channel-state');
     if (!contribution) throw new Error('Missing canonical Channels collection');
@@ -381,7 +383,8 @@ async function installPullRequestProjection(h: Awaited<ReturnType<typeof createH
     });
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
     const installed = await installPortableAccountPluginReleaseForTest({ manifest: version ? { ...PLUGIN_MANIFEST, version } : PLUGIN_MANIFEST,
-        activate, accountLifetime: h.account.accountLifetime, publishProjection });
+        activate, accountLifetime: h.account.accountLifetime, publishProjection,
+        additionalPlugins: [{ manifest: githubManifest, activate: activateGithub }] });
     onTestFinished(() => installed.dispose());
     return { projection: installed.projection, disable: installed.disable,
         get changeCursor() { return changeCursor; },
@@ -1661,8 +1664,9 @@ describe('UI Workflow Action front door', () => {
             const projection = await installPullRequestProjection(h, sessionId);
             projection.setSessionProjection({ available: true, directory: '/repo', active: true });
             const triggerActions = await import('@/sync/domains/workflows/workflowTriggerActions');
-            const sessionLists = vi.spyOn(triggerActions, 'listWorkflowTriggerPage');
-            const accountLists = vi.spyOn(triggerActions, 'listWorkflowTriggerSets');
+            const pages = vi.spyOn(triggerActions, 'listWorkflowTriggerPage');
+            const sessionListCount = () => pages.mock.calls.filter(([request]) => 'lifetimeSession' in request).length;
+            const accountListCount = () => pages.mock.calls.filter(([request]) => 'scope' in request && request.scope === 'account_all').length;
             const pullRequestLinks = [{ provider: 'github' as const, repository: 'happier-dev/happier', number: 42,
                 url: 'https://github.com/happier-dev/happier/pull/42' }];
             projection.setLinks(pullRequestLinks);
@@ -1671,8 +1675,8 @@ describe('UI Workflow Action front door', () => {
             hook = await renderHook(() => useSessionTriggers(sessionId));
             await waitForHomeGovernance(() => expect(hook!.getCurrent()).toMatchObject({ status: 'ready',
                 sets: [expect.objectContaining({ triggers: [expect.objectContaining({ kind: 'schedule' })] })], pullRequestLinks }));
-            expect(sessionLists).toHaveBeenCalledTimes(1);
-            expect(accountLists).toHaveBeenCalledTimes(1);
+            expect(sessionListCount()).toBe(1);
+            expect(accountListCount()).toBe(1);
             projection.fail();
             await act(async () => hook!.getCurrent().retry());
             await waitForHomeGovernance(() => expect(hook!.getCurrent()).toMatchObject({ status: 'ready',
@@ -1724,19 +1728,20 @@ describe('UI Workflow Action front door', () => {
                 hint: { pluginDomain: 'dataCollection', pluginId: 'happier.channels', collectionId: 'channel-state',
                     contractDigest: 'a'.repeat(43), revision: projection.changeCursor, full: true },
             }]);
-            const sessionLists = vi.spyOn(triggerActions, 'listWorkflowTriggerPage');
+            const pages = vi.spyOn(triggerActions, 'listWorkflowTriggerPage');
+            const sessionListCount = () => pages.mock.calls.filter(([request]) => 'lifetimeSession' in request).length;
             hook = await renderHook(() => useSessionTriggers(sessionId));
             await waitForHomeGovernance(() => expect(hook!.getCurrent()).toMatchObject({ status: 'ready', sets: [], pullRequestLinks: [] }));
-            expect(sessionLists).toHaveBeenCalledTimes(1);
+            expect(sessionListCount()).toBe(1);
             pullRequestLinks = [pullRequest];
             projection.setLinks(pullRequestLinks);
             await act(async () => changed());
             await waitForHomeGovernance(() => expect(hook!.getCurrent().pullRequestLinks).toEqual([pullRequest]));
-            expect(sessionLists).toHaveBeenCalledTimes(2);
+            expect(sessionListCount()).toBe(2);
             projection.setLinks([]);
             await act(async () => changed());
             await waitForHomeGovernance(() => expect(hook!.getCurrent().pullRequestLinks).toEqual([]));
-            expect(sessionLists).toHaveBeenCalledTimes(3);
+            expect(sessionListCount()).toBe(3);
             expect(h.automationWrites).toEqual([]);
             await hook.unmount();
             hook = null;
@@ -1772,7 +1777,7 @@ describe('UI Workflow Action front door', () => {
             hook = await renderHook(() => useSessionTriggers(sessionId));
             await waitForHomeGovernance(() => expect(hook!.getCurrent()).toMatchObject({ status: 'ready',
                 observationFailure: { code: 'contributed_action_unavailable', phase: 'observe', retryable: false },
-                sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' } }));
+                sets: [], pullRequestLinks: [] }));
             const queryCount = () => runtimeFetch.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/plugins/data/query').length;
             const settledReads = queryCount();
             await act(async () => publishActivePluginCollectionChanges([{
@@ -1950,13 +1955,14 @@ describe('UI Workflow Action front door', () => {
             expect(queryCount() - beforeMount).toBe(2);
             await hook.unmount();
             hook = await renderHook(() => useSessionTriggers(sessionId));
-            await waitForHomeGovernance(() => expect(hook!.getCurrent().status).not.toBe('loading'));
-            expect(hook.getCurrent().status).toBe('ready');
-            expect(queryCount() - beforeMount).toBe(4);
+            await waitForHomeGovernance(() => expect(hook!.getCurrent()).toMatchObject({ status: 'ready', pullRequestLinks: [] }));
+            // The unchanged Account projection stays covered across a remount.
+            expect(queryCount() - beforeMount).toBe(3);
 
             const triggerActions = await import('@/sync/domains/workflows/workflowTriggerActions');
-            const sessionLists = vi.spyOn(triggerActions, 'listWorkflowTriggerPage');
-            const accountLists = vi.spyOn(triggerActions, 'listWorkflowTriggerSets');
+            const pages = vi.spyOn(triggerActions, 'listWorkflowTriggerPage');
+            const sessionListCount = () => pages.mock.calls.filter(([request]) => 'lifetimeSession' in request).length;
+            const accountListCount = () => pages.mock.calls.filter(([request]) => 'scope' in request && request.scope === 'account_all').length;
             const triggerId = hook.getCurrent().sets[0]!.triggers[0]!.id;
             // A real writer changes the stored trigger; Sync publishes its next
             // public revision through the same owner used on cold hydration.
@@ -1967,8 +1973,8 @@ describe('UI Workflow Action front door', () => {
             await act(async () => { await fetchAndApplyAutomations({ credentials: h.account.credentials,
                 applyAutomations: storage.getState().applyAutomations }); });
             await waitForHomeGovernance(() => {
-                expect(sessionLists).toHaveBeenCalledTimes(1);
-                expect(accountLists).toHaveBeenCalledTimes(1);
+                expect(sessionListCount()).toBe(1);
+                expect(accountListCount()).toBe(1);
                 expect(hook!.getCurrent().sets[0]!.triggers[0]!.enabled).toBe(false);
             });
 

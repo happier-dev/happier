@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 } from '@happier-dev/channels-protocol/v1';
+import { SESSION_PULL_REQUEST_LINKS_ACTION_ID_V1 } from '@happier-dev/channels-protocol/v1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { SessionTriggerPullRequestLinksV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { getStorage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
@@ -52,8 +52,8 @@ export function useSessionWorkflowContext(sessionId: string | null, options: Rea
         const controller = new AbortController();
         const retirement = lifetime.onRetire(() => controller.abort());
         const observer = observeCurrentUiContextContributedAction({
-            action: { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 },
-            input: { kind: 'get', sessionId }, defaultSessionId: sessionId, signal: controller.signal,
+            action: { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_LINKS_ACTION_ID_V1 },
+            input: { sessionId }, defaultSessionId: sessionId, signal: controller.signal,
             isCurrent: () => !controller.signal.aborted && lifetime.isCurrent(), invalidate: read.retry,
         }, { execute: createFrontDoorActionExecute(), context: {
             surface: 'ui', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,

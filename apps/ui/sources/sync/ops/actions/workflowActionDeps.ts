@@ -26,9 +26,8 @@ import {
     SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1,
     SessionPullRequestBindingInputV1Schema,
     SessionPullRequestBindingResultV1Schema,
-    SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1,
-    SessionPullRequestWatchReadResultV1Schema,
-    resolveDistinctPullRequestLinksV1,
+    SESSION_PULL_REQUEST_LINKS_ACTION_ID_V1,
+    SessionPullRequestLinksResultV1Schema,
     type SessionPullRequestBindingInputV1,
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -475,13 +474,13 @@ export function createUiWorkflowAction(params: Readonly<{
         pullRequests: {
             listLinks: async (sessionId, caller) => {
                 const result = await current(() => executeDefaultActionInCapturedAccount(account, 'action.invoke', {
-                    action: { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 },
-                    input: { kind: 'get', sessionId },
+                    action: { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_LINKS_ACTION_ID_V1 },
+                    input: { sessionId },
                 }, { ...caller, surface: caller?.surface ?? 'ui', defaultSessionId: sessionId }));
                 if (!result.ok) targetUnavailable();
-                const metadata = SessionPullRequestWatchReadResultV1Schema.safeParse(result.result);
-                if (!metadata.success || metadata.data.kind !== 'ready' || metadata.data.sessionId !== sessionId) targetUnavailable();
-                return resolveDistinctPullRequestLinksV1(metadata.data.bindings.map(binding => binding.link)).slice();
+                const links = SessionPullRequestLinksResultV1Schema.safeParse(result.result);
+                if (!links.success || links.data.sessionId !== sessionId) targetUnavailable();
+                return links.data.pullRequestLinks;
             },
             attach: async ({ sessionId, pullRequest, automationId, triggerId, triggerRevision, triggerKind }, caller) => {
                 const result = await invokePullRequestBinding({ kind: 'attach', sessionId, pullRequest,

@@ -2654,6 +2654,14 @@ need no additional field. This optional Account execution declaration is an
 unreleased 0.3 author-contract extension: matching Protocol, SDK, plugin and UI
 readers reload together; older strict development readers reject it. Omission
 retains the existing relay behavior. No wire epoch or persisted format changes.
+
+Workflow Session Habits and Session Info read retained PR links through the
+Channels Account Action `session-pull-request-links-v1` in 0.3 development
+source. The invoking app reads the exact Session's bindings from the Home
+collection and formats links through the admitted provider declaration. A
+reachable Home can serve these links while every daemon is offline. The
+separate PR Watch management Action still uses the normal receiver placement.
+
 An Account Action can also declare `execution.agentInvokingUi.when` alongside
 `invokingUi: true` in 0.3 development source. The daemon sends a matching
 Session Agent invocation using the existing reverse Action RPC. That transport

@@ -1,7 +1,8 @@
 import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
 import { DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1 } from '@happier-dev/channels-protocol/v1';
 import { readConversationDiscussionReplyDestinationForInvocation } from './discussionReplyDestination.js';
-import { SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 } from '@happier-dev/channels-protocol/v1';
+import { SESSION_PULL_REQUEST_LINKS_ACTION_ID_V1, SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 } from '@happier-dev/channels-protocol/v1';
+import { observeSessionPullRequestLinks, readSessionPullRequestLinksForInvocation } from './sessionPullRequestBindings.js';
 import { manageSessionPullRequestWatchForInvocation, observeSessionPullRequestWatchAction } from './sessionPullRequestWatch.js';
 import { SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1, readSessionPullRequestRelationsForInvocation,
     observeSessionPullRequestRelationsAction } from './sessionPullRequestRelations.js';
@@ -9,6 +10,8 @@ import { SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1, readSessionPullRequestRela
 /** Retained relationships and Watch Actions use admitted Account state on every client. */
 export function activate(api: PluginAccountApi): void {
     api.actions.register(DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1, readConversationDiscussionReplyDestinationForInvocation);
+    api.actions.register(SESSION_PULL_REQUEST_LINKS_ACTION_ID_V1, readSessionPullRequestLinksForInvocation,
+        { observeRead: observeSessionPullRequestLinks });
     api.actions.register(SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1, readSessionPullRequestRelationsForInvocation,
         { observeRead: observeSessionPullRequestRelationsAction });
     api.actions.register(SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1, manageSessionPullRequestWatchForInvocation,

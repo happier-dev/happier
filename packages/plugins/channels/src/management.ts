@@ -11,7 +11,7 @@ import { SessionAcceptedWorkspaceV1Schema, SessionIdSchema } from '@happier-dev/
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
-import { readSessionPullRequestBindingRows } from './sessionPullRequestBindings.js';
+import { readSessionPullRequestBindingRows, readSessionPullRequestLinks } from './sessionPullRequestBindings.js';
 import { persistConversationBindingCreation } from './bindingCreation.js';
 import { selectSessionPullRequestRelations } from './sessionPullRequestRelations.js';
 export { observeSessionPullRequestBindingAction } from './sessionPullRequestRelations.js';
@@ -4171,12 +4171,7 @@ export async function manageSessionPullRequestBindingForInvocation(input: JsonVa
       await disableSessionPullRequestTriggerBindings(request, context);
       return { kind: 'removed' };
     }
-    const bindings = await readSessionPullRequestBindings(request.sessionId, context);
-    if (bindings.length === 0) return { kind: 'links', sessionId: request.sessionId, pullRequestLinks: [] };
-    const { contribution } = await readSessionPullRequestProvider({ targetedContributions: context.services.targetedContributions, signal: context.signal });
-    const projection = resolveSessionPullRequestLinksV1(bindings.map(({ binding }) => binding), contribution.descriptor.pullRequests!)
-      .find(({ sessionId }) => sessionId === request.sessionId);
-    return { kind: 'links', ...(projection ?? { sessionId: request.sessionId, pullRequestLinks: [] }) };
+    return readSessionPullRequestLinks(request.sessionId, context);
   }
   const status = await context.services.actions.execute('session.status.get', {
     sessionId: request.sessionId, includeAcceptedWorkspace: true,

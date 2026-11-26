@@ -1,9 +1,40 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, type PluginAccountCollectionForDefinition } from '@happier-dev/plugin-sdk/collections';
-import type { ConversationBindingV1 } from '@happier-dev/channels-protocol/v1';
+import type { PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
+import { SessionPullRequestLinksInputV1Schema, resolveSessionPullRequestLinksV1,
+  type ConversationBindingV1 } from '@happier-dev/channels-protocol/v1';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_INDEX_ID, CHANNEL_STATE_RECORD_KIND } from './collections.js';
 import { isChannelStateJsonRecord, readConversationBindingUpdateRow,
   type ChannelStateRow } from './accountLocalBindingPolicy.js';
+import { readSessionPullRequestProvider } from './providerContributions.js';
+import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+
+type SessionPullRequestLinksContext = PluginAccountStorageConsumerContext & Pick<PluginInvocationContext, 'signal'>
+  & { services: Pick<PluginInvocationContext['services'], 'targetedContributions'> };
+
+export async function readSessionPullRequestLinksForInvocation(input: JsonValue, context: SessionPullRequestLinksContext) {
+  const { sessionId } = SessionPullRequestLinksInputV1Schema.parse(input);
+  return readSessionPullRequestLinks(sessionId, context);
+}
+
+export function observeSessionPullRequestLinks(input: JsonValue, invalidate: () => void, context: SessionPullRequestLinksContext) {
+  const { sessionId } = SessionPullRequestLinksInputV1Schema.parse(input);
+  return requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION)
+    .watch(sessionPullRequestBindingSelection({ sessionId }), invalidate);
+}
+
+export async function readSessionPullRequestLinks(sessionId: string, context: SessionPullRequestLinksContext) {
+  const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  const rows = await readSessionPullRequestBindingRows({ collection, sessionId, signal: context.signal });
+  if (rows.length === 0) return { kind: 'links' as const, sessionId, pullRequestLinks: [] };
+  const { contribution } = await readSessionPullRequestProvider({
+    targetedContributions: context.services.targetedContributions,
+    signal: context.signal,
+  });
+  const links = resolveSessionPullRequestLinksV1(rows.map(({ binding }) => binding), contribution.descriptor.pullRequests!)
+    .find(group => group.sessionId === sessionId)?.pullRequestLinks ?? [];
+  return { kind: 'links' as const, sessionId, pullRequestLinks: links };
+}
 
 /** One selector serves the relation read and its content-free membership observation. */
 export function sessionPullRequestBindingSelection(input: Readonly<{ sessionId?: string; sessionIds?: ReadonlySet<string>; connectionId?: string }>) {

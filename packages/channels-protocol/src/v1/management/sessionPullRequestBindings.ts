@@ -24,6 +24,7 @@ export {
 };
 
 export const SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 = 'session-pull-request-binding-v1';
+export const SESSION_PULL_REQUEST_LINKS_ACTION_ID_V1 = 'session-pull-request-links-v1';
 export const SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1 = 'session-pull-request-relations-v1';
 export const SESSION_PULL_REQUEST_NATIVE_RELATIONS_ACTION_ID_V1 = 'session-pull-request-relations-native-v1';
 export const ConversationPullRequestV1JsonSchema = /* @__PURE__ */ (() => ConversationPullRequestV1Schema.jsonSchema)();
@@ -174,12 +175,17 @@ export function resolveSessionPullRequestLinksV1(bindings: readonly Conversation
   return [...linksBySession].map(([sessionId, pullRequestLinks]) => ({ sessionId, pullRequestLinks: resolveDistinctPullRequestLinksV1(pullRequestLinks) }));
 }
 
+export const SessionPullRequestLinksInputV1Schema = defineProtocolObject({
+  sessionId: SessionIdSchema,
+}, { policy: 'closed' });
+export const SessionPullRequestLinksResultV1Schema = defineProtocolObject({
+  kind: defineProtocolLiteral('links'),
+  ...sessionPullRequestLinksFieldsV1,
+}, { policy: 'closed' });
+
 export const SessionPullRequestBindingResultV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('attached'), bindingId: ConversationBindingIdV1ProtocolSchema }, { policy: 'closed' }),
-  defineProtocolObject({
-    kind: defineProtocolLiteral('links'),
-    ...sessionPullRequestLinksFieldsV1,
-  }, { policy: 'closed' }),
+  SessionPullRequestLinksResultV1Schema,
   defineProtocolObject({ kind: defineProtocolLiteral('removed') }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('relations'), links: defineProtocolArray(defineProtocolObject({
     sessionId: SessionIdSchema, bindingId: ConversationBindingIdV1ProtocolSchema,
