@@ -12,7 +12,14 @@ import { createCliPayloadFixture } from '../testkit/createCliPayloadFixture.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { installRemoteFirstPartyComponentPayload } from '../kinds/remoteFirstPartyPayloadInstaller.js';
 import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
+import { transferOpenSshFile } from '../../ssh/index.js';
 import { deliverManagedNativeArchive } from '../../machines/managed/nativeFileDelivery.js';
+import { createOpenSshRemoteCliTransport } from './openSshRemoteCliTransport.js';
+
+vi.mock('../../ssh/index.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../../ssh/index.js')>(),
+  transferOpenSshFile: vi.fn(),
+}));
 
 const exec = promisify(execFile);
 describe('managed guest CLI source supplier', () => {
@@ -28,7 +35,8 @@ describe('managed guest CLI source supplier', () => {
   it.each([{ matching: false, transport: 'native', noDownloader: true }, { matching: true, transport: 'native', noDownloader: true },
     { matching: true, transport: 'native', noDownloader: false },
     { matching: false, transport: 'ssh', noDownloader: false }, { matching: true, transport: 'ssh', noDownloader: false },
-    { matching: true, transport: 'ssh', noDownloader: false, readHome: true }])(
+    { matching: true, transport: 'ssh', noDownloader: false, readHome: true },
+    { matching: true, transport: 'slow-open-ssh', noDownloader: false }])(
     'uses the Home archive pin before extraction or execution ($transport matching=$matching noDownloader=$noDownloader readHome=$readHome)', async ({ matching, transport, noDownloader, readHome }) => {
     if (process.platform === 'win32') return; // Guest download/extraction is a POSIX remote boundary.
     const root = await mkdtemp(join(tmpdir(), 'happier-home-guest-export-'));
@@ -99,7 +107,22 @@ describe('managed guest CLI source supplier', () => {
           });
         },
         runRemoteText,
-      }) : installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl, channel: 'stable',
+      }) : transport === 'slow-open-ssh' ? (() => {
+        const operation = new AbortController();
+        vi.mocked(transferOpenSshFile).mockImplementationOnce(async ({ localPath, remotePath }) => {
+          await cp(localPath, join(remotePath, basename(localPath)), { recursive: true });
+        });
+        return createOpenSshRemoteCliTransport({
+          ssh: { target: 'fixture@example.test', auth: 'agent' },
+          auth: { mode: 'agent' }, knownHostsMode: 'system', channel: 'stable', signal: operation.signal,
+          exec: request => {
+            if (request.command.includes('tar -xf') && request.timeoutMs !== null) {
+              throw new Error('The OpenSSH default cutoff expired while the guest was still installing.');
+            }
+            return runRemoteText(request.command);
+          },
+        }).install({ requireHomePayload: true, homeUrl, guestCli });
+      })() : installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl, channel: 'stable',
         ...(readHome ? { requireHomePayload: true } : { guestCli }),
         onPhase: value => { phase = value; } }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),

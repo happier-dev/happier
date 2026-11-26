@@ -61,7 +61,10 @@ export function createOpenSshRemoteCliTransport(input: Readonly<{
         return { os: normalizeRemoteReleaseOs(facts?.platform), arch: normalizeRemoteReleaseArch(facts?.arch) };
       },
       runRemoteText: ({ remoteCommand, signal }) => exec({
-        command: placement.daemonUsername ? buildDedicatedDaemonInvocationCommand(remoteCommand) : remoteCommand, signal,
+        command: placement.daemonUsername ? buildDedicatedDaemonInvocationCommand(remoteCommand) : remoteCommand,
+        signal,
+        // Archive promotion can outlast the generic SSH command timeout. The install task owns cancellation.
+        timeoutMs: signal ? null : undefined,
       }),
       copyLocalDirectoryToRemote: async ({ localPath, remotePath, signal }) => {
         const staging = placement.daemonUsername ? await exec({ command: 'mktemp -d /tmp/happier-bootstrap-upload.XXXXXXXX', signal }) : undefined;
