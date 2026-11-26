@@ -186,7 +186,8 @@ export type PluginActionExecutionController<Result, Input = JsonValue> = Readonl
    * one typed outcome instead of writing a second try/catch beside this state.
    * A call made while one is already in flight is ignored and resolves with the
    * pending state: this hook owns the action's identity, so a second dispatch
-   * would be the same mutation running twice.
+   * would be the same mutation running twice. A replacement waits for an
+   * explicitly cancelled predecessor to settle before dispatching.
    */
   execute: (
     input?: Input,
@@ -239,7 +240,11 @@ export function useExecutePluginAction(
   // `pending` yet when a second press arrives in the same tick, so a state-only
   // guard dispatches the action twice (the same defect the shared pressable
   // owner fixes for presses).
-  const pendingRef = useRef<object | null>(null);
+  const pendingRef = useRef<Readonly<{
+    token: object;
+    signal: AbortSignal | undefined;
+    settled: Promise<void>;
+  }> | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -255,8 +260,18 @@ export function useExecutePluginAction(
     overrideInput?: JsonValue,
     options?: PluginUiActionExecutionOptions,
   ): Promise<PluginActionExecution<JsonValue>> => {
-    if (pendingRef.current === bindingToken) return { status: 'pending' };
-    pendingRef.current = bindingToken;
+    while (pendingRef.current?.token === bindingToken) {
+      const previous = pendingRef.current;
+      if (!previous.signal?.aborted) return { status: 'pending' };
+      // Cancellation may settle asynchronously at the host boundary. The
+      // successor consumes that settlement instead of mistaking it for a
+      // duplicate live operation. Re-check the slot after another waiter wakes.
+      await previous.settled;
+    }
+    let finish!: () => void;
+    const pending = { token: bindingToken, signal: options?.signal,
+      settled: new Promise<void>((resolve) => { finish = resolve; }) };
+    pendingRef.current = pending;
     setExecutionRecord({ token: bindingToken, execution: { status: 'pending' } });
 
     let settled: PluginActionExecution<JsonValue>;
@@ -282,7 +297,8 @@ export function useExecutePluginAction(
       settled = projectPluginActionRejectionV1<JsonValue>(error, translateRef.current);
     }
 
-    if (pendingRef.current === bindingToken) pendingRef.current = null;
+    if (pendingRef.current === pending) pendingRef.current = null;
+    finish();
     if (mountedRef.current) {
       setExecutionRecord((current) => current.token === bindingToken
         ? { token: bindingToken, execution: settled }
@@ -292,7 +308,7 @@ export function useExecutePluginAction(
   }, [action, bindingToken, hostApi, input]);
 
   const reset = useCallback(() => {
-    if (pendingRef.current !== bindingToken) {
+    if (pendingRef.current?.token !== bindingToken) {
       setExecutionRecord({ token: bindingToken, execution: { status: 'idle' } });
     }
   }, [bindingToken]);

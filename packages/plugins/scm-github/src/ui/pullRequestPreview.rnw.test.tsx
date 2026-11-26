@@ -44,6 +44,7 @@ async function mountOverview(
   directTabs = false,
   settlement?: PluginUiActionControlExecution,
   admittedReview?: Readonly<{ reviewId: string }>,
+  beforePreviewRead?: (signal?: AbortSignal) => Promise<void>,
 ) {
   const transportOptions = {
     pullRequestState: 'open',
@@ -165,6 +166,7 @@ async function mountOverview(
           if (action.localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readPreview) {
             previewReads.push(actionInput);
             previewRequestIds.push(requestId);
+            await beforePreviewRead?.(signal);
           }
           return plugin.invokeAction(action.localId, actionInput, {
             surface: 'ui',
@@ -353,6 +355,31 @@ describe('the PR Overview Preview step', () => {
     await vi.waitFor(() => detail.getByText(operation === 'deploy' ? `Deployed ${SHA}` : 'Removed'));
     expect(previewReads).toHaveLength(2);
     await changed();
+    expect(previewReads).toHaveLength(2);
+  });
+
+  it('settles the replacement Preview read after a deployment push cancels an in-flight read', async () => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let started!: () => void;
+    const firstRead = new Promise<void>(resolve => { started = resolve; });
+    let firstSignal: AbortSignal | undefined;
+    let reads = 0;
+    const { detail, previewReads, changed } = await mountOverview(
+      { operation: 'deploy', receiptState: 'running', domainState: 'active' },
+      'srv_preview', false, undefined, undefined,
+      async signal => {
+        if (++reads !== 1) return;
+        firstSignal = signal;
+        started();
+        await held;
+      },
+    );
+    await firstRead;
+    await changed({ receiptState: undefined });
+    expect(firstSignal?.aborted).toBe(true);
+    await act(async () => { release(); });
+    await vi.waitFor(() => detail.getByText(`Deployed ${SHA}`));
     expect(previewReads).toHaveLength(2);
   });
 

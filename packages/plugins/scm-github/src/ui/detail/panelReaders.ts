@@ -772,7 +772,6 @@ export function useGithubSettledRead<T>(
   const inFlight = useRef(false);
   const lastKnownGood = useRef<T | null>(null);
   const previousReader = useRef(read);
-  const previousRead = useRef<Promise<void> | null>(null);
   const [attempt, setAttempt] = useState(0);
   const settled = useRef<Readonly<{ read: GithubSettledReader<T>; attempt: number }> | null>(null);
 
@@ -807,12 +806,7 @@ export function useGithubSettledRead<T>(
     setPending(true);
     if (lastKnownGood.current === null) setState({ kind: 'loading' });
     setFailure(null);
-    const prior = previousRead.current;
-    previousRead.current = (async () => {
-      // A changed file cancels the prior read. Let that same Action controller
-      // settle cancellation before reusing its single-in-flight guard.
-      await prior;
-      if (controller.signal.aborted) return;
+    void (async () => {
       const outcome = await read(controller.signal);
       if (controller.signal.aborted) return;
       settled.current = { read, attempt };

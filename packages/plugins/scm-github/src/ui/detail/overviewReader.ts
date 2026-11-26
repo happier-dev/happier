@@ -7,7 +7,7 @@ import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js
 import { GithubOverviewResultV1Schema, type GithubOverviewResultV1 } from '../../triage/detail/contracts.js';
 import { settleGithubOverviewReadV1, type GithubOverviewReadStateV1 } from './overviewState.js';
 import { useGithubOverviewRetention } from './overviewRetention.js';
-import { dispatchFailure, ROUTE_UNAVAILABLE, UNREADABLE_RESULT, useGithubRoutingToken, type ExecuteResult } from './readBoundary.js';
+import { dispatchFailure, ROUTE_UNAVAILABLE, UNREADABLE_RESULT, useGithubRoutingToken } from './readBoundary.js';
 
 export type GithubOverviewValueV1 = Extract<GithubOverviewResultV1, { kind: 'overview' }>;
 
@@ -86,7 +86,6 @@ export function useGithubOverview(
   }
   const readNow = useRef(visibleState);
   readNow.current = visibleState;
-  const previousRead = useRef<Promise<ExecuteResult | null>>(Promise.resolve(null));
   const readLifetime = useRef<Readonly<{ scope: typeof scope; activeSignal: AbortSignal; signal: AbortSignal }> | null>(null);
   const readFor = useRef<{ scope: typeof scope; signal: AbortSignal; revision: string; settled: boolean; propertyChoices: boolean } | null>(null);
 
@@ -144,22 +143,12 @@ export function useGithubOverview(
       return false;
     }
     setState((current) => Object.freeze({ ...current, refreshing: true }));
-    const prior = previousRead.current;
-    const pending = (async () => {
-      // Re-observation can supply a new head while this Action is in flight.
-      // The scope's cleanup aborts that obsolete read at the Action boundary.
-      // Let cancellation settle the shared Action guard before reusing it.
-      await prior;
-      if (lifetime.signal.aborted || scopeNow.current !== scope) return null;
-      return execute(
-        { v: 1, instance, localRef, routingToken, ...(includeBranchRules ? { includeBranchRules: true } : {}),
-          ...(includePropertyChoices ? { includePropertyChoices: true } : {}) },
-        { signal: lifetime.signal },
-      );
-    })();
-    previousRead.current = pending;
-    const execution: ExecuteResult | null = await pending;
-    if (execution === null || lifetime.signal.aborted || scopeNow.current !== scope) return false;
+    const execution = await execute(
+      { v: 1, instance, localRef, routingToken, ...(includeBranchRules ? { includeBranchRules: true } : {}),
+        ...(includePropertyChoices ? { includePropertyChoices: true } : {}) },
+      { signal: lifetime.signal },
+    );
+    if (lifetime.signal.aborted || scopeNow.current !== scope) return false;
     if (execution.status !== 'success') {
       settle(Object.freeze({
         ...readNow.current,
