@@ -134,7 +134,7 @@ import {
   readHttpStatus,
 } from '@/api/client/httpStatusError';
 import { isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import {
   ManagedInstallationServerOriginV1Schema,
   ManagedInstallationCapabilityRequestV1Schema,

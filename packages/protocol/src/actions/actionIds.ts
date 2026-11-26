@@ -142,10 +142,6 @@ export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const
 export const SESSION_INPUT_HANDOFF_ACTION_ID_V1 = 'session.input.handoff' as const;
 export const SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1 = 'session.access.context.set' as const;
 export const SESSION_PUBLIC_LINK_CREATE_ACTION_ID_V1 = 'session.public_link.create' as const;
-/** Prepare's existing-Session handoff is the canonical message Action. */
-export function isDeploymentPrepareSessionMessageEffectV1(rootActionId: string, effectActionId: string): boolean {
-  return rootActionId === DEPLOYMENT_PREPARE_ACTION_ID_V1 && effectActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
-}
 export const SESSION_COMPACT_ACTION_ID_V1 = 'session.compact' as const;
 export const SESSION_TURN_CANCEL_ACTION_ID_V1 = 'session.turn.cancel' as const;
 import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1, SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1 } from './sessionWorkspaceReturnActionIdsV1.js';
@@ -194,7 +190,7 @@ export {
   BROWSER_DIAGNOSTICS_INTERACTION_ACTION_IDS, isBrowserDiagnosticsInteractionActionIdV1,
 } from './actionIdsBrowser.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTION_ACTION_IDS_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_SUGGESTION_ACTION_IDS_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { isProjectWorkspaceSyncOpenActionV1 } from './projectActionIdsV1.js';

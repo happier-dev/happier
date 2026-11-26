@@ -24,7 +24,7 @@ export type { DeploymentChildExecutionProofV1 } from '../deployments/deploymentC
 import type { ApprovalRequesterConfirmationV1 } from '../approvals/approvalRequestV1.js';
 import { ManagedCredentialInstallInputV1Schema } from '../machines/managed/credentialDeliveryV1.js';
 import { projectWorkspaceSyncAdmissionInputV1, deriveWorkspaceSyncRelationshipId } from '../workspaces/workspaceSyncAdmissionV1.js';
-import { readDeploymentReferenceServiceListEnvironmentIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { readDeploymentReferenceServiceListEnvironmentIdV1 } from './specs/deploymentPreparationScope.js';
 
 export type ExternalActionMachineRpcEventV1 = typeof SOCKET_RPC_EVENTS.CALL
   | typeof SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1

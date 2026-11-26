@@ -102,9 +102,10 @@ import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadAct
     isDeploymentDomainMetadataReadActionIdV1, isDeploymentReceiptReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, DEPLOYMENT_CANCEL_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1,
+    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1,
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
-    DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readDeploymentReferenceServiceListEnvironmentIdV1, readDeploymentReviewedChildV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import { DeploymentCancelTransitionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { DeploymentEnvironmentUpdateStorageInputV1Schema, DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
@@ -117,7 +118,7 @@ import { isDeploymentDomainNativeAdmissionV1, isDeploymentBackupConfigureNativeA
 import { getActionSpec, resolveActionExecutionPlacementForInput, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, isScmDiffSummaryRunAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionIdSchema, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
-    isMachineDeploymentEnvironmentAccessActionIdV1, isDeploymentPrepareSessionMessageEffectV1,
+    isMachineDeploymentEnvironmentAccessActionIdV1, SESSION_MESSAGE_SEND_ACTION_ID_V1,
     SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1, getManagedBoundSetupReportActionIdsV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
 import { isMachineGrantSetAccessReadV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
@@ -1602,8 +1603,9 @@ function readGrantedSessionAgentReadinessChild(binding: ExternalActionExecutionA
 /** Prepare resolves its reviewed handoff to an accessible Session; Session owners retain access decisions. */
 function isAdmittedDeploymentPrepareSessionMessage(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1): boolean {
-    return isDeploymentPrepareSessionMessageEffectV1(binding.actionId, effectActionId)
-        && binding.deploymentPreparationAdmission?.operation === 'prepare'
+    // Prepare's declared Session child names the one message Action it may send.
+    return effectActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && readDeploymentReviewedChildV1(binding,
+        { actionId: effectActionId, role: DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 }, effectActionId) !== undefined
         && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
         && target.kind === 'session' && 'authentication' in binding;
 }
@@ -1611,13 +1613,11 @@ function isAdmittedDeploymentPrepareSessionMessage(binding: ExternalActionExecut
 function readDeploymentPrepareSessionHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof):
     Readonly<{ machineId: string } | { sessionId: string }> | null {
-    if (proof.reviewedChild?.actionId !== effectActionId
-        || proof.reviewedChild.role !== DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1
-        || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return null;
+    if (readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId, proof)?.row.role
+        !== DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1) return null;
     // The ordinary birth owner binds the reviewed recipe and creates the Session.
     // Its preceding codec read needs only the root's selected Machine.
-    if (binding.actionId === 'deployments.prepare' && binding.deploymentPreparationAdmission?.operation === 'prepare'
-        && 'authentication' in binding && binding.target.kind === 'machine'
+    if ('authentication' in binding && binding.target.kind === 'machine'
         && binding.target.machineId === binding.machineId && target.kind === 'machine' && target.machineId === binding.machineId
         && effectActionId === SESSION_SPAWN_NEW_ACTION_ID_V1
         && proof.path === `/v1/machines/${encodeURIComponent(binding.machineId)}`) return { machineId: binding.machineId };
@@ -1781,14 +1781,13 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const setupPreparationRead = isSetupDeploymentPreparationReadEffect(binding, effectActionId);
     const candidatePublication = isDeploymentCandidatePublicationEffect(binding, effectActionId);
     const templateDeployEffect = binding.actionId === 'deployments.templates.instantiate' && candidatePublication
-        && (proof.reviewedChild === undefined || proof.reviewedChild.role === 'template.deploy');
+        && (proof.reviewedChild === undefined
+            || readDeploymentReviewedChildV1(binding, proof.reviewedChild, DEPLOYMENT_DEPLOY_ACTION_ID_V1) !== undefined);
     const reviewedDomainEffect = isDeploymentDomainAddActionIdV1(effectActionId)
-        && proof.reviewedChild?.actionId === effectActionId
-        && isDeploymentDomainNativeAdmissionV1(proof.reviewedChild.deploymentNativeAdmission)
+        && readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId) !== undefined
+        && isDeploymentDomainNativeAdmissionV1(proof.reviewedChild?.deploymentNativeAdmission)
         && proof.reviewedChild.deploymentNativeAdmission.actionId === effectActionId
-        && proof.reviewedChild.deploymentNativeAdmission.authoredMetadataDigest !== undefined
-        && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId)
-            === effectActionId;
+        && proof.reviewedChild.deploymentNativeAdmission.authoredMetadataDigest !== undefined;
     const createPreparationEffect = isDeploymentCreateHttpEffect(binding, effectActionId);
     const movePreparationEffect = isDeploymentMoveToRepositoryHttpEffect(binding, effectActionId, proof.reviewedChild);
     const targetRetentionPurpose = await readDeploymentTargetRetentionHttpPurpose(db, binding, effectActionId, proof);
@@ -1852,13 +1851,11 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
             && readReviewedMachineSetupHttpPurpose({ binding, effectActionId, target }, proof) !== null,
         projectSetupSet: binding.actionId === PROJECT_SETUP_SET_ACTION_ID_V1 && isProjectSetupSetChildActionIdV1(effectActionId),
     };
-    const configureBindings = binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
-        && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-        && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === 'backup.bindings'
+    // Configure and telemetry roots each declare one bindings child.
+    const setupBindingsChild = readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId) !== undefined;
+    const configureBindings = setupBindingsChild && binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1
         && isDeploymentBackupConfigureNativeAdmissionV1(binding.deploymentNativeAdmission);
-    const telemetryBindings = binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
-        && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-        && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1
+    const telemetryBindings = setupBindingsChild && binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1
         && isDeploymentTelemetryNativeAdmissionV1(binding.deploymentNativeAdmission);
     const managedExecWake = readManagedExecWakePurpose(binding, effectActionId, proof);
     const databaseReadAccessBindings = binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
@@ -1984,9 +1981,8 @@ async function verifyCommon(
             refuseExternalActionExecutionRequest('deployment_child_http', proof, undefined, undefined, reason);
         // Review and activation may forward the exact saved-reference read.
         if (proof.reviewedChild && ((routing?.kind !== 'member' && routing?.kind !== 'review')
-            || proof.reviewedChild.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1
-            || effectActionId.data !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
-                && !readDeploymentReferenceServiceListEnvironmentIdV1(packet.externalActionExecution.authorization.binding.actionId, effectActionId.data, proof.reviewedChild)))
+            || readDeploymentReviewedChildV1(packet.externalActionExecution.authorization.binding, proof.reviewedChild,
+                effectActionId.data, proof)?.row.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1))
             return refuseChildHttp('reviewed_child_read');
         if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseChildHttp('authorization_token');
         const referenceReview = routing?.kind === 'review' && proof.reviewedChild !== undefined;

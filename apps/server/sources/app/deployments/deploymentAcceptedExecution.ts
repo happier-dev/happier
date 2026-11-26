@@ -7,8 +7,9 @@ import type { Prisma } from '@prisma/client';
 import { deploymentFailure } from './deploymentAdmission';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { readTemplateDeploymentEnvironmentIdInTx } from './deploymentPreparationAuthorization';
+import { readDeploymentReviewedChildV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import { isDeploymentDomainAddActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, DEPLOYMENT_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1, DEPLOYMENT_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentInProgressStates } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentDatabaseReadAccessBindingChildV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 
@@ -47,10 +48,8 @@ export function readDeploymentExecutionEffectFromRequest(request: FastifyRequest
         || isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission) && isDeploymentDomainAddActionIdV1(actionId)
         || binding.actionId === 'deployments.environments.create' && reviewed?.actionId === actionId
             && (actionId === 'deployments.bindings.set' || actionId === 'deployments.domains.add' || actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1)
-        || binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 && actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-            && reviewed?.actionId === actionId && reviewed.role === 'backup.bindings'
-        || binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 && actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-            && reviewed?.actionId === actionId && reviewed.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1
+        || (binding.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 || binding.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1)
+            && actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && readDeploymentReviewedChildV1(binding, reviewed, actionId) !== undefined
         || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
             && readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, reviewed) !== undefined
         || reviewed !== undefined && isDeploymentDomainAddActionIdV1(reviewed.actionId) && actionId === reviewed.actionId

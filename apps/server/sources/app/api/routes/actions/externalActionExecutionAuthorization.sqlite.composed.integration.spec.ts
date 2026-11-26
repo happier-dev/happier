@@ -5653,7 +5653,7 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
-    it.each(['settings.list', 'settings.get', 'settings.set', 'settings.invoke'] as const)(
+    it.each(['settings.list', 'settings.get', 'settings.set'] as const)(
         'admits %s through the exact signed Account ingress and retains its credential authority', async actionId => {
         const fixture = await createFixture({ qualifiedPat: false });
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -5703,6 +5703,23 @@ describe("external Action execution authorization", () => {
             await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
             expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).toBeNull();
             expect(await verifyCurrentExternalActionPrincipal(terminalAuthorization.binding)).toBeNull();
+        } finally { await app.close(); }
+    });
+
+    // settings.invoke runs only in the answering client, so Home has no Account ingress for it (retired 10-12).
+    it('refuses a direct Account request for client-only settings.invoke and dispatches nothing', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const { app, dispatchedPrincipals } = await createApp(fixture.team.id);
+        const envelope = { ...fixture.envelope, input: { anchor: 'delegation.workDepthLimit' } };
+        try {
+            const response = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('settings.invoke'),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
+            expect(response.statusCode, response.body).toBe(403);
+            expect(response.json()).toMatchObject({ authorizationRefusal: 'credential_action_admission' });
+            await app.inject({ method: 'POST', url: '/v1/actions/settings.invoke',
+                headers: { authorization: `Bearer ${token}` }, payload: envelope });
+            expect(dispatchedPrincipals).toEqual([]);
         } finally { await app.close(); }
     });
 

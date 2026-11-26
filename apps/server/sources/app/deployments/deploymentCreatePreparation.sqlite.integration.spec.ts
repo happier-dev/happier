@@ -991,7 +991,8 @@ describe('reviewed create preparation authority', () => {
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: true };
         const reviewedChild = { actionId: childAction, role: `target-retention:${f.machine.id}`,
             inputDigest: computeActionInputApprovalDigestV1(childAction, body) };
-        const proof = (credential = authorization, requestBody: unknown = body, child: typeof reviewedChild | null = reviewedChild,
+        const proof = (credential = authorization, requestBody: unknown = body,
+            child: Readonly<{ actionId: string; role: string; inputDigest: string }> | null = reviewedChild,
             signingKey = f.key.secretKey, effectActionId: string = childAction) => {
             const path = effectActionId === 'machines.managed.list' ? managedMachineActionEndpointPathV1(effectActionId)
                 : '/v1/machines/managed/controller/admit-control';
@@ -1061,6 +1062,14 @@ describe('reviewed create preparation authority', () => {
         expect(await verifyExternalActionDomainExecutionRequest(proof(authorization, body, null))).toBeNull();
         expect(await verifyExternalActionDomainExecutionRequest(proof(authorization, body,
             { ...reviewedChild, role: 'unrelated-child' }))).toBeNull();
+        // The declared retention family needs a named Machine, its own effect and an until-delete operand.
+        expect(await verifyExternalActionDomainExecutionRequest(proof(authorization, body,
+            { ...reviewedChild, role: 'target-retention:' }))).toBeNull();
+        expect(await verifyExternalActionDomainExecutionRequest(proof(authorization, body,
+            { ...reviewedChild, actionId: 'machines.managed.power.set' }))).toBeNull();
+        const unusedRetention = { ...body, retention: { kind: 'unused' as const, afterMs: 1_000, effect: 'stop' as const } };
+        expect(await verifyExternalActionDomainExecutionRequest(proof(authorization, unusedRetention,
+            { ...reviewedChild, inputDigest: computeActionInputApprovalDigestV1(childAction, unusedRetention) }))).toBeNull();
         const otherRoot = await mint('deployments.environments.update', update);
         expect(await verifyExternalActionDomainExecutionRequest(proof(otherRoot))).toBeNull();
         const otherPerson = await fixture();

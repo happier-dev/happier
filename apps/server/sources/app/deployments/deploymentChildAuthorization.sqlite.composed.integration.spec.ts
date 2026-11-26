@@ -106,6 +106,9 @@ import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1, signExternalActionMachineRpcRequestV1,
     signExternalActionMachineRequestV1, verifyExternalActionMachineRpcRequestV1, encodeExternalActionResolvedTargetV1 } from '@happier-dev/protocol/actions';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1, DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
+import { PLATFORM_FAILURE_SETUP_ROLE } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { encodeDeploymentChildExecutionV1, decodeDeploymentChildExecutionV1, verifyExternalActionMachineRequestV1, createDeploymentChildExecutionProofV1, projectDeploymentChildExecutionProofV1,
@@ -3717,6 +3720,108 @@ describe('deployment children retain their controller Action authority', () => {
                 } });
                 expect(response.statusCode, `${effectActionId}: ${response.body}`).toBe(statusCode);
                 if (statusCode === 401) expect(response.json()).toMatchObject({ error: 'invalid_token' });
+            }
+        }, { authentication: 'real' });
+    });
+
+    // SEC-CHILD-TABLE-1126 reviewer negative: the setup-bindings role must follow the child's native
+    // admission kind (backup -> backup.bindings, telemetry -> telemetry.bindings), never the root's row.
+    it('SEC-CHILD keeps the setup bindings role tied to the child native admission kind under a Create root', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { runtimeTargetLinkId: f.link.id } });
+        const parent = await db.deploymentEnvironment.create({ data: { ...f.environment, id: crypto.randomUUID(),
+            runtimeTargetLinkId: null, ...await f.content('deployment-environment.v1') } });
+        const preview = { templateEnvironmentId: parent.id, expectedTemplateRevision: parent.revision,
+            pullRequestId: crypto.randomUUID(), runtimeTargetLinkId: f.link.id };
+        const binding = { ...f.authorization.binding, actionId: 'deployments.environments.create', environmentId: parent.id,
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1('deployments.environments.create', {
+                mode: 'apply', projectSourceId: f.environment.projectSourceId, requestKey: crypto.randomUUID(), preview,
+                protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
+            }) };
+        const bindingAction = 'deployments.bindings.set';
+        const telemetry = projectDeploymentNativeAdmissionV1('deployments.environments.telemetry.set', { serverId,
+            environmentId: f.environment.id, expectedRevision: f.environmentRevision });
+        const configure = projectDeploymentNativeAdmissionV1('deployments.backups.configure', { serverId,
+            environmentId: f.environment.id, expectedRevision: f.environmentRevision, intent: 'markNotNeeded' });
+        const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id }, select: { contentArtifactId: true } });
+        const results: Record<string, boolean | null> = {};
+        for (const [nativeName, native] of [['telemetry', telemetry], ['configure', configure]] as const) {
+            for (const role of ['backup.bindings', 'telemetry.bindings', 'preview.bindings']) {
+                const reviewedChild = { actionId: bindingAction, role, deploymentNativeAdmission: native,
+                    inputDigest: computeActionInputApprovalDigestV1(bindingAction, { serverId, environmentId: f.environment.id,
+                        expectedRevision: f.environmentRevision, set: [], remove: [] }) };
+                const preparation = { kind: 'clientBindings', serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision };
+                results[`${nativeName}|${role}|runtimeLinkRead`] = await readDeploymentEnvironmentSetupHttpPurpose(db, binding, bindingAction,
+                    { method: 'GET', path: `/v1/artifacts/${encodeURIComponent(link.contentArtifactId)}`,
+                        routeInput: { id: link.contentArtifactId }, reviewedChild }, f.environment.id);
+                results[`${nativeName}|${role}|secretLaunch`] = await readDeploymentEnvironmentSetupHttpPurpose(db, binding, bindingAction,
+                    { method: 'POST', path: `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`,
+                        body: preparation, routeInput: preparation, reviewedChild }, f.environment.id);
+            }
+        }
+        // The Create purpose calls this owner only for a `backup.bindings` child (deploymentPreparationAuthorization.ts).
+        // A backup.bindings child that carries a telemetry admission must not take the telemetry writer path.
+        expect(results['telemetry|backup.bindings|runtimeLinkRead'], `SECENV ${JSON.stringify(results)}`).toBe(false);
+        expect(results['telemetry|backup.bindings|secretLaunch'], `SECENV ${JSON.stringify(results)}`).toBe(false);
+    });
+
+    it('admits the declared teardown preview child only for reads in its teardown root scope', async () => {
+        const f = await fixture();
+        const foreign = await fixture();
+        const actionId = 'deployments.teardown';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const input = getActionSpec(actionId).inputSchema.parse({ serverId, environmentId: f.environment.id,
+            targetLinkId: f.link.id, expectedRevision: f.environmentRevision,
+            expectedTargetLinkRevision: f.link.revision, requestKey: crypto.randomUUID(), reason: 'manual' });
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+        const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.controller.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input, deploymentNativeAdmission });
+        const preview = formatQualifiedPluginActionId({ pluginId: 'happier.deploy-railway', localId: 'teardown-preview' });
+        const childInput = { v: 1, serverId, environmentId: f.environment.id, targetLinkId: f.link.id };
+        const environmentPath = (environmentId: string) => bindHomeDomainHttpRequestV1({
+            transport: getActionSpec('deployments.environments.get').serverTransport!,
+            inputSchema: getActionSpec('deployments.environments.get').inputSchema,
+            input: getActionSpec('deployments.environments.get').inputSchema.parse({ serverId, environmentId }) }).path;
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); }, async app => {
+            const request = (role: string, options: Readonly<{ method?: 'GET' | 'PATCH'; path?: string; payload?: Record<string, unknown>;
+                childActionId?: string }> = {}) => {
+                const method = options.method ?? 'GET';
+                const path = options.path ?? environmentPath(f.environment.id);
+                const effectActionId = options.childActionId ?? preview;
+                const reviewedChild = { actionId: effectActionId, role,
+                    inputDigest: computeActionInputApprovalDigestV1(effectActionId as Parameters<typeof computeActionInputApprovalDigestV1>[0], childInput) };
+                return app.inject({ method, url: path, ...(options.payload ? { payload: options.payload } : {}), headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId, target,
+                        installationId: f.controller.installationId, requestId: envelope.requestId,
+                        method, path, ...(options.payload ? { body: options.payload } : {}), reviewedChild,
+                        privateKey: f.controller.keys.secretKey }),
+                } });
+            };
+            for (const role of [DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1, DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1]) {
+                const read = await request(role);
+                expect(read.statusCode, `${role} reads its teardown Environment: ${read.body}`).toBe(200);
+            }
+            for (const [label, refused] of [
+                ['a role the teardown root does not declare', await request('teardown.unreviewed')],
+                ['a role declared only for another root kind', await request(PLATFORM_FAILURE_SETUP_ROLE)],
+                ['a declared role carried by a non-provider effect', await request(DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1,
+                    { childActionId: 'deployments.environments.update' })],
+                ['an Environment outside the teardown scope', await request(DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1,
+                    { path: environmentPath(foreign.environment.id) })],
+                ['a write from the read-only preview', await request(DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1, {
+                    method: 'PATCH', path: `/v1/deployments/environments/${encodeURIComponent(f.environment.id)}`,
+                    payload: { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision } })],
+            ] as const) {
+                expect(refused.statusCode, `${label}: ${refused.body}`).toBe(401);
+                expect(refused.json()).toMatchObject({ error: 'invalid_token' });
             }
         }, { authentication: 'real' });
     });

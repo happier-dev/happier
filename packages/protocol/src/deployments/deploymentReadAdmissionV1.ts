@@ -4,11 +4,12 @@ import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revis
 import { DeploymentHealthReadInputV1Schema, DeploymentHealthCurrentInputV1Schema,
   DeploymentDriftReadInputV1Schema, DeploymentLogsReadInputV1Schema, DeploymentStageLogsReadInputV1Schema } from './deploymentReadsV1.js';
 
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1,
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
   DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, isDeploymentReadAdmissionActionIdV1 } from './deploymentActionIdsV1.js';
 import { ProjectReadinessReadInputV1Schema } from '../projects/readinessInputV1.js';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '../actions/projectReadinessActionIdsV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '../actions/actionIds.js';
+import { readDeploymentReviewedChildV1 } from '../actions/specs/deploymentPreparationScope.js';
 import { DeploymentDataSizeInputV1Schema } from './deploymentReadsV1.js';
 import { ActionInvokeInputSchema } from '../actions/actionInvokeInput.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -116,8 +117,9 @@ export function readDeploymentDatabaseReadAccessSetupV1(admission: DeploymentRea
 export function readDeploymentDatabaseReadAccessBindingChildV1(admission: DeploymentReadAdmissionV1 | undefined,
   reviewedChild: Readonly<{ actionId: string; role: string }> | undefined,
 ) {
-  if (reviewedChild?.actionId !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-    || reviewedChild.role !== DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1) return undefined;
+  // A database read admission is the signed root of its own `action.invoke`.
+  if (!readDeploymentReviewedChildV1({ actionId: ACTION_INVOKE_ACTION_ID_V1 }, reviewedChild,
+    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1)) return undefined;
   const setup = readDeploymentDatabaseReadAccessSetupV1(admission);
   return setup?.allowsBindingWrite ? setup : undefined;
 }

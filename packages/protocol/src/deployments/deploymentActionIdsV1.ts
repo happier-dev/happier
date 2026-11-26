@@ -1,6 +1,4 @@
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
-import { RPC_METHODS } from '../rpc/methods.js';
-import type { ReviewedActionChildHttpProofV1 } from '../actions/externalActionApi.js';
 import { isProjectReadinessActionIdV1, type ProjectReadinessActionIdV1 } from '../actions/projectReadinessActionIdsV1.js';
 
 /** Snapshot composition and pure validation are Account reads, never Environment transports. */
@@ -71,17 +69,6 @@ export const DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 = 'deployments.environments
 /** A host-selected saved service reference retains its exact Environment read operand. */
 export const DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 = 'deployment.reference';
 
-/** The reviewed Deploy may read inventory for its saved-reference Environment. */
-export function readDeploymentReferenceServiceListEnvironmentIdV1(
-  rootActionId: string | undefined,
-  effectActionId: string | undefined,
-  child: Pick<ReviewedActionChildHttpProofV1, 'actionId' | 'role' | 'environmentId'> | undefined,
-): string | undefined {
-  if (rootActionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1 || effectActionId !== RPC_METHODS.MACHINES_SERVICE_LIST
-    || child?.actionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || child.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1) return undefined;
-  return child.environmentId || undefined;
-}
-
 export const DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 = 'deployments.environments.telemetry.set';
 export const DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 = 'telemetry.bindings';
 export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
@@ -89,11 +76,6 @@ export const DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1 = 'database.
 const DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1 = 'copy-data-link:';
 /** Duplicate's reviewed data Link child names the source data Link it copies. */
 export const deploymentCopyDataLinkChildRoleV1 = (sourceTargetLinkId: string) => `${DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1}${sourceTargetLinkId}`;
-export function readDeploymentCopyDataLinkChildSourceV1(role: string | undefined): string | undefined {
-  const source = role?.startsWith(DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1)
-    ? role.slice(DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1.length) : undefined;
-  return source || undefined;
-}
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
 export const DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 = 'deployments.domains.add' as const;
@@ -131,12 +113,6 @@ export function isDeploymentApprovalMetadataPreparationActionIdV1(value: string)
 export const DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 = 'deployments.environments.delete';
 export const DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 = 'deployments.targets.check';
 export const DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 = 'deployments.targets.unlink';
-
-/** Template composition spends these writes through the exact preparation owner. */
-export function isDeploymentTemplateStorageActionIdV1(value: string): boolean {
-  return value === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || value === DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1
-    || value === 'deployments.targets.link' || value === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
-}
 
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_DOMAIN_PAGE_ACTION_ID_V1, DEPLOYMENT_DATA_PAGE_ACTION_ID_V1,

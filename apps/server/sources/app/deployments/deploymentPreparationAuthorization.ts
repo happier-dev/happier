@@ -18,8 +18,9 @@ import { ManagedControlAdmissionInputV1Schema, ManagedListInputV1Schema,
     managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { Tx } from '@/storage/inTx';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, resolveProjectSourceAccessInTx, canManageProjectSourceOwnerInTx, sourceOwner } from '@/app/projects/sources/projectSourceService';
-import { MACHINE_SERVICE_ADOPT_ACTION_ID, MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1,
-    MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1 } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { MACHINE_SERVICE_ADOPT_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
+import { DEPLOYMENT_BACKUP_BINDINGS_CHILD_ROLE_V1, readDeploymentReferenceServiceListEnvironmentIdV1,
+    readDeploymentReviewedChildV1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, readCreatedDeploymentEnvironmentIdInTx,
     type DeploymentEnvironmentRow } from './deploymentEnvironmentService';
 import { admitDeploymentMachineInTx, projectDeploymentSourceMachinePlacementFailure, type DeploymentAuthentication } from './deploymentAdmission';
@@ -1031,8 +1032,7 @@ export async function readDeploymentDomainPreparationHttpPurpose(tx: Tx, binding
             : null;
     }
     if (!isDeploymentDomainAddActionIdV1(effectActionId)) return null;
-    if (binding.actionId !== effectActionId && (!reviewed
-        || reviewed.actionId !== effectActionId || !reviewed.role.startsWith('template.domain:'))) return false;
+    if (binding.actionId !== effectActionId && !readDeploymentReviewedChildV1(binding, reviewed, effectActionId)) return false;
     if (!isDeploymentDomainNativeAdmissionV1(admission) || admission.actionId !== effectActionId
         || admission.authoredMetadataDigest === undefined) {
         // Prepared-reference Create children retain their incumbent exact-input
@@ -1107,8 +1107,9 @@ export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding:
     const telemetry = isDeploymentTelemetryNativeAdmissionV1(admission);
     if (reviewed && (createdEnvironmentId !== admission.environmentId || reviewed.actionId !== effectActionId)) return false;
     const bindings = effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
-    if (bindings && (proof.reviewedChild?.actionId !== effectActionId
-        || proof.reviewedChild.role !== (telemetry ? DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 : 'backup.bindings'))) return false;
+    // The child's native admission kind selects its one declared bindings role.
+    if (bindings && readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId)?.row.role
+        !== (telemetry ? DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 : DEPLOYMENT_BACKUP_BINDINGS_CHILD_ROLE_V1)) return false;
     const domainRead = telemetry && effectActionId === deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1;
     if (!bindings && !domainRead && effectActionId !== admission.actionId
         && effectActionId !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && effectActionId !== PROJECT_SOURCE_READ_ACTION_ID_V1) return false;
@@ -1406,16 +1407,15 @@ export async function readDeploymentTargetRetentionHttpPurpose(tx: Tx, binding: 
                 || binding.deploymentPreparationAdmission?.operation === 'create' && parsed.data.enrolledMachineId === binding.machineId)
             ? { kind: 'preparation-read' } : null;
     }
-    if (effectActionId !== managedIds.MANAGED_RETENTION_UPDATE_ACTION_ID_V1
-        || proof.reviewedChild?.actionId !== effectActionId
-        || !proof.reviewedChild.role.startsWith('target-retention:')
-        || proof.reviewedChild.role.length === 'target-retention:'.length
+    const reviewed = proof.reviewedChild;
+    if (effectActionId !== managedIds.MANAGED_RETENTION_UPDATE_ACTION_ID_V1 || !reviewed
+        || !readDeploymentReviewedChildV1(binding, reviewed, effectActionId)
         || proof.path !== '/v1/machines/managed/controller/admit-control') return null;
     const parsed = ManagedControlAdmissionInputV1Schema.safeParse(proof.body);
     return parsed.success && parsed.data.action === effectActionId
         && parsed.data.input.homeId === binding.serverIdentityId
         && 'retention' in parsed.data.input && parsed.data.input.retention.kind === 'until-delete'
-        && computeActionInputApprovalDigestV1(effectActionId, parsed.data.input) === proof.reviewedChild.inputDigest
+        && computeActionInputApprovalDigestV1(effectActionId, parsed.data.input) === reviewed.inputDigest
         ? { kind: 'reviewed-child', requestId: parsed.data.requestId } : null;
 }
 
@@ -1466,25 +1466,22 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     const deployEffect = effectActionId === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1;
     const receiptRead = isDeploymentReceiptReadActionIdV1(effectActionId);
     const configureEffect = effectActionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1;
-    const backupBindings = effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && proof.reviewedChild?.role === 'backup.bindings';
+    // The declared child plan names the one reviewed child this root runs for this effect.
+    const child = readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId);
+    const backupBindings = child?.row.role === DEPLOYMENT_BACKUP_BINDINGS_CHILD_ROLE_V1;
     const adoptBindings = binding.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID
-        && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
-        && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1;
+        && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && child !== undefined;
     // Duplicate's reviewed data Link names the source data Link it copies; nothing else links under Create.
-    const copyDataLink = effectActionId === deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1
-        && proof.reviewedChild?.actionId === effectActionId
-        ? deploymentActionIds.readDeploymentCopyDataLinkChildSourceV1(proof.reviewedChild.role) : undefined;
+    const copyDataLink = effectActionId === deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 ? child?.roleOperand : undefined;
     if (effectActionId === deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 && (!copyDataLink || !admission.copyFrom)) return null;
     const childEffect = effectActionId === deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || configureEffect || domainEffect || deployEffect
         || copyDataLink !== undefined;
-    if (domainEffect && proof.reviewedChild?.actionId !== effectActionId) return null;
+    if (domainEffect && !child) return null;
     const environmentId = childEffect || receiptRead || effectActionId === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || proof.path.startsWith('/v1/artifacts/')
         ? await readPreviewCreateEnvironmentIdInTx(tx, binding, admission) : null;
     if (childEffect && (admission.mode !== 'apply'
         || !admission.copyFrom && !admission.catalogApp && !admission.preview && !adoptBindings || !environmentId)) return null;
-    if (admission.preview && childEffect && (proof.reviewedChild?.actionId !== effectActionId
-        || proof.reviewedChild.role !== (configureEffect ? 'preview.backup' : backupBindings ? 'backup.bindings'
-            : deployEffect ? 'preview.deploy' : domainEffect ? 'template.domain:preview' : 'preview.bindings'))) return null;
+    if (admission.preview && childEffect && !child) return null;
     const admit = (allowed: boolean): DeploymentCreateHttpPurpose | null => allowed
         ? { rootActionId: deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, effectActionId,
             ...(childEffect && environmentId ? { child: { environmentId } } : {}) } : null;
@@ -1492,8 +1489,7 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
         tx, binding, effectActionId, proof, environmentId!) === true);
     const method = proof.method.toUpperCase();
     const matches = (expected: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, expected);
-    const deployRole = admission.preview ? 'preview.deploy' : 'template.deploy';
-    const reviewedDeploy = proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === deployRole;
+    const reviewedDeploy = deployEffect && child !== undefined;
     if (deployEffect && proof.reviewedChild && !reviewedDeploy) return null;
     if (receiptRead) return admit(isNativeHttpPurpose?.(proof) === true
         && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, proof.routeInput,
@@ -1516,9 +1512,8 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
             return admit(isNativeHttpPurpose?.(proof) === true
                 && parsed.data.serverId === binding.serverIdentityId
                 && parsed.data.environmentId === environmentId
-                && proof.reviewedChild?.actionId === effectActionId
-                && proof.reviewedChild.role === deployRole
-                && computeActionInputApprovalDigestV1(effectActionId, reviewedInput) === proof.reviewedChild.inputDigest);
+                && reviewedDeploy
+                && computeActionInputApprovalDigestV1(effectActionId, reviewedInput) === proof.reviewedChild?.inputDigest);
         }
         // Read-only native preparation precedes the candidate's reviewed digest.
         // Transitions are admitted separately against the accepted receipt.
@@ -1590,10 +1585,8 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (method === 'POST' && proof.path === '/v1/deployments/environments') {
         const parsed = DeploymentEnvironmentCreateStorageInputV1Schema.safeParse(proof.body);
         const reviewedCreate = binding.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID
-            && effectActionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
-            && proof.reviewedChild?.actionId === effectActionId
-            && proof.reviewedChild.role === MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1
-            && parsed.success && computeActionInputApprovalDigestV1(effectActionId, parsed.data) === proof.reviewedChild.inputDigest;
+            && effectActionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && child !== undefined
+            && parsed.success && computeActionInputApprovalDigestV1(effectActionId, parsed.data) === proof.reviewedChild?.inputDigest;
         return admit((binding.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 || reviewedCreate)
             && !childEffect && admission.mode === 'apply' && parsed.success && parsed.data.serverId === binding.serverIdentityId
             && parsed.data.projectSourceId === admission.source?.id && sameStrictJsonValue(parsed.data.newProject, admission.newProject)
@@ -1936,10 +1929,7 @@ async function isOtherDeploymentPreparationAuthorizedInTx(tx: Tx, binding: Exter
  * its own Account can already read: no requester material crosses to it. */
 async function readCurrentDeploymentReferenceInput(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     child: ReviewedActionChildHttpProofV1 | undefined, signerAccountId: string) {
-    const operation = deploymentOperationForRootActionV1(binding.actionId, binding.deploymentPreparationAdmission);
-    if (operation !== 'deploy' && operation !== 'rollback' && operation !== 'promote'
-        || child?.actionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
-        || child.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 || !child.environmentId) return null;
+    if (!child?.environmentId || !readDeploymentReviewedChildV1(binding, child, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1)) return null;
     const input = { serverId: binding.serverIdentityId, environmentId: child.environmentId };
     if (child.inputDigest !== computeActionInputApprovalDigestV1(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, input)) return null;
     // The signed root is the admission while its Deploy review renders runtime
@@ -1955,7 +1945,7 @@ async function readCurrentDeploymentReferenceInput(tx: Tx, binding: ExternalActi
 export async function readDeploymentReferenceServiceListInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string, child: ReviewedActionChildHttpProofV1 | undefined,
     signerAccountId: string, machineId: string) {
-    if (!deploymentActionIds.readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, child)) return null;
+    if (!readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, child)) return null;
     const reference = await readCurrentDeploymentReferenceInput(tx, binding, child, signerAccountId);
     if (!reference) return null;
     const { environmentId, serverId } = reference.input;
@@ -1979,7 +1969,7 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
     const child = proof.reviewedChild;
     if (child?.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && child?.environmentId === undefined) return null;
     if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
-    if (deploymentActionIds.readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, child)) {
+    if (readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, child)) {
         const match = /^\/v1\/machines\/([^/?#]+)$/u.exec(proof.path);
         if (!match) return false;
         let machineId: string;

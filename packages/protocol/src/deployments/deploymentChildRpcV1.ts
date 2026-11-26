@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import type { ExternalActionExecutionAuthorizationBindingV1, ReviewedActionChildHttpProofV1 } from '../actions/externalActionApi.js';
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
+import { readDeploymentReviewedChildV1 } from '../actions/specs/deploymentPreparationScope.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '../json/strictJsonValue.js';
@@ -247,10 +248,9 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     if (input.rootActionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
         || input.rootActionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 && isDeploymentDomainAddActionIdV1(child.actionId)) {
         if (deploymentChildEffectActionIdForRootV1(input.rootActionId, input.rootPreparationAdmission, child.actionId) !== child.actionId) return false;
+        const root = { actionId: input.rootActionId, deploymentPreparationAdmission: input.rootPreparationAdmission };
         if (child.actionId === 'deployments.deploy') {
-            if (input.reviewedChild) return input.reviewedChild.actionId === child.actionId
-                && input.reviewedChild.role === (input.rootPreparationAdmission?.operation === 'create'
-                    && input.rootPreparationAdmission.preview ? 'preview.deploy' : 'template.deploy')
+            if (input.reviewedChild) return readDeploymentReviewedChildV1(root, input.reviewedChild, child.actionId) !== undefined
                 && input.reviewedChild.inputDigest === computeActionInputApprovalDigestV1(child.actionId, child.input);
             // Read-only preparation precedes the final candidate revision. Home
             // binds its allocated Environment; the original request names this attempt.
@@ -259,15 +259,16 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
                 && original.data.serverId === child.input.serverId && input.rootRequestId !== undefined
                 && child.input.requestKey === input.rootRequestId;
         }
-        if (input.reviewedChild?.actionId !== 'deployments.domains.add' || child.actionId !== 'deployments.domains.add') return false;
-        if (!input.reviewedChild.role.startsWith('template.domain:')) return false;
-        const native = input.reviewedChild.deploymentNativeAdmission;
+        const reviewed = input.reviewedChild;
+        if (!reviewed || child.actionId !== 'deployments.domains.add'
+            || !readDeploymentReviewedChildV1(root, reviewed, child.actionId)) return false;
+        const native = reviewed.deploymentNativeAdmission;
         if (native && (!isDeploymentDomainNativeAdmissionV1(native) || native.actionId !== child.actionId || native.environmentId !== child.input.environmentId
             || native.domainId !== child.input.domainId)) return false;
         if (child.kind === 'domainDiscover') return native && input.rootBinding
             ? matchesDeploymentDomainPreparedInputV1(child.input, { ...input.rootBinding,
-                deploymentNativeAdmission: native, reviewedChild: input.reviewedChild })
-            : input.reviewedChild.inputDigest === computeActionInputApprovalDigestV1('deployments.domains.add', child.input);
+                deploymentNativeAdmission: native, reviewedChild: reviewed })
+            : reviewed.inputDigest === computeActionInputApprovalDigestV1('deployments.domains.add', child.input);
         // Native continuation consumes Home's accepted Domain capture. Its
         // original exact operand was admitted by the signed HTTP child proof.
         return child.kind === 'domain';
