@@ -8,7 +8,7 @@ import { flushHookEffects, renderScreen as renderTestScreen, standardCleanup } f
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
@@ -180,38 +180,41 @@ describe('MachineDetailScreen (execution runs section)', () => {
         await act(async () => { await headers()[1]!.props.onPress(); });
         expect(routerNavigate).toHaveBeenCalledWith(`/session/sess-1?serverId=${encodeURIComponent(serverA)}`, expect.anything());
     });
-    it.each(['use', 'manage'] as const)('offers the Machine-wide run inventory only to Manage guests (%s)', async role => {
+    it.each(['use', 'manage'] as const)('presents the daemon-projected run markers for each guest role (%s)', async role => {
         const machine = createMachineFixture({ activeAt: Date.now(), isShared: true, access: {
             custodian: { accountId: 'machine-owner', displayName: 'Machine owner' }, role,
             resourceMode: 'plain', accessState: 'ready',
         } });
-        homes.answer(serverA, '/v1/machines', { body: [createPlainMachineRowFixture({ id: machine.id, accountId: 'machine-owner', machine })] });
+        const answerSharedMachine = (current: typeof machine, role: 'use' | 'manage') => {
+            const row = createPlainSharedMachineRowFixture({ id: current.id, custodianAccountId: 'machine-owner', role, machine: current });
+            homes.answer(serverA, '/v1/machines', { body: [row] });
+            homes.answer(serverA, `/v1/machines/${current.id}`, { body: { machine: row } });
+        };
+        const requesterRun = createExecutionRun({ runId: 'requester-machine-run' });
+        const ownerRun = createExecutionRun({ runId: 'owner-machine-run', callId: 'owner-call', sidechainId: 'owner-sidechain' });
+        const answerDaemonRuns = (viewerRole: 'use' | 'manage') => {
+            runs = viewerRole === 'use' ? [requesterRun] : [requesterRun, ownerRun];
+        };
+        answerSharedMachine(machine, role);
         await sync.refreshMachines();
-        runs = [createExecutionRun({ runId: 'owner-machine-run' })];
+        answerDaemonRuns(role);
         const screen = await renderScreen(<MachinePageScreen />);
         await flushHookEffects({ cycles: 8 });
-        if (role === 'use') {
-            expect(listRequests()).toHaveLength(0);
-            expect(runGroups(screen)).toHaveLength(0);
-            expect(screen.findByTestId('machine-runs-error')).toBeNull();
-        } else {
-            await waitForHomeGovernance(() => expect(runGroups(screen)).toHaveLength(1));
-            expect(listRequests().length).toBeGreaterThan(0);
-            expect(runRows(screen, 'owner-machine-run').length).toBeGreaterThan(0);
-            // Withdrawal takes effect at the next mounted read; restoring Manage restores the inventory.
+        await waitForHomeGovernance(() => expect(runRows(screen, requesterRun.runId).length).toBeGreaterThan(0));
+        expect(runRows(screen, ownerRun.runId).length > 0).toBe(role === 'manage');
+        expect(listRequests()).toHaveLength(1);
+        expect(screen.findByTestId('machine-runs-error')).toBeNull();
+        if (role === 'manage') {
+            // The receiving daemon filters Use reads by requester before publishing marker fields.
             for (const nextRole of ['use', 'manage'] as const) {
                 const nextMachine = { ...machine, access: { ...machine.access!, role: nextRole } };
-                homes.answer(serverA, '/v1/machines', { body: [createPlainMachineRowFixture({ id: machine.id, accountId: 'machine-owner', machine: nextMachine })] });
+                answerSharedMachine(nextMachine, nextRole);
+                answerDaemonRuns(nextRole);
                 const priorReads = listRequests().length;
                 await act(async () => { await sync.refreshMachines(); });
-                await flushHookEffects({ cycles: 8 });
-                if (nextRole === 'use') {
-                    expect(runGroups(screen)).toHaveLength(0);
-                    expect(listRequests()).toHaveLength(priorReads);
-                } else {
-                    await waitForHomeGovernance(() => expect(runGroups(screen)).toHaveLength(1));
-                    expect(listRequests().length).toBeGreaterThan(priorReads);
-                }
+                await waitForHomeGovernance(() => expect(runRows(screen, ownerRun.runId).length > 0).toBe(nextRole === 'manage'));
+                expect(runRows(screen, requesterRun.runId).length).toBeGreaterThan(0);
+                expect(listRequests()).toHaveLength(priorReads + 1);
             }
         }
     });
