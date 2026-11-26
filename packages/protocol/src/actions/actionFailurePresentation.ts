@@ -1,5 +1,5 @@
 import type { ActionExecuteFailure } from './actionExecutionResult.js';
-import { WORKFLOW_RUN_START_ACTION_ID_V1 } from './actionIds.js';
+import { SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from './actionIds.js';
 import type { ActionSurfaceAvailabilityReason } from './actionSurfaceAvailability.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { readTeamCreationPolicyRefusalV1 } from '../teams/errors.js';
@@ -49,6 +49,14 @@ export function projectActionFailureForAgentV1(
   failure: ActionExecuteFailure,
   voice?: Readonly<{ actionId?: unknown }>,
 ): ActionExecuteFailure {
+  if (voice?.actionId === SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1) {
+    switch (failure.errorCode) {
+      case 'unknown_agent':
+        return { ...failure, error: 'Ask the person which Agent they want to use.' };
+      case 'action_home_not_found':
+        return { ...failure, error: 'Ask the person to select a Home in Happier.' };
+    }
+  }
   if (voice && failure.errorCode === 'action_disabled') {
     const { reason } = readRecord(failure.details);
     if (typeof reason === 'string' && Object.hasOwn(voiceAvailabilityGuidance, reason)) {

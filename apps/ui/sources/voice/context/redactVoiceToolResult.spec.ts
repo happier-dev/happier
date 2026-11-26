@@ -268,14 +268,20 @@ describe('redactVoiceToolResultValue', () => {
     }
   });
 
-  it('keeps a connected-account refusal valid for wrapped delivery without diagnostics', () => {
-    const failure = { ok: false, errorCode: 'unknown_agent', error: 'PRIVATE ERROR', details: { secret: 'PRIVATE DETAIL' } };
-    const execution = redactVoiceActionExecutionResultForProvider('listSpawnConnectedServices', failure, {
-      ...SHARE_ALL, shareDeviceInventory: true,
+  it.each([
+    ['unknown_agent', /ask the person which Agent/i],
+    ['action_home_not_found', /ask the person to select a Home/i],
+  ])('delivers a safe next step for %s without diagnostics', (errorCode, guidance) => {
+    const failure = { ok: false, errorCode, error: 'PRIVATE ERROR', details: { secret: 'PRIVATE DETAIL' } };
+    const prefs = { ...SHARE_ALL, shareDeviceInventory: true };
+    const direct = redactVoiceToolResultForProvider('listSpawnConnectedServices', failure, prefs);
+    const wrapped = redactVoiceActionExecutionResultForProvider('listSpawnConnectedServices', failure, prefs);
+    expect(UiActionDispatchResultV1Schema.parse({ v: 1, execution: wrapped }).execution).toEqual({
+      ok: false, errorCode, error: expect.stringMatching(guidance),
     });
-    expect(UiActionDispatchResultV1Schema.parse({ v: 1, execution }).execution).toEqual({
-      ok: false, errorCode: 'unknown_agent', error: 'unknown_agent',
-    });
+    expect(direct).toEqual(wrapped);
+    expect(JSON.stringify(direct)).not.toContain('PRIVATE');
+    expect(redactVoiceToolResultForProvider('listSpawnConnectedServices', direct, prefs)).toEqual(direct);
   });
 
   it('keeps non-inventory action options available with inventory sharing off', () => {

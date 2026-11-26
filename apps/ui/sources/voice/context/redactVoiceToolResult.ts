@@ -369,10 +369,13 @@ function projectConnectedServicesList(value: unknown, prefs: VoiceToolResultReda
   const result = readResultRecord(value);
   if (result.ok === false) {
     const code = result.errorCode;
+    if (code === 'unknown_agent' || code === 'action_home_not_found') {
+      return projectActionFailureForAgentV1({ ok: false, errorCode: code, error: code }, {
+        actionId: SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1,
+      });
+    }
     const hostCode = PluginUiHostApiErrorCodeV1Schema.safeParse(code);
-    const errorCode = code === 'unknown_agent' || code === 'action_home_not_found'
-      ? code
-      : hostCode.success ? hostCode.data : 'action_failed';
+    const errorCode = hostCode.success ? hostCode.data : 'action_failed';
     return { ok: false, errorCode, error: errorCode };
   }
   const supportedServiceIds = Array.isArray(result.supportedServiceIds)
