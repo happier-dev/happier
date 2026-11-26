@@ -93,13 +93,17 @@ import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncr
 import { encodeBase64 } from '@/encryption/base64';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { createWorkflowAutomationDetailFixture, createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
+import { createWorkflowAutomationDetailFixture, createWorkflowAutomationHttpBoundary, createWorkflowAutomationTriggerDetailFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { z } from 'zod/mini';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { AutomationDefinitionDetailSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
+import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Schema, AutomationActionAdmitResultV1Schema,
+    type AutomationActionAdmitRequestV1, type AutomationActionAdmitResultV1 } from '@happier-dev/protocol/automations/automationActionOccurrenceV1';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, type ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 
 type WorkflowEditorBodyProps = React.ComponentProps<
     typeof import('./WorkflowEditorBody').WorkflowEditorBody
@@ -256,10 +260,12 @@ async function pressRunStart(screen: Awaited<ReturnType<typeof renderHostScreen>
     await screen.pressByTestIdAsync('workflow-run-inputs-run');
 }
 
-async function renderScreen(element: React.ReactElement, options: Parameters<typeof renderHostScreen>[1] = {}) {
+async function renderScreen(element: React.ReactElement, {
+    initialCredentials = editorCredentials, ...options
+}: NonNullable<Parameters<typeof renderHostScreen>[1]> & { initialCredentials?: AuthCredentials | null } = {}) {
     const PaneWrapper = options.wrapper ?? AppPaneProvider;
     editorScreen = await renderHostScreen(element, { ...options,
-        wrapper: ({ children }) => <AuthProvider initialCredentials={editorCredentials}><RealModalProvider><ObserveModals /><PaneWrapper>{children}</PaneWrapper></RealModalProvider></AuthProvider>,
+        wrapper: ({ children }) => <AuthProvider initialCredentials={initialCredentials}><RealModalProvider><ObserveModals /><PaneWrapper>{children}</PaneWrapper></RealModalProvider></AuthProvider>,
         createNodeMock: options.createNodeMock ?? ((node) => ({
             focus: () => focusPromptSpy(node.props), blur: () => {}, setNativeProps: () => {}, scrollTo: () => {},
             getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
@@ -863,16 +869,17 @@ it('opens an editor-local workflow seed without waiting for the Session draft co
 });
 
 it('opens a saved definition entered before Account readiness without a library visit', async () => {
-    switchEditorAccountScope(null);
-    getStorage().setState({ isDataReady: false, isSessionDraftsReady: false });
-    const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+    const { disconnectActiveServerConnection, restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await disconnectActiveServerConnection();
+    // Hold restoration until after observing the initial editor. AuthProvider would
+    // otherwise reconcile persisted Home credentials as soon as it mounts.
+    const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />,
+        { initialCredentials: null });
+    expect(screen.findByTestId('workflow-editor-loading')).not.toBeNull();
     expect(readBodyProps()).toBeNull();
     expect(definitionActions.get).not.toHaveBeenCalled();
-    await act(async () => {
-        switchEditorAccountScope({ serverId: 'server-a', accountId: 'account-a' });
-        getStorage().setState({ isDataReady: true, isSessionDraftsReady: true });
-    });
-    expect(readBodyProps()?.draftStore.get().name).toBe('Saved workflow');
+    await act(async () => { await restoreConnectionToActiveServer(editorCredentials); });
+    await waitForHomeGovernance(() => expect(readBodyProps()?.draftStore.get().name).toBe('Saved workflow'));
     expect(readBodyProps()?.saveStatus?.kind).toBe('saved');
     expect(definitionActions.get).toHaveBeenCalledWith({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
     expect(definitionActions.create).not.toHaveBeenCalled();
@@ -887,7 +894,11 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     triggerEvents: readonly Readonly<{ event: { pluginId: string; localId: string }; payloadSchema: PluginJsonSchemaV2 }>[] = [],
     sourceRuns: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[] = [],
     actionIndex?: ReturnType<typeof ActionAutomationIndexV1Schema.parse> | 'unavailable' | (() => Promise<Response>),
-    publicFeatures?: () => Promise<Response> | undefined) {
+    publicFeatures?: () => Promise<Response> | undefined,
+    actionCheck?: Readonly<{
+        definition: AutomationDefinitionDetail;
+        admit(input: AutomationActionAdmitRequestV1): AutomationActionAdmitResultV1;
+    }>) {
     // The memory writer has a prepared HTTP boundary as well as the Home's
     // ordinary transport. Both consume this fixture's same explicit policy.
     if (settings) preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 });
@@ -921,6 +932,7 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     const creates: Array<{ id: string; header: string; body: string; headerVersion: number; bodyVersion: number }> = [];
     const automationBoundary = createWorkflowAutomationHttpBoundary();
     const automationCreates = automationBoundary.creates;
+    if (actionCheck) automationBoundary.rows.set(actionCheck.definition.id, actionCheck.definition);
     // Session callers carry their approval profile in the real owner metadata.
     // Serve those external records through both supported snapshot transports.
     const callerSessions = new Set(['session-agent', 'authoring-session', 'unavailable-author']);
@@ -952,6 +964,10 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
             return actionIndex === 'unavailable'
                 ? Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
                 : Response.json(actionIndex);
+        }
+        if (actionCheck && request.path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1 && request.method === 'POST') {
+            const input = AutomationActionAdmitRequestV1Schema.parse(request.body);
+            return Response.json(AutomationActionAdmitResultV1Schema.parse(actionCheck.admit(input)));
         }
         if (request.path === '/v3/automations/runs/workflow-storage' && request.method === 'POST'
             && request.body !== null && typeof request.body === 'object' && 'operation' in request.body
@@ -1205,10 +1221,38 @@ describe('WorkflowEditorHostScreen composition', () => {
             }
             expect(readAlert()).toBeUndefined();
         };
-        const boundary = await serveMountedDraftActionHome(undefined, true, undefined, undefined, 'plain', [], [], {
-            v: 1, rows: [{ automationId: 'save-check', triggerId: 'before-save', triggerRevision: 1,
-                workflowId: SAVED_TRIGGER_WORKFLOW_ID, workflowRevision: 1, ownerAccountId: 'account-a',
-                actionIds: ['workflow.definition.update'], phase: 'before', mode: 'wait' }],
+        const actionId = getActionSpec('workflow.definition.update').id;
+        const reference = { automationId: 'save-check', triggerId: 'before-save', triggerRevision: 1 };
+        const action = { kind: 'action' as const, actionIds: [actionId], phase: 'before' as const, mode: 'notify' as const };
+        const trigger = createWorkflowAutomationTriggerDetailFixture(reference.automationId, {
+            triggerId: reference.triggerId,
+            trigger: { ...action, enabled: true, triggerDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: 'plain', binding: { ...reference, v: 1, triggerKind: 'action' }, definition: action,
+            }) },
+        }, reference.triggerRevision);
+        const definition = AutomationDefinitionDetailSchema.parse({
+            ...createWorkflowAutomationDetailFixture({
+                id: reference.automationId, workflowDefinitionId: SAVED_TRIGGER_WORKFLOW_ID, revision: 1,
+            }),
+            assignments: [], triggers: [trigger],
+            executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, placement: 'action_invocation',
+                workflow: { t: 'plain', v: { executionTarget: { kind: 'session' } } } },
+        });
+        // Keep the cached index unique to this Home. The projectless Action Link
+        // reaches Home admission, where it needs the occurrence's Machine.
+        const { kind: _kind, ...matching } = action;
+        const boundary = await serveMountedDraftActionHome(undefined, true, 'srv_workflow-machine-skip', undefined, 'plain', [], [], {
+            v: 1, rows: [{ ...reference, ...matching,
+                workflowId: SAVED_TRIGGER_WORKFLOW_ID, workflowRevision: 1, ownerAccountId: 'account-a' }],
+        }, undefined, {
+            definition,
+            admit(input) {
+                expect(input.triggers).toEqual([reference]);
+                expect(input.evidence).toMatchObject({ actionId, phase: 'before' });
+                expect(input.evidence.machineId).toBeUndefined();
+                return { results: [{ automationId: reference.automationId, triggerId: reference.triggerId,
+                    kind: 'skipped', reason: 'machineRequired' }] };
+            },
         });
         const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
         let mounted: ReturnType<typeof useMountedActionExecution> | undefined;
@@ -5033,11 +5077,15 @@ describe('WorkflowEditorHostScreen composition', () => {
                 return { source: { kind: 'new' as const, newSessionDraftSeedId: id }, consumed: () => readNewSessionAutomationHandoffSeed(id) === null };
             };
             const first = makeSource('FIRST');
-            const editor = (source: ReturnType<typeof makeSource>['source']) => <React.StrictMode>
-                <WorkflowEditorHostScreen source={source} />
+            const editor = (source: ReturnType<typeof makeSource>['source'], key?: string) => <React.StrictMode>
+                <WorkflowEditorHostScreen key={key} source={source} />
             </React.StrictMode>;
             const screen = await renderRunEditor(editor(first.source));
             expect(first.consumed()).toBe(true);
+            // The web step starts as a resting card. Open its prompt once and
+            // keep that editor open while the second handoff replaces its content.
+            await screen.pressByTestIdAsync('workflow-editor-step-prompt-summary-prompt');
+            expect(screen.findByType(AgentInput).props.value).toBe('FIRST');
             const second = makeSource('SECOND');
             await screen.update(editor(second.source));
             expect(second.consumed()).toBe(true);
@@ -5063,12 +5111,9 @@ describe('WorkflowEditorHostScreen composition', () => {
                 });
                 if (publication !== 'render') {
                     if (publication === 'retirement') {
-                        // Retirement withdraws private content immediately.
-                        // Address admission may settle before or after this
-                        // publication; observe its terminal state after readiness.
+                        // The mounted editor knows that its adopted Account lifetime retired.
                         expect(screen.findAllByType(WorkflowEditorBody)).toHaveLength(0);
-                        await act(async () => getStorage().setState({ isSessionDraftsReady: true }));
-                        expect(screen.findByTestId('workflow-editor-draft-unavailable')).not.toBeNull();
+                        expect(screen.findByTestId('workflow-editor-account-changed')).not.toBeNull();
                     }
                     else {
                         expect(screen.findByTestId('session-drafts-hydrating')).toBeNull();
@@ -5079,8 +5124,10 @@ describe('WorkflowEditorHostScreen composition', () => {
                 }
                 await screen.update(editor({ ...second.source }));
                 if (publication === 'retirement') {
-                    // After a remount the handle is missing: it cannot prove why
-                    // custody ended, and must not invent an Account-change claim.
+                    expect(screen.findByTestId('workflow-editor-account-changed')).not.toBeNull();
+                    expect(screen.findAllByType(WorkflowEditorBody)).toHaveLength(0);
+                    // A fresh mount only sees the consumed route handle.
+                    await screen.update(editor(second.source, 'reopened'));
                     expect(screen.findByTestId('workflow-editor-draft-unavailable')).not.toBeNull();
                     expect(screen.findByTestId('workflow-editor-account-changed')).toBeNull();
                     expect(screen.findAllByType(WorkflowEditorBody)).toHaveLength(0);
