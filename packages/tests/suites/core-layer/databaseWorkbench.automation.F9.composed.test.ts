@@ -7,7 +7,7 @@ import { AutomationDatabaseSubjectV1Schema, projectAutomationDatabaseSubjectV1 }
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { DATABASE_STATS_READ_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
+import { DATABASE_STATS_READ_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
 import {
     DatabaseOperationResultV1Schema,
     DatabaseStatsOperationInputV1Schema,
@@ -119,20 +119,22 @@ it('P4-F9-known-good-observation-run', async () => {
     const saved = WorkflowActionOutputSchemasV1['workflow.trigger.add'].parse(armed.result);
     expect(await targetCalls(), 'Arming a database source must not sample it').toBe(callsBeforeArm);
 
-    async function readRuns() {
+    async function readRuns(automationId = saved.set.automationId) {
       const arrival = await fixture.owner.execute('workflow.run.list', { origin: 'automation' });
       expect(arrival.ok, JSON.stringify(arrival)).toBe(true);
       if (!arrival.ok) throw new Error(`Run listing refused (${arrival.errorCode})`);
       return WorkflowActionOutputSchemasV1['workflow.run.list'].parse(arrival.result).runs.filter(row =>
-        row.origin.kind === 'automation' && row.origin.automationId === saved.set.automationId);
+        row.origin.kind === 'automation' && row.origin.automationId === automationId);
+    }
+    const statsInput = DatabaseStatsOperationInputV1Schema.parse({ operation: 'stats.read', target,
+      request: { kind: 'stats.read', group: 'statements', selection: { page: { rows: 80 }, order: 'totalTime' } } });
+    async function readSource() {
+      const arrival = await fixture.executeDatabase(DATABASE_STATS_READ_ACTION_ID_V1, statsInput);
+      if (!arrival.ok) throw new Error(`Database source read refused (${arrival.errorCode})`);
+      return DatabaseOperationResultV1Schema.parse(arrival.result);
     }
     async function observe() {
-      const arrival = await fixture.executeDatabase(DATABASE_STATS_READ_ACTION_ID_V1,
-        DatabaseStatsOperationInputV1Schema.parse({ operation: 'stats.read', target: target,
-          request: { kind: 'stats.read', group: 'statements', selection: { page: { rows: 80 }, order: 'totalTime' } } }));
-      expect(arrival.ok, JSON.stringify(arrival)).toBe(true);
-      if (!arrival.ok) throw new Error(`Database source read refused (${arrival.errorCode})`);
-      const result = DatabaseOperationResultV1Schema.parse(arrival.result);
+      const result = await readSource();
       expect(result).toMatchObject({ ok: true, operation: 'stats.read', observation: { status: 'available', group: 'statements' } });
       expect(JSON.stringify(result)).not.toContain(privateLiteral);
     }
@@ -164,6 +166,16 @@ it('P4-F9-known-good-observation-run', async () => {
     const secondRun = (await readRuns()).find(row => row.id !== firstRun.id);
     expect(replayNextObservation, 'The real Home ingress must see the duplicate delivery').toBe(false);
     expect(replayedRunIds, 'A duplicate delivery must rejoin the identical Workflow Run').toEqual([secondRun?.id]);
+    // Withdraw the real source prerequisite while the same matching trigger is
+    // still armed. Unavailable observations must neither match nor look empty.
+    await fixture.postgres.sql('dbw_selected', 'DROP EXTENSION pg_stat_statements');
+    try {
+      expect(await readSource()).toMatchObject({ ok: true, operation: 'stats.read',
+        observation: { status: 'unavailable', group: 'statements', reason: 'extension_missing' } });
+      expect(await readRuns()).toHaveLength(2);
+    } finally {
+      await fixture.postgres.sql('dbw_selected', 'CREATE EXTENSION pg_stat_statements');
+    }
     const threshold = await fixture.owner.executeReviewed('workflow.trigger.update', {
       automationId: saved.set.automationId, triggerId: saved.triggerId, expectedRevision: saved.set.revision,
       patch: { trigger: { ...eventSource,
@@ -183,6 +195,54 @@ it('P4-F9-known-good-observation-run', async () => {
     expect(disabled.ok, JSON.stringify(disabled)).toBe(true);
     await observe();
     expect(await readRuns()).toHaveLength(2);
+
+    // A second trigger matches the original source, but its Worker reads a
+    // distinct target that was available when authored and is now withdrawn.
+    const workerTarget = (await fixture.connectDatabase(fixture.postgres.neighborDatabaseUrl, 'F9 worker target')).target;
+    const workerInput = DatabaseStatsOperationInputV1Schema.parse({ ...statsInput, target: workerTarget });
+    const workerControl = await fixture.executeDatabase(DATABASE_STATS_READ_ACTION_ID_V1, workerInput);
+    if (!workerControl.ok) throw new Error(`F9 worker target control refused (${workerControl.errorCode})`);
+    expect(DatabaseOperationResultV1Schema.parse(workerControl.result)).toMatchObject({
+      ok: true, operation: 'stats.read', observation: { status: 'available', scope: { database: 'dbw_neighbor' } },
+    });
+    const workerTrigger = await fixture.owner.executeReviewed('workflow.trigger.add', {
+      target: { kind: 'inline', definition: { version: 1, blocks: [
+        { kind: 'action', id: 'read-worker-target', actionId: DATABASE_STATS_READ_ACTION_ID_V1, input: {
+          operation: { kind: 'literal', value: workerInput.operation },
+          target: { kind: 'literal', value: workerInput.target },
+          request: { kind: 'literal', value: workerInput.request },
+        } },
+      ] } },
+      project: { machineId: fixture.machine.target.machineId, directory: fixture.machine.workspaceDir },
+      trigger: { ...eventSource, enabled: true, filter: matchingFilter },
+    });
+    if (!workerTrigger.ok) throw new Error(`F9 Worker trigger refused (${workerTrigger.errorCode})`);
+    const workerAutomationId = WorkflowActionOutputSchemasV1['workflow.trigger.add'].parse(workerTrigger.result).set.automationId;
+    await observe();
+    await waitFor(async () => {
+      const runs = await readRuns(workerAutomationId);
+      expect(runs.length).toBeLessThanOrEqual(1);
+      return runs.some(row => row.state === 'succeeded');
+    }, { ...workflowSettlement, context: 'The matching trigger reads the selected database through its Workflow Worker' });
+    const controlRunId = (await readRuns(workerAutomationId))[0]!.id;
+    const forgotten = await fixture.executeDatabase(DATABASE_TARGETS_FORGET_ACTION_ID_V1, { target: workerTarget });
+    expect(forgotten).toMatchObject({ ok: true, result: { ok: true } });
+    expect(await fixture.executeDatabase(DATABASE_STATS_READ_ACTION_ID_V1, workerInput))
+      .toMatchObject({ ok: false, errorCode: 'database_target_unavailable' });
+    await observe();
+    await waitFor(async () => {
+      const runs = await readRuns(workerAutomationId);
+      expect(runs.length).toBeLessThanOrEqual(2);
+      return runs.some(row => row.id !== controlRunId && (row.state === 'failed' || row.state === 'interrupted'));
+    }, { ...workflowSettlement, context: 'Matching observation starts a Worker Run that encounters the withdrawn database target' });
+    const failedRun = (await readRuns(workerAutomationId)).find(row => row.id !== controlRunId)!;
+    const invocations = await fixture.owner.execute('workflow.run.invocations.list', { runId: failedRun.id, includeContent: true });
+    if (!invocations.ok) throw new Error(`F9 Worker failure read refused (${invocations.errorCode})`);
+    expect(WorkflowActionOutputSchemasV1['workflow.run.invocations.list'].parse(invocations.result).invocationDetails)
+      .toEqual(expect.arrayContaining([expect.objectContaining({
+        index: expect.objectContaining({ lifecycle: 'failed' }),
+        progress: expect.objectContaining({ reason: expect.objectContaining({ code: 'database_target_unavailable' }) }),
+      })]));
   } finally {
     await fixture.stop();
   }
