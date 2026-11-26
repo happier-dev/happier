@@ -146,3 +146,25 @@ it('retains an unconfirmed guest process outcome instead of reporting failed Set
     })).rejects.toMatchObject({ code: 'plugin_exec_termination_incomplete' });
     expect(states).toEqual(['running']);
 });
+
+it('retains the bound Setup refusal when publishing the failed state also fails', async () => {
+    const signal = new AbortController().signal;
+    const reports: Array<{ state: string; code?: string }> = [];
+    await expect(runBoundSessionSetup({ machine, sessionId: 'committed-session', requesterAccountId: 'owner',
+        setup: { items: [{ kind: 'app', definition: {
+            name: 'Guest app', project: { kind: 'existing', projectSourceId: 'project' },
+            definition: { from: 'compose', document: 'services: {}', profiles: [], services: [] }, bindings: [],
+        } }] },
+        binaryPath: '/guest/happier', platform: { os: 'linux', arch: 'x64', home: '/guest/home' }, recipes: [], signal,
+        operation: { actionRequestId: 'refused-operation', signal, operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } },
+        report: async (state, _facts, code) => {
+            reports.push({ state, code });
+            if (state === 'failed') throw new Error('Home report disconnected');
+        },
+        transport: {
+            exec: async () => { throw new Error('Unexpected guest effect'); },
+            putFile: async () => { throw new Error('Unexpected guest file'); },
+        },
+    })).rejects.toMatchObject({ code: 'machine_setup_app_preparation_unavailable' });
+    expect(reports).toEqual([{ state: 'running' }, { state: 'failed', code: 'machine_setup_app_preparation_unavailable' }]);
+});

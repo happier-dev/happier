@@ -7,8 +7,10 @@ import { machineSetupSourceOriginKeyV1, projectMachineSetupSourceChangeExecution
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { PluginProjectedMachineRecipeEntryV1 } from '@happier-dev/protocol/daemon/machineSetupProjection';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { applyBoundMachineSetup, createBoundMachineSetupTarget, prepareBoundMachineSetupRecipePlans } from '../setup/boundMachineSetup';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
+import { logger } from '@/ui/logger';
 import { ManagedMachineControllerError } from './controllerErrors';
 import { observeMachineSetupInitialPresence } from '../setup/initialPresence';
 import { prepareMachineSetupSecretEnvironment, type MachineSetupSecretCustody } from '../setup/secretEnvironment';
@@ -42,7 +44,7 @@ export async function runBoundSessionSetup(input: Readonly<{
     const completedScripts = new Set<number>();
     const origin = machineSetupSourceOriginKeyV1(sources[0]!);
     await input.report('running', sourceFacts);
-    let settled = false;
+    let outcomeUnconfirmed = false;
     let secrets: Awaited<ReturnType<typeof prepareMachineSetupSecretEnvironment>> | undefined;
     try {
         // App Setup currently requires accepted deployment children at the
@@ -89,20 +91,25 @@ export async function runBoundSessionSetup(input: Readonly<{
             isCurrent: async () => !signal.aborted,
         });
         if (!result.ok && isMachineSetupResultUnsettled(result)) {
-            settled = true;
-            throw new ManagedMachineControllerError(result.errorCode ?? 'outcome_uncertain');
+            outcomeUnconfirmed = true;
+            throw new ManagedMachineControllerError(result.errorCode, undefined, undefined, result.failureCause, result);
         }
         if (result.ok || completedScripts.size || result.errorCode === 'machine_setup_setup_failed') {
             sourceFacts[origin] = { ...sourceFacts[origin], pendingScripts: execution.sources[0]?.scripts?.flatMap((script, index) =>
                 script.body && !completedScripts.has(index) ? [index] : []) ?? [] };
         }
         signal.throwIfAborted();
-        await input.report(result.ok ? 'succeeded' : 'failed', sourceFacts, result.ok ? undefined : result.errorCode);
-        settled = true;
-        if (!result.ok) throw new ManagedMachineControllerError(result.errorCode ?? 'target_unavailable');
+        if (!result.ok) throw new ManagedMachineControllerError(result.errorCode, undefined, undefined, result.failureCause, result);
+        await input.report('succeeded', sourceFacts, undefined);
     } catch (error) {
-        if (!settled && !signal.aborted) await input.report('failed', sourceFacts,
-            error instanceof ManagedMachineControllerError ? error.code : 'machine_setup_apply_failed');
+        if (!outcomeUnconfirmed && !signal.aborted) {
+            try {
+                await input.report('failed', sourceFacts,
+                    error instanceof ManagedMachineControllerError ? error.code : 'machine_setup_apply_failed');
+            } catch (reportError) {
+                logger.warn('[Machine setup] Bound outcome report failed', projectActionFailureCauseV1(reportError, 'machines.setup.apply'));
+            }
+        }
         throw error;
     } finally {
         secrets?.dispose();
