@@ -13,6 +13,7 @@ import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import type { PluginUiResourceClient, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { pluginUiResourceReferenceKey } from '@happier-dev/plugin-ui/advanced';
+import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { PluginUiHostReadReferenceV1Schema, PluginUiReadAuthorityReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 
 import {
@@ -56,6 +57,14 @@ type PluginSurfaceResourceDigest = Extract<
     PluginUiResourceSubscriptionEventV1,
     { kind: 'invalidated' }
 >['digest'];
+
+function readHostResourceWatchDigest(snapshot: PluginUiResourceSnapshot): PluginSurfaceResourceDigest | undefined {
+    // Host reads and watches use the admitted value's transport digest. Typed
+    // values compute it on demand and leave the store's snapshot digest unset.
+    const digest = PluginUiArtifactDigestV1Schema.safeParse(snapshot.value?.digest);
+    if (!digest.success || (snapshot.digest !== undefined && snapshot.digest !== digest.data)) return undefined;
+    return digest.data;
+}
 
 function readJsonRecord(value: PluginUiJsonValueV1 | undefined): JsonRecord | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -255,13 +264,13 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
                         input.deliver(terminalEvent(subscriptionId, 'denied', snapshot.error.code ?? 'plugin_resource_unavailable'));
                         close();
                     } else if (snapshot.value) {
-                        const digest = PluginUiArtifactDigestV1Schema.safeParse(snapshot.digest);
-                        if (!digest.success) {
+                        const digest = readHostResourceWatchDigest(snapshot);
+                        if (digest === undefined) {
                             input.deliver(terminalEvent(subscriptionId, 'unavailable', 'plugin_resource_digest_invalid'));
                             close();
-                        } else if (digest.data !== lastDigest) {
-                            lastDigest = digest.data;
-                            input.deliver(invalidatedEvent(subscriptionId, digest.data));
+                        } else if (digest !== lastDigest) {
+                            lastDigest = digest;
+                            input.deliver(invalidatedEvent(subscriptionId, digest));
                         }
                     }
                 }, true);
@@ -270,11 +279,11 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
                     const snapshot = await readPluginResourceStoreSnapshot(entry, signal);
                     if (signal?.aborted || input.isCurrent?.() === false) { close(); return resourceAbortPayload(input.isCurrent); }
                     if (!snapshot.value) { close(); return createPluginSurfaceResourceSnapshotError(snapshot.error); }
-                    const digest = PluginUiArtifactDigestV1Schema.safeParse(snapshot.digest);
-                    if (!digest.success) { close(); return errorPayload('unavailable', 'plugin_resource_digest_invalid'); }
-                    lastDigest = digest.data;
+                    const digest = readHostResourceWatchDigest(snapshot);
+                    if (digest === undefined) { close(); return errorPayload('unavailable', 'plugin_resource_digest_invalid'); }
+                    lastDigest = digest;
                     established = true;
-                    return { subscriptionId, digest: digest.data };
+                    return { subscriptionId, digest };
                 } catch (error) {
                     close();
                     return errorPayload('unavailable', error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'

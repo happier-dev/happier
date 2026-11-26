@@ -25,6 +25,10 @@ import {
     createPluginSurfaceResourceWatchHandlers,
     type PluginSurfaceResourceWatchTransport,
 } from './pluginSurfaceResourceWatch';
+import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import type { UsageQueryBatchResult } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { createUsageQueryResourceContent } from '@/sync/api/account/usageQueryResourceEncoding';
+import { createPluginSurfaceResourceReadHandler } from './pluginSurfaceResourceRead';
 import { createBoundPluginSurfaceController } from './boundPluginSurfaceController';
 import { DATABASE_PLUGIN_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
@@ -343,6 +347,74 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
             progress?.(content(DIGEST_B));
             expect(events).toEqual([expect.objectContaining({ kind: 'invalidated', digest: DIGEST_B })]);
         } finally { settled.resolve(content(DIGEST_B)); handlers.dispose(); store.dispose(); }
+    });
+
+    it('mounts a Usage host watch after a typed-identity read supplies transport bytes', async () => {
+        const input = { period: { startMs: 0, endMs: 100 }, includeSeries: true, includeQuota: false,
+            includeQuotaHistory: false, workProjection: 'summary' as const };
+        const query = normalizeUsageQuery(input);
+        const batch: UsageQueryBatchResult = { v: 1, results: [{ key: 'usage', requestedQuery: query,
+            shownQuery: query, sources: [], pending: false }] };
+        const content = createUsageQueryResourceContent(batch);
+        const updatedBatch = { ...batch, results: batch.results.map(result => ({ ...result, pending: true })) };
+        const updatedContent = createUsageQueryResourceContent(updatedBatch);
+        const admitted = new WeakMap([[content, batch], [updatedContent, updatedBatch]]);
+        let currentContent = content;
+        const store = createPluginUiResourceStore({ client: {
+            contentIdentity: value => admitted.get(value),
+            readResource: async () => currentContent,
+        } });
+        const events: PluginUiResourceSubscriptionEventV1[] = [];
+        const context = { pluginId: 'acme.preview', hostResourceStore: store };
+        const read = createPluginSurfaceResourceReadHandler(context);
+        const watch = createPluginSurfaceResourceWatchHandlers({ ...context, deliver: event => { events.push(event); } });
+        const resource = { hostRead: 'usage.query' as const, input: { queries: [input] } };
+        try {
+            await expect(read({ requestId: 'read', method: 'readResource', payload: { resource } }))
+                .resolves.toMatchObject({ contentType: 'application/json', digest: content.digest });
+            await expect(watch.watchResource({ requestId: 'watch', method: 'watchResource',
+                payload: { resource, subscriptionId: 'usage-watch' } }))
+                .resolves.toEqual({ digest: content.digest, subscriptionId: 'usage-watch' });
+
+            const entry = store.getEntry(resource);
+            currentContent = updatedContent;
+            await entry.refresh();
+            await entry.refresh();
+            expect(events).toEqual([
+                expect.objectContaining({ kind: 'invalidated', digest: updatedContent.digest, subscriptionId: 'usage-watch' }),
+            ]);
+        } finally {
+            watch.dispose();
+            store.dispose();
+        }
+    });
+
+    it('refuses a host watch when the stored digest disagrees with the read value digest', async () => {
+        let digest: ResourceDigest = DIGEST_A;
+        const content: ResourceContent = {
+            contentType: 'application/json',
+            get digest() { return digest; },
+            get bytes() {
+                // The external producer changes its reported digest after the store admits the value.
+                digest = DIGEST_B;
+                return new TextEncoder().encode('1');
+            },
+        };
+        const store = createPluginUiResourceStore({ client: { readResource: async () => content } });
+        const context = { pluginId: 'acme.preview', hostResourceStore: store };
+        const read = createPluginSurfaceResourceReadHandler(context);
+        const watch = createPluginSurfaceResourceWatchHandlers({ ...context, deliver: () => {} });
+        const resource = { hostRead: 'usage.query' as const, input: { queries: [{}] } };
+        try {
+            await expect(read({ requestId: 'read', method: 'readResource', payload: { resource } }))
+                .resolves.toMatchObject({ digest: DIGEST_A });
+            await expect(watch.watchResource({ requestId: 'watch', method: 'watchResource',
+                payload: { resource, subscriptionId: 'conflicting-digest' } }))
+                .resolves.toMatchObject({ code: 'unavailable', diagnostics: ['plugin_resource_digest_invalid'] });
+        } finally {
+            watch.dispose();
+            store.dispose();
+        }
     });
 
     it('refuses an opaque host Resource digest and retires a host watch when its digest becomes invalid', async () => {
