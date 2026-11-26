@@ -2650,6 +2650,8 @@ export class ApiMachineClient {
                             platform: { os: process.platform === 'win32' ? 'windows' : process.platform, arch: process.arch },
                             successHomeDir: configuration.happyHomeDir,
                         },
+                        resolveProjectRuntime: deps?.projectOpen?.resolveProjectRuntime
+                            ?? (context => this.resolveProjectFiniteRuntime(context)),
                         ...(this.lifecycleDependencies.workspaceSyncHandoffAdapter ? {
                             workspaceSyncAdapter: this.lifecycleDependencies.workspaceSyncHandoffAdapter,
                         } : {}),

@@ -2,7 +2,7 @@ import { readSecretReferenceOverlayV1Reference, type SecretReferenceOverlayV1 } 
 import type { EnvVarRequirement } from '@happier-dev/protocol/profiles/environmentVariables';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { readSavedSecretMaterializerForOperation } from "@/settings/secrets/savedSecretCatalogRead";
-import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
+import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectAccountRowsInput, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import type { ProjectFiniteActionRuntime } from './projectFiniteAction';
 import type { ProjectSetupAcceptedAssociation } from './projectSetupAcceptedWorkspace';
 import { mergeProjectLaunchLayers } from './projectLaunchEnvironment';
@@ -34,7 +34,11 @@ export async function resolveProjectRequesterSecretBindings(account: ProjectAcco
     return selectProjectRequesterSecretBindings(saved, input.requirements, input.environmentBindings);
 }
 
-export async function resolveProjectRequesterSecretInputs(runtime: ProjectFiniteActionRuntime,
+/** The admitted requester's own Account custody and saved-secret sources; never another Account's. */
+export type ProjectRequesterSecretRuntime = ProjectRuntimeAccountAccess
+    & Pick<ProjectFiniteActionRuntime, 'plugins' | 'resolveSecretEnvironment' | 'secretEnvironment'>;
+
+export async function resolveProjectRequesterSecretInputs(runtime: ProjectRequesterSecretRuntime,
     input: Parameters<typeof resolveProjectRequesterSecretBindings>[1], signal?: AbortSignal): Promise<Readonly<{
     environmentBindings?: SecretReferenceOverlayV1;
     secretEnvironment: ProjectFiniteActionRuntime['secretEnvironment'];
@@ -45,7 +49,7 @@ export async function resolveProjectRequesterSecretInputs(runtime: ProjectFinite
 }
 
 /** Materializes only the admitted requester's selected refs through the existing secret owner. */
-export async function resolveProjectRequesterSecretEnvironment(runtime: ProjectFiniteActionRuntime,
+export async function resolveProjectRequesterSecretEnvironment(runtime: ProjectRequesterSecretRuntime,
     environmentBindings?: SecretReferenceOverlayV1, signal?: AbortSignal): Promise<ProjectFiniteActionRuntime['secretEnvironment']> {
     const requester = readRequesterAccountActionContext(runtime.accountAuthorization);
     if (!requester) return runtime.resolveSecretEnvironment

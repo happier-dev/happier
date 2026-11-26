@@ -16,7 +16,7 @@ import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncExecutionMachineIdV1,
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2, type ManagedWorkspaceLocatorV2, type WorkspaceAddressV1, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { projectWorkspaceRefV1, resolveWorkspaceRefV1, workspaceAddressFromRefV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceRefV1, workspaceAddressFromRefV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { StoredCredentials } from '@/persistence';
 import type { ScmBackendRegistry } from '@/scm/registry';
@@ -38,8 +38,11 @@ import { WorkspaceSyncPreparationRefusal } from '@/workspaces/sync/workspaceSync
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { materializeProjectCheckout } from './materializeProjectCheckout';
+import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { prepareProjectSetup, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
 import { projectNativeSystemIo } from '@/workspaces/projectSetup/projectNativeSystemIo';
+import { readProjectEffectiveDefinition } from '@/workspaces/projectSetup/projectEffectiveDefinition';
+import { resolveProjectRequesterSecretInputs, type ProjectRequesterSecretRuntime } from '@/workspaces/projectSetup/projectSetupRequesterInputs';
 import { admitProjectSourceSelectionV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import type { ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
@@ -63,7 +66,9 @@ export type ProjectOpenRuntime = Readonly<{
   /** The Machine isolation policy the receiving admission reads; it places a grantee's own work. */
   readAgentIsolation?: Parameters<typeof isRequesterOwnWorkPlacedOnDaemonForHost>[1];
   setupPreparation?: Pick<ProjectSetupPreparationInput, 'nativeIo' | 'platform'> & Partial<Pick<ProjectSetupPreparationInput,
-    'environmentBindings' | 'secretEnvironment' | 'configEnvironment' | 'plugins' | 'successHomeDir'>>;
+    'configEnvironment' | 'plugins' | 'successHomeDir'>>;
+  /** The admitted requester's installed Project runtime: its own saved secrets, never the Machine custodian's. */
+  resolveProjectRuntime?(context: RpcHandlerContext): Promise<ProjectRequesterSecretRuntime | null>;
   /** Existing daemon Sync preparation, including its transport and root custody. */
   workspaceSyncAdapter?: WorkspaceSyncHandoffAdapter;
   /** The daemon retains the native namespace; host filesystem preparation never handles it. */
@@ -158,14 +163,10 @@ async function resolveProjectRequester(runtime: ProjectOpenRuntime, context: Rpc
   return { rows: { credentials, serverId: runtime.serverId, signal: context.signal }, credentials };
 }
 
-function shouldListOpenedProject(requester: ProjectRequester): boolean {
-  // A reviewed child of another Action keeps its parent binding and stays a Session folder.
-  return !requester.sessionProjectFiles
-    && (!requester.rows.authorization || isProjectWorkspaceSyncOpenActionV1(requester.rows.authorization.binding.actionId));
-}
-
 async function listOpenedProject(requester: ProjectRequester, ref: WorkspaceRefV1, signal: AbortSignal): Promise<void> {
-  if (!shouldListOpenedProject(requester)) return;
+  // A reviewed child of another Action keeps its parent binding and stays a Session folder.
+  if (requester.sessionProjectFiles
+    || requester.rows.authorization && !isProjectWorkspaceSyncOpenActionV1(requester.rows.authorization.binding.actionId)) return;
   await mutateProjectAccountOrganization({ ...requester.rows, serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id,
     mutate: value => value.hidden === false ? value : { ...value, hidden: false } }).catch(error => {
     signal.throwIfAborted();
@@ -260,59 +261,43 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           requesterAccountId: admission.actorAccountId, lifetime: managedTargetLifetime.signal });
         const signal = AbortSignal.any([target.lifetime, context.signal]);
         const argv = [target.holderPath, 'workspace', '--root', rootPath];
-        // Tie the validated holder channel to target.lifetime so it can be handed off warm to the registry.
-        let channelHandedOff = false;
-        const channel = target.openChannel(argv, target.lifetime);
-        const abortOpen = () => { if (!channelHandedOff) channel.end(); };
-        context.signal.addEventListener('abort', abortOpen, { once: true });
+        const channel = target.openChannel(argv, signal);
         try {
-          const holder = openSessionHolderWorkspaceChannel(channel);
           const source = createHolderWorkspaceSource({ id: destination.managedId, rootPath,
-            holder, helperPath: target.helperPath });
+            holder: openSessionHolderWorkspaceChannel(channel), helperPath: target.helperPath });
           if (!(await source.stat(directory)).isDirectory()) return refused('workspace_target_unavailable');
-          signal.throwIfAborted();
-          return await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, async () => {
-            if (acceptedSource && sourceAddress) {
-              const ref = acceptedSource.ref;
-              managedTargetRetained = registerManagedWorkspaceTarget({ workspace: sourceAddress,
-                requesterAccountId: admission.actorAccountId, target, initialChannel: { channel, holder } });
-              channelHandedOff = managedTargetRetained;
-              await listOpenedProject(requester, ref, signal);
-              return { kind: 'opened', workspace: sourceAddress, directory, setup: 'notRequired',
-                facts: { projectKey: ref.projectKey ?? ref.id,
-                  ...(ref.repositoryIdentity ? { repositoryIdentity: ref.repositoryIdentity } : {}),
-                  ...(ref.source ? { source: ref.source } : {}) } };
-            }
-            let acceptedRefId: string | undefined;
-            effectsIssued = true;
-            const accepted = await createProjectAccountSnapshotMutation(requester.rows)(current => {
-              signal.throwIfAborted();
-              const materialized = materializeWorkspaceRefForManagedRoot(current.workspaceRefs, {
-                ...locator, nowMs: Date.now(), createId: randomUUID,
-              });
-              acceptedRefId = materialized.workspaceRef.id;
-              return { ...current, workspaceRefs: materialized.workspaceRefs };
-            }, signal, shouldListOpenedProject(requester) ? {
-              ensureProjectListed: next => {
-                const row = next.workspaceRefs.find(item => item.id === acceptedRefId);
-                return row ? { serverId: row.serverId, projectKey: row.projectKey ?? row.id } : null;
-              },
-            } : undefined);
-            if (accepted.status !== 'applied' && accepted.status !== 'unchanged') return outcomeUnknown(`Account row acceptance returned ${accepted.status}`);
-            const ref = accepted.snapshot.workspaceRefs.find(row => row.id === acceptedRefId);
-            if (!ref || !isManagedWorkspaceRefV2(ref)) return outcomeUnknown('Managed Workspace row was absent from accepted Account rows');
-            const workspace = workspaceAddressFromRefV2(ref);
-            if (workspace.kind !== 'managed') return outcomeUnknown('Managed Workspace address was unavailable');
-            managedTargetRetained = registerManagedWorkspaceTarget({ workspace, requesterAccountId: admission.actorAccountId,
-              target, initialChannel: { channel, holder } });
-            channelHandedOff = managedTargetRetained;
-            if (!accepted.projectListed) await listOpenedProject(requester, ref, signal);
-            return { kind: 'opened', workspace, directory, setup: 'notRequired', facts: { projectKey: ref.projectKey ?? ref.id } };
-          });
-        } finally {
-          context.signal.removeEventListener('abort', abortOpen);
-          if (!channelHandedOff) channel.end();
-        }
+        } finally { channel.end(); }
+        signal.throwIfAborted();
+        return await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, async () => {
+          if (acceptedSource && sourceAddress) {
+            const ref = acceptedSource.ref;
+            managedTargetRetained = registerManagedWorkspaceTarget({ workspace: sourceAddress,
+              requesterAccountId: admission.actorAccountId, target });
+            await listOpenedProject(requester, ref, signal);
+            return { kind: 'opened', workspace: sourceAddress, directory, setup: 'notRequired',
+              facts: { projectKey: ref.projectKey ?? ref.id,
+                ...(ref.repositoryIdentity ? { repositoryIdentity: ref.repositoryIdentity } : {}),
+                ...(ref.source ? { source: ref.source } : {}) } };
+          }
+          let acceptedRefId: string | undefined;
+          effectsIssued = true;
+          const accepted = await createProjectAccountSnapshotMutation(requester.rows)(current => {
+            signal.throwIfAborted();
+            const materialized = materializeWorkspaceRefForManagedRoot(current.workspaceRefs, {
+              ...locator, nowMs: Date.now(), createId: randomUUID,
+            });
+            acceptedRefId = materialized.workspaceRef.id;
+            return { ...current, workspaceRefs: materialized.workspaceRefs };
+          }, signal);
+          if (accepted.status !== 'applied' && accepted.status !== 'unchanged') return outcomeUnknown(`Account row acceptance returned ${accepted.status}`);
+          const ref = accepted.snapshot.workspaceRefs.find(row => row.id === acceptedRefId);
+          if (!ref || !isManagedWorkspaceRefV2(ref)) return outcomeUnknown('Managed Workspace row was absent from accepted Account rows');
+          const workspace = workspaceAddressFromRefV2(ref);
+          if (workspace.kind !== 'managed') return outcomeUnknown('Managed Workspace address was unavailable');
+          managedTargetRetained = registerManagedWorkspaceTarget({ workspace, requesterAccountId: admission.actorAccountId, target });
+          await listOpenedProject(requester, ref, signal);
+          return { kind: 'opened', workspace, directory, setup: 'notRequired', facts: { projectKey: ref.projectKey ?? ref.id } };
+        });
       } finally { context.signal.removeEventListener('abort', cancel); }
     }
     const executionIdentity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: homeId,
@@ -428,17 +413,13 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       // Native selection/acquisition happens before Open. Qualify only the
       // caller's chosen Machine; a manifest cannot redirect browse acceptance.
       const receivingMachineId = readHostReviewedChildReceivingAdmissionV1(context.reviewedChildActionContext)?.machineId;
-      const needsSyncMapping = input.materialization.kind === 'sync' && !managedCopySource
-        && (input.materialization.workspaceAction.kind === 'copy_once' || input.materialization.workspaceAction.kind === 'create_relationship');
-      const combinedPhysicalRead = !requester.rows.authorization && needsSyncMapping && Boolean(sourceRootPath);
       const children = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
         relationshipId: requester.rows.authorization?.binding.workspaceSyncAdmission?.relationshipId,
-        serverHttpBaseUrl: runtime.serverHttpBaseUrl, ...(credentials ? { credentials } : {}),
-        machineIds: combinedPhysicalRead ? [runtime.machineId, sourceMachineId] : [runtime.machineId],
+        serverHttpBaseUrl: runtime.serverHttpBaseUrl, ...(credentials ? { credentials } : {}), machineIds: [runtime.machineId],
         ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}),
         ...(receivingMachineId === runtime.machineId ? { receivingMachineId } : {}),
-        purpose: combinedPhysicalRead ? 'physical_sync' : 'child_namespace', signal: context.signal });
-      const child = children.find(fact => fact.machineId === runtime.machineId);
+        purpose: 'child_namespace', signal: context.signal });
+      const child = children[0];
       if (child?.managedMachine && !isManagedDevcontainerChildProjectionCurrentV1({ homeId: runtime.serverId,
         machineId: runtime.machineId, projection: child.projection, managedMachine: child.managedMachine })) return refused('workspace_sync_child_unavailable');
       let sync: Parameters<typeof materializeProjectCheckout>[0]['sync'];
@@ -461,14 +442,11 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         let syncTarget = target;
         if (!managedCopySource && (action.kind === 'copy_once' || action.kind === 'create_relationship')) {
           const mappingPurpose = requester.rows.authorization ? 'admitted_mapping' as const : 'physical_sync' as const;
-          // Reuse the already-read receiving Machine facts; only fetch a distinct remote source under admitted mapping.
-          const childMachines = combinedPhysicalRead || sourceMachineId === runtime.machineId
-            ? children
-            : [...await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
-              relationshipId: requester.rows.authorization?.binding.workspaceSyncAdmission?.relationshipId,
-              serverHttpBaseUrl: runtime.serverHttpBaseUrl, purpose: mappingPurpose,
-              ...(credentials ? { credentials } : {}), machineIds: [sourceMachineId], signal: context.signal,
-              ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}) }), ...children];
+          const childMachines = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
+            relationshipId: requester.rows.authorization?.binding.workspaceSyncAdmission?.relationshipId,
+            serverHttpBaseUrl: runtime.serverHttpBaseUrl, purpose: mappingPurpose,
+            ...(credentials ? { credentials } : {}), machineIds: [sourceMachineId, runtime.machineId], signal: context.signal,
+            ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}) });
           const source = sourceWorkspaceRefId ? resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: runtime.serverId, id: sourceWorkspaceRefId }) : null;
           if (requester.rows.authorization) {
             if (source?.kind !== 'resolved') return refused('workspace_sync_child_unavailable');
@@ -538,7 +516,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         });
       }
       const mutateProjectRows = createProjectAccountSnapshotMutation(requester.rows);
-      const acceptDestination = async (rootPath: string, parentRootPath?: string, listProject = false) => {
+      const acceptDestination = async (rootPath: string, parentRootPath?: string) => {
         context.signal.throwIfAborted();
         const prepared = privateCheckout?.prepared;
         let acceptedId: string | undefined;
@@ -559,14 +537,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           acceptedId = materialized.workspaceRef.id;
           created = materialized.created;
           return { ...current, workspaceRefs: materialized.workspaceRefs };
-        }, context.signal, listProject ? {
-          ensureProjectListed: next => {
-            const row = acceptedId ? resolveWorkspaceRefV1(next.workspaceRefs, {
-              serverId: runtime.serverId, workspaceId: acceptedId, machineId: runtime.machineId, rootPath,
-            }) : null;
-            return row?.kind === 'resolved' ? { serverId: row.ref.serverId, projectKey: row.ref.projectKey ?? row.ref.id } : null;
-          },
-        } : undefined);
+        }, context.signal);
         if (accepted.status !== 'applied' && accepted.status !== 'unchanged')
           return { kind: 'unconfirmed' as const, reason: `Account row acceptance returned ${accepted.status}` };
         const resolved = acceptedId ? resolveWorkspaceRefV1(accepted.snapshot.workspaceRefs, {
@@ -574,9 +545,9 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         }) : { kind: 'missing' as const };
         if (resolved.kind !== 'resolved')
           return { kind: 'unconfirmed' as const, reason: `Accepted Workspace row readback was ${resolved.kind}` };
-        return { kind: 'accepted' as const, ref: resolved.ref, created, projectListed: accepted.projectListed === true };
+        return { kind: 'accepted' as const, ref: resolved.ref, created };
       };
-      let publishedPreDispatch: WorkspaceRefV1 | undefined;
+      let publishedOrdinaryCopy: WorkspaceRefV1 | undefined;
       context.signal.throwIfAborted();
       if (remoteSyncSource) {
         if (requester.rows.authorization && (!runtime.callWorkspaceSource || !admittedSyncSource || !sync)) {
@@ -589,10 +560,10 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         if (input.materialization.kind === 'sync' && (copy || privateSync && privateCheckout)) {
           // The receiving preflight resolves the selected root in its own rows.
           // Publish this host's identity before the Source asks it to qualify.
-          const published = await acceptDestination(privateCheckout?.prepared.rootPath ?? input.materialization.targetPath, undefined, false);
+          const published = await acceptDestination(privateCheckout?.prepared.rootPath ?? input.materialization.targetPath);
           if (published.kind === 'unconfirmed') return outcomeUnknown(published.reason);
           if (copy && published.created) createdCopyTarget = published.ref;
-          publishedPreDispatch = published.ref;
+          if (copy && !privateCheckout) publishedOrdinaryCopy = published.ref;
         }
         // Best effort: the Source's refusal is the outcome, so a cleanup
         // failure is logged and never replaces that typed cause.
@@ -696,22 +667,30 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         }
       }
       context.signal.throwIfAborted();
-      const reusePublishedPreDispatch = publishedPreDispatch !== undefined
-        && publishedPreDispatch.rootPath === checkout.rootPath
-        && !parentRootPath
-        && (!checkout.repositoryIdentity || isDeepStrictEqual(publishedPreDispatch.repositoryIdentity, checkout.repositoryIdentity));
-      const accepted = reusePublishedPreDispatch
-        ? { kind: 'accepted' as const, ref: publishedPreDispatch, projectListed: false }
-        : await acceptDestination(checkout.rootPath, parentRootPath, shouldListOpenedProject(requester));
+      const accepted = publishedOrdinaryCopy
+        ? { kind: 'accepted' as const, ref: publishedOrdinaryCopy }
+        : await acceptDestination(checkout.rootPath, parentRootPath);
       if (accepted.kind === 'unconfirmed') return outcomeUnknown(accepted.reason);
       const acceptedRef = accepted.ref;
       const workspace = workspaceAddressFromRefV1(acceptedRef);
-      if (!accepted.projectListed) await listOpenedProject(requester, acceptedRef, context.signal);
+      await listOpenedProject(requester, acceptedRef, context.signal);
       let setup: Opened['setup'];
       try {
-        const projected = projectWorkspaceRefV1(acceptedRef);
-        const association = { workspace: acceptedRef, project: { serverId: projected.serverId, projectId: projected.projectKey } };
+        const association = await resolveProjectSetupAcceptedWorkspace({ address: workspace, ...requester.rows,
+          serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal });
+        // A declared secret is bound from the requester's own saved Secrets, as setup readiness binds it.
+        // An unreadable definition is left to the preparation owner, which reports its own refusal.
+        const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath, account: requester.rows,
+          project: association.project, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal }).catch(() => undefined);
+        const requirements = definition?.effectiveDefinition.effectiveManifest?.environmentVariables ?? [];
+        const projectRuntime = requirements.some(requirement => requirement.kind === 'secret')
+          ? await runtime.resolveProjectRuntime?.(context) : undefined;
+        const secrets = projectRuntime ? await resolveProjectRequesterSecretInputs(projectRuntime,
+          { project: association.project, requirements }, context.signal) : undefined;
         const prepared = await prepareProjectSetup({ ...runtime.setupPreparation,
+          ...(definition ? { acceptedSetup: definition.acceptedSetup } : {}),
+          ...(secrets?.environmentBindings ? { environmentBindings: secrets.environmentBindings } : {}),
+          ...(secrets?.secretEnvironment ? { secretEnvironment: secrets.secretEnvironment } : {}),
           requesterIdentity: executionIdentity,
           approvalContext: context.localActionContext,
           workspace: association.workspace, projectAssociation: association,
