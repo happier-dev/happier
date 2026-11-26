@@ -21,6 +21,7 @@ import { formatReviewFindingLocation } from '@/components/sessions/reviews/findi
 import { showReviewNewRoundDialog } from '@/components/reviews/detail/ReviewNewRoundDialog';
 import { ReviewSubmitPanel } from '@/components/reviews/detail/ReviewSubmitPanel';
 import { ReviewSummary } from '@/components/reviews/summary/ReviewSummary';
+import { ExecutionRunResultLayout } from '@/components/sessions/runs/ExecutionRunResultLayout';
 import {
   ReviewFindingRow,
   type ReviewFindingDecision,
@@ -414,7 +415,9 @@ export function ReviewDetailSpecimen(
     if (scene === 'newround') openNewRound();
   }, [openNewRound, scene]);
 
-  if (scene === 'summary') return <ReviewSummaryScene />;
+  if (scene === 'summary' || scene === 'summary-clear' || scene === 'summary-running') {
+    return <ReviewSummaryScene state={scene} />;
+  }
   if (scene === 'loading') return <ReviewDetailState kind="loading" />;
   if (scene === 'failed')
     return <ReviewDetailState kind="failed" onRetry={() => undefined} />;
@@ -582,21 +585,23 @@ const styles = StyleSheet.create((theme) => ({
   placeholder: { minHeight: theme.space.s48 },
   summaryPage: { flex: 1, padding: theme.space.s24, alignItems: 'center', backgroundColor: theme.colors.surface.base },
   summaryCard: {
-    width: '100%', maxWidth: 680, padding: theme.space.s12, borderRadius: theme.space.s12,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.default,
+    width: '100%', maxWidth: 680,
   },
 }));
 
-/** The shared summary as a Session transcript draws it (lab `session-card`), inside a plain card edge. */
-function ReviewSummaryScene() {
+/** Fixture-only Session states in the real structured result frame; no Run or vendor work is started. */
+function ReviewSummaryScene({ state }: Readonly<{ state: 'summary' | 'summary-clear' | 'summary-running' }>) {
+  const clear = state === 'summary-clear';
+  const running = state === 'summary-running';
   return (
     <View style={styles.summaryPage}>
       <View style={styles.summaryCard}>
+        <ExecutionRunResultLayout presentation="message" testID={`review-session-${state}`}>
         <ReviewSummary
-          subject="this session"
-          status={{ label: 'Needs decision', tone: 'quiet' }}
-          glance={{ sentence: '2 blockers found', tone: 'attention', facts: [] }}
-          rows={FIXTURES.slice(0, 2).map((fixture) => ({
+          subject={clear ? 'turn 7' : running ? 'turn 6' : 'this session'}
+          status={{ label: clear ? 'Clear' : running ? 'Reviewing' : 'Needs decision', tone: 'quiet' }}
+          glance={{ sentence: clear ? 'Nothing to fix in this turn' : running ? 'Claude is done · Codex is running' : '2 blockers found', tone: clear || running ? 'quiet' : 'attention', facts: [] }}
+          rows={clear || running ? [] : FIXTURES.slice(0, 2).map((fixture) => ({
             rowId: fixture.finding.id,
             severity: fixture.finding.severity,
             title: fixture.finding.title,
@@ -604,10 +609,11 @@ function ReviewSummaryScene() {
             location: formatReviewFindingLocation(fixture.finding),
             decision: fixture.decision,
           }))}
-          more={{ label: '4 more findings and 1 question · Show', onPress: () => undefined }}
-          reviewers={[{ label: 'Claude', backendId: 'claude' }, { label: 'Codex', backendId: 'codex' }]}
+          more={clear || running ? null : { label: '4 more findings and 1 question · Show', onPress: () => undefined }}
+          reviewers={clear ? [{ label: 'Claude', backendId: 'claude' }] : [{ label: 'Claude', backendId: 'claude' }, { label: 'Codex', backendId: 'codex' }]}
           onOpenReview={() => undefined}
         />
+        </ExecutionRunResultLayout>
       </View>
     </View>
   );
