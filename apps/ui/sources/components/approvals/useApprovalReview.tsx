@@ -875,6 +875,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       requesterSessionId={sessionId}
       requesterStatus={requesterStatus}
       requesterAgentId={parsed.request.createdBy.agentId ?? null}
+      // The Account the request was admitted for: the person who asked when no Session or Agent did.
+      requesterAccountId={parsed.kind === 'built_in' && parsed.request.v === 2 || parsed.kind === 'target'
+        ? parsed.request.executionOriginV1?.accountId ?? null : null}
       requesterSurface={requesterSurface}
       requestedByGuard={isHappierGuardApproval(parsed?.request ?? null, parsed?.kind === 'built_in')}
     />
@@ -902,7 +905,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   return {
     kind: 'ready' as const,
     // A Computer ask is titled by its host-stamped act, never by the agent's own summary (lab computer CSp).
-    title: projectCommandTitle ?? deploymentDecision?.title ?? (computerAction ? readComputerActLine(computerAction) : null)
+    // A reviewed deploy's decision is the request's own title (its tab and Inbox row read the same one).
+    title: projectCommandTitle ?? (computerAction ? readComputerActLine(computerAction) : null)
       ?? (requestTitle.title || t('approvals.untitled')),
     description: (parsed.request.status === 'open' ? deploymentDecision?.description : undefined) ?? (parsed.kind === 'target' && parsed.request.detail
       ? parsed.request.detail

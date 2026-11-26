@@ -24,3 +24,8 @@ export function createAcceptedExternalSessionTailCursorSyncBoundary(
 export function createSessionListHydrationSyncBoundary(): Pick<SyncPublicApi, 'hydrateSessionListRows'> {
     return { hydrateSessionListRows: async () => undefined };
 }
+
+/** Readers that demand a peripheral feed (friends, …) hold it while mounted; a fixture has no Home to read it from. */
+export function createPeripheralFeedSyncBoundary(): Pick<SyncPublicApi, 'acquirePeripheralFeed'> {
+    return { acquirePeripheralFeed: () => () => {} };
+}

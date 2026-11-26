@@ -30,11 +30,13 @@ import type { ApprovalSessionReadingStatus } from './useApprovalSessionReading';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
+    approvalOriginNamesRequester,
     describeApprovalAgent,
     describeApprovalOrigin,
     describeUnnamedApprovalRequester,
     resolveApprovalHomeSentenceName,
 } from './approvalRequesterLabels';
+import { useApprovalAccountLabel } from './useApprovalAccountLabel';
 
 const ApprovalContextLine = React.memo(function ApprovalContextLine(props: Readonly<{
     context: SessionContextPresentation | null;
@@ -78,6 +80,8 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     requesterSessionId?: string | null;
     requesterStatus?: ApprovalSessionReadingStatus;
     requesterAgentId: string | null;
+    /** The Account the request was admitted for; names the person who asked when no Session or Agent did. */
+    requesterAccountId?: string | null;
     requesterSurface: string;
     /** Happier's own host asked (Guard's Asks); a Session it names is the work's owner, not the requester. */
     requestedByGuard?: boolean;
@@ -87,6 +91,8 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
     const homeName = props.homeName?.trim() || null;
     const guard = props.requestedByGuard === true;
     const isRecordingVisible = useSessionRecordingVisibility();
+    // The person who asked, as this viewer may see them: You, a known name, or nothing (never guessed).
+    const personLabel = useApprovalAccountLabel(props.serverId, guard ? undefined : props.requesterAccountId?.trim() || undefined);
     const requesterId = props.requesterSessionId ?? props.session?.id;
     const recordingVisible = !requesterId || isRecordingVisible({ sessionId: requesterId,
         serverId: props.serverId ?? props.session?.serverId });
@@ -124,17 +130,21 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
         // "A session on <Home>" already names the Home.
         : sentenceHome ? null : props.homeDisplayId?.trim() ?? null;
 
-    if (!guard && !sessionTitle && !sessionResolving && !pathLabel && !machineLabel && !agentLabel && !originLabel && !homeLabel) {
+    // The main line names who asked: the session, else the Agent or an origin that is itself the asker ("Asked by
+    // Happier"), else the person (You, or their name). A Home's label never stands in for them, and a channel alone
+    // ("Asked from the command line") names no one: with nobody to name, the section is left out (UI refinements
+    // 2026-11-25 14:53Z, item 3).
+    const noSession = !sessionTitle && !sessionResolving;
+    const askerLine = noSession && (agentLabel || (originLabel && approvalOriginNamesRequester(surface)))
+        ? joinHappierFacts(agentLabel, originLabel) : null;
+    const personLeads = noSession && !askerLine && Boolean(personLabel);
+    if (!guard && !sessionTitle && !sessionResolving && !askerLine && !personLeads) {
         return null;
     }
-    // The section always leads with one main line: the session, else the Home that asked (by its
-    // name, so it is not also repeated as a "Home: …" fact), else who asked and how.
-    const homeLeads = !sessionTitle && !sessionResolving && Boolean(homeLabel);
     // Who asked, how, and from which Home: one quiet facts line, not a separate "Home: …" label.
-    const factsHome = homeLabel && !homeLeads ? homeLabel : null;
-    const requesterFacts = agentLabel || originLabel || factsHome ? joinHappierFacts(agentLabel, originLabel, factsHome) : null;
-    const factsLead = !sessionTitle && !sessionResolving && !homeLeads;
-    const mainLine = guard ? t('detailPages.approval.requesterGuard') : sessionTitle ?? (homeLeads ? homeLabel : requesterFacts);
+    const requesterFacts = askerLine ? homeLabel
+        : agentLabel || originLabel || homeLabel ? joinHappierFacts(agentLabel, originLabel, homeLabel) : null;
+    const mainLine = guard ? t('detailPages.approval.requesterGuard') : sessionTitle ?? askerLine ?? (personLeads ? personLabel : null);
 
     return (
         <ItemGroup
@@ -176,7 +186,7 @@ export const ApprovalSessionContextCard = React.memo(function ApprovalSessionCon
                 ) : null}
             </View>
 
-            {requesterFacts && !factsLead ? (
+            {requesterFacts ? (
                 // Who asked and how it arrived, as one quiet line of words (never the stored enum).
                 <Text testID="approvals.requester-origin" style={styles.metaText}>
                     {requesterFacts}

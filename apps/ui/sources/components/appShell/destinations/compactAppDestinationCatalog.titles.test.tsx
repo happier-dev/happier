@@ -310,6 +310,23 @@ describe('Project destination instance titles', () => {
         }
     });
 
+    it('titles a Deployment review tab by the decision its page leads with, never the Action name (ORCH-TOP #217 review)', async () => {
+        const { createDeploymentApprovalArtifact } = await import('@/dev/testkit/fixtures/deploymentApprovalArtifacts');
+        const create = createDeploymentApprovalArtifact({ id: 'deploy-create-approval', kind: 'create', scope });
+        const remove = createDeploymentApprovalArtifact({ id: 'deploy-delete-approval', kind: 'delete', scope });
+        const before = storage.getState().artifacts;
+        try {
+            storage.setState((state) => ({ ...state, artifacts: { ...state.artifacts, [create.id]: create, [remove.id]: remove } }));
+            const pending = formatApprovalStatusLabel('open');
+            expect(readDestinationInstanceTitle(catalog, destination(`/inbox/approvals/${create.id}`)))
+                .toBe(`${t('projects.deployments.review.decisionCreate', { name: 'orders-api', platform: 'Railway' })} · ${pending}`);
+            expect(readDestinationInstanceTitle(catalog, destination(`/inbox/approvals/${remove.id}`)))
+                .toBe(`${t('projects.deployments.review.decisionDeletePlatform', { name: 'orders-api', platform: 'Railway' })} · ${pending}`);
+        } finally {
+            storage.setState((state) => ({ ...state, artifacts: before }));
+        }
+    });
+
     it('names inactive settings entities from their scoped catalogs and Approvals from their route owner', async () => {
         const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_saved',
             source: { kind: 'contribution', contributionKey: 'acme/provider' }, role: 'named',

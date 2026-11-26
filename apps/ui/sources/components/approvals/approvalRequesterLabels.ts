@@ -107,6 +107,16 @@ const ORIGIN_LABEL_KEYS = {
   system: 'detailPages.approval.origin.system',
 } as const;
 
+/**
+ * Origins whose words name who asked ("Asked by Happier", "Asked by a Workflow Run"). The others (the app, the
+ * command line, voice, a connected tool, the API) say only how a person or Agent asked, never who.
+ */
+const ORIGINS_NAMING_REQUESTER: ReadonlySet<string> = new Set(['system', 'agent', 'session_agent', 'plugin', 'workflow_run']);
+
+export function approvalOriginNamesRequester(surface: string | null | undefined): boolean {
+  return ORIGINS_NAMING_REQUESTER.has(surface?.trim() ?? '');
+}
+
 /** How the request arrived, in words; an origin this build does not know says nothing. */
 export function describeApprovalOrigin(
   surface: string | null | undefined,

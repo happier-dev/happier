@@ -16,6 +16,7 @@ import { readPluginInstallApprovalChange, readPluginInstallSourceName } from './
 import { useApprovalReferenceReading } from './approvalReferenceReading';
 import { useIncomingDiscussionApprovalNames } from './useIncomingDiscussionApprovalNames';
 import type { ActionApprovalPresentationInput } from './actionApprovalPresentation';
+import { describeDeploymentReviewDecision, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 
 export type ApprovalRequestTitleInput = Pick<ActionApprovalPresentationInput, 'execution' | 'executionOriginV1' | 'incomingDiscussionNames'> & Readonly<{
     storedTitle: string | null | undefined;
@@ -84,7 +85,10 @@ export function resolveApprovalRequestTitle(
     : WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId).success
       ? readWidgetLayoutFragmentApprovalNameV1(input.actionArgs, input.preview)
       : generated && !subject ? readPluginEventTriggerApprovalSummary(input, input.triggerEnvironmentName) : null;
-  const title = subjectName && actionTitle ? `${actionTitle} · ${subjectName}` :
+  // A deploy, Create or Delete leads with the decision its host reviewed ("Create orders-api on Railway"), never the
+  // Action's name: the page, its Inbox row and its retained tab read it from here.
+  const reviewedDecision = describeDeploymentReviewDecision(readDeploymentReviewApproval({ preview: input.preview }), actionId || null, null);
+  const title = reviewedDecision ? reviewedDecision.title : subjectName && actionTitle ? `${actionTitle} · ${subjectName}` :
     generated
       ? (presentation.title ?? actionTitle ?? t('inbox.work.rows.approvalUntitled'))
       : firstLine;

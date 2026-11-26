@@ -8,10 +8,13 @@ import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/a
 installSessionSubagentCommonModuleMocks({ text: async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key, values) => key === 'session.homeFreshness.lastUpdated'
-        ? `Last updated ${values?.ago}` : key });
+        ? `Last updated ${values?.ago}` : key === 'time.compactAge.minutes' ? `${values?.count}m`
+        : key === 'time.compactAge.hours' ? `${values?.count}h` : key });
 } });
 // Navigation is the native SDK boundary; context facts and formatting remain real.
 vi.mock('expo-router', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// Naming the asking Account demands the friends feed; the fixture has no Home to read it from.
+vi.mock('@/sync/sync', async () => ({ sync: (await import('@/dev/testkit/mocks/sync')).createPeripheralFeedSyncBoundary() }));
 const { ApprovalSessionContextCard } = await import('./ApprovalSessionContextCard');
 const { buildSessionContextFacts, projectSessionContextPresentation } = await import('@/sync/domains/session/presentation/sessionContextPresentation');
 const { removeServerProfile, upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
@@ -39,7 +42,7 @@ describe('Approval context age leaf', () => {
         function Parent() {
             paints();
             return <ApprovalSessionContextCard session={null} sessionName={null} machineLabel={null} serverId="home"
-                context={context} contextFacts={facts} homeName="Home" requesterAgentId={null} requesterSurface="" />;
+                context={context} contextFacts={facts} homeName="Home" requesterSessionId="session" requesterAgentId={null} requesterSurface="" />;
         }
         const screen = await renderScreen(<Parent />);
         expect(screen.getTextContent()).toContain('Last updated 59m');
@@ -51,19 +54,44 @@ describe('Approval context age leaf', () => {
         expect(screen.getTextContent()).toContain('session.homeFreshness.offline');
         expect(paints.mock.calls.length).toBe(before);
         await screen.update(<ApprovalSessionContextCard session={null} sessionName={null} machineLabel={null} serverId="home"
-            context={context} homeName="Home" requesterAgentId={null} requesterSurface="" />);
+            context={context} homeName="Home" requesterSessionId="session" requesterAgentId={null} requesterSurface="" />);
         expect(vi.getTimerCount()).toBe(0);
     });
 });
 
-describe('Requested by main line', () => {
-    it('leads with the asking Home when no session asked', async () => {
-        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machineLabel={null} serverId="home"
-            context={null} homeName="Studio Mac" requesterSessionId={null} requesterAgentId={null} requesterSurface="cli" />);
-        const title = screen.findByTestId('approvals.requester-title');
-        expect(title?.props.children).toBe('Studio Mac');
-        // The Home is the main line, so it is not repeated as a "Home: …" fact beneath it.
-        expect(screen.getTextContent()).not.toContain('actionConfirmations.homeTarget');
+// UI refinements 2026-11-25 14:53Z item 3: name who asked; a Home's label never stands in for them.
+describe('Requested by main line when no session asked', () => {
+    it('reads as the person themselves when their own command line asked', async () => {
+        const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
+        const active = await activateStorageAccountScope({ serverId: 'home', accountId: 'account-me' });
+        try {
+            const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machineLabel="Build box"
+                serverId="home" context={null} homeName="Studio Mac" requesterSessionId={null} requesterAgentId={null}
+                requesterSurface="cli" requesterAccountId="account-me" />);
+            expect(screen.findByTestId('approvals.requester-title')?.props.children).toBe('message.accountActorYou');
+            // How it arrived and the Home stay as the quiet facts beneath, each once.
+            const facts = String(screen.findByTestId('approvals.requester-origin')?.props.children);
+            expect(facts).toContain('detailPages.approval.origin.cli');
+            expect(facts).toContain('Studio Mac');
+        } finally {
+            active.dispose();
+        }
+    });
+
+    it('leaves the section out when nothing names who asked, rather than leading with the Home', async () => {
+        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machineLabel="Build box"
+            serverId="home" context={null} homeName="Studio Mac" requesterSessionId={null} requesterAgentId={null}
+            requesterSurface="cli" requesterAccountId="account-unknown" />);
+        const text = screen.getTextContent();
+        expect(text).not.toContain('detailPages.approval.contextTitle');
+        expect(text).not.toContain('Studio Mac');
+    });
+
+    it('says in words when the Home asked by itself, with the Home as a fact beneath', async () => {
+        const screen = await renderScreen(<ApprovalSessionContextCard session={null} sessionName={null} machineLabel={null}
+            serverId="home" context={null} homeName="Studio Mac" requesterSessionId={null} requesterAgentId={null} requesterSurface="system" />);
+        expect(screen.findByTestId('approvals.requester-title')?.props.children).toBe('detailPages.approval.origin.system');
+        expect(screen.findByTestId('approvals.requester-origin')?.props.children).toBe('Studio Mac');
     });
 });
 
