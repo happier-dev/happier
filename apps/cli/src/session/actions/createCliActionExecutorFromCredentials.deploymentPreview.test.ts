@@ -2,7 +2,8 @@ import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegis
 import axios from 'axios';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import nacl from 'tweetnacl';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, projectDeploymentPreparationAdmissionV1, projectExternalActionDeploymentMetadataEnvironmentIdV1, projectExternalActionDeploymentNativeEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -22,6 +23,10 @@ import { DeploymentTemplateInstantiateInputV1Schema } from '@happier-dev/protoco
 import { DeploymentMoveToRepositoryInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+
+beforeEach(() => {
+    stubUndiciFetch((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
+});
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); withdrawActiveProjectAccountRowsSnapshot(); });
 
@@ -262,8 +267,8 @@ it.each([
                 executor: createActionExecutor(createCliActionDeps({ token, credentials, sessionId: '', mode: 'plain', ctx: null,
                     serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.test',
                     actionsSettingsProvider: createActionSettingsProvider({ accountSettings }) })) } });
-        const localTransport = vi.fn(async (_url: unknown, options: RequestInit) => {
-            const response = await app.inject({ method: 'POST', url: '/actions/root/execute',
+        const localTransport = vi.fn(async (url: unknown, options: RequestInit) => {
+            const response = await app.inject({ method: 'POST', url: new URL(String(url)).pathname,
                 headers: { 'x-happier-daemon-token': 'fixture-control' }, payload: JSON.parse(String(options.body)) });
             return new Response(response.body, { status: response.statusCode });
         });

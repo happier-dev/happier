@@ -8,6 +8,7 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
+import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
@@ -34,13 +35,19 @@ describe('managed creation preference at CLI Action origination', () => {
         const pluginId = 'happier.machine.vercel';
         // Package-asset bytes are the filesystem boundary; compile current authored declarations
         // rather than letting concurrent semantic publication choose the fixture's contract.
+        const published = ingestCanonicalPluginManifest(VERCEL_PLUGIN.manifest, {
+            manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource',
+        });
+        if (!published.ok) throw new Error('The authored Vercel fixture must admit before publication');
+        const manifestText = JSON.stringify(published.manifest);
         const readFileSync = fs.readFileSync;
         vi.spyOn(fs, 'readFileSync').mockImplementation((...args: Parameters<typeof fs.readFileSync>) =>
             String(args[0]).replaceAll('\\', '/').endsWith('/bundled-plugin-manifests/machine-vercel.json')
-                ? JSON.stringify(VERCEL_PLUGIN.manifest) : readFileSync(...args));
-        const [plugin] = loadCurrentBundledPluginLocatorResult({ pluginIds: [pluginId] }).loadedPlugins;
+                ? args[1] === undefined ? Buffer.from(manifestText) : manifestText : readFileSync(...args));
+        const loaded = loadCurrentBundledPluginLocatorResult({ pluginIds: [pluginId] });
+        const [plugin] = loaded.loadedPlugins;
         const descriptor = plugin?.manifest.contributes.machineProvisioners?.[0];
-        if (!descriptor) throw new Error('The actual bundled declaration must supply Vercel');
+        if (!descriptor) throw new Error(`The actual bundled declaration must supply Vercel: ${JSON.stringify(loaded.pluginFailures)}`);
         const bootstrapTransport = descriptor.bootstrapTransport;
         if (bootstrapTransport?.kind !== 'native') throw new Error('The selected Vercel descriptor must own native exec');
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', provenance: {

@@ -9,7 +9,8 @@ import nacl from 'tweetnacl';
 import { TeamSummaryV1Schema, resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams/projections';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams/capabilities';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
@@ -43,10 +44,8 @@ import { SessionSpawnNewInputV2Schema as BeforeCommitObservationInputSchema } fr
 
 // The daemon uses bundled Undici; keep the file's HTTP fixtures at that same
 // network boundary while retaining its real control transport and parsers.
-vi.mock('undici', async importOriginal => {
-    const actual = await importOriginal<typeof import('undici')>();
-    return { ...actual, fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
-        default: { ...actual.default, fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args) } };
+beforeEach(() => {
+    stubUndiciFetch((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
 });
 
 describe('paired terminal Action admission', () => {
@@ -100,7 +99,8 @@ describe('paired terminal Action admission', () => {
                 expect(JSON.parse(String(options.body))).toMatchObject({ actionId, input });
                 return Response.json({ ok: true, result: { kind: 'approval_request_created', actionId, artifactId: 'signed-root-approval' } });
             });
-            vi.stubGlobal('fetch', ingress);
+            vi.stubGlobal('fetch', (url: unknown, options: RequestInit) => String(url).endsWith('/ping')
+                ? Promise.resolve(Response.json({ status: 'ok' })) : ingress(url, options));
             const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
                 serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
                 machineId: 'own-machine', onApprovalRequested,
@@ -239,7 +239,8 @@ describe('paired terminal Action admission', () => {
                 resolveServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
                 actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
             expect(await executor.execute('session.spawn_new', input, { surface: 'cli' })).toMatchObject({
-                ok: false, errorCode: 'machine_offline', details: { machineId },
+                ok: false, errorCode: missing ? 'access_denied' : 'machine_offline',
+                ...(missing ? {} : { details: { machineId } }),
             });
             expect(post).not.toHaveBeenCalled();
             expect(localRequests).toEqual([]);
@@ -259,7 +260,8 @@ describe('paired terminal Action admission', () => {
             const transported: unknown[] = [];
             vi.spyOn(axios, 'get').mockRejectedValue(new Error('Requester Machine probe unavailable'));
             vi.spyOn(axios, 'post').mockRejectedValue(new Error('No Home Action dispatch expected'));
-            vi.stubGlobal('fetch', async (_url: unknown, options: RequestInit) => {
+            vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
                 const request: unknown = JSON.parse(String(options.body));
                 transported.push(request && typeof request === 'object' ? Reflect.get(request, 'input') : null);
                 return Response.json({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false } });
@@ -302,6 +304,7 @@ describe('paired terminal Action admission', () => {
             const requests: unknown[] = [];
             // Only the daemon HTTP boundary is substituted; original admission/credential selection stay real.
             vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
                 expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
                 expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
                 const request: unknown = JSON.parse(String(options.body));
@@ -338,6 +341,7 @@ describe('paired terminal Action admission', () => {
             vi.spyOn(axios, 'post').mockRejectedValue(new Error('No outer approval may precede adoption preparation'));
             const requests: unknown[] = [];
             vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
                 expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
                 expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
                 const request: unknown = JSON.parse(String(options.body));
@@ -448,6 +452,7 @@ describe('paired terminal Action admission', () => {
             vi.spyOn(axios, 'post').mockRejectedValue(new Error('Unexpected Home mutation'));
             const requests: unknown[] = [];
             vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
                 expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
                 expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
                 // Human approval follows this caller's lifetime, without the
@@ -645,20 +650,19 @@ describe('paired terminal Action admission', () => {
             });
             // The Account's plugin availability census is the only Home read a plugin Action needs
             // before it proves Machine placement; this Account has no plugin intents.
-            const availability = (url: string) => url.endsWith(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'])
-                ? { availabilityCursor: 1, pluginIds: [], intentReads: [], failedPluginIds: [] }
-                : url.endsWith(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'])
-                    ? { availabilityCursor: 1, hostingCapability: { enabled: true, maxArtifactBytes: 16 * 1024 * 1024, maxAccountBytes: 256 * 1024 * 1024 },
-                        intent: null, release: null, uiArtifacts: [], packageAssets: [] }
-                    : null;
-            vi.spyOn(axios, 'post').mockImplementation(async url => actionId === 'session.role.set' && url.endsWith('/v2/sessions/lookup-by-tags')
-                ? { status: 200, data: { sessions: [createSessionRecordFixture({ id: 'session-one', encryptionMode: 'plain', share: null,
-                    metadata: JSON.stringify({ machineId: 'own-machine', path: '/workspace', flavor: 'claude' }) })] } }
-                : availability(url) ? { status: 200, data: availability(url) } : { status: 401, data: { error: 'invalid_token' } });
+            vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                if (actionId === 'session.role.set' && url.endsWith('/v2/sessions/lookup-by-tags')) return {
+                    status: 200, data: { sessions: [createSessionRecordFixture({ id: 'session-one', encryptionMode: 'plain', share: null,
+                        metadata: JSON.stringify({ machineId: 'own-machine', path: '/workspace', flavor: 'claude' }) })] },
+                };
+                const availability = readBundledPluginAvailabilityHttpFixture(new URL(String(url)).pathname, body);
+                return availability ? { status: 200, data: availability } : { status: 401, data: { error: 'invalid_token' } };
+            });
             // An explicit Machine uses the original CLI's signed root owner,
             // including the placement-aware plugin discovery/invocation path.
             let ingressRequests = 0;
             vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
                 ingressRequests++;
                 expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
                 expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
@@ -700,9 +704,16 @@ describe('paired terminal Action admission', () => {
             const surface = { serverId: 'srv_home', accountId: 'owner',
                 owner: { kind: 'project' as const, projectId: 'project', layoutId: 'notes' } };
             // Mock only HTTP: both Action factories, stored provenance and daemon discovery remain real.
-            vi.spyOn(axios, 'get').mockRejectedValue(new Error('Own client placement must not need Home Machine admission'));
+            onTestFinished(installAxiosRequestMethodAdapter());
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (new URL(String(url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return {
+                    status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }),
+                };
+                throw new Error('Own client placement must not need Home Machine admission');
+            });
             vi.spyOn(axios, 'post').mockRejectedValue(new Error('A terminal is not a PAT'));
             vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
                 expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
                 expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
                 expect(JSON.parse(String(options.body))).toMatchObject({ actionId: 'widgets.area.layout.select', input: { surface } });
@@ -818,6 +829,7 @@ describe('paired terminal Action admission', () => {
             });
             vi.spyOn(axios, 'post').mockRejectedValue(new Error('Session creation is not a terminal Home finite Action'));
             vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
                 expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
                 expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
                 expect(JSON.parse(String(options.body))).toMatchObject({ actionId: 'session.spawn_new', input });

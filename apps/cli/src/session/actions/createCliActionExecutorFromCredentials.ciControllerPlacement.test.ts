@@ -1,19 +1,12 @@
 import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { configuration } from '@/configuration';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 
-vi.mock('undici', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('undici')>();
-  return {
-    ...actual,
-    fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
-    default: {
-      ...actual.default,
-      fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
-    },
-  };
+beforeEach(() => {
+  stubUndiciFetch((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
 });
 
 afterEach(() => {

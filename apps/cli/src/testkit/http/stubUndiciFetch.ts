@@ -1,7 +1,7 @@
-import * as undici from 'undici';
+import * as undici from 'undici/index.js';
 import { onTestFinished, vi, type MockedFunction } from 'vitest';
 
-vi.mock('undici', async importOriginal => {
+vi.mock('undici/index.js', async importOriginal => {
     const runtime = await importOriginal<typeof import('undici')>();
     return { ...runtime, fetch: vi.fn(runtime.fetch) };
 });

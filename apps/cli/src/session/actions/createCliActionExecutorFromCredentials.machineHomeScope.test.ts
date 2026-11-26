@@ -34,6 +34,11 @@ it.each([
             },
         });
         const http = createServer(async (request, response) => {
+            if (request.method === 'POST' && request.url === '/ping') {
+                response.setHeader('content-type', 'application/json');
+                response.end(JSON.stringify({ status: 'ok' }));
+                return;
+            }
             try {
                 expect(request.url).toBe('/actions/root/execute');
                 const chunks: Buffer[] = [];

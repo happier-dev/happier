@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { WorkflowAcceptedAuthorizationV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -17,10 +18,8 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createMachineInstallationIdentityFixture } from '../../../../../packages/tests/src/testkit/machineIdentity';
 
-vi.mock('undici', async importOriginal => {
-    const actual = await importOriginal<typeof import('undici')>();
-    return { ...actual, fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args),
-        default: { ...actual.default, fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args) } };
+beforeEach(() => {
+    stubUndiciFetch((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
 });
 
 describe('deployment read placement from a CLI on another Machine', () => {
