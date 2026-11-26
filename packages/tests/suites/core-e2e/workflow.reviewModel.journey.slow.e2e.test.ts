@@ -19,6 +19,9 @@ import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '
 import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { normalizeExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
+import { ReviewHumanStateV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { REVIEW_HUMAN_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIdsReviewHumanV1';
+import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { ReviewCommentListResponseV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
 import panelNativeReview from '../../../plugins/review-panels/src/agent/reviews/fixtures/selected-review.json';
 import { readMuseLoginRecording, readMuseMspProcessAudit, waitForMuseMspProcessAudit } from '../../../plugins/muse/src/agent/testkit/mspProcess';
@@ -844,6 +847,73 @@ else {
       expect.objectContaining({ title: diffFinding.title, filePath: 'billing.ts', startLine: 1,
         summary: diffFinding.summary, evidence: diffFinding.evidence }),
     ]));
+  });
+  it('F1 preserves a clean direct control before a joined two-model, Session and person Review', async () => {
+    await writeFinMuseExecutable({ binDir: join(dirname(auditPath), 'bin'), recordingPath, auditPath, perProcessAudit: true });
+    await nativeReply({ summary: 'No findings in the selected comparison.', reviewOutcome: 'complete', findings: [] });
+    const direct = await startNativeReview('muse', {}, { modelId });
+    expect(direct).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: { reviewOutcome: 'complete', findings: [] } });
+    const directReviewId = direct.run.display?.groupId;
+    expect(directReviewId).toEqual(expect.any(String));
+    const directReview = ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId: directReviewId }));
+    expect(directReview.review).toMatchObject({ sourceKind: 'direct', state: 'completed', counts: { total: 0 } });
+
+    const makeLaunch = (selectedModelId: string) => ({ executionTarget: machine.target,
+      directory: { kind: 'path' as const, path: machine.workspaceDir }, agentTarget: muse, permissionMode: 'read-only' as const,
+      modelSelection: { v: 1 as const, ref: { agentTargetKey: 'agent:happier.agent.muse/muse',
+        providerConnectionId: null, modelId: selectedModelId }, updatedAt: 0 },
+    });
+    const session = SessionSpawnNewActionResultV1Schema.parse(await act('session.spawn_new', makeLaunch(modelId)));
+    if (session.type !== 'success') throw new Error('The mixed Review Session did not open');
+    const accountId = readAccountIdFromToken(owner.auth.token);
+    if (!accountId) throw new Error('The mixed Review owner credential has no Account subject');
+    const marker = 'Independently inspect the joined mixed roster without editing the workspace.';
+    const selectedModels = ['meta/muse-spark-1.3', modelId];
+    const captured = ScmComparisonCaptureOutputSchema.parse(await act('scm.diffSummary.capture', {
+      cwd: machine.workspaceDir, source: { kind: 'workingTree', area: 'both' },
+    }));
+    if (!captured.success) throw new Error(captured.errorCode);
+    const before = await readFile(join(machine.workspaceDir, 'README.md'), 'utf8');
+    const started = readReviewWorkflowStartActionResultV1(await act('review.start', {
+      target: { kind: 'detached' }, cwd: machine.workspaceDir, comparisonId: captured.comparison.id,
+      instructions: marker, reviewCommentAuthorIntent: 'open', reviewers: [
+        ...selectedModels.map(selected => ({ kind: 'model', launch: makeLaunch(selected) })),
+        { kind: 'session', session: { serverId: ui!.serverId, sessionId: session.sessionId } },
+        { kind: 'person', principal: { kind: 'account', accountId }, required: true },
+      ],
+    }));
+    if (!started?.reviewRound) throw new Error('The mixed roster did not admit its Review and Workflow');
+    expect(started.reviewRound.reviewId).not.toBe(directReviewId);
+    expect(await act('workflow.run.wait', { runId: started.workflow.runId, conditions: ['terminal'] }))
+      .toMatchObject({ observation: 'terminal', run: { state: 'succeeded' } });
+    const history = WorkflowInvocationListResultV1Schema.parse(await act('workflow.run.invocations.list', {
+      runId: started.workflow.runId, includeContent: true,
+    }));
+    const leaves = history.invocationDetails?.filter(row => row.progress.invocationPath.blockId.startsWith('step-1-reviewer-'));
+    expect(leaves).toHaveLength(3);
+    expect(leaves?.map(row => row.index.lifecycle)).toEqual(['completed', 'completed', 'completed']);
+    const mixed = ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId: started.reviewRound.reviewId }));
+    expect(mixed.review).toMatchObject({ state: 'completed', subjectKind: 'comparison', counts: { total: 0 } });
+    const requested = ReviewHumanStateV1Schema.parse(await act(REVIEW_HUMAN_ACTION_IDS_V1.get, {
+      reviewId: started.reviewRound.reviewId,
+    }));
+    expect(requested.requests).toEqual([expect.objectContaining({ principal: { kind: 'account', accountId },
+      required: true, needsAccess: false, roundOrdinal: 1 })]);
+    const auditFiles = (await readdir(dirname(auditPath))).filter(name => name.startsWith(`${basename(auditPath)}.`));
+    const audits = await Promise.all(auditFiles.map(name => readMuseMspProcessAudit(join(dirname(auditPath), name))));
+    const mixedAudits = audits.filter(audit => audit.turnInputs.some(input => JSON.stringify(input).includes(marker)));
+    expect(mixedAudits).toHaveLength(3);
+    for (const audit of mixedAudits) expect(JSON.stringify(audit.turnInputs)).toContain(captured.comparison.id);
+    // One base-model process plus two contributor processes (fresh + retained
+    // Session) distinguishes independent selections from either global model.
+    expect(mixedAudits.flatMap(audit => audit.modelSelections)
+      .sort((left, right) => (left.modelId ?? '').localeCompare(right.modelId ?? ''))).toEqual([
+      { providerId: 'meta', modelId: 'muse-spark-1.3' },
+      { providerId: 'meta', modelId: 'muse-spark-1.3-contributor' },
+      { providerId: 'meta', modelId: 'muse-spark-1.3-contributor' },
+    ]);
+    expect(await readFile(join(machine.workspaceDir, 'README.md'), 'utf8')).toBe(before);
+    expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId: directReviewId })).review).toEqual(directReview.review);
   });
   it('F1 refuses an inaccessible source Session before launching a reviewer', async () => {
     const other = await fixture!.createAccount('source-owner');
