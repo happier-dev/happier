@@ -4,6 +4,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ReviewListResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListPageV1';
 import { createAccountServerActionDeps } from '../../../../cli/src/api/accountServerActionDeps';
 import { auth } from '@/app/auth/auth';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
@@ -112,6 +113,29 @@ describe('Review read Actions through authenticated HTTP', () => {
         origin = `http://127.0.0.1:${address.port}`;
     }, 180_000);
     afterAll(async () => { await app?.close(); await harness?.close(); });
+
+    it('serves a full Review page and its continuation through authenticated HTTP', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const ids = Array.from({ length: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 + 1 }, () => randomUUID());
+        await db.artifact.createMany({ data: ids.map(id => ({ id, accountId: owner.id,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() })) });
+        await db.reviewMetadata.createMany({ data: ids.map(artifactId => ({ artifactId,
+            subjectKind: 'comparison', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1, startedAt: new Date() })) });
+        const request = async (cursor?: string) => {
+            const response = await app.inject({ method: 'POST', url: '/v1/reviews/list',
+                headers: { authorization: `Bearer ${token}` }, payload: { limit: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ...(cursor ? { cursor } : {}) } });
+            expect(response.statusCode, response.body).toBe(200);
+            return ReviewListResponseV1Schema.parse(response.json());
+        };
+        const first = await request();
+        expect(first.items).toHaveLength(ARTIFACT_LIST_PAGE_MAX_ITEMS_V1);
+        expect(first.cursor).toEqual(expect.any(String));
+        const second = await request(first.cursor!);
+        expect(second.items).toHaveLength(1);
+        expect(second.cursor).toBeNull();
+        expect(new Set([...first.items, ...second.items].map(row => row.reviewId))).toEqual(new Set(ids));
+    });
 
     it('consumes retained Account PR occurrences through production holds and actual Review HTTP starts', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

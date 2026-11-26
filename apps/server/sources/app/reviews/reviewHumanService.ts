@@ -134,7 +134,8 @@ export async function readAdmittedReviewNeedsYouInTx(tx: Tx, input: HumanReadInp
     const result = new Map<string, ReviewNeedsYouV1>();
     if (input.reviews.length === 0) return result;
     const counts = input.facts === undefined ? await readAdmittedReviewCountsInTx(tx, input.reviews.map(row => row.reviewId)) : undefined;
-    for (const accesses of portableQueryChunks({ values: input.reviews, bindingsPerValue: 2, fixedBindings: 1 })) {
+    // The caller Account plus Prisma's implicit LIMIT and OFFSET also consume bindings.
+    for (const accesses of portableQueryChunks({ values: input.reviews, bindingsPerValue: 2, fixedBindings: 3 })) {
         const metadataRows = input.facts === undefined
             ? await tx.reviewMetadata.findMany({ where: { artifactId: { in: accesses.map(access => access.reviewId) } },
                 select: { artifactId: true, currentRoundOrdinal: true } })
