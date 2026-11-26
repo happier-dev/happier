@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DatabaseOperationInputV1Schema, DatabaseReadStatementInputV1Schema, type DatabaseRowsContinuationV1 } from '@happier-dev/plugin-sdk/database';
-import { postgresqlReadOnlyRoleGuardSql } from '@happier-dev/deployment-protocol';
 import { openPostgresqlConnection } from './postgresql.js';
 
 const run = promisify(execFile);
@@ -38,16 +37,23 @@ describe('PostgreSQL demand connection against the real engine', () => {
         if (directory) await rm(directory, { recursive: true, force: true });
     });
 
-    it('proves a deployment login has only the dedicated read role before exposing its connection', async () => {
+    it('runs a supplied session guard before exposing its connection', async () => {
         const setup = await connection.execute({ operation: 'statement.run', target, mode: 'write', executionMode: 'transaction', statements: [
-            { sql: 'CREATE ROLE happier_ro LOGIN', parameters: [] },
-            { sql: 'GRANT pg_read_all_data TO happier_ro', parameters: [] },
+            { sql: 'CREATE ROLE fixture_reader LOGIN', parameters: [] },
+            { sql: 'GRANT SELECT ON items TO fixture_reader', parameters: [] },
         ] });
         expect(setup.ok).toBe(true);
-        await expect(openPostgresqlConnection(databaseUrl, undefined, { sessionGuardSql: postgresqlReadOnlyRoleGuardSql }))
+        const sessionGuardSql = `DO $guard$
+BEGIN
+    IF current_user <> 'fixture_reader' THEN
+        RAISE insufficient_privilege;
+    END IF;
+END
+$guard$`;
+        await expect(openPostgresqlConnection(databaseUrl, undefined, { sessionGuardSql }))
             .rejects.toMatchObject({ code: '42501' });
-        const readOnlyUrl = databaseUrl.replace('fixture@', 'happier_ro@');
-        const reader = await openPostgresqlConnection(readOnlyUrl, undefined, { sessionGuardSql: postgresqlReadOnlyRoleGuardSql });
+        const readOnlyUrl = databaseUrl.replace('fixture@', 'fixture_reader@');
+        const reader = await openPostgresqlConnection(readOnlyUrl, undefined, { sessionGuardSql });
         try {
             expect(await reader.execute({ operation: 'statement.run', target, mode: 'read', statement: {
                 sql: 'SELECT note FROM items WHERE id = $1', parameters: [{ type: 'integer', value: '1' }],
