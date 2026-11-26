@@ -294,18 +294,20 @@ describe('MachineDetailScreen (execution runs section)', () => {
         expect(new Set(listedOn)).toEqual(new Set(['https://machine-runs-b.test']));
         expect(machineRequests().some(request => request.serverId === serverB)).toBe(true);
     });
-    it('opens every former inline section from This machine, inside the door the page is in', async () => {
+    it('opens the This machine sections inside the settings Machine door', async () => {
         route.params = { id: 'machine-1' };
         const screen = await renderScreen(<MachinePageScreen />);
         await flushHookEffects();
-        for (const page of ['sharing', 'agents', 'terminal', 'connection', 'installables', 'doctor', 'details']) {
+        for (const page of ['agents', 'terminal', 'computer', 'doctor', 'connection', 'details']) {
             expect(screen.findByTestId(`machine-page-row-${page}`)).toBeTruthy();
         }
         expect(screen.findByTestId('machine-detail-stop-daemon')).toBeNull();
         expect(screen.findByTestId('machine-detail-remove')).toBeNull();
         expect(screen.findByTestId('machine-terminal-effective-host')).toBeNull();
-        await screen.pressByTestIdAsync('machine-page-row-installables');
-        expect(routerPush).toHaveBeenCalledWith(`/settings/machines/machine-1/installables?serverId=${encodeURIComponent(serverA)}`);
+        expect(screen.findByTestId('machine-page-row-sharing')).toBeNull();
+        expect(screen.findByTestId('machine-page-row-installables')).toBeNull();
+        await screen.pressByTestIdAsync('machine-page-row-terminal');
+        expect(routerPush).toHaveBeenCalledWith(`/settings/machines/machine-1/terminal?serverId=${encodeURIComponent(serverA)}`);
     });
     it('shows only running runs by default and includes finished when toggled', async () => {
         runs = [createExecutionRun({ runId: 'run-running' }), createExecutionRun({ runId: 'run-finished', callId: 'call-2', sidechainId: 'side-2', status: 'succeeded', finishedAtMs: 1_700_000_000_000 })];
