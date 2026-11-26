@@ -18,7 +18,8 @@ installHomeGovernanceBoundaries(homes);
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 const { deploymentDatabaseAgentLevelLabel } = await import('./DeploymentDatabaseAccessSettings');
-const { DeploymentWorkbenchAccessSettings } = await import('./DeploymentWorkbenchAccess');
+const { DeploymentWorkbenchAccessObserver, DeploymentWorkbenchAccessSettings } = await import('./DeploymentWorkbenchAccess');
+const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
 const { PluginUiHostPresentationScope } = await import('@happier-dev/plugin-ui/advanced');
 const { projectHappierUiEnvironment } = await import('@happier-dev/plugin-ui/environment');
 const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
@@ -27,6 +28,43 @@ afterEach(async () => {
     vi.useRealTimers();
     await standardCleanup();
     await homes.reset();
+});
+
+it('delivers the selected Environment policy wake once when a retained Review returns', async () => {
+    const serverId = await homes.addHome({ name: 'Review policy', serverUrl: 'https://workbench-review.test', accountId: 'alice', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const environment = { serverId, projectSourceId: 'source', environmentId: 'staging' };
+    const scope = { accountLifetime: account.accountLifetime, isCurrent: () => true };
+    const target = { kind: 'deployment_service', environment, deploymentId: 'deployment',
+        targetLinkId: 'link', serviceId: 'postgres', database: 'main' } as const;
+    const onChanged = vi.fn();
+    const review = (visible: boolean) => <DestinationInstanceContext.Provider
+        value={{ tabId: 'workbench', ref: { kind: 'workbench', params: {} },
+            pathname: '/plugins/happier.database/workbench', visible, focused: visible, isFocused: () => visible }}>
+        <DeploymentWorkbenchAccessObserver target={target} onChanged={onChanged} scope={scope} />
+    </DestinationInstanceContext.Provider>;
+    const wake = (environmentId: string, revision: number) => {
+        const change = buildDeploymentAccountChangeV1({ projectSourceId: environment.projectSourceId, environmentId, revision });
+        return act(async () => publishHomeAccountChange(serverId, [change.entityId], { changeKinds: ['account'] }));
+    };
+    const screen = await renderAccountScreen(review(true));
+    try {
+        await screen.update(review(false));
+        await wake('other-environment', 1);
+        await screen.update(review(true));
+        expect(onChanged).not.toHaveBeenCalled();
+        await screen.update(review(false));
+        await wake(environment.environmentId, 2);
+        await wake(environment.environmentId, 3);
+        expect(onChanged).not.toHaveBeenCalled();
+        await screen.update(review(true));
+        expect(onChanged).toHaveBeenCalledOnce();
+        await wake(environment.environmentId, 4);
+        expect(onChanged).toHaveBeenCalledTimes(2);
+    } finally {
+        await screen.unmount();
+        account.dispose();
+    }
 });
 
 it('loads the access sheet policy once and refreshes only on the selected Environment arrival', async () => {

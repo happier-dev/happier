@@ -22,6 +22,8 @@ export type WorkspaceOpenOptions = Readonly<{
     admittedEntry?: true;
     /** A phone Details page opens or focuses its own rail tab; the source tab keeps its route. */
     retainSourceTab?: boolean;
+    /** A retained editor can return from this visit through its preceding history entry. */
+    retainedFromTabId?: string;
     /** Explicit app-section activation. Ordinary item opens retain the selected section. */
     section?: boolean;
     availableSizePx?: number;
@@ -197,14 +199,16 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         const tab = state.tabs[group.activeTabId];
         return { tabId: tab.id, groupId: group.id, target: tab.target, sectionPathname };
     };
-    const visit = (replace = false, projectUrl = true, forceProjection = false, selectSection = false) => {
+    const visit = (replace = false, projectUrl = true, forceProjection = false, selectSection = false, retainedFromTabId?: string) => {
         const target = focusedEntry().target;
         const catalog = input.getCatalog();
         const pathname = hrefForDestinationRef(catalog, target)?.split(/[?#]/, 1)[0] ?? null;
         const nextSection = selectSection || sectionPathname === null ? pathname : sectionPathname;
         const sectionChanged = nextSection !== sectionPathname;
         sectionPathname = nextSection;
-        const entry = focusedEntry();
+        const focused = focusedEntry();
+        const entry = retainedFromTabId && focused.tabId !== retainedFromTabId
+            ? { ...focused, retainedFromTabId } : focused;
         const next = replace && history.index >= 0
             ? { entries: history.entries.map((item, index) => index === history.index ? entry : item), index: history.index }
             : recordWorkspaceNavigation(history, entry);
@@ -232,7 +236,9 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             : entry.sectionPathname;
         const state = input.getState();
         for (const action of singletonActions(state, entry.target) ?? workspaceNavigationRestorationActions(state, entry)) input.dispatch(action);
-        return focusedEntry();
+        const focused = focusedEntry();
+        return focused.tabId === entry.tabId && entry.retainedFromTabId
+            ? { ...focused, retainedFromTabId: entry.retainedFromTabId } : focused;
     };
     return {
         resolveOpenTarget,
@@ -249,6 +255,13 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         get history() { return history; },
         get canGoBack() { return input.transport.canTraverse?.(-1) ?? history.index > 0; },
         get canGoForward() { return input.transport.canTraverse?.(1) ?? history.index < history.entries.length - 1; },
+        canReturnToRetained(tabId: string): boolean {
+            const current = history.entries[history.index];
+            const preceding = history.entries[history.index - 1];
+            return current?.tabId === tabId && focusedEntry().tabId === tabId
+                && preceding !== undefined && current.retainedFromTabId === preceding.tabId
+                && input.getState().tabs[preceding.tabId] !== undefined;
+        },
         findOpenHref(href: string): WorkspaceOpenDestination | null {
             const target = resolveOpenTarget(href);
             return target ? findOpenDestination(target) : null;
@@ -402,7 +415,8 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 }
             }
             finishOpen?.(focusedEntry());
-            visit(options.replace, projectUrl, true, options.section);
+            visit(options.replace, projectUrl, true, options.section,
+                history.entries[history.index]?.tabId === options.retainedFromTabId ? options.retainedFromTabId : undefined);
             options.onOpened?.();
             return true;
         },
@@ -448,7 +462,10 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             const target = { ...tab.target, params };
             if (sameDestinationRef(target, tab.target)) return;
             input.dispatch({ type: 'setTarget', tabId, target });
-            if (focusedEntry().tabId === tabId) visit(true);
+            if (focusedEntry().tabId === tabId) {
+                const current = history.entries[history.index];
+                visit(true, true, false, false, current?.tabId === tabId ? current.retainedFromTabId : undefined);
+            }
         },
         acceptUrl(href: string, entry?: WorkspaceNavigationEntry, position?: number) {
             if (entry) {

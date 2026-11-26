@@ -29,6 +29,7 @@ type DestinationRouter = ReturnType<typeof useRouter> & {
     redirect: ReturnType<typeof useRouter>['replace'];
     replaceAdmitted: ReturnType<typeof useRouter>['replace'];
     pushRetainingCurrent: ReturnType<typeof useRouter>['push'];
+    returnToRetained?: () => boolean;
     retainCurrent: () => void;
 };
 

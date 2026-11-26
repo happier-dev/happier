@@ -7,6 +7,8 @@ export type WorkspaceNavigationEntry = Readonly<{
     target: DestinationRef;
     /** The selected app section can differ from an ordinary item's destination. */
     sectionPathname?: string | null;
+    /** The preceding entry owns the mounted editor that opened this destination. */
+    retainedFromTabId?: string;
 }>;
 
 export type WorkspaceNavigationHistory = Readonly<{

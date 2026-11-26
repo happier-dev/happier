@@ -336,10 +336,11 @@ const ProjectDeploymentsPage = React.memo(
     );
     const back = React.useCallback(() => {
       const current = selectionRef.current;
+      if (current.environmentId && !current.deploymentId && !current.database && router.returnToRetained?.()) return;
       setSelection(current.deploymentId || current.database
         ? { environmentId: current.environmentId, deploymentId: null }
         : NOTHING_SELECTED);
-    }, [setSelection]);
+    }, [router, setSelection]);
     // A receipt's next action opens one of its Environment's pages: the receipt closes and that tab opens.
     const openEnvironmentTab = React.useCallback((next: DeploymentEnvironmentDestinationV1) => {
       setSelection({ environmentId: selectionRef.current.environmentId, deploymentId: null });

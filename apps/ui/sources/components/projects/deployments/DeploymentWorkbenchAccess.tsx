@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Button, ErrorState, Item, ItemGroup, Row, Stack, Text } from '@happier-dev/plugin-ui';
 import type { HostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
+import { useDestinationVisibilitySignal } from '@/components/appShell/workspace/destinationInstanceContext';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -29,21 +30,33 @@ export function readDeploymentWorkbenchLifetime(scope: DeploymentWorkbenchPresen
 export function DeploymentWorkbenchAccessObserver({ target, environment, policyEnvironmentId, onChanged, scope }:
     AccessObserverInput & Readonly<{ scope: DeploymentWorkbenchPresentationScope }>) {
     const { serverId, projectSourceId, environmentId } = target.environment;
-    const presented = useDeploymentPresentationDemand(true);
+    const presentation = useDestinationVisibilitySignal();
+    const { accountLifetime, isCurrent } = scope;
     // Production protection and Preview inheritance can coexist. The Access result resolves the policy owner;
     // until then a wake from this Source can revalidate its Preview without a separate Environment read.
     const unresolvedTemplate = policyEnvironmentId === undefined && (environment === 'preview' || environment === 'production');
     React.useEffect(() => {
-      const lifetime = readDeploymentWorkbenchLifetime(scope, serverId);
-      if (!presented.visible || !lifetime) return;
-      return subscribeHomeAccountChange(event => {
-        if (!scope.isCurrent() || !lifetime.isCurrent() || !areServerProfileIdentifiersEquivalent(event.serverId, serverId)) return;
+      const lifetime = readDeploymentWorkbenchLifetime({ accountLifetime, isCurrent }, serverId);
+      if (!lifetime) return;
+      let needsRefresh = false;
+      const refreshIfVisible = () => {
+        if (!needsRefresh || !presentation.get() || !isCurrent() || !lifetime.isCurrent()) return;
+        needsRefresh = false;
+        onChanged();
+      };
+      const unsubscribeVisibility = presentation.subscribe(refreshIfVisible);
+      const unsubscribeHome = subscribeHomeAccountChange(event => {
+        if (!isCurrent() || !lifetime.isCurrent() || !areServerProfileIdentifiersEquivalent(event.serverId, serverId)) return;
         const wake = readDeploymentHomeWake(event);
         if (wake === 'all' || wake?.some(change => !change.deploymentId && !change.activityChanged
             && (change.projectSourceId === undefined || change.projectSourceId === projectSourceId)
-            && (unresolvedTemplate || change.environmentId === environmentId || change.environmentId === policyEnvironmentId))) onChanged();
+            && (unresolvedTemplate || change.environmentId === environmentId || change.environmentId === policyEnvironmentId))) {
+          needsRefresh = true;
+          refreshIfVisible();
+        }
       }, { serverIds: [lifetime.scope.serverId] });
-    }, [environmentId, onChanged, policyEnvironmentId, presented.visible, projectSourceId, scope, serverId, unresolvedTemplate]);
+      return () => { unsubscribeHome(); unsubscribeVisibility(); };
+    }, [accountLifetime, environmentId, isCurrent, onChanged, policyEnvironmentId, presentation, projectSourceId, serverId, unresolvedTemplate]);
     return null;
 }
 

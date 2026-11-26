@@ -686,6 +686,11 @@ export function WorkspaceProvider(props: Readonly<{
             if (!isCurrentUiOwner() || !latest.current.owner.getState().tabs[tabId]?.preview) return;
             runtime.adapter.dispatch({ type: 'promoteTab', tabId });
         };
+        const back = () => {
+            if (!isCurrentUiOwner()) return;
+            if (runtime.browser) runtime.adapter.step(-1);
+            else guardTraversal(-1, () => runtime.adapter.step(-1), 'history');
+        };
         const navigation: DestinationNavigation = {
             retainCurrent,
             push: (href) => navigate(href, false),
@@ -704,14 +709,16 @@ export function WorkspaceProvider(props: Readonly<{
                 // No departure guard: the editor keeps its identity, local state and dirty baseline.
                 // Promotion prevents a later preview open from retiring that retained draft.
                 retainCurrent();
-                runtime.adapter.openHref(resolved, { mode: 'newTab', groupId: group.id, reuseExisting: true });
+                runtime.adapter.openHref(resolved, { mode: 'newTab', groupId: group.id, reuseExisting: true,
+                    retainedFromTabId: tabId });
             },
             replace: (href) => navigate(href, true),
             redirect: (href) => navigate(href, true, true),
-            back: () => {
-                if (!isCurrentUiOwner()) return;
-                if (runtime.browser) runtime.adapter.step(-1);
-                else guardTraversal(-1, () => runtime.adapter.step(-1), 'history');
+            back,
+            returnToRetained: () => {
+                if (!isCurrentUiOwner() || !runtime.adapter.canReturnToRetained(tabId)) return false;
+                back();
+                return true;
             },
             canGoBack: () => runtime.adapter.canGoBack,
             setParams: (values) => { if (isCurrentUiOwner()) runtime.adapter.setParams(tabId, values); },

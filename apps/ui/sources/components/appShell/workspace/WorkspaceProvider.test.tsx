@@ -2726,6 +2726,58 @@ describe('consumed workspace navigation owner', () => {
         await act(async () => { open('request-b'); });
         expect(Object.keys(navigation().state.tabs)).toHaveLength(Object.keys(first.tabs).length + 1);
     });
+    it('returns from retained Environment settings to its original phone browser tab after changing settings params', async () => {
+        boundary.platform = 'web';
+        const initialHref = '/session/A1?serverId=home-a';
+        const location = new URL(initialHref, 'https://workspace.test');
+        const entries: Array<{ state: unknown; href: string }> = [{ state: null, href: initialHref }];
+        let index = 0;
+        const history = {
+            get state() { return entries[index]!.state; },
+            replaceState(state: unknown, _unused: string, href?: string | URL | null) {
+                const next = href ? String(href) : entries[index]!.href;
+                entries[index] = { state, href: next };
+                location.href = new URL(next, location).href;
+            },
+            pushState(state: unknown, _unused: string, href: string) {
+                entries.splice(index + 1, entries.length, { state, href });
+                index += 1;
+                location.href = new URL(href, location).href;
+            },
+            go(delta: number) {
+                index += delta;
+                location.href = new URL(entries[index]!.href, location).href;
+                window.dispatchEvent(new PopStateEvent('popstate', { state: entries[index]!.state }));
+            },
+        };
+        installBrowserBoundary({ location, history, sessionStorage: { getItem: () => 'main' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });
+        const screen = await renderScreen(<WorkspaceProvider phone enabled={false} catalog={catalog}>
+            {navigation => React.createElement('WorkspaceOwner', { navigation })}
+        </WorkspaceProvider>);
+        const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const activeTab = () => {
+            const { state } = navigation();
+            return state.tabs[state.groups[state.focusedGroupId].activeTabId];
+        };
+        const editor = activeTab();
+        const settingsHref = '/deployments/source-app?deploymentEnvironment=staging&deploymentTab=settings&deploymentSection=database-access';
+        await act(async () => navigation().navigationForTab(editor.id).pushRetainingCurrent!(settingsHref));
+        const settings = activeTab();
+        expect(settings.id).not.toBe(editor.id);
+        const settingsNavigation = navigation().navigationForTab(settings.id);
+        await act(async () => { settingsNavigation.setParams!({ deploymentSection: 'general' }); });
+        await act(async () => { settingsNavigation.returnToRetained?.(); });
+        expect(activeTab()).toMatchObject({ id: editor.id, target: editor.target });
+        expect(location.pathname + location.search).toBe(initialHref);
+        await act(async () => history.go(1));
+        expect(activeTab().id).toBe(settings.id);
+        expect(location.search).toContain('deploymentSection=general');
+        await act(async () => { settingsNavigation.returnToRetained?.(); });
+        expect(activeTab().id).toBe(editor.id);
+        await act(async () => navigation().openHref(settingsHref));
+        expect(navigation().navigationForTab(activeTab().id).returnToRetained?.()).toBe(false);
+    });
 
     it('closes a batch under one discard decision and preserves pinned tabs', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } });

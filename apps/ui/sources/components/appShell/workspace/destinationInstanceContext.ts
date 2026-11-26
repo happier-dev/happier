@@ -14,6 +14,8 @@ export type DestinationNavigation = Pick<ReturnType<typeof useRouter>, 'push' | 
         redirect?: ReturnType<typeof useRouter>['replace'];
         /** Open another destination without retiring the caller's mounted draft. */
         pushRetainingCurrent?: ReturnType<typeof useRouter>['push'];
+        /** Return through history when the preceding entry still owns the retained editor. */
+        returnToRetained?: () => boolean;
         /** Retain this pane before acquiring work that outlives its preview. */
         retainCurrent?: () => void;
     };
