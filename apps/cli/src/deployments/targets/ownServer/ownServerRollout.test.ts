@@ -13,6 +13,7 @@ import { projectDeploymentTransitionOutcomeUnknownForHost } from '@/deployments/
 import * as persistence from '@/persistence';
 import type { ServerProfile } from '@/server/serverProfiles';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
@@ -625,9 +626,16 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
             } else {
                 expect.soft(await docker.readContainerIds()).toEqual([]);
                 await expect(stat(candidateDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
-                const { deploymentRoot } = await resolveOwnServerDeploymentIdentityForHost({
+                const { deploymentRoot, environmentInstanceId } = await resolveOwnServerDeploymentIdentityForHost({
                     happierHomeDir: join(root, 'machine-a'), serverId: 'home', environmentId: environment.environment.id,
                 });
+                const abandoned = resolveNativeComposeDeploymentImageReferences({ environmentInstanceId,
+                    deploymentId: failed.receipt.deployment.id, image: failed.image });
+                const invocations = await docker.readInvocations();
+                for (const reference of [abandoned.ownedTag, abandoned.activationRef]) {
+                    expect(invocations.some(({ args }) => args[0] === 'image' && args[1] === 'tag' && args.at(-1) === reference)).toBe(true);
+                    expect.soft(await docker.readPruneReference(reference)).toBeNull();
+                }
                 expect(await readOwnServerDeploymentStageLogs({ deploymentRoot, serverId: profile.homeConnectionDescriptor!.homeServerIdentityId,
                     machineId: 'machine-a', installationId: identities.get('machine-a')!.installationId,
                 }, failed.receipt, { ref: 'activate' })).toMatchObject({

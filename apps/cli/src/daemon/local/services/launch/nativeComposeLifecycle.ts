@@ -32,7 +32,8 @@ import { readNativeComposeSourceBytes } from './nativeComposeSource';
 import { assertStoredComposeToolSupport } from '@/workspaces/projectSetup/nativeComposeSource';
 import { nativeComposeSourceInterpolationNames } from '@/workspaces/projectSetup/nativeComposeInterpolation';
 import { projectNativeComposeReview, type NativeComposeRuntimeReview } from '@/workspaces/projectSetup/nativeComposeReview';
-import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentImageReferences, normalizeNativeComposePlatform,
+import { abandonNativeComposeDeploymentImageReferences, createNativeComposeImageIdentity,
+    resolveNativeComposeDeploymentImageReferences, normalizeNativeComposePlatform,
     type NativeComposeImageAcquisition, type NativeComposeRegistryAcquisition, type NativeComposeEffectAuthority } from './nativeComposeImageIdentity';
 import { inspectNativeComposeStorage, type NativeComposeStorageReview } from './nativeComposeStorage';
 import { readNativeComposeProjectVolumeNames, selectNativeComposePreviewVolumeNames, settleNativeComposeVolumeRemoval } from './nativeComposeVolumes';
@@ -203,7 +204,7 @@ export type NativeComposeEnvironmentProject = Readonly<{
     }>>;
     activate(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext; signal?: AbortSignal;
         volumeRebind?: Readonly<{ volume: string; physicalName: string; runningServices: readonly string[] }>;
-        cleanupOnFailure?: boolean; onIncumbentServicesChanged?(services: readonly string[]): Promise<void> }>): Promise<NativeComposeActivatedProject>;
+        cleanupOnFailure?: 'abandon-images' | 'retain-images'; onIncumbentServicesChanged?(services: readonly string[]): Promise<void> }>): Promise<NativeComposeActivatedProject>;
     settleNative(): Promise<void>;
     dispose(): Promise<void>;
 }>;
@@ -1852,9 +1853,24 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                             } catch (cleanupError) {
                                 cleanupFailure = projectActionFailureCauseV1(cleanupError, 'deployment.native.compose.cleanup');
                             }
+                            let nativeImageCleanupWarning: 'image_observation_unavailable' | 'image_removal_failed' | null = null;
+                            if (!cleanupFailure && request.cleanupOnFailure === 'abandon-images') {
+                                const cleanupRun = (args: readonly string[]) => run(args, request.signal, undefined, false, authority);
+                                for (const service of current.services) {
+                                    try {
+                                        nativeImageCleanupWarning = await abandonNativeComposeDeploymentImageReferences(imageReferences(service), cleanupRun)
+                                            ?? nativeImageCleanupWarning;
+                                    } catch {
+                                        nativeImageCleanupWarning = 'image_removal_failed';
+                                    }
+                                }
+                                if (nativeImageCleanupWarning) input.stageOutput.appendRedacted('stderr',
+                                    Buffer.from(`\nCandidate image cleanup failed (${nativeImageCleanupWarning}).\n`));
+                            }
                             throw new PluginError({ ...error.data, details: { ...error.details,
                                 firstDeployCleanup: cleanupFailure ? 'failed' : 'removed',
                                 ...(cleanupFailure ? { cleanupFailure } : {}),
+                                ...(nativeImageCleanupWarning ? { nativeImageCleanupWarning } : {}),
                             } }, enriched || error.cause !== undefined ? { cause: enriched ?? error.cause } : undefined);
                         }
                     }

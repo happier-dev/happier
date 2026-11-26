@@ -1424,7 +1424,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                         // Rebuilding an absent rollback target is a fresh native generation.
                                         // A confirmed failure must leave the serving project in place.
                                         await activationProject.activate({ render: activationRender, context, signal: snapshot.signal,
-                                            cleanupOnFailure: true });
+                                            cleanupOnFailure: 'retain-images' });
                                         observed = await activationProject.observeActivated({ render: activationRender, signal: snapshot.signal });
                                     }
                                     if (observed.kind !== 'active') return refuse('outcome_unknown');
@@ -1443,7 +1443,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             activated = true;
                             return activationProject.activate({ render: activationRender, context, signal: snapshot.signal,
                                 onIncumbentServicesChanged,
-                                cleanupOnFailure: !snapshot.link.activeDeploymentId && receipt.content.onFailure === 'rollbackAll' });
+                                ...(!snapshot.link.activeDeploymentId && receipt.content.onFailure === 'rollbackAll'
+                                    ? { cleanupOnFailure: restored ? 'retain-images' : 'abandon-images' } : {}) });
                         };
                         if (!incumbentReceipt || !host.readStartFirstRoutes) return activateReplacement();
                         const docker = await activationProject.readNativeDocker({ render: activationRender, signal: snapshot.signal });

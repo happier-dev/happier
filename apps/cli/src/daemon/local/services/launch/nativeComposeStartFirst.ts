@@ -74,7 +74,7 @@ export async function activateNativeComposeStartFirst(input: NativeComposeStartF
         throw new PluginError({ code: 'native_failed', message: 'Native Compose generation is unavailable',
             details: { reason: 'deployment_generation_unavailable' } });
     }
-    const activation = input.target ?? await activate({ render: input.render, context: input.context, ...(signal ? { signal } : {}), cleanupOnFailure: true });
+    const activation = input.target ?? await activate({ render: input.render, context: input.context, ...(signal ? { signal } : {}), cleanupOnFailure: 'retain-images' });
     if (activation.health !== 'healthy') return unavailable();
     const candidate = activation.routingGeneration();
     if (input.target && (candidate.environmentInstanceId !== input.render.environmentInstanceId || candidate.engineId !== input.render.engineId

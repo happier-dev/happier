@@ -99,7 +99,7 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'missing
             await docker.seedVolume('source-postgres-data', 'source-project');
             if (mode === 'previewExisting') await docker.seedVolume(appVolume, rendered.projectName);
             const activation = machineNativeEffectAdmission.run({ operation: { operationId: 'first', kind: 'deployments.deploy', signal: candidateSignal }, keys: rendered.keys },
-                context => project.activate({ render: rendered, context, cleanupOnFailure: true, signal: candidateSignal }));
+                context => project.activate({ render: rendered, context, cleanupOnFailure: 'retain-images', signal: candidateSignal }));
             if (mode === 'missingVariable') {
                 const error = await activation.catch((failure: unknown) => failure);
                 const failure = projectDeploymentReceiptFailure(projectDeploymentException(error), 'activate');

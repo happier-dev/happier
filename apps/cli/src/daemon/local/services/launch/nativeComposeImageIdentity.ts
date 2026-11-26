@@ -279,6 +279,24 @@ export async function removeNativeComposeDeploymentImageReferences(
     return failure;
 }
 
+/** Clean a confirmed abandoned candidate's exact aliases. A tag for
+ * another release on the same image still holds the shared CONFIG alias. */
+export async function abandonNativeComposeDeploymentImageReferences(
+    references: ReturnType<typeof resolveNativeComposeDeploymentImageReferences>,
+    run: Parameters<typeof readNativeComposeDeploymentImageReferences>[1],
+): Promise<'image_observation_unavailable' | 'image_removal_failed' | null> {
+    const { activationRef, ownedTag } = references;
+    const observed = await run(['image', 'inspect', activationRef]);
+    const images = observed.exitCode === 0 ? readNativeImageJson(observed.stdout) : undefined;
+    const tags = Array.isArray(images) && images.length === 1 && record(images[0]) ? images[0].RepoTags : undefined;
+    const known = Array.isArray(tags) && tags.every(tag => typeof tag === 'string') && tags.includes(activationRef);
+    const repository = ownedTag.slice(0, ownedTag.lastIndexOf(':') + 1);
+    const shared = !known || tags.some(tag => tag !== ownedTag && tag.startsWith(repository)
+        && /^[a-f0-9]{64}$/u.test(tag.slice(repository.length)));
+    const failure = await removeNativeComposeDeploymentImageReferences(shared ? [ownedTag] : [ownedTag, activationRef], run);
+    return failure ?? (known ? null : 'image_observation_unavailable');
+}
+
 /** Build/export custody exists before the native CONFIG digest is known. */
 export function resolveNativeComposeDeploymentOwnedImageTag(input: Readonly<{
     environmentInstanceId: string; deploymentId: string; service: string; platform: string;
