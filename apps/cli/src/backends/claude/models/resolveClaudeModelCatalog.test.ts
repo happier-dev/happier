@@ -522,6 +522,8 @@ describe('resolveClaudeModelCatalog', () => {
       { situation: 'the sign-in has expired', pin: 'gateway', expiresInMs: -1 },
       { situation: 'ANTHROPIC_BASE_URL names another endpoint', pin: 'gateway', expiresInMs: 60 * 60_000,
         baseUrl: 'https://other-gateway.example/anthropic' },
+      { situation: 'ANTHROPIC_BASE_URL names the Anthropic API', pin: 'gateway', expiresInMs: 60 * 60_000,
+        baseUrl: 'https://api.anthropic.com' },
     ])('never sends the gateway token when $situation', async ({ pin, expiresInMs, baseUrl, allowUnauthorizedTls }) => {
       const gateway = await startGateway();
       try {

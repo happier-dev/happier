@@ -287,7 +287,14 @@ export async function resolveClaudeModelProbeTarget(
         }
       }
       const gatewayLogin = await readClaudeCodeNativeGatewayLogin({ claudeConfigDir, signal });
-      return gatewayLogin ? resolveGatewayLoginTarget(gatewayLogin, baseUrl, (params.nowMs ?? Date.now)()) : null;
+      return gatewayLogin
+        ? resolveGatewayLoginTarget({
+          login: gatewayLogin,
+          baseUrl,
+          configuredEndpoint: readNonBlankString(effectiveEnv.ANTHROPIC_BASE_URL),
+          nowMs: (params.nowMs ?? Date.now)(),
+        })
+        : null;
     });
   } catch {
     return null;
@@ -299,14 +306,19 @@ export async function resolveClaudeModelProbeTarget(
  * never sends the token to another origin. Like the rest of this resolver it is passive, so an
  * expired sign-in waits for Claude Code to refresh it instead of being refreshed here.
  */
-function resolveGatewayLoginTarget(
-  login: ClaudeCodeGatewayLogin,
-  explicitBaseUrl: string | null,
-  nowMs: number,
-): ClaudeModelProbeTarget | null {
-  if (login.expiresAt !== null && login.expiresAt <= nowMs) return null;
-  if (explicitBaseUrl !== null && new URL(explicitBaseUrl).origin !== new URL(login.url).origin) return null;
-  const baseUrl = explicitBaseUrl ?? login.url;
+function resolveGatewayLoginTarget(params: Readonly<{
+  login: ClaudeCodeGatewayLogin;
+  /** The normalized endpoint, `null` for both an unset and an explicit Anthropic API URL. */
+  baseUrl: string | null;
+  /** `ANTHROPIC_BASE_URL` as configured, so an explicit Anthropic API URL still counts as configured. */
+  configuredEndpoint: string | null;
+  nowMs: number;
+}>): ClaudeModelProbeTarget | null {
+  const { login } = params;
+  if (login.expiresAt !== null && login.expiresAt <= params.nowMs) return null;
+  if (params.configuredEndpoint !== null
+    && new URL(params.configuredEndpoint).origin !== new URL(login.url).origin) return null;
+  const baseUrl = params.baseUrl ?? login.url;
   const credential = {
     kind: 'gateway_login' as const,
     value: login.accessToken,
