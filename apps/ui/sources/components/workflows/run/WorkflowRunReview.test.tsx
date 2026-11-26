@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import '@/sync/ops/actions/defaultActionExecutor';
 import { renderScreen } from '@/dev/testkit';
@@ -364,10 +365,10 @@ it('keeps a read-only transcript fold from looking up a private Review through t
   } finally { await screen.unmount(); }
 });
 
-function publishRunningReviewAndConverge(runId: string): void {
+function publishRunningReviewAndConverge(runId: string, state: 'running' | 'interrupted' = 'running'): void {
   const definition = createWorkflowDefinitionFixture();
   publishOpenedWorkflowRunDetail(WorkflowRunGetResultV1Schema.parse({
-    run: createWorkflowRunSummaryFixture({ id: runId, state: 'running', origin: { kind: 'direct' } }),
+    run: createWorkflowRunSummaryFixture({ id: runId, state, origin: { kind: 'direct' } }),
     definition, authoredDefinition: definition, callerAccess: { canEdit: true }, checkpoint: null,
     acceptedContext: {
       startedBy: 'user', source: { kind: 'catalog', ref: 'builtin:review-and-converge', version: 1 }, inputs: {},
@@ -400,5 +401,29 @@ it('shows the Findings its linked Review already holds on a still-running Review
     publishRunningReviewAndConverge('unrelated-run');
     await screen.update(fold);
     expect(commits).toBe(settled);
+  } finally { await screen.unmount(); }
+});
+
+it('states a stopped Review & converge round in its card header only, not again as a failed Review (R13)', async () => {
+  publishRunningReviewAndConverge('hunt-run', 'interrupted');
+  const failed = { ...review, state: 'failed', finishedAt: 3, counts: { total: 0, needsDecision: 0 } };
+  const needsYou = { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+    requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false };
+  homes.answer(serverId, 'POST /v1/reviews/list', { body: { items: [{ ...failed, needsYou }], cursor: null } });
+  homes.answer(serverId, 'POST /v1/reviews/get', { body: { review: failed,
+    human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [], needsYou } } });
+  homes.answer(serverId, 'GET /v1/reviews/comments', { body: { items: [], cursor: null } });
+  const source = { ...createTestSessionTranscriptSource({ serverId, navigate: vi.fn() }), kind: 'app' as const };
+  const screen = await renderWithSessionTranscriptSource(
+    <WorkflowRunFold turnId="review-turn" run={{ runId: 'hunt-run', turnCount: 0 }} serverId={serverId}>{null}</WorkflowRunFold>, source);
+  try {
+    expect(screen.findHostByTestId('workflow-review-round:hunt-run')).not.toBeNull();
+    await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/reviews/list').length).toBeGreaterThan(0));
+    // Let the list answer reach the card (it would mount the Review summary and its read).
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1000)); });
+    // The card's state word, with Stop reviewing and Open run beside it, is the one statement; a Review
+    // that failed with nothing found adds no second "couldn't finish" under it.
+    expect(screen.getTextContent()).toContain(t('workflows.run.open'));
+    expect(screen.getTextContent()).not.toContain(t('reviewWalkthrough.detail.glanceFailed'));
   } finally { await screen.unmount(); }
 });

@@ -272,6 +272,10 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
   // The linked Review's Findings so far, through the one list key the settled fold and Run page read.
   const reviewReadable = props.scope !== null;
   const producedReview = useWorkflowRunProducedReview(props.runId, props.scope, reviewReadable);
+  // The card's state word already says the round stopped, beside Stop reviewing and Open run. A Review that
+  // failed with nothing found would only say it again ("couldn't finish"), so the card shows its Findings only.
+  const shownReview = producedReview !== null && !(producedReview.state === 'failed' && producedReview.counts.total === 0)
+    ? producedReview : null;
   // Every round records its first step (skipped on round one) and its panel.
   const roundsStarted = Math.max(flow?.runStates.get('verify')?.length ?? 0, flow?.runStates.get('panel')?.length ?? 0);
   const round = describeReviewAndConvergeRound(props.inputs, roundsStarted);
@@ -307,7 +311,7 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
         </>
       )}
     >
-      {flow === null && producedReview === null ? null : (
+      {flow === null && shownReview === null ? null : (
         <>
           {flow === null ? null : (
             <WorkflowFlowView
@@ -319,7 +323,7 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
               testIDPrefix={`${testID}-map`}
             />
           )}
-          {producedReview === null ? null : (
+          {shownReview === null ? null : (
             <WorkflowRunReview runId={props.runId} scope={props.scope} enabled={reviewReadable} testID={`${testID}-review`} />
           )}
         </>
