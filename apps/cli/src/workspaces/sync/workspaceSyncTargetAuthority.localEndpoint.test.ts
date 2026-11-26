@@ -44,8 +44,8 @@ it.each([
     const contentPolicy = { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) };
     const staged = { v: 1 as const, relationshipId, controllerMachineId: source.machineId,
       alphaWorkspaceRefId: sourceWorkspace.id, betaWorkspaceRefId: targetWorkspace.id, mode: 'keep_synced' as const,
-      enabled: true, createdAtMs: 1, updatedAtMs: 1, committedAtMs: null, contentPolicy,
-      ...(workerCopy ? { provenance: { kind: 'worker_clean_copy' as const,
+      enabled: true, createdAtMs: 1, updatedAtMs: 1, contentPolicy,
+      ...(workerCopy ? { committedAtMs: null, provenance: { kind: 'worker_clean_copy' as const,
         sourceWorkspaceRefId: sourceWorkspace.id, targetWorkspaceRefId: targetWorkspace.id } } : {}) };
     let rows: ActiveProjectAccountRowsSnapshot = { source: 'network', accountMode: 'plain', workspaceRefs: [sourceWorkspace, targetWorkspace],
       relationships: [{ ...staged, enabled: false }], organizations: [], rows: [], graphRevision: 1, loadedAtMs: 1, scopeKey: 'owner' };
@@ -93,7 +93,7 @@ it.each([
       const original = await first.prepareBootstrapHere({ ...prepare, transientRelationship: staged, targetBootstrap: 'use_existing' }, undefined, context);
       await first.releaseBootstrapHere({ v: 1, bootstrapOperationId: relationshipId,
         targetWorkspaceRefId: targetWorkspace.id, reason: 'relationship_committed' }, undefined, writerContext('release'));
-      rows = { ...rows, relationships: [{ ...staged, committedAtMs: 2, updatedAtMs: 3 }] };
+      rows = { ...rows, relationships: [{ ...staged, ...(workerCopy ? { committedAtMs: 2 } : {}), updatedAtMs: 3 }] };
       const recovered = { state: 'ready', rootFingerprint: original.rootFingerprint, created: false };
       if (workerCopy) await expect(first.prepareBootstrapHere(prepare)).resolves.toMatchObject(recovered);
       await first.releaseAllRetainedBootstraps();

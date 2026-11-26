@@ -599,6 +599,15 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   const localProfileId = input.activeServerId ?? configuration.activeServerId;
   const readServerHttpBaseUrl = captureServerHttpBaseUrl();
   const factories: ProductionDaemonWorkspaceSyncFactories = { ...defaultFactories, ...overrides };
+  const requesterMachineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary | undefined = input.requesterMachineAdmissionBoundary
+    ? {
+        ...input.requesterMachineAdmissionBoundary,
+        readAgentIsolation: input.requesterMachineAdmissionBoundary.readAgentIsolation
+          ?? (input.agentIsolation ? () => input.agentIsolation!.read() : undefined),
+        awaitAgentIsolationReadable: input.requesterMachineAdmissionBoundary.awaitAgentIsolationReadable
+          ?? input.agentIsolation?.awaitReadable,
+      }
+    : undefined;
   // Installed publication and reconciliation share the daemon's local profile
   // scope. WorkspaceRef identities inside that snapshot retain the portable Home.
   const refreshInstalledProjectRows = async (signal?: AbortSignal) => await factories.refreshProjectRows({
@@ -683,10 +692,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     },
   };
   const recoverPrivateExecutions = async (relationshipId?: string) => {
-    if (!runtime || !input.requesterMachineAdmissionBoundary) return false;
+    if (!runtime || !requesterMachineAdmissionBoundary) return false;
     return recoverPrivateWorkspaceSyncExecutions({ happyHomeDir: input.happyHomeDir, localProfileId,
       serverId: semanticServerId, serverHttpBaseUrl: readServerHttpBaseUrl(),
-      boundary: input.requesterMachineAdmissionBoundary, privateCheckout: input.privateCheckout,
+      boundary: requesterMachineAdmissionBoundary, privateCheckout: input.privateCheckout,
       adapter: runtime.handoffAdapter, readProjectRows: factories.refreshProjectRows,
       // A recovered SOURCE presents creation's standing admission; Home's grant check runs at each use.
       ...(input.callWorkspaceTargetPhase ? { createSourceTargetPhaseCaller: standing => {
@@ -1714,7 +1723,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     requester: NonNullable<ReturnType<typeof readRequesterAccountActionContext>>, accountId: string,
     admission: RpcHandlerContext['machineAdmission'], targetContext: RpcHandlerContext,
     sourceWriter: Readonly<{ machineId: string; installationId: string }> | undefined) => {
-      const boundary = input.requesterMachineAdmissionBoundary;
+      const boundary = requesterMachineAdmissionBoundary;
       if (!requester.retainCustody || !boundary || !admission) throw compositionError('project_requester_authority_unavailable', 'Retained requester Sync custody is unavailable');
       const custodian = admission;
       const custody = requester.retainCustody();
@@ -1792,7 +1801,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       && request.action.kind !== 'copy_once' && request.action.kind !== 'none'
       && context?.workspaceSyncSourceRouting && context.callerInputAuthorization?.binding.actionId === 'projects.open'
       && (!canUseInstalledRelationshipOwner(context)
-        || requester?.retainCustody && input.requesterMachineAdmissionBoundary && context.machineAdmission)) {
+        || requester?.retainCustody && requesterMachineAdmissionBoundary && context.machineAdmission)) {
       if (!requester) throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
       retainRequesterSyncExecution(request, accepted.snapshot, requester, context.callerInputAuthorization.binding.accountId,
         context.machineAdmission, context, accepted.childMachines.find(child => child.machineId === context.workspaceSyncSourceRouting?.sourceMachineId)?.controller
@@ -2129,7 +2138,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       const execution = await preparePrivateWorkspaceSyncExecution({ ...request, assertTransferCurrent: async () => {
         await request.assertTransferCurrent();
         const identity = request.executionIdentity;
-        const boundary = input.requesterMachineAdmissionBoundary;
+        const boundary = requesterMachineAdmissionBoundary;
         if (identity?.kind === 'isolated' && (!boundary || !await verifyWorkspaceSyncRelationshipMachineAdmissionCurrent({
           credentials: request.credentials, sessionId: request.input.operationId, attribution: identity.requester,
           serverHttpBaseUrl: request.accountRowsCustody.serverHttpBaseUrl, boundary }))) {
@@ -3078,7 +3087,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       if (id !== undefined) {
         // Create's target preparation and settlement use its ingress admission.
         // Later requests use the retained relationship's SOURCE custody.
-        const boundary = input.requesterMachineAdmissionBoundary;
+        const boundary = requesterMachineAdmissionBoundary;
         const sourceAdmission = projectRequesterStandingAdmission(targetPhaseContext);
         const verifyCurrent = checkout
           ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent : verifyWorkspaceSyncSourceMachineAdmissionCurrent;

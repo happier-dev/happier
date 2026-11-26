@@ -656,6 +656,7 @@ describe('signed Project clean preparation', () => {
         // A root this installation's ingress never admitted carries no custody of the person here.
         localActionContext: { externalActionExecutionAuthorization: scenario === 'copy_once under a root this SOURCE never admitted'
           ? ExternalActionExecutionAuthorizationV1Schema.parse(admittedRoot) : dispatch.authorization } } : {}) };
+    const releasePrivateExecution = vi.spyOn(fixture.parent.handoffAdapter, 'releasePrivateExecution');
     handingOff = true;
     const settled = await runWithServerHttpBaseUrl('https://bind-child-home.invalid',
       () => fixture.parent.handoffAdapter.prepare(input, undefined, context)).then(value => ({ value }), (error: unknown) => ({ error }));
@@ -678,11 +679,13 @@ describe('signed Project clean preparation', () => {
       }
       if (scenario === "another Account's Workspace, copy_once") {
         // The person's rows decide their copy's source: the SOURCE owner's Workspace is not theirs.
-        // Refused at that step, before any TARGET call.
+        // Refused at that step, before any TARGET call, and foreign requester custody is released.
         expect(refusal, evidence).toMatchObject({ code: 'peer_unavailable',
           failureCause: { phase: 'workspace_sync.copy_source.resolve', errorCode: 'peer_unavailable' } });
         expect(signed, evidence).toEqual([]);
         expect(targetResults, evidence).toEqual([]);
+        expect(releasePrivateExecution, evidence).toHaveBeenCalledWith(operationId);
+        expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId }) ?? null, evidence).toBeNull();
         return;
       }
       // L12 cut 46: the SOURCE resolved the person's copy source in its owner's installed rows and refused

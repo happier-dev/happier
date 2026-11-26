@@ -2586,7 +2586,8 @@ export function createWorkspaceSyncTargetAuthority(
   const isRestoredInstalledWriter = (entry: RetainedBootstrap | RetainedNativeBootstrap,
     routing: RetainedSourceWriterTargetRouting): boolean => {
     if ('kind' in entry || entry.sourceWriterTargetRouting || entry.transientAuthority
-      || !entry.readyPublished || entry.relationshipDefinition?.committedAtMs == null
+      || !entry.readyPublished || !entry.relationshipDefinition
+      || getWorkspaceSyncWorkerCopyV1(entry.relationshipDefinition) !== null && entry.relationshipDefinition.committedAtMs == null
       || routing.source.sourceContext.machineAdmission.actorAccountId !== dependencies.localAccountId
       || routing.sourceWriter.machineId !== entry.relationshipDefinition.controllerMachineId
       || routing.source.sourceMachineId !== entry.sourceMachineId || routing.source.sourceRootPath !== entry.sourceRootPath

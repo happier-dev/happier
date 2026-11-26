@@ -15,6 +15,7 @@ import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspace
 import { createWorkspaceSyncSourceCredentialCustody, listRequesterSessionCredentialBindings,
   type RequesterSessionMachineAdmissionBoundary } from '../sessionEncryption/requesterSessionCredentials';
 import { replacePrivateBearerFile } from '../privateBearerFile';
+import type { HostAgentIsolationLaunchSnapshot } from '../agentIsolation/agentIsolationLaunchPolicy';
 import type { WorkspaceSyncSourceStandingAdmission } from '../sessionEncryption/requesterSessionCustody';
 import { recoverPrivateWorkspaceSyncExecutions } from './recoverPrivateWorkspaceSyncExecutions';
 
@@ -58,8 +59,12 @@ async function fixture() {
   const adapter = createWorkspaceSyncHandoffAdapter({ sync: controller,
     bootstrap: async () => { throw new Error('Unexpected target bootstrap'); } });
   onTestFinished(async () => { await adapter.releaseAllPrivateExecutions?.(); });
+  let agentIsolation: Pick<HostAgentIsolationLaunchSnapshot, 'enabled' | 'memberProvisioning' | 'status'> = {
+    enabled: false, status: { kind: 'off' },
+  };
   const boundary: RequesterSessionMachineAdmissionBoundary = { machineId: 'machine', daemonToken: 'custodian-token',
-    isHomeCurrent: () => true, readInstallation: () => ({ installationId: 'installation', privateKey: new Uint8Array(64) }) };
+    isHomeCurrent: () => true, readInstallation: () => ({ installationId: 'installation', privateKey: new Uint8Array(64) }),
+    readAgentIsolation: () => agentIsolation };
   const add = async (accountId: string, relationshipId: string, sourceAdmission?: WorkspaceSyncSourceStandingAdmission) => {
     const credentials = { token: `requester-${accountId}`, encryption: null };
     const bearer = `Bearer ${credentials.token}`;
@@ -88,7 +93,7 @@ async function fixture() {
   const recover = (relationshipId?: string) => recoverPrivateWorkspaceSyncExecutions({ happyHomeDir,
     localProfileId: 'home', serverId: 'home', serverHttpBaseUrl: 'https://sync-home.test', boundary, adapter,
     readProjectRows: readProjectAccountRows, ...(relationshipId ? { relationshipId } : {}) });
-  return { happyHomeDir, add, recover, adapter, httpReads, useAccounts };
+  return { happyHomeDir, add, recover, adapter, httpReads, useAccounts, setAgentIsolation: (next: typeof agentIsolation) => { agentIsolation = next; } };
 }
 
 it('recovers a shared Source under its exact Use admission and refuses a changed link or a Manage downgrade', async () => {
@@ -112,12 +117,31 @@ it('recovers a shared Source under its exact Use admission and refuses a changed
   await f.add('guest', changedLink, admission('admitted-use', 'use'));
   await f.add('guest', downgraded, admission('admitted-manage', 'manage'));
 
+  // Unread isolation policy fails closed without retiring persisted Use custody.
+  f.setAgentIsolation({ enabled: true, status: { kind: 'unavailable', code: 'metadata_unavailable' } });
+  await expect(f.recover(relationshipId)).rejects.toMatchObject({ code: 'project_requester_home_unavailable' });
+  expect(f.adapter.resolvePrivateExecution?.({ relationshipId })).toBeNull();
+
+  // While Agent Isolation is off, the exact Use admission recovers and passes transfer checks.
+  f.setAgentIsolation({ enabled: false, status: { kind: 'off' } });
   await f.recover();
   const retained = f.adapter.resolvePrivateExecution?.({ relationshipId });
   expect(retained?.execution.credentials.token).toBe('requester-guest');
   await expect(retained?.execution.assertTransferCurrent()).resolves.toBeUndefined();
   expect(f.adapter.resolvePrivateExecution?.({ relationshipId: changedLink })).toBeNull();
   expect(f.adapter.resolvePrivateExecution?.({ relationshipId: downgraded })).toBeNull();
+
+  // Once the custodian enables Agent Isolation, live transfer checks refuse and restart does not recover the direct Use link.
+  f.setAgentIsolation({ enabled: true, status: { kind: 'effective', platform: 'linux' } });
+  await expect(retained?.execution.assertTransferCurrent()).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
+  await f.adapter.releaseAllPrivateExecutions?.();
+  await f.recover();
+  expect(f.adapter.resolvePrivateExecution?.({ relationshipId })).toBeNull();
+  expect(await listRequesterSessionCredentialBindings({ happyHomeDir: f.happyHomeDir, serverId: 'home',
+    accountId: 'guest', machineId: 'machine', installationId: 'installation',
+    scope: 'workspace_sync_relationship', endpointRole: 'source', sessionId: relationshipId })).toEqual({
+    status: 'ready', bindings: [],
+  });
 });
 
 it('recovers an exact private Sync relationship with zero directory scans and refuses only its own unreadable custody', async () => {

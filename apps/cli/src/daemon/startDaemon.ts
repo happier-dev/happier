@@ -2512,6 +2512,8 @@ export async function startDaemon(
       machineId, daemonToken: credentials.token, readInstallation: readInstallationIdentityIfExistsSync,
       getObservedServerIdentityId: () => resolveBoundHomeServerIdentityId(),
       signal: homeTransportCancellation.signal,
+      readAgentIsolation: () => agentIsolation.read(),
+      awaitAgentIsolationReadable: agentIsolation.awaitReadable,
       isHomeCurrent: () => configuration.activeServerId === requesterRuntimeServerId
         && (!attribution || attribution.serverId === requesterRuntimeServerId && attribution.machineId === machineId),
     });

@@ -517,6 +517,8 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         throw Object.assign(new Error('workspace_root_unsafe'), { code: 'workspace_root_unsafe' });
       }
       if (input.action.kind === 'copy_once') validateWorkspaceSyncContentPolicy(input.action.contentPolicy);
+      const hadPrivateExecution = preparedByOperation.get(input.operationId)?.privateExecution !== undefined;
+      try {
       const admittedInput = input;
       const execution = input.action.kind !== 'none' ? await deps.resolveExecutionInput?.(input, authority, context) : undefined;
       if (execution) input = execution.input;
@@ -572,17 +574,6 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           flushBeforeCommit: true,
           ...(input.signal ? { signal: input.signal } : {}),
           ...(context ? { requesterContext: context } : {}),
-        }).catch(async (error: unknown) => {
-          if (error instanceof WorkspaceSyncPreparationRefusal) {
-            try {
-              await adapter.releasePrivateExecution!(input.operationId);
-            } catch (cleanupError) {
-              logger.warnLocalFile('[Workspace Sync] Refused private execution cleanup failed', {
-                failureCause: projectActionFailureCauseV1(cleanupError),
-              });
-            }
-          }
-          throw error;
         });
         let preparedStatus: WorkspaceSyncStatusV1;
         try {
@@ -693,6 +684,20 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           logger.warnLocalFile('[Workspace Sync] Refused target custody release failed', {
             failureCause: projectActionFailureCauseV1(cleanupError),
           });
+        }
+        throw error;
+      }
+      } catch (error) {
+        const retained = preparedByOperation.get(input.operationId)?.privateExecution;
+        if (!hadPrivateExecution && !preparedByOperation.get(input.operationId)?.prepared
+          && retained !== undefined && (!retained.relationshipId || error instanceof WorkspaceSyncPreparationRefusal)) {
+          try {
+            await adapter.releasePrivateExecution!(input.operationId);
+          } catch (cleanupError) {
+            logger.warnLocalFile('[Workspace Sync] Refused private execution cleanup failed', {
+              failureCause: projectActionFailureCauseV1(cleanupError),
+            });
+          }
         }
         throw error;
       }

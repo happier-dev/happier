@@ -61,7 +61,10 @@ import { normalizeMaterializationKeyForPath } from '../connectedServices/materia
 import { isContainedMaterializedHomeDirectory } from '../connectedServices/materialize/cleanup/ConnectedServiceMaterializedHomeCleanupScheduler';
 export { releaseUnretainedRequesterSessionRuntimeContext } from './requesterSessionRuntimeContextLifetime';
 import { readHostAccountExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationAccountCustody';
-import { selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { isHostAgentIsolationPolicyUnread, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchContext,
+  type HostAgentIsolationLaunchSnapshot, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { readSettledMachineIsolationPolicy } from '@/daemon/agentIsolation/sessionPreparation';
 
 /** The existing custody owner distinguishes absent private birth from an
  * unreadable/historical source. Current Account ownership never rewrites birth. */
@@ -600,6 +603,8 @@ export type RequesterSessionMachineAdmissionBoundary = Readonly<{
   isHomeCurrent(): boolean;
   getObservedServerIdentityId?(): string | null | Promise<string | null>;
   readInstallation(): Readonly<{ installationId: string; privateKey: string | Uint8Array }> | null;
+  readAgentIsolation?: () => Pick<HostAgentIsolationLaunchSnapshot, 'enabled' | 'memberProvisioning' | 'status'> | undefined;
+  awaitAgentIsolationReadable?: HostAgentIsolationLaunchContext['awaitReadable'];
 }>;
 
 // Discovery belongs to one binding invocation, including opaque ingress
@@ -741,11 +746,25 @@ export async function verifyWorkspaceSyncSourceMachineAdmissionCurrent(
   const current = await readWorkspaceSyncMachineAdmissionCurrent(input);
   if (!current) return false;
   if (isCustodianMachineAdmission(current) || current.role === 'manage') return true;
-  // Only a link originally admitted with Use can reconnect with Use.
+  // Only a link originally admitted with Use can reconnect with Use, and only
+  // while this Machine's isolation policy still places guest work on the daemon.
   const admitted = input.sourceAdmission;
-  return admitted?.authorization.binding.admittedMachineRole === 'use'
-    && admitted.routing.sourceContext?.machineAdmission.role === 'use'
-    && admitted.routing.sourceContext.machineAdmission.custodianAccountId === current.custodianAccountId;
+  if (admitted?.authorization.binding.admittedMachineRole !== 'use'
+    || admitted.routing.sourceContext?.machineAdmission.role !== 'use'
+    || admitted.routing.sourceContext.machineAdmission.custodianAccountId !== current.custodianAccountId) return false;
+  const readPolicy = input.boundary.readAgentIsolation;
+  if (!readPolicy) return false;
+  const snapshot = await readSettledMachineIsolationPolicy({
+    read: readPolicy,
+    isUnread: isHostAgentIsolationPolicyUnread,
+    awaitReadable: input.boundary.awaitAgentIsolationReadable,
+    signal: input.signal ?? input.boundary.signal,
+  });
+  if (!snapshot || isHostAgentIsolationPolicyUnread(snapshot)) {
+    throw new PluginError({ code: 'project_requester_home_unavailable', retryable: true,
+      message: 'This Machine is still starting. Retry when it is available.' });
+  }
+  return resolveMachineAgentExecutionPlacementV1({ policy: snapshot, platform: process.platform }) === 'daemon';
 }
 
 /** Reconstructs Account ports for this exact Session; protected custody is data, never an authority witness. */
