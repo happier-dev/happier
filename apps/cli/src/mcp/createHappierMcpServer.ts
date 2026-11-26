@@ -214,7 +214,7 @@ export function createHappierMcpServer(
     return policy.sessionAgentSpawnPolicyV1;
   };
   const isActionEnabled = createMcpActionEnablementWithServerFeatureAvailability({
-    actionSettingsProvider: createSessionActionSettingsView(actionSettingsProvider, () => client.getMetadataSnapshot?.()),
+    actionSettingsProvider: createSessionActionSettingsView(actionSettingsProvider, () => client.getMetadataSnapshot?.(), toolSurface),
     surface: toolSurface,
     hasAuthenticatedRuntime: sessionCredentials !== null,
     authorityScope: opts?.authorityScope,

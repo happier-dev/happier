@@ -128,7 +128,10 @@ export function createActionSettingsProvider(params: Readonly<{
  */
 export function createSessionActionSettingsView(provider: RuntimeActionSettingsProvider,
   readSessionMetadata: () => Readonly<{ approvalProfileId?: unknown; approvalProfileTeamOrGroupDerived?: unknown }> | null | undefined,
+  surface?: 'agent' | 'voice',
 ): RuntimeActionSettingsProvider {
+  // A Voice Run Session is the carrier. The App default executor reads the bound Session's profile at admission.
+  if (surface === 'voice') return provider;
   let last: Readonly<{ settings: ActionsSettingsV1; profileId: unknown; derived: boolean;
     catalog: readonly ReadableApprovalProfileV1[] | undefined; effective: ActionsSettingsV1 }> | undefined;
   return { ...provider, getActionsSettings: () => {

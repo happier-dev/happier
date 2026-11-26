@@ -61,9 +61,11 @@ describe('Voice Action reference catalog', () => {
       accountId: 'alice', currentAccount: true });
     const session = createSessionFixture({ id: 'voice-memory-target', serverId });
     const { storage } = await import('@/sync/domains/state/storage');
-    const setMemory = (memoryEnabled: boolean) => storage.getState().applySessions([{
-      ...session, metadata: { ...session.metadata, work: { memoryEnabled } },
-    }]);
+    const setMemory = (memoryEnabled: boolean) => {
+      const current = { ...session, metadata: { ...session.metadata, work: { memoryEnabled } } };
+      storage.getState().applySessions([current]);
+      home.answer(serverId, `GET /v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(current) });
+    };
     setMemory(false);
     const handlers = createVoiceToolHandlers({ resolveSessionId: () => session.id, currentServerId: serverId,
       resolveCurrentSessionAddress: async () => ({ serverId, sessionId: session.id }) });

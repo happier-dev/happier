@@ -44,7 +44,8 @@ export function createVoiceRunActionReverseHandler(handle: VoiceAgentHandle, con
     const serverId = handle.accountLifetime.scope.serverId;
     const turn = handle.toolTurnContext?.current;
     const tools = createVoiceToolHandlers({
-      voiceSessionBinding: binding, resolveCurrentSessionAddress: async () => target, currentServerId: serverId,
+      voiceSessionBinding: binding, currentSessionAddress: target,
+      resolveCurrentSessionAddress: async () => target, currentServerId: serverId,
       currentExecutionTarget: binding ? readAdmittedVoiceSessionExecutionTarget({ adapterId: binding.adapterId,
         controlSessionId: binding.controlSessionId, serverId }) : null,
       readVoiceAgentHandle: () => handle,

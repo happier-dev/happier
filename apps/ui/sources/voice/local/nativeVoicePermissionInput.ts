@@ -45,6 +45,9 @@ export function createNativeVoicePermissionInput(params: Readonly<{
 }>): NativeVoicePermissionInput {
   const execute = createFrontDoorActionExecute(undefined, {
     readAdmittedVoiceInvocation: () => params.readVoiceAgentHandle()?.actionInvocation,
+    admittedVoiceSessionAddress: async () => voiceConversationBindingResolver.resolveByControlSessionId({
+      controlSessionId: params.controlSessionId,
+    })?.targetSessionAddress ?? null,
   });
   const readCanApproveRequests = () => mayVoiceApproveBySpokenConsent(
     storage.getState().settings.voice.canApproveRequests,

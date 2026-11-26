@@ -506,6 +506,7 @@ describe('createDefaultActionExecutor approvals', () => {
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const voiceExecutor = origin === 'direct' ? executor : createDefaultActionExecutor({
             readAdmittedVoiceInvocation: () => ({ caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' }),
+            admittedVoiceSessionAddress: null,
         });
         await seedApproval('voice-live-preference', liveCliConfidentialApproval());
         await seedApproval('voice-live-next', liveCliConfidentialApproval());

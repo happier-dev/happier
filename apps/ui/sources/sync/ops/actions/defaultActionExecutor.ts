@@ -1,3 +1,4 @@
+import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
 import { mayVoiceApproveBySpokenConsent, projectVoiceApprovalGuidance, resolveVoiceApprovalGuidance, type VoiceApprovalGuidance } from './voiceActionApprovalAuthority';
@@ -756,6 +757,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   for (const operation of invocation?.owned ?? []) storage.getState().finishSessionArchive(operation);
 }
 
+type VoiceActionExecutorBinding = Readonly<{
+  /** Working Session from the Voice host, captured or resolved at admission; null means Home Voice. */
+  admittedVoiceSessionAddress: SessionAddress | null | (() => Promise<SessionAddress | null>);
+  /** Host-owned Voice Run admission; never read from Action input or remote context. */
+  readAdmittedVoiceInvocation?: () => import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1 | undefined;
+}> | Readonly<{ readAdmittedVoiceInvocation?: undefined; admittedVoiceSessionAddress?: undefined }>;
+
   function buildDefaultActionExecutor(opts?: Readonly<{
   /** Mounted draft destination; Action policy and draft settlement remain canonical. */
   sessionAuthoringPresentation?: import('@/components/sessions/new/newSessionSeedNavigation').SessionAuthoringPresentation;
@@ -792,8 +800,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   apiTokenAction?: ApiTokenActionTransport;
   /** Private Machine reverse-RPC continuation: admission/approval happened in the daemon. */
   admittedClientActionId?: ActionId;
-  /** Host-owned Voice Run admission; never read from Action input or remote context. */
-  readAdmittedVoiceInvocation?: () => import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1 | undefined;
   /** The daemon still awaiting that continuation; its Session caller's Workflow children return there. */
   admittedClientActionParent?: AdmittedClientActionParent;
   resolveServerIdForSessionId?: (sessionId: string) => string | null;
@@ -925,7 +931,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   /** Host-page defaults remain outside Action input and personal persisted copies. */
   resolveWidgetAreaPresets?: Parameters<typeof createWidgetAreaActionDepsV1>[1];
   widgetAreaIsCurrent?: () => boolean;
-  }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
+  }> & VoiceActionExecutorBinding, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
     executeNativeManagedAction(actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext, confirmInFlow?: boolean,
       retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>, observeApproval?: boolean): Promise<ActionExecuteResult>;
     readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
@@ -2425,18 +2431,30 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     readApprovalProfile: accountContext ? id => readBoundApprovalProfile(accountContext, id) : undefined,
     readActionApprovalProfileId: async context => {
       const caller = context.actionCaller;
-      if (caller?.kind !== 'session') return undefined;
-      if (!accountContext) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-      // An unreadable caller Session leaves its profile selection unknown: refuse admission, typed.
+      const voiceBinding = context.surface === 'voice' ? opts?.admittedVoiceSessionAddress : null;
+      const voiceAddress = typeof voiceBinding === 'function' ? await voiceBinding() : voiceBinding;
+      const sessionId = context.surface === 'voice' && voiceBinding !== undefined
+        ? voiceAddress?.sessionId : caller?.kind === 'session' ? caller.sessionId : undefined;
+      // Home Voice has no working Session and uses Account rows only.
+      if (!sessionId) return undefined;
+      if (!accountContext || (voiceAddress && !areServerProfileIdentifiersEquivalent(voiceAddress.serverId, accountContext.serverId))) {
+        return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+      }
+      // An unreadable caller or bound Voice Session leaves its profile selection unknown.
       const session = await runWithServerRequestAuthorityForServerAccountScope({
         scope: accountContext.accountLifetime.scope, activeRequest: accountContext.request,
-      }, authority => readSessionSnapshotForAuthority({ authority, sessionId: caller.sessionId,
+      }, authority => readSessionSnapshotForAuthority({ authority, sessionId,
         includeTurns: false, signal: context.signal, isCurrent: accountContext.accountLifetime.isCurrent }))
         .then(read => read.session, error => { if (error instanceof SessionSnapshotReadError) return null; throw error; });
       const metadata = session ? readSessionOwnerMetadataView(session) : null;
-      if (!metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+      if (session && context.surface === 'voice' && !isSessionAccessOwner(session.access, session.accessLevel) && !metadata) {
+        // Shared layout-one Sessions keep the owner's profile private; Account rows still apply.
+        return { approvalProfileId: null, approvalProfileTeamOrGroupDerived: true };
+      }
+      if (!session || !metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
       const approvalProfileId = resolveSessionApprovalProfileReferenceV1(metadata);
-      return { approvalProfileId, approvalProfileTeamOrGroupDerived: metadata.approvalProfileTeamOrGroupDerived === true };
+      return { approvalProfileId, approvalProfileTeamOrGroupDerived: metadata.approvalProfileTeamOrGroupDerived === true
+        || (context.surface === 'voice' && !isSessionAccessOwner(session.access, session.accessLevel)) };
     },
     // Host facts for the shared approval router: the person's settings (with the Source Control
     // preference) and installed Settings declarations' operations, classified like the built-ins.

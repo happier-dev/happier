@@ -120,7 +120,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
         return catalog.tools;
     };
     const sessionActionSettings = createSessionActionSettingsView(params.actionSettingsProvider,
-        () => params.client.getMetadataSnapshot?.());
+        () => params.client.getMetadataSnapshot?.(), surface);
     const readInputs = (pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[]) => {
         const location = params.client.getCurrentSessionLocation?.();
         return {

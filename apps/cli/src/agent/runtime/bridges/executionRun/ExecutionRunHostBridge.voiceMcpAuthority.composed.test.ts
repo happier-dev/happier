@@ -25,6 +25,7 @@ import { createUnboundConnectedAccountsFixture } from '@/agent/runtime/registry/
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MemoryDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/memoryDocV1';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1, ApprovalProfileArtifactV1Schema, buildApprovalProfileArtifactHeaderV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { VoiceRunActionDispatchRequestV1Schema, voiceRunActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
@@ -69,7 +70,7 @@ import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '../../../../../../../apps/ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '../../../../../../../apps/ui/sources/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '../../../../../../../apps/ui/sources/dev/testkit/fixtures/featureFixtures';
-import { createSessionFixture, createPlainSessionByIdResponseFixture } from '../../../../../../../apps/ui/sources/dev/testkit/fixtures/sessionFixtures';
+import { createSessionAccessFixture, createSessionFixture, createPlainSessionByIdResponseFixture } from '../../../../../../../apps/ui/sources/dev/testkit/fixtures/sessionFixtures';
 import { settingsDefaults } from '../../../../../../../apps/ui/sources/sync/domains/settings/settings';
 import type { VoiceAgentHandle } from '../../../../../../../apps/ui/sources/voice/agent/types';
 import { installLocalStorageMock, installWebLockManagerMock } from '../../../../../../../apps/ui/sources/auth/storage/tokenStorage.web.testHelpers';
@@ -147,11 +148,18 @@ async function openCodePeer(prompt: (text: string) => Promise<string>) {
 afterEach(async () => { resetVoiceSessionStoreForTests(); await homes.reset(); vi.restoreAllMocks(); vi.unstubAllEnvs();
   reloadConfiguration(); resetActiveAccountSettingsSnapshotForTests(); });
 
-it('uses the bound Voice Session for native Memory discovery and ask-first Save', async () => {
+it.each(['account-ask', 'bound-off', 'bound-ask', 'bound-unreadable', 'team-tighten', 'team-cannot-waive', 'home-account-ask', 'shared-session-cannot-waive-account-ask', 'shared-session-cannot-waive-account-off', 'shared-off', 'shared-ask', 'cross-home', 'shared-layout1-account-ask', 'shared-layout1-account-off', 'shared-layout1-unrestricted'] as const)(
+  'uses the bound Voice Session for native Memory discovery and ask-first Save (%s)', async policy => {
   const serverId = await homes.addHome({ name: 'Voice Memory', serverUrl: 'https://voice-memory.test',
     accountId: 'alice', currentAccount: true });
   const actionId = 'memory.remember';
-  const actionsSettingsV1 = { v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['voice'] } } };
+  const shared = policy.startsWith('shared-');
+  const sharedLayout1 = policy.startsWith('shared-layout1-');
+  const accountOff = policy === 'shared-session-cannot-waive-account-off' || policy === 'shared-layout1-account-off';
+  const waive = policy === 'team-cannot-waive' || policy.startsWith('shared-session-cannot-waive');
+  const accountOnly = policy === 'account-ask' || policy === 'home-account-ask';
+  const actionsSettingsV1 = { v: 1, actions: { [actionId]: accountOff ? { disabledSurfaces: ['voice'] }
+    : accountOnly || waive || policy === 'shared-layout1-account-ask' ? { approvalRequiredSurfaces: ['voice'] } : {} } };
   homes.answer(serverId, 'GET /v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
     actionsSettingsV1, voice: { ...settingsDefaults.voice, canApproveRequests: false },
   } } } });
@@ -166,7 +174,9 @@ it('uses the bound Voice Session for native Memory discovery and ask-first Save'
   const ref = { kind: 'doc' as const, artifactId: 'memory-doc', serverId };
   const text = 'Remember Jade Umbrella.';
   const saveInput = { ref, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, text };
-  const target = createSessionFixture({ id: targetId, serverId, metadata: { ...createTestMetadata(),
+  const target = createSessionFixture({ id: targetId, serverId, ...(shared ? { access: createSessionAccessFixture('edit') } : {}), metadata: { ...createTestMetadata(),
+    ...(!accountOnly ? { approvalProfileId: 'bound-profile',
+      approvalProfileTeamOrGroupDerived: policy === 'team-tighten' || policy === 'team-cannot-waive' } : {}),
     workspaceId: 'project-workspace', work: { memoryEnabled: true, promptStack: [
       { id: 'project.memory', ref, enabled: true, placement: 'system_append' },
     ] } } });
@@ -174,6 +184,25 @@ it('uses the bound Voice Session for native Memory discovery and ask-first Save'
     ...target, metadata: { ...target.metadata!, work: { ...target.metadata!.work, memoryEnabled } },
   }]);
   const artifacts = homes.artifacts(serverId);
+  if (!accountOnly) {
+    const profile = ApprovalProfileArtifactV1Schema.parse({ kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, profile: {
+      name: 'Bound profile', actions: { [actionId]: (policy === 'bound-ask' || policy === 'shared-ask')
+        ? { approvalRequiredSurfaces: ['voice'] } : waive ? {} : { disabledSurfaces: ['voice'] } },
+      ...(waive ? { approvalWaivedSurfaces: { [actionId]: ['voice'] } } : {}),
+    } });
+    expect((await artifacts.handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
+      id: 'bound-profile', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: encodePlainArtifactStoredContent(buildApprovalProfileArtifactHeaderV1(profile)),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(profile) }),
+    }) }))?.ok).toBe(true);
+  }
+  homes.answer(serverId, `GET /v2/sessions/${targetId}`, policy === 'bound-unreadable'
+    ? { status: 404, body: { error: 'not_found' } }
+    : { body: shared && !sharedLayout1
+      // Released layout-zero shared Sessions expose the selected profile; layout one keeps it owner-private.
+      ? { session: { ...createPlainSessionByIdResponseFixture(target).session, metadataLayoutVersion: 0,
+          metadata: JSON.stringify(target.metadata), ownerMetadata: undefined } }
+      : createPlainSessionByIdResponseFixture(target) });
   const doc = await artifacts.handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({
     id: ref.artifactId, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
     header: encodePlainArtifactStoredContent({ v: 1, kind: 'memory_doc.v1', title: 'Project Memory' }),
@@ -187,7 +216,7 @@ it('uses the bound Voice Session for native Memory discovery and ask-first Save'
   setMemory(true);
   voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation', controlSessionId: 'memory-call',
     conversationSessionId: carrier, conversationSessionAddress: { serverId, sessionId: carrier },
-    targetSessionAddress: { serverId, sessionId: targetId }, transcriptMode: 'native_session', updatedAt: 1 });
+    targetSessionAddress: policy === 'home-account-ask' ? null : { serverId: policy === 'cross-home' ? 'other-home' : serverId, sessionId: targetId }, transcriptMode: 'native_session', updatedAt: 1 });
   setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'memory-call', status: 'connected', mode: 'listening', canStop: true });
   const receive = createVoiceRunActionReverseHandler({ accountLifetime: account.accountLifetime,
     client: new DaemonVoiceAgentClient(account.accountLifetime.scope, controller.signal),
@@ -210,14 +239,19 @@ it('uses the bound Voice Session for native Memory discovery and ask-first Save'
     execute: operation => execute(operation, { sessionId: carrier, isCurrent: async () => true,
       actionInvocation, signal: controller.signal }),
   });
+  // Exercise the App's Account-Off authority even after Coordination Part B removes the CLI veto.
   const mcp = createHappierMcpServer({
     sessionId: carrier, getServerBinding: () => ({ serverId, serverUrl: account.endpointUrl }),
     rpcHandlerManager: new RpcHandlerManager({ scopePrefix: carrier, encryptionMode: 'plain' }), updateMetadata() {},
-    getMetadataSnapshot: () => createTestMetadata({ work: { memoryEnabled: false } }),
+    getMetadataSnapshot: () => createTestMetadata({ approvalProfileId: 'carrier-profile', work: { memoryEnabled: false } }),
     getRunActionInvocation: () => actionInvocation,
     getSessionActionConfirmationBinding: () => ({ turnId, run, isCurrent: () => true, lifetimeSignal: controller.signal }),
     getActiveTurnAdmissionWitness: () => ({ turnId, inputId: 'memory-input', userMessageSeq: 1, userMessageSeqs: [1] }),
-  }, { actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({ actionsSettingsV1 }) }) });
+  }, { actionsSettingsProvider: { ...createActionSettingsProvider({ accountSettings: accountSettingsParse({ actionsSettingsV1: accountOff ? undefined : actionsSettingsV1 }) }),
+    getApprovalProfiles: () => [{ id: 'carrier-profile', profile: { id: 'carrier-profile', name: 'Carrier profile',
+      actions: { [actionId]: { disabledSurfaces: ['voice'] } } }, access: 'owner',
+      revision: { headerVersion: 1, bodyVersion: 1 } }],
+  } });
   const [agentTransport, hostTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'native-voice-memory', version: '1' });
   const call = async (actionId: string, input: Record<string, unknown>) => {
@@ -232,24 +266,42 @@ it('uses the bound Voice Session for native Memory discovery and ask-first Save'
     const discover = () => call('action.spec.get', { id: actionId });
     const search = () => call('action.spec.search', { query: 'memory save remember phrase project' });
     const save = () => call(actionId, saveInput);
+    if (policy === 'bound-off' || policy === 'bound-unreadable' || policy === 'team-tighten' || policy === 'shared-off' || accountOff || policy === 'cross-home') {
+      expect(await save()).toMatchObject({ isError: true, payload: { errorCode:
+        policy === 'bound-unreadable' || policy === 'cross-home' ? 'approval_context_unavailable' : 'action_disabled' } });
+      expect(artifacts.list().filter(row => row.id !== ref.artifactId && row.id !== 'bound-profile')).toHaveLength(0);
+      expect(artifacts.readPlainBody(ref.artifactId)).not.toContain(text);
+      expect(homes.requestsFor(`/v1/artifacts/${ref.artifactId}`).filter(request => request.method !== 'GET')).toHaveLength(0);
+      return;
+    }
     expect(await discover()).toMatchObject({ payload: { actionSpec: { id: actionId, inputSchema: expect.any(Object) } } });
     expect(await search()).toMatchObject({ payload: { actionSpecs: expect.arrayContaining([expect.objectContaining({ id: actionId })]) } });
+    if (policy === 'shared-layout1-unrestricted') {
+      expect(await save()).toMatchObject({ payload: { ok: true } });
+      expect(artifacts.readPlainBody(ref.artifactId)).toContain(text);
+      expect(artifacts.list()).toHaveLength(2);
+      return;
+    }
     const saving = save();
     const first = await Promise.race([saving.then(result => ({ result })), approvedRequestCreated.then(() => 'approval')]);
     expect(first).toBe('approval');
-    const approvals = artifacts.list().filter(row => row.id !== ref.artifactId);
+    const approvals = artifacts.list().filter(row => row.id !== ref.artifactId && row.id !== 'bound-profile');
     expect(approvals).toHaveLength(1);
     expect(artifacts.readPlainBody(ref.artifactId)).not.toContain(text);
     expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: approvals[0]!.id, decision: 'approve' },
       { surface: 'ui', serverId, actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
     expect((await saving).isError ?? false).toBe(false);
     expect(artifacts.readPlainBody(ref.artifactId)).toContain(text);
+    if (policy === 'home-account-ask') {
+      expect(homes.requestsFor(`/v2/sessions/${targetId}`)).toHaveLength(0);
+      return;
+    }
     setMemory(false);
     expect(await search()).toMatchObject({ payload: { actionSpecs: expect.arrayContaining([expect.objectContaining({ id: actionId })]) } });
     const memoryOff = { isError: true, payload: { errorCode: 'action_disabled', details: { reason: 'session_memory_off' } } };
     expect(await discover()).toMatchObject(memoryOff);
     expect(await save()).toMatchObject(memoryOff);
-    expect(artifacts.list().filter(row => row.id !== ref.artifactId)).toHaveLength(1);
+    expect(artifacts.list().filter(row => row.id !== ref.artifactId && row.id !== 'bound-profile')).toHaveLength(1);
   } finally {
     controller.abort();
     voiceSessionBindingStore.getState().unbind(carrier);
