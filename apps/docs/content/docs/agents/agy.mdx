@@ -3,22 +3,22 @@ title: Antigravity CLI (experimental)
 description: Configure Antigravity in Happier, including authentication, the CLI ACP server, connected accounts, resume, execution runs, and MCP tools.
 ---
 
-Happier runs Antigravity sessions and execution runs through the ACP server built into the `agy` CLI (`agy acp`), using your Antigravity CLI login. Sessions that use a connected Antigravity account run on the official pinned `agy_acp_server` instead.
+Happier runs every Antigravity session and execution run through the ACP server built into the `agy` CLI (`agy acp`). Sessions use your Antigravity CLI login, or a connected Antigravity account when you select one.
 
 ## Availability
 
-Development builds run native-login sessions on `agy acp`, enable negotiated modes
-before session creation, and keep the managed ACP server at 1.3.0 for connected
-accounts. These changes are not yet a stable-release guarantee; authenticated
-composer, context-usage and account-switch validation is still in progress.
+Development builds run all Antigravity sessions on `agy acp` and no longer install
+or launch the pinned `agy_acp_server` that 0.2.21 and earlier used. These changes
+are not yet a stable-release guarantee; authenticated composer, context-usage and
+account-switch validation is still in progress.
 
 ## Requirements and authentication
 
-For new native-login sessions, install the Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` on the machine where Happier runs. Happier needs a CLI that includes the ACP server (Antigravity CLI 1.5.0 or newer); run `agy update` to upgrade an older install.
+Install the Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` on the machine where Happier runs. Happier needs a CLI that includes the ACP server (Antigravity CLI 1.5.0 or newer); connected accounts need Antigravity CLI 1.5.18 or newer. Run `agy update` to upgrade an older install.
 
 Native Antigravity can continue a background task after the conversation returns to idle. Its result appears on the original tool card, and later activity can appear as another continuation. When Antigravity cannot identify which prompt originated a permission request, Happier asks you to decide even if a newer prompt has broader permissions.
 
-`agy acp` uses the same Antigravity CLI login as the interactive `agy`, so if you already signed in there, sessions are ready to start. Otherwise run this on the machine where Happier runs:
+Without a connected account, `agy acp` uses the same Antigravity CLI login as the interactive `agy`, so if you already signed in there, sessions are ready to start. If you set `GEMINI_HOME`, Happier passes it to `agy` as the profile directory (`--gemini-dir`). Otherwise run this on the machine where Happier runs:
 
 ```bash
 happier agy auth login
@@ -28,21 +28,21 @@ This runs `agy acp --login`, which prints a Google login link. Open it in any br
 
 You can also open this login flow from **Settings → AI & Agents → AI backends → Antigravity**. Happier does not probe Antigravity authentication in the background, so the app may continue to show **Unknown** after login.
 
-## Connected accounts and the pinned ACP server
+## Connected accounts
 
-Connected Antigravity accounts run on the official pinned `agy_acp_server` v1.3.0, because it reads the per-account credential home Happier prepares for each account. When automatic installation is enabled, development builds can install the platform archive as soon as you select a connected account in New Session. If the server is still missing, the first connected launch installs it. If you disabled automatic installation for your machine, install the pinned server from the New Session dependency prompt before launching.
-Integrity is verified by SHA-256 on every download, extraction reuses the shared
-archive helpers, and the executable bit is set on Unix. A corrupt or missing artifact
-fails visibly, and the next launch re-runs the authoritative ensure to recover.
-An older managed version is also replaced through that ensure path. Explicitly
-configured executable overrides keep their own negotiated capabilities.
+A connected Antigravity account runs `agy acp` in a private profile that Happier
+prepares for that account (`--gemini-dir <profile> --app-data-dir antigravity-cli`).
+Happier writes the account's token to the profile and makes the CLI keep it there
+instead of the operating system's credential store, so the machine's own
+Antigravity login is neither used nor changed. Because only Antigravity CLI 1.5.18
+and newer honor this, Happier refuses to start a connected-account session on an
+older CLI, before any conversation is opened, and asks you to run `agy update`.
 
-Linux launches add the required `--uid=` platform arg. Platforms without a published
-archive fail clearly instead of being emulated. The 1.3.0 pin includes Intel Mac;
-earlier releases using 1.1.1 do not gain that asset or context telemetry automatically.
-
-Each runtime keeps its own conversation history, so a running session cannot switch
-between native login and a connected account; start a new session instead.
+Your configuration policy decides whether skills, hooks and MCP settings come from
+the machine profile. With shared state, conversations, their artifacts and their
+titles are shared with the machine login, so a running session can switch between
+your own login and a connected account, or between accounts, and continue the
+same conversation. With isolated state, each account keeps its own history.
 
 ## Start and resume sessions
 
@@ -51,16 +51,14 @@ happier agy
 ```
 
 Happier supports new sessions, vendor resume, follow-up messages, cancellation,
-live model changes through the agent-advertised ACP `model` config option, and execution
-runs. Models, modes, and MCP tools come from negotiated agent state rather than a
-static list.
+live model changes, and execution runs. Models, modes, and MCP tools come from
+negotiated agent state rather than a static list.
 
-Native-login sessions created before Happier used `agy acp` belong to the pinned
-server. Happier keeps resuming them there with the pinned server's earlier login;
-new native-login sessions start on `agy acp`. The pinned server handles these older
-conversations without a separate `agy` CLI install. To enter a resume ID through
-**New Session** with native login, install the `agy` CLI first so the app lets you
-select Antigravity after checking the machine.
+Conversations created by the pinned server in 0.2.21 and earlier still resume.
+When the CLI does not have the requested conversation but the pinned server's
+store in the same profile does, Happier copies it into the CLI's store and opens it
+under the same ID. The original files stay where they were. Resuming any
+Antigravity conversation needs the `agy` CLI.
 
 In development builds, choose the machine and project in the new-session composer
 to discover the available modes before launch. The chosen starting mode is applied
@@ -68,18 +66,18 @@ before the first prompt. Discovery needs an authenticated ACP server; signed-out
 discovery does not invent model or mode choices. With native authentication,
 these discovery sessions can leave empty conversations in Antigravity's history.
 
-Native-login sessions show the models your `agy` CLI offers ACP clients. The official
-1.3.0 server used by connected accounts restricts Happier's model catalog to Gemini
-models. When Antigravity reports context usage after a turn, Happier uses those
-counts for its existing context indicator.
+The model picker lists the model families your `agy` CLI offers ACP clients, with
+the reasoning effort the selected model supports as a separate choice. A saved
+model that names an effort, such as `gemini-4-neon-medium` from an earlier
+execution-run configuration, applies as that model with that effort. When
+Antigravity reports context usage after a turn, Happier uses those counts for its
+existing context indicator.
 
 ## Permissions
 
 Happier sends no static permission-mode override for Antigravity and preserves your agent
 configuration unless you choose otherwise in the session.
 The mode picker uses the server's advertised modes. `agy acp` advertises a Plan mode.
-On the pinned 1.3.0 server, Antigravity's `/plan` slash command does not establish
-an ACP Plan mode, so a legacy plan permission cannot create that missing option.
 
 ## MCP tools
 
@@ -89,14 +87,12 @@ sessions. For shared MCP setup and session selection, see [MCP servers](/extendi
 ## Troubleshooting
 
 - Run `agy --version` on the agent machine to confirm the CLI is installed. If `agy acp --help` is unavailable or Happier reports missing ACP support, run `agy update`.
-- For `Authentication required` in a native-login session on `agy acp`, run `happier agy auth login` on that machine
+- For `Authentication required` without a connected account, run `happier agy auth login` on that machine
   and wait for it to finish.
-- For a session created with the older pinned server, run `happier agy auth login --pinned` and retry resume.
-  To refresh a specific pinned login method, pass `--method <method>`.
 - For `Authentication required` with a connected account, sign in to that account again in
   **Settings -> Connected services** (or with `happier connect agy`), then retry launch.
-- For a connected account, if the pinned ACP server is missing, reselect Antigravity in the app
-  and watch the install progress, then retry launch.
+- If a connected-account session says it needs a newer Antigravity CLI, run `agy update` on that machine
+  and retry.
 - If a model is unavailable, retry after the ACP handshake completes; the model list is
   provider-advertised.
 
