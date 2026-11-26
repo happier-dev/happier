@@ -1,3 +1,4 @@
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -223,6 +224,12 @@ export function WorkspaceWorkerSettings(
       : (label.name ?? '')
     : t('projectWorkers.primary');
 
+  const canDiscardDraft = Boolean(notice && preference.draft && preference.notice !== 'saving' && preference.notice !== 'approval');
+  useCurrentUiContextLocalCommands([
+    { key: 'back', title: t('projectWorkers.backToScripts'), invoke: props.onBack },
+    ...(canDiscardDraft ? [{ key: 'discard', title: t('projectWorkers.draftDiscard'), invoke: preference.discardDraft }] : []),
+  ], { contextKey: JSON.stringify([props.workspace.serverId, props.workspace.workspaceId]) });
+
   const header = (
     <HappierPageHeader
       title={t('projectWorkers.title')}
@@ -294,7 +301,7 @@ export function WorkspaceWorkerSettings(
           tone={preference.notice === 'saving' || preference.notice === 'approval' ? 'neutral' : 'warning'}
           title={notice}
           // An intended edit that did not save stays until it is retried against the current value or discarded.
-          {...(preference.draft && preference.notice !== 'saving' && preference.notice !== 'approval'
+          {...(canDiscardDraft
             ? {
                 description: t('projectWorkers.draftKept'),
                 action: {

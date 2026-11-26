@@ -11771,6 +11771,11 @@ view as pressing the row and retires when the row leaves the presented surface.
 Add machine publishes its visible folder and ignored-content drafts and Cancel.
 Linking still uses its existing semantic Actions and review controls.
 
+Mounted Worker views publish output, capacity-sheet and handoff-settings
+navigation, failure details, Back and a visible Discard draft. Destination choices
+that save a preference remain on `projects.worker.preferences.set`; mounted
+commands do not save preferences or start work.
+
 In unreleased 0.3 source, each Usage/Vitals scrub lens publishes a fixed command
 set rather than a command per chart bucket. Its chart-values command returns
 the latest exact bucket titles, totals and rows. Invoke it without input to

@@ -116,7 +116,7 @@ const base: WorkspaceExecutionSettingsV1 = {
 };
 
 async function setup(
-  options: Readonly<{ askFirst?: boolean; row?: Row }> = {},
+  options: Readonly<{ askFirst?: boolean; row?: Row; mounted?: boolean }> = {},
 ) {
   const home = createExecutionConfigHome();
   home.replace(options.row ?? null);
@@ -147,24 +147,60 @@ async function setup(
     rootPath: '/src/happier',
   };
   const { WorkspaceWorkerSettings } = await import('./WorkspaceWorkerSettings');
-  const screen = await renderScreen(
-    <WorkspaceWorkerSettings
+  const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+  const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+  let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+  let backCount = 0;
+  function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+  const body = <WorkspaceWorkerSettings
       testID="workers"
       workspace={workspace}
       scripts={[
         { name: 'test', portable: true },
         { name: 'lint', portable: false },
       ]}
-      onBack={() => {}}
-    />,
+      onBack={() => { backCount++; }}
+    />;
+  const screen = await renderScreen(
+    options.mounted ? <><Observe />{body}</> : body,
+    options.mounted ? { wrapper: await createMountedCurrentUiContextWrapper() } : undefined,
   );
   await vi.waitFor(() =>
     expect(screen.findByTestId('workers.adHoc.switch')).toBeTruthy(),
   );
-  return { home, screen };
+  return { home, screen, getReader: () => reader!, backCount: () => backCount };
 }
 
 describe('Workspace worker settings through the preference Actions', () => {
+  it('publishes only back and a visible discard draft, with no preference commands', async () => {
+    const { home, screen, getReader, backCount } = await setup({ row: { revision: 3, value: base }, mounted: true });
+    try {
+    const reader = getReader();
+    const titles = () => reader.readCurrentUiContext()!.commands.map(command => command.title);
+    expect(titles()).toEqual(['projectWorkers.backToScripts']);
+    const backAddress = reader.readCurrentUiContext()!.commands[0]!.id;
+    const invoke = async (address: string) => {
+      const resolved = reader.resolveCurrentUiCommand(address)!;
+      if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
+      await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+    };
+    await invoke(backAddress);
+    await screen.pressByTestIdAsync('workers.back');
+    expect(backCount()).toBe(2);
+    home.replace({ revision: 4, value: { ...base, unavailable: 'fail' } });
+    await act(async () => { screen.findByTestId('workers.adHoc.switch')!.props.onValueChange(true); });
+    await vi.waitFor(() => expect(titles()).toEqual(['projectWorkers.backToScripts', 'projectWorkers.draftDiscard']));
+    const discard = reader.readCurrentUiContext()!.commands[1]!.id;
+    await invoke(discard);
+    expect(screen.findByTestId('workers.draft.discard')).toBeNull();
+    expect(titles()).toEqual(['projectWorkers.backToScripts']);
+    expect(reader.resolveCurrentUiCommand(discard)).toBeNull();
+    expect(home.writes).toEqual([]);
+    await screen.unmount();
+    expect(reader.resolveCurrentUiCommand(backAddress)).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
   it('saves the next preference against the observed absent row and shows it only once applied', async () => {
     const { home, screen } = await setup();
     expect(screen.findAllByTestId('workers.adHoc.switch')[0]?.props.value).toBe(
