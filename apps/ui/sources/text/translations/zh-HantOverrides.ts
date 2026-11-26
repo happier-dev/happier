@@ -5871,6 +5871,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                         title: "強制啟用 Agent Teams",
                         subtitle: "在所有由 Happier 啟動的 Claude 工作階段中啟用 Claude Code 的實驗性 Agent Teams（代理群）功能。"
                     },
+                    claudeCodeModeEnabled: {
+                      title: '程式碼模式',
+                      subtitle: "Claude 會撰寫一個呼叫多個工具的指令碼，你可以看到其中的每次呼叫。在使用 Claude 自有模型服務的統一終端機中可用；工作階段會保持開始時的模式。",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "使用統一終端模式",
                         subtitle: "將 Claude Code 保持為標準終端工作階段，並把支援的 Happier 提示傳送到該工作階段。"
@@ -6141,6 +6145,15 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     },
                 },
                 fields: {
+                    codexCodeModeEnabled: {
+                      title: '程式碼模式',
+                      subtitle: "Codex 會撰寫一個呼叫多個工具的指令碼，你可以看到其中的每次呼叫。預設遵循 Codex 自身的設定；部分模型一律使用它。",
+                      options: {
+                        default: { title: '預設' },
+                        on: { title: '開啟' },
+                        off: { title: '關閉' },
+                      },
+                    },
                     codexBackendMode: {
                         title: 'Codex 路由模式',
                         subtitle: '選擇 App Server、ACP 或 MCP。',
@@ -8689,6 +8702,13 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     tools: {
+      script: {
+        title: '指令碼',
+        toolCallsCount: ({ count }: { count: number }) => `${count} 次工具呼叫`,
+        scriptDisclosure: '指令碼原始碼',
+        outputDisclosure: '輸出',
+        returned: '傳回值',
+      },
         common: {
             more: ({ count }: { count: number }) => `+${count} 更多`,
             elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

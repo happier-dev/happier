@@ -40,6 +40,7 @@ const labels: HappierCapabilityFactsLabels = {
   toolCount: (count, shown) => t('capabilities.facts.toolCount', { count, shown }),
   tokensPerTurn: (shown) => t('capabilities.facts.tokensPerTurn', { count: shown }),
   tokensWhenUsed: (shown) => t('capabilities.facts.tokensWhenUsed', { count: shown }),
+  onDemand: () => t('capabilities.mcp.tools.loading.onDemand'),
 };
 
 const GLYPH_ICON: Readonly<Record<HappierCapabilityFactGlyph, IconName>> = {

@@ -6725,6 +6725,10 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
                         title: "Forcer l’activation des Agent Teams",
                         subtitle: "Active les Agent Teams expérimentales de Claude Code (essaim d’agents) dans toutes les sessions Claude démarrées par Happier."
                     },
+                    claudeCodeModeEnabled: {
+                      title: 'Mode code',
+                      subtitle: "Claude écrit un script qui appelle plusieurs outils, et vous voyez chaque appel à l'intérieur. Fonctionne dans le terminal unifié avec les services de modèles de Claude ; une session garde le mode avec lequel elle a commencé.",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "Utiliser le mode terminal unifié",
                         subtitle: "Garde Claude Code comme session de terminal canonique et envoie les prompts Happier pris en charge dans cette session."
@@ -6995,6 +6999,15 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
 	          },
 	        },
 	        fields: {
+	          codexCodeModeEnabled: {
+	            title: 'Mode code',
+	            subtitle: "Codex écrit un script qui appelle plusieurs outils, et vous voyez chaque appel à l'intérieur. Par défaut suit le réglage propre à Codex ; certains modèles l'utilisent toujours.",
+	            options: {
+	              default: { title: 'Par défaut' },
+	              on: { title: 'Activé' },
+	              off: { title: 'Désactivé' },
+	            },
+	          },
 	          codexBackendMode: {
 	            title: "Mode de routage Codex",
 	            subtitle: "Choisis App Server, ACP ou MCP.",
@@ -10601,6 +10614,13 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
   },
 
     tools: {
+      script: {
+        title: 'Script d’exécution',
+        toolCallsCount: ({ count }: { count: number }) => count === 1 ? `${count} appel d’outil` : `${count} appels d’outils`,
+        scriptDisclosure: 'Code du script',
+        outputDisclosure: 'Sortie',
+        returned: 'Valeur renvoyée',
+      },
       common: {
         more: ({ count }: { count: number }) => `+${count} de plus`,
         elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

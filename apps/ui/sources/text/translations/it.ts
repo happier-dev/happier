@@ -7112,6 +7112,10 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
                         title: "Forza l’attivazione di Agent Teams",
                         subtitle: "Abilita Agent Teams sperimentale di Claude Code (sciame di agenti) in tutte le sessioni Claude avviate da Happier."
                     },
+                    claudeCodeModeEnabled: {
+                      title: 'Modalità codice',
+                      subtitle: "Claude scrive uno script che chiama più strumenti, e vedi ogni chiamata al suo interno. Funziona nel terminale unificato con i servizi di modelli di Claude; una sessione mantiene la modalità con cui è iniziata.",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "Usa la modalita terminale unificata",
                         subtitle: "Mantiene Claude Code come sessione terminale canonica e invia i prompt Happier supportati in quella sessione."
@@ -7365,6 +7369,15 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
             },
           },
           fields: {
+            codexCodeModeEnabled: {
+              title: 'Modalità codice',
+              subtitle: "Codex scrive uno script che chiama più strumenti, e vedi ogni chiamata al suo interno. Predefinito segue l'impostazione di Codex; alcuni modelli la usano sempre.",
+              options: {
+                default: { title: 'Predefinito' },
+                on: { title: 'Attiva' },
+                off: { title: 'Disattiva' },
+              },
+            },
             codexBackendMode: {
               title: "Modalità di instradamento di Codex",
               subtitle: "Seleziona App Server, ACP o MCP.",
@@ -10985,6 +10998,13 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
   },
 
     tools: {
+      script: {
+        title: 'Script di esecuzione',
+        toolCallsCount: ({ count }: { count: number }) => count === 1 ? `${count} chiamata a uno strumento` : `${count} chiamate a strumenti`,
+        scriptDisclosure: 'Codice dello script',
+        outputDisclosure: 'Output dello script',
+        returned: 'Valore restituito',
+      },
       common: {
         more: ({ count }: { count: number }) => `+${count} altri`,
         elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

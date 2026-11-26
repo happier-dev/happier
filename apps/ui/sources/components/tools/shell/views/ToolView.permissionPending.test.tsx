@@ -1,5 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AgentStateSchema } from '@happier-dev/session-core/state';
+import type { ToolCardDisplaySettings } from './toolViewDisplaySettings';
 import {
     createUseSettingMock } from '@/dev/testkit/mocks/storage';
 import {
@@ -128,11 +130,43 @@ describe('ToolView (permission pending)', () => {
     it('keeps pending permissions closed with a read-only source when the interaction prop is absent', async () => {
         const screen = await renderWithSessionTranscriptSource(React.createElement(ToolView, {
             tool: makeToolCall({ state: 'running', completedAt: null, permission: { id: 'perm1', status: 'pending' } }),
-            metadata: null, messages: [], sessionId: 's1',
+            metadata: null, messages: [], sessionId: 's1', forcePermissionPromptsInTranscript: true,
         }), createTestSessionTranscriptSource());
         const footers = screen.findAllByType('PermissionFooter');
         expect(footers).toHaveLength(1);
         expect(footers[0]?.props.canApprovePermissions).toBe(false);
+    });
+
+    it('shows a Script child permission before sidechain hydration and transfers it to the child when opened', async () => {
+        const source = createTestSessionTranscriptSource({
+            agentState: AgentStateSchema.parse({ requests: {
+                'child-permission': { tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 1, sidechainId: 'script-call' },
+                'unrelated-permission': { tool: 'Bash', arguments: { command: 'ls' }, createdAt: 2, sidechainId: 'another-call' },
+            } }),
+        });
+        const displaySettings: ToolCardDisplaySettings = {
+            toolViewDetailLevelDefault: 'default',
+            toolViewDetailLevelDefaultLocalControl: 'title',
+            toolViewDetailLevelByToolName: {},
+            toolViewExpandedDetailLevelDefault: 'default',
+            toolViewExpandedDetailLevelByToolName: {},
+            toolViewTapAction: 'expand',
+            permissionPromptSurface: 'transcript',
+        };
+        const screen = await renderWithSessionTranscriptSource(
+            <ToolView tool={makeToolCall({ id: 'script-call', name: 'Script' })} metadata={null}
+                messages={[]} sessionId="s1" displaySettings={displaySettings}>
+                <ToolView tool={makeToolCall({ id: 'child-call', name: 'Bash', state: 'running',
+                    permission: { id: 'child-permission', status: 'pending' } })}
+                    metadata={null} messages={[]} sessionId="s1" displaySettings={displaySettings} />
+            </ToolView>,
+            source,
+        );
+        expect(screen.findByTestId('permission-prompt-card')).toBeTruthy();
+        expect(screen.findAllByType('PermissionFooter').map(node => node.props.permission.id)).toEqual(['child-permission']);
+        await screen.pressByTestIdAsync('tool-view-header-primary');
+        expect(screen.findByTestId('permission-prompt-card')).toBeNull();
+        expect(screen.findAllByType('PermissionFooter').map(node => node.props.permission.id)).toEqual(['child-permission']);
     });
 
     it('marks a card waiting for the person with the one attention edge, and drops it once settled', async () => {

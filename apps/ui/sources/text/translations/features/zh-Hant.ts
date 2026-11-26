@@ -1937,6 +1937,13 @@ const zhHant: Shared_mcpPageTranslations.McpPageBase = {
   remote: '遠端',
   local: '本機',
   tools: {
+    loading: {
+      everyTurn: '每輪',
+      onDemand: '按需',
+      rowTitle: '工具載入',
+      everyTurnDetail: ({ count, tokens }) => `每個工作階段每輪都會載入它的 ${count} 個工具，約 ${tokens} 個詞元。按需可以省下這些：代理程式在需要時再查找工具。`,
+      onDemandDetail: ({ tokens }) => `代理程式在需要時再查找工具。每輪節省約 ${tokens} 個詞元。`,
+    },
     title: '工具',
     description: '你的代理可以呼叫的內容。「詢問」會顯示核准卡片，「允許」無需詢問直接執行，「關閉」會隱藏該工具。',
     defaultTitle: '工具預設值',
@@ -3018,6 +3025,7 @@ const actionFamilyTranslations = { 'zh-Hant': translated({
             messaging: '訊息',
             session_control: '工作階段控制',
             session_capabilities: '工作階段能力',
+            session_tools: '工作階段工具',
             intent_start: '審查與委派',
             review_reads: "檢視審查",
             review_comments: '審查留言',

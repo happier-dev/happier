@@ -1,7 +1,7 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
 
-import type { ToolCall } from "@happier-dev/session-core/messages";
+import type { Message, ToolCall } from "@happier-dev/session-core/messages";
 import type { Metadata } from '@happier-dev/session-core/state';
 
 import { knownTools } from '@/components/tools/catalog';
@@ -45,6 +45,8 @@ export function buildToolHeaderModel(input: {
      * live-metadata answer.
      */
     historicalAgentId?: string | null;
+    /** The call's child transcript messages (a Script header counts its inner calls). */
+    messages?: readonly Message[];
     answeringSession?: Readonly<{ sessionId: string; name: string | null }>;
     serverId?: Parameters<typeof resolveToolHeaderTextPresentation>[0]['serverId'];
     viewerScope?: Parameters<typeof resolveToolHeaderTextPresentation>[0]['viewerScope'];
@@ -53,7 +55,7 @@ export function buildToolHeaderModel(input: {
     const toolForRendering = normalizeToolCallForRendering(input.tool);
     const headerText = resolveToolHeaderTextPresentation({ tool: toolForRendering, metadata: input.metadata,
         answeringSession: input.answeringSession, serverId: input.serverId,
-        viewerScope: input.viewerScope, answeringAccountActor: input.answeringAccountActor });
+        viewerScope: input.viewerScope, answeringAccountActor: input.answeringAccountActor, messages: input.messages });
     const normalizedToolName = headerText.normalizedToolName;
     const knownTool = knownTools[normalizedToolName as keyof typeof knownTools] as any;
 

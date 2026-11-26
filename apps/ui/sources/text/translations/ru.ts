@@ -6642,6 +6642,10 @@ export const ru: TranslationStructure = {
                         title: "Принудительно включить Agent Teams",
                         subtitle: "Включает экспериментальный Agent Teams в Claude Code (рой агентов) во всех сессиях Claude, запущенных из Happier."
                     },
+                    claudeCodeModeEnabled: {
+                      title: 'Режим кода',
+                      subtitle: "Claude пишет один скрипт, который вызывает несколько инструментов, и вы видите каждый вызов внутри. Работает в едином терминале с собственными сервисами моделей Claude; сессия сохраняет режим, с которым началась.",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "Использовать единый терминальный режим",
                         subtitle: "Сохраняет Claude Code как каноническую терминальную сессию и отправляет поддерживаемые промпты Happier в эту сессию."
@@ -6895,6 +6899,15 @@ export const ru: TranslationStructure = {
           },
         },
         fields: {
+          codexCodeModeEnabled: {
+            title: 'Режим кода',
+            subtitle: "Codex пишет один скрипт, который вызывает несколько инструментов, и вы видите каждый вызов внутри. «По умолчанию» следует собственной настройке Codex; некоторые модели используют его всегда.",
+            options: {
+              default: { title: 'По умолчанию' },
+              on: { title: 'Включён' },
+              off: { title: 'Выключен' },
+            },
+          },
           codexBackendMode: {
             title: "Режим маршрутизации Codex",
             subtitle: "Выберите App Server, ACP или MCP.",
@@ -10620,6 +10633,13 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
   },
 
   tools: {
+    script: {
+      title: 'Скрипт',
+      toolCallsCount: ({ count }: { count: number }) => count % 10 === 1 && count % 100 !== 11 ? `${count} вызов инструмента` : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? `${count} вызова инструментов` : `${count} вызовов инструментов`,
+      scriptDisclosure: 'Код скрипта',
+      outputDisclosure: 'Вывод',
+      returned: 'Возвращено',
+    },
     common: {
       more: ({ count }: { count: number }) => `+${count} ещё`,
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}с`,

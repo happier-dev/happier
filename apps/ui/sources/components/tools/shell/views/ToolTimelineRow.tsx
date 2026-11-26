@@ -47,6 +47,7 @@ import { McpAlwaysAllowSettledLineReporter } from '../permissions/McpAlwaysAllow
 import { usePendingPromptLanding } from '../permissions/usePendingPromptPrimaryFocus';
 import { resolvePermissionRequestId } from '@/components/tools/renderers/core/resolvePermissionRequestId';
 import { ApprovalPromptCard } from '../approvals/ApprovalPromptCard';
+import { ScriptChildPrompt } from './ScriptChildPrompt';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { resolveToolErrorSummary } from '@/components/tools/shell/presentation/resolveToolErrorSummary';
@@ -55,7 +56,7 @@ import { readHappierActionCallId } from '@/components/sessions/transcript/refere
 import { resolveToolActionFailure } from '@/components/tools/shell/presentation/resolveToolActionFailure';
 import { formatApprovalStatusLabel, formatToolPermissionDecisionLabel, resolveNativePermissionAnswer } from '@/components/approvals/approvalStatusLabel';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
-import { buildApprovalToolCallLocation, selectMatchingToolApprovalRequests, readDeclinedApprovalAtCall, readToolOutputText } from './toolApprovalPromptMatching';
+import { buildApprovalToolCallLocation, selectScriptChildApprovalRequest, selectMatchingToolApprovalRequests, readDeclinedApprovalAtCall, readToolOutputText } from './toolApprovalPromptMatching';
 import { isAskUserQuestionToolName } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/shell/permissions/resolveToolPermissionTerminalErrorMessage';
 import {
@@ -135,8 +136,9 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
             historicalAgentId,
+            messages: props.messages,
         });
-    }, [historicalAgentId, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
+    }, [historicalAgentId, props.messages, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
     const toolForRendering = headerModel.toolForRendering;
     const pendingLanding = usePendingPromptLanding(resolvePermissionRequestId(toolForRendering), props.messageId);
     const pendingLandingToken = props.messageId ? pendingLanding?.token : undefined;
@@ -255,10 +257,12 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
     const resolvedDetailLevelDefault = resolveToolViewDetailLevelDefaultForChromeMode({
         chromeMode: 'activity_feed',
         setting: normalizedToolViewDetailLevelDefaultSetting,
+        toolName: normalizedToolName,
     });
     const resolvedExpandedDetailLevelDefault = resolveToolViewExpandedDetailLevelDefaultForChromeMode({
         chromeMode: 'activity_feed',
         setting: normalizedToolViewExpandedDetailLevelDefaultSetting,
+        toolName: normalizedToolName,
     });
 
     const collapsedDetailLevel =
@@ -378,6 +382,10 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
         ) : (headerRightElements[0] ?? null);
 
     const isBodyVisible = inlineDetailLevel !== 'title' && inlineDetailLevel !== 'compact';
+    const scriptChildApproval = normalizedToolName === 'Script' ? selectScriptChildApprovalRequest({
+        requests: props.approvalRequests, sessionId: props.sessionId, messageId: props.messageId,
+        parentToolCallId: toolForRendering.id,
+    }) : undefined;
     const bodyDetailLevel: 'summary' | 'full' = inlineDetailLevel === 'full' ? 'full' : 'summary';
     const lastVisibleBodyDetailLevelRef = React.useRef<'summary' | 'full'>(bodyDetailLevel);
     if (isBodyVisible) {
@@ -521,7 +529,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
                             tool={toolForRendering}
                             normalizedToolName={normalizedToolName}
                             metadata={props.metadata}
-                            messages={toolMessages}
+                            messages={normalizedToolName === 'Script' && !isBodyVisible ? EMPTY_SCRIPT_MESSAGES : toolMessages}
                             sessionId={props.sessionId}
                             serverId={props.serverId}
                             messageId={props.messageId}
@@ -542,11 +550,19 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             <McpAlwaysAllowSettledLineReporter.Provider value={setCatalogSettledLineShown}>
                 {permissionFooter}
             </McpAlwaysAllowSettledLineReporter.Provider>
+            {normalizedToolName === 'Script' && props.sessionId ? (
+                <ScriptChildPrompt sessionId={props.sessionId} serverId={props.serverId} metadata={props.metadata}
+                    sidechainId={toolForRendering.id} approval={scriptChildApproval} showPermission={showPermissionPromptsInTranscript}
+                    canApprovePermissions={interaction.canApprovePermissions && sourceInteraction.canApprovePermissions && transcriptSource.actions !== null}
+                    disabledReason={interaction.permissionDisabledReason} />
+            ) : null}
             {approvalCards}
         </TranscriptJumpAttention>
         </TranscriptRowSeqProvider>
     );
 });
+
+const EMPTY_SCRIPT_MESSAGES: Message[] = [];
 
 const styles = StyleSheet.create((theme) => ({
     container: {

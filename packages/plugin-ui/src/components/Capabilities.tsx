@@ -190,6 +190,7 @@ function factsLabels(translate: PluginTranslate): HappierCapabilityFactsLabels {
       translate(`${KEY}.facts.tokensWhenUsed`, `${shown} tokens`, {
         count: shown,
       }),
+    onDemand: () => translate(`${KEY}.facts.onDemand`, 'On demand'),
   };
 }
 

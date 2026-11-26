@@ -13,6 +13,7 @@ export type KnownToolDefinition = {
     result?: z.core.$ZodObject;
     minimal?: boolean | ((opts: { metadata: Metadata | null, tool: ToolCall, messages?: Message[] }) => boolean);
     extractDescription?: (opts: { metadata: Metadata | null, tool: ToolCall }) => string;
-    extractSubtitle?: (opts: { metadata: Metadata | null, tool: ToolCall }) => string | null;
+    /** `messages`: the call's child transcript messages, when the shell holds them (a Script's inner calls). */
+    extractSubtitle?: (opts: { metadata: Metadata | null, tool: ToolCall, messages?: readonly Message[] }) => string | null;
     extractStatus?: (opts: { metadata: Metadata | null, tool: ToolCall }) => string | null;
 };

@@ -7,7 +7,7 @@ import { createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptF
 import { listTranscriptApprovalArtifactsForSession, type OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { resolveMessageRouteIdForDisplay } from '@happier-dev/session-core/messages';
-import { doesApprovalMatchToolCall, selectMatchingToolApprovalRequests, selectToolApprovalRequestsForMessages, useToolApprovalRequestsIndex } from './toolApprovalPromptMatching';
+import { doesApprovalMatchToolCall, selectScriptChildApprovalRequest, selectMatchingToolApprovalRequests, selectToolApprovalRequestsForMessages, useToolApprovalRequestsIndex } from './toolApprovalPromptMatching';
 
 afterEach(standardCleanup);
 
@@ -28,6 +28,34 @@ function request(index: number): OpenApprovalArtifactForSession {
 }
 
 describe('transcript approval matching cost', () => {
+    it('indexes 12 child approvals once for 200 collapsed Script cards with unhydrated children', () => {
+        const requests = Array.from({ length: 12 }, (_, i) => {
+            const base = request(i);
+            return { ...base, approval: { ...base.approval, origin: { ...base.approval.origin!,
+                parentMessageId: `script-${i}`, toolCallId: `child-${i}` } } };
+        });
+        let iterations = 0;
+        const iterate = requests[Symbol.iterator].bind(requests);
+        requests[Symbol.iterator] = () => { iterations++; return iterate(); };
+        for (let i = 0; i < 200; i++) {
+            const id = `script-${i}`;
+            const message = createToolCallMessageFixture({ id, children: [],
+                tool: { ...createToolCallMessageFixture().tool, id, name: 'Script' } });
+            const selected = selectToolApprovalRequestsForMessages({ requests, sessionId: 'fixture', rowId: id, messages: [message] });
+            expect(selectScriptChildApprovalRequest({ requests: selected, sessionId: 'fixture',
+                messageId: id, parentToolCallId: id })).toBe(requests[i]);
+            expect(selectScriptChildApprovalRequest({ requests: selected, sessionId: 'fixture',
+                messageId: id, parentToolCallId: id })).toBe(requests[i]);
+            expect(selectMatchingToolApprovalRequests({ requests: selected, sessionId: 'fixture', messageId: id,
+                tool: message.tool, normalizedToolName: 'Script' })).toEqual([]);
+            if (i < 12) {
+                const child = { ...message.tool, name: 'action_execute', id: `child-${i}` };
+                expect(selectMatchingToolApprovalRequests({ requests: selected, sessionId: 'fixture', messageId: 'child-message',
+                    tool: child, normalizedToolName: child.name })).toEqual([requests[i]]);
+            }
+        }
+        expect(iterations).toBe(1);
+    });
     it('normalizes omitted contextual operands without sharing Session scope across cached inputs', () => {
         const makeRequest = (sessionId: string): OpenApprovalArtifactForSession => {
             const base = request(1);

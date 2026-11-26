@@ -30,6 +30,8 @@ export type HappierCapabilityCost = Readonly<{
   /** MCP: tools exposed and their schema tokens every turn. */
   toolCount?: number;
   tokensPerTurn?: number;
+  /** MCP: agents search the tools when they need one, so they add nothing to each turn. */
+  onDemand?: boolean;
 }>;
 
 export type HappierCapabilityFactsInput = Readonly<{
@@ -65,6 +67,8 @@ export type HappierCapabilityFactsLabels = Readonly<{
   toolCount: (count: number, shown: string) => string;
   tokensPerTurn: (shown: string) => string;
   tokensWhenUsed: (shown: string) => string;
+  /** How an On demand server reaches agents; leads its cost facts as a word. */
+  onDemand: () => string;
 }>;
 
 /** The one compact number for tool counts and token costs ("1.2k"), wherever a capability states them. */
@@ -122,6 +126,7 @@ export function buildHappierCapabilityFacts(
       strong: input.trust === 'runs_scripts',
     });
   const cost = input.cost;
+  if (cost?.onDemand === true) facts.push({ key: 'delivery', text: labels.onDemand() });
   if (cost?.toolCount !== undefined)
     facts.push({
       key: 'tools',
@@ -130,7 +135,8 @@ export function buildHappierCapabilityFacts(
         formatHappierCapabilityCount(cost.toolCount),
       ),
     });
-  if (cost?.tokensPerTurn !== undefined)
+  // On demand already says what a turn carries (nothing); its 0 still counts toward the per-turn total.
+  if (cost?.tokensPerTurn !== undefined && cost.onDemand !== true)
     facts.push({
       key: 'tokensPerTurn',
       text: labels.tokensPerTurn(

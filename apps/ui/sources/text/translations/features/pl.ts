@@ -1990,6 +1990,13 @@ const pl: Shared_mcpPageTranslations.McpPageBase = {
   remote: 'Zdalny',
   local: 'Lokalny',
   tools: {
+    loading: {
+      everyTurn: 'W każdej turze',
+      onDemand: 'Na żądanie',
+      rowTitle: 'Ładowanie narzędzi',
+      everyTurnDetail: ({ count, tokens }) => `Każda sesja ładuje ${count === 1 ? '1 narzędzie' : `${count} narzędzi`} w każdej turze, ok. ${tokens} tokenów. Na żądanie je oszczędza: agenci szukają narzędzia, gdy go potrzebują.`,
+      onDemandDetail: ({ tokens }) => `Agenci szukają narzędzia, gdy go potrzebują. Ok. ${tokens} tokenów oszczędzonych w każdej turze.`,
+    },
     title: 'Narzędzia',
     description: 'Co mogą wywoływać Twoi agenci. Pytaj pokazuje kartę zatwierdzenia, Zezwalaj działa bez pytania, Wyłączone ukrywa narzędzie.',
     defaultTitle: 'Domyślnie dla narzędzi',
@@ -3126,6 +3133,7 @@ const actionFamilyTranslations = { pl: translated({
             messaging: 'Wiadomości',
             session_control: 'Sterowanie sesją',
             session_capabilities: 'Możliwości sesji',
+            session_tools: 'Narzędzia sesji',
             intent_start: 'Recenzje i delegowanie',
             review_reads: "Odczyt recenzji",
             review_comments: 'Komentarze recenzji',

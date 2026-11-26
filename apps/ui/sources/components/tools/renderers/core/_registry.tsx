@@ -2,6 +2,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import * as React from 'react';
 import { EditView, projectEditDisplayText } from '../fileOps/EditView';
 import { BashView, projectBashDisplayText } from '../system/BashView';
+import { ScriptView, projectScriptDisplayText } from '../workflow/ScriptView';
 import { Message, ToolCall } from "@happier-dev/session-core/messages";
 import { Metadata } from '@happier-dev/session-core/state';
 import { WriteView, projectWriteDisplayText } from '../fileOps/WriteView';
@@ -51,6 +52,8 @@ export type ToolViewProps = {
     /** Original body block when a text message is presented as a synthetic tool. */
     findBodyBlockId?: string;
     detailLevel?: ToolViewDetailLevel;
+    /** On a details page opened at one inner call (`?jumpChildId=`), that call's message route id. */
+    jumpChildId?: string | null;
     interaction?: TranscriptInteraction;
     /**
      * Set only when a prompt card answers this pending request for an Execution
@@ -67,6 +70,7 @@ type ToolViewDescriptor = Readonly<{ component: ToolViewComponent; projectDispla
 const toolViewDescriptors: Record<KnownCanonicalToolNameV2, ToolViewDescriptor> = {
     Edit: { component: EditView, projectDisplayText: projectEditDisplayText },
     Bash: { component: BashView, projectDisplayText: projectBashDisplayText },
+    Script: { component: ScriptView, projectDisplayText: projectScriptDisplayText },
     Delete: { component: DeleteView, projectDisplayText: projectDeleteDisplayText },
     Patch: { component: PatchView, projectDisplayText: projectPatchDisplayText },
     Diff: { component: DiffView, projectDisplayText: projectDiffDisplayText },
@@ -138,6 +142,7 @@ export function getToolViewComponent(toolName: string): ToolViewComponent | null
 // Export individual components
 export { EditView } from '../fileOps/EditView';
 export { BashView } from '../system/BashView';
+export { ScriptView } from '../workflow/ScriptView';
 export { PatchView } from '../fileOps/PatchView';
 export { DiffView } from '../fileOps/DiffView';
 export { ExitPlanToolView } from '../workflow/ExitPlanToolView';

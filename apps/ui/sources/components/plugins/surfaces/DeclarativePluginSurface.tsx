@@ -46,7 +46,7 @@ import { PluginSurfaceInteractionBoundary } from '@/components/plugins/shared/Pl
 import { PluginSettingDaemonSecretField } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { isSegmentedChoiceOptionCount, SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SchemaFieldRow } from '@/components/settings/schemaFields/SchemaFieldRow';
 import {
     DECLARATIVE_BUTTON_GEOMETRY,
@@ -1245,7 +1245,7 @@ export function DeclarativePluginSurface(props: Readonly<{
             };
             // Two to four short options are one segmented choice beside the label, like every
             // Happier setting; more stay a list of choices beneath it.
-            if (options.length >= 2 && options.length <= 4) {
+            if (isSegmentedChoiceOptionCount(options.length)) {
                 const selected = parsedValue.success
                     ? options.find((option) => sameStrictJsonValue(option.value, parsedValue.data))
                     : undefined;

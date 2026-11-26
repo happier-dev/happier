@@ -7239,6 +7239,10 @@ localTailscale: {
                         title: "Agent Teams を強制的に有効化",
                         subtitle: "Happier から開始するすべての Claude セッションで、Claude Code の実験的 Agent Teams（エージェント群）を有効にします。"
                     },
+                    claudeCodeModeEnabled: {
+                      title: 'コードモード',
+                      subtitle: "Claude は複数のツールを呼び出すスクリプトを 1 つ書き、その中の各呼び出しを確認できます。Claude 自身のモデルサービスを使う統合ターミナルで動作します。セッションは開始時のモードを保ちます。",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "統合ターミナルモードを使用",
                         subtitle: "Claude Code を正規のターミナルセッションとして維持し、対応する Happier プロンプトをそのセッションへ送信します。"
@@ -7491,6 +7495,15 @@ localTailscale: {
           },
         },
         fields: {
+          codexCodeModeEnabled: {
+            title: 'コードモード',
+            subtitle: "Codex は複数のツールを呼び出すスクリプトを 1 つ書き、その中の各呼び出しを確認できます。デフォルトは Codex 自身の設定に従います。一部のモデルは常に使用します。",
+            options: {
+              default: { title: '既定' },
+              on: { title: 'オン' },
+              off: { title: 'オフ' },
+            },
+          },
           codexBackendMode: {
             title: "Codex ルーティングモード",
             subtitle: "アプリサーバー、ACP、または MCP を選択します。",
@@ -11069,6 +11082,13 @@ localTailscale: {
   },
 
   tools: {
+    script: {
+      title: 'スクリプト',
+      toolCallsCount: ({ count }: { count: number }) => `ツール呼び出し ${count} 件`,
+      scriptDisclosure: 'スクリプトのコード',
+      outputDisclosure: '出力',
+      returned: '戻り値',
+    },
     common: {
       more: ({ count }: { count: number }) => `+${count} 件`,
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

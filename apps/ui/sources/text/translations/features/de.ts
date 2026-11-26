@@ -2006,6 +2006,13 @@ const de: Shared_mcpPageTranslations.McpPageBase = {
   remote: 'Remote',
   local: 'Lokal',
   tools: {
+    loading: {
+      everyTurn: 'Bei jedem Zug',
+      onDemand: 'Bei Bedarf',
+      rowTitle: 'Werkzeuge laden',
+      everyTurnDetail: ({ count, tokens }) => `Jede Sitzung lädt seine ${count === 1 ? '1 Werkzeug' : `${count} Werkzeuge`} bei jedem Zug, etwa ${tokens} Token. Bei Bedarf spart sie: Agenten schlagen ein Werkzeug nach, wenn sie es brauchen.`,
+      onDemandDetail: ({ tokens }) => `Agenten schlagen ein Werkzeug nach, wenn sie es brauchen. Etwa ${tokens} Token pro Zug gespart.`,
+    },
     title: 'Tools',
     description: 'Was deine Agenten aufrufen dürfen. Fragen zeigt eine Freigabekarte, Erlauben läuft ohne Nachfrage, Aus blendet das Tool aus.',
     defaultTitle: 'Standard für Tools',
@@ -3127,6 +3134,7 @@ const actionFamilyTranslations = { de: translated({
             messaging: 'Nachrichten',
             session_control: 'Session-Steuerung',
             session_capabilities: 'Session-Funktionen',
+            session_tools: 'Session-Werkzeuge',
             intent_start: 'Reviews und Delegation',
             review_reads: "Reviews lesen",
             review_comments: 'Review-Kommentare',

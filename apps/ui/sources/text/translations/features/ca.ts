@@ -2007,6 +2007,13 @@ const ca: Shared_mcpPageTranslations.McpPageBase = {
   remote: 'Remot',
   local: 'Local',
   tools: {
+    loading: {
+      everyTurn: 'A cada torn',
+      onDemand: 'A demanda',
+      rowTitle: 'Càrrega d’eines',
+      everyTurnDetail: ({ count, tokens }) => `Cada sessió carrega les seves ${count === 1 ? '1 eina' : `${count} eines`} a cada torn, uns ${tokens} tokens. A demanda les estalvia: els agents busquen una eina quan la necessiten.`,
+      onDemandDetail: ({ tokens }) => `Els agents busquen una eina quan la necessiten. Uns ${tokens} tokens estalviats a cada torn.`,
+    },
     title: 'Eines',
     description: 'El que els teus agents poden cridar. Pregunta mostra una targeta d’aprovació, Permet s’executa sense preguntar i Desactivat amaga l’eina.',
     defaultTitle: 'Valor per defecte de les eines',
@@ -3114,6 +3121,7 @@ const actionFamilyTranslations = { ca: translated({
             messaging: 'Missatgeria',
             session_control: 'Controls de sessió',
             session_capabilities: 'Capacitats de la sessió',
+            session_tools: 'Eines de la sessió',
             intent_start: 'Revisions i delegació',
             review_reads: "Consulta de revisions",
             review_comments: 'Comentaris de revisió',

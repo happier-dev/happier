@@ -4,6 +4,7 @@ import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
   McpServerToolSettingsPatchV1,
+  McpToolLoadingV1,
   McpToolSettingV1,
 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { resolveMcpToolDecisionV1 } from '@happier-dev/protocol/mcp/servers/tools/resolveMcpToolDecisionV1';
@@ -23,6 +24,8 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { formatAgentNameList } from '@/components/capabilities/identity/agentNameList';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { t } from '@/text';
 
 import {
@@ -57,7 +60,11 @@ export function describeMcpToolAgents(
   perAgent: McpServerToolsList['perAgent'],
   agentNames: (agentIds: readonly string[]) => readonly string[],
   installedAgentIds: readonly string[],
+  loading?: McpServerToolsList['loading'],
 ): McpToolAgentNotes {
+  if (loading === 'on_demand') {
+    return { onDemand: agentNames(installedAgentIds), notApply: [], blocked: [], hidden: [] };
+  }
   const installed = new Set(installedAgentIds);
   const names = (
     predicate: (
@@ -91,6 +98,10 @@ export const McpServerToolsSection = React.memo(function McpServerToolsSection(
     /** The Agents installed on the person's machines (D24 names only these). */
     installedAgentIds: readonly string[];
     onChange: (patch: McpServerToolSettingsPatchV1) => Promise<string | null>;
+    /** How the tools reach agents, the settled per-turn figure and its one write (`useMcpServerTools`). */
+    loading: McpToolLoadingV1;
+    settledTokensPerTurn: number | null;
+    onLoadingChange: (loading: McpToolLoadingV1) => Promise<string | null>;
     /** Why the tools couldn't be read (a diagnostic code) and the way to read them again. */
     errorCode?: string | null;
     onRetry?: () => void;
@@ -155,10 +166,19 @@ export const McpServerToolsSection = React.memo(function McpServerToolsSection(
     },
     [props.onChange],
   );
+  // Stable for the memoized row; one write, its refusal shown like any other tools change.
+  const changeLoading = useEventCallback((next: McpToolLoadingV1) => {
+    setFailure(null);
+    void props.onLoadingChange(next).then((error) => { if (error) setFailure(error); });
+  });
+
+  // Code Mode on this Home: how the tools reach agents (Every turn or On demand) is this section's first choice.
+  const codeMode = useFeatureEnabled('sessions.codeMode');
+  const effectiveLoading = codeMode ? props.loading : 'every_turn';
 
   const notes =
     list && list.perAgent.status === 'ready'
-      ? describeMcpToolAgents(list.perAgent, props.agentNames, props.installedAgentIds)
+      ? describeMcpToolAgents(list.perAgent, props.agentNames, props.installedAgentIds, effectiveLoading)
       : null;
   const footLines = notes
     ? [
@@ -216,6 +236,16 @@ export const McpServerToolsSection = React.memo(function McpServerToolsSection(
       title={t('capabilities.mcp.tools.title')}
       description={description}
     >
+      {codeMode && !props.stale ? (
+        <McpToolLoadingItem
+          testID={`${props.testID}:toolLoading`}
+          loading={props.loading}
+          tokensPerTurn={props.settledTokensPerTurn}
+          toolCount={tools.length}
+          disabled={!editable}
+          onChange={changeLoading}
+        />
+      ) : null}
       {props.stale ? null : (
         <SegmentedChoiceItem<ServerDefault>
           testID={`${props.testID}:default`}
@@ -253,7 +283,8 @@ export const McpServerToolsSection = React.memo(function McpServerToolsSection(
         </SectionContentRow>
       ) : (
         <>
-          {list.tokens !== null && !props.stale ? (
+          {/* With Code Mode the loading row's description carries the figure, so it is said once. */}
+          {!codeMode && list.tokens !== null && !props.stale ? (
             <SectionContentRow testID={`${props.testID}:cost`}>
               <Text variant="meta" style={styles.note}>
                 {t('capabilities.mcp.tools.cost', {
@@ -389,6 +420,49 @@ export const McpServerToolsSection = React.memo(function McpServerToolsSection(
         </SectionContentRow>
       ) : null}
     </ItemGroup>
+  );
+});
+
+/**
+ * Tool loading: one preference row, two options. The chosen option's description is the row's detail and
+ * carries the settled per-turn token figure from the server's tool snapshot; with no settled figure the row
+ * keeps its label and control only, so nothing flickers while a list is read.
+ */
+const McpToolLoadingItem = React.memo(function McpToolLoadingItem(props: Readonly<{
+  loading: McpToolLoadingV1;
+  tokensPerTurn: number | null;
+  toolCount: number;
+  disabled: boolean;
+  onChange: (next: McpToolLoadingV1) => void;
+  testID: string;
+}>) {
+  const tokens = props.tokensPerTurn;
+  const count = props.toolCount;
+  const options = React.useMemo(() => {
+    const figure = tokens === null ? null : formatCapabilityCount(tokens);
+    return [
+      {
+        id: 'every_turn' as const,
+        label: t('capabilities.mcp.tools.loading.everyTurn'),
+        description: figure === null ? undefined : t('capabilities.mcp.tools.loading.everyTurnDetail', { count, tokens: figure }),
+      },
+      {
+        id: 'on_demand' as const,
+        label: t('capabilities.mcp.tools.loading.onDemand'),
+        description: figure === null ? undefined : t('capabilities.mcp.tools.loading.onDemandDetail', { tokens: figure }),
+      },
+    ];
+  }, [count, tokens]);
+  return (
+    <SegmentedChoiceItem<McpToolLoadingV1>
+      testID={props.testID}
+      testIDPrefix={props.testID}
+      title={t('capabilities.mcp.tools.loading.rowTitle')}
+      value={props.loading}
+      disabled={props.disabled}
+      options={options}
+      onChange={props.onChange}
+    />
   );
 });
 

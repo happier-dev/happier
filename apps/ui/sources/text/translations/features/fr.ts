@@ -2007,6 +2007,13 @@ const fr: Shared_mcpPageTranslations.McpPageBase = {
   remote: 'Distant',
   local: 'Local',
   tools: {
+    loading: {
+      everyTurn: 'À chaque tour',
+      onDemand: 'À la demande',
+      rowTitle: 'Chargement des outils',
+      everyTurnDetail: ({ count, tokens }) => `Chaque session charge ses ${count === 1 ? '1 outil' : `${count} outils`} à chaque tour, environ ${tokens} jetons. À la demande les économise : les agents cherchent un outil quand ils en ont besoin.`,
+      onDemandDetail: ({ tokens }) => `Les agents cherchent un outil quand ils en ont besoin. Environ ${tokens} jetons économisés à chaque tour.`,
+    },
     title: 'Outils',
     description: 'Ce que vos agents peuvent appeler. Demander affiche une carte d’approbation, Autoriser s’exécute sans demander, Désactivé masque l’outil.',
     defaultTitle: 'Réglage par défaut des outils',
@@ -3132,6 +3139,7 @@ const actionFamilyTranslations = { fr: translated({
             messaging: 'Messagerie',
             session_control: 'Contrôles de session',
             session_capabilities: 'Capacités de session',
+            session_tools: 'Outils de session',
             intent_start: 'Revues et délégation',
             review_reads: "Consultation des revues",
             review_comments: 'Commentaires de revue',

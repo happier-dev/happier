@@ -6764,6 +6764,10 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
                         title: "Wymuś włączenie Agent Teams",
                         subtitle: "Włącza eksperymentalne Agent Teams w Claude Code (rój agentów) we wszystkich sesjach Claude uruchamianych przez Happier."
                     },
+                    claudeCodeModeEnabled: {
+                      title: 'Tryb kodu',
+                      subtitle: "Claude pisze jeden skrypt, który wywołuje kilka narzędzi, a ty widzisz każde wywołanie w środku. Działa w zunifikowanym terminalu z własnymi usługami modeli Claude; sesja zachowuje tryb, w którym się zaczęła.",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "Użyj trybu zunifikowanego terminala",
                         subtitle: "Utrzymuje Claude Code jako kanoniczną sesję terminala i wysyła obsługiwane prompty Happier do tej sesji."
@@ -7017,6 +7021,15 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
             },
           },
           fields: {
+            codexCodeModeEnabled: {
+              title: 'Tryb kodu',
+              subtitle: "Codex pisze jeden skrypt, który wywołuje kilka narzędzi, a ty widzisz każde wywołanie w środku. Domyślnie działa według własnego ustawienia Codex; niektóre modele zawsze go używają.",
+              options: {
+                default: { title: 'Domyślnie' },
+                on: { title: 'Włączony' },
+                off: { title: 'Wyłączony' },
+              },
+            },
             codexBackendMode: {
               title: "Tryb routingu Codex",
               subtitle: "Wybierz Serwer aplikacji, ACP lub MCP.",
@@ -10598,6 +10611,13 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
   },
 
   tools: {
+    script: {
+      title: 'Skrypt',
+      toolCallsCount: ({ count }: { count: number }) => count === 1 ? `${count} wywołanie narzędzia` : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? `${count} wywołania narzędzi` : `${count} wywołań narzędzi`,
+      scriptDisclosure: 'Kod skryptu',
+      outputDisclosure: 'Wyjście',
+      returned: 'Zwrócono',
+    },
     common: {
       more: ({ count }: { count: number }) => `+${count} więcej`,
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

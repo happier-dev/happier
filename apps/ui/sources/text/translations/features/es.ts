@@ -1905,6 +1905,13 @@ const es: Shared_mcpPageTranslations.McpPageBase = {
   remote: 'Remoto',
   local: 'Local',
   tools: {
+    loading: {
+      everyTurn: 'En cada turno',
+      onDemand: 'A demanda',
+      rowTitle: 'Carga de herramientas',
+      everyTurnDetail: ({ count, tokens }) => `Cada sesión carga sus ${count === 1 ? '1 herramienta' : `${count} herramientas`} en cada turno, unos ${tokens} tokens. A demanda los ahorra: los agentes buscan una herramienta cuando la necesitan.`,
+      onDemandDetail: ({ tokens }) => `Los agentes buscan una herramienta cuando la necesitan. Unos ${tokens} tokens ahorrados en cada turno.`,
+    },
     title: 'Herramientas',
     description: 'Lo que tus agentes pueden llamar. Preguntar muestra una tarjeta de aprobación, Permitir se ejecuta sin preguntar y Desactivado oculta la herramienta.',
     defaultTitle: 'Valor predeterminado de las herramientas',
@@ -3009,6 +3016,7 @@ const actionFamilyTranslations = { es: translated({
             messaging: 'Mensajería',
             session_control: 'Controles de sesión',
             session_capabilities: 'Capacidades de la sesión',
+            session_tools: 'Herramientas de sesión',
             intent_start: 'Revisiones y delegación',
             review_reads: "Consulta de revisiones",
             review_comments: 'Comentarios de revisión',

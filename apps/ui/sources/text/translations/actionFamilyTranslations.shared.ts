@@ -28,6 +28,7 @@ export const surfaceFamilyLabels = {
     connected_services_configuration: 'Connected accounts',
     capability_rules: 'Capability rules',
     session_capabilities: 'Session capabilities',
+    session_tools: 'Session tools',
     boards: 'Boards',
     artifacts: 'Artifacts',
     doc_collaboration: 'Document comments and proposals',

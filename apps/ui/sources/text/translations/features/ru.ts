@@ -1986,6 +1986,13 @@ const ru: Shared_mcpPageTranslations.McpPageBase = {
   remote: 'Удалённый',
   local: 'Локальный',
   tools: {
+    loading: {
+      everyTurn: 'На каждом шаге',
+      onDemand: 'По запросу',
+      rowTitle: 'Загрузка инструментов',
+      everyTurnDetail: ({ count, tokens }) => `Каждая сессия загружает ${count === 1 ? '1 инструмент' : `${count} инструментов`} этого сервера на каждом шаге, около ${tokens} токенов. По запросу их экономит: агенты ищут инструмент, когда он нужен.`,
+      onDemandDetail: ({ tokens }) => `Агенты ищут инструмент, когда он нужен. Около ${tokens} токенов экономится на каждом шаге.`,
+    },
     title: 'Инструменты',
     description: 'Что могут вызывать ваши агенты. «Спрашивать» показывает карточку подтверждения, «Разрешить» запускает без вопросов, «Выкл.» скрывает инструмент.',
     defaultTitle: 'По умолчанию для инструментов',
@@ -3118,6 +3125,7 @@ const actionFamilyTranslations = { ru: translated({
             messaging: 'Сообщения',
             session_control: 'Управление сессиями',
             session_capabilities: 'Возможности сессии',
+            session_tools: 'Инструменты сессии',
             intent_start: 'Ревью и делегирование',
             review_reads: "Чтение ревью",
             review_comments: 'Комментарии ревью',

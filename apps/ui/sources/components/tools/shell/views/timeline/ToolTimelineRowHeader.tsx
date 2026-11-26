@@ -354,6 +354,8 @@ const styles = StyleSheet.create((theme, _runtime) => ({
         lineHeight: 18,
     },
     subtitleInline: {
+        // Counts and durations change while a call runs; equal-width digits keep the line still.
+        fontVariant: ['tabular-nums'],
         ...Typography.variant('body'),
         color: resolveToolRowPaint(theme, 'detail').foreground.color,
         minWidth: 0,

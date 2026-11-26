@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { resolveMcpToolDecisionV1 } from '@happier-dev/protocol/mcp/servers/tools/resolveMcpToolDecisionV1';
 
-import { McpServerToolsSection } from './McpServerToolsSection';
+import { describeMcpToolAgents, McpServerToolsSection } from './McpServerToolsSection';
 import {
   pressTestInstanceAsync,
   renderScreen,
@@ -88,6 +88,9 @@ const list = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1[
     },
   ],
   tokens: 2270,
+  loading: 'every_turn',
+  effectivePromptTokens: 2270,
+  savedPromptTokens: 0,
   perAgent: {
     status: 'ready',
     agents: [
@@ -133,6 +136,9 @@ async function mount(
       agentNames={(ids) => ids.map((id) => NAMES[id] ?? id)}
       installedAgentIds={installedAgentIds}
       onChange={onChange}
+      loading={list.loading}
+      settledTokensPerTurn={list.tokens}
+      onLoadingChange={async () => null}
     />,
   );
   return { screen, onChange };
@@ -148,6 +154,14 @@ const label = (
     .find((value) => typeof value === 'string');
 
 describe('McpServerToolsSection', () => {
+  it('applies host tool rules across installed agents when the server moves on demand', () => {
+    const agents = ['claude', 'codex', 'kilo'];
+    expect(describeMcpToolAgents(list.perAgent, ids => ids, agents, 'every_turn').notApply).toEqual(['codex']);
+    expect(describeMcpToolAgents(list.perAgent, ids => ids, agents, 'on_demand')).toEqual({
+      onDemand: agents, notApply: [], blocked: [], hidden: [],
+    });
+  });
+
   it.each(['ask', 'allow_read_only', 'allow_all'] as const)('projects %s through the canonical default-mode decision, including unknown annotations', async serverDefault => {
     const tools = [
       { name: 'read', annotations: { readOnlyHint: true } },
@@ -159,7 +173,8 @@ describe('McpServerToolsSection', () => {
       tools: tools.map(tool => ({ ...tool, tokens: 1, setting: 'inherit', source: 'server_default' })),
     });
     const screen = await renderScreen(<McpServerToolsSection testID="projection" status="ready" list={projected}
-      agentNames={ids => ids} installedAgentIds={[]} onChange={async () => null} />);
+      agentNames={ids => ids} installedAgentIds={[]} onChange={async () => null}
+      loading={projected.loading} settledTokensPerTurn={projected.tokens} onLoadingChange={async () => null} />);
     for (const tool of tools) {
       const decision = resolveMcpToolDecisionV1({ policy: { default: serverDefault, overrides: {} },
         toolName: tool.name, annotations: tool.annotations, permissionMode: 'default' });

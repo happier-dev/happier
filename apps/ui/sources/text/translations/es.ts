@@ -6916,6 +6916,10 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
                         title: "Forzar activación de Agent Teams",
                         subtitle: "Activa Agent Teams experimental de Claude Code (enjambre de agentes) en todas las sesiones de Claude iniciadas por Happier."
                     },
+                    claudeCodeModeEnabled: {
+                      title: 'Modo de código',
+                      subtitle: "Claude escribe un script que llama a varias herramientas, y ves cada llamada dentro. Funciona en el terminal unificado con los servicios de modelos propios de Claude; una sesión conserva el modo con el que empezó.",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "Usar modo de terminal unificada",
                         subtitle: "Mantiene Claude Code como la sesión de terminal canónica y envía prompts compatibles de Happier a esa sesión."
@@ -7167,6 +7171,15 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
 	          },
 	        },
 	        fields: {
+	          codexCodeModeEnabled: {
+	            title: 'Modo de código',
+	            subtitle: "Codex escribe un script que llama a varias herramientas, y ves cada llamada dentro. Predeterminado sigue la configuración propia de Codex; algunos modelos lo usan siempre.",
+	            options: {
+	              default: { title: 'Predeterminado' },
+	              on: { title: 'Activado' },
+	              off: { title: 'Desactivado' },
+	            },
+	          },
 	          codexBackendMode: {
 	            title: "Modo de enrutamiento de Codex",
 	            subtitle: "Selecciona App Server, ACP o MCP.",
@@ -10763,6 +10776,13 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
   },
 
     tools: {
+      script: {
+        title: 'Script de ejecución',
+        toolCallsCount: ({ count }: { count: number }) => count === 1 ? `${count} llamada a una herramienta` : `${count} llamadas a herramientas`,
+        scriptDisclosure: 'Código del script',
+        outputDisclosure: 'Salida',
+        returned: 'Devuelto',
+      },
       common: {
         more: ({ count }: { count: number }) => `+${count} más`,
         elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

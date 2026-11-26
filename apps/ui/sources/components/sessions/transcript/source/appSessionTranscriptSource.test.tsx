@@ -512,6 +512,62 @@ describe('app transcript source', () => {
         } finally { storage.setState(previous); }
     });
 
+    it('notifies only the Script row for ten output updates and five child arrivals in a 200-row transcript', async () => {
+        const previous = storage.getState();
+        const session = createSessionFixture({ id: 'script-locality', serverId: getActiveServerSnapshot().serverId, active: true });
+        const toolCall = (id: string, seq: number, name: string, sidechainId?: string): NormalizedMessage => ({
+            id, seq, localId: null, createdAt: seq, role: 'agent', isSidechain: sidechainId !== undefined, sidechainId,
+            content: [{ type: 'tool-call', id, name, input: {}, description: null, uuid: id, parentUUID: null }],
+        });
+        const scriptId = 'running-script';
+        try {
+            storage.getState().applySessions([session]);
+            storage.getState().applyMessages(session.id, [
+                toolCall(scriptId, 1, 'Script'),
+                ...Array.from({ length: 199 }, (_, index) => toolCall(`sibling-${index}`, index + 2, 'Bash')),
+            ]);
+            storage.getState().applyMessagesLoaded(session.id);
+            const stored = storage.getState().sessionMessages[session.id]!;
+            const rows = stored.messageIdsOldestFirst;
+            const parentId = rows.find(id => {
+                const message = stored.messagesById[id];
+                return message?.kind === 'tool-call' && message.tool.id === scriptId;
+            })!;
+            expect(rows).toHaveLength(200);
+            expect(parentId).toBeDefined();
+            const renders = new Map<string, number>();
+            function Reader({ id }: { id: string }) {
+                const row = useTranscriptMessage(id);
+                renders.set(id, (renders.get(id) ?? 0) + 1);
+                if (row?.kind !== 'tool-call' || row.tool.id !== scriptId) return null;
+                return <Text testID="script-child-count">{row.children.length}</Text>;
+            }
+            const screen = await renderScreen(
+                <AppSessionTranscriptSourceProvider sessionId={session.id} serverId={session.serverId}>
+                    {rows.map(id => <Reader key={id} id={id} />)}
+                </AppSessionTranscriptSourceProvider>,
+            );
+            renders.clear();
+            for (let i = 0; i < 10; i++) {
+                const id = `output-${i}`;
+                await act(async () => {
+                    storage.getState().applyMessages(session.id, [{ id, seq: 201 + i, localId: null,
+                        createdAt: 201 + i, role: 'agent', isSidechain: true, sidechainId: scriptId,
+                        content: [{ type: 'text', text: `output ${i}`, uuid: id, parentUUID: null }] }]);
+                });
+            }
+            for (let i = 0; i < 5; i++) {
+                await act(async () => {
+                    storage.getState().applyMessages(session.id, [toolCall(`child-${i}`, 211 + i, 'Bash', scriptId)]);
+                });
+            }
+            expect(renders).toEqual(new Map([[parentId, 15]]));
+            const parent = storage.getState().sessionMessages[session.id]?.messagesById[parentId];
+            expect(parent?.kind === 'tool-call' && parent.children.filter(child => child.kind === 'tool-call')).toHaveLength(5);
+            await screen.unmount();
+        } finally { storage.setState(previous); }
+    });
+
     it('keeps a mounted message reader valid when its row moves between current and ancestor provenance', async () => {
         const previous = storage.getState();
         const own = createToolCallMessageFixture({ id: 'shared-id', seq: 1 });

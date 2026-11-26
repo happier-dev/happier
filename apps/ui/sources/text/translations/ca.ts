@@ -6442,6 +6442,10 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
                         title: "Força l’activació d’Agent Teams",
                         subtitle: "Activa Agent Teams experimental de Claude Code (eixam d’agents) a totes les sessions de Claude iniciades per Happier."
                     },
+                    claudeCodeModeEnabled: {
+                      title: 'Mode de codi',
+                      subtitle: "Claude escriu un script que crida diverses eines, i veus cada crida a dins. Funciona al terminal unificat amb els serveis de models propis de Claude; una sessió manté el mode amb què va començar.",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "Usa el mode de terminal unificat",
                         subtitle: "Manté Claude Code com a sessió de terminal canònica i envia els prompts compatibles de Happier a aquesta sessió."
@@ -6712,6 +6716,15 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
 	                    },
 	                },
 	                fields: {
+	                    codexCodeModeEnabled: {
+	                      title: 'Mode de codi',
+	                      subtitle: "Codex escriu un script que crida diverses eines, i veus cada crida a dins. Per defecte segueix la configuració pròpia de Codex; alguns models sempre l'utilitzen.",
+	                      options: {
+	                        default: { title: 'Predeterminat' },
+	                        on: { title: 'Activat' },
+	                        off: { title: 'Desactivat' },
+	                      },
+	                    },
 	                    codexBackendMode: {
 	                        title: 'Mode d\'encaminament de Codex',
 	                        subtitle: 'Selecciona el servidor d’aplicacions, ACP o MCP.',
@@ -10038,6 +10051,13 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
     },
 
       tools: {
+        script: {
+          title: 'Script d’execució',
+          toolCallsCount: ({ count }: { count: number }) => count === 1 ? `${count} crida a una eina` : `${count} crides a eines`,
+          scriptDisclosure: 'Codi del script',
+          outputDisclosure: 'Sortida',
+          returned: 'Retornat',
+        },
           common: {
               more: ({ count }: { count: number }) => `+${count} més`,
               elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

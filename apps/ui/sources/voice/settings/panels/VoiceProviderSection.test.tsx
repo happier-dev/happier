@@ -3498,15 +3498,14 @@ describe('VoiceProviderSection', () => {
         }));
         const { tree } = screen;
 
-        const select = findTestInstanceByTypeWithProps(tree, DropdownMenu, {
-            selectedId: JSON.stringify('calm'),
-        });
-        expect(select?.props.itemTrigger.title).toBe('Provider voice');
-        expect(select?.props.items.map((item: Readonly<{ title: string }>) => item.title)).toEqual([
+        // Two short options are one segmented row (DESIGN), not a dropdown.
+        const row = findTestInstanceByTypeWithProps(tree, SegmentedChoiceItem, { title: 'Provider voice' });
+        expect(row?.props.value).toBe(JSON.stringify('calm'));
+        expect(row?.props.options.map((option: Readonly<{ label: string }>) => option.label)).toEqual([
             'Calm',
             'Bright',
         ]);
-        await act(async () => select?.props.onSelect(JSON.stringify('bright')));
+        await act(async () => row?.props.onChange(JSON.stringify('bright')));
         expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
             providerId,
             providers: expect.objectContaining({

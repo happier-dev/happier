@@ -24,6 +24,7 @@ import {
     type MessageStoreRef,
 } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { useSessionSelector } from '@/sync/store/hooks';
 import type { StorageState } from '@/sync/store/types';
 import type { MessagesByRefsSelectorOptions } from '@/sync/store/messageSelection';
 import { deriveTranscriptInteractionFromSession, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -230,6 +231,8 @@ function createAppSessionTranscriptReads(sessionId: string, serverId: string | n
         },
         useMetadata: () => useSessionField((session) => session ? readSessionOwnerMetadataView(session) : null),
         useAgentState: () => useSessionField((session) => session?.agentState ?? null),
+        useAgentStateSelection: <T,>(select: (agentState: Session['agentState']) => T) =>
+            useSessionSelector(sessionId, serverId, session => select(session?.agentState ?? null)),
         useArchivedAt: () => useSessionField((session) => session?.archivedAt ?? null),
         useSessionTurns: () => useSessionField((session) => session?.sessionTurns?.turns ?? null),
         useWorkspacePath: () => useSessionWorkspacePath(sessionId, serverId),
@@ -269,7 +272,7 @@ function createAppSessionTranscriptReads(sessionId: string, serverId: string | n
         useRuntimeLastObservedAt: () => useSessionField((session) => typeof session?.activeAt === 'number' && Number.isFinite(session.activeAt) ? session.activeAt : null),
     } satisfies Pick<SessionTranscriptSource,
         | 'useMessageIdsOldestFirst' | 'useMessagesById' | 'useMessage' | 'useMessagesByIds'
-        | 'useReducerState' | 'useMetadata' | 'useAgentState' | 'useWorkspacePath'
+        | 'useReducerState' | 'useMetadata' | 'useAgentState' | 'useAgentStateSelection' | 'useWorkspacePath'
         | 'useForkSupportSource' | 'useAuthorship' | 'loadToolOutput' | 'usePendingRequests' | 'useAwareness' | 'useRuntimeLastObservedAt'>;
 }
 

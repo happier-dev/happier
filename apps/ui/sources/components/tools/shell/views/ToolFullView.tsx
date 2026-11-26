@@ -329,6 +329,7 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
                             messages={messages}
                             sessionId={sessionId}
                             detailLevel="full"
+                            jumpChildId={normalizedJumpChildId}
                             interaction={interaction}
                         />
                     </TextSelectabilityScope>

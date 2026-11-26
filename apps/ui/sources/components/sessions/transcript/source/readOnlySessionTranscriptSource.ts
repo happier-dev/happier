@@ -115,6 +115,7 @@ export function createReadOnlySessionTranscriptSource(input: ReadOnlySessionTran
         useRuntimeLastObservedAt: () => null,
         useMetadata: () => useSelected((snapshot) => snapshot.metadata),
         useAgentState: () => useSelected((snapshot) => snapshot.agentState),
+        useAgentStateSelection: select => useSelected(snapshot => select(snapshot.agentState)),
         useWorkspacePath: () => useSelected((snapshot) => snapshot.workspacePath ?? null),
         useForkSupportSource: () => null,
         useAuthorship: () => useSelected((snapshot) => snapshot.authorship),

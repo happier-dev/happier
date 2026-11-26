@@ -7939,6 +7939,10 @@ const enSettingsAgents = {
           subtitle:
             'Enable Claude Code experimental Agent Teams (agent swarm) in all Claude sessions started by Happier.',
         },
+        claudeCodeModeEnabled: {
+          title: 'Code Mode',
+          subtitle: "Claude writes one script that calls several tools, and you see each call inside it. Works in the unified terminal with Claude's own model services; a session keeps the mode it started with.",
+        },
         claudeUnifiedTerminalEnabled: {
           title: 'Use unified terminal mode',
           subtitle:
@@ -8235,6 +8239,15 @@ const enSettingsAgents = {
         },
       },
       fields: {
+        codexCodeModeEnabled: {
+          title: 'Code Mode',
+          subtitle: "Codex writes one script that calls several tools, and you see each call inside it. Default follows Codex's own setting; some models always use it.",
+          options: {
+            default: { title: 'Default' },
+            on: { title: 'On' },
+            off: { title: 'Off' },
+          },
+        },
         codexBackendMode: {
           title: 'Codex routing mode',
           subtitle: 'Select App Server, ACP, or MCP.',
@@ -12439,6 +12452,13 @@ const enToolView = {
 };
 
 const enTools = {
+  script: {
+    title: 'Script',
+    toolCallsCount: ({ count }: { count: number }) => count === 1 ? `${count} tool call` : `${count} tool calls`,
+    scriptDisclosure: 'Script source',
+    outputDisclosure: 'Output',
+    returned: 'Returned',
+  },
   common: {
     more: ({ count }: { count: number }) => `+${count} more`,
     elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

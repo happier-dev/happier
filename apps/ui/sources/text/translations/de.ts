@@ -6894,6 +6894,10 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
                         title: "Agent Teams erzwingen",
                         subtitle: "Die experimentellen Agent Teams von Claude Code (Agent-Schwarm) in allen von Happier gestarteten Claude-Sessions aktivieren."
                     },
+                    claudeCodeModeEnabled: {
+                      title: 'Codemodus',
+                      subtitle: "Claude schreibt ein Skript, das mehrere Werkzeuge aufruft, und du siehst jeden Aufruf darin. Funktioniert im einheitlichen Terminal mit Claudes eigenen Modelldiensten; eine Sitzung behält den Modus, mit dem sie gestartet wurde.",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "Einheitlichen Terminal-Modus nutzen",
                         subtitle: "Claude Code als maßgebliche Terminal-Session behalten und unterstützte Happier-Prompts in diese Session schicken."
@@ -7164,6 +7168,15 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
 	                    },
 	                },
 	                fields: {
+	                    codexCodeModeEnabled: {
+	                      title: 'Codemodus',
+	                      subtitle: "Codex schreibt ein Skript, das mehrere Werkzeuge aufruft, und du siehst jeden Aufruf darin. Standard folgt der eigenen Einstellung von Codex; manche Modelle nutzen es immer.",
+	                      options: {
+	                        default: { title: 'Standard' },
+	                        on: { title: 'Ein' },
+	                        off: { title: 'Aus' },
+	                      },
+	                    },
 	                    codexBackendMode: {
 	                        title: 'Codex-Routing-Modus',
 	                        subtitle: 'Wähl App Server, ACP oder MCP.',
@@ -10727,6 +10740,13 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     tools: {
+      script: {
+        title: 'Skript',
+        toolCallsCount: ({ count }: { count: number }) => count === 1 ? `${count} Werkzeugaufruf` : `${count} Werkzeugaufrufe`,
+        scriptDisclosure: 'Skriptcode',
+        outputDisclosure: 'Ausgabe',
+        returned: 'Rückgabewert',
+      },
         common: {
             more: ({ count }: { count: number }) => `+${count} weitere`,
             elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
 import type { HappierHitReach } from '@happier-dev/plugin-ui/environment';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -13,7 +13,6 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { useCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 
@@ -216,31 +215,7 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
     );
 });
 
-/**
- * The "+N more" pressable shown while a group is collapsed with hidden tools.
- * Shared between the whole-card ToolCallsGroupView and the per-unit expand row.
- */
-export const ToolCallsGroupExpandMoreChrome = React.memo(function ToolCallsGroupExpandMoreChrome(props: Readonly<{
-    hiddenCount: number;
-    onExpand: () => void;
-}>) {
-    const coarsePrimaryPointer = useCoarsePrimaryPointer();
-    return (
-        <HappierPressable
-            testID="transcript-tool-calls-preview-more"
-            onPress={props.onExpand}
-            style={({ pressed }) => [
-                chromeStyles.previewMore,
-                Platform.OS === 'web' && !coarsePrimaryPointer ? chromeStyles.previewMoreDesktop : null,
-                pressed && chromeStyles.previewMorePressed,
-            ]}
-        >
-            <Text style={chromeStyles.previewMoreText}>
-                {t('session.toolCallsCollapsedPreviewMore', { count: props.hiddenCount })}
-            </Text>
-        </HappierPressable>
-    );
-});
+export { ToolCallsGroupExpandMoreChrome } from './ToolCallsGroupExpandMoreChrome';
 
 const GROUP_STATUS_ICON_SIZE_PX = 16;
 const GROUP_CARET_SIZE_PX = 14;
@@ -291,22 +266,6 @@ const chromeStyles = StyleSheet.create((theme) => ({
         width: GROUP_STATUS_ICON_SIZE_PX,
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    previewMore: {
-        paddingHorizontal: 0,
-        paddingTop: theme.space.s6,
-        paddingBottom: theme.space.s6,
-        alignSelf: 'flex-start',
-    },
-    previewMoreDesktop: {
-        paddingTop: theme.space.s2,
-    },
-    previewMorePressed: {
-        opacity: motionTokens.press.opacitySubtle,
-    },
-    previewMoreText: {
-        color: theme.colors.text.secondary,
-        ...Typography.variant('body'),
     },
 }));
 

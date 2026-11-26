@@ -3,6 +3,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 
 export const ICON_TASK = (size: number, color: string) => <Icon name="rocket" size={size} color={color} />;
 export const ICON_TERMINAL = (size: number, color: string) => <Icon name="terminal" size={size} color={color} />;
+export const ICON_SCRIPT = (size: number, color: string) => <Icon name="code" size={size} color={color} />;
 export const ICON_SEARCH = (size: number, color: string) => <Icon name="magnifying-glass" size={size} color={color} />;
 export const ICON_READ = (size: number, color: string) => <Icon name="eye" size={size} color={color} />;
 export const ICON_EDIT = (size: number, color: string) => <Icon name="note-pencil" size={size} color={color} />;

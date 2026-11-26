@@ -1936,6 +1936,13 @@ const zhHans: Shared_mcpPageTranslations.McpPageBase = {
   remote: '远程',
   local: '本地',
   tools: {
+    loading: {
+      everyTurn: '每轮',
+      onDemand: '按需',
+      rowTitle: '工具加载',
+      everyTurnDetail: ({ count, tokens }) => `每个会话每轮都会加载它的 ${count} 个工具，约 ${tokens} 个词元。按需可以省下这些：代理在需要时再查找工具。`,
+      onDemandDetail: ({ tokens }) => `代理在需要时再查找工具。每轮节省约 ${tokens} 个词元。`,
+    },
     title: '工具',
     description: '你的智能体可以调用的内容。“询问”会显示审批卡片，“允许”无需询问直接运行，“关闭”会隐藏该工具。',
     defaultTitle: '工具默认设置',
@@ -3017,6 +3024,7 @@ const actionFamilyTranslations = { 'zh-Hans': translated({
             messaging: '消息',
             session_control: '会话控制',
             session_capabilities: '会话能力',
+            session_tools: '会话工具',
             intent_start: '评审与委派',
             review_reads: "查看评审",
             review_comments: '评审评论',

@@ -7,7 +7,8 @@ import { readSessionCapabilityNoticeV1 } from '@happier-dev/protocol/sessions/me
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import { resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveMcpToolDecisionV1 } from '@happier-dev/protocol/mcp/servers/tools/resolveMcpToolDecisionV1';
-import { parseMcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { parseMcpPluginItemIdV1, resolveMcpToolLoadingV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { CapabilityCost } from '@/components/capabilities/facts/CapabilityFacts';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
@@ -168,12 +169,14 @@ export function useSessionCapabilitiesDetail(
   const startSignIn = React.useRef(signIn.start);
   startSignIn.current = signIn.start;
   React.useEffect(() => { if (signInRequest) void startSignIn.current({ stepUp: signInRequest.stepUp }); }, [signInRequest]);
+  // With Code Mode on this Home, an On demand server's tools are searched when needed and add nothing to a turn.
+  const codeMode = useFeatureEnabled('sessions.codeMode');
   const freshCost = React.useCallback((kind: 'skill' | 'mcp_server', id: string): CapabilityCost | null => {
     if (kind === 'skill') {
       const cost = skills.get(id)?.cost;
       return cost ? { tokensWhenUsed: cost.bodyTokens } : null;
     }
-    const entry = servers.get(id);
+    const entry = servers.get(id) ?? mcpCatalog?.pluginServers?.[id];
     const snapshot = entry?.toolsSnapshot;
     if (!entry || !snapshot) return null;
     const toolsDeclaration = agentId ? machine?.agentDeclarationsById?.[agentId]?.capabilities?.tools
@@ -181,8 +184,9 @@ export function useSessionCapabilitiesDetail(
     const hidesOff = toolsDeclaration?.mcpToolControl?.off === 'hidden';
     const tools = snapshot.tools.filter(tool => !hidesOff || resolveMcpToolDecisionV1({ policy: entry.tools, toolName: tool.name,
       annotations: tool.annotations, permissionMode: 'default' }).exposed);
+    if (codeMode && resolveMcpToolLoadingV1(entry.tools) === 'on_demand') return { onDemand: true, toolCount: tools.length, tokensPerTurn: 0 };
     return { toolCount: tools.length, tokensPerTurn: tools.reduce((sum, tool) => sum + tool.tokens, 0) };
-  }, [skills, servers, agentId, machine?.agentDeclarationsById]);
+  }, [skills, servers, agentId, machine?.agentDeclarationsById, codeMode]);
   const detail = React.useMemo<Detail>(
     () => ({
       rules,

@@ -59,6 +59,7 @@ export type SessionTranscriptSource = Readonly<{
     useRuntimeLastObservedAt(): number | null;
     useMetadata(): Metadata | null;
     useAgentState(): AgentState | null;
+    useAgentStateSelection<T>(select: (agentState: AgentState | null) => T): T;
     useArchivedAt?(): number | null;
     useSessionTurns?(): readonly SessionTurnV1[] | null;
     useWorkspacePath(): string | null;

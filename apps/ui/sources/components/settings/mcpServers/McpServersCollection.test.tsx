@@ -174,6 +174,7 @@ let accountTokenEpoch = 0;
 let accountSettings: Record<string, unknown> = {};
 let catalogReadGate: ReturnType<typeof createDeferred<void>> | null = null;
 let catalogReadFails = false;
+let catalogWriteConflict: ReturnType<typeof createDeferred<void>> | null = null;
 let holdCatalogReadsAfterWrite = false;
 let testResponseGate: ReturnType<typeof createDeferred<void>> | null = null;
 let runtimeMissing = false;
@@ -246,6 +247,7 @@ describe('MCP servers collection and tools', () => {
         accountMachines = [];
         catalogRevision = 1;
         catalogReadFails = false;
+        catalogWriteConflict = null;
         accountSettingsVersion = 1;
         catalogWrites.length = 0;
         savedSecretRequests.length = 0;
@@ -395,6 +397,10 @@ describe('MCP servers collection and tools', () => {
                 if (init?.method === 'POST') {
                     const mutation = McpServerCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
                     if (mutation.content?.t !== 'plain') throw new Error('Expected a plain MCP catalog write');
+                    if (catalogWriteConflict) {
+                        await catalogWriteConflict.promise;
+                        return Response.json({ status: 'conflict', revision: catalogRevision });
+                    }
                     if (mutation.expectedRevision !== catalogRevision) return Response.json({ status: 'conflict', revision: catalogRevision });
                     catalogWrites.push(mutation);
                     settingsState.value = { ...mutation.content.v, strictMode: false };
@@ -452,6 +458,49 @@ describe('MCP servers collection and tools', () => {
         await vi.waitFor(() => expect(screen.findByType(CapabilityBlockingBanner).props.status).toMatchObject({ kind: 'cantrun', detail: 'npx' }));
         await screen.pressByTestIdAsync('mcp.server.banner.action');
         expect(routerPushSpy).toHaveBeenCalledWith(`/machines/${encodeURIComponent(machine.id)}?serverId=${encodeURIComponent(scope.serverId)}&tab=setup&page=tools`);
+    });
+
+    it('changes tool loading on the catalog row and Undo restores the acknowledged mode', async () => {
+        const server = settingsState.value.servers[0]!;
+        settingsState.value = { ...settingsState.value, servers: [{ ...server,
+            toolsSnapshot: { checkedAt: 1, machineId: machine.id, tools: [{ name: 'inspect', tokens: 2500 }] },
+        }] };
+        await refreshCatalogFixture();
+        const hook = await renderHook(({ id }: { id: string | null }) => useMcpServerTools(id, catalogRevision), {
+            initialProps: { id: null },
+        });
+        expect(hook.getCurrent().settledTokensPerTurn).toBeNull();
+        await hook.rerender({ id: server.id });
+        await vi.waitFor(() => expect(hook.getCurrent().settledTokensPerTurn).toBe(2500));
+        const writesBefore = catalogWrites.length;
+        await act(async () => { expect(await hook.getCurrent().setLoading('on_demand')).toBeNull(); });
+        expect(settingsState.value.servers[0]!.tools?.loading).toBe('on_demand');
+        expect(hook.getCurrent().loading).toBe('on_demand');
+        expect(hook.getCurrent().settledTokensPerTurn).toBe(2500);
+        expect(catalogWrites).toHaveLength(writesBefore + 1);
+        expect(accountSettingsWrites).toHaveLength(0);
+        await act(async () => { readPresentationNotice()!.undo!.run(); });
+        await vi.waitFor(() => expect(settingsState.value.servers[0]!.tools?.loading).toBe('every_turn'));
+        expect(accountSettingsWrites).toHaveLength(0);
+    });
+
+    it('rolls back the optimistic loading mode and publishes a failure notice on a catalog conflict', async () => {
+        const server = settingsState.value.servers[0]!;
+        const hook = await renderHook(() => useMcpServerTools(server.id, catalogRevision));
+        await vi.waitFor(() => expect(hook.getCurrent().status).toBe('ready'));
+        retirePresentationNotice();
+        const conflict = createDeferred<void>();
+        catalogWriteConflict = conflict;
+        const result = { pending: null as Promise<string | null> | null };
+        await act(async () => { result.pending = hook.getCurrent().setLoading('on_demand'); });
+        expect(hook.getCurrent().loading).toBe('on_demand');
+        await act(async () => {
+            conflict.resolve();
+            expect(await result.pending).toBe('mcp_catalog_conflict');
+        });
+        expect(hook.getCurrent().loading).toBe('every_turn');
+        expect(readPresentationNotice()).toMatchObject({ severity: 'error' });
+        expect(accountSettingsWrites).toHaveLength(0);
     });
 
     it('allows a tool directly and Undo restores acknowledged inheritance after the catalog refreshes', async () => {
@@ -972,6 +1021,14 @@ describe('MCP servers collection and tools', () => {
         });
         await screen.pressByTestIdAsync(row);
         await vi.waitFor(() => expect(replace).toHaveBeenCalledWith(mcpServerRoute(pluginServerId)));
+        const tools = await renderHook(() => useMcpServerTools(pluginServerId, catalogRevision));
+        await vi.waitFor(() => expect(tools.getCurrent()).toMatchObject({ status: 'ready', loading: 'every_turn' }));
+        await act(async () => { expect(await tools.getCurrent().setLoading('on_demand')).toBeNull(); });
+        expect(settingsState.value.pluginServers?.[pluginServerId]?.tools?.loading).toBe('on_demand');
+        expect(tools.getCurrent().loading).toBe('on_demand');
+        await act(async () => { readPresentationNotice()!.undo!.run(); });
+        await vi.waitFor(() => expect(settingsState.value.pluginServers?.[pluginServerId]?.tools?.loading).toBe('every_turn'));
+        expect(accountSettingsWrites).toHaveLength(0);
     });
 
     it('lists each server with where it applies, flags one that applies nowhere, and adds in the collection', async () => {

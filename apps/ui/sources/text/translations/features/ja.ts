@@ -1972,6 +1972,13 @@ const ja: Shared_mcpPageTranslations.McpPageBase = {
   remote: 'リモート',
   local: 'ローカル',
   tools: {
+    loading: {
+      everyTurn: '毎ターン',
+      onDemand: 'オンデマンド',
+      rowTitle: 'ツールの読み込み',
+      everyTurnDetail: ({ count, tokens }) => `毎ターン、すべてのセッションがこのサーバーの ${count} 個のツールを読み込みます（約 ${tokens} トークン）。オンデマンドなら節約できます。エージェントは必要なときにツールを探します。`,
+      onDemandDetail: ({ tokens }) => `エージェントは必要なときにツールを探します。1 ターンあたり約 ${tokens} トークンを節約します。`,
+    },
     title: 'ツール',
     description: 'エージェントが呼び出せるもの。「確認」は承認カードを表示し、「許可」は確認なしで実行し、「オフ」はツールを非表示にします。',
     defaultTitle: 'ツールの既定',
@@ -3072,6 +3079,7 @@ const actionFamilyTranslations = { ja: translated({
             messaging: 'メッセージ',
             session_control: 'セッションの操作',
             session_capabilities: 'セッションの機能',
+            session_tools: 'セッションツール',
             intent_start: 'レビューと委任',
             review_reads: "レビューの閲覧",
             review_comments: 'レビューコメント',

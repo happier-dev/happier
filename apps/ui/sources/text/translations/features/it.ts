@@ -2000,6 +2000,13 @@ const it: Shared_mcpPageTranslations.McpPageBase = {
   remote: 'Remoto',
   local: 'Locale',
   tools: {
+    loading: {
+      everyTurn: 'A ogni turno',
+      onDemand: 'Su richiesta',
+      rowTitle: 'Caricamento degli strumenti',
+      everyTurnDetail: ({ count, tokens }) => `Ogni sessione carica i suoi ${count === 1 ? '1 strumento' : `${count} strumenti`} a ogni turno, circa ${tokens} token. Su richiesta li risparmia: gli agenti cercano uno strumento quando serve.`,
+      onDemandDetail: ({ tokens }) => `Gli agenti cercano uno strumento quando serve. Circa ${tokens} token risparmiati a ogni turno.`,
+    },
     title: 'Strumenti',
     description: 'Ciò che i tuoi agenti possono chiamare. Chiedi mostra una scheda di approvazione, Consenti procede senza chiedere, Disattivato nasconde lo strumento.',
     defaultTitle: 'Impostazione predefinita degli strumenti',
@@ -3121,6 +3128,7 @@ const actionFamilyTranslations = { it: translated({
             messaging: 'Messaggistica',
             session_control: 'Controlli di sessione',
             session_capabilities: 'Funzionalità della sessione',
+            session_tools: 'Strumenti della sessione',
             intent_start: 'Revisioni e delega',
             review_reads: "Lettura delle revisioni",
             review_comments: 'Commenti di revisione',

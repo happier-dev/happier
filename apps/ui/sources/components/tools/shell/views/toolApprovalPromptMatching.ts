@@ -1,5 +1,7 @@
 import * as React from 'react';
 import type { Message, ToolCall } from "@happier-dev/session-core/messages";
+import type { AgentState } from '@happier-dev/session-core/state';
+import type { SessionPendingRequest } from '@happier-dev/session-core/pending';
 import { normalizeToolCallForRendering } from '@happier-dev/session-core/tools';
 import { isRecord, readHappierActionToolPayload } from '@happier-dev/protocol/actions/happierActionToolResult';
 import { bindContextualActionToolInput } from '@happier-dev/protocol/actions/actionToolContext';
@@ -138,8 +140,16 @@ function prepareToolApprovalRequests(requests: Requests, prior?: ApprovalIndex):
             uncorrelatedByArtifactId.set(request.artifact.id, request);
             continue;
         }
-        for (const id of [origin.messageId, origin.parentMessageId]) if (id) add(matchKey(origin.sessionId, 'm', id), request);
+        if (origin.messageId) add(matchKey(origin.sessionId, 'm', origin.messageId), request);
         if (origin.toolCallId) add(matchKey(origin.sessionId, 't', origin.toolCallId), request);
+        if (origin.parentMessageId) {
+            if (origin.messageId || origin.toolCallId) {
+                add(matchKey(origin.sessionId, 'child', origin.parentMessageId), request);
+                if (request.approval.status === 'open') add(matchKey(origin.sessionId, 'openChild', origin.parentMessageId), request);
+            } else {
+                add(matchKey(origin.sessionId, 'm', origin.parentMessageId), request);
+            }
+        }
         if (origin.messageId || origin.parentMessageId || origin.toolCallId || !origin.toolName) continue;
         const input = approvalInput(request);
         if (input === null) continue;
@@ -179,12 +189,68 @@ export function selectDeliveredTranscriptApprovalRequest(
     return requests?.length ? prepareToolApprovalRequests(requests).uncorrelatedByArtifactId.get(artifactId) : undefined;
 }
 
+/** A child approval keeps its own association even while the Script's sidechain is unhydrated. */
+export function selectScriptChildApprovalRequest(params: Readonly<{
+    requests: Requests | undefined;
+    sessionId: string | undefined;
+    messageId: string | undefined;
+    parentToolCallId: string | undefined;
+}>): OpenApprovalArtifactForSession | undefined {
+    if (!params.sessionId || !params.requests?.length) return undefined;
+    const index = prepareToolApprovalRequests(params.requests);
+    const read = (kind: string, id: string | undefined) => id ? index.buckets.get(matchKey(params.sessionId!, kind, id))?.[0] : undefined;
+    return read('openChild', params.messageId) ?? read('openChild', params.parentToolCallId)
+        ?? read('child', params.messageId) ?? read('child', params.parentToolCallId);
+}
+
+type AgentRequests = NonNullable<AgentState['requests']>;
+const permissionsBySidechain = new WeakMap<AgentRequests, ReadonlyMap<string, readonly string[]>>();
+const noPermissionIds: readonly string[] = Object.freeze([]);
+
+/** Raw agent state owns sidechain attribution before the pending request's tool message arrives. */
+export function selectScriptSidechainPermissionIds(requests: AgentState['requests'], sidechainId: string): readonly string[] {
+    if (!requests) return noPermissionIds;
+    let index = permissionsBySidechain.get(requests);
+    if (!index) {
+        const buckets = new Map<string, string[]>();
+        for (const [id, request] of Object.entries(requests)) {
+            if (typeof request.sidechainId !== 'string' || !request.sidechainId) continue;
+            const bucket = buckets.get(request.sidechainId);
+            if (bucket) bucket.push(id);
+            else buckets.set(request.sidechainId, [id]);
+        }
+        index = buckets;
+        permissionsBySidechain.set(requests, index);
+    }
+    return index.get(sidechainId) ?? noPermissionIds;
+}
+
+type PermissionRequests = readonly SessionPendingRequest[];
+const pendingPermissionsById = new WeakMap<PermissionRequests, ReadonlyMap<string, SessionPendingRequest>>();
+
+/** Intersect the sidechain association with the pending-request owner's current answerable list. */
+export function selectScriptPendingPermission(ids: readonly string[], requests: PermissionRequests): SessionPendingRequest | undefined {
+    let index = pendingPermissionsById.get(requests);
+    if (!index) {
+        index = new Map(requests.map(request => [request.id, request]));
+        pendingPermissionsById.set(requests, index);
+    }
+    for (const id of ids) {
+        const request = index.get(id);
+        if (request) return request;
+    }
+    return undefined;
+}
+
 /** Exact associations first; fallback input is prepared once per changed ToolCall input. */
 export function selectMatchingToolApprovalRequests(params: ToolApprovalMatch & Readonly<{ requests: Requests | undefined }>): Requests {
     if (!params.sessionId || !params.requests?.length) return noRequests;
     const index = prepareToolApprovalRequests(params.requests);
     const keys: string[] = [];
-    if (params.messageId) keys.push(matchKey(params.sessionId, 'm', params.messageId));
+    if (params.messageId) {
+        keys.push(matchKey(params.sessionId, 'm', params.messageId));
+        if (params.normalizedToolName !== 'Script') keys.push(matchKey(params.sessionId, 'child', params.messageId));
+    }
     if (typeof params.tool.id === 'string') keys.push(matchKey(params.sessionId, 't', params.tool.id));
     const names = new Set([params.tool.name, params.normalizedToolName,
         ...(params.tool.name.startsWith('mcp__happier__') ? [params.tool.name.slice('mcp__happier__'.length)] : [])]);
@@ -229,6 +295,12 @@ export function selectToolApprovalRequestsForMessages(params: Readonly<{
             for (const request of selectMatchingToolApprovalRequests({ requests: params.requests, sessionId: params.sessionId,
                 messageId, tool, normalizedToolName: tool.name })) selected.add(request);
         }
+        if (tool.name === 'Script') {
+            for (const id of new Set([message.id, displayedId, tool.id])) {
+                if (!id) continue;
+                for (const request of index.buckets.get(matchKey(params.sessionId, 'child', id)) ?? []) selected.add(request);
+            }
+        }
         // Header inference may name an old tool differently. This parent projection narrows by the
         // reviewed input only; the leaf still enforces its exact raw/normalized name through the matcher.
         for (const context of index.fallbackSessions.get(params.sessionId)?.values() ?? []) {
@@ -258,7 +330,8 @@ export function doesApprovalMatchToolCall(params: Readonly<{
     if (origin?.kind !== 'transcript_tool_call') return false;
     if (!params.sessionId || origin.sessionId !== params.sessionId) return false;
     if (origin.messageId || origin.parentMessageId) {
-        if (params.messageId && (origin.messageId === params.messageId || origin.parentMessageId === params.messageId)) {
+        const belongsToScriptChild = params.normalizedToolName === 'Script' && (origin.messageId || origin.toolCallId);
+        if (params.messageId && (origin.messageId === params.messageId || (!belongsToScriptChild && origin.parentMessageId === params.messageId))) {
             return true;
         }
         if (origin.toolCallId) {

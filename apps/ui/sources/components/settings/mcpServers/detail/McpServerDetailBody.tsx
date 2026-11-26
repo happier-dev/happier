@@ -335,6 +335,9 @@ export function McpServerWhereAndTools(
         agentNames={detail.names.agentNames}
         installedAgentIds={detail.agentIds}
         onChange={detail.tools.set}
+        loading={detail.tools.loading}
+        settledTokensPerTurn={detail.tools.settledTokensPerTurn}
+        onLoadingChange={detail.tools.setLoading}
         errorCode={detail.tools.errorCode}
         onRetry={detail.tools.reload}
         readOnly={props.readOnly}

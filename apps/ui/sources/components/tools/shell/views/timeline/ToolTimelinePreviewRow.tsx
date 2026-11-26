@@ -60,6 +60,7 @@ export const ToolTimelinePreviewRow = React.memo(function ToolTimelinePreviewRow
         const resolvedDetailLevelDefault = resolveToolViewDetailLevelDefaultForChromeMode({
             chromeMode: 'activity_feed',
             setting: normalizedToolViewDetailLevelDefaultSetting,
+            toolName: model.normalizedToolName,
         });
 
         const toolForRendering = model.toolForRendering;

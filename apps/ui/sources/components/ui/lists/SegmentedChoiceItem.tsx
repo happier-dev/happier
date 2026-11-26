@@ -51,6 +51,14 @@ export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightE
 }>;
 
 /**
+ * Whether a choice is a segmented row (DESIGN: two to four short options, all visible) rather than a
+ * field select. Labels too long for the row fold into "More" by the row's own rule, so count decides.
+ */
+export function isSegmentedChoiceOptionCount(optionCount: number): boolean {
+    return optionCount >= 2 && optionCount <= 4;
+}
+
+/**
  * A row choosing between two to four short, always-visible options. On a configuration page the
  * control sits beside the label and moves beneath it when the row is too narrow for both; beneath,
  * options that still do not fit the row become one field select (a phone's "In / order" wrap).

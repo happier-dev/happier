@@ -7025,6 +7025,10 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
                         title: "Forcar ativacao do Agent Teams",
                         subtitle: "Ativa o Agent Teams experimental do Claude Code (enxame de agentes) em todas as sessoes do Claude iniciadas pelo Happier."
                     },
+                    claudeCodeModeEnabled: {
+                      title: 'Modo de código',
+                      subtitle: "O Claude escreve um script que chama várias ferramentas, e vê cada chamada lá dentro. Funciona no terminal unificado com os serviços de modelos do próprio Claude; uma sessão mantém o modo com que começou.",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "Usar modo de terminal unificado",
                         subtitle: "Mantem o Claude Code como a sessao de terminal canonica e envia prompts compativeis do Happier para essa sessao."
@@ -7278,6 +7282,15 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
             },
           },
           fields: {
+            codexCodeModeEnabled: {
+              title: 'Modo de código',
+              subtitle: "O Codex escreve um script que chama várias ferramentas, e vê cada chamada lá dentro. Predefinição segue a definição do próprio Codex; alguns modelos usam-no sempre.",
+              options: {
+                default: { title: 'Predefinição' },
+                on: { title: 'Ativado' },
+                off: { title: 'Desativado' },
+              },
+            },
             codexBackendMode: {
               title: "Modo de roteamento do Codex",
               subtitle: "Selecione App Server, ACP ou MCP.",
@@ -10880,6 +10893,13 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
   },
 
   tools: {
+    script: {
+      title: 'Script de execução',
+      toolCallsCount: ({ count }: { count: number }) => count === 1 ? `${count} chamada a uma ferramenta` : `${count} chamadas a ferramentas`,
+      scriptDisclosure: 'Código do script',
+      outputDisclosure: 'Saída',
+      returned: 'Retornado',
+    },
     common: {
       more: ({ count }: { count: number }) => `+${count} mais`,
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

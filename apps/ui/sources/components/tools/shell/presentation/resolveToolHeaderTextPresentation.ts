@@ -1,4 +1,4 @@
-import type { ToolCall, TranscriptAccountActor } from "@happier-dev/session-core/messages";
+import type { Message, ToolCall, TranscriptAccountActor } from "@happier-dev/session-core/messages";
 import type { Metadata } from '@happier-dev/session-core/state';
 import { SessionQuestionHandlerV1Schema, type SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
 
@@ -75,6 +75,8 @@ export function resolveToolHeaderTextPresentation(params: {
     viewerScope?: ServerAccountScope | null;
     /** Existing sanitized, authorized Account actor projection for this exact Home. */
     answeringAccountActor?: TranscriptAccountActor | null;
+    /** The call's child transcript messages, for a subtitle that counts them. */
+    messages?: readonly Message[];
 }): ToolHeaderTextPresentation {
     const { tool, metadata } = params;
     const actor = tool.permission?.status === 'approved'
@@ -121,7 +123,7 @@ export function resolveToolHeaderTextPresentation(params: {
 
     let subtitle: string | null = null;
     if (knownTool && typeof knownTool.extractSubtitle === 'function') {
-        const extractedSubtitle = knownTool.extractSubtitle({ tool, metadata });
+        const extractedSubtitle = knownTool.extractSubtitle({ tool, metadata, messages: params.messages });
         if (typeof extractedSubtitle === 'string' && extractedSubtitle) {
             subtitle = extractedSubtitle;
         }

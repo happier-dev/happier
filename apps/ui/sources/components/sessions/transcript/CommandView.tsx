@@ -9,7 +9,8 @@ import type { TranscriptFindSourceRange } from './find/transcriptFindRowStore';
 
 
 interface CommandViewProps {
-    command: string;
+    /** The command line; omitted for output that no command produced (a script's console). */
+    command?: string;
     prompt?: string;
     stdout?: string | null;
     stderr?: string | null;
@@ -125,10 +126,12 @@ export const CommandView = React.memo<CommandViewProps>(({
             fullWidth ? { width: '100%' } : undefined
         ]}>
             {/* Command Line */}
-            <View style={styles.line}>
-                <Text selectable style={styles.promptText}>{prompt} </Text>
-                <Text selectable style={styles.commandText}><FindHighlightedText text={command} ranges={commandFindRanges} /></Text>
-            </View>
+            {command !== undefined ? (
+                <View style={styles.line}>
+                    <Text selectable style={styles.promptText}>{prompt} </Text>
+                    <Text selectable style={styles.commandText}><FindHighlightedText text={command} ranges={commandFindRanges} /></Text>
+                </View>
+            ) : null}
 
             {hasNewProps ? (
                 <>

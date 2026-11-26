@@ -9,6 +9,7 @@ import { SchemaFieldControl } from '@/components/settings/schemaFields/SchemaFie
 import { SchemaFieldRow } from '@/components/settings/schemaFields/SchemaFieldRow';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
+import { isSegmentedChoiceOptionCount, SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 
 type PluginSettingChoiceOption = NonNullable<
     NonNullable<PluginProjectionEditableSettingField['presentation']>['options']
@@ -100,6 +101,34 @@ export function PluginSettingSelectField(props: Readonly<{
             setOpen(false);
         }
     }, [open, props.disabled]);
+
+    // Two to four options are one segmented row, all visible (Default · On · Off), never a dropdown.
+    if (isSegmentedChoiceOptionCount(options.length)) {
+        const testID = `settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}`;
+        return (
+            <SegmentedChoiceItem<string>
+                testID={testID}
+                testIDPrefix={testID}
+                title={props.field.title}
+                // The row names what the setting does; the chosen option's own description, when it has
+                // one, says what that choice means. A disabled row keeps its reason instead.
+                subtitle={[props.field.subtitle, props.disabledReason].filter(Boolean).join('\n') || undefined}
+                accessibilityHint={props.disabledReason ?? undefined}
+                value={items.some((item) => item.id === selectedId) ? selectedId : null}
+                disabled={props.disabled}
+                options={items.map((item) => ({
+                    id: item.id,
+                    label: item.title,
+                    ...(item.subtitle && !props.disabledReason ? { description: item.subtitle } : {}),
+                }))}
+                onChange={(itemId) => {
+                    const option = options.find((candidate) => JSON.stringify(candidate.value) === itemId);
+                    if (!option || props.disabled) return;
+                    props.onChangeValue(option.value);
+                }}
+            />
+        );
+    }
 
     return (
         <SchemaFieldControl control="select" inputProps={{

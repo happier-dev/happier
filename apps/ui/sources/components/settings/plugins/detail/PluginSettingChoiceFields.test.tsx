@@ -22,6 +22,8 @@ const { PluginSettingMultiSelectField, PluginSettingSelectField, PluginSettingSw
 const { Switch } = await import('@/components/ui/forms/Switch');
 const { Item } = await import('@/components/ui/lists/Item');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+const { SegmentedTabBar } = await import('@/components/ui/navigation/SegmentedTabBar');
 
 afterEach(() => {
     vi.unstubAllGlobals();
@@ -57,6 +59,17 @@ const SELECT_FIELD: PluginProjectionEditableSettingField = {
     },
 };
 
+// More than four options stay a field select (the dropdown path).
+const EXTRA_OPTIONS = [
+    { value: 'balanced', title: 'Balanced', description: 'Trade speed for care.' },
+    { value: 'thorough', title: 'Thorough', description: 'Check everything twice.' },
+    { value: 'custom', title: 'Custom', description: 'Use the plugin’s own profile.' },
+];
+const DROPDOWN_FIELD: PluginProjectionEditableSettingField = {
+    ...SELECT_FIELD,
+    presentation: { options: [...(SELECT_FIELD.presentation?.options ?? []), ...EXTRA_OPTIONS] },
+};
+
 const DISABLED_REASON = 'Enable this capability in the plugin manifest.';
 
 describe('PluginSettingSwitchField', () => {
@@ -66,7 +79,7 @@ describe('PluginSettingSwitchField', () => {
                 <PluginSettingSwitchField pluginId="acme.plugin" group={GROUP}
                     field={{ ...SELECT_FIELD, control: 'switch', valueType: 'boolean', defaultValue: false }}
                     value={true} disabled={false} onChangeValue={() => {}} />
-                <PluginSettingSelectField pluginId="acme.plugin" group={GROUP} field={SELECT_FIELD}
+                <PluginSettingSelectField pluginId="acme.plugin" group={GROUP} field={DROPDOWN_FIELD}
                     value="safe" disabled={false} onChangeValue={() => {}} />
                 <PluginSettingMultiSelectField pluginId="acme.plugin" group={GROUP}
                     field={{ ...SELECT_FIELD, control: 'multiSelect' }}
@@ -135,6 +148,24 @@ describe('PluginSettingSwitchField', () => {
                   "subtitle": "Prioritize speed.",
                   "title": "Fast",
                 },
+                {
+                  "accessibilityLabel": "Balanced. Trade speed for care.",
+                  "id": ""balanced"",
+                  "subtitle": "Trade speed for care.",
+                  "title": "Balanced",
+                },
+                {
+                  "accessibilityLabel": "Thorough. Check everything twice.",
+                  "id": ""thorough"",
+                  "subtitle": "Check everything twice.",
+                  "title": "Thorough",
+                },
+                {
+                  "accessibilityLabel": "Custom. Use the plugin’s own profile.",
+                  "id": ""custom"",
+                  "subtitle": "Use the plugin’s own profile.",
+                  "title": "Custom",
+                },
               ],
               "rowKind": "item",
               "selectedId": ""safe"",
@@ -192,6 +223,11 @@ const NULLABLE_SELECT_FIELD: PluginProjectionEditableSettingField = {
     },
 };
 
+const NULLABLE_DROPDOWN_FIELD: PluginProjectionEditableSettingField = {
+    ...NULLABLE_SELECT_FIELD,
+    presentation: { options: [...(NULLABLE_SELECT_FIELD.presentation?.options ?? []), ...EXTRA_OPTIONS] },
+};
+
 function findDisabledSelectTrigger(screen: Awaited<ReturnType<typeof renderScreen>>) {
     return screen.findAllByType(Pressable).find((node) => (
         node.props.disabled === true
@@ -199,13 +235,72 @@ function findDisabledSelectTrigger(screen: Awaited<ReturnType<typeof renderScree
     )) ?? null;
 }
 
-describe('PluginSettingSelectField', () => {
+describe('PluginSettingSelectField · two to four options (segmented row)', () => {
+    const segmentedBar = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllByType(SegmentedTabBar)[0];
+
+    it('draws one segmented row, never a dropdown, with the field description under its title', async () => {
+        const onChangeValue = vi.fn();
+        const screen = await renderScreen(
+            <PluginSettingSelectField pluginId="acme.plugin" group={GROUP} field={SELECT_FIELD}
+                value="fast" disabled={false} onChangeValue={onChangeValue} />,
+        );
+        expect(screen.findAllByType(DropdownMenu)).toHaveLength(0);
+        expect(screen.findAllByType(SegmentedChoiceItem)).toHaveLength(1);
+        expect(segmentedBar(screen)?.props.activeTabId).toBe('"fast"');
+        expect(segmentedBar(screen)?.props.tabs.map((tab: { label: string }) => tab.label)).toEqual(['Safe', 'Fast']);
+        // The chosen option's own description is what the row says.
+        expect(screen.getTextContent()).toContain('Prioritize speed.');
+
+        await act(async () => { segmentedBar(screen)?.props.onSelectTab('"safe"'); });
+        expect(onChangeValue).toHaveBeenCalledWith('safe');
+    });
+
+    it('keeps the field description when options carry none', async () => {
+        const field: PluginProjectionEditableSettingField = { ...SELECT_FIELD, presentation: { options: [
+            { value: 'default', title: 'Default' }, { value: 'on', title: 'On' }, { value: 'off', title: 'Off' },
+        ] }, defaultValue: 'default' };
+        const screen = await renderScreen(
+            <PluginSettingSelectField pluginId="acme.plugin" group={GROUP} field={field}
+                value={undefined} disabled={false} onChangeValue={() => {}} />,
+        );
+        expect(segmentedBar(screen)?.props.activeTabId).toBe('"default"');
+        expect(screen.getTextContent()).toContain('Choose how this plugin runs.');
+    });
+
+    it('shows a persisted null choice and takes the default only for an absent value', async () => {
+        const persisted = await renderScreen(
+            <PluginSettingSelectField pluginId="acme.plugin" group={GROUP} field={NULLABLE_SELECT_FIELD}
+                value={null} disabled={false} onChangeValue={() => {}} />,
+        );
+        expect(segmentedBar(persisted)?.props.activeTabId).toBe('null');
+        const absent = await renderScreen(
+            <PluginSettingSelectField pluginId="acme.plugin" group={GROUP} field={NULLABLE_SELECT_FIELD}
+                value={undefined} disabled={false} onChangeValue={() => {}} />,
+        );
+        expect(segmentedBar(absent)?.props.activeTabId).toBe('"safe"');
+    });
+
+    it('keeps an author-declared disabled reason visible, as a hint, and refuses changes', async () => {
+        const onChangeValue = vi.fn();
+        const screen = await renderScreen(
+            <PluginSettingSelectField pluginId="acme.plugin" group={GROUP} field={SELECT_FIELD}
+                value="safe" disabled disabledReason={DISABLED_REASON} onChangeValue={onChangeValue} />,
+        );
+        expect(screen.getTextContent()).toContain(DISABLED_REASON);
+        expect(screen.findAllByType(Item).some((node) => node.props.accessibilityHint === DISABLED_REASON)).toBe(true);
+        expect(segmentedBar(screen)?.props.disabled).toBe(true);
+        await act(async () => { segmentedBar(screen)?.props.onSelectTab('"fast"'); });
+        expect(onChangeValue).not.toHaveBeenCalled();
+    });
+});
+
+describe('PluginSettingSelectField · more than four options (field select)', () => {
     it('exposes an author-declared disabled reason visibly and as an accessibility hint', async () => {
         const screen = await renderScreen(
             <PluginSettingSelectField
                 pluginId="acme.plugin"
                 group={GROUP}
-                field={SELECT_FIELD}
+                field={DROPDOWN_FIELD}
                 value="safe"
                 disabled
                 disabledReason={DISABLED_REASON}
@@ -224,7 +319,7 @@ describe('PluginSettingSelectField', () => {
             <PluginSettingSelectField
                 pluginId="acme.plugin"
                 group={GROUP}
-                field={SELECT_FIELD}
+                field={DROPDOWN_FIELD}
                 value="safe"
                 disabled
                 onChangeValue={onChangeValue}
@@ -258,7 +353,7 @@ describe('PluginSettingSelectField', () => {
             <PluginSettingSelectField
                 pluginId="acme.plugin"
                 group={GROUP}
-                field={SELECT_FIELD}
+                field={DROPDOWN_FIELD}
                 value="safe"
                 disabled={disabled}
                 onChangeValue={() => {}}
@@ -303,7 +398,7 @@ describe('PluginSettingSelectField', () => {
             <PluginSettingSelectField
                 pluginId="acme.plugin"
                 group={GROUP}
-                field={NULLABLE_SELECT_FIELD}
+                field={NULLABLE_DROPDOWN_FIELD}
                 value={null}
                 disabled={false}
                 onChangeValue={() => {}}
@@ -326,7 +421,7 @@ describe('PluginSettingSelectField', () => {
             <PluginSettingSelectField
                 pluginId="acme.plugin"
                 group={GROUP}
-                field={NULLABLE_SELECT_FIELD}
+                field={NULLABLE_DROPDOWN_FIELD}
                 value={undefined}
                 disabled={false}
                 onChangeValue={() => {}}
@@ -355,7 +450,7 @@ describe('PluginSettingSelectField', () => {
             <PluginSettingSelectField
                 pluginId="acme.plugin"
                 group={GROUP}
-                field={SELECT_FIELD}
+                field={DROPDOWN_FIELD}
                 value="safe"
                 disabled={false}
                 onChangeValue={() => {}}

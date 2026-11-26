@@ -18,6 +18,7 @@ import { renderToolPermissionFooter } from '../permissions/renderToolPermissionF
 import { usePendingPromptLanding } from '../permissions/usePendingPromptPrimaryFocus';
 import { resolvePermissionRequestId } from '@/components/tools/renderers/core/resolvePermissionRequestId';
 import { ApprovalPromptCard } from '../approvals/ApprovalPromptCard';
+import { ScriptChildPrompt } from './ScriptChildPrompt';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
 import { t } from '@/text';
 import { resolveToolViewDetailLevel, type ToolViewDetailLevel } from '@/components/tools/normalization/policy/resolveToolViewDetailLevel';
@@ -51,7 +52,7 @@ import { Typography } from '@/constants/Typography';
 import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
-import { buildApprovalToolCallLocation, selectMatchingToolApprovalRequests, readDeclinedApprovalAtCall, readToolOutputText } from './toolApprovalPromptMatching';
+import { buildApprovalToolCallLocation, selectScriptChildApprovalRequest, selectMatchingToolApprovalRequests, readDeclinedApprovalAtCall, readToolOutputText } from './toolApprovalPromptMatching';
 import { TranscriptJumpAttention } from '@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
@@ -70,6 +71,7 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const TOOL_VIEW_HIGHLIGHT_RADIUS = 12;
+const EMPTY_MESSAGES: Message[] = [];
 
 interface ToolViewProps {
     /** Result content mounted only while this tool's existing disclosure is expanded. */
@@ -168,14 +170,6 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
         toolViewExpandedDetailLevelDefault === 'full'
             ? toolViewExpandedDetailLevelDefault
             : 'default';
-    const resolvedDetailLevelDefault = resolveToolViewDetailLevelDefaultForChromeMode({
-        chromeMode: 'cards',
-        setting: normalizedToolViewDetailLevelDefaultSetting,
-    });
-    const resolvedExpandedDetailLevelDefault = resolveToolViewExpandedDetailLevelDefaultForChromeMode({
-        chromeMode: 'cards',
-        setting: normalizedToolViewExpandedDetailLevelDefaultSetting,
-    });
 
     const toolForSession = React.useMemo(() => {
         return resolveInactiveSessionToolCallFailure({
@@ -192,8 +186,9 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
             historicalAgentId,
+            messages: props.messages,
         });
-    }, [historicalAgentId, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
+    }, [historicalAgentId, props.messages, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
 
     const toolForRendering = headerModel.toolForRendering;
     const isWaitingForPermission = headerModel.isWaitingForPermission;
@@ -274,13 +269,22 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
         : resolveToolViewDetailLevel({
               toolName: normalizedToolName,
               toolInput: toolForRendering.input,
-              detailLevelDefault: resolvedDetailLevelDefault,
+              detailLevelDefault: resolveToolViewDetailLevelDefaultForChromeMode({
+                  chromeMode: 'cards',
+                  setting: normalizedToolViewDetailLevelDefaultSetting,
+                  toolName: normalizedToolName,
+              }),
               detailLevelDefaultLocalControl: toolViewDetailLevelDefaultLocalControl,
               detailLevelByToolName: toolViewDetailLevelByToolName as Record<string, ToolViewDetailLevel> | null | undefined,
           });
 
     const expandedDetailLevel: 'summary' | 'full' =
-        (toolViewExpandedDetailLevelByToolName as Record<string, 'summary' | 'full'> | null | undefined)?.[normalizedToolName] ?? resolvedExpandedDetailLevelDefault;
+        (toolViewExpandedDetailLevelByToolName as Record<string, 'summary' | 'full'> | null | undefined)?.[normalizedToolName]
+        ?? resolveToolViewExpandedDetailLevelDefaultForChromeMode({
+            chromeMode: 'cards',
+            setting: normalizedToolViewExpandedDetailLevelDefaultSetting,
+            toolName: normalizedToolName,
+        });
 
     const effectiveDetailLevel = isExpanded ? (findBodyReveal ? 'full' : expandedDetailLevel) : collapsedDetailLevel;
 
@@ -398,6 +402,9 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const isBodyVisible = effectiveDetailLevel !== 'title' && effectiveDetailLevel !== 'compact';
+    const scriptChildApproval = normalizedToolName === 'Script' ? selectScriptChildApprovalRequest({
+        requests: props.approvalRequests, sessionId, messageId, parentToolCallId: toolForRendering.id,
+    }) : undefined;
     const bodyDetailLevel: 'summary' | 'full' = inlineDetailLevel === 'full' ? 'full' : 'summary';
     const lastVisibleBodyDetailLevelRef = React.useRef<'summary' | 'full'>(bodyDetailLevel);
     if (isBodyVisible) {
@@ -547,7 +554,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                         tool={toolForRendering}
                         normalizedToolName={normalizedToolName}
                         metadata={props.metadata}
-                        messages={props.messages ?? []}
+                        messages={normalizedToolName !== 'Script' || isBodyVisible ? props.messages ?? EMPTY_MESSAGES : EMPTY_MESSAGES}
                         sessionId={sessionId}
                         serverId={props.serverId}
                         messageId={messageId}
@@ -566,6 +573,11 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                 metadata: props.metadata, canApprovePermissions: viewerCanAnswer, disabledReason: interaction.permissionDisabledReason,
                 showPrompt: showPermissionPromptsInTranscript && isWaitingForPermission,
             })}
+            {normalizedToolName === 'Script' && sessionId ? (
+                <ScriptChildPrompt sessionId={sessionId} serverId={props.serverId} metadata={props.metadata}
+                    sidechainId={toolForRendering.id} approval={scriptChildApproval} showPermission={showPermissionPromptsInTranscript}
+                    canApprovePermissions={viewerCanAnswer} disabledReason={interaction.permissionDisabledReason} />
+            ) : null}
             {matchingApprovalRequests.map((request) => (
                 <ApprovalPromptCard
                     key={request.artifact.id}
@@ -699,11 +711,15 @@ const styles = StyleSheet.create((theme) => ({
     },
     toolDescription: {
         ...Typography.variant('body'),
+        // Counts and durations change while a call runs; equal-width digits keep the line still.
+        fontVariant: ['tabular-nums'],
         color: resolveToolRowPaint(theme, 'detail').foreground.color,
         marginTop: theme.space.s2,
     },
     compactSubtitle: {
         ...Typography.variant('body'),
+        // Counts and durations change while a call runs; equal-width digits keep the line still.
+        fontVariant: ['tabular-nums'],
         color: resolveToolRowPaint(theme, 'detail').foreground.color,
     },
     content: {

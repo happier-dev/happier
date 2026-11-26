@@ -5,6 +5,9 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { createPluginAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
 import { readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
+import { isFeatureId } from '@happier-dev/protocol/features/catalog';
+import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
+import { resolveRuntimeFeatureDecisionFromSnapshot, useServerFeaturesRuntimeSnapshot, useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 
 import type {
@@ -1074,6 +1077,43 @@ const PluginSettingsSectionDisclosure = React.memo(function PluginSettingsSectio
     );
 });
 
+function expressionUsesHostFeature(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    if (record.fact === 'host.feature') return true;
+    if (Array.isArray(record.all) && record.all.some(expressionUsesHostFeature)) return true;
+    if (Array.isArray(record.any) && record.any.some(expressionUsesHostFeature)) return true;
+    if (record.not !== undefined && expressionUsesHostFeature(record.not)) return true;
+    return false;
+}
+
+function PluginDetailHostFeaturePolicyBridge(props: Readonly<{
+    serverId: string | null;
+    policyContext?: PluginUiPolicyEvaluationContext;
+    children: (policyContext: PluginUiPolicyEvaluationContext | undefined) => React.ReactNode;
+}>) {
+    const settings = useFeatureLocalPolicySettings();
+    const serverId = typeof props.serverId === 'string' ? props.serverId.trim() : '';
+    const runtimeSnapshot = useServerFeaturesRuntimeSnapshot({ enabled: serverId.length === 0 });
+    const scopedSnapshot = useServerFeaturesSnapshotForServerId(serverId, { enabled: serverId.length > 0 });
+    const policyContext = React.useMemo<PluginUiPolicyEvaluationContext>(() => {
+        const snapshot = serverId.length > 0 ? scopedSnapshot : runtimeSnapshot;
+        const scope = serverId.length > 0
+            ? ({ scopeKind: 'spawn', serverId } as const)
+            : ({ scopeKind: 'runtime' } as const);
+        return {
+            ...props.policyContext,
+            isFeatureEnabled: (featureId: string) => isFeatureId(featureId)
+                && resolveRuntimeFeatureDecisionFromSnapshot({
+                    featureId,
+                    settings,
+                    snapshot,
+                    scope,
+                }).state === 'enabled',
+        };
+    }, [props.policyContext, runtimeSnapshot, scopedSnapshot, serverId, settings]);
+    return <>{props.children(policyContext)}</>;
+}
 export function PluginDetailGenericSettingsSection(props: PluginDetailGenericSettingsSectionProps) {
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
     const groups = React.useMemo(() => (
@@ -1121,11 +1161,15 @@ export function PluginDetailGenericSettingsSection(props: PluginDetailGenericSet
     const daemonSecretTarget = daemonTarget?.kind === 'daemon' ? daemonTarget : null;
 
     if (accountGroups.length === 0 && daemonGroups.length === 0) return null;
-    return (
+    const needsHostFeaturePolicy = !props.policyContext?.isFeatureEnabled && groups.some((group) =>
+        group.fields.some((field) => expressionUsesHostFeature(field.availability?.when)),
+    );
+    const renderSections = (policyContext: PluginUiPolicyEvaluationContext | undefined) => (
         <>
             {accountGroups.length > 0 ? (
                 <PluginDetailScopedSettingsSection
                     {...props}
+                    policyContext={policyContext}
                     groups={accountGroups}
                     scope={ACCOUNT_PLUGIN_SETTINGS_SCOPE}
                     target={accountTarget}
@@ -1138,6 +1182,7 @@ export function PluginDetailGenericSettingsSection(props: PluginDetailGenericSet
             {daemonGroups.length > 0 ? (
                 <PluginDetailScopedSettingsSection
                     {...props}
+                    policyContext={policyContext}
                     groups={daemonGroups}
                     scope={DAEMON_PLUGIN_SETTINGS_SCOPE}
                     target={daemonTarget}
@@ -1149,6 +1194,14 @@ export function PluginDetailGenericSettingsSection(props: PluginDetailGenericSet
             ) : null}
         </>
     );
+    if (needsHostFeaturePolicy) {
+        return (
+            <PluginDetailHostFeaturePolicyBridge serverId={props.serverId} policyContext={props.policyContext}>
+                {renderSections}
+            </PluginDetailHostFeaturePolicyBridge>
+        );
+    }
+    return renderSections(props.policyContext);
 }
 
 function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSectionProps & Readonly<{

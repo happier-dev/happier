@@ -6641,6 +6641,10 @@ export const zhHans: TranslationStructure = {
                         title: "强制启用 Agent Teams",
                         subtitle: "在所有由 Happier 启动的 Claude 会话中启用 Claude Code 的实验性 Agent Teams（代理群）功能。"
                     },
+                    claudeCodeModeEnabled: {
+                      title: '代码模式',
+                      subtitle: "Claude 编写一个调用多个工具的脚本，你可以看到其中的每次调用。在使用 Claude 自有模型服务的统一终端中可用；会话会保持开始时的模式。",
+                    },
                     claudeUnifiedTerminalEnabled: {
                         title: "使用统一终端模式",
                         subtitle: "将 Claude Code 保持为规范的终端会话，并把受支持的 Happier 提示发送到该会话中。"
@@ -6893,6 +6897,15 @@ export const zhHans: TranslationStructure = {
           },
         },
         fields: {
+          codexCodeModeEnabled: {
+            title: '代码模式',
+            subtitle: "Codex 编写一个调用多个工具的脚本，你可以看到其中的每次调用。默认遵循 Codex 自身的设置；部分模型始终使用它。",
+            options: {
+              default: { title: '默认' },
+              on: { title: '开启' },
+              off: { title: '关闭' },
+            },
+          },
           codexBackendMode: {
             title: "Codex 路由模式",
             subtitle: "选择 App Server、ACP 或 MCP。",
@@ -10423,6 +10436,13 @@ export const zhHans: TranslationStructure = {
   },
 
   tools: {
+    script: {
+      title: '脚本',
+      toolCallsCount: ({ count }: { count: number }) => `${count} 次工具调用`,
+      scriptDisclosure: '脚本源代码',
+      outputDisclosure: '输出',
+      returned: '返回值',
+    },
     common: {
       more: ({ count }: { count: number }) => `+${count} 更多`,
       elapsedSeconds: ({ seconds }: { seconds: string }) => `${seconds}s`,

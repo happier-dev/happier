@@ -8,6 +8,7 @@ import { PluginSettingsContributionV2Schema } from '@happier-dev/protocol/plugin
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 await vi.hoisted(async () => {
     const { installSettingsViewCommonModuleMocks } = await import('../settingsViewTestHelpers');
     installSettingsViewCommonModuleMocks({ storage: 'real', modal: async () => {
@@ -225,5 +226,43 @@ describe('Agent contributed Account preferences', () => {
                 serverUrlByServerId: { ...values.serverUrlByServerId, srv_agent_settings_home: 'https://updated-home.example.test' },
             } } },
         });
+    });
+
+    it.each([true, false])('gates host.feature Code Mode Agent settings on the active Home sessions.codeMode decision (%s)', async (codeModeEnabled) => {
+        await account.restore({
+            machines: [],
+            serverIdentityId: 'srv_agent_settings_home',
+            features: createRootLayoutFeaturesResponse({ features: { sessions: { codeMode: { enabled: codeModeEnabled } } } }),
+        });
+        account.home.answer(account.serverId, '/v1/account/plugin-settings/test.agent', {
+            body: PluginAccountSettingsReadResponseV1Schema.parse({ status: 'absent' }),
+        });
+        const gatedProjection: PluginProjectionEntry = {
+            ...projection,
+            editableSettingsGroups: [{
+                ...projection.editableSettingsGroups[0]!,
+                fields: [{
+                    key: 'claudeCodeModeEnabled', control: 'switch', valueType: 'boolean', valueSchema: { type: 'boolean' },
+                    title: 'Code Mode', secretCustody: null, redaction: 'none', clearWhenEmpty: 'persist',
+                    availability: { state: 'available', reason: 'available', when: { fact: 'host.feature', operator: 'enabled', value: 'sessions.codeMode' }, diagnostics: [] },
+                }],
+            }],
+        };
+        const screen = await renderScreen(<AgentContributedSettingsSection agentId="test.agent/agent"
+            pluginSettingsProjection={gatedProjection}
+            targetSelection={selection(false)}
+            executionTarget={null}
+            daemonOperationsAvailable={false}
+        />);
+        await flushHookEffects();
+        const disclosureId = 'settings.plugins.detail.test.agent.settings.preferences.disclosure';
+        if (codeModeEnabled) {
+            await vi.waitFor(() => expect(screen.findByTestId(disclosureId)).not.toBeNull());
+            await openPreferences(screen);
+            expect(screen.findByTestId('settings.plugins.detail.test.agent.settings.preferences.claudeCodeModeEnabled')).not.toBeNull();
+        } else {
+            expect(screen.findByTestId(disclosureId)).toBeNull();
+            expect(screen.findByTestId('settings.plugins.detail.test.agent.settings.preferences.claudeCodeModeEnabled')).toBeNull();
+        }
     });
 });

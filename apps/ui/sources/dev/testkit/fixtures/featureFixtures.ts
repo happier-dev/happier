@@ -141,7 +141,10 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             pendingQueueV2: { enabled: false },
             pendingDeliveryState: { enabled: false },
         },
-        sessions: FeatureGatesSchema.shape.sessions.parse(undefined),
+        sessions: {
+            ...FeatureGatesSchema.shape.sessions.parse(undefined),
+            codeMode: { enabled: true },
+        },
         machines: FeatureGatesSchema.shape.machines.parse(undefined),
         localServices: {
             enabled: false,

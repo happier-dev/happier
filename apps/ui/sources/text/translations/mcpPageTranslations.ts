@@ -16,6 +16,13 @@ export type McpPageTranslation = Readonly<{
   local: string;
   config: McpConfigTranslation;
   tools: Readonly<{
+    loading: Readonly<{
+      everyTurn: string;
+      onDemand: string;
+      rowTitle: string;
+      everyTurnDetail: (params: Readonly<{ count: number; tokens: string }>) => string;
+      onDemandDetail: (params: Readonly<{ tokens: string }>) => string;
+    }>;
     title: string;
     description: string;
     defaultTitle: string;
@@ -224,6 +231,13 @@ const en: McpPageBase = {
   remote: 'Remote',
   local: 'Local',
   tools: {
+    loading: {
+      everyTurn: 'Every turn',
+      onDemand: 'On demand',
+      rowTitle: 'Tool loading',
+      everyTurnDetail: ({ count, tokens }) => `Every session carries its ${count === 1 ? '1 tool' : `${count} tools`} each turn, about ${tokens} tokens. On demand saves them: agents look a tool up when they need it.`,
+      onDemandDetail: ({ tokens }) => `Agents look a tool up when they need it. About ${tokens} tokens saved each turn.`,
+    },
     title: 'Tools',
     description: 'What your agents may call. Ask shows an approval card, Allow runs without asking, Off hides the tool.',
     defaultTitle: 'Default for tools',

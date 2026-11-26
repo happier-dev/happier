@@ -2,6 +2,7 @@ import type { KnownToolDefinition } from './_types';
 import { coreSubAgentTools } from './core/subAgent';
 import { coreSubAgentRunTools } from './core/subAgentRun';
 import { coreTerminalTools } from './core/terminal';
+import { coreScriptTools } from './core/script';
 import { coreSearchTools } from './core/search';
 import { coreFileTools } from './core/files';
 import { coreWebTools } from './core/web';
@@ -15,6 +16,7 @@ export const knownToolsCore = {
     ...coreSubAgentTools,
     ...coreSubAgentRunTools,
     ...coreTerminalTools,
+    ...coreScriptTools,
     ...coreSearchTools,
     ...coreFileTools,
     ...coreWebTools,
