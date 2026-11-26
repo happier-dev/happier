@@ -1234,3 +1234,250 @@ it('persists a mounted gutter comment through a cold PR read while keeping Viewe
         }, { authentication: 'real' });
     } finally { await removeTempDir(cwd); }
 });
+
+it('repairs an HTTP-refused Review relationship from the mounted Task draft without creating another Task', async () => {
+    const { isPluginError } = await import('@happier-dev/plugin-sdk');
+    const { createPluginTestkit } = await import('@happier-dev/plugin-sdk/testing');
+    const { resolveManifestTargetedContributions } = await import('@happier-dev/cli-common/plugins/registration');
+    const { projectPluginUiTargetedContributionsV1 } = await import('@happier-dev/protocol/plugins/ui/targetedContributions');
+    const { PluginUiProviderInternal: PluginUiProvider } = await import('../../../../../../packages/plugin-ui/src/components/PluginUiProvider');
+    const { TriageSourceDescriptorV1Schema } = await import('@happier-dev/triage-protocol/v1');
+    const { PLUGIN_MANIFEST, TRIAGE_PLUGIN, collectionMigrations, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } = await import('../../../../../../packages/plugins/triage/src/manifest');
+    const { INTERNAL_TASK_SOURCE_RECORD_V1 } = await import('../../../../../../packages/plugins/triage/src/internalTasks/configuration');
+    const { TriageCreateTaskFields } = await import('../../../../../../packages/plugins/triage/src/ui/detail/taskFields');
+    const { createTriageEphemeralSharedScopeFixture } = await import('../../../../../../packages/plugins/triage/src/ui/window/ephemeralSharedScope.test-support');
+    const { createAccountPluginDataStorageHost } = await import('../../../../../cli/src/plugins/runtime/context/accountPluginDataStorage');
+    const { createCliTasksActionDeps } = await import('../../../../../cli/src/session/actions/cliActionDeps/tasks');
+    const { InternalTaskActionIdSchema } = await import('@happier-dev/protocol/actions/internalTaskActions');
+    const { normalizePluginAccountCollectionContractV1, PluginAccountCollectionContributionV1Schema,
+        PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1, PluginCollectionMutationRequestV1Schema,
+        PluginCollectionMutationErrorV1Schema, AccountEncryptionCurrentnessResponseSchema,
+        ACCOUNT_STORED_CONTENT_PLUGIN_DATA_PROTOCOL_VERSION, PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } = await import('@happier-dev/protocol');
+    const { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } = await import('@happier-dev/protocol/server/http/requestBodyBoundsV1');
+    const { PluginUiExecuteActionRequestV1Schema } = await import('@happier-dev/protocol/plugins/ui');
+    const { registerPluginAvailabilityRoutes } = await import('../../plugins/availability/routes');
+    const { pluginDataRoutes } = await import('@/app/api/routes/plugins/data/pluginDataRoutes');
+    const { accountRoutes } = await import('@/app/api/routes/account/accountRoutes');
+    const { kvRoutes } = await import('@/app/api/routes/kv/kvRoutes');
+    const { taskRoutes } = await import('@/app/api/routes/todos/taskRoutes');
+    const { captureAccountStoredContentCompatibilityForHttpRequest } = await import('@/app/clientCompatibility/accountStoredContentCompatibility');
+    const { createSignedPluginInstallationPublisherHeader } = await import('@/testkit/pluginInstallationPublisherTestkit');
+    const { createPluginSurfaceActionControls } = await import('../../../../../ui/sources/components/plugins/surfaces/pluginSurfaceActionControls');
+    const { resolveBoundPluginSurfaceContext } = await import('../../../../../ui/sources/components/plugins/surfaces/boundPluginSurfaceController');
+    const { createPluginSurfaceHostApi } = await import('../../../../../ui/sources/components/plugins/surfaces/createPluginSurfaceHostApi');
+    const { createCanonicalPluginReactNativeHostApiAdapter } = await import('../../../../../ui/sources/components/plugins/reactNative/hostApi');
+    const { createPluginUiPrivatePresentationHost } = await import('../../../../../ui/sources/components/plugins/surfaces/pluginUiPrivatePresentationHost');
+    const { createPluginSurfaceContextFixture } = await import('../../../../../ui/sources/dev/testkit/fixtures/pluginSurfaceContextFixture');
+    const { act } = await import('react-test-renderer');
+    const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+    const credentials = { token, encryption: null };
+    const machineId = randomUUID(), installationId = randomUUID(), keyPair = tweetnacl.sign.keyPair();
+    await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+    await withAuthenticatedTestApp(app => {
+        app.addHook('preHandler', async request => { captureAccountStoredContentCompatibilityForHttpRequest(request); });
+        registerReviewCommentRoutes(app); registerReviewReadRoutes(app); artifactsRoutes(app);
+        accountRoutes(app); kvRoutes(app); taskRoutes(app); pluginDataRoutes(app); registerPluginAvailabilityRoutes(app);
+    }, async app => {
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        await runWithServerHttpBaseUrl(origin, async () => {
+            const artifacts = createCredentialedAccountArtifactStore(credentials);
+            const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(artifacts));
+            const reviewId = randomUUID();
+            const round = await records.start({ reviewId, title: 'Task relationship recovery', subjectKind: 'repository',
+                sourceKind: 'direct', reviewerIds: ['reviewer'], startedAt: Date.now() });
+            const comments = createCliReviewCommentActionExecutorFromCredentials({ credentials,
+                resolvePrincipalSigningContext: async () => ({ machineId, installationId,
+                    privateKeyBase64Url: Buffer.from(keyPair.secretKey).toString('base64url') }) });
+            const runId = randomUUID();
+            const run: ExecutionRunState = { runId, callId: runId, sidechainId: runId, sessionId: null, depth: 0,
+                intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review.',
+                permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+                status: 'running', startedAtMs: Date.now(), intentInput: { reviewRound: round, reviewReviewerId: 'reviewer' } };
+            const published = await createReviewRunCommentService({ cwd: harness.baseDir,
+                scope: { workspace: { machineId, path: harness.baseDir } }, execute: comments }).materialize({ run, review: round,
+                reviewedFingerprint: null, findings: ['selected-a', 'selected-b', 'unselected'].map((id, index) => ({
+                    id, title: id, summary: 'Private finding content stays in the Review.', severity: 'high', category: 'correctness',
+                    filePath: `file-${index}.ts`, startLine: 1,
+                })) });
+            expect(published).toMatchObject({ status: 'materialized', failures: [] });
+            const originReview = { reviewId, findingIds: published.comments.slice(0, 2).map(row => row.comment.id) };
+            const lifetime = new AbortController();
+            const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json',
+                'x-happier-account-stored-content-protocol': String(ACCOUNT_STORED_CONTENT_PLUGIN_DATA_PROTOCOL_VERSION) };
+            const requests: Array<{ collectionId: string; refused: boolean }> = [];
+            let refuseNextLink = false;
+            const storageHost = createAccountPluginDataStorageHost({
+                contracts: PLUGIN_MANIFEST.contributes.accountCollections.map(contribution => normalizePluginAccountCollectionContractV1({
+                    pluginId: PLUGIN_MANIFEST.id, contribution: PluginAccountCollectionContributionV1Schema.parse(contribution) })),
+                readCredentials: async () => credentials, isCurrentAccount: () => true,
+                resolveAccountScopeKey: () => account.id, resolveBaseUrl: () => origin,
+                resolveReleaseLessDeclaration: () => PLUGIN_MANIFEST,
+                resolveReleaseLessCollectionMigrations: async () => collectionMigrations,
+                resolveAccountEncryptionCurrentness: async () => {
+                    const reply = await fetch(`${origin}/v1/account/encryption/currentness`, { headers });
+                    expect(reply.status).toBe(200);
+                    return AccountEncryptionCurrentnessResponseSchema.parse(await reply.json());
+                },
+                http: {
+                    get: async url => { const reply = await fetch(url, { headers }); return { status: reply.status, data: await reply.json() }; },
+                    post: async (url, body) => {
+                        const path = new URL(url).pathname;
+                        const request = JSON.parse(body);
+                        if (path === PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1) {
+                            const mutation = PluginCollectionMutationRequestV1Schema.parse(request);
+                            const refused = refuseNextLink && mutation.collectionId === 'user-marks';
+                            requests.push({ collectionId: mutation.collectionId, refused });
+                            if (refused) {
+                                refuseNextLink = false;
+                                // The Account HTTP transport is the fault boundary; every codec and owner stays real.
+                                return { status: 400, data: PluginCollectionMutationErrorV1Schema.parse({ error: 'collection_mutation_invalid' }) };
+                            }
+                        }
+                        const reply = await fetch(url, { method: 'POST', body, headers: { ...headers,
+                            [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                                keyPair, machineId, installationId, path, body: request, nonce: randomUUID() }) } });
+                        return { status: reply.status, data: await reply.json() };
+                    },
+                },
+            });
+            const binding = { pluginId: PLUGIN_MANIFEST.id, occurrenceId: 'task-repair', signal: lifetime.signal, isOccurrenceCurrent: () => true };
+            await storageHost.claimReleaseLessDeclaration(binding);
+            const storage = storageHost.bind(binding);
+            if (!storage) throw new Error('Task Account storage unavailable');
+            const tasks = createCliTasksActionDeps({ credentials, serverId: 'task-repair-home' }, { homeAccountId: account.id,
+                todoHomeBaseUrl: origin, todoHomeServerId: 'task-repair-home', actionHomeId: 'task-repair-home',
+                resolveServerRequestHeaders: () => headers });
+            const hostCalls: string[] = [];
+            const uiCalls: string[] = [];
+            const results: unknown[] = [];
+            let plugin: Awaited<ReturnType<typeof createPluginTestkit>>;
+            plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { ...TRIAGE_PLUGIN, activateAccount(api) {
+                TRIAGE_PLUGIN.activateAccount({ ...api, actions: { register(id, handler, options) {
+                    api.actions.register(id, (input, context) => handler(input, { ...context, services: { ...context.services,
+                        // The SDK supplies real opaque operation handles; its host fixture omits declaration descriptors.
+                        targetedContributions: { observeForSelf: point => {
+                            return { dispose() {}, readCurrent: async options => {
+                                const snapshot = plugin.readTargetedContributionFixture(point, options?.signal);
+                                return { ...snapshot, contributions: snapshot.contributions.map(entry => ({ ...entry,
+                                    descriptor: TriageSourceDescriptorV1Schema.parse(PLUGIN_MANIFEST.contributes.targetedPluginContributions
+                                        .find(declaration => declaration.id === entry.contributor.contributionId)?.descriptor), surfaces: {} })) };
+                            } };
+                        } },
+                    } }), options);
+                } } });
+            } }, services: { storage: { account: storage }, actions: { execute: async (id, input, options) => {
+                hostCalls.push(id);
+                if (id === 'reviews.comments.list') return await comments(id, input);
+                const parsed = InternalTaskActionIdSchema.safeParse(id);
+                if (!parsed.success) throw new Error(`Unexpected Task host Action ${id}`);
+                return await tasks.internalTaskAction!({ actionId: parsed.data, input,
+                    context: { surface: 'ui', authority: 'present_user' }, signal: options?.signal });
+            } } } });
+            const configured = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured;
+            const invoke = async (id: string, input: unknown) => {
+                uiCalls.push(id);
+                const result = await plugin.invokeAction(id, input, { surface: 'ui' });
+                results.push(result);
+                return result;
+            };
+            try {
+                // Positive control uses the same real Review read, native Task source and collection HTTP port.
+                const control = await invoke('tasks/create-v1', { v: 1, source: configured.instance.source,
+                    sourceInstanceId: configured.instance.sourceInstanceId, kindId: 'task', fields: { title: 'Task recovery control' }, originReview });
+                expect(control, JSON.stringify(control)).toMatchObject({ kind: 'createdAndLinkAttempted', creation: { kind: 'applied' }, reviewLink: 'linked' });
+                const surface = createPluginSurfaceContextFixture({ accountEncryptionMode: 'plain', target: { kind: 'app' },
+                    mount: { kind: 'destination', destination: { pluginId: PLUGIN_MANIFEST.id, localId: PLUGIN_MANIFEST.contributes.ui.views[0]!.id }, container: 'appPage' } });
+                const snapshot = plugin.readTargetedContributionFixture(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1);
+                const declarations = [{ manifest: PLUGIN_MANIFEST, occurrenceId: snapshot.occurrenceId,
+                    sourceCustody: snapshot.sourceCustody }];
+                const admitted = resolveManifestTargetedContributions(declarations);
+                const point = TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1;
+                const semantic = admitted.read({ targetPluginId: PLUGIN_MANIFEST.id, pointId: point.id, protocol: point.protocol });
+                if (!semantic) throw new Error('Native Task source declaration unavailable');
+                const targeted = projectPluginUiTargetedContributionsV1({
+                    target: { pluginId: PLUGIN_MANIFEST.id, occurrenceId: snapshot.occurrenceId },
+                    snapshots: [{ point: { pointId: point.id, protocol: point.protocol }, snapshot: semantic }],
+                    readSourceCustody: () => snapshot.sourceCustody,
+                });
+                const requestSurface = resolveBoundPluginSurfaceContext({ pluginId: PLUGIN_MANIFEST.id,
+                    contributionId: PLUGIN_MANIFEST.contributes.ui.views[0]!.id, surfaceId: 'task-repair',
+                    placement: 'browserSurface', platform: 'web', accountLifetime: null, interactionEnabled: true, daemonInteractionEnabled: false });
+                const controls = createPluginSurfaceActionControls({ pluginId: PLUGIN_MANIFEST.id, surfaceId: 'task-repair',
+                    signal: lifetime.signal, isCurrent: () => true, captureCurrentBinding: () => () => true,
+                    hostAction: { execute: async (_actionId, raw) => {
+                        const request = PluginUiExecuteActionRequestV1Schema.parse(raw);
+                        const action = typeof request.action === 'string' ? request.action : request.action.localId;
+                        try { return { ok: true, result: await invoke(action, request.input) }; }
+                        catch (error) { if (!isPluginError(error)) throw error; return { ok: false, errorCode: error.code, error: error.message }; }
+                    } } });
+                const host = createPluginSurfaceHostApi({ surfaceContext: requestSurface, handlers: {
+                    actionControl: controls.handleRequest,
+                    executeAction: async request => {
+                        const input = PluginUiExecuteActionRequestV1Schema.parse(request.payload);
+                        return await invoke(typeof input.action === 'string' ? input.action : input.action.localId, input.input);
+                    },
+                } });
+                const native = createCanonicalPluginReactNativeHostApiAdapter({ surface: { ...surface, targetedContributions: targeted },
+                    requestSurface, handleRequest: host.handleRequest, installedMethods: host.installedMethods });
+                expect(native.api.version().methods).toContain('actionControl');
+                const fixture = await createSessionFilesViewFixture({ serverUrl: origin, credentials: { token },
+                    serverIdentityId: await getOrCreateServerIdentityId(), machine: null });
+                const created: import('@happier-dev/triage-protocol/v1').TriageEntryRefV1[] = [];
+                const screen = await fixture.render(React.createElement(PluginUiProvider, { hostApi: native.api, mountedPluginId: PLUGIN_MANIFEST.id, context: { ...surface, targetedContributions: targeted },
+                    ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
+                    presentationHost: createPluginUiPrivatePresentationHost(undefined, { actionControls: controls }) },
+                    React.createElement(TriageCreateTaskFields, { sources: [{ configured, sourceInstanceId: configured.instance.sourceInstanceId, displayLabel: 'Happier tasks' }],
+                        sourcesLoaded: true, sourcesUnavailableReason: null, draft: { title: 'Repair selected findings', originReview },
+                        onApplied: async () => undefined, onClose() {}, onCreated: value => { created.push(value.entryRef); } })));
+                const press = async (title: string) => {
+                    const controlled = title === 'Create task' || title === 'Repair Review link';
+                    const buttons = () => screen.tree.root.findAll(node => node.props.title === title && typeof node.props.onPress === 'function'
+                        && !node.props.disabled && !node.props.loading
+                        && (!controlled || String(node.props.testID).startsWith('plugin-surface-action-control:')));
+                    await vi.waitFor(() => expect(buttons().length, JSON.stringify({ text: screen.getTextContent(),
+                        controls: controls.getSnapshot().map(control => ({ id: control.id, busy: control.busy, presentation: control.presentation })) })).toBeGreaterThan(0));
+                    const button = buttons()[0]!;
+                    await act(async () => { await button.props.onPress(); });
+                };
+                try {
+                    await press('Task');
+                    refuseNextLink = true;
+                    await press('Create task');
+                    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Repair Review link'));
+                    expect(results.at(-1)).toMatchObject({ kind: 'createdAndLinkAttempted', creation: { kind: 'applied' }, reviewLink: 'failed' });
+                    expect(created).toEqual([]);
+                    const createsBeforeRepair = hostCalls.filter(id => id === 'tasks.internal.create').length;
+                    expect(createsBeforeRepair).toBe(2); // One positive control and the one requested Task.
+                    const failed = results.at(-1) as { creation: { observation: { localRef: { entryId: string } } } };
+                    const retainedId = failed.creation.observation.localRef.entryId;
+                    // A refused Repair retains the owner's typed cause and the already-created Task.
+                    refuseNextLink = true;
+                    await press('Repair Review link');
+                    await press('Details');
+                    await vi.waitFor(() => expect(screen.getTextContent()).toContain('collection_mutation_invalid'));
+                    expect(created).toEqual([]);
+                    expect(hostCalls.filter(id => id === 'tasks.internal.create')).toHaveLength(createsBeforeRepair);
+                    await press('Repair Review link');
+                    await vi.waitFor(() => expect(created).toHaveLength(1));
+                    expect(created[0]?.entryId).toBe(retainedId);
+                    expect(hostCalls.filter(id => id === 'tasks.internal.create')).toHaveLength(createsBeforeRepair);
+                    expect(uiCalls.filter(id => id === 'tasks/create-v1')).toHaveLength(2);
+                    expect(requests.filter(request => request.refused)).toHaveLength(2);
+                    expect(await plugin.invokeAction('tasks/read-origin-review-v1', { v: 1, entryRef: created[0] }, { surface: 'ui' }))
+                        .toEqual({ v: 1, originReview });
+                    const fresh = storageHost.bind({ ...binding, occurrenceId: 'cold-task-repair' });
+                    if (!fresh) throw new Error('Cold Task relationship storage unavailable');
+                    const { readTaskOriginReview } = await import('../../../../../../packages/plugins/triage/src/corpus/marks/setPinned');
+                    const { bindCorpusCollections } = await import('../../../../../../packages/plugins/triage/src/corpus/collections/bindCorpusCollections');
+                    expect(await readTaskOriginReview({ entryRef: created[0]!, collections: bindCorpusCollections(fresh), signal: lifetime.signal }))
+                        .toEqual(originReview);
+                    const retained = await tasks.internalTaskAction!({ actionId: 'tasks.internal.read', input: { taskId: retainedId },
+                        context: { surface: 'ui', authority: 'present_user' } });
+                    expect(retained).toMatchObject({ status: 'applied', todo: { id: retainedId, title: 'Repair selected findings' } });
+                    expect(JSON.stringify(retained)).not.toContain('Private finding content stays in the Review.');
+                } finally { await screen.unmount(); standardCleanup(); await fixture.dispose(); native.dispose(); controls.dispose(); host.dispose(); }
+            } finally { lifetime.abort(); await plugin.dispose(); }
+        });
+    }, { authentication: 'real', bodyLimit: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 });
+});
