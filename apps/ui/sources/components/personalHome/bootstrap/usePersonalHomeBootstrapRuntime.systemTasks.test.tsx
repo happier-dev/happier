@@ -10,6 +10,7 @@ import type { ServerCredentialLookupOptions } from '@/auth/storage/tokenStorage'
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { PersonalHomeFacts } from './personalHomeBootstrapTypes';
 import { usePersonalHomeBootstrapRuntime } from './usePersonalHomeBootstrapRuntime';
+import { usePersonalHomeBootstrapController } from './usePersonalHomeBootstrapController';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -135,6 +136,7 @@ const harness = vi.hoisted(() => {
     const serverAccountsBySeedBase64Url = new Map<string, string>();
     /** When set, the endpoint commits the Account and then fails before the token returns. */
     let failCreateAfterCommit = false;
+    let relayStatusUnavailable = false;
 
     function seedBase64Url(seed: Uint8Array | undefined): string | null {
         if (!seed) return null;
@@ -178,6 +180,15 @@ const harness = vi.hoisted(() => {
         const timer = setTimeout(() => {
             pendingTimers.delete(timer);
             const listener = listeners.get(taskId);
+            if (kind === 'relay.runtime.status.v1' && relayStatusUnavailable) {
+                listener?.onResult({
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: false,
+                    error: { code: 'relay_status_failed', message: 'Runtime status unavailable' },
+                });
+                return;
+            }
             const data = statusData();
             recordedResults.push({ taskId, kind, data: JSON.parse(JSON.stringify(data)) as Record<string, unknown> });
             events.push(`task:${kind}:result`);
@@ -452,6 +463,7 @@ const harness = vi.hoisted(() => {
         HOME_B_IDENTITY,
         HOME_B_TOKEN,
         makeManualBridge,
+        failRelayStatus: () => { relayStatusUnavailable = true; },
         markBootstrapStarted: () => {
             bootstrapStarted = true;
         },
@@ -526,6 +538,7 @@ const harness = vi.hoisted(() => {
             pendingSeedReadbackFailure = false;
             serverAccountsBySeedBase64Url.clear();
             failCreateAfterCommit = false;
+            relayStatusUnavailable = false;
             authPingFailureCount = 0;
             publishedHomeConnectionDescriptor = { ...DEFAULT_HOME_DESCRIPTOR };
             redeemHomeChallenge.mockClear();
@@ -699,6 +712,23 @@ describe('usePersonalHomeBootstrapRuntime system-task composition', () => {
             network.dispose();
             vi.useRealTimers();
         }
+    });
+
+    it('does not spawn more status tasks when a failed status read updates the setup screen', async () => {
+        harness.failRelayStatus();
+        const hook = await renderHook(() => {
+            const runtime = usePersonalHomeBootstrapRuntime();
+            return usePersonalHomeBootstrapController({ readFacts: runtime.readFacts });
+        });
+        for (let cycle = 0; cycle < 8; cycle += 1) {
+            await act(async () => { vi.runOnlyPendingTimers(); });
+            await flushHookEffects();
+        }
+        // One initial relay-control read and one authoritative bootstrap read. Re-render
+        // and result/snapshot delivery must never turn either into another process start.
+        expect(harness.recordedSpecs().filter((spec) => spec.kind === 'relay.runtime.status.v1')).toHaveLength(2);
+        expect(hook.getCurrent().isChecking).toBe(false);
+        expect(hook.getCurrent().error).toMatchObject({ code: 'relay_status_failed' });
     });
 
     it.each(['primary', 'canonical-alias'] as const)('does not prepare this computer when the runtime URL names two saved Home identities (%s)', async (matching) => {

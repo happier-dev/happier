@@ -317,9 +317,10 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
 
     const readStatus = React.useCallback(async (): Promise<RelayRuntimeStatusData | null> => {
         const result = await runTaskAndWait('relay.runtime.status.v1');
-        if (!result?.ok) {
-            setLastErrorMessage(readErrorMessage(result));
-            return null;
+        if (!result) return null;
+        if (!result.ok) {
+            setLastErrorMessage(result.error.message);
+            throw Object.assign(new Error(result.error.message), { code: result.error.code });
         }
         const status = readRelayRuntimeStatusData(result);
         if (!status) {

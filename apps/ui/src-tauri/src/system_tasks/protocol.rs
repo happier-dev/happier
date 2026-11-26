@@ -3,7 +3,7 @@ use serde_json::Value;
 
 pub const SYSTEM_TASK_PROTOCOL_VERSION: u8 = 1;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SystemTaskSpec {
     pub protocol_version: u8,

@@ -128,7 +128,7 @@ function profileMatchesUrl(profile: ServerProfile, url: string): boolean {
         || (createServerUrlComparableKey(profile.canonicalServerUrl ?? '') || normalizeUrl(profile.canonicalServerUrl)) === key;
 }
 
-function mapRelayStatus(status: ReturnType<typeof useLocalRelayRuntimeControl>['status'], error: string | null): RelayRuntimeStatusSnapshot | null {
+function mapRelayStatus(status: ReturnType<typeof useLocalRelayRuntimeControl>['status']): RelayRuntimeStatusSnapshot | null {
     if (!status) return null;
     const active = status.service.active;
     const healthy = status.healthy === true;
@@ -148,7 +148,6 @@ function mapRelayStatus(status: ReturnType<typeof useLocalRelayRuntimeControl>['
         status: state,
         purpose: status.purpose,
         anonymousSignupEnabled: status.anonymousSignupEnabled,
-        ...(error ? { error } : {}),
     };
 }
 
@@ -290,7 +289,7 @@ export function usePersonalHomeBootstrapRuntime(): PersonalHomeBootstrapRuntime 
         const explicitlySelectedOtherHome = isExplicitExistingHomeSelection(
             activeProfile, activeSelection.isSelectionExplicit,
         );
-        const relayRuntime = mapRelayStatus(authoritativeRelayStatus, relay.lastErrorMessage);
+        const relayRuntime = mapRelayStatus(authoritativeRelayStatus);
         let localHomeReachability: PersonalHomeFacts['localHomeReachability'] = 'unknown';
         let localHomeIdentity = candidate?.serverIdentityId ?? null;
         let anonymousSignup: PersonalHomeFacts['anonymousSignup'] = relayRuntime?.anonymousSignupEnabled === true
@@ -425,7 +424,6 @@ export function usePersonalHomeBootstrapRuntime(): PersonalHomeBootstrapRuntime 
     }, [
         readDaemonStatus,
         readRelayStatus,
-        relay.lastErrorMessage,
     ]);
 
     const runRelayTaskAndWait = relay.runTaskAndWait;

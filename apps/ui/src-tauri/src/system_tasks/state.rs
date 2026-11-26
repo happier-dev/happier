@@ -1,11 +1,29 @@
-use super::protocol::{SystemTaskEvent, SystemTaskResult};
+use super::process::TaskProcess;
+use super::protocol::{SystemTaskEvent, SystemTaskResult, SystemTaskSpec};
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
-use std::process::Child;
+use std::process::ChildStdout;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub type SharedChild = Arc<Mutex<Child>>;
+pub(super) type SharedChild = Arc<TaskProcess>;
+
+pub(super) struct TaskStart {
+    pub task_id: String,
+    pub spawned: Option<(SharedChild, ChildStdout)>,
+}
+
+#[derive(Debug)]
+pub(super) struct TaskStartError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl TaskStartError {
+    fn executor(message: String) -> Self {
+        Self { code: "executor_unavailable", message }
+    }
+}
 const DEFAULT_MAX_COMPLETED_TASKS: usize = 64;
 const DEFAULT_MAX_EVENTS_PER_TASK: usize = 200;
 const DEFAULT_MAX_STDERR_PREVIEW_BYTES: usize = 4096;
@@ -34,8 +52,9 @@ struct SystemTasksStateInner {
 struct TaskStore {
     tasks: HashMap<String, TaskRecord>,
     completed_task_ids: VecDeque<String>,
-    starting_tasks: usize,
     component_removal: ComponentRemoval,
+    starting_tasks: usize,
+    exiting: bool,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -52,6 +71,19 @@ impl TaskStore {
             || self.starting_tasks > 0
             || self.tasks.values().any(|task| task.child.is_some())
     }
+
+    fn admit_start(&self) -> Result<(), TaskStartError> {
+        if self.exiting {
+            return Err(TaskStartError { code: "desktop_exiting", message: "Desktop is exiting.".to_string() });
+        }
+        if self.component_removal != ComponentRemoval::Idle {
+            return Err(TaskStartError {
+                code: "desktop_cleanup_in_progress",
+                message: "Desktop component cleanup is in progress or complete. Quit the app before starting more system tasks.".to_string(),
+            });
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct TaskStartReservation(SystemTasksState);
@@ -65,6 +97,7 @@ impl Drop for TaskStartReservation {
 }
 
 struct TaskRecord {
+    shared_spec: Option<SystemTaskSpec>,
     child: Option<SharedChild>,
     cancel_requested: bool,
     snapshot: SystemTaskSnapshot,
@@ -73,16 +106,14 @@ struct TaskRecord {
 
 impl SystemTasksState {
     /// A result can arrive before the executor exits. Keep quit held until the real child
-    /// is released, including task starts and synchronous component cleanup.
+    /// is released, including synchronous component cleanup.
     pub(crate) fn is_busy(&self) -> Result<bool, String> {
         Ok(self.lock_tasks()?.is_busy())
     }
 
     pub(crate) fn reserve_start(&self) -> Result<TaskStartReservation, String> {
         let mut store = self.lock_tasks()?;
-        if store.component_removal != ComponentRemoval::Idle {
-            return Err("Desktop component cleanup is in progress or complete. Quit the app before starting more system tasks.".to_string());
-        }
+        store.admit_start().map_err(|error| error.message)?;
         store.starting_tasks += 1;
         Ok(TaskStartReservation(self.clone()))
     }
@@ -129,17 +160,60 @@ impl SystemTasksState {
         format!("system_task_{sequence}")
     }
 
-    pub fn insert_running_task(&self, task_id: &str, child: SharedChild) -> Result<(), String> {
-        let mut task_store = self.lock_tasks()?;
-        task_store.tasks.insert(
-            task_id.to_string(),
-            TaskRecord {
-                child: Some(child),
-                cancel_requested: false,
-                snapshot: SystemTaskSnapshot::default(),
-                stderr_preview: Vec::new(),
-            },
-        );
+    pub(super) fn start(
+        &self,
+        shared_spec: Option<SystemTaskSpec>,
+        spawn: impl FnOnce() -> Result<TaskProcess, String>,
+    ) -> Result<TaskStart, TaskStartError> {
+        let mut store = self.lock_tasks().map_err(TaskStartError::executor)?;
+        store.admit_start()?;
+        if let Some(spec) = &shared_spec {
+            if let Some((task_id, _)) = store.tasks.iter().find(|(_, task)| {
+                task.child.is_some() && task.snapshot.result.is_none()
+                    && task.shared_spec.as_ref() == Some(spec)
+            }) {
+                return Ok(TaskStart { task_id: task_id.clone(), spawned: None });
+            }
+        }
+
+        let child = Arc::new(spawn().map_err(TaskStartError::executor)?);
+        let stdout = child.lock().expect("new task process is unshared").stdout.take();
+        let stdout = stdout.ok_or_else(|| {
+                let _ = child.terminate(true);
+                let _ = child.lock().expect("new task process is unshared").wait();
+                TaskStartError::executor("Failed to capture system task stdout.".to_string())
+            })?;
+        let task_id = self.allocate_task_id();
+        store.tasks.insert(task_id.clone(), TaskRecord {
+            shared_spec,
+            child: Some(child.clone()),
+            ..TaskRecord::default()
+        });
+        Ok(TaskStart { task_id, spawned: Some((child, stdout)) })
+    }
+
+    pub(super) fn retire_native_task(&self, task_id: &str) -> Result<(), String> {
+        self.lock_tasks()?.tasks.remove(task_id);
+        Ok(())
+    }
+
+    pub(crate) fn terminate_for_exit(&self) {
+        if let Ok(mut store) = self.lock_tasks() {
+            store.exiting = true;
+            for child in store.tasks.values().filter_map(|task| task.child.as_ref()) {
+                if let Err(error) = child.terminate(true) {
+                    log::warn!("Failed to terminate system task on exit: {error}");
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn insert_running_task(&self, task_id: &str, child: SharedChild) -> Result<(), String> {
+        self.lock_tasks()?.tasks.insert(task_id.to_string(), TaskRecord {
+            child: Some(child),
+            ..TaskRecord::default()
+        });
         Ok(())
     }
 
@@ -180,6 +254,7 @@ impl SystemTasksState {
         if record.snapshot.result.is_some() {
             return Ok(false);
         }
+        record.shared_spec = None;
         record.snapshot.result = Some(result);
         task_store.completed_task_ids.push_back(task_id.to_string());
         evict_completed_tasks(&mut task_store, self.inner.max_completed_tasks);
@@ -219,7 +294,7 @@ impl SystemTasksState {
             .unwrap_or_default())
     }
 
-    pub fn request_cancel(&self, task_id: &str) -> Result<Option<SharedChild>, String> {
+    pub(super) fn request_cancel(&self, task_id: &str) -> Result<Option<SharedChild>, String> {
         let mut task_store = self.lock_tasks()?;
         let Some(record) = task_store.tasks.get_mut(task_id) else {
             return Ok(None);
@@ -228,7 +303,7 @@ impl SystemTasksState {
         Ok(record.child.clone())
     }
 
-    pub fn running_child(&self, task_id: &str) -> Result<Option<SharedChild>, String> {
+    pub(super) fn running_child(&self, task_id: &str) -> Result<Option<SharedChild>, String> {
         let task_store = self.lock_tasks()?;
         Ok(task_store
             .tasks
@@ -320,6 +395,7 @@ fn evict_completed_tasks(task_store: &mut TaskStore, max_completed_tasks: usize)
 impl Default for TaskRecord {
     fn default() -> Self {
         Self {
+            shared_spec: None,
             child: None,
             cancel_requested: false,
             snapshot: SystemTaskSnapshot::default(),
@@ -336,24 +412,23 @@ impl Default for SystemTasksState {
 
 #[cfg(test)]
 mod tests {
-    use super::{SharedChild, SystemTasksState};
+    use super::{SharedChild, SystemTasksState, TaskProcess};
     use crate::system_tasks::protocol::{
         build_failure_result, SystemTaskEvent, SystemTaskResult, SystemTaskSuccessResult,
         SYSTEM_TASK_PROTOCOL_VERSION,
     };
     use std::process::{Command, Stdio};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     fn spawn_test_child() -> SharedChild {
-        let child = Command::new("node")
+        let child = TaskProcess::spawn(Command::new("node")
             .arg("-e")
             .arg("setTimeout(() => {}, 60_000)")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
+            .stderr(Stdio::null()))
             .expect("test child should spawn");
-        Arc::new(Mutex::new(child))
+        Arc::new(child)
     }
 
     fn kill_test_child(child: SharedChild) {
@@ -380,12 +455,12 @@ mod tests {
         let state = SystemTasksState::default();
         assert!(!state.is_busy().unwrap());
         state.run_component_cleanup(|| {
-            assert!(state.reserve_start().is_err(), "cleanup must exclude task starts");
+            assert!(state.start(None, || panic!("cleanup must exclude task starts")).is_err());
             assert!(state.is_busy().unwrap(), "quit must wait for component cleanup");
             Ok(())
         }).unwrap();
         assert!(!state.is_busy().unwrap(), "completed cleanup must allow quit");
-        assert!(state.reserve_start().is_err(), "successful cleanup must block reacquisition until exit");
+        assert!(state.start(None, || panic!("successful cleanup must block reacquisition until exit")).is_err());
     }
 
     #[test]
@@ -399,17 +474,13 @@ mod tests {
         state.mark_finished("busy").unwrap();
         assert!(state.run_component_cleanup(|| Err("retry".to_string())).is_err());
         assert!(!state.is_busy().unwrap(), "failed cleanup must allow quit after its executor returns");
-        assert!(state.reserve_start().is_ok(), "failed cleanup must permit recovery");
+        let error = state.start(None, || Err("spawn attempted".to_string())).err().unwrap();
+        assert_eq!(error.message, "spawn attempted");
     }
 
     #[test]
-    fn component_cleanup_waits_for_spawn_reservations_and_real_process_exit() {
+    fn component_cleanup_waits_for_real_process_exit() {
         let state = SystemTasksState::default();
-        let reservation = state.reserve_start().unwrap();
-        assert!(state.is_busy().unwrap(), "quit must wait for task startup");
-        assert!(state.run_component_cleanup(|| panic!("spawn is in progress")).is_err());
-        drop(reservation);
-        assert!(!state.is_busy().unwrap());
         let child = spawn_test_child();
         state.insert_running_task("finishing", child.clone()).unwrap();
         state.complete_task("finishing", build_failure_result("finishing", "failed", "done")).unwrap();

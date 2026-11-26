@@ -419,7 +419,7 @@ const PersonalHomeRuntimeControlSectionContent = React.memo(function PersonalHom
             }
             verifiedBackupHomeServerIdentityId = verified.homeServerIdentityId;
             verifiedBackupPath = created.path;
-            const reboundStatus = await control.readStatus();
+            const reboundStatus = await control.readStatus().catch(() => null);
             if (reboundStatus?.purpose?.kind !== 'personal-home') {
                 setEraseBackupRecovery({ path: created.path, reason: 'unknown' });
                 return;

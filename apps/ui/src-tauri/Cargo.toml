@@ -77,7 +77,7 @@ webview2-com = "0.38"
 windows-core-061 = { package = "windows-core", version = "=0.61.2" }
 # The tray reads the taskbar theme from the registry; already in the tree via hyper-util.
 windows-registry = "0.6"
-windows-sys = { version = "0.60.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.60.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 windows = { version = "0.62.2", features = ["Foundation", "Data_Xml_Dom", "UI_Notifications", "UI_ViewManagement", "Win32_Graphics_Dwm", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target."cfg(target_os = \"linux\")".dependencies]

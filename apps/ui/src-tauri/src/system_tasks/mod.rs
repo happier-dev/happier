@@ -1,6 +1,7 @@
 mod hsetup_command;
 mod hsetup_path;
 mod json_lines;
+mod process;
 mod protocol;
 mod state;
 
@@ -11,12 +12,13 @@ use protocol::{
     build_failure_result, parse_output_line, parse_system_task_spec_json, rewrite_event_task_id,
     rewrite_result_task_id, OutputPayload, SystemTaskResult,
 };
+use process::TaskProcess;
 use serde::Serialize;
 use crate::background_command::background_command;
 use state::{SharedChild, SystemTaskSnapshot};
 use std::io::{BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -74,27 +76,19 @@ pub async fn start_system_task(
     state: State<'_, SystemTasksState>,
     spec_json: String,
 ) -> Result<StartSystemTaskResponse, String> {
-    parse_system_task_spec_json(&spec_json)?;
+    let spec = parse_system_task_spec_json(&spec_json)?;
+    let share = matches!(spec.kind.as_str(), "relay.runtime.status.v1" | "daemon.service.status.v1")
+        || (spec.kind == "relay.runtime.installOrUpdate.v1"
+            && spec.params.pointer("/purpose/kind").and_then(serde_json::Value::as_str) == Some("personal-home"));
 
-    let _starting = state.reserve_start()?;
-
-    let task_id = state.allocate_task_id();
-    let hsetup_path = hsetup_path::resolve_hsetup_path(&app)?;
-
-    let mut child = spawn_hsetup_child(&hsetup_path, &spec_json)?;
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "Failed to capture system task stdout.".to_string())?;
-
-    let child = std::sync::Arc::new(std::sync::Mutex::new(child));
-    state.insert_running_task(&task_id, child.clone())?;
-
-    let system_tasks = state.inner().clone();
-    monitor_child_output(app, system_tasks, task_id.clone(), child, stdout);
-
-    Ok(StartSystemTaskResponse { task_id })
+    let start = state.start(share.then_some(spec), || {
+        let hsetup_path = hsetup_path::resolve_hsetup_path(&app)?;
+        spawn_hsetup_child(&hsetup_path, &spec_json)
+    }).map_err(|error| error.message)?;
+    if let Some((child, stdout)) = start.spawned {
+        monitor_child_output(app, state.inner().clone(), start.task_id.clone(), child, stdout);
+    }
+    Ok(StartSystemTaskResponse { task_id: start.task_id })
 }
 
 /// How a task the native side ran for itself ended.
@@ -118,39 +112,33 @@ pub(crate) fn run_system_task_for_native(app: &AppHandle, spec_json: &str) -> Na
         return failed("invalid_spec", message);
     }
     let state = app.state::<SystemTasksState>();
-    let _running = match state.reserve_start() {
-        Ok(reservation) => reservation,
-        Err(message) => return failed("desktop_cleanup_in_progress", message),
+    let start = state.start(None, || {
+        let hsetup_path = hsetup_path::resolve_hsetup_path(app)?;
+        let child = spawn_hsetup_child(&hsetup_path, spec_json)?;
+        drop(child.lock().expect("new task process is unshared").stdin.take());
+        Ok(child)
+    });
+    let start = match start {
+        Ok(start) => start,
+        Err(error) => return failed(error.code, error.message),
     };
-    let hsetup_path = match hsetup_path::resolve_hsetup_path(app) {
-        Ok(path) => path,
-        Err(message) => return failed("executor_unavailable", message),
-    };
-    let mut child = match spawn_hsetup_child(&hsetup_path, spec_json) {
-        Ok(child) => child,
-        Err(message) => return failed("executor_unavailable", message),
-    };
-    drop(child.stdin.take());
-    let Some(stdout) = child.stdout.take() else {
-        let _ = child.kill();
-        return failed(
-            "executor_unavailable",
-            "Failed to capture system task stdout.".to_string(),
-        );
-    };
+    let (child, stdout) = start.spawned.expect("native task starts a new process");
     // Drain the real child boundary: a piped stderr must not block hsetup before its result.
-    let stderr = child.stderr.take().map(|mut stderr| {
+    let stderr = child.lock().ok().and_then(|mut child| child.stderr.take()).map(|mut stderr| {
         thread::spawn(move || {
             let _ = std::io::copy(&mut stderr, &mut std::io::sink());
         })
     });
     let outcome = read_native_task_outcome(&mut BufReader::new(stdout));
     if outcome.is_none() {
-        let _ = child.kill();
+        let _ = child.terminate(true);
     }
-    let _ = child.wait();
     if let Some(stderr) = stderr {
         let _ = stderr.join();
+    }
+    wait_for_child(&child);
+    if let Err(error) = state.retire_native_task(&start.task_id) {
+        log::warn!("Failed to retire native system task: {error}");
     }
     outcome.unwrap_or_else(|| {
         failed(
@@ -190,14 +178,7 @@ pub async fn cancel_system_task(
         return Ok(());
     };
 
-    let mut child_guard = child
-        .lock()
-        .map_err(|_| "System task process mutex poisoned.".to_string())?;
-    match request_child_cancel(&mut child_guard) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == ErrorKind::InvalidInput => Ok(()),
-        Err(error) => Err(format!("Failed to cancel system task: {error}")),
-    }
+    child.terminate(false).map_err(|error| format!("Failed to cancel system task: {error}"))
 }
 
 #[tauri::command]
@@ -332,10 +313,13 @@ fn monitor_child_output_with_emitters(
             }
         }
 
-        wait_for_child(&child);
+        if !emitted_final_result {
+            let _ = child.terminate(true);
+        }
         if let Some(handle) = stderr_handle {
             let _ = handle.join();
         }
+        wait_for_child(&child);
         let _ = state.mark_finished(&task_id);
 
         if !emitted_final_result {
@@ -580,49 +564,27 @@ fn reveal_system_task_output_path(path: &Path) -> Result<(), String> {
     }
 }
 
-fn kill_child(child: &SharedChild) {
-    if let Ok(mut child_guard) = child.lock() {
-        let _ = request_child_cancel(&mut child_guard);
-    }
-}
-
 fn wait_for_child(child: &SharedChild) {
     if let Ok(mut child_guard) = child.lock() {
         let _ = child_guard.wait();
     }
 }
 
-fn request_child_cancel(child: &mut Child) -> Result<(), std::io::Error> {
-    #[cfg(unix)]
-    {
-        let signal_result = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
-        if signal_result == 0 {
-            return Ok(());
-        }
-
-        let signal_error = std::io::Error::last_os_error();
-        if signal_error.kind() != ErrorKind::InvalidInput {
-            return Err(signal_error);
-        }
-    }
-
-    child.kill()
-}
-
-fn spawn_hsetup_child(hsetup_path: &Path, spec_json: &str) -> Result<Child, String> {
-    let mut child = create_hsetup_run_command(hsetup_path)
-        .spawn()
+fn spawn_hsetup_child(hsetup_path: &Path, spec_json: &str) -> Result<TaskProcess, String> {
+    let child = TaskProcess::spawn(&mut create_hsetup_run_command(hsetup_path))
         .map_err(|error| format!("Failed to start hsetup: {error}"))?;
-
-    let Some(stdin) = child.stdin.as_mut() else {
-        return Err("Failed to open hsetup stdin.".to_string());
-    };
-    stdin
-        .write_all(spec_json.as_bytes())
-        .and_then(|_| stdin.write_all(b"\n"))
-        .and_then(|_| stdin.flush())
-        .map_err(|error| format!("Failed to write task spec to hsetup stdin: {error}"))?;
-
+    let sent = child.lock().expect("new task process is unshared").stdin.as_mut()
+        .ok_or_else(|| "Failed to open hsetup stdin.".to_string())
+        .and_then(|stdin| stdin
+            .write_all(spec_json.as_bytes())
+            .and_then(|_| stdin.write_all(b"\n"))
+            .and_then(|_| stdin.flush())
+            .map_err(|error| format!("Failed to write task spec to hsetup stdin: {error}")));
+    if let Err(error) = sent {
+        let _ = child.terminate(true);
+        let _ = child.lock().expect("new task process is unshared").wait();
+        return Err(error);
+    }
     Ok(child)
 }
 
@@ -645,7 +607,7 @@ fn create_hsetup_run_command(hsetup_path: &Path) -> Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        monitor_child_output_with_emitters, read_native_task_outcome, request_child_cancel,
+        monitor_child_output_with_emitters, read_native_task_outcome, TaskProcess,
         send_prompt_answer_to_task, spawn_hsetup_child, NativeTaskOutcome,
     };
     use crate::system_tasks::SystemTasksState;
@@ -679,16 +641,16 @@ mod tests {
 
         let spec_json =
             r#"{"protocolVersion":1,"kind":"system.ping.v1","params":{"secret":"token"}}"#;
-        let mut child =
+        let child =
             spawn_hsetup_child(&script_path, spec_json).expect("child should start successfully");
         let mut stdout = String::new();
-        child
+        child.lock().unwrap()
             .stdout
             .take()
             .expect("stdout should be piped")
             .read_to_string(&mut stdout)
             .expect("stdout should read");
-        let status = child.wait().expect("child should exit");
+        let status = child.lock().unwrap().wait().expect("child should exit");
 
         assert!(status.success());
         assert!(stdout.contains("ARG:system-tasks\n"));
@@ -713,12 +675,11 @@ mod tests {
         let previous_path = std::env::var("PATH").ok();
         std::env::set_var("PATH", "");
 
-        let mut child = std::process::Command::new(&script_path)
-            .spawn()
+        let child = TaskProcess::spawn(&mut std::process::Command::new(&script_path))
             .expect("child should spawn");
         thread::sleep(Duration::from_millis(100));
 
-        let cancel_result = request_child_cancel(&mut child);
+        let cancel_result = child.terminate(false);
 
         match previous_path {
             Some(value) => std::env::set_var("PATH", value),
@@ -726,9 +687,66 @@ mod tests {
         }
 
         assert!(cancel_result.is_ok());
-        let _status = child.wait().expect("child should exit");
+        let _status = child.lock().unwrap().wait().expect("child should exit");
 
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_reaches_a_descendant_of_the_spawned_hsetup() {
+        use std::io::BufRead;
+
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("hsetup");
+        fs::write(&script, "#!/bin/sh\nIFS= read -r spec\nsleep 60 &\necho $!\nwait\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let child = spawn_hsetup_child(&script, "{}").unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(child.lock().unwrap().stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let descendant: libc::pid_t = line.trim().parse().unwrap();
+        let group = unsafe { libc::getpgid(descendant) };
+        let pid = child.lock().unwrap().id() as libc::pid_t;
+        child.terminate(false).unwrap();
+        child.lock().unwrap().wait().unwrap();
+        if group != pid {
+            unsafe { libc::kill(descendant, libc::SIGKILL); }
+        }
+        assert_eq!(group, pid, "hsetup and its descendants must have their own process group");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parallel_personal_home_starts_share_one_executor_and_snapshot_reads_spawn_none() {
+        use super::parse_system_task_spec_json;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let state = SystemTasksState::default();
+        let spec = r#"{"protocolVersion":1,"kind":"relay.runtime.installOrUpdate.v1","params":{"purpose":{"kind":"personal-home","canonicalServerUrl":"http://127.0.0.1:3005"}}}"#;
+        let temp = tempfile::tempdir().unwrap();
+        let script = temp.path().join("hsetup");
+        fs::write(&script, "#!/bin/sh\nIFS= read -r spec\nIFS= read -r answer\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let spawns = AtomicUsize::new(0);
+        let start = || state.start(Some(parse_system_task_spec_json(spec).unwrap()), || {
+            let child = spawn_hsetup_child(&script, spec)?;
+            spawns.fetch_add(1, Ordering::Relaxed);
+            Ok(child)
+        }).unwrap();
+        let starts = thread::scope(|scope| {
+            let threads: Vec<_> = (0..12).map(|_| scope.spawn(start)).collect();
+            threads.into_iter().map(|worker| worker.join().unwrap()).collect::<Vec<_>>()
+        });
+        let first_id = &starts[0].task_id;
+        for _ in 0..50 {
+            assert!(state.snapshot(first_id).unwrap().result.is_none());
+        }
+        state.terminate_for_exit();
+        for (child, _) in starts.iter().filter_map(|start| start.spawned.as_ref()) {
+            assert!(!child.lock().unwrap().wait().unwrap().success());
+        }
+        assert!(starts.iter().all(|start| start.task_id == *first_id));
+        assert_eq!(spawns.load(Ordering::Relaxed), 1);
     }
 
     fn env_lock() -> MutexGuard<'static, ()> {
@@ -778,13 +796,13 @@ mod tests {
 
         let spec_json =
             r#"{"protocolVersion":1,"kind":"remote.ssh.bootstrapMachine.v1","params":{}}"#;
-        let mut child =
+        let child =
             spawn_hsetup_child(&script_path, spec_json).expect("child should start successfully");
 
-        let stdout = child.stdout.take().expect("stdout should be piped");
+        let stdout = child.lock().unwrap().stdout.take().expect("stdout should be piped");
         let mut lines = BufReader::new(stdout).lines();
 
-        let child = std::sync::Arc::new(std::sync::Mutex::new(child));
+        let child = std::sync::Arc::new(child);
         let state = SystemTasksState::default();
         state
             .insert_running_task("task_1", child.clone())
@@ -841,17 +859,17 @@ mod tests {
         fs::set_permissions(&script_path, permissions).expect("script should be executable");
 
         let spec_json = r#"{"protocolVersion":1,"kind":"system.ping.v1","params":{}}"#;
-        let mut child = spawn_hsetup_child(&script_path, spec_json).expect("child should start");
+        let child = spawn_hsetup_child(&script_path, spec_json).expect("child should start");
 
         let mut stderr = String::new();
-        child
+        child.lock().unwrap()
             .stderr
             .take()
             .expect("stderr should be piped")
             .read_to_string(&mut stderr)
             .expect("stderr should read");
 
-        let status = child.wait().expect("child should exit");
+        let status = child.lock().unwrap().wait().expect("child should exit");
         assert_eq!(status.code(), Some(7));
         assert!(stderr.contains("boom"));
 
@@ -873,10 +891,10 @@ mod tests {
         fs::set_permissions(&script_path, permissions).expect("script should be executable");
 
         let spec_json = r#"{"protocolVersion":1,"kind":"system.ping.v1","params":{}}"#;
-        let mut child = spawn_hsetup_child(&script_path, spec_json).expect("child should start");
-        let stdout = child.stdout.take().expect("stdout should be piped");
+        let child = spawn_hsetup_child(&script_path, spec_json).expect("child should start");
+        let stdout = child.lock().unwrap().stdout.take().expect("stdout should be piped");
 
-        let child = std::sync::Arc::new(std::sync::Mutex::new(child));
+        let child = std::sync::Arc::new(child);
         let state = SystemTasksState::default();
         state
             .insert_running_task("task_1", child.clone())

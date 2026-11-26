@@ -337,6 +337,7 @@ pub fn run() {
                 // final application shutdown; the persistent identity key is
                 // retained so restarts reuse the same endpoint identity.
                 tauri::RunEvent::Exit => {
+                    tauri::Manager::state::<system_tasks::SystemTasksState>(app_handle).terminate_for_exit();
                     window_sizing::flush_window_frames(app_handle);
                     capture::shortcuts::shutdown(app_handle);
                     iroh::shutdown_process_endpoint(app_handle);
