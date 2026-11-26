@@ -1698,7 +1698,8 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 }
             }
         },
-        retire: () => { retired = true; lifetime.abort(); },
+        // Insertion cleanup fences admission; layout disposal may notify React observers.
+        retire: () => { retired = true; },
         isCurrent,
         dispose: () => {
             if (disposed) return;
