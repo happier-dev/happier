@@ -940,6 +940,30 @@ describe('MachinePathBrowserModal', () => {
         }
     });
 
+    it('shows a rooted file selection relative to the checkout in the confirm footer', async () => {
+        const root = '/checkouts/billing';
+        const file = `${root}/data/Analytics.sqlite`;
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(async ({ directoryPath }) => ({
+            ok: true,
+            entries: directoryPath === root
+                ? [{ name: 'data', path: `${root}/data`, type: 'directory' }]
+                : [{ name: 'Analytics.sqlite', path: file, type: 'file' }],
+            truncated: false,
+        }));
+        const onResolve = vi.fn();
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1"
+            rootDirectoryPath={root} selectionMode="file" onResolve={onResolve} onClose={vi.fn()} />);
+        await waitForTestId(screen, getPathBrowserToggleTestId(`${root}/data`));
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId(`${root}/data`));
+        await waitForTestId(screen, getPathBrowserRowTestId(file));
+        await screen.pressByTestIdAsync(getPathBrowserRowTestId(file));
+
+        expect(screen.getTextContent()).toContain('data/Analytics.sqlite');
+        expect(screen.getTextContent()).not.toContain(file);
+        await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(onResolve).toHaveBeenCalledWith(file, 'machine-1');
+    });
+
     it('supports a scoped popover view rooted at a specific directory without listing machine roots', async () => {
         const onPickPath = vi.fn();
         const onRequestClose = vi.fn();
@@ -1276,6 +1300,16 @@ describe('MachinePathBrowserModal', () => {
         const onResolve = vi.fn();
         const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" onResolve={onResolve} onClose={vi.fn()} />);
         await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+        await waitForTestId(screen, getPathBrowserToggleTestId('/tmp'));
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/tmp'));
+        const incompleteId = getPathBrowserRowTestId('/tmp#truncated');
+        const firstEntryId = getPathBrowserRowTestId('/tmp/a-0');
+        await waitForTestId(screen, incompleteId);
+        await waitForTestId(screen, firstEntryId);
+        const rows = screen.findAll(node => node.props.testID === incompleteId || node.props.testID === firstEntryId);
+        expect(rows[0]?.props.testID).toBe(incompleteId);
 
         await act(async () => { screen.changeTextByTestId('path-browser-search', '/tmp/p03-qab-join'); });
         // The capped listing arrives, then the name lookup runs after the query's input debounce.

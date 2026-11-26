@@ -357,7 +357,7 @@ describe('useLazyDirectoryTree', () => {
         expect(loadDirectoryEntries).toHaveBeenCalledWith('/Users', expect.any(AbortSignal), undefined);
     });
 
-    it('adds an informational node when a directory result is truncated', async () => {
+    it('shows the incomplete listing notice before a capped directory’s children', async () => {
         const getCachedEntries = vi.fn(() => null);
 
         const loadDirectoryEntries = vi.fn(async (directoryPath: string) => {
@@ -404,8 +404,8 @@ describe('useLazyDirectoryTree', () => {
         await vi.waitFor(() => {
             expect(api.nodes.map((node: any) => ({ type: node.type, path: node.path, count: node.entryCount }))).toEqual([
                 { type: 'directory', path: '/', count: undefined },
-                { type: 'directory', path: '/Users', count: undefined },
                 { type: 'info', path: '/#truncated', count: 1 },
+                { type: 'directory', path: '/Users', count: undefined },
             ]);
         });
 

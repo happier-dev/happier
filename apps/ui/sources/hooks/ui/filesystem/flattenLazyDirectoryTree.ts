@@ -19,6 +19,21 @@ export function flattenLazyDirectoryTree(input: {
     const entries = input.directoryEntriesByPath.get(input.directoryPath) ?? [];
     const out: LazyDirectoryTreeNode[] = [];
 
+    // A capped listing signals incompleteness before its children fill the viewport.
+    if (input.directoryTruncationByPath.get(input.directoryPath) === true) {
+        out.push({
+            path: `${input.directoryPath}#truncated`,
+            name: '',
+            type: 'info',
+            depth: input.depth,
+            isExpanded: false,
+            isLoadingChildren: false,
+            parentDirectoryPath: input.directoryPath,
+            infoKind: 'truncated',
+            entryCount: entries.length,
+        });
+    }
+
     for (const entry of entries) {
         const isExpanded = entry.type === 'directory' && input.expandedDirectories.has(entry.path);
         const hasChildrenLoaded = entry.type === 'directory' && isLoadedDirectory(input.directoryEntriesByPath.get(entry.path));
@@ -69,20 +84,6 @@ export function flattenLazyDirectoryTree(input: {
                 })
             );
         }
-    }
-
-    if (input.directoryTruncationByPath.get(input.directoryPath) === true) {
-        out.push({
-            path: `${input.directoryPath}#truncated`,
-            name: '',
-            type: 'info',
-            depth: input.depth,
-            isExpanded: false,
-            isLoadingChildren: false,
-            parentDirectoryPath: input.directoryPath,
-            infoKind: 'truncated',
-            entryCount: entries.length,
-        });
     }
 
     return out;

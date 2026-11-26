@@ -492,7 +492,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         && (!initialPath || initialPath === rootDirectoryPath);
     const selectedPath = pickedPath ?? (canPickLoadedRoot ? rootDirectoryPath : null);
     // The selection is shown once: beside the confirm button when there is one, else under the title.
-    const selectedPathLabel = selectedPath ? formatPathRelativeToHome(selectedPath, workspace ? undefined : machineHomeDir) : null;
+    let selectedPathLabel: string | null = null;
+    if (selectedPath) {
+        selectedPathLabel = selectionMode === 'file' && rootDirectoryPath
+            ? resolvePathRelativeToRoot({ path: selectedPath, root: rootDirectoryPath, preservePathSpelling: true })
+            : formatPathRelativeToHome(selectedPath, workspace ? undefined : machineHomeDir);
+    }
     const headerSelectedPathLabel = interaction === 'confirm' ? null : selectedPathLabel;
 
     const nodesByPath = React.useMemo(() => {
@@ -1008,7 +1013,9 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const chromeSetter = useCardChrome ? props.setChrome : undefined;
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
-        title: props.title ?? t('newSession.pathPicker.enterPathTitle'),
+        title: props.title ?? (selectionMode === 'file'
+            ? t('browserPresence.interaction.chooseFile')
+            : t('newSession.pathPicker.enterPathTitle')),
         subtitle: headerSelectedPathLabel ?? undefined,
         testID: PATH_BROWSER_MODAL_TEST_ID,
         actions: chromeActions,
@@ -1020,7 +1027,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             size: 'lg' as const,
             viewportMargin: { horizontal: 12, vertical: 12 } as const,
         },
-    }), [chromeActions, chromeFooter, headerSelectedPathLabel, props.title]);
+    }), [chromeActions, chromeFooter, headerSelectedPathLabel, props.title, selectionMode]);
 
     useModalCardChrome(chromeSetter, chrome);
 
