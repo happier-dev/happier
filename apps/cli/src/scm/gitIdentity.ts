@@ -62,19 +62,39 @@ export function runWithGitIdentity<T>(input: Readonly<{ person: ScmGitIdentity |
   return scope.getStore() ? run() : scope.run({ ...input, resolutions: new Map() }, run);
 }
 
-export function readResolvedGitIdentity(cwd: string): Promise<GitIdentityResolution> | undefined {
-  return scope.getStore()?.resolutions.get(cwd);
+/** Explicit describe and author-writing commands share the admitted operation's resolution. */
+export function resolveScmGitIdentity(cwd: string, run: ScmCommandRunner): Promise<GitIdentityResolution> | undefined {
+  const current = scope.getStore();
+  if (!current) return undefined;
+  let result = current.resolutions.get(cwd);
+  if (!result) {
+    result = resolveGitIdentity({ ...current, cwd, run });
+    current.resolutions.set(cwd, result);
+  }
+  return result;
+}
+
+/** Git's author-producing commands, including explicit attribution probes used by publication. */
+export function gitCommandUsesIdentity(args: readonly string[]): boolean {
+  let index = 0;
+  while (args[index]?.startsWith('-')) {
+    const option = args[index++];
+    if (option === '-c' || option === '-C' || option === '--git-dir' || option === '--work-tree' || option === '--config-env') index++;
+  }
+  const command = args[index];
+  const rest = args.slice(index + 1);
+  switch (command) {
+    case 'var': return rest[0] === 'GIT_AUTHOR_IDENT' || rest[0] === 'GIT_COMMITTER_IDENT';
+    case 'stash': return rest.length === 0 || rest[0] === 'push' || rest[0] === 'save' || rest[0] === 'create';
+    case 'commit': case 'commit-tree': case 'merge': case 'rebase': case 'revert': case 'cherry-pick': case 'am': case 'pull':
+      return !rest.includes('--abort') && !rest.includes('--quit') && !rest.includes('--show-current-patch');
+    default: return false;
+  }
 }
 
 /** Resolve once per repository per admitted operation, through its already-selected process port. */
 export async function applyGitIdentity(input: ScmCommandInput, run: ScmCommandRunner): Promise<ScmCommandInput> {
-  const current = scope.getStore();
-  if (!current) return input;
-  let result = current.resolutions.get(input.cwd);
-  if (!result) {
-    result = resolveGitIdentity({ ...current, cwd: input.cwd, run });
-    current.resolutions.set(input.cwd, result);
-  }
-  const resolved = await result;
+  const resolved = await resolveScmGitIdentity(input.cwd, run);
+  if (!resolved) return input;
   return { ...input, env: { ...resolved.environment, ...input.env } };
 }

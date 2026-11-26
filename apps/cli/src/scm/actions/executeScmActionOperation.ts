@@ -1,6 +1,6 @@
 import { projectVerifiedExternalActionRequesterContext, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
-import { readResolvedGitIdentity, readScmPersonGitIdentity, runWithGitIdentity } from '@/scm/gitIdentity';
+import { readScmPersonGitIdentity, runWithGitIdentity } from '@/scm/gitIdentity';
 import type { ScmBackendContext } from '@/scm/types';
 import { runWithScmHostingActionExecutor } from '../hostingProviders/executionAuthority';
 import { discoverScmRepositories } from '../repositoryDiscovery';
@@ -33,7 +33,7 @@ import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protoco
 import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { resolveCwd } from '@/scm/runtime';
+import { resolveCwd, describeScmGitIdentity } from '@/scm/runtime';
 import { createNonRepositoryScmSnapshotResponse, notRepositoryResponse, runScmRoute } from '@/scm/rpc/dispatch';
 import { captureScmComparison, readCapturedScmComparison, readCapturedScmComparisonFile, readCapturedScmComparisonPage } from '@/scm/comparisons/captureScmComparison';
 import { findCapturedComparisonFile, projectCapturedComparison, projectCapturedScmOutput } from '@/scm/comparisons/projectCapturedComparison';
@@ -371,7 +371,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                 runWithBackend: async ({ context, selection }) => {
                     if (!selection.backend.describeBackend) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'SCM backend operation is unavailable' };
                     const result = await selection.backend.describeBackend({ context, request });
-                    const identity = await readResolvedGitIdentity(context.cwd);
+                    const identity = await describeScmGitIdentity(context.cwd);
                     return identity ? { ...result, gitIdentity: identity.identity } : result;
                 },
             });

@@ -90,7 +90,7 @@ describe.each(['rpc', 'action'] as const)('SCM requester identity through %s', e
 
 // Process counts are the operation cost contract, measured at the selected process port.
 describe('Git identity process budget', () => {
-  it.each([false, true])('one resolver process per repository; custodian=%s', async isCustodian => {
+  it.each([false, true])('reads cost zero identity probes and a commit resolves once; custodian=%s', async isCustodian => {
     const { runWithGitIdentity } = await import('@/scm/gitIdentity');
     const { runWithScmCommandRunner, runScmCommand } = await import('@/scm/runtime');
     const commands: string[][] = [];
@@ -106,7 +106,13 @@ describe('Git identity process budget', () => {
       commands.length = 0;
       for (const cwd of ['/one', '/one', '/two']) await runScmCommand({ bin: 'git', cwd, args: ['status'] });
     }));
-    expect(commands.filter(args => args[0] !== 'status')).toHaveLength(2);
+    expect(commands.filter(args => args[0] !== 'status')).toHaveLength(0);
     expect(commands.filter(args => args[0] === 'status')).toHaveLength(3);
+    commands.length = 0;
+    await runWithScmCommandRunner(run, () => runWithGitIdentity({ person: null, isCustodian }, async () => {
+      await runScmCommand({ bin: 'git', cwd: '/one', args: ['commit', '-m', 'first'] });
+      await runScmCommand({ bin: 'git', cwd: '/one', args: ['commit', '--amend', '--no-edit'] });
+    }));
+    expect(commands.filter(args => args[0] !== 'commit')).toHaveLength(1);
   });
 });

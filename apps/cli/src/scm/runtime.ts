@@ -1,4 +1,4 @@
-import { applyGitIdentity } from './gitIdentity';
+import { applyGitIdentity, gitCommandUsesIdentity, resolveScmGitIdentity } from './gitIdentity';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { appendGitConfigEnvironment } from './gitConfigEnvironment';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -289,6 +289,15 @@ export class ScmExecutionRefusedError extends Error {
 }
 
 export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
+    return executeScmCommand(input, true);
+}
+
+/** Describe explicitly requests attribution through the same placed process port as commands. */
+export function describeScmGitIdentity(cwd: string) {
+    return resolveScmGitIdentity(cwd, input => executeScmCommand(input, false));
+}
+
+function executeScmCommand(input: ScmCommandInput, useGitIdentity: boolean): Promise<ScmExecResult> {
     input = resolveScmCommandOperationInput(input);
     const startedAt = performance.now();
     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -316,7 +325,7 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
         const scoped = withEmptySafeDirectory(command);
         return runner ? Promise.resolve().then(() => runner(scoped)).catch(failure) : runHostScmCommand(scoped);
     };
-    const executeCommand: ScmCommandRunner = async command => executeRawCommand(isGitExecutable(command.bin)
+    const executeCommand: ScmCommandRunner = async command => executeRawCommand(useGitIdentity && isGitExecutable(command.bin) && gitCommandUsesIdentity(command.args)
         ? await applyGitIdentity(command, probe => executeRawCommand({ ...probe, signal: command.signal })) : command);
     const execute = () => executeCommand(input);
     const command = isHostGitPush(input)
