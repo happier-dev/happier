@@ -1,3 +1,4 @@
+import { resolveQuotaReadingExpiry } from '@/sync/domains/connectedServices/accountUsage/quotaReadingExpiry';
 import type { ConnectedServiceAccountWithoutUsage, ConnectedServiceQuotaSummary } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSummaries';
 import type { UsageSummaryCacheV1 } from '@/sync/domains/state/warmCachePersistence';
 import type { UsageAccountInput } from './usageByProvider';
@@ -113,7 +114,7 @@ export function buildUsageSummary(input: Readonly<{
 }
 
 function readUsageSummaryEntryStaleAt(entry: UsageSummaryEntry): number | null {
-    return entry.fetchedAt == null || entry.staleAfterMs === undefined ? null : entry.fetchedAt + entry.staleAfterMs;
+    return entry.meters.length > 0 ? resolveQuotaReadingExpiry(entry.fetchedAt, entry.staleAfterMs) : null;
 }
 
 function resolveStaleAt(entries: readonly UsageSummaryEntry[]): number | null {

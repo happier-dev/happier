@@ -984,6 +984,117 @@ it('does not declare all projections missing when a settled paced window is behi
   expect(text).not.toContain(t('usage.board.plans.paceSharedReason', { reason: '' }));
 });
 
+it.each([false, true])('keeps the first Projections expiry and leaves surviving series alone (expiring window selected: %s)', async selectExpiring => {
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const { createCommittedFiberRenderCounter, readTestRendererRoot } = await import('@/dev/testkit/performance/committedFiberCounts');
+  const start = Date.UTC(2026, 10, 26, 12);
+  vi.useFakeTimers({ now: start, toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  try {
+    const reading = (accountId: string, usedPct: number, staleAfterMs: number) =>
+      quotaRead(accountId, start, [{ meterId: 'weekly', label: 'Weekly', usedPct,
+        resetAtMs: start + DAY, windowDurationMs: 7 * DAY }], {}, { staleAfterMs });
+    const first = reading('early', 20, 5 * 60_000);
+    const selected = reading('selected', 70, 9 * 60_000);
+    const sibling = reading('sibling', 30, 10 * 60_000);
+    const counts = createCommittedFiberRenderCounter();
+    let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
+    const render = (third: typeof sibling) => wrap(<React.Profiler id="projections"
+      onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+      <UsageProjectionsWidget {...bodyProps([first, selected, third])} id="usage_projections" testID="proj" />
+    </React.Profiler>);
+    const screen = await renderScreen(render(sibling));
+    readRoot = readTestRendererRoot(screen.tree.root);
+    await screen.pressByTestIdAsync('proj.reported-header');
+    await screen.update(render(reading('sibling', 31, 11 * 60_000)));
+    const selectedControl = (account: string) => screen.findAllByProps({
+      testID: `proj.multiple.${account}.weekly`, selected: true,
+    }).length > 0;
+    expect(screen.findByTestId('proj.multiple.early.weekly')).toBeTruthy();
+    if (selectExpiring) await screen.pressByTestIdAsync('proj.multiple.early.weekly');
+    expect(selectedControl(selectExpiring ? 'early' : 'selected')).toBe(true);
+    expect(screen.findByTestId('proj.window.early.weekly.freshness')).toBeFalsy();
+    const survivingSeries = () => screen.findAllByType(BurnUpChart)
+      .filter(node => node.props.decorative === true && /Account (selected|sibling)/.test(node.props.label))
+      .map(node => node.props.series);
+    const before = survivingSeries();
+    expect(before).toHaveLength(2);
+    const windowComponent = (testID: string) => {
+      const instance = screen.findAllByProps({ testID }).find(node => node.props.window?.meterId === 'weekly');
+      if (!instance) throw new Error(`Expected a mounted window at ${testID}`);
+      return instance.type;
+    };
+    const row = windowComponent('proj.window.early.weekly');
+    const multiple = windowComponent('proj.multiple.sibling.weekly');
+    counts.start();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000); });
+    counts.stop();
+    expect(screen.findByTestId('proj.window.early.weekly.freshness')).toBeTruthy();
+    expect(screen.getTextContent()).toContain(t('usage.board.plans.paceStale'));
+    expect(screen.findByTestId('proj.multiple.early.weekly')).toBeFalsy();
+    expect(selectedControl('selected')).toBe(true);
+    const measured = counts.read();
+    expect(measured.rendersFor(row)).toBe(1);
+    expect(measured.rendersFor(UsageProjectionsWidget)).toBe(0);
+    const after = survivingSeries();
+    expect(after).toHaveLength(before.length);
+    after.forEach((series, index) => expect.soft(series).toBe(before[index]));
+    expect(measured.rendersFor(multiple)).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('Projections samples wall time for the reset on an ordinary layout render', async () => {
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const start = Date.UTC(2026, 10, 26, 12);
+  vi.useFakeTimers({ now: start, toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  try {
+    const quota = [quotaRead('expired-layout', start - HOUR, [{ meterId: 'weekly', label: 'Weekly', usedPct: 10,
+      resetAtMs: start + 2 * 60_000, windowDurationMs: 7 * DAY }], {}, { staleAfterMs: 120_000 })];
+    const render = (width: number) => wrap(<WidgetPresentationProvider value={{ size: 'medium',
+      footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width, height: 260 } }}>
+      <UsageProjectionsWidget {...bodyProps(quota)} id="usage_projections" testID="proj" />
+    </WidgetPresentationProvider>);
+    const screen = await renderScreen(render(400));
+    const freshness = () => screen.findAllByType(SurfaceFreshnessLine)
+      .find(node => node.props.testID === 'proj.window.expired-layout.weekly.freshness')?.props.reason;
+    expect(freshness()).toContain(t('connectedServicesCollection.meterResetsIn', { time: '2m' }));
+    vi.setSystemTime(start + 3 * 60_000);
+    await screen.update(render(720));
+    expect(freshness()).toContain(t('usage.board.plans.paceStale'));
+    expect(freshness()).not.toContain(t('connectedServicesCollection.meterResetsIn', { time: '2m' }));
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('only arms metered expiry and moves a used-up count to a retained row at its deadline', async () => {
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const { installTimerCensus } = await import('@/dev/testkit/performance/timerCensus');
+  const start = Date.UTC(2026, 10, 26, 12);
+  vi.useFakeTimers({ now: start, toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  const census = installTimerCensus(stack => stack.includes('/sessionListRuntimeClock.ts:') ? 'runtime deadline' : null);
+  try {
+    const spent = quotaRead('spent', start, [{ meterId: 'weekly', label: 'Weekly', usedPct: 100,
+      resetAtMs: start + DAY, windowDurationMs: 7 * DAY }], {}, { staleAfterMs: 5 * 60_000 });
+    const empty = quotaRead('empty', start, [], {}, { staleAfterMs: 60_000 });
+    const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium' }}>
+      <UsageProjectionsWidget {...bodyProps([empty, spent])} id="usage_projections" testID="proj" />
+    </WidgetPresentationProvider>));
+    expect(screen.findByTestId('proj.usedUp')).toBeTruthy();
+    expect(screen.findByTestId('proj.window.spent.weekly')).toBeFalsy();
+    const runtimeTimers = () => census.read().filter(timer => timer.consumer === 'runtime deadline');
+    expect(runtimeTimers()).toEqual([{ kind: 'timeout', delayMs: 5 * 60_000, consumer: 'runtime deadline' }]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000); });
+    expect(screen.findByTestId('proj.usedUp')).toBeFalsy();
+    expect(screen.findByTestId('proj.window.spent.weekly.freshness')).toBeTruthy();
+    expect(runtimeTimers()).toEqual([]);
+  } finally {
+    census.stop();
+    vi.useRealTimers();
+  }
+});
+
 it('keeps the reported reset when pace has no window and labels a truly expired reading', async () => {
   const now = Date.now();
   const resetAtMs = now + 23 * HOUR + 30_000;

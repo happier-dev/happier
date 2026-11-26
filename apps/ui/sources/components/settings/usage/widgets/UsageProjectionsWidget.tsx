@@ -43,6 +43,8 @@ import {
   type UsageBodyProps,
 } from './usageBodyKit';
 import {
+  expireUsagePlanAccount,
+  readUsagePlanReadingExpiry,
   projectUsageEarlierCurves,
   projectUsagePastCycles,
   selectUsagePacedWindows,
@@ -50,10 +52,7 @@ import {
   type UsagePlanPastCycle,
   type UsagePlanWindow,
 } from './plans/usagePlansModel';
-import {
-  useUsagePlans,
-  type UsagePlanAccountName,
-} from './plans/useUsagePlans';
+import { useUsagePlans } from './plans/useUsagePlans';
 import {
   formatPlanPercent,
   formatPlanResetPhrase,
@@ -70,6 +69,8 @@ import {
 import { readUsagePersonalPaceTarget, selectUsageWindowsAboveTarget } from './plans/usagePacingTarget';
 import { UsageDailyQuotaHistory } from './plans/UsageDailyQuotaHistory';
 import { formatMoment } from '@/utils/datetime/formatMoment';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { isQuotaReadingExpired } from '@/sync/domains/connectedServices/accountUsage/quotaReadingExpiry';
 
 /** Below this width a meter stacks its name over the bar and the projection beneath it. */
 const STACKED_BELOW_PX = 460;
@@ -89,20 +90,20 @@ function pickDefaultFocus(paced: readonly Focus[], tightest: Focus | null): Focu
  * slowest and fastest pace the owner saw are drawn to the reset too: an observed spread, not a forecast.
  */
 function buildBurnUp(
-  focus: Focus,
+  window: UsagePlanWindow,
   nowMs: number,
   labels: ChartLabels | Pick<ChartLabels, 'observed' | 'projected'>,
   colors: Readonly<{ line: string; range: string }>,
   earlier?: Readonly<{ curves: EarlierCurves; color: string }>,
 ): HappierSeries[] {
-  const pace = focus.window.pace!;
+  const pace = window.pace!;
   const point = (x: number, y: number) => ({ id: `t${x}`, x, y, label: formatMoment(x, nowMs) });
   const observedPoints = pace.observedCurve.map((sample) => point(sample.observedAtMs, sample.usedFraction * 100));
   const last = observedPoints.at(-1);
   const series: HappierSeries[] = [
     { id: 'observed', label: labels.observed, color: colors.line, points: observedPoints },
   ];
-  const resetAtMs = focus.window.resetAtMs;
+  const resetAtMs = window.resetAtMs;
   if (!last || resetAtMs === null) return series;
   // A line that would pass the limit flattens at it from the moment it gets there (lab p2burn "runs
   // out"), so the scale stays 0–100% instead of stretching to "578%". Every line shares the same moments
@@ -155,9 +156,6 @@ function earlierCurvesText(earlier: ReturnType<typeof projectUsageEarlierCurves>
 }
 
 export function UsageProjectionsWidget(props: UsageBodyProps) {
-  const { theme } = useUnistyles();
-  const chartTheme = useUsagePluginTheme();
-  const text = usePlanText();
   const presentation = useWidgetPresentation();
   const width = presentation?.geometry?.width ?? null;
   const tile = presentation?.size === 'small';
@@ -168,34 +166,84 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   const list = presentation?.size === 'medium' || presentation?.size === 'wide' || presentation?.size === 'full';
   const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model.refresh);
   useWidgetFrameBodyCaption(t('usage.board.plans.projectionsCaption'));
-  // Settled once every first read has answered; a re-read keeps the last reading (and its pace) in place, so a refresh
-  // never swaps a drawn chart for "no pace yet" and back (R6 #4: 534 → 184 → 590 on a cold Overview).
-  const settled = projection.accounts.length > 0 && !projection.accounts.some(isUsagePlanAccountFirstReading);
-  const paced = React.useMemo(() => settled ? [...selectUsagePacedWindows(projection.accounts)]
-    .sort((left, right) => left.window.key.localeCompare(right.window.key)) : [], [projection.accounts, settled]);
   // The viewer's pick, kept by window identity; a window that stops having a pace falls back to the default.
   const [pickedKey, setPickedKey] = React.useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [expanded, setExpanded] = React.useState(false);
+  return <ProjectionsBody {...props} plans={{ projection, nameOf, nowMs }}
+    width={width} tile={tile} list={list} pickedKey={pickedKey} setPickedKey={setPickedKey}
+    pickerOpen={pickerOpen} setPickerOpen={setPickerOpen} expanded={expanded} setExpanded={setExpanded} />;
+}
+
+function ProjectionsBody(props: UsageBodyProps & Readonly<{
+  plans: Pick<ReturnType<typeof useUsagePlans>, 'projection' | 'nameOf' | 'nowMs'>;
+  width: number | null;
+  tile: boolean;
+  list: boolean;
+  pickedKey: string | null;
+  setPickedKey: (key: string) => void;
+  pickerOpen: boolean;
+  setPickerOpen: (open: boolean) => void;
+  expanded: boolean;
+  setExpanded: React.Dispatch<React.SetStateAction<boolean>>;
+}>) {
+  const { theme } = useUnistyles();
+  const chartTheme = useUsagePluginTheme();
+  const text = usePlanText();
+  const { width, tile, list, pickedKey, setPickedKey, pickerOpen, setPickerOpen, expanded, setExpanded } = props;
+  const { projection, nameOf, nowMs: renderedAtMs } = props.plans;
+  const nowMs = Date.now();
+
+  // Derive deadlines from the accounts this body presents. A reading that only
+  // contributes to the folded used-up tally still has a visible expiry.
+  const agingReaders = React.useMemo(() => projection.accounts.flatMap(account => {
+    const at = readUsagePlanReadingExpiry(account.read?.current);
+    if (at === null || !account.windows.some(window => window.paceUnavailable !== 'stale'
+      && (!list || window.remainingFraction !== null))) return [];
+    return [{ account, at, expired: expireUsagePlanAccount(account) }];
+  }), [projection.accounts, list]);
+  const readNextExpiry = React.useCallback((now: number) => {
+    let next: number | null = null;
+    for (const { at } of agingReaders) {
+      if (!isQuotaReadingExpired(at, now) && (next === null || at < next)) next = at;
+    }
+    return next;
+  }, [agingReaders]);
+  const expiryNowMs = useSessionListRuntimeDeadlineNowMs(readNextExpiry, agingReaders.length > 0);
+  const accounts = React.useMemo(() => {
+    const expired = new Map(agingReaders
+      .filter(({ at }) => isQuotaReadingExpired(at, Math.max(renderedAtMs, expiryNowMs)))
+      .map(({ account, expired }) => [account, expired]));
+    return expired.size > 0 ? projection.accounts.map(account => expired.get(account) ?? account) : projection.accounts;
+  }, [agingReaders, projection.accounts, expiryNowMs, renderedAtMs]);
+  // The tightest headline can only be the chart's default while it still has a pace.
+  const tightest = projection.tightest && accounts.includes(projection.tightest.account) ? projection.tightest : null;
+  // Settled once every first read has answered; a re-read keeps the last reading (and its pace) in place, so a refresh
+  // never swaps a drawn chart for "no pace yet" and back (R6 #4: 534 → 184 → 590 on a cold Overview).
+  const settled = accounts.length > 0 && !accounts.some(isUsagePlanAccountFirstReading);
+  const paced = React.useMemo(() => settled ? [...selectUsagePacedWindows(accounts)]
+    .sort((left, right) => left.window.key.localeCompare(right.window.key)) : [], [accounts, settled]);
   // No focus until every first read has answered: charting whichever paced account answered first moved the chart
   // from window to window as the others landed.
   const focus = React.useMemo(
-    () => settled ? paced.find((entry) => entry.window.key === pickedKey) ?? pickDefaultFocus(paced, projection.tightest) : null,
-    [settled, paced, pickedKey, projection.tightest],
+    () => settled ? paced.find((entry) => entry.window.key === pickedKey) ?? pickDefaultFocus(paced, tightest) : null,
+    [settled, paced, pickedKey, tightest],
   );
   const accent = usageSignatureAccent(theme);
   const rangeColor = theme.colors.text.tertiary;
   const ghostColor = theme.colors.border.default;
+  const focusAccount = focus?.account;
+  const focusWindow = focus?.window;
   const earlier = React.useMemo(
-    () => (focus && !list && !tile ? projectUsageEarlierCurves(focus.account, focus.window.meterId) : null),
-    [focus, list, tile],
+    () => (focusAccount && focusWindow && !list && !tile ? projectUsageEarlierCurves(focusAccount, focusWindow.meterId) : null),
+    [focusAccount, focusWindow, list, tile],
   );
   const series = React.useMemo(
     () =>
-      focus && !list
+      focusWindow && !list
         ? buildBurnUp(
-            focus,
-            nowMs,
+            focusWindow,
+            Date.now(),
             {
               observed: t('usage.board.plans.burnObserved'),
               projected: t('usage.board.plans.burnProjected'),
@@ -206,14 +254,15 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             earlier?.status === 'available' && !tile ? { curves: earlier.curves, color: ghostColor } : undefined,
           )
         : [],
-    [focus, nowMs, accent, rangeColor, earlier, tile, ghostColor, list],
+    [focusWindow, renderedAtMs, accent, rangeColor, earlier, tile, ghostColor, list],
   );
   // Ghost points join the plot after the current ones, so the axis names the plot's real first and last moment.
   const axisTicks = React.useMemo(() => {
     if (!series.some((entry) => entry.id.startsWith('earlier:'))) return null;
     const xs = series.flatMap((entry) => entry.points.map((point) => Number(point.x)));
-    return [formatMoment(Math.min(...xs), nowMs), formatMoment(Math.max(...xs), nowMs)];
-  }, [series, nowMs]);
+    const now = Date.now();
+    return [formatMoment(Math.min(...xs), now), formatMoment(Math.max(...xs), now)];
+  }, [series, renderedAtMs]);
   const pickerItems = React.useMemo(
     () =>
       paced.map((entry) => ({
@@ -228,7 +277,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
     setPickerOpen(false);
     setPickedKey(key);
     return true;
-  }, [paced]);
+  }, [paced, setPickedKey, setPickerOpen]);
   const windowCommands = useCurrentUiContextLocalCommands(!list && paced.length > 1 ? [
     { key: 'menuOpen', title: `${t('usage.board.plans.windowPicker')}: ${t('common.open')}`, invoke: () => setPickerOpen(true) },
     { key: 'menuClose', title: `${t('usage.board.plans.windowPicker')}: ${t('common.close')}`, invoke: () => setPickerOpen(false) },
@@ -239,7 +288,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   ] : []);
   const chooseWindow = React.useCallback((key: string) => { void windowCommands.invoke(key); }, [windowCommands.invoke]);
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), !list && Boolean(focus?.window.pace), true);
-  if (projection.accounts.length === 0) {
+  if (accounts.length === 0) {
     return (
       <View style={styles.body}>
         <UsagePlansNothingRead
@@ -257,19 +306,19 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   // The viewer's own advice target, as echoed by the same allowance read (lab `p2budget`).
   const target = readUsagePersonalPaceTarget(props.slice.quota?.[0]?.targets ?? []);
   const above = target === null ? [] : selectUsageWindowsAboveTarget(
-    projection.accounts.map((account) => ({ title: nameOf(account).title, windows: account.windows })),
+    accounts.map((account) => ({ title: nameOf(account).title, windows: account.windows })),
     target,
   );
   const targetNote = target === null ? null
     : above.length > 0
       ? t('usage.board.plans.targetAbove', { percent: Math.round(target * 100), windows: above.join(', ') })
       : t('usage.board.plans.targetWithin', { percent: Math.round(target * 100) });
-  const windows = projection.accounts.flatMap(account => account.windows
+  const windows = accounts.flatMap(account => account.windows
     .map(window => ({ account, window, name: nameOf(account) })));
   const rows = windows.filter(row => row.window.remainingFraction !== null);
   const unreported = windows.filter(row => row.window.remainingFraction === null);
-  const unreadCount = projection.accounts.filter(isUsagePlanAccountSettledUnread).length;
-  const onlyUnread = unreadCount === projection.accounts.length;
+  const unreadCount = accounts.filter(isUsagePlanAccountSettledUnread).length;
+  const onlyUnread = unreadCount === accounts.length;
   const unreadState = unreadCount > 0 ? (
     <UsageBodyInsufficient
       testID={`${props.testID}.unread`}
@@ -337,12 +386,11 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             {lead.rows.map((row) => (
               <ProjectionRow
                 key={row.window.key}
-                name={row.name}
+                accountName={row.name.title}
                 window={row.window}
                 observedAtMs={row.account.observedAtMs}
-                nowMs={nowMs}
+                renderedAtMs={renderedAtMs}
                 stacked={rowsStacked}
-                statement={row.statement}
                 resetOnly={!!quietReason && row.statement.kind === 'unavailable' && row.statement.text === quietReason}
                 testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`}
               />
@@ -373,7 +421,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         {/* The legend explains pace marks; without any pace it explains nothing. */}
         {live.some(row => row.window.pace) ? <UsagePlanLegend testID={`${props.testID}.legend`} parts={[t('usage.board.plans.legendEvenPace'), t('usage.board.plans.legendHatched')]} /> : null}
         {unreadState}
-        <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice} onRetry={props.model.refresh}
+        <UsagePlanAccountStates accounts={accounts} nameOf={nameOf} slice={props.slice} onRetry={props.model.refresh}
           replacesContent={!rows.length && !unreported.length && !depletingNote}
           testID={`${props.testID}.state`} />
       </View>
@@ -482,16 +530,16 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
       {!tile && focus && paced.length > 1 ? (
         <View style={styles.multiples} testID={`${props.testID}.multiples`} accessibilityRole="list">
           {paced.map((entry) => (
-            <SmallMultiple
+            <SmallMultipleControl
               key={entry.window.key}
-              entry={entry}
-              name={nameOf(entry.account)}
+              window={entry.window}
+              accountName={nameOf(entry.account).title}
               selected={entry.window.key === focus.window.key}
-              nowMs={nowMs}
+              renderedAtMs={renderedAtMs}
               color={accent}
               basis={stacked ? '47%' : '31%'}
               onPick={chooseWindow}
-              testID={`${props.testID}.multiple.${entry.account.accountId}.${entry.window.meterId}`}
+              controlId={`${props.testID}.multiple.${entry.account.accountId}.${entry.window.meterId}`}
             />
           ))}
         </View>
@@ -501,12 +549,11 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
           {rows.map((row) => (
             <ProjectionRow
               key={row.window.key}
-              name={row.name}
+              accountName={row.name.title}
               window={row.window}
               observedAtMs={row.account.observedAtMs}
-              nowMs={nowMs}
+              renderedAtMs={renderedAtMs}
               stacked={rowsStacked}
-              statement={planWindowStatement(row.window, nowMs)}
               testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`}
             />
           ))}
@@ -516,9 +563,8 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
       {unreported.length ? <UsagePlanDisclosure testID={`${props.testID}.unreported`}
         title={t('usage.board.plans.unreportedWindows', { count: unreported.length })}>
         <UsageMeterStack testID={`${props.testID}.unreported.windows`}>
-          {unreported.map(row => <ProjectionRow key={row.window.key} name={row.name}
-            window={row.window} observedAtMs={row.account.observedAtMs} nowMs={nowMs} stacked={rowsStacked}
-            statement={planWindowStatement(row.window, nowMs)}
+          {unreported.map(row => <ProjectionRow key={row.window.key} accountName={row.name.title}
+            window={row.window} observedAtMs={row.account.observedAtMs} renderedAtMs={renderedAtMs} stacked={rowsStacked}
             testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`} />)}
         </UsageMeterStack>
       </UsagePlanDisclosure> : null}
@@ -545,7 +591,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
         />
       )}
       {unreadState}
-      <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
+      <UsagePlanAccountStates accounts={accounts} nameOf={nameOf} slice={props.slice}
         onRetry={props.model.refresh} testID={`${props.testID}.state`} />
     </View>
   );
@@ -603,35 +649,30 @@ function ProjectionHeadline(props: Readonly<{ window: UsagePlanWindow; nowMs: nu
 }
 
 /** One window's own burn-up at tile size; pressing it makes it the charted window. */
-function SmallMultiple(
+const SmallMultipleControl = React.memo(function SmallMultipleControl(
   props: Readonly<{
-    entry: Focus;
-    name: UsagePlanAccountName;
+    window: UsagePlanWindow;
+    accountName: string;
     selected: boolean;
-    nowMs: number;
+    renderedAtMs: number;
     color: string;
     basis: `${number}%`;
     onPick: (key: string) => void;
-    testID: string;
+    controlId: string;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const chartTheme = useUsagePluginTheme();
   const text = usePlanText();
-  const { entry, nowMs, color } = props;
-  const title = `${props.name.title} · ${entry.window.label}`;
-  const statement = planWindowStatement(entry.window, nowMs);
-  const series = React.useMemo(
-    () => buildBurnUp(entry, nowMs, { observed: t('usage.board.plans.burnObserved'), projected: t('usage.board.plans.burnProjected') },
-      { line: color, range: color }),
-    [entry, nowMs, color],
-  );
-  const key = entry.window.key;
+  const { window } = props;
+  const nowMs = Date.now();
+  const title = `${props.accountName} · ${window.label}`;
+  const statement = planWindowStatement(window, nowMs);
+  const key = window.key;
   const onPick = props.onPick;
   const pick = React.useCallback(() => onPick(key), [onPick, key]);
   return (
     <HappierPressable
-      testID={props.testID}
+      testID={props.controlId}
       onPress={pick}
       accessibilityRole="button"
       accessibilityLabel={[title, statement.text].join(', ')}
@@ -646,20 +687,7 @@ function SmallMultiple(
       <Text style={[props.selected ? styles.chartTitle : styles.multipleTitle, text.detail]} numberOfLines={1}>
         {title}
       </Text>
-      <BurnUpChart
-        decorative
-        theme={chartTheme}
-        size="tile"
-        label={title}
-        series={series}
-        minimumMaximum={100}
-        valueFormatter={(value) => `${Math.round(value)}%`}
-        unknownLabel={t('usage.board.plans.cellUnknown')}
-        summary={statement.text}
-        showAxis={false}
-        showLegend={false}
-        showReadout={false}
-      />
+      <SmallMultiple window={window} title={title} renderedAtMs={props.renderedAtMs} color={props.color} testID={props.controlId} />
       <Text
         style={[styles.quiet, text.detail, statement.tone === 'warning' ? styles.danger : null]}
         numberOfLines={1}
@@ -668,7 +696,37 @@ function SmallMultiple(
       </Text>
     </HappierPressable>
   );
-}
+});
+
+// Selection updates the control without resampling the time of an unchanged series.
+const SmallMultiple = React.memo(function SmallMultiple(
+  props: Readonly<{ window: UsagePlanWindow; title: string; renderedAtMs: number; color: string; testID: string }>,
+) {
+  const chartTheme = useUsagePluginTheme();
+  const { window, title, renderedAtMs, color } = props;
+  const series = React.useMemo(
+    () => buildBurnUp(window, renderedAtMs, { observed: t('usage.board.plans.burnObserved'), projected: t('usage.board.plans.burnProjected') },
+      { line: color, range: color }),
+    [window, renderedAtMs, color],
+  );
+  return (
+    <BurnUpChart
+      decorative
+      testID={`${props.testID}.chart`}
+      theme={chartTheme}
+      size="tile"
+      label={title}
+      series={series}
+      minimumMaximum={100}
+      valueFormatter={(value) => `${Math.round(value)}%`}
+      unknownLabel={t('usage.board.plans.cellUnknown')}
+      summary={planWindowStatement(window, renderedAtMs).text}
+      showAxis={false}
+      showLegend={false}
+      showReadout={false}
+    />
+  );
+});
 
 /** The charted window's ended cycles, each row as the B owner recorded it. Mounted only while disclosed. */
 function PastCycles(props: Readonly<{ account: UsagePlanAccount; window: UsagePlanWindow; nowMs: number; testID: string }>) {
@@ -739,21 +797,24 @@ function PastCycleRow(props: Readonly<{ cycle: UsagePlanPastCycle; nowMs: number
     ? <ChartDatum testID={`${props.testID}.detail`} datum={{ keyboard: false, label: ended, value: exact, subtitle: detail }}>{visual}</ChartDatum> : visual;
 }
 
-function ProjectionRow(
+const ProjectionRow = React.memo(function ProjectionRow(
   props: Readonly<{
-    name: UsagePlanAccountName;
+    accountName: string;
     window: UsagePlanWindow;
     observedAtMs: number | null;
-    nowMs: number;
+    renderedAtMs: number;
     stacked: boolean;
-    statement: ReturnType<typeof planWindowStatement>;
     /** The list says the missing projection once; this row then shows its reset countdown. */
     resetOnly?: boolean;
     testID: string;
   }>,
 ) {
-  const { window, statement } = props;
-  const label = `${props.name.title} · ${window.label}`;
+  const { window } = props;
+  // The parent passes its render instant so an ordinary render refreshes this
+  // caption even when the window is unchanged. Expiry renders only this row.
+  const nowMs = Date.now();
+  const statement = planWindowStatement(window, nowMs);
+  const label = `${props.accountName} · ${window.label}`;
   const text = usePlanText();
   const expired = window.paceUnavailable === 'stale';
   const statusText = !props.resetOnly && statement.kind === 'unavailable' || statement.kind === 'used_up' ? statement.text : null;
@@ -761,7 +822,7 @@ function ProjectionRow(
   // window resets, and why it has no projection, are its caption.
   const projected = !expired && (statement.kind === 'at_reset' || statement.kind === 'depletes');
   // Used up already says when it comes back; its reset is not said twice.
-  const caption = [statement.kind === 'used_up' ? null : formatPlanResetPhrase(window.resetAtMs, props.nowMs), statusText]
+  const caption = [statement.kind === 'used_up' ? null : formatPlanResetPhrase(window.resetAtMs, nowMs), statusText]
     .filter(Boolean).join(' · ');
   const projection = projected ? statement.text : '';
   const locale = getPreferredLanguage();
@@ -787,7 +848,7 @@ function ProjectionRow(
       }
       resetsAt={null}
       tone={expired ? 'neutral' : window.tone}
-      now={props.nowMs}
+      now={nowMs}
       estimated={window.estimated}
       size={props.stacked ? 'default' : 'wide'}
       layout={props.stacked ? 'stacked' : 'inline'}
@@ -807,7 +868,7 @@ function ProjectionRow(
     : <ChartDatum testID={`${props.testID}.datum`} datum={{ keyboard: false, label, value,
       subtitle: [window.pace ? t('usage.board.plans.estimatedFrom', { count: window.pace.sampleCount }) : null,
         window.pace ? `${t('usage.board.plans.projectionUsedAtReset')} · ${formatHappierDataExactShare(window.pace.projectedUsedFraction, locale)}` : null,
-        window.resetAtMs === null ? null : formatMoment(window.resetAtMs, props.nowMs), statusText].filter(Boolean).join(' · ') }}>
+        window.resetAtMs === null ? null : formatMoment(window.resetAtMs, nowMs), statusText].filter(Boolean).join(' · ') }}>
       <View>{visual}</View>
     </ChartDatum>;
   // The exact tooltip is pointer-only. Expose one reading for the meter and its caption in either row shape.
@@ -818,7 +879,7 @@ function ProjectionRow(
         : caption ? <Text testID={`${props.testID}.caption`} style={[styles.quiet, text.detail]} numberOfLines={1}>{caption}</Text> : null}
     </View>
   </View>;
-}
+});
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16 },

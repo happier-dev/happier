@@ -273,6 +273,22 @@ describe('sessionListRuntimeClock', () => {
         await status.unmount();
     });
 
+    it('keeps the earliest wake after a deadline reader changes with the same first instant', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const clock = createSessionListRuntimeClock();
+        const status = await renderHook(({ later }: { later: number }) =>
+            useSessionListRuntimeDeadlineNowMs(React.useCallback((now: number) =>
+                now < 3_000 ? 3_000 : now < later ? later : null, [later]), true, clock),
+        { initialProps: { later: 4_000 } });
+        await status.rerender({ later: 5_000 });
+        expect(vi.getTimerCount()).toBe(1);
+        await flushHookEffects({ advanceTimersMs: 2_000, cycles: 1, turns: 2 });
+        expect(status.getCurrent()).toBe(3_000);
+        await status.unmount();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
     it('advances all subscribers together at the earliest requested wake time', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);

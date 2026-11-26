@@ -209,13 +209,23 @@ export function useSessionListRuntimeDeadlineNowMs(
     }, [clock, subscribed, readNextRefreshAtMs]);
     const subscribe = React.useCallback((listener: () => void) => {
         if (!subscribed) return noopSubscribe();
+        const arm = (deadline: number | null) => {
+            if (deadline === null) clock.clearWake(token);
+            else clock.requestWake(token, deadline);
+        };
         const start = () => {
-            const stopClock = clock.subscribeWake(token, () => { snapshot.advance(); listener(); });
+            const stopClock = clock.subscribeWake(token, () => {
+                snapshot.advance();
+                const next = snapshot.nextRefresh();
+                // Deadlines are one-shot. An unchanged or past instant must not wake again.
+                arm(next !== null && next > snapshot.get() ? next : null);
+                listener();
+            });
+            // A replacement subscription owns the deadline even when the instant did not change.
+            arm(snapshot.nextRefresh());
             const stopChanges = subscribeDeadlineChanges?.(() => {
                 snapshot.reconcile();
-                const deadline = snapshot.nextRefresh();
-                if (deadline === null) clock.clearWake(token);
-                else clock.requestWake(token, deadline);
+                arm(snapshot.nextRefresh());
             });
             return () => { stopClock(); stopChanges?.(); };
         };
@@ -226,23 +236,18 @@ export function useSessionListRuntimeDeadlineNowMs(
         const sync = () => {
             if (gate.get()) {
                 if (stop) return;
-                stop = start();
                 snapshot.reconcile();
-                const deadline = snapshot.nextRefresh();
-                if (deadline !== null) clock.requestWake(token, deadline);
+                stop = start();
             } else if (stop) {
                 stop();
                 stop = null;
-                clock.clearWake(token);
             }
         };
         sync();
         const stopGate = gate.subscribe(sync);
         return () => { stopGate(); stop?.(); };
     }, [clock, gate, subscribed, snapshot, token, subscribeDeadlineChanges]);
-    const nowMs = React.useSyncExternalStore(subscribe, snapshot.get, snapshot.get);
-    useClockWake(snapshot.nextRefresh(), gate ? gate.get() : subscribed, clock, token);
-    return nowMs;
+    return React.useSyncExternalStore(subscribe, snapshot.get, snapshot.get);
 }
 
 /**

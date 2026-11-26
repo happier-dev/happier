@@ -1,3 +1,4 @@
+import { isQuotaReadingExpired, resolveQuotaReadingExpiry } from '@/sync/domains/connectedServices/accountUsage/quotaReadingExpiry';
 import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
 import type { ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { getProviderAccountUsageQuotaPageFactsV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
@@ -235,7 +236,7 @@ export function projectUsagePlans(
       source.bindingKind === 'group_member' ? source.groupId : null;
     if (accounts.some((account) => account.key === key)) continue;
     const snapshot = read?.current;
-    const expired = snapshot?.state === 'loaded_data' && nowMs >= snapshot.observedAtMs + snapshot.staleAfterMs;
+    const expired = isQuotaReadingExpired(readUsagePlanReadingExpiry(snapshot), nowMs);
     const paceByMeter = expired ? null : new Map(
       (read?.pace ?? []).map((entry) => [entry.meterId, entry.value]),
     );
@@ -313,6 +314,17 @@ export function projectUsagePlans(
   const unreadAccounts = accounts.filter(account => account.observedAtMs === null);
   return { accounts, readAccounts, unreadAccounts, readAccountCount: readAccounts.length,
     pools: qualifiedPools ?? [...pools.values()], tightest, events };
+}
+
+export function readUsagePlanReadingExpiry(snapshot: QuotaRead['current'] | undefined): number | null {
+  return snapshot?.state === 'loaded_data' ? resolveQuotaReadingExpiry(snapshot.observedAtMs, snapshot.staleAfterMs) : null;
+}
+
+/** Keep the measured facts when the reading's projection lapses. */
+export function expireUsagePlanAccount(account: UsagePlanAccount): UsagePlanAccount {
+  const windows = account.windows.map(window => window.paceUnavailable === 'stale'
+    ? window : { ...window, pace: null, paceUnavailable: 'stale' as const });
+  return { ...account, stale: true, windows, headline: pickHeadline(windows) };
 }
 
 /** Every window the B pace owner derived a pace for, in the Account's own order. */

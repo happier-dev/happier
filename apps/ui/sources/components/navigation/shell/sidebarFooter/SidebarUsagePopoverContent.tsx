@@ -1,3 +1,4 @@
+import { isQuotaReadingExpired } from '@/sync/domains/connectedServices/accountUsage/quotaReadingExpiry';
 import * as React from 'react';
 import { parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { Platform, View } from 'react-native';
@@ -277,7 +278,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
         let next: number | null = null;
         for (const { account } of sourceAccounts) {
             const at = account.staleAt;
-            if (at !== null && at > nowMs && (next === null || at < next)) next = at;
+            if (at !== null && !isQuotaReadingExpired(at, nowMs) && (next === null || at < next)) next = at;
         }
         return next;
     }, [sourceAccounts]);
@@ -289,7 +290,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
         const spent: Entry[] = [];
         const unknown: Entry[] = [];
         for (const entry of sourceAccounts) {
-            const expired = entry.account.staleAt !== null && entry.account.staleAt <= clockNow;
+            const expired = isQuotaReadingExpired(entry.account.staleAt, clockNow);
             const verdict = usage.source === 'live' && !expired ? facts.accounts?.[entry.account.key]?.quotaExhausted : undefined;
             const group = verdict === false ? usable : verdict === true ? spent : unknown;
             group.push({ ...entry, expired });
