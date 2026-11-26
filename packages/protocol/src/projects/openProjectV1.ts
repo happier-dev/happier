@@ -1,6 +1,6 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { isRpcMethodNotFoundError, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { isRpcMethodNotFoundError, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 import type { ActionExecuteFailure } from '../actions/executor/types.js';
@@ -140,12 +140,29 @@ export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnio
 ]));
 export type OpenProjectResultV1 = z.infer<typeof OpenProjectResultV1Schema>;
 
+const UNSENT_PROJECT_OPEN_PRESERVED_RPC_CODES: ReadonlySet<string> = new Set([
+  RPC_ERROR_CODES.UPDATE_REQUIRED,
+  RPC_ERROR_CODES.FORBIDDEN,
+  RPC_ERROR_CODES.MACHINE_ROLE_INACTIVE,
+  RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED,
+  RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE,
+]);
+
 export function readProjectOpenUnsentRefusalV1(error: unknown): z.infer<typeof OpenProjectRefusalV1Schema> {
-  const code = isRpcMethodNotFoundError(error) ? RPC_ERROR_CODES.UPDATE_REQUIRED : 'machine_unreachable';
+  const rpcCode = readRpcErrorCode(error);
+  const code = isRpcMethodNotFoundError(error)
+    ? RPC_ERROR_CODES.UPDATE_REQUIRED
+    : rpcCode && UNSENT_PROJECT_OPEN_PRESERVED_RPC_CODES.has(rpcCode)
+      ? rpcCode
+      : 'machine_unreachable';
   return {
     kind: 'refused',
     code,
-    failureCause: projectActionFailureCauseV1({ ok: false, errorCode: code, error: code }, 'projects.open.transport'),
+    effectAttempted: false,
+    failureCause: projectActionFailureCauseV1(
+      error !== undefined && error !== null ? error : { ok: false, errorCode: code, error: code },
+      'projects.open.transport',
+    ),
   };
 }
 

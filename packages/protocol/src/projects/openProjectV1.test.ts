@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, WorkspaceActivationRequestV1Schema } from './openProjectV1.js';
+import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, WorkspaceActivationRequestV1Schema, readProjectOpenUnsentRefusalV1 } from './openProjectV1.js';
+import { RPC_ERROR_CODES, RpcError } from '../rpc/errors.js';
 import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
 describe('OpenProject V1 wire admission', () => {
@@ -102,5 +103,32 @@ describe('OpenProject V1 wire admission', () => {
     expect(ProjectOpenSyncMaterializationResultV1Schema.parse({ kind: 'materialized' })).toEqual({ kind: 'materialized' });
     expect(ProjectOpenSyncMaterializationResultV1Schema.safeParse({ kind: 'materialized', setup: 'prepared' }).success).toBe(false);
     expect(ProjectOpenSyncMaterializationResultV1Schema.safeParse({ kind: 'outcomeUnknown', operationId: 'invented' }).success).toBe(false);
+  });
+
+  it('preserves typed unsent RPC refusal codes and failureCause instead of collapsing them to machine_unreachable', () => {
+    const admissionCause = { phase: 'rpc.admission.external_action', errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+      httpStatus: null, nativeErrorReason: 'cross_machine_child_unadmitted' } as const;
+    const forbiddenWithCause = new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN, admissionCause);
+    expect(readProjectOpenUnsentRefusalV1(forbiddenWithCause)).toEqual({
+      kind: 'refused', code: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false, failureCause: admissionCause,
+    });
+    expect(readProjectOpenUnsentRefusalV1(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN))).toMatchObject({
+      kind: 'refused', code: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+      failureCause: { phase: 'projects.open.transport', errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.FORBIDDEN },
+    });
+    expect(readProjectOpenUnsentRefusalV1(new RpcError('Inactive role', RPC_ERROR_CODES.MACHINE_ROLE_INACTIVE))).toMatchObject({
+      kind: 'refused', code: RPC_ERROR_CODES.MACHINE_ROLE_INACTIVE, effectAttempted: false,
+    });
+    expect(readProjectOpenUnsentRefusalV1(new RpcError('Team auth', RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED))).toMatchObject({
+      kind: 'refused', code: RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED, effectAttempted: false,
+    });
+    expect(readProjectOpenUnsentRefusalV1(new RpcError('Not found', RPC_ERROR_CODES.METHOD_NOT_FOUND))).toMatchObject({
+      kind: 'refused', code: RPC_ERROR_CODES.UPDATE_REQUIRED, effectAttempted: false,
+      failureCause: { phase: 'projects.open.transport', errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND },
+    });
+    expect(readProjectOpenUnsentRefusalV1(new RpcError('Offline', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE))).toMatchObject({
+      kind: 'refused', code: 'machine_unreachable', effectAttempted: false,
+      failureCause: { phase: 'projects.open.transport', errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE },
+    });
   });
 });
