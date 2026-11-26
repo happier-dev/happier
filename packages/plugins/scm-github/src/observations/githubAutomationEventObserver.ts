@@ -980,7 +980,7 @@ type GithubGroupCheckpointReadV1 = Readonly<{
 }>;
 type GithubGroupProviderCandidateV1 =
   | Readonly<{ kind: 'repository'; polled: GithubRepositoryEventsPollResultV1<GithubRepositoryEventFactsV1>;
-    previewHeads: PromiseSettledResult<Awaited<ReturnType<typeof readGithubPreviewHeadUpdates>>> }>
+    previewHeads: PromiseSettledResult<Awaited<ReturnType<typeof readGithubPreviewHeadUpdates>>> | null }>
   | Readonly<{ kind: 'checks'; surface: Awaited<ReturnType<typeof readGithubPullRequestChecks>> }>
   | Readonly<{ kind: 'deployment'; candidate: GithubDeploymentReviewCandidateV1 }>;
 
@@ -1030,6 +1030,7 @@ async function readGroupProviderCandidate(input: Readonly<{
   const cursor = cursors[0] ?? null;
   const agreed = cursor?.etag !== null && cursor?.etag !== undefined && cursors.every(value => value?.etag === cursor.etag);
   const polled = await pollRepositoryEvents({ context: input.context, source, cursor: agreed ? cursor : null, client });
+  if (polled.kind === 'notModified') return { kind: 'repository', polled, previewHeads: null };
   const [previewHeads] = await Promise.allSettled([readGithubPreviewHeadUpdates({
     context: input.context, client, repository: source.repository,
     templates: eligible.flatMap(member => member.row && member.source.previewTemplate ? [member.source.previewTemplate] : []),
@@ -1258,26 +1259,13 @@ async function runObservedSource(input: Readonly<{
       return sourceCycleResult(input.sourceKey, nextEligibleAt);
     }
 
-    const previewHeads = candidate.previewHeads;
-    const previewObservations = input.source.previewTemplate && previewHeads.status === 'fulfilled'
-      ? (previewHeads.value.get(JSON.stringify([input.source.previewTemplate.serverId, input.source.previewTemplate.environmentId])) ?? [])
-        .map(update => {
-          const observation = normalizeGithubAutomationEvent({ kind: 'pullRequestLifecycle', repository: input.source.repository,
-            pullRequest: update.pullRequest });
-          return {
-            ...observation, sourceInstanceId: input.source.definition.sourceInstanceId,
-            sourceContractVersion: input.source.definition.sourceContractVersion,
-            occurrenceId: update.occurrenceId, occurredAt: observedAtMs, observationReceivedAt: observedAtMs, observedDelta: 1,
-          };
-        })
-      : [];
     if (polled.kind === 'notModified') {
       const checkpoint = reuseGithubRepositoryEventsCheckpointOnNotModified(existing.cursor, observedAtMs);
       // A 304 is still a completed observation. Its new continuity horizon
       // must be CAS-persisted even when no template field changed.
       const retained = existing;
       const disposition = await processCheckpointedPluginEventAttemptV1({
-        context: input.context, definitions: [input.source.definition], observations: previewObservations, complete: true, isCurrent: input.isDefinitionCurrent,
+        context: input.context, definitions: [input.source.definition], observations: [], complete: true, isCurrent: input.isDefinitionCurrent,
         save: async () => { await collection.put(createCheckpointRow({
           source: input.source, cursor: checkpoint,
           lastContiguousOccurrenceId: retained.row.value.payload.lastContiguousOccurrenceId,
@@ -1286,7 +1274,6 @@ async function runObservedSource(input: Readonly<{
       });
       if (disposition.kind !== 'checkpointSafe') return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
       input.context.signal.throwIfAborted();
-      if (input.source.previewTemplate && previewHeads.status === 'rejected') throw previewHeads.reason;
       await reportSourceStatus({
         context: input.context,
         source: input.source,
@@ -1319,6 +1306,22 @@ async function runObservedSource(input: Readonly<{
       return sourceCycleResult(input.sourceKey, nextEligibleAt);
     }
 
+    const previewHeads = candidate.previewHeads;
+    const template = input.source.previewTemplate;
+    // Keep the previous ETag if the Preview read fails. A 304 on the next attempt would skip it.
+    if (template && previewHeads?.status === 'rejected') throw previewHeads.reason;
+    const previewObservations = template && previewHeads?.status === 'fulfilled'
+      ? (previewHeads.value.get(JSON.stringify([template.serverId, template.environmentId])) ?? [])
+        .map(update => {
+          const observation = normalizeGithubAutomationEvent({ kind: 'pullRequestLifecycle', repository: input.source.repository,
+            pullRequest: update.pullRequest });
+          return {
+            ...observation, sourceInstanceId: input.source.definition.sourceInstanceId,
+            sourceContractVersion: input.source.definition.sourceContractVersion,
+            occurrenceId: update.occurrenceId, occurredAt: observedAtMs, observationReceivedAt: observedAtMs, observedDelta: 1,
+          };
+        })
+      : [];
     const observations: PluginEventObservationV1[] = [...classified.observations
       .flat()
       .filter(observation => observation.eventRef.localId === input.source.definition.eventRef.localId)
@@ -1338,7 +1341,6 @@ async function runObservedSource(input: Readonly<{
       }), { expectedRevision: retained.row.revision, signal: input.context.signal }); },
     });
     if (disposition.kind !== 'checkpointSafe') return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
-    if (input.source.previewTemplate && previewHeads.status === 'rejected') throw previewHeads.reason;
     await reportSourceStatus({
       context: input.context,
       source: input.source,

@@ -1412,7 +1412,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     expect(http.request).toHaveBeenCalledTimes(1);
   });
 
-  it.each([0, 1, 3])('uses one existing Events poll and one exact head read per live Preview (%i)', async liveCount => {
+  it.each([0, 1, 3])('reads Preview heads only after repository Events change (%i live Previews)', async liveCount => {
     const def = definition({ automationId: 'preview-heads', sourceSelectorId: sourceSelectorA,
       eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle });
     const source = { ...def, deploymentPreview: { serverId: 'srv_preview', environmentId: 'preview-template' } };
@@ -1453,22 +1453,56 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       }
       throw new Error(`Unexpected Action ${action}`);
     }) };
-    const http = { request: vi.fn(async ({ url }: { url: string }) => {
+    let now = 2_000;
+    let eventsChanged = false;
+    let previewReadUnavailable = false;
+    const changedEtag = 'preview-head-moved';
+    const http = { request: vi.fn(async ({ url, headers }: { url: string; headers?: Record<string, string> }) => {
       const path = new URL(url).pathname;
-      if (path.endsWith('/events')) return { status: 304, headers: {}, body: new Uint8Array() };
+      if (path.endsWith('/events')) {
+        if (!eventsChanged || headers?.['If-None-Match'] === changedEtag) return { status: 304, headers: {}, body: new Uint8Array() };
+        return { status: 200, headers: { etag: changedEtag }, body: new TextEncoder().encode(JSON.stringify([
+          { id: 'new-push', type: 'PushEvent', created_at: new Date(now).toISOString(), repo: { id: 77, name: 'acme/widgets' },
+            payload: { ref: 'refs/heads/preview', before: oldSha, head: headSha } },
+          { id: 'old', type: 'OtherEvent', created_at: '1970-01-01T00:00:00.900Z', repo: { id: 77, name: 'acme/widgets' }, payload: {} },
+        ])) };
+      }
       const i = Number(path.split('/').at(-1)) - 40;
       expect(live).toContain(i);
+      if (previewReadUnavailable) return { status: 503, headers: {}, body: new Uint8Array() };
       return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ id: Number(id(i)),
         number: number(i), state: i === 2 ? 'closed' : 'open', author_association: 'MEMBER',
         user: { id: 99, login: 'octocat', type: 'User' },
         head: { sha: i === 1 ? oldSha : headSha, ref: 'preview', repo: { id: 77, full_name: 'acme/widgets' } },
         base: { ref: 'main', repo: { id: 77, full_name: 'acme/widgets' } } })) };
     }) };
-    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
-    await observer.runCycle(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http })));
-    expect(http.request.mock.calls.map(([request]) => new URL(request.url).pathname)).toEqual([
-      '/repos/acme/widgets/events', ...live.map(i => `/repos/acme/widgets/pulls/${number(i)}`),
-    ]);
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now });
+    const context = observerBackgroundContext({ actions, collection: checkpoints.collection, http });
+    const paths = () => http.request.mock.calls.map(([request]) => new URL(request.url).pathname);
+    const deploymentReads = () => actions.execute.mock.calls.map(([action]) => action).filter(action => action.startsWith('deployments.'));
+    const unchangedPolls = 3;
+    for (let i = 0; i < unchangedPolls; i++) {
+      await observer.runCycle(sourceAttemptContext(observer, context));
+      now += 60_000;
+    }
+    expect(paths()).toEqual(Array.from({ length: unchangedPolls }, () => '/repos/acme/widgets/events'));
+    expect(deploymentReads()).toEqual([]);
+    expect(admissions).toHaveLength(0);
+
+    eventsChanged = true;
+    if (liveCount === 1) {
+      previewReadUnavailable = true;
+      await observer.runCycle(sourceAttemptContext(observer, context));
+      expect(admissions).toHaveLength(0);
+      previewReadUnavailable = false;
+      now += 60_000;
+    }
+    const priorRequests = paths().length;
+    const priorDeploymentReads = deploymentReads().length;
+    await observer.runCycle(sourceAttemptContext(observer, context));
+    expect(http.request.mock.calls[priorRequests]?.[0].headers?.['If-None-Match']).toBe('prior-etag');
+    expect(paths().slice(priorRequests)).toEqual(['/repos/acme/widgets/events', ...live.map(i => `/repos/acme/widgets/pulls/${number(i)}`)]);
+    expect(deploymentReads().slice(priorDeploymentReads)).toEqual(['deployments.environments.list', ...live.map(() => 'deployments.receipts.get')]);
     expect(admissions).toHaveLength(liveCount ? 1 : 0);
     if (liveCount) expect(admissions[0]?.payload).toMatchObject({ pullRequest: { action: 'synchronize', headSha } });
   });
