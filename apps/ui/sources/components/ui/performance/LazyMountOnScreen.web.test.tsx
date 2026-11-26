@@ -15,7 +15,7 @@ type FakeElement = {
 
 type ObserverRecord = Readonly<{
     options: Readonly<{ root: unknown; rootMargin: string }>;
-    intersect: (visible?: boolean) => void;
+    intersect: (visible?: boolean, ...queued: boolean[]) => void;
 }>;
 
 /** Runs `run` with the browser boundary (window, document, IntersectionObserver) replaced by controlled fakes. */
@@ -37,7 +37,9 @@ async function withControlledBrowser(
             callback: (entries: readonly Readonly<{ isIntersecting: boolean }>[]) => void,
             options: ObserverRecord['options'],
         ) {
-            observers.push({ options, intersect: (visible = true) => callback([{ isIntersecting: visible }]) });
+            observers.push({ options, intersect: (visible = true, ...queued) => callback(
+                [visible, ...queued].map(isIntersecting => ({ isIntersecting })),
+            ) });
         }
 
         public disconnect() {}
@@ -99,7 +101,22 @@ describe('LazyMountOnScreen web', () => {
         });
     });
 
-    it('stops clipped preview work and resumes once with current input on re-entry', async () => {
+    it('mounts children when the latest queued intersection becomes visible', async () => {
+        await withControlledBrowser(async (observers) => {
+            function Content() { return <div />; }
+            const screen = await renderScreen(<LazyMountOnScreen><Content /></LazyMountOnScreen>, {
+                createNodeMock: element => (element as Readonly<{ type?: unknown }>).type === 'div' ? {} : null,
+            });
+            expect(screen.findAllByType(Content)).toHaveLength(0);
+
+            await act(async () => { observers[0]?.intersect(false, true); });
+
+            expect(screen.findAllByType(Content)).toHaveLength(1);
+            await screen.unmount();
+        });
+    });
+
+    it('stops preview work at the latest queued visibility and resumes with current input', async () => {
         const renders = vi.fn();
         await withControlledBrowser(async (observers) => {
             function Preview({ value }: Readonly<{ value: string }>) {
@@ -116,7 +133,7 @@ describe('LazyMountOnScreen web', () => {
             expect(observers[0]?.options.rootMargin).toBe('0px');
             await act(async () => { observers[0]?.intersect(true); });
             expect(renders.mock.calls).toEqual([['first']]);
-            await act(async () => { observers[0]?.intersect(false); });
+            await act(async () => { observers[0]?.intersect(true, false); });
             await screen.update(preview('current'));
             expect(renders.mock.calls).toEqual([['first']]);
             await act(async () => { observers[0]?.intersect(true); });

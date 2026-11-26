@@ -50,7 +50,7 @@ export function LazyMountOnScreen(props: LazyMountOnScreenProps) {
         let done = false;
         const observer = new IO((entries) => {
             if (done) return;
-            const entry = entries?.[0];
+            const entry = entries[entries.length - 1];
             if (props.unmountWhenHidden) {
                 if (entry) setVisible(entry.isIntersecting);
             } else if (entry?.isIntersecting) {
