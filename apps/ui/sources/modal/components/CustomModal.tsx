@@ -19,6 +19,7 @@ import { ModalCommands } from './ModalCommands';
 import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { t } from '@/text';
 import { MODAL_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
+import { ModalRoutePresentationContext } from '../context/ModalRoutePresentationContext';
 import { ModalLayerZIndexProvider } from '@/modal/portal/ModalPortalTarget';
 
 interface CustomModalProps {
@@ -40,6 +41,7 @@ function isPromiseLikeDismissDecision(value: unknown): value is PromiseLike<bool
 
 
 export function CustomModal({ config, onClose, showBackdrop = true, visible, zIndexBase, onExited }: CustomModalProps) {
+    const suspended = React.useContext(ModalRoutePresentationContext)?.suspended === true;
     const Component = config.component;
     const dismissible = config.dismissible !== false;
     const dismissalPendingRef = React.useRef(false);
@@ -181,7 +183,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
         </ModalCardFrame>;
         return <RetainedModalFrame frame={frame}>{retainedFrame => {
             if (presentation.anchor) {
-                return <AnchoredModalCard anchor={presentation.anchor} visible={visible} onExited={onExited} accessibilityLabel={accessibilityLabel} zIndexBase={zIndexBase ?? MODAL_Z_INDEX}
+                return <AnchoredModalCard anchor={presentation.anchor} visible={visible && !suspended} onExited={suspended ? undefined : onExited} accessibilityLabel={accessibilityLabel} zIndexBase={zIndexBase ?? MODAL_Z_INDEX}
                     dimensions={chrome?.dimensions} picker={presentation.card?.anchorRole === 'picker'} focusReturnRef={config.focusReturnRef} onRequestClose={sharedDismiss} frame={retainedFrame} />;
             }
             return (

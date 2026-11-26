@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Platform } from 'react-native';
+import { shallow } from 'zustand/shallow';
 import { ModalConfig, type ModalShowConfig, ModalContextValue, ModalType, type CustomModalConfig } from './types';
 import { Modal } from './ModalManager';
 import { WebAlertModal } from './components/WebAlertModal';
@@ -13,6 +14,8 @@ import { MODAL_Z_INDEX, MODAL_Z_INDEX_STEP, SCREEN_OVERLAY_Z_INDEX } from '@/com
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { ModalContentIdProvider, useModalContentId } from './context/ModalContentIdContext';
 import { ModalCoveredProvider } from './context/ModalCoveredContext';
+import { ModalRoutePresentationContext } from './context/ModalRoutePresentationContext';
+import { normalizeCurrentRouteHref, useCurrentRouteHref } from '@/components/appShell/workspace/currentRouteLocation';
 
 const ModalContext = createContext<ModalContextValue | undefined>(undefined);
 // Consumers that only need presentation context must not receive titles,
@@ -39,11 +42,23 @@ type ModalProviderProps = Readonly<{
     children?: React.ReactNode;
 }>;
 
+type ModalDeparture = Readonly<{
+    origin: string;
+    /** Null once the requested destination becomes current. */
+    destination: string | null;
+}>;
+
 type ModalHostEntry = ModalConfig & Readonly<{
     visible: boolean;
     /** The dialog a card hung from a control belongs to: it closes with that dialog. */
     hostId?: string;
+    departure?: ModalDeparture;
 }>;
+
+function isSuspended(modal: ModalHostEntry, href: string): boolean {
+    const departure = modal.departure;
+    return departure !== undefined && (departure.destination === null ? href !== departure.origin : href === departure.destination);
+}
 
 type ModalHostState = Readonly<{
     modals: ModalHostEntry[];
@@ -75,11 +90,50 @@ function HostedCustomModal({ config, hideModal, ...props }: Omit<React.Component
     return <CustomModal {...props} config={config} onClose={onClose} />;
 }
 
+function ModalEntryPresentation({ id, suspended, willNavigate, children }: React.PropsWithChildren<Readonly<{
+    id: string;
+    suspended: boolean;
+    willNavigate: (id: string, href: string) => void;
+}>>) {
+    const navigate = React.useCallback((href: string) => willNavigate(id, href), [id, willNavigate]);
+    const value = React.useMemo(() => ({ suspended, willNavigate: navigate }), [navigate, suspended]);
+    return <ModalRoutePresentationContext.Provider value={value}>{children}</ModalRoutePresentationContext.Provider>;
+}
+
 export function ModalProvider({ active = true, children }: ModalProviderProps) {
     const [state, setState] = useState<ModalHostState>({
         modals: []
     });
     const stateRef = React.useRef<ModalHostState>(state);
+    const routeHref = useCurrentRouteHref();
+    const routeHrefRef = React.useRef(routeHref);
+    React.useLayoutEffect(() => { routeHrefRef.current = routeHref; }, [routeHref]);
+
+    const willNavigate = useCallback((id: string, href: string) => {
+        const origin = routeHrefRef.current;
+        const destination = normalizeCurrentRouteHref(href, origin);
+        if (destination === null || destination === origin) return;
+        setState(previous => {
+            if (!previous.modals.some(modal => modal.id === id && modal.visible && !isSuspended(modal, origin))) return previous;
+            // Yield the presenting stack together. An underlying dialog or a card hung from it
+            // would otherwise still cover the destination after its foreground dialog leaves.
+            const departure = { origin, destination };
+            return { modals: previous.modals.map(modal => modal.visible && !isSuspended(modal, origin)
+                ? { ...modal, departure } : modal) };
+        });
+    }, []);
+
+    React.useLayoutEffect(() => {
+        if (!state.modals.some(modal => modal.departure?.destination && modal.departure.origin !== routeHref)) return;
+        setState(previous => ({
+            modals: previous.modals.map(modal => {
+                const departure = modal.departure;
+                if (!departure?.destination || departure.origin === routeHref) return modal;
+                return { ...modal, departure: departure.destination === routeHref
+                    ? { origin: departure.origin, destination: null } : undefined };
+            }),
+        }));
+    }, [routeHref, state.modals]);
     const reportToParent = useContext(NestedVisibleModalReportContext);
     const [hostKey] = useState(() => ({}));
     const [nestedReports, setNestedReports] = useState<ReadonlyMap<object, VisibleModal>>(() => new Map());
@@ -112,6 +166,21 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     }, []);
 
     const showModal = useCallback((config: ModalShowConfig): string => {
+        const href = routeHrefRef.current;
+        if (config.type === 'custom') {
+            const retained = stateRef.current.modals.findLast(modal => modal.type === 'custom'
+                && modal.visible && isSuspended(modal, href)
+                && modal.component === config.component && shallow(modal.props, config.props));
+            if (retained) {
+                setState(previous => {
+                    const nextState = { modals: previous.modals.map(modal => modal.id === retained.id
+                        ? { ...modal, departure: undefined } : modal) };
+                    stateRef.current = nextState;
+                    return nextState;
+                });
+                return retained.id;
+            }
+        }
         const id = generateId();
         // Child autofocus runs before the modal shell's layout effect. Capture the
         // opener before mounting, then let the existing modal focus owner restore it.
@@ -125,7 +194,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                 : undefined
         );
         // A card hung from a control belongs to the dialog that control sits in (the topmost open one).
-        const hostId = anchor ? [...stateRef.current.modals].reverse().find(modal => modal.visible)?.id : undefined;
+        const hostId = anchor ? [...stateRef.current.modals].reverse().find(modal => modal.visible && !isSuspended(modal, href))?.id : undefined;
         const modalConfig = { ...config, focusReturnRef, id, visible: true, ...(hostId ? { hostId } : {}) } as ModalHostEntry;
         setState(prev => {
             const nextState = {
@@ -144,11 +213,9 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
             const currentTarget = prev.modals.find(modal => modal.id === id);
             if (!currentTarget) return prev;
             const nextState = {
-                modals: prev.modals.map((modal) => (
-                    modal.id === id
-                        ? { ...modal, visible: false }
-                        : modal
-                )),
+                modals: isSuspended(currentTarget, routeHrefRef.current)
+                    ? prev.modals.filter(modal => modal.id !== id)
+                    : prev.modals.map(modal => modal.id === id ? { ...modal, visible: false } : modal),
             };
             stateRef.current = nextState;
             return nextState;
@@ -232,26 +299,24 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
         };
     }, [active, showModal, hideModal, hideAllModals, updateCustomModalProps]);
 
-    const contextValue: ModalContextValue = {
+    const topVisibleIndex = state.modals.findLastIndex(modal => modal.visible && !isSuspended(modal, routeHref));
+    const presentingModal = topVisibleIndex >= 0;
+    const contextValue = React.useMemo<ModalContextValue>(() => ({
         // Derived here rather than at each consumer so "a modal owns the keyboard" has one owner. Only a modal that
         // is showing owns it: one that is leaving stays in the stack for its exit (seconds on a busy JS thread), and
         // a composer focused meanwhile (Bots → New bot) sat behind the keyboard until it was removed.
-        isKeyboardLiftSuppressedByModal: state.modals.some((modal) => modal.visible),
+        isKeyboardLiftSuppressedByModal: presentingModal,
         state,
         showModal,
         hideModal,
         hideAllModals,
         updateCustomModalProps,
-    };
-
-    const topVisibleIndex = state.modals.reduce((topIndex, modal, index) => (
-        modal.visible ? index : topIndex
-    ), -1);
+    }), [presentingModal, state, showModal, hideModal, hideAllModals, updateCustomModalProps]);
     // A card hung from a control (an anchored popover) draws no scrim of its own, so the scrim stays with the
     // topmost visible modal that draws one: a dialog keeps dimming the page while its Add key card is open.
     const deviceType = useDeviceType();
     const topScrimIndex = state.modals.reduce((scrimIndex, modal, index) => (
-        modal.visible && !(modal.type === 'custom' && resolveCustomModalPresentation(modal.chrome, deviceType).anchor) ? index : scrimIndex
+        modal.visible && !isSuspended(modal, routeHref) && !(modal.type === 'custom' && resolveCustomModalPresentation(modal.chrome, deviceType).anchor) ? index : scrimIndex
     ), -1);
     const ownVisible = topVisibleIndex >= 0 ? state.modals[topVisibleIndex]! : null;
     const nestedVisible = nestedReports.size > 0 ? [...nestedReports.values()].at(-1)! : null;
@@ -277,7 +342,8 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                     <OverlayPortalHost zIndex={screenOverlayPortalZIndex} />
                     {state.modals.map((modal, index) => {
                     // A topmost modal that is leaving keeps its scrim, which fades with it, instead of dropping it at once.
-                    const showBackdrop = index === topScrimIndex || (!modal.visible && index === state.modals.length - 1);
+                    const suspended = isSuspended(modal, routeHref);
+                    const showBackdrop = !suspended && (index === topScrimIndex || (!modal.visible && index === state.modals.length - 1));
                     const modalZIndexBase = zIndexBase + index * zIndexStep;
 
                     const renderModal = () => {
@@ -344,7 +410,7 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                             return (
                                 <PluginSurfaceFocusEligibilityProvider
                                     active={active && modal.visible && index === topVisibleIndex}
-                                    presentationActive={active && modal.visible}
+                                    presentationActive={active && modal.visible && !suspended}
                                     currentUiContextActive={active && modal.visible && index === topVisibleIndex}
                                 >
                                 <HostedCustomModal
@@ -365,7 +431,9 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
                     // A dialog with another one in front of it is covered: its shell goes inert until the front one closes.
                     return <ModalContentIdProvider key={modal.id} id={modal.id}>
                         <ModalCoveredProvider covered={modal.visible && index < topVisibleIndex}>
-                            {renderModal()}
+                            <ModalEntryPresentation id={modal.id} suspended={suspended} willNavigate={willNavigate}>
+                                {renderModal()}
+                            </ModalEntryPresentation>
                         </ModalCoveredProvider>
                     </ModalContentIdProvider>;
                     })}

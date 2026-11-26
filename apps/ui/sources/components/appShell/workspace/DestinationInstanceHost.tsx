@@ -5,6 +5,7 @@ import { resolveHref } from 'expo-router/build/link/href';
 import type { DestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { useOptionalWorkspaceNavigation, useWorkspaceFocusedPathname, useWorkspaceFocusedRoute, useWorkspaceFocusedRouteSelector, useWorkspaceRouterFacts, type WorkspaceFocusedRoute, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { sameDestinationRef } from './workspaceState';
+import { ModalRoutePresentationContext } from '@/modal/context/ModalRoutePresentationContext';
 import { qualifyPaneScopeId } from '@/components/appShell/panes/paneScopeIdentity';
 import { PluginSurfaceFocusEligibilityProvider, useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useRetainedPresentationEntryRetirement } from '@/components/ui/presentation/retainedPresentationEntryLifetime';
@@ -406,6 +407,28 @@ export function useOpenAppSection(): (href: string, replace?: boolean) => void {
 }
 
 export function useDestinationRouter(): DestinationRouter {
+    const router = useOwnedDestinationRouter();
+    const willNavigate = React.useContext(ModalRoutePresentationContext)?.willNavigate;
+    return React.useMemo(() => {
+        if (!willNavigate) return router;
+        const bind = (navigate: DestinationRouter['push']): DestinationRouter['push'] => (href, options) => {
+            willNavigate(resolveHref(href));
+            navigate(href, options);
+        };
+        return {
+            ...router,
+            push: bind(router.push),
+            pushRetainingCurrent: bind(router.pushRetainingCurrent),
+            navigate: bind(router.navigate),
+            replace: bind(router.replace),
+            replaceAdmitted: bind(router.replaceAdmitted),
+            redirect: bind(router.redirect),
+            dismissTo: bind(router.dismissTo),
+        };
+    }, [router, willNavigate]);
+}
+
+function useOwnedDestinationRouter(): DestinationRouter {
     // A router binds the tab's navigation owner, not its focus or visibility.
     const instance = useDestinationInstanceIdentity();
     // eslint-disable-next-line react-hooks/rules-of-hooks -- ownership is stable for this mounted body.

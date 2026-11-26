@@ -11,6 +11,7 @@ import { ModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/
 import type { ModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { ModalBoundaryProvider } from '@/modal/context/ModalBoundaryContext';
 import { useModalCovered } from '@/modal/context/ModalCoveredContext';
+import { ModalRoutePresentationContext } from '@/modal/context/ModalRoutePresentationContext';
 import { t } from '@/text';
 import { createFloatingScrimWebStyle, FloatingScrim, useFloatingScrimFrost } from '@/components/ui/overlays/FloatingScrim';
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
@@ -128,6 +129,8 @@ export function BaseModal({
     onPresenceChange,
 }: BaseModalProps) {
     const { theme } = useUnistyles();
+    const suspended = React.useContext(ModalRoutePresentationContext)?.suspended === true;
+    const presented = visible && !suspended;
     // A bottom sheet that closes on its scrim also closes by dragging it down (its frame draws the grabber).
     const sheetDismiss = placement === 'bottom' && closeOnBackdrop && onClose ? onClose : null;
     const webContentShellRef = React.useRef<HTMLDivElement | null>(null);
@@ -178,7 +181,7 @@ export function BaseModal({
         outputRange: [0, 1],
     });
     const modalAccessibilityLabel = accessibilityLabel ?? t('common.dialog');
-    const modalPointerEvents = resolveOverlayPointerEvents(visible ? 'auto' : 'none');
+    const modalPointerEvents = resolveOverlayPointerEvents(presented ? 'auto' : 'none');
     const interactivePointerEvents = resolveOverlayPointerEvents('auto');
     const nativeContent = (
         <View
@@ -190,7 +193,7 @@ export function BaseModal({
     );
 
     useWebOverlayFocusContainment({
-        active: isWeb && visible && modalPresence.present,
+        active: isWeb && presented && modalPresence.present,
         containerRef: webContentShellRef,
         focusReturn: focusReturnRef
             ? { kind: 'provided', ref: focusReturnRef, fallback: focusReturnFallback }
@@ -198,9 +201,9 @@ export function BaseModal({
     });
     const restoreNativeFocus = useRestoreFocusToTrigger(focusReturnRef);
     useEffect(() => {
-        if (isWeb || !visible) return;
+        if (isWeb || !presented) return;
         return () => { restoreNativeFocus(); };
-    }, [restoreNativeFocus, visible]);
+    }, [restoreNativeFocus, presented]);
 
     // On web, avoid setting React state inside a callback ref. In some browser/portal scenarios,
     // ref attach/detach churn can lead to nested update loops ("Maximum update depth exceeded").
@@ -214,7 +217,7 @@ export function BaseModal({
 
     const goBack = onBack ?? onClose;
     const escapeLayer = useEscapeLayer({
-        enabled: isWeb && visible && Boolean(goBack),
+        enabled: isWeb && presented && Boolean(goBack),
         priority: ESCAPE_LAYER_PRIORITIES.modal,
         allowEditableTarget: true,
         onEscape: () => { goBack?.(); },
@@ -222,7 +225,7 @@ export function BaseModal({
 
     useEffect(() => {
         if (isWeb) return;
-        if (!visible || !goBack) return;
+        if (!presented || !goBack) return;
 
         const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
             goBack();
@@ -232,7 +235,7 @@ export function BaseModal({
         return () => {
             subscription.remove();
         };
-    }, [goBack, visible]);
+    }, [goBack, presented]);
 
     const handleBackdropPress = () => {
         if (closeOnBackdrop && onClose) {
@@ -363,11 +366,11 @@ export function BaseModal({
                         data-testid={testID}
                         data-happy-modal-layer=""
                         // Behind another dialog: no focus, Tab containment or assistive technology until it closes.
-                        inert={covered || undefined}
+                        inert={covered || suspended || undefined}
                         aria-modal="true"
                         aria-label={modalAccessibilityLabel}
                         tabIndex={-1}
-                        style={{ ...contentStyle, pointerEvents: visible ? 'auto' : 'none' }}
+                        style={{ ...contentStyle, display: suspended ? 'none' : contentStyle.display, pointerEvents: presented ? 'auto' : 'none' }}
                         onPointerDown={stopPropagation}
                         onTouchStart={stopPropagation}
                         onClick={(e) => {
@@ -459,13 +462,16 @@ export function BaseModal({
             style={[
                 styles.portalRoot,
                 { zIndex: baseZ, elevation: baseZ },
+                suspended ? { display: 'none' } : null,
                 modalPointerEvents.webStyle,
             ]}
             pointerEvents={modalPointerEvents.nativePointerEvents}
             role="dialog"
             testID={testID}
             accessibilityLabel={modalAccessibilityLabel}
-            accessibilityViewIsModal={visible}
+            accessibilityViewIsModal={presented}
+            accessibilityElementsHidden={suspended || undefined}
+            importantForAccessibility={suspended ? 'no-hide-descendants' : undefined}
         >
             <OverlayPortalProvider>
                 <KeyboardAwareModalFrame

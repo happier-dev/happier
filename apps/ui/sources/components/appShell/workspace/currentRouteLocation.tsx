@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
 import { shallow } from 'zustand/shallow';
-import { matchWorkspaceDestinationRoute } from './workspaceRoutes';
+import { matchWorkspaceDestinationRoute, workspaceRouteHref } from './workspaceRoutes';
 
 type RouteParams = Readonly<Record<string, string | string[] | undefined>>;
 export type CurrentRouteLocation = Readonly<{ pathname: string; params: RouteParams }>;
@@ -136,4 +136,27 @@ export function useCurrentRouteParamsSelector<T>(select: (params: RouteParams) =
     const expoSelected = React.useMemo(() => select(params), [params, select]);
     return selected === NO_LOCATION ? expoSelected : selected as T;
 }
+/** A qualified, comparable address from the current workspace or Expo route. */
+export function useCurrentRouteHref(): string {
+    const pathname = useCurrentRoutePathname();
+    const params = useCurrentRouteParams();
+    return sortRouteQuery(workspaceRouteHref(pathname || '/', params));
+}
+
+/** Normalize navigation hrefs using the same route aliases and query ordering as published locations. */
+export function normalizeCurrentRouteHref(href: string, relativeTo: string): string | null {
+    const base = 'https://route.invalid';
+    const url = new URL(href, base + relativeTo);
+    if (url.origin !== base) return null;
+    const { pathname, params } = readCurrentRouteLocation(url.href, {});
+    return sortRouteQuery(workspaceRouteHref(pathname, params));
+}
+
+function sortRouteQuery(href: string): string {
+    const [pathname, query] = href.split('?', 2);
+    const params = new URLSearchParams(query);
+    params.sort();
+    return pathname + (params.size ? `?${params}` : '');
+}
+
 const NO_LOCATION: unique symbol = Symbol('no workspace location');

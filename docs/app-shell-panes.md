@@ -19,6 +19,10 @@ already open: it moves the existing tab beside the target pane rather than
 silently activating it. Plugin app pages retain their single mounted instance.
 Phones push the entity within the selected tab and do not offer splits.
 
+When an action inside a retained dialog opens another destination through the destination router,
+the modal host releases the dialog's screen and input once the new address is current. It keeps the
+body mounted so Back to the opening address or the same dialog entry restores the draft.
+
 An ordinary rail or collection-row open focuses the destination's existing tab,
 or replaces the current tab's content when that destination is not already open.
 Retained and preview tabs follow the same rule. Only an explicit Open in new tab,
