@@ -467,6 +467,21 @@ describe('typed operations over the C ABI JSON envelope', () => {
     },
   );
 
+  it('preserves only the known relay-disabled reason from a native Machine dial failure', async () => {
+    let reason: string | undefined = 'relay_disabled';
+    const addon = createFakeAddon(() => JSON.stringify({
+      ok: false,
+      error: { code: 'transport-timeout', message: 'machine failure', reason },
+    }));
+    const native = createIrohNodeNativeModule(addon);
+    const open = () => native.startMachineTunnel({ endpointHandle: 'e', endpointId: 'i', handshakeJson: '{}' });
+    await expect(open()).rejects.toMatchObject({ nativeCode: 'transport-timeout', nativeReason: 'relay_disabled' });
+    reason = 'new_reason';
+    await expect(open()).rejects.toMatchObject({ nativeCode: 'transport-timeout', nativeReason: undefined });
+    reason = undefined;
+    await expect(open()).rejects.toMatchObject({ nativeCode: 'transport-timeout', nativeReason: undefined });
+  });
+
   it('rejects malformed envelopes and drifted result shapes instead of returning raw JSON', async () => {
     const addon = createFakeAddon((operation, request) => {
       if (operation === 'ensureHomeTunnel') return 'not-json';

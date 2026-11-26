@@ -286,6 +286,7 @@ async function openBrokeredSessionTeamCredentialProviderBinding(
           errorClass: 'Error',
           errorCode: null,
           nativeErrorCode: error.nativeCode,
+          ...(error.nativeReason ? { nativeErrorReason: error.nativeReason } : {}),
           httpStatus: null,
         },
       });

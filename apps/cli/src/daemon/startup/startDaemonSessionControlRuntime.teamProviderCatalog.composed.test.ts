@@ -528,7 +528,8 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
         },
         openTunnel: async request => {
           if (metadata === 'tunnel start failed' && brokerOpens === 1) {
-            throw new IrohNativeOperationError('transport-unavailable', 'Native tunnel start failed');
+            throw new IrohNativeOperationError('transport-timeout', 'Native tunnel start failed',
+              { nativeReason: 'relay_disabled' });
           }
           if (nativeTunnelOpen) return await nativeTunnelOpen(request);
           const { refreshBrokerOpen } = request;
@@ -810,7 +811,8 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     const refusal = await openThroughRunner().then(() => null, (error: unknown) => error);
     expect(boundary.responseStatus).toBe(200);
     const tunnelFailure = { phase: 'providers.team_credential.tunnel_start',
-      errorClass: 'Error', errorCode: null, nativeErrorCode: 'transport-unavailable', httpStatus: null };
+      errorClass: 'Error', errorCode: null, nativeErrorCode: 'transport-timeout',
+      nativeErrorReason: 'relay_disabled', httpStatus: null };
     expect(boundary.responseBody).toMatchObject({ ok: false, error: {
       code: 'broker_unavailable', failureCause: tunnelFailure,
     } });

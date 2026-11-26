@@ -205,6 +205,11 @@ from the descriptor. Relay URLs and direct-address hints only help reach that en
 stand in for its authenticated identity. Diagnostics may describe a proven native path as `Direct`
 or `Secure relay`, while an unproven path stays `unknown`.
 
+In 0.3 development source, a native Machine tunnel start that times out or has no
+known peer address carries `nativeErrorReason: relay_disabled` when the initiating
+endpoint's relay policy is disabled. The Session broker issue and finite-copy
+failure retain the original native error code alongside this reason.
+
 In current 0.3 development source, native Machine loopback tunnels retain their
 listener when the authenticated connection closes. A subsequent authorized local
 connection obtains its fresh witness, where required, then re-dials the same

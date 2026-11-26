@@ -809,9 +809,10 @@ fn tunnel_start_error(error: happier_iroh_core::IrohError) -> Value {
     }
 }
 
-fn machine_start_error(error: happier_iroh_core::IrohError) -> Value {
+fn machine_start_error(error: happier_iroh_core::IrohError, relay: Option<&RelaySelection>) -> Value {
     use happier_iroh_core::IrohError;
-    match error {
+    let direct_route_failed = matches!(error, IrohError::TransportTimeout | IrohError::TransportUnreachable);
+    let mut response = match error {
         IrohError::InvalidDescriptor => error_response(
             "machine-control-invalid",
             "machine handshake control is invalid",
@@ -848,7 +849,11 @@ fn machine_start_error(error: happier_iroh_core::IrohError) -> Value {
         }
         IrohError::Cancelled => error_response("cancelled", "machine tunnel start was cancelled"),
         IrohError::Io(_) => error_response("transport-unavailable", "machine transport is unavailable"),
+    };
+    if direct_route_failed && matches!(relay, Some(RelaySelection::Disabled)) {
+        response["error"]["reason"] = json!("relay_disabled");
     }
+    response
 }
 
 fn observed_path_string(tunnel: &HomeTunnel) -> &'static str {
@@ -1324,7 +1329,7 @@ fn start_machine_tunnel(value: *const c_char) -> Value {
         }
     }) {
         Ok(tunnel) => tunnel,
-        Err(error) => return machine_start_error(error),
+        Err(error) => return machine_start_error(error, Some(&config.relay)),
     };
     let id = next_id();
     let status = tunnel.status();
@@ -1349,7 +1354,7 @@ fn start_machine_tunnel(value: *const c_char) -> Value {
     });
     if let Err(tunnel) = published {
         runtime().block_on(tunnel.stop_and_wait());
-        return machine_start_error(happier_iroh_core::IrohError::Cancelled);
+        return machine_start_error(happier_iroh_core::IrohError::Cancelled, None);
     }
     let mut result = json!({"machineTunnelId": id, "endpointHandle": input.endpoint_handle, "localPort": status.local_port, "connectionActive": status.connection_active, "remoteEndpointId": status.remote_endpoint_id, "observedPath": status.observed_path.observed_path.as_str(), "lastErrorCode": status.last_failure.map(|failure| failure.as_str()), "startedAtMs": started_at_ms});
     add_optional_local_capability(&mut result, tunnel_local_capability);
@@ -1452,7 +1457,7 @@ fn start_machine_http_tunnel_input(
         }
     }) {
         Ok(tunnel) => tunnel,
-        Err(error) => return machine_start_error(error),
+        Err(error) => return machine_start_error(error, Some(&config.relay)),
     };
     let id = next_id();
     let status = tunnel.status();
@@ -1475,7 +1480,7 @@ fn start_machine_http_tunnel_input(
     });
     if let Err(tunnel) = published {
         runtime().block_on(tunnel.stop_and_wait());
-        return machine_start_error(happier_iroh_core::IrohError::Cancelled);
+        return machine_start_error(happier_iroh_core::IrohError::Cancelled, None);
     }
     json!({"ok": true, "result": {"machineTunnelId": id, "endpointHandle": input.endpoint_handle, "localPort": local_port, "localCapability": local_capability, "connectionActive": status.connection_active, "remoteEndpointId": status.remote_endpoint_id, "observedPath": status.observed_path.observed_path.as_str(), "lastErrorCode": status.last_failure.map(|failure| failure.as_str()), "startedAtMs": started_at_ms}})
 }
@@ -2450,7 +2455,7 @@ mod tests {
 
     #[test]
     fn machine_tunnel_identity_mismatch_surfaces_the_existing_failure_code() {
-        let response = machine_start_error(happier_iroh_core::IrohError::EndpointIdentityMismatch);
+        let response = machine_start_error(happier_iroh_core::IrohError::EndpointIdentityMismatch, None);
         assert_eq!(
             response["error"]["code"],
             happier_iroh_core::MachineFailureCode::EndpointIdentityMismatch.as_str()
@@ -2497,6 +2502,10 @@ mod tests {
         assert_eq!(with_address["ok"], true, "{with_address}");
         assert_eq!(
             missing_address["error"]["code"], "transport-unreachable",
+            "{missing_address}"
+        );
+        assert_eq!(
+            missing_address["error"]["reason"], "relay_disabled",
             "{missing_address}"
         );
     }

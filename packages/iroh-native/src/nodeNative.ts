@@ -296,21 +296,23 @@ export function loadIrohNodeNative(
 export class IrohNativeOperationError extends IrohError {
   /** Exact C ABI error code, preserved for diagnostics. */
   readonly nativeCode: string;
+  readonly nativeReason: 'relay_disabled' | undefined;
 
   constructor(
     nativeCode: string,
     message: string,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; nativeReason?: IrohNativeOperationError['nativeReason'] },
   ) {
     super(classifyIrohNativeErrorCode(nativeCode), message, options);
     this.name = 'IrohNativeOperationError';
     this.nativeCode = nativeCode;
+    this.nativeReason = options?.nativeReason;
   }
 }
 
 type IrohNodeEnvelope =
   | { ok: true; result: unknown }
-  | { ok: false; nativeCode: string; message: string };
+  | { ok: false; nativeCode: string; message: string; nativeReason: IrohNativeOperationError['nativeReason'] };
 
 function parseEnvelope(raw: string): IrohNodeEnvelope {
   let parsed: unknown;
@@ -344,7 +346,7 @@ function parseEnvelope(raw: string): IrohNodeEnvelope {
   }
   const error =
     typeof envelope.error === 'object' && envelope.error !== null
-      ? (envelope.error as { code?: unknown; message?: unknown })
+      ? (envelope.error as { code?: unknown; message?: unknown; reason?: unknown })
       : null;
   if (
     !error ||
@@ -356,13 +358,16 @@ function parseEnvelope(raw: string): IrohNodeEnvelope {
       'Iroh native addon returned a malformed error envelope',
     );
   }
-  return { ok: false, nativeCode: error.code, message: error.message };
+  return {
+    ok: false, nativeCode: error.code, message: error.message,
+    nativeReason: error.reason === 'relay_disabled' ? error.reason : undefined,
+  };
 }
 
 async function callOperation(response: Promise<string>): Promise<unknown> {
   const envelope = parseEnvelope(await response);
   if (!envelope.ok)
-    throw new IrohNativeOperationError(envelope.nativeCode, envelope.message);
+    throw new IrohNativeOperationError(envelope.nativeCode, envelope.message, { nativeReason: envelope.nativeReason });
   return envelope.result;
 }
 

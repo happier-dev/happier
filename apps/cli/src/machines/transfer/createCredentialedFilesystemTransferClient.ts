@@ -137,8 +137,12 @@ export async function createCredentialedFilesystemTransferClient(input: Readonly
       const tunnel = await awaitMachineCarrierTunnelOpen(runtime.openTunnel({ alpn: MACHINE_ALPN, flow: 'finite_transfer',
         remoteEndpointId: minted.endpoint.endpointId, handshake }, minted.endpoint), signal).catch((error: unknown) => {
           signal?.throwIfAborted();
-          if (error instanceof IrohNativeOperationError && error.nativeCode === 'transport-unavailable') {
-            throw filesystemCarrierUnavailableError('iroh.tunnel_open', { nativeErrorCode: error.nativeCode });
+          if (error instanceof IrohNativeOperationError
+            && (error.code === 'transport' || error.code === 'transport_timeout' || error.code === 'transport_closed')) {
+            throw filesystemCarrierUnavailableError('iroh.tunnel_open', {
+              nativeErrorCode: error.nativeCode,
+              ...(error.nativeReason ? { nativeErrorReason: error.nativeReason } : {}),
+            });
           }
           throw error;
         });

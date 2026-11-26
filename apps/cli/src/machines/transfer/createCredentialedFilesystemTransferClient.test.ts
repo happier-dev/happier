@@ -306,7 +306,8 @@ describe('credentialed deployment archive byte transport', () => {
             expectedSignedOrigin = archiveOrigin;
             const carrierCode = 'machine_carrier_unavailable';
             const carrierCause = { errorClass: 'Error', errorCode: carrierCode, httpStatus: null } as const;
-            const unreachable = () => new IrohNativeOperationError('transport-unavailable', 'Private native detail');
+            const unreachable = () => new IrohNativeOperationError('transport-unreachable', 'Private native detail',
+                { nativeReason: 'relay_disabled' });
             const expectCarrierFailure = (result: Awaited<ReturnType<typeof copy>>, expected: Record<string, unknown>) => {
                 expect.soft(result).toMatchObject({ ok: false, errorCode: carrierCode });
                 const parsed = ActionFailureCauseV1Schema.safeParse(result.ok ? undefined : result.failureCause);
@@ -316,13 +317,16 @@ describe('credentialed deployment archive byte transport', () => {
             expectCarrierFailure(await copy('startup-failed.tar'), { phase: 'daemon.filesystem.copy.source.iroh.runtime_start',
                 nativeErrorReason: 'startup_failed', nativeErrorCode: 'invalid-request' });
             await expect(readFile(join(destinationRoot, 'startup-failed.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
-            const sourceDialCause = { phase: 'daemon.filesystem.copy.source.iroh.tunnel_open', nativeErrorCode: 'transport-unavailable' };
+            const sourceDialCause = { phase: 'daemon.filesystem.copy.source.iroh.tunnel_open',
+                nativeErrorCode: 'transport-unreachable', nativeErrorReason: 'relay_disabled' };
             nativeBoundary.dial.mockRejectedValueOnce(unreachable());
             expectCarrierFailure(await copy('unreachable.tar'), sourceDialCause);
             await expect(readFile(join(destinationRoot, 'unreachable.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
-            nativeBoundary.dial.mockImplementationOnce(dialArchiveTunnel).mockRejectedValueOnce(unreachable());
+            nativeBoundary.dial.mockImplementationOnce(dialArchiveTunnel)
+                .mockRejectedValueOnce(new IrohNativeOperationError('transport-timeout', 'Private native detail',
+                    { nativeReason: 'relay_disabled' }));
             expectCarrierFailure(await copy('destination-unreachable.tar'), {
-                phase: 'daemon.filesystem.copy.destination.iroh.tunnel_open', nativeErrorCode: 'transport-unavailable' });
+                ...sourceDialCause, phase: 'daemon.filesystem.copy.destination.iroh.tunnel_open', nativeErrorCode: 'transport-timeout' });
             await expect(readFile(join(destinationRoot, 'destination-unreachable.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
             nativeBoundary.dial.mockRejectedValueOnce(unreachable());
             const archiveCarrierFailure = projectDeploymentException(await hostCopy(archiveCopyRequest).catch(error => error));
