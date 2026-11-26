@@ -109,6 +109,7 @@ export const en = {
         yourEdits: 'Your edits',
         newerVersion: 'The newer version',
         compareIntro: 'These differ between your edits and the newer version.',
+        compareSavedBy: ({ name, age }: { name: string; age: string }) => `Saved by ${name} ${age}`,
         compareSame: 'Your edits and the newer version have the same name, steps and settings.',
         compareName: 'Name',
         compareSettings: 'Workflow settings',

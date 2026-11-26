@@ -4472,11 +4472,14 @@ describe('WorkflowEditorHostScreen composition', () => {
         const original = readBodyProps()?.draftStore.get();
         if (!original) throw new Error('Expected exact saved snapshot');
         await act(async () => readBodyProps()?.onChange({ ...original, name: 'My local edit' }));
-        const next = { ...base, metadata: { title: 'Agent rename' }, revision: { headerVersion: 5, bodyVersion: 9 }, changedBlockIds: ['step-1'] };
+        const next = { ...base, metadata: { title: 'Agent rename' }, revision: { headerVersion: 5, bodyVersion: 9 },
+            changedBlockIds: ['step-1'], savedBy: { kind: 'agent' as const, accountId: 'account-a' }, savedAt: 123_456 };
         await screen.update(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId, agentRevision: next }} />);
         expect(readBodyProps()?.draftStore.get().name).toBe('My local edit');
         expect(readBodyProps()?.saveConflict?.currentDraft?.name).toBe('Agent rename');
-        expect(readBodyProps()?.saveConflict?.currentRevision).toEqual(next.revision);
+        expect(readBodyProps()?.saveConflict).toMatchObject({
+            currentRevision: next.revision, savedBy: next.savedBy, savedAt: next.savedAt,
+        });
         expect(readBodyProps()?.highlightedBlockIds ?? []).toEqual([]);
     });
 

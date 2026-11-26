@@ -19976,6 +19976,7 @@ const pl: WorkflowEditorPageTranslations = {
         yourEdits: 'Twoje zmiany',
         newerVersion: 'Nowsza wersja',
         compareIntro: 'Tym różnią się Twoje zmiany i nowsza wersja.',
+        compareSavedBy: ({ name, age }: { name: string; age: string }) => `Zapisane przez ${name} ${age}`,
         compareSame: 'Twoje zmiany i nowsza wersja mają tę samą nazwę, te same kroki i te same ustawienia.',
         compareName: 'Nazwa',
         compareSettings: 'Ustawienia workflow',

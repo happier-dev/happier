@@ -1402,6 +1402,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                                 captureProvenance: current.metadata.captureProvenance,
                             }),
                             currentRevision: current.revision,
+                            savedBy: current.savedBy,
+                            savedAt: current.savedAt,
                         });
                     } catch {
                         if (isCurrent()) setSaveConflict({ currentDraft: null, currentRevision: null });
@@ -1620,7 +1622,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     // Initial hydration, pushed saved content and Agent snapshots share one
     // adoption decision. Read dirty state when the read settles, not when it starts.
     const acceptSavedRevision = useEventCallback((revision: Pick<Awaited<ReturnType<typeof getWorkflowDefinition>>,
-        'definitionId' | 'revision' | 'metadata' | 'definition'>, changedBlockIds: readonly string[] | null = null) => {
+        'definitionId' | 'revision' | 'metadata' | 'definition' | 'savedBy' | 'savedAt'>, changedBlockIds: readonly string[] | null = null) => {
         const accepted = saved?.definitionId === revision.definitionId && contentScopeKey === accountScopeKey;
         if (accepted && (revision.revision.headerVersion < saved.revision.headerVersion
                 || revision.revision.bodyVersion < saved.revision.bodyVersion)) return;
@@ -1648,7 +1650,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             captureProvenance: revision.metadata.captureProvenance,
         });
         if (accepted && draft !== null && (readDraftDirty(draft, description) || savePending)) {
-            setSaveConflict({ currentDraft: incoming, currentRevision: revision.revision });
+            setSaveConflict({ currentDraft: incoming, currentRevision: revision.revision,
+                savedBy: revision.savedBy, savedAt: revision.savedAt });
             return;
         }
         const nextDescription = revision.metadata.description ?? '';

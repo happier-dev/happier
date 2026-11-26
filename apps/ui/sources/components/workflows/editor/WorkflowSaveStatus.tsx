@@ -12,6 +12,11 @@ import { readDocumentFocusReturnTarget, type FocusReturnTarget } from '@/keyboar
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { t } from '@/text';
 import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import type { WorkflowDefinitionGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+
+import { useSyncedAccountName } from '@/components/account/useSyncedAccountName';
+import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { useActiveServerAccountScope, useUser } from '@/sync/store/hooks';
 
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { buildWorkflowDefinitionCandidate } from '@/sync/domains/workflows/workflowAuthoring';
@@ -25,7 +30,7 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMe
 export type WorkflowSaveConflict = Readonly<{
     currentDraft: WorkflowEditorDraft | null;
     currentRevision: WorkflowArtifactRevisionV1 | null;
-}>;
+} & Pick<WorkflowDefinitionGetResultV1, 'savedBy' | 'savedAt'>>;
 
 /**
  * Where the explicit Save stands, as the host's save owner knows it. There is no
@@ -142,9 +147,9 @@ function readableDraft(draft: WorkflowEditorDraft): string {
 type WorkflowSaveComparisonProps = Readonly<{
     localDraft: WorkflowEditorDraft;
     currentDraft: WorkflowEditorDraft;
-    currentRevision: WorkflowArtifactRevisionV1 | null;
+    nowMs?: number;
     testID: string;
-}>;
+} & Pick<WorkflowSaveConflict, 'currentRevision' | 'savedBy' | 'savedAt'>>;
 
 const DIFFERENCE_WORD = {
     changed: 'workflows.page.saveStatus.compareChanged',
@@ -157,7 +162,19 @@ const DIFFERENCE_WORD = {
  * their names, the Workflow's name and its settings. The exact documents stay behind Technical details.
  */
 function WorkflowSaveComparisonSheet(props: CustomModalInjectedProps & WorkflowSaveComparisonProps): React.ReactElement {
-    const { localDraft, currentDraft, currentRevision } = props;
+    const { localDraft, currentDraft, currentRevision, savedBy, savedAt } = props;
+    const saverId = savedAt !== undefined && savedBy?.kind === 'person' ? savedBy.accountId : undefined;
+    const scope = useActiveServerAccountScope();
+    const cachedPerson = useUser(saverId);
+    const viewer = useSyncedAccountName(saverId === scope?.accountId ? scope ?? null : null);
+    const name = savedBy?.kind === 'agent'
+        ? t('workflows.authoring.agent')
+        : viewer?.label ?? (cachedPerson ? formatAccountDisplayName(cachedPerson) : null);
+    const presented = useLayoutPresentationActive();
+    const nowMs = useMinuteClock(presented && name !== null && savedAt !== undefined, props.nowMs);
+    const attribution = name !== null && savedAt !== undefined
+        ? t('workflows.page.saveStatus.compareSavedBy', { name, age: formatRelativeTimeShort(savedAt, nowMs) })
+        : null;
     const rows = React.useMemo(() => {
         const differences = listWorkflowDraftDifferences(localDraft, currentDraft);
         const changed = t(DIFFERENCE_WORD.changed);
@@ -177,7 +194,9 @@ function WorkflowSaveComparisonSheet(props: CustomModalInjectedProps & WorkflowS
     return (
         <View testID={props.testID} style={styles.comparison}>
             <Text style={styles.comparisonLead}>
-                {rows.length === 0 ? t('workflows.page.saveStatus.compareSame') : t('workflows.page.saveStatus.compareIntro')}
+                {attribution ?? (rows.length === 0
+                    ? t('workflows.page.saveStatus.compareSame')
+                    : t('workflows.page.saveStatus.compareIntro'))}
             </Text>
             {rows.length === 0 ? null : (
                 <View accessibilityRole="list">
@@ -312,8 +331,9 @@ export function WorkflowSaveStatus(props: Readonly<{
     const conflict = state.kind === 'conflict' ? state.conflict : null;
     const sheetComparison = React.useMemo(() => conflict === null || conflict.currentDraft === null ? null : {
         localDraft: props.localDraft, currentDraft: conflict.currentDraft, currentRevision: conflict.currentRevision,
+        savedBy: conflict.savedBy, savedAt: conflict.savedAt, nowMs: props.nowMs,
         testID: `${testIDPrefix}-comparison-sheet`,
-    }, [conflict, props.localDraft, testIDPrefix]);
+    }, [conflict, props.localDraft, props.nowMs, testIDPrefix]);
     useWorkflowCardModal({
         open: comparing,
         component: WorkflowSaveComparisonSheet,

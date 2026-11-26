@@ -19884,6 +19884,7 @@ const ja: WorkflowEditorPageTranslations = {
         yourEdits: 'あなたの編集',
         newerVersion: '新しいバージョン',
         compareIntro: 'あなたの編集と新しいバージョンで異なる部分です。',
+        compareSavedBy: ({ name, age }: { name: string; age: string }) => `${name}が保存 · ${age}`,
         compareSame: 'あなたの編集と新しいバージョンは、名前・ステップ・設定がすべて同じです。',
         compareName: '名前',
         compareSettings: 'ワークフローの設定',

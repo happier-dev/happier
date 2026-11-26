@@ -19824,6 +19824,7 @@ const zhHant: WorkflowEditorPageTranslations = {
         yourEdits: '你的修改',
         newerVersion: '較新的版本',
         compareIntro: '你的修改與較新的版本在以下方面不同。',
+        compareSavedBy: ({ name, age }: { name: string; age: string }) => `由${name}儲存 · ${age}`,
         compareSame: '你的修改與較新的版本名稱、步驟和設定都相同。',
         compareName: '名稱',
         compareSettings: '工作流程設定',

@@ -3,13 +3,9 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 
 /** Exact saved definition and metadata acknowledged by a successful Action. */
-export type WorkflowAgentRevision = Readonly<{
-    definitionId: string;
-    definition: WorkflowDefinitionGetResultV1['definition'];
-    revision: WorkflowDefinitionGetResultV1['revision'];
-    metadata: WorkflowDefinitionGetResultV1['metadata'];
-    changedBlockIds: readonly string[];
-}>;
+export type WorkflowAgentRevision = Readonly<Pick<WorkflowDefinitionGetResultV1,
+    'definitionId' | 'definition' | 'revision' | 'metadata' | 'savedBy' | 'savedAt'
+> & { changedBlockIds: readonly string[] }>;
 
 const KIND = 'workflow-agent-revision';
 type StoredRevision = Readonly<{

@@ -19824,6 +19824,7 @@ const zhHans: WorkflowEditorPageTranslations = {
         yourEdits: '你的修改',
         newerVersion: '较新的版本',
         compareIntro: '你的修改与较新的版本在以下方面不同。',
+        compareSavedBy: ({ name, age }: { name: string; age: string }) => `由${name}保存 · ${age}`,
         compareSame: '你的修改与较新的版本名称、步骤和设置都相同。',
         compareName: '名称',
         compareSettings: '工作流设置',

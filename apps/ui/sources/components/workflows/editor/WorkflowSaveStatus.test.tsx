@@ -8,6 +8,8 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { applyWorkflowDefinitionEditsV1, WorkflowDefinitionEditOpV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { UserProfileSchema } from '@happier-dev/protocol/social/friends';
+import { storage } from '@/sync/domains/state/storage';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -209,6 +211,33 @@ describe('WorkflowSaveStatus', () => {
         expect(screen.getTextContent()).toContain('Review remote changes');
         await screen.pressByTestIdAsync('workflow-editor-save-as-copy');
         expect(saveAsCopy).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['both facts', 'no author', 'no timestamp'] as const)('opens Compare with %s for the newer revision', async (facts) => {
+        const { WorkflowSaveStatus } = await import('./WorkflowSaveStatus');
+        const { ModalProvider } = await import('@/modal/ModalProvider');
+        const now = Date.UTC(2026, 8, 30, 12);
+        const savedAt = now - 120_000;
+        const person = UserProfileSchema.parse({ id: 'compare-saver', name: 'Mara Novak', firstName: 'Mara', lastName: 'Novak',
+            avatar: null, username: 'mara', bio: null, status: 'friend', publicKey: null });
+        storage.getState().applyUsers({ [person.id]: person });
+        const attribution = {
+            ...(facts === 'no author' ? {} : { savedBy: { kind: 'person' as const, accountId: person.id } }),
+            ...(facts === 'no timestamp' ? {} : { savedAt }),
+        };
+        const screen = await renderScreen(<ModalProvider><WorkflowSaveStatus
+            state={{ kind: 'conflict', conflict: { ...attribution, currentDraft: { ...draft, name: 'Newer name' },
+                currentRevision: { headerVersion: 2, bodyVersion: 1 } } }}
+            localDraft={draft} onSaveAsCopy={() => {}} nowMs={now} testIDPrefix="compare-author" /></ModalProvider>);
+        await screen.pressByTestIdAsync('compare-author-compare');
+        const label = `workflows.page.saveStatus.compareSavedBy:${JSON.stringify({ name: 'Mara Novak', age: formatRelativeTimeShort(savedAt, now) })}`;
+        if (facts === 'both facts') {
+            expect(screen.getTextContent()).toContain(label);
+        } else {
+            expect(screen.getTextContent()).toContain('workflows.page.saveStatus.compareIntro');
+            expect(screen.getTextContent()).not.toContain('workflows.page.saveStatus.compareSavedBy');
+        }
+        await screen.unmount();
     });
 
     it('says what differs in step names and words, with the exact documents only behind Technical details (R14 MUST 5)', async () => {

@@ -19964,6 +19964,7 @@ const ca: WorkflowEditorPageTranslations = {
         yourEdits: 'Els teus canvis',
         newerVersion: 'La versió més recent',
         compareIntro: 'Això és diferent entre els teus canvis i la versió més recent.',
+        compareSavedBy: ({ name, age }: { name: string; age: string }) => `Desat per ${name} ${age}`,
         compareSame: 'Els teus canvis i la versió més recent tenen el mateix nom, els mateixos passos i la mateixa configuració.',
         compareName: 'Nom',
         compareSettings: 'Configuració del workflow',
