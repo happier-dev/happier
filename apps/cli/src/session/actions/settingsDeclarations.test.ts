@@ -4,6 +4,11 @@ import { ActionsSettingsV1Schema, AccountSettingsV2UpdateRequestSchema, accountS
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol';
 import { ACCOUNT_SETTING_DECLARATIONS_V1 } from '@happier-dev/protocol/actions/accountSettingDeclarations';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
+import { ArtifactCreateHttpResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { z } from 'zod/mini';
 
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -22,6 +27,9 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createCliVoiceSettingsBindingContext } from './settingsCatalogServices';
+
+// UI catalog parity reaches native styling; keep the platform boundary in its owning testkit.
+vi.mock('react-native-unistyles', async () => (await import('../../../../ui/sources/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'settings.set': { enabled: true } } });
 
@@ -76,7 +84,7 @@ describe('CLI declared Account settings', () => {
 
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); resetInMemoryAccountSettingsContextForTests(); });
 
-  function executor(token = 'settings-parity-test') {
+  function executor(token = `header.${Buffer.from(JSON.stringify({ sub: 'settings-parity-test' })).toString('base64url')}.signature`) {
     return createCliActionExecutorHarness({
       token, sessionId: 'settings-parity', mode: 'plain', ctx: null, serverId: 'settings-home',
       serverHttpBaseUrl: 'https://settings-home.test',
@@ -852,12 +860,43 @@ describe('CLI declared Account settings', () => {
       .toMatchObject({ ok: true, result: { value: 4 } });
   });
 
-  it('lets agents read Account defaults but refuses an unbound configuration approval without writing', async () => {
+  it('lets agents read Account defaults and proposes configuration approval without changing the Account', async () => {
+    const artifacts = new Map<string, ReturnType<typeof ArtifactCreateHttpResponseV1Schema.parse>>();
+    const read = vi.mocked(axios.get).getMockImplementation()!;
+    vi.mocked(axios.get).mockImplementation(async (url, config) => {
+      const path = new URL(url).pathname;
+      if (!path.startsWith('/v1/artifacts/')) return read(url, config);
+      const artifact = artifacts.get(path.split('/').at(-1)!);
+      return { status: artifact ? 200 : 404, data: artifact ?? { error: 'not_found' } };
+    });
+    const write = vi.mocked(axios.post).getMockImplementation()!;
+    vi.mocked(axios.post).mockImplementation(async (url, raw, config) => {
+      if (!url.endsWith('/v1/artifacts')) return write(url, raw, config);
+      const wire = ArtifactJsonCreateHttpInputV1Schema.parse(raw);
+      const artifact = ArtifactCreateHttpResponseV1Schema.parse({
+        id: wire.id, ownerAccountId: 'settings-parity-test', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+        header: wire.header, body: wire.body, dataEncryptionKey: wire.dataEncryptionKey,
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+      });
+      artifacts.set(wire.id, artifact);
+      return { status: 200, data: artifact };
+    });
     const agent = { surface: 'agent', authority: 'account_automation', actionsSettings } as const;
-    expect(await executor().execute('settings.get', { anchor: 'delegation.workDepthLimit' }, agent)).toMatchObject({ ok: true, result: { value: 4 } });
-    expect(await executor().execute('settings.set', { anchor: 'delegation.approvalReviewerEnabled', value: true }, agent)).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+    const owner = executor();
+    expect(await owner.execute('settings.get', { anchor: 'delegation.workDepthLimit' }, agent)).toMatchObject({ ok: true, result: { value: 4 } });
+    const proposed = await owner.execute('settings.set', { anchor: 'delegation.approvalReviewerEnabled', value: true }, agent);
+    const artifactWrite = vi.mocked(axios.post).mock.calls.find(([url]) => url.endsWith('/v1/artifacts'));
+    if (!artifactWrite) throw new Error('Missing configuration approval Artifact');
+    const wire = ArtifactJsonCreateHttpInputV1Schema.parse(artifactWrite[1]);
+    const { body } = z.object({ body: z.string() }).parse(decodePlainArtifactStoredContent(wire.body));
+    const request = ApprovalRequestSchema.parse(JSON.parse(body));
+    expect(proposed, JSON.stringify(proposed)).toMatchObject({ ok: true,
+      result: { kind: 'approval_request_created', actionId: 'settings.set', artifactId: wire.id } });
+    expect(request).toMatchObject({ actionId: 'settings.set', status: 'open',
+      actionArgs: { anchor: 'delegation.approvalReviewerEnabled', value: true } });
     expect(accountSettingsParse(content.t === 'plain' ? content.v : {}).approvalReviewerEnabled).toBe(false);
     expect(version).toBe(1);
+    expect(vi.mocked(axios.post).mock.calls.some(([url]) => url.endsWith('/v2/account/settings'))).toBe(false);
   });
 
   it('reads an admitted native contribution through the production CLI registry producer', async () => {

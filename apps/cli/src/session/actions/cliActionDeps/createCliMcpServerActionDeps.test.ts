@@ -24,10 +24,14 @@ import { MCP_SIGN_IN_CONNECTED_ACCOUNT_DESCRIPTOR } from '@/mcp/oauth/mcpSignInR
 import { createCliConnectedServiceAction } from '../connectedServiceActionDeps';
 import { tryHandleMcpServerCliCommand } from '@/cli/actions/adapters/mcpServersArgv';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { createConnectedAccountAttemptTransactionApiBoundary } from '@/testkit/connectedAccountAttemptTransactionApi';
 import { ApprovalRequestSchema, createBlockingApprovalCoordinator, type ApprovalRequest } from '@happier-dev/protocol';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { decodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 const servers: Server[] = [];
 
 afterEach(async () => {
@@ -42,20 +46,30 @@ describe('MCP Machine Action transport disposition', () => {
     const inventoryHeaders: (string | undefined)[] = [];
     const catalogHeaders: (string | undefined)[] = [];
     const catalogBearerHeaders: (string | undefined)[] = [];
-    const server = createServer((request, response) => {
+    const server = createServer(async (request, response) => {
+      // The real credential transport carries signed HTTP proof in its body.
+      // Decode that frame at the fixture's HTTP boundary as the Home does.
+      let headers = request.headers;
+      if (request.headers[EXTERNAL_ACTION_HTTP_BODY_HEADER_V1]) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const frame = decodeExternalActionHttpBodyV1(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        if (!frame) throw new Error('Invalid signed fixture request');
+        headers = { ...headers, ...frame.headers };
+      }
       response.setHeader('Content-Type', 'application/json');
       if (request.url?.endsWith('/execution-authorization/verify')) return response.end(JSON.stringify({ ok: true }));
       if (request.url === '/v1/account/encryption/currentness') return response.end(JSON.stringify({ mode: 'plain', version: 1,
         settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
       if (request.url === '/v1/machines') {
-        inventoryHeaders.push(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]?.toString());
-        expect(request.headers.authorization).toBeUndefined();
+        inventoryHeaders.push(headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]?.toString());
+        expect(headers.authorization).toBeUndefined();
         return response.end(JSON.stringify([{ id: 'selected-machine', active: true, activeAt: Date.now(), revokedAt: null,
           replacedByMachineId: null, storageMode: 'plain', dataEncryptionKey: null }]));
       }
       if (request.url === '/v1/account/entity-rows/mcp') {
-        catalogHeaders.push(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]?.toString());
-        catalogBearerHeaders.push(request.headers.authorization);
+        catalogHeaders.push(headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]?.toString());
+        catalogBearerHeaders.push(headers.authorization);
         return response.end(JSON.stringify({ status: 'present', revision: 1,
         content: { t: 'plain', v: { v: 1, bindings: [], servers: [{ id: 'server', name: 'server', transport: 'http',
           remote: { url: 'https://mcp.fixture.test/mcp', headers: {}, auth: { kind: 'oauth' } },
@@ -119,8 +133,19 @@ describe('MCP Machine Action transport disposition', () => {
     expect(machineRequests).toEqual(['selected-machine']);
   });
   it.each([false, true])('returns the full JSON start receipt through the generated CLI and real Connected Account adapters (approval=%s)', async approvalRequired => {
-    const server = createServer((request, response) => {
+    const transactions = createConnectedAccountAttemptTransactionApiBoundary();
+    const server = createServer(async (request, response) => {
       response.setHeader('Content-Type', 'application/json');
+      if (request.method === 'POST') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const availability = absentAccountPluginAvailabilityHttpResponse(new URL(request.url!, base).href, body);
+        if (availability) {
+          response.statusCode = availability.status;
+          return response.end(JSON.stringify(availability.data));
+        }
+      }
       if (request.url === '/v1/account/encryption/currentness') response.end(JSON.stringify({ mode: 'plain', version: 1,
         settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
       else if (request.url === '/v1/machines') response.end(JSON.stringify(['other-machine', 'selected-machine'].map(id => ({
@@ -131,6 +156,11 @@ describe('MCP Machine Action transport disposition', () => {
           remote: { url: 'https://mcp.fixture.test/mcp', headers: {}, auth: { kind: 'oauth' } },
           env: {}, createdAt: 1, updatedAt: 1 }] } } }));
       else if (request.url === '/v1/account/entity-rows/profiles/transfer') response.end(JSON.stringify({ status: 'absent' }));
+      else if (request.url === '/v2/connect/connected-account-attempt-transactions/attempt') {
+        const record = await transactions.read({ attemptId: 'attempt' });
+        response.statusCode = record ? 200 : 404;
+        response.end(JSON.stringify(record ?? { error: 'connected_account_attempt_transaction_not_found' }));
+      }
       else { response.statusCode = 404; response.end('{}'); }
     });
     servers.push(server);
@@ -168,8 +198,14 @@ describe('MCP Machine Action transport disposition', () => {
         } else if (request.method === CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD) {
           const { machineId, command } = ConnectedAccountAuthenticationCommandRequestSchema.parse(request.request);
           commands.push({ machineId, operation: command.operation });
-          if (command.operation === 'beginConnect') return ConnectedAccountAttemptResponseSchema.parse({ status: 'configurationRequired',
-            attemptId: 'attempt', target: { kind: 'attempt', attemptId: 'attempt', service, modeId: 'oauth' }, missingFieldIds: ['serverId', 'resource'] });
+          if (command.operation === 'beginConnect') {
+            // The native daemon publishes the durable Home address consumed by
+            // attempt-only continuations; its database boundary stays synthetic.
+            await transactions.create({ kind: 'oauth', attemptId: 'attempt', content: { t: 'plain', v: {} },
+              scope: { machineId, service, modeId: 'oauth', intent: 'connect', phase: 'configurationRequired', createdAtMs: Date.now() } });
+            return ConnectedAccountAttemptResponseSchema.parse({ status: 'configurationRequired',
+              attemptId: 'attempt', target: { kind: 'attempt', attemptId: 'attempt', service, modeId: 'oauth' }, missingFieldIds: ['serverId', 'resource'] });
+          }
           if (command.operation === 'continueConnect') return ConnectedAccountAttemptResponseSchema.parse({ status: 'starting', attemptId: 'attempt' });
           if (command.operation === 'read' && command.waitForProviderStart) return ConnectedAccountAttemptResponseSchema.parse({ status: 'awaitingOAuth',
             attemptId: 'attempt', authorizationUrl: 'https://issuer.fixture.test/authorize', callbackUrl: mode.callbackUrl, expiresAtMs: 5000 });
@@ -181,6 +217,7 @@ describe('MCP Machine Action transport disposition', () => {
       const output = captureConsoleJsonOutput<unknown>();
       const capturedMachineIds: (string | undefined)[] = [];
       const coordinator = createBlockingApprovalCoordinator();
+      const invocationLifetime = new AbortController();
       let storedApproval: ApprovalRequest | null = null;
       let origin: ReturnType<typeof createActionExecutor> | undefined;
       const invocation = tryHandleMcpServerCliCommand({ argv: ['mcp', 'servers', 'sign-in', 'fixture', '--machine-id', 'selected-machine', '--no-open', '--json'],
@@ -191,6 +228,7 @@ describe('MCP Machine Action transport disposition', () => {
           const mcpServerAction = createCliMcpServerActionExecuteV1({ credentials, serverId: 'home', serverHttpBaseUrl: base,
             connectedServiceAction, callMachineAction });
           const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), mcpServerAction, connectedServiceAction,
+            hostActionApprovalLifetime: { actionId: 'mcp.servers.signIn.start', surface: 'cli', signal: invocationLifetime.signal },
             // Artifact persistence is the other substituted system boundary;
             // real codecs, transition admission and live coordinator run below.
             approvalsCreate: async ({ request }) => { storedApproval = ApprovalRequestSchema.parse(request); return { artifactId: 'oauth-approval' }; },
@@ -212,7 +250,8 @@ describe('MCP Machine Action transport disposition', () => {
             readActionsSettings: () => normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'mcp.servers.signIn.start': approvalRequired ? [] : ['cli'] } }) });
           origin = executor;
           return { ...executor, execute: (id, input, context) => executor.execute(id, input, {
-            ...context, serverId: 'home', actionRequestId: 'oauth-start', defaultSessionMachineId: 'selected-machine',
+            ...context, authority: resolveInvocationAuthority({ credential: 'terminal', surface: 'cli' }),
+            signal: invocationLifetime.signal, serverId: 'home', actionRequestId: 'oauth-start', defaultSessionMachineId: 'selected-machine',
           }), async resolveSessionTarget() { throw new Error('Unexpected Session target'); } };
         } } });
       try {
@@ -224,11 +263,11 @@ describe('MCP Machine Action transport disposition', () => {
         }
         expect(await invocation).toBe(true);
         if (approvalRequired) {
-          expect(storedApproval).toMatchObject({ status: 'executed', execution: { ok: true, result: { machineId: 'selected-machine' } } });
+          expect(storedApproval, JSON.stringify(storedApproval)).toMatchObject({ status: 'executed', execution: { ok: true, result: { machineId: 'selected-machine' } } });
           expect(JSON.stringify(storedApproval)).not.toContain('https://issuer.fixture.test/authorize');
         }
       } finally { coordinator.dispose(); await invocation; }
-      expect(process.exitCode ?? 0).toBe(0);
+      expect(process.exitCode ?? 0, JSON.stringify(output.json())).toBe(0);
       expect(capturedMachineIds).toEqual(['selected-machine']);
       expect(output.json()).toEqual({ v: 1, ok: true, kind: 'mcp_servers_sign_in', data: {
         attemptId: 'attempt', machineId: 'selected-machine', authorizationUrl: 'https://issuer.fixture.test/authorize', expiresAtMs: 5000 } });
