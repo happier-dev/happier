@@ -159,7 +159,7 @@ export function useDeploymentEnvironmentHealthRecord(controller: DeploymentReadC
 }
 
 function useEnvironmentRead(controller: DeploymentReadControllerV1 | null, environmentId: string | null,
-    demand: DeploymentReadDemandV1, health: boolean) {
+    demand: DeploymentReadDemandV1, health: boolean | string) {
     const acquire = React.useMemo(() => controller && environmentId
         ? () => controller.acquireEnvironment(environmentId, INACTIVE, { health }) : null,
     [controller, environmentId, health]);
@@ -292,7 +292,7 @@ export function useReceiptRead(controller: DeploymentReadControllerV1 | null, en
 export function useDeploymentReceipt(controller: DeploymentReadControllerV1 | null, environmentId: string | null, deploymentId: string | null,
     demand: DeploymentReadDemandV1) {
     const read = useReceiptRead(controller, environmentId, deploymentId, demand);
-    const environment = useEnvironmentRead(controller, environmentId, demand, true);
+    const environment = useEnvironmentRead(controller, environmentId, demand, deploymentId ?? false);
     const history = useDeploymentHistory(controller, deploymentId ? environmentId : null, demand);
     const detail = environment.snapshot.value;
     const runtime = detail?.runtimeTargetLink;

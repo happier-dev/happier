@@ -189,7 +189,7 @@ export type DeploymentReadControllerV1 = Readonly<{
         DeploymentReadPageLeaseV1<DeploymentEnvironmentReadCollectionV1, 'includeTotal'>;
     acquireActivity(demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<DeploymentActivityV1>;
     acquireEnvironment(environmentId: string, demand: DeploymentReadDemandV1,
-        options?: Readonly<{ health?: boolean }>): DeploymentReadLeaseV1<DeploymentEnvironmentReadDetailV1>;
+        options?: Readonly<{ health?: boolean | string }>): DeploymentReadLeaseV1<DeploymentEnvironmentReadDetailV1>;
     acquireHistory(environmentId: string, query: DeploymentHistoryQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentHistoryPageV1>;
     acquireReceipt(environmentId: string, deploymentId: string, demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<DeploymentReceiptReadDetailV1>;
     acquireReceiptChip(environmentId: string, deploymentId: string, demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<DeploymentChipV1>;

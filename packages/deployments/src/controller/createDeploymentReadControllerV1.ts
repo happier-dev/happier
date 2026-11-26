@@ -36,7 +36,7 @@ type Resource = Readonly<{
 type Entry = {
     resource: Resource;
     projection: ReturnType<typeof createDeploymentProjectionV1>;
-    demands: Set<{ current: DeploymentReadDemandV1; consumeHealth: boolean }>;
+    demands: Set<{ current: DeploymentReadDemandV1; consumeHealth: boolean | string }>;
     abort: AbortController | undefined;
     request: Promise<void> | undefined;
     healthObservation: DeploymentEnvironmentHealthObservationV1 | undefined;
@@ -94,8 +94,11 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
     }
     const syncHealthObservation = (entry: Entry) => {
         if (entry.resource.kind === 'environment') {
-            reconcileDeploymentEnvironmentHealthObservationV1(entry,
-                !retired && [...entry.demands].some(demand => demand.consumeHealth && isDeploymentReadDemandActiveV1(demand.current)), scope, transport,
+            const detail = entry.projection.getSnapshot().value as DeploymentEnvironmentReadDetailV1 | null;
+            const servingId = detail?.runtimeTargetLink?.activeDeploymentId;
+            const observe = !retired && [...entry.demands].some(({ current, consumeHealth }) =>
+                (consumeHealth === true || consumeHealth === servingId) && isDeploymentReadDemandActiveV1(current));
+            reconcileDeploymentEnvironmentHealthObservationV1(entry, observe, scope, transport,
                 observeCollectionHealth ? undefined : publishCollectionHealth);
             for (const candidate of entries.values()) {
                 if (candidate.resource.kind === 'domains' && candidate.resource.environmentId === entry.resource.environmentId) {
@@ -331,7 +334,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         overlap.request = startRead(entry, abort);
         return overlap.request;
     }
-    function acquire<T>(resource: Resource, initialDemand: DeploymentReadDemandV1, consumeHealth = false): DeploymentReadLeaseV1<T> {
+    function acquire<T>(resource: Resource, initialDemand: DeploymentReadDemandV1, consumeHealth: boolean | string = false): DeploymentReadLeaseV1<T> {
         let entry = entries.get(resource.key);
         if (!entry) {
             entry = { resource, projection: createDeploymentProjectionV1(), demands: new Set(), abort: undefined, request: undefined,
@@ -512,7 +515,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                         || !detail.targetLinks.some(link => link.targetLink.id === aggregate.targetLinkId))) throw new Error('Foreign health aggregate');
                     return detail;
                 },
-            }, demand, options?.health === true);
+            }, demand, options?.health);
         },
         acquireActivity(demand) {
             return acquire({ key: 'activity', kind: 'activity',

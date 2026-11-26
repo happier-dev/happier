@@ -58,6 +58,43 @@ function createBoundary() {
 }
 
 describe('deployment React demand', () => {
+    it('opens no health watch for a historical Receipt and follows the serving pointer as it changes', async () => {
+        const boundary = createBoundary();
+        const selected = boundary.receipt.id;
+        const link = boundary.detail.targetLinks[0]!.targetLink;
+        let servingId = 'another-deployment';
+        let opened = 0;
+        let closed = 0;
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...boundary.transport,
+            readEnvironment: async () => {
+                const current = { ...link, activeDeploymentId: servingId };
+                return { ok: true, value: { ...boundary.detail, targetLinks: [{ targetLink: current }] } };
+            },
+            observeEnvironmentHealth() {
+                opened += 1;
+                return () => { closed += 1; };
+            },
+        } });
+        const hook = await renderHook(() => useDeploymentReceipt(controller, boundary.row.id, selected, shown));
+        try {
+            await flushHookEffects();
+            expect(hook.getCurrent().snapshot.value?.deployment.id).toBe(selected);
+            expect({ opened, closed }).toEqual({ opened: 0, closed: 0 });
+            servingId = selected;
+            await act(async () => {
+                controller.invalidate({ environmentId: boundary.row.id });
+                await flushHookEffects();
+            });
+            expect({ opened, closed }).toEqual({ opened: 1, closed: 0 });
+            servingId = 'another-deployment';
+            await act(async () => {
+                controller.invalidate({ environmentId: boundary.row.id });
+                await flushHookEffects();
+            });
+            expect({ opened, closed }).toEqual({ opened: 1, closed: 1 });
+        } finally { await hook.unmount(); controller.retire(); }
+    });
+
     it('settles an Environment read refusal with its cause and recovers through the same menu retry', async () => {
         const boundary = createBoundary();
         let refused = true;

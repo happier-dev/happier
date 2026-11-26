@@ -84,7 +84,7 @@ import { describeReceipt, DeployOutcomeBanner, type DeploymentReviewHandle } fro
 import { hasDeploymentPressAttention, useDeploymentPress, type DeploymentRecoveryTarget } from './deploymentActionOutcome';
 import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { createDeploymentActions } from './deploymentActions';
-import { useDeploymentEnvironmentHealthRecord, useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
+import { useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
 import { DeploymentLiveAddressActions } from './deploymentLiveAddress';
 import { deploymentAddressExpected, deploymentLiveAddressDemand, formatDeploymentLiveAddress, resolveDeploymentLiveAddress, type DeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -142,10 +142,6 @@ export const DeploymentReceiptDetail = React.memo(
       onOpenRecoveryDestination?: (destination: DeploymentFailureRecoveryDestinationV1, at?: DeploymentRecoveryTarget) => void;
     }>,
   ) {
-    // The serving pointer lives on the Environment's runtime link; the controller shares that read.
-    const environment = useDeploymentEnvironmentHealthRecord(props.controller, props.environmentId, props.demand);
-    const environmentValue = environment.snapshot.value;
-    const activeId = environmentValue?.runtimeTargetLink?.activeDeploymentId ?? null;
     const [latestPress, setLatestPress] = React.useState<'rollback' | 'deploy' | 'cancel' | null>(null);
     // The version a press is rolling back to, said while it runs (R17-D7) instead of a bare spinner.
     const [rollingBackTo, setRollingBackTo] = React.useState<string | null>(null);
@@ -157,6 +153,8 @@ export const DeploymentReceiptDetail = React.memo(
       props.deploymentId,
       props.demand,
     );
+    const environmentValue = receipt.environmentSnapshot.value;
+    const activeId = environmentValue?.runtimeTargetLink?.activeDeploymentId ?? null;
     const value = receipt.snapshot.value;
     const opened = value?.content ? value : null;
     const runtime = environmentValue?.runtimeTargetLink;
