@@ -389,6 +389,15 @@ environment and selected session directory, and its credential kind and value re
 and installed-runtime parser phases share the caller's deadline, cancellation and owned-resource
 cleanup. Helper output uses both API-key and Bearer headers without the subscription OAuth beta
 header. Custom endpoint path prefixes are preserved, while saved subscription credentials remain restricted to Anthropic.
+After a saved claude.ai login, the resolver reads Claude Code's saved enterprise-gateway sign-in
+(`enterpriseGateway` in the same keychain item or `.credentials.json`). That token is used only with
+the gateway URL stored beside it, and only when `ANTHROPIC_BASE_URL` is unset or names the same
+origin. It is sent as `Authorization: Bearer` without the subscription OAuth beta header, over a
+connection whose leaf certificate matches the SHA-256 fingerprint Claude Code pinned for that host
+in `gatewayTrust`. The standard chain and hostname checks still run, each request does a fresh
+handshake so session resumption cannot skip the pin, and the request is not routed through an
+HTTP(S) proxy. A sign-in with no pin, a non-https URL, or a passed `expiresAt` is not used; the
+resolver never refreshes it, so discovery returns the built-in catalog until Claude Code does.
 For Claude, a successful account response is authoritative for membership and API capability/context
 facts; curated rows only enrich matching ids and serve as the fallback before the first success. A
 later failed refresh retains the bounded last successful account snapshot, serves it during the

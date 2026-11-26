@@ -7,7 +7,11 @@ import {
   type ConnectedServiceCredentialApi,
   type ConnectedServiceAuthGroupApi,
 } from '@/api/connectedServices/connectedServiceCredentialApi';
-import { readClaudeCodeNativeCredential } from '@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile';
+import {
+  readClaudeCodeNativeCredential,
+  readClaudeCodeNativeGatewayLogin,
+} from '@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile';
+import type { ClaudeCodeGatewayLogin } from '@/backends/claude/connectedServices/nativeAuth/claudeCodeNativeCredentialPayload';
 import { resolveConnectedServiceCredentialsWithRevisions } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import type { Credentials } from '@/persistence';
 import { buildProfileEnvOverlay } from '@/settings/profiles/buildProfileEnvOverlay';
@@ -19,11 +23,18 @@ import type { CatalogProbeLifecycle, RegisterNativeCatalogCleanup } from '@/capa
 import { DEFAULT_ANTHROPIC_BASE_URL } from './fetchAnthropicModels';
 import { readClaudeApiKeyHelperCredential } from './readClaudeApiKeyHelperCredential';
 
-export type ClaudeModelProbeCredential = Readonly<{
-  /** `api_key_helper`: output of Claude Code's `apiKeyHelper`, sent the way Claude Code sends it. */
-  kind: 'bearer' | 'api_key' | 'api_key_helper';
-  value: string;
-}>;
+export type ClaudeModelProbeCredential =
+  | Readonly<{
+    /** `api_key_helper`: output of Claude Code's `apiKeyHelper`, sent the way Claude Code sends it. */
+    kind: 'bearer' | 'api_key' | 'api_key_helper';
+    value: string;
+  }>
+  | Readonly<{
+    /** Claude Code's gateway sign-in: usable only over a connection presenting the pinned certificate. */
+    kind: 'gateway_login';
+    value: string;
+    tlsCertificateSha256: string;
+  }>;
 
 export type ClaudeModelProbeTarget = Readonly<{
   baseUrl: string | null;
@@ -255,19 +266,42 @@ export async function resolveClaudeModelProbeTarget(
     return { baseUrl, credential, cacheIdentity: targetCacheIdentity(baseUrl, credential) };
   }
 
-  // Never pair a native saved subscription token with an explicitly configured third-party
-  // endpoint. With the default endpoint, reading the native credential mirrors Claude Code login.
-  if (baseUrl !== null) return null;
+  // Saved logins come last, as in Claude Code. A claude.ai login only ever talks to the Anthropic
+  // API, so it is never paired with an explicitly configured endpoint.
+  const claudeConfigDir = resolveConfiguredClaudeConfigDir({ env: effectiveEnv });
   try {
-    const native = await readClaudeCodeNativeCredential({
-      claudeConfigDir: resolveConfiguredClaudeConfigDir({ env: effectiveEnv }),
-      signal: params.signal,
-    });
-    const accessToken = readNonBlankString(native?.payload.claudeAiOauth.accessToken);
-    if (!accessToken) return null;
-    const credential = { kind: 'bearer' as const, value: accessToken };
-    return { baseUrl: null, credential, cacheIdentity: targetCacheIdentity(null, credential) };
+    if (baseUrl === null) {
+      const native = await readClaudeCodeNativeCredential({ claudeConfigDir, signal: params.signal });
+      const accessToken = readNonBlankString(native?.payload.claudeAiOauth.accessToken);
+      if (accessToken) {
+        const credential = { kind: 'bearer' as const, value: accessToken };
+        return { baseUrl: null, credential, cacheIdentity: targetCacheIdentity(null, credential) };
+      }
+    }
+    const gatewayLogin = await readClaudeCodeNativeGatewayLogin({ claudeConfigDir, signal: params.signal });
+    return gatewayLogin ? resolveGatewayLoginTarget(gatewayLogin, baseUrl, (params.nowMs ?? Date.now)()) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * A gateway sign-in belongs to the gateway that issued it: discovery uses that gateway's URL and
+ * never sends the token to another origin. Like the rest of this resolver it is passive, so an
+ * expired sign-in waits for Claude Code to refresh it instead of being refreshed here.
+ */
+function resolveGatewayLoginTarget(
+  login: ClaudeCodeGatewayLogin,
+  explicitBaseUrl: string | null,
+  nowMs: number,
+): ClaudeModelProbeTarget | null {
+  if (login.expiresAt !== null && login.expiresAt <= nowMs) return null;
+  if (explicitBaseUrl !== null && new URL(explicitBaseUrl).origin !== new URL(login.url).origin) return null;
+  const baseUrl = explicitBaseUrl ?? login.url;
+  const credential = {
+    kind: 'gateway_login' as const,
+    value: login.accessToken,
+    tlsCertificateSha256: login.tlsCertificateSha256,
+  };
+  return { baseUrl, credential, cacheIdentity: targetCacheIdentity(baseUrl, credential) };
 }

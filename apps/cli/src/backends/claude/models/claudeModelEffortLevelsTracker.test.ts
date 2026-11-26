@@ -16,7 +16,9 @@ vi.mock('./fetchAnthropicModels', async (importOriginal) => {
 
 vi.mock('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/backends/claude/connectedServices/nativeAuth/claudeCodeCredentialFile')>();
-  return { ...actual, readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock };
+  // The tracker suite does not isolate CLAUDE_CONFIG_DIR, so neither saved login is read from disk.
+  return { ...actual, readClaudeCodeNativeCredential: readClaudeCodeNativeCredentialMock,
+    readClaudeCodeNativeGatewayLogin: async () => null };
 });
 
 import { createClaudeModelEffortLevelsTracker } from './claudeModelEffortLevelsTracker';

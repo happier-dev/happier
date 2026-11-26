@@ -76,6 +76,42 @@ export function readClaudeCodeNativeCredentialPayload(
   };
 }
 
+/**
+ * Claude Code's saved sign-in to an enterprise gateway (`/login` with `forceLoginMethod: gateway`),
+ * stored in the same secure storage as `claudeAiOauth`.
+ *
+ * `gatewayTrust` maps the gateway hostname to the SHA-256 fingerprint of the TLS certificate
+ * Claude Code pinned at sign-in. Claude Code refuses a gateway without that pin and checks it on
+ * every request, so a login without a usable https URL and pin projects to `null`.
+ */
+export type ClaudeCodeGatewayLogin = Readonly<{
+  url: string;
+  accessToken: string;
+  expiresAt: number | null;
+  tlsCertificateSha256: string;
+}>;
+
+const SHA256_HEX = /^[0-9a-f]{64}$/u;
+
+export function readClaudeCodeGatewayLogin(value: unknown): ClaudeCodeGatewayLogin | null {
+  const root = readObject(value);
+  const gateway = readObject(root?.enterpriseGateway);
+  const url = readString(gateway?.url)?.trim() ?? null;
+  const accessToken = readString(gateway?.jwt)?.trim() ?? null;
+  if (!gateway || !url || !accessToken) return null;
+  let hostname: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return null;
+    hostname = parsed.hostname.replace(/^\[|\]$/gu, '');
+  } catch {
+    return null;
+  }
+  const tlsCertificateSha256 = readString(readObject(root?.gatewayTrust)?.[hostname])?.trim().toLowerCase() ?? null;
+  if (!tlsCertificateSha256 || !SHA256_HEX.test(tlsCertificateSha256)) return null;
+  return { url, accessToken, expiresAt: readNumber(gateway.expiresAt), tlsCertificateSha256 };
+}
+
 function canonicalizeJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(canonicalizeJsonValue);

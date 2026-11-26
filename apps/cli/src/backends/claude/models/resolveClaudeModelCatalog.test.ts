@@ -5,11 +5,14 @@ import { CLAUDE_AUTH_ENV_KEYS } from '@/backends/claude/auth/claudeAuthEnvKeys';
 
 import type { AnthropicModelEntry } from './fetchAnthropicModels';
 
+import { X509Certificate } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type IncomingHttpHeaders } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { once } from 'node:events';
+import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 
 import { buildClaudeEffortCliArgs } from '@/backends/claude/utils/claudeEffort';
 import {
@@ -18,6 +21,7 @@ import {
   resolveClaudeModelCatalogResolution,
   resetClaudeModelCatalogCacheForTests,
 } from './resolveClaudeModelCatalog';
+import { gatewayTlsFixture } from './gatewayTlsFixture.testkit';
 
 // Only the HTTP transport is replaced; settings, helper execution, credential resolution,
 // response parsing, and catalog enrichment all run through their real owners.
@@ -422,6 +426,98 @@ describe('resolveClaudeModelCatalog', () => {
     expect(staleAccountA).toEqual({ ...accountA, refreshError: true });
     expect(staleAccountA.models.map((model) => model.id)).toEqual(['claude-account-a']);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  describe('with a Claude Code gateway sign-in', () => {
+    const GATEWAY_TOKEN = 'gateway-session-token';
+    let defaultCaCertificates: string[];
+
+    // The fixture certificate is self-signed; trust it the way an operator's private CA is
+    // trusted, so the standard chain check passes and only the pin decides.
+    beforeEach(() => {
+      defaultCaCertificates = getCACertificates('default');
+      setDefaultCACertificates([...defaultCaCertificates, gatewayTlsFixture.cert]);
+    });
+
+    afterEach(() => {
+      setDefaultCACertificates(defaultCaCertificates);
+    });
+
+    async function startGateway() {
+      const requests: IncomingHttpHeaders[] = [];
+      const server = createHttpsServer(gatewayTlsFixture, (request, response) => {
+        requests.push(request.headers);
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({ data: [{ id: 'claude-gateway-only', display_name: 'Gateway only' }] }));
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected a TCP gateway');
+      return {
+        url: `https://127.0.0.1:${address.port}`,
+        pin: new X509Certificate(gatewayTlsFixture.cert).fingerprint256.replaceAll(':', '').toLowerCase(),
+        requests,
+        close: async () => {
+          server.closeAllConnections();
+          await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        },
+      };
+    }
+
+    /** The shape Claude Code's `/login` stores for a gateway, next to the hostname's TLS pin. */
+    async function writeGatewaySignIn(params: Readonly<{ url: string; pin: string | null; expiresAt: number }>) {
+      await writeFile(join(configDir, '.credentials.json'), JSON.stringify({
+        enterpriseGateway: {
+          url: params.url,
+          jwt: GATEWAY_TOKEN,
+          expiresAt: params.expiresAt,
+          idpRefreshToken: 'idp-refresh-token',
+          tokenEndpoint: `${params.url}/oauth/token`,
+        },
+        ...(params.pin ? { gatewayTrust: { '127.0.0.1': params.pin } } : {}),
+      }));
+    }
+
+    it('discovers models from the gateway Claude Code signed in to, over its pinned certificate', async () => {
+      const gateway = await startGateway();
+      try {
+        await writeGatewaySignIn({ url: gateway.url, pin: gateway.pin, expiresAt: Date.now() + 60 * 60_000 });
+
+        const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 5_000 });
+
+        expect(resolution).toMatchObject({ source: 'dynamic', models: [{ id: 'claude-gateway-only' }] });
+        expect(gateway.requests).toHaveLength(1);
+        expect(gateway.requests[0]?.authorization).toBe(`Bearer ${GATEWAY_TOKEN}`);
+        expect(gateway.requests[0]?.['anthropic-beta']).toBeUndefined();
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        await gateway.close();
+      }
+    });
+
+    it.each([
+      { situation: 'the certificate does not match the pin', pin: 'f'.repeat(64), expiresInMs: 60 * 60_000 },
+      { situation: 'no certificate is pinned for the gateway host', pin: null, expiresInMs: 60 * 60_000 },
+      { situation: 'the sign-in has expired', pin: 'gateway', expiresInMs: -1 },
+      { situation: 'ANTHROPIC_BASE_URL names another endpoint', pin: 'gateway', expiresInMs: 60 * 60_000,
+        baseUrl: 'https://other-gateway.example/anthropic' },
+    ])('never sends the gateway token when $situation', async ({ pin, expiresInMs, baseUrl }) => {
+      const gateway = await startGateway();
+      try {
+        await writeGatewaySignIn({ url: gateway.url, pin: pin === 'gateway' ? gateway.pin : pin,
+          expiresAt: Date.now() + expiresInMs });
+        if (baseUrl) process.env.ANTHROPIC_BASE_URL = baseUrl;
+
+        const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 5_000 });
+
+        expect(resolution.source).toBe('static');
+        expect(gateway.requests).toEqual([]);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        await gateway.close();
+      }
+    });
   });
 });
 
