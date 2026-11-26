@@ -506,6 +506,7 @@ type CliActionExecutorTestOverrides = Pick<
   Parameters<typeof createCliActionExecutor>[0],
   'happyHomeDir' | 'listContributedActionDefinitions' | 'pluginActionExecutionOwner' | 'rawSession'
   | 'serverIdentityId' | 'externalActionMachineRequestPrivateKey' | 'externalActionMachineInstallationId'
+  | 'token' | 'credentials'
 >;
 
 function createPlainExecutor(extra: CliActionExecutorTestOverrides = {}) {
@@ -1600,14 +1601,15 @@ describe('createCliActionExecutor', () => {
   });
 
   it('rejects actions disabled on the CLI surface by action settings', async () => {
+    // Review record writes are admitted for this executor's own Account before settings apply.
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     publishActionsSettings({
       v: 1,
       actions: {
         'review.start': { enabled: true, disabledSurfaces: ['cli'], disabledPlacements: [] },
       },
-    });
-
-    const executor = createPlainExecutor();
+    }, 1, token);
+    const executor = createPlainExecutor({ token, credentials: { token, credentialProvenance: 'stored_session', encryption: null } });
 
     const result = await executor.execute(
       'review.start',

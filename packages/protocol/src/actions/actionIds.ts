@@ -32,6 +32,10 @@ export const REVIEW_SETTLE_ROUND_ACTION_ID_V1 = 'review.settle_round' as const;
 export function isReviewNewRoundRunActionV1(actionId: string, runActionId: unknown): boolean {
   return actionId === 'execution.run.action' && runActionId === REVIEW_NEW_ROUND_ACTION_ID_V1;
 }
+/** Generic Run triage moves named Review comments through the hosting Account's comment port. */
+export function isReviewTriageRunActionV1(actionId: string, runActionId: unknown): boolean {
+  return actionId === 'execution.run.action' && runActionId === 'review.triage';
+}
 export const REVIEW_NEW_ROUND_ACTION_ID_V1 = 'review.new_round' as const;
 /** Review comparison preparation spends only its native capture and source-facts children. */
 export function isReviewScmPreparationEffectV1(rootActionId: string, effectActionId: string): boolean {

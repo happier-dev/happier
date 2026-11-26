@@ -129,6 +129,66 @@ it.each([
     expect(verifyMachineAdmissionCurrent).toHaveBeenCalledTimes(1);
 });
 
+it.each([
+    { name: 'owner', actorAccountId: 'owner', runtimeAccountId: 'owner', allowed: true },
+    { name: 'Manage guest', actorAccountId: 'guest', runtimeAccountId: 'guest', allowed: false },
+    { name: 'guest with owner attribution', actorAccountId: 'guest', runtimeAccountId: 'owner', allowed: false },
+    { name: 'guest signing as their own Account', actorAccountId: 'guest', runtimeAccountId: 'guest', allowed: 'requester' },
+] as const)('keeps installed Account Review record writes from a $name Machine caller', async ({ actorAccountId, runtimeAccountId, allowed }) => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const executor = createCliActionExecutor({ token, credentials: { token, encryption: null },
+        sessionId: '', mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.example.test',
+        pluginActionExecutionOwner: 'current_process',
+        actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', runtimeAccountId,
+        machineAdmission: { actorAccountId, custodianAccountId: 'owner', machineId: 'machine',
+            installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => true,
+        ...(allowed === 'requester' ? { externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
+            token: 'home-verified-root', binding: { accountId: 'guest', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+                serverIdentityId: 'srv_home', machineId: 'machine', installationId: 'installation', actionId: 'review.new_round',
+                requestId: 'guest-round', target: { kind: 'machine', machineId: 'machine' }, accountEncryptionMode: 'plain',
+                admittedMachineRole: 'manage', requestEnvelopeDigest: 'a'.repeat(43) } }) } : {}) };
+    // Home HTTP is the boundary: an owner-credential Review read is the first record effect of a new round.
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data: { error: 'not_found' } });
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 404, data: { error: 'not_found' } });
+    const result = await executor.execute('review.new_round', { reviewId: 'owner-review' }, context);
+    const homeCalls = [...get.mock.calls, ...post.mock.calls];
+    if (allowed === 'requester') {
+        // The requester's own signed authority is Home's to decide; only installed credentials are withheld.
+        expect(result).not.toMatchObject({ errorCode: 'review_comment_permission_denied' });
+        expect(homeCalls.flatMap(call => JSON.stringify(call.at(-1) ?? null).includes(token) ? [call[0]] : [])).toEqual([]);
+    } else if (allowed) expect(homeCalls.length, JSON.stringify(result)).toBeGreaterThan(0);
+    else {
+        expect(homeCalls.map(call => [call[0], (call.at(-1) as { headers?: unknown } | undefined)?.headers])).toEqual([]);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+    }
+});
+
+it.each([
+    { name: 'Session share editor', context: { rpcSessionAuthorization: { kind: 'session.write' as const, sessionId: 'owner-session' } }, allowed: false },
+    { name: 'Manage guest', context: { runtimeAccountId: 'guest', machineAdmission: { actorAccountId: 'guest', custodianAccountId: 'owner',
+        machineId: 'machine', installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const },
+        verifyMachineAdmissionCurrent: async () => true }, allowed: false },
+    { name: 'owner', context: { runtimeAccountId: 'owner' }, allowed: true },
+])('admits a $name before a generic Run call spends installed Account Review ports', async ({ context, allowed }) => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const executor = createCliActionExecutor({ token, credentials: { token, encryption: null },
+        sessionId: '', mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.example.test',
+        pluginActionExecutionOwner: 'current_process',
+        actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+    const callerContext: ActionExecutorContext = { surface: 'cli', authority: 'present_user', ...context };
+    for (const input of [
+        // Triage moves the named comment through the hosting Session's Account, whatever Review it belongs to.
+        { runId: 'run', actionId: 'review.triage', input: { findings: [{ id: 'finding', commentId: 'owner-comment', status: 'accepted' }] } },
+        { runId: 'run', actionId: 'review.new_round', input: {} },
+    ]) {
+        const prepared = await executor.prepare!('execution.run.action', input, callerContext);
+        if (allowed) expect(prepared).not.toMatchObject({ kind: 'settled', result: { errorCode: 'review_comment_permission_denied' } });
+        else expect(prepared, input.actionId).toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'review_comment_permission_denied' } });
+    }
+});
+
 it('keeps host Review services on their captured Home with refreshed Account credentials', async () => {
     const serverApiUrl = 'https://review-home.example.test';
     const serverIdentityId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';

@@ -51,7 +51,7 @@ import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } fr
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readRetainedVerifiedExternalActionRequester, retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
-import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_ID_FAMILIES_V1, isReviewNewRoundRunActionV1, isReviewRecordWriteActionIdV1, isReviewTriageRunActionV1 } from '@happier-dev/protocol/actions/actionIds';
 import { canUseLocalRuntimeReviewAccount } from '@/daemon/lifecycle/requesterWorkAttribution';
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutorHarness>[0]
@@ -202,7 +202,13 @@ export function createCliActionHost(params: CliActionExecutorParams):
   });
   const runtimeAccountId = readAccountIdFromToken(params.token) ?? undefined;
   const requesterPrivateEffectAuthorityFailure = async (actionId: ActionId, input: unknown, context: ActionExecutorContext | undefined) => {
-    if ((ACTION_ID_FAMILIES_V1.review_comments.some(id => id === actionId) || actionId === 'review.apply')
+    const runActionId = readRecord(input)?.actionId;
+    if ((ACTION_ID_FAMILIES_V1.review_comments.some(id => id === actionId) || actionId === 'review.apply'
+      || isReviewTriageRunActionV1(actionId, runActionId)
+      // Review record writes spend this executor's Account only without a requester
+      // authorization; with one, the transport signs for the requester's own Account.
+      || (isReviewRecordWriteActionIdV1(actionId) || isReviewNewRoundRunActionV1(actionId, runActionId))
+        && !context?.externalActionExecutionAuthorization)
       && !await canUseLocalRuntimeReviewAccount(context, runtimeAccountId ?? null, params.serverId)) {
       // The raw comment port spends this executor's Account credentials. Machine
       // placement or requester attribution cannot lend that Account to a guest.
