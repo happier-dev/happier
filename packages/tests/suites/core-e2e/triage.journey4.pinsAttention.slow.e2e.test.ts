@@ -12,6 +12,9 @@ import { InternalTaskMutationOutputSchema } from '@happier-dev/protocol/actions/
 import { connectUiPersonActionClient, connectUiTriageActionClient, mountUiInboxJourney } from '@happier-tests/ui-action-client';
 import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ReviewGetResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
+import { ReviewHumanActionStateV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { REVIEW_HUMAN_ACTION_IDS_V1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
@@ -39,6 +42,7 @@ import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startServerLight } from '../../src/testkit/process/serverLight';
 import { startTestDaemon } from '../../src/testkit/daemon/daemon';
 import { waitFor } from '../../src/testkit/timing';
+import { createGitRepoWithChanges } from '../../src/testkit/uiE2e/gitRepoFixtures';
 
 const run = createRunDirs({ runLabel: 'triage-journey4' });
 
@@ -224,6 +228,75 @@ it.each(['plain', 'e2ee'] as const)('publishes daemon Review attention into the 
     const retained = await ownerActions.execute('artifact.get', { artifactId: noticeId }, cliContext());
     expect(retained).toMatchObject({ ok: true, result: { artifact: { header: { title, resolved: true } } } });
     expect(inbox.getCurrent()!.items).not.toEqual(expect.arrayContaining([expect.objectContaining({ title })]));
+
+    // A requested person needs attention even when no Agent or finding exists.
+    // Keep the real requester, Home, Team admission, daemon and mounted Inbox.
+    await createGitRepoWithChanges({ repoDir: machine.workspaceDir, fileCount: 1 });
+    const target = { kind: 'machine' as const, machineId: machine.target.machineId };
+    const source = { kind: 'workingTree' as const, area: 'both' as const };
+    const capture = await ownerActions.execute('scm.diffSummary.capture', { cwd: machine.workspaceDir, source },
+      { ...cliContext(), externalActionTarget: target });
+    if (!capture.ok) throw new Error(`Human Review comparison refused (${capture.errorCode})`);
+    const captured = ScmComparisonCaptureOutputSchema.parse(capture.result);
+    if (!captured.success) throw new Error(captured.errorCode);
+    const humanReviewId = randomUUID();
+    const humanTitle = `No-findings requested Review ${randomUUID()}`;
+    await runWithServerHttpBaseUrl(fixture.server.baseUrl, async () => {
+      const round = await records.start({ reviewId: humanReviewId, title: humanTitle, subjectKind: 'comparison',
+        sourceKind: 'direct', reviewerIds: [], startedAt: Date.now(), comparisonId: captured.comparison.id,
+        comparisonCapture: { target, input: { cwd: machine.workspaceDir, source, comparisonId: captured.comparison.id } } });
+      await records.settle({ ...round, outcome: 'completed', finishedAt: Date.now(), runs: [] });
+    });
+    expect(await ui.executeConfirmed('artifact.access.grants.set', { artifactId: humanReviewId,
+      principal: { kind: 'account', accountId: readAccountIdFromToken(peer.credentials.token) }, accessLevel: 'edit' }, context))
+      .toMatchObject({ ok: true });
+    const humanNotices = () => inbox!.getCurrent()?.openAccountNotices.filter(entry => entry.header.title === humanTitle) ?? [];
+    const personContext = { ...cliContext(), presentUserConfirmation: { actionId: REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict } };
+    const verdictInput = { reviewId: humanReviewId, roundOrdinal: 1, verdict: 'comment' as const };
+    expect(await ownerActions.execute(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict, verdictInput, personContext))
+      .toMatchObject({ ok: false, errorCode: 'review_reviewer_not_requested' });
+    const requested = await peerActions.execute(REVIEW_HUMAN_ACTION_IDS_V1.setReviewers, {
+      reviewId: humanReviewId, roundOrdinal: 1, reviewers: [
+        { principal: { kind: 'account', accountId: readAccountIdFromToken(actor.credentials.token) }, required: true },
+        { principal: { kind: 'team', teamId }, required: false },
+      ],
+    }, { ...cliContext(), presentUserConfirmation: { actionId: REVIEW_HUMAN_ACTION_IDS_V1.setReviewers } });
+    if (!requested.ok) throw new Error(`Named and Team request refused (${requested.errorCode})`);
+    expect(ReviewHumanActionStateV1Schema.parse(requested.result).requests).toEqual(expect.arrayContaining([
+      expect.objectContaining({ principal: { kind: 'account', accountId: readAccountIdFromToken(actor.credentials.token) }, required: true }),
+      expect.objectContaining({ principal: { kind: 'team', teamId }, required: false }),
+    ]));
+    await waitFor(() => humanNotices().length === 1, { context: 'No-findings person request reaches the real daemon Inbox' });
+    const humanNoticeId = humanNotices()[0]!.artifact.id;
+    expect(humanNotices()[0]!.header.reviewAttention).toMatchObject({ requestedVerdict: true });
+    expect(await ownerActions.execute(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict, verdictInput,
+      { ...personContext, surface: 'agent', authority: 'account_automation', bypassApprovals: true }))
+      .toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    const teamVerdict = await peerActions.execute(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+      { ...verdictInput, body: 'An admitted Team member reviewed this round' }, personContext);
+    if (!teamVerdict.ok) throw new Error(`Team member verdict refused (${teamVerdict.errorCode})`);
+    expect(ReviewHumanActionStateV1Schema.parse(teamVerdict.result).needsYou.requestedVerdict).toBe(false);
+    const stillRequested = await ownerActions.execute(REVIEW_HUMAN_ACTION_IDS_V1.get, { reviewId: humanReviewId }, cliContext());
+    if (!stillRequested.ok) throw new Error(stillRequested.errorCode);
+    expect(ReviewHumanActionStateV1Schema.parse(stillRequested.result).needsYou.requestedVerdict).toBe(true);
+    expect(humanNotices().map(entry => entry.artifact.id)).toEqual([humanNoticeId]);
+    expect(await ui.executeConfirmed(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+      { ...verdictInput, body: 'The separately named person reviewed this round' }, context)).toMatchObject({ ok: true });
+    await waitFor(() => humanNotices().length === 0, { context: 'Person verdict resolves the no-findings Review attention' });
+    const next = await ownerActions.execute(REVIEW_NEW_ROUND_ACTION_ID_V1, { reviewId: humanReviewId }, cliContext());
+    expect(next).toMatchObject({ ok: true, result: { reviewRound: { reviewId: humanReviewId, roundOrdinal: 2 } } });
+    await waitFor(() => humanNotices().length === 1, { context: 'New round renews the same requested Review attention' });
+    expect(humanNotices().map(entry => entry.artifact.id)).toEqual([humanNoticeId]);
+    const renewed = await ownerActions.execute(REVIEW_HUMAN_ACTION_IDS_V1.get, { reviewId: humanReviewId }, cliContext());
+    if (!renewed.ok) throw new Error(renewed.errorCode);
+    expect(ReviewHumanActionStateV1Schema.parse(renewed.result)).toMatchObject({ roundOrdinal: 2,
+      requests: expect.arrayContaining([expect.objectContaining({ required: true, roundOrdinal: 2 }),
+        expect.objectContaining({ required: false, roundOrdinal: 2 })]),
+      verdicts: expect.arrayContaining([expect.objectContaining({ roundOrdinal: 1,
+        body: 'The separately named person reviewed this round' })]),
+      needsYou: { requestedVerdict: true } });
+    expect(await ownerActions.execute(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict, verdictInput, personContext))
+      .toMatchObject({ ok: false, errorCode: 'review_round_not_admitted' });
   } finally {
     await inbox?.unmount();
     await ui?.close();
