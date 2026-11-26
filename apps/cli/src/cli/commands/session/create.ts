@@ -8,7 +8,7 @@ import { hasFlag } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { formatCliActionFailureText, normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { parseSessionCreateSpawnOptions } from './create/parseSessionCreateSpawnOptions';
@@ -126,7 +126,8 @@ export async function cmdSessionCreate(
     );
     recordStartupPhase('spawn_dispatch');
   } catch (error) {
-    const failure = projectCliActionFailure(normalizeCliActionThrownError(error).failure);
+    const actionFailure = normalizeCliActionThrownError(error).failure;
+    const failure = projectCliActionFailure(actionFailure);
     if (structuredCreationOutput) {
       await printJsonEnvelope({
         ok: false,
@@ -136,7 +137,7 @@ export async function cmdSessionCreate(
       return;
     }
     const { message, ...failureMetadata } = failure;
-    throw Object.assign(new Error(message ?? failure.code), failureMetadata);
+    throw Object.assign(new Error(formatCliActionFailureText(message, actionFailure)), failureMetadata);
   }
 
   const result = normalizeActionExecuteResult(actionRes);
@@ -158,7 +159,7 @@ export async function cmdSessionCreate(
       ? ` Retry with --spawn-attempt-id ${effectiveSpawnAttemptId} --resume-spawn-attempt.`
       : '';
     const { message, ...failureMetadata } = failure;
-    throw Object.assign(new Error(`${message ?? failure.code}${retryHint}`), failureMetadata);
+    throw Object.assign(new Error(formatCliActionFailureText(message, result, { suffix: retryHint.trim() })), failureMetadata);
   }
   const rawCreated = result.data;
   if (await tryHandleApprovalRequestCreated({
@@ -193,7 +194,7 @@ export async function cmdSessionCreate(
       : code === 'session_access_authentication_unavailable'
         ? 'This Team’s required sign-in methods are unavailable. Contact your Home administrator.'
         : launchMessage;
-    throw Object.assign(new Error(message), error);
+    throw Object.assign(new Error(formatCliActionFailureText(message, { errorCode: code, errorMessage: message, ...cause })), error);
   }
   if (created.type === 'pending') {
     if (structuredCreationOutput) {
@@ -245,7 +246,7 @@ export async function cmdSessionCreate(
         return;
       }
       const { message, ...failureMetadata } = failure;
-      throw Object.assign(new Error(message ?? failure.code), failureMetadata);
+      throw Object.assign(new Error(formatCliActionFailureText(message, waitResult)), failureMetadata);
     }
     if (await tryHandleApprovalRequestCreated({
       envelopeKind: 'session_create',

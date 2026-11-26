@@ -22,6 +22,7 @@ import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machi
 import type { createCliMachineInventoryActionDeps } from '@/session/actions/cliActionDeps/machineInventory';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { waitForPendingAcceptedSessionWorkspace } from '@/daemon/sessions/registerAcceptedSessionWorkspace';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionStatusGet' | 'sessionWorkStateGet' | 'sessionWaitIdle'>;
 export function createCliSessionStatusActionDeps(
@@ -104,10 +105,11 @@ export function createCliSessionStatusActionDeps(
             return { projectContextSource: resolveSessionProjectContextSourceV1({ resolution: resolved, workspaceRefs: rows.workspaceRefs }),
               ...(resolved.kind === 'resolved' && resolved.ref ? { acceptedWorkspace: { checkout: workspaceAddressFromRefV1(resolved.ref),
                 ...(resolved.ref.repositoryIdentity ? { repository: resolved.ref.repositoryIdentity } : {}) } } : {}) };
-          } catch {
+          } catch (error) {
             operationSignal?.throwIfAborted();
             // Unavailable or inadmissible private rows do not turn into a guessed checkout.
-            return unavailable;
+            return { projectContextSource: { kind: 'unavailable' as const,
+              failureCause: projectActionFailureCauseV1(error, 'session.accepted_workspace') } };
           }
         } } : {}),
         ...(operation ? { operation } : {}), ...(credentialPurpose ? { credentialPurpose } : {}),

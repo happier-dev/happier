@@ -7,6 +7,7 @@ import { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
 import { ScmWorktreeSchema } from '../scm/workingSnapshot.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 
 export const ProjectsListOutputV1Schema = lazyZodSchema(() => {
   const workspace = WorkspaceRefV2MachineWriteSchema.shape;
@@ -128,7 +129,7 @@ export function projectProjectListV1(input: Readonly<{
 export const ProjectContextSourceResolutionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('personal') }),
   z.strictObject({ kind: z.literal('source'), sourceId: z.string().check(z.minLength(1)) }),
-  z.strictObject({ kind: z.literal('unavailable') }),
+  z.strictObject({ kind: z.literal('unavailable'), failureCause: z.optional(ActionFailureCauseV1Schema) }),
 ]));
 export type ProjectContextSourceResolutionV1 = z.infer<typeof ProjectContextSourceResolutionV1Schema>;
 

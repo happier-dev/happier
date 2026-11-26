@@ -41,8 +41,9 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
-import { createHttpStatusError } from '@/api/client/httpStatusError';
+import { createHttpStatusError, readServerRefusalCode } from '@/api/client/httpStatusError';
 import type { ProjectSessionDefaultsV1 } from '@happier-dev/protocol/projects/projectSessionDefaultsV1';
+import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type OpenedProjectAccountRow = Readonly<{ key: ProjectAccountRowKeyV1; revision: number; payload: ProjectAccountRowPayloadV1 | null }>;
 function payloadHasKind<K extends ProjectAccountRowKeyV1['kind']>(payload: ProjectAccountRowPayloadV1, kind: K):
@@ -361,13 +362,21 @@ export async function mutateProjectAccountRows(input: ReadInput & Readonly<{
 async function fetchRows(input: ReadInput, mode: 'plain' | 'e2ee', selection: ProjectAccountRowListRequestV1 | Readonly<{ key: ProjectAccountRowKeyV1 }>): Promise<readonly OpenedProjectAccountRow[]> {
   const path = `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/${'key' in selection ? 'read' : 'list'}`;
   const admittedHeaders = await timeWebLatencyPhase('projectRows.requestAdmission', () => requestHeaders(input, path, selection));
-  const response = await timeWebLatencyPhase('projectRows.http', () => axios.post(`${baseUrl(input)}${path}`, selection, {
+  const response = await timeWebLatencyPhase('projectRows.http', () => axios.post<unknown>(`${baseUrl(input)}${path}`, selection, {
     headers: admittedHeaders, validateStatus: () => true, ...(input.signal ? { signal: input.signal } : {}),
   }));
   // The predecessor Home has no Project-row route. Keep unsupported distinct
   // from an empty census; explicit accepted Project addresses must still refuse.
   if (response.status === 404) throw rowError('project_account_rows_unsupported');
-  if (response.status !== 200) throw createHttpStatusError(response.status, 'Project rows are unavailable', 'project_account_rows_unavailable');
+  if (response.status !== 200) {
+    const errorCode = readServerRefusalCode(response.data) ?? 'project_account_rows_unavailable';
+    const body = response.data && typeof response.data === 'object' && !Array.isArray(response.data)
+      ? response.data as Readonly<Record<string, unknown>> : null;
+    throw Object.assign(createHttpStatusError(response.status, 'Project rows are unavailable', errorCode), {
+      failureCause: readActionFailureCauseV1({ phase: 'project_rows.read', errorClass: 'HttpStatusError', errorCode,
+        httpStatus: response.status, nativeErrorReason: body?.authorizationRefusal }),
+    });
+  }
   let selectedRows: readonly ProjectAccountRowV1[];
   if ('key' in selection) {
     const result = ProjectAccountRowReadResponseV1Schema.parse(response.data);

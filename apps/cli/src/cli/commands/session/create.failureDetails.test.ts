@@ -373,12 +373,24 @@ it.each(['provider', 'agent_signed_out', 'child_exit', 'admission', 'wait_admiss
               message: expect.stringMatching(/select.*connected account profile.*configure.*default profile/i),
             } };
         expect.soft(output.json()).toMatchObject({ ok: false, kind: 'session_create', error: expected });
-        await expect(cmdSessionCreate(argv, deps)).rejects.toMatchObject({ ...expected,
+        const thrown = await cmdSessionCreate(argv, deps).catch(error => error);
+        expect(thrown).toMatchObject({ ...expected,
           ...(kind === 'agent_signed_out' ? {
             message: expect.stringMatching(/select.*connected account profile.*configure.*default profile/i),
           } : kind === 'child_exit' ? { message: expect.stringContaining('module_not_found: nacl-fast.js') }
           : kind === 'team_authentication' ? { message: expect.stringMatching(/sign in.*method.*team/i) } : {}),
         });
+        if (kind === 'admission' || kind === 'wait_admission') {
+          expect(thrown).toMatchObject({ message: expect.stringContaining('Phase: session.authorization.mint') });
+          expect(thrown).toMatchObject({ message: expect.stringContaining('HTTP 409') });
+          expect(thrown).toMatchObject({ message: expect.stringContaining('No effect attempted') });
+        }
+        if (kind === 'admission') {
+          expect(thrown).toMatchObject({ message: expect.stringContaining('requestId: ') });
+        }
+        if (kind === 'placement' || kind === 'placement_action') {
+          expect(thrown).toMatchObject({ message: expect.stringContaining('Reason: machine_sandbox_acquisition_unavailable') });
+        }
         expect(requests).toEqual(kind === 'wait_admission'
           ? ['POST /v1/actions/session.spawn_new', 'POST /v1/actions/session.wait.idle',
             'POST /v1/actions/session.spawn_new', 'POST /v1/actions/session.wait.idle']

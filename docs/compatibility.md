@@ -1,5 +1,22 @@
 # Compatibility and version skew
 
+## Session accepted-workspace failure cause (unreleased 0.3)
+
+An unavailable `projectContextSource` can carry the existing optional
+`ActionFailureCauseV1` diagnostic. Session status keeps the rest of the readable
+Session and withholds `acceptedWorkspace` when the private Project-row read
+fails. Its cause retains the read phase, HTTP status, typed refusal code and
+closed native reason, including `credential_scope_denied` / `effect_family`.
+Authorization and credential selection are unchanged.
+
+The source-resolution union and nested cause remain closed. Earlier results
+without the optional cause remain valid; matching 0.3 Protocol and CLI readers
+reload together under the unpublished direct cut because earlier strict
+development readers reject the extra field. This changes no stored format,
+wire epoch, gate or compatibility adapter. The scoped-clean `../0.2` frontier
+at `ba3670d22d5bb36b0c92f4bd627ef790f0ce03de` has no corresponding Source-resolution
+producer or reader.
+
 ## Spoken-turn device labels (unreleased 0.3)
 
 The persisted presentation payloads `conversation_turn.v1` and

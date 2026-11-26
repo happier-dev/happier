@@ -404,7 +404,7 @@ describe('Project snapshot refresh availability', () => {
           : { status: 200, data: { status: 'account-mode-mismatch' } });
       const mutate = vi.fn<Parameters<typeof mutateProjectAccountOrganization>[0]['mutate']>(value => value);
       const code = failure === 'mode authentication' ? 'project_account_mode_unavailable'
-        : failure === 'row authentication' ? 'project_account_rows_unavailable'
+        : failure === 'row authentication' ? 'access_denied'
           : failure === 'invalid content' ? 'project_account_mode_mismatch' : 'project_account_rows_account-mode-mismatch';
       await expect(mutateProjectAccountOrganization({ ...input, projectKey: 'project-a', mutate })).rejects.toMatchObject({ code });
       expect(mutate).not.toHaveBeenCalled();
@@ -458,7 +458,7 @@ describe('Project snapshot refresh availability', () => {
     const post = boundary([{ key, revision: 1, content: { t: 'plain', v: { key, value: ref } } }]);
     const input = { credentials, serverId: 'home-a', publication: 'installed' as const };
     post.mockResolvedValueOnce({ status: 503, data: { error: 'internal' } });
-    await expect(readProjectAccountRows(input)).rejects.toMatchObject({ code: 'project_account_rows_unavailable' });
+    await expect(readProjectAccountRows(input)).rejects.toMatchObject({ code: 'internal' });
     expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
     await readProjectAccountRows(input);
     vi.mocked(axios.get).mockResolvedValueOnce({ status: 401, data: { error: 'unauthorized' } });
