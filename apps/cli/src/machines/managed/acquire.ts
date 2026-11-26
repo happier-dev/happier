@@ -1663,7 +1663,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 }, ManagedControllerContextOutputV1Schema);
                 const retained = await normalizeManagedPresetCarrier(retainedContext, hydrator, options.signal);
                 client.assertConnection(retained.machine);
-                const recoveryBaseOptions = { ...options, requestId: retained.requestId };
+                const recoveryBaseOptions = { ...options, requestId: retained.requestId,
+                    ...(options.policyPurpose ? { policyMachine: retained.machine } : {}) };
                 const opaqueMachine = hydrator.structural(retained.machine);
                 const recoveryOptions = isManagedOpaquePresetMachineV1(opaqueMachine)
                     ? withManagedOpaquePresetReview(recoveryBaseOptions, { machine: retained.machine, opaqueMachine,
@@ -1683,7 +1684,10 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         guestCli: readExternalActionManagedRetryGuestCliV1(options.context?.externalActionExecutionAuthorization?.binding) });
                     return accepted;
                 }
-                const result = retained.machine.submittedNativeEffect && !options.policyPurpose
+                // The controller's reconnect already observes power. An outstanding Stop
+                // consumes that observation through the same intent report as Check now.
+                const submitted = retained.machine.submittedNativeEffect;
+                const result = submitted && (!options.policyPurpose || submitted.intent === 'stop')
                     ? { machine: await reconcileManagedIntent({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action }) }
                     : await reconcileManagedMachine({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action, hydrator });
                 if (result === null) return null;

@@ -550,10 +550,22 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         supportsNativeLifetimeRenewal: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<boolean> =>
             withBoundDriver(params, signal, async driver => driver.supportsNativeLifetimeRenewal(machine)),
         reconcileObservation: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<ManagedMachineV1> =>
-            withBoundDriver(params, signal, async driver => ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(
-                await driver.execute('machines.managed.inspect', { homeId: machine.homeId, managedId: machine.id }, {
-                    requestId: randomUUID(), signal, policyMachine: machine, policyPurpose: { kind: 'retention' },
-                })).machine),
+            withBoundDriver(params, signal, async driver => {
+                const actionId = 'machines.managed.inspect';
+                const input = { homeId: machine.homeId, managedId: machine.id };
+                const requestId = randomUUID();
+                const inspect = (context?: ManagedMachineOperationSettlementContext) => driver.execute(actionId, input, {
+                    requestId, signal, context, policyMachine: machine, policyPurpose: { kind: 'retention' },
+                });
+                // Bind the incumbent operation owner's private settlement port. A
+                // connection refresh is still an Inspect and creates no receipt.
+                const observed = await params.observeActionExecution?.({
+                    actionId, input, actionRequestId: requestId,
+                    execute: async context => ({ ok: true, result: await inspect(context) }),
+                });
+                if (observed && !observed.ok) throw ManagedMachineControllerError.fromActionFailure(observed, actionId);
+                return ManagedMachineActionOutputSchemasV1[actionId].parse(observed ? observed.result : await inspect()).machine;
+            }),
         reconcileNativeCredentials: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<void> =>
             serializeNativeCredentialWrite(machine.homeId, machine.id, signal, () =>
                 withBoundDriver(params, signal, driver => driver.reconcileNativeCredentials(machine, {

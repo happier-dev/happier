@@ -7958,8 +7958,10 @@ custody even when it shows that the older desired power did not happen; unknown,
 unavailable or stale observations keep it unresolved. Home then allows the
 still-current newer intent to submit through normal admission. Delete still
 requires observed absence, and Rebuild requires its bound replacement.
-Reconnect refreshes policy census; it is not a universal native inspection timer.
-Read the managed row before retrying; Stop
+When the installed controller reconnects, its existing native observation
+can settle an uncertain Stop on the original operation once Home confirms the
+result for that resource and controller. Check now remains available for an
+immediate observation. Read the managed row before retrying. Stop
 remains available to retract desired Start even while the last observation
 says stopped. Definite native refusals retain their existing failure result.
 The shared `project_requester_home_unavailable` code also applies to Machine

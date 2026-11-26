@@ -5,6 +5,7 @@ import { afterAll, beforeAll, expect, it, onTestFinished, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import axios from 'axios';
 import { AccountSettingsSchema, MACHINE_PLAIN_DATA_KEY_MARKER, decodeBase64, encodePlainMachineStoredContent, PluginReleaseFactsV1Schema, type ActionExecuteResult } from '@happier-dev/protocol';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -72,10 +73,12 @@ import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction'
 import type { RpcHandler } from '@/api/rpc/types';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
 import { createDaemonExternalActionTargetResolver } from '../externalActions/daemonExternalActionTargetResolver';
-import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { projectExternalActionRequesterHttpAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { startSocket } from '../../../../server/sources/app/api/socket';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PLUGIN as BOAT } from '../../../../../packages/plugins/machine-boat/src/manifest';
 
 let database: LightSqliteHarness;
 beforeAll(async () => {
@@ -712,4 +715,167 @@ it('delivers a stored-credential finite CLI entry through real Home admission wi
             expect(delivered, JSON.stringify({ result, controllerReads })).toBe(true);
             expect(controllerReads).toBe(0);
         } finally { inventory.mockRestore(); restore(); await app.close(); }
+    }));
+
+it('settles Stop through the original Action receipt when the controller next observes archival', async () =>
+    await withConfiguredDaemonTestHome({ prefix: 'managed-stop-observation-' }, async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const homeId = await getOrCreateServerIdentityId();
+        const keys = nacl.sign.keyPair();
+        const installationId = randomUUID();
+        const controller = { machineId: randomUUID(), installationId };
+        await db.machine.create({ data: { id: controller.machineId, accountId: owner.id, installationId,
+            installationPublicKey: keys.publicKey, metadata: encodePlainMachineStoredContent({
+                host: 'controller', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier',
+            }), active: true } });
+        let state: 'running' | 'archiving' | 'archived' = 'running';
+        let stopBehavior: 'immediate' | 'delayed' | 'refused' = 'immediate';
+        let stopRequests = 0;
+        const sandboxId = 'bx_abcdefgh';
+        const boat = await createPluginTestkit({ manifest: BOAT.manifest, module: BOAT, services: {
+            http: createPluginHttpFixture({ async request(request) {
+                const response = (status: number, body: unknown) => ({ status, finalUrl: request.url, headers: {},
+                    body: new TextEncoder().encode(JSON.stringify(body)) });
+                const path = new URL(request.url).pathname;
+                if (request.method === 'POST' && path === `/api/v1/sandboxes/${sandboxId}/stop`) {
+                    stopRequests++;
+                    if (stopBehavior === 'refused') return response(404, { ok: false, code: 'not_found' });
+                    state = stopBehavior === 'immediate' ? 'archived' : 'archiving';
+                    return response(200, { ok: true });
+                }
+                expect(path).toBe(`/api/v1/sandboxes/${sandboxId}`);
+                return response(200, { ok: true, type: 'sandbox.info', sandbox: { id: sandboxId, state, dataExpiredAt: null } });
+            } }),
+        } });
+        onTestFinished(() => boat.dispose());
+        const nativeOptions = { privateNative: true, supportedIntents: ['stop'] as const };
+        const fixtureActions = nativeFixture(nativeOptions).manifest.contributes.actions;
+        const native = nativeFixture({ ...nativeOptions, actionHandlers: new Map(fixtureActions.map(action => [action.id,
+            async (input, context) => {
+                if (action.id !== 'power' && action.id !== 'inspect') throw new Error(`Unexpected native role: ${action.id}`);
+                if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected a native role input');
+                return await boat.invokeAction(action.id, { ...input, resource: { sandboxId } }, { signal: context.signal });
+            },
+        ])) });
+        const manifest = native.runtimeRegistry.contributes.activationTargets[0]!.manifest;
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        await db.machine.update({ where: { id: controller.machineId }, data: { pluginMaterializationRevision: BigInt(1) } });
+        await db.accountPluginIntent.create({ data: { accountId: owner.id, pluginId: manifest.id, enabled: true,
+            writableCollections: [], releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.create({ data: { accountId: owner.id, serverIdentityId: homeId,
+            machineId: controller.machineId, materializationId: installationId, pluginId: manifest.id,
+            version: manifest.version, sourceClass: 'bundledFirstParty', portableRelease: false,
+            archiveDigestSha256: declaration.manifestDigestSha256, uiArtifacts: [], enabled: true,
+            trustState: 'trusted', observedAt: new Date() } });
+        const provisioner = native.runtimeRegistry.contributes.machineProvisioners[0]!;
+        const provider = { pluginId: provisioner.pluginId, localId: provisioner.definition.id };
+        const launch = { provider, schemaVersion: 1, name: 'Retained guest', choices: {} };
+        const row = () => db.managedMachine.create({ data: { homeId, custodianAccountId: owner.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: installationId,
+            admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            desired: 'start', intentRevision: 0, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            launch, resource: { contributionRef: provider, schemaVersion: 1, value: {} },
+            observation: { availability: 'present', power: 'running', storage: 'retained', observedAt: 1 },
+        } });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        machinesRoutes(app);
+        registerAccountEncryptionRoutes(app);
+        registerAccountSettingsRoutes(app);
+        registerAccountProfileRoute(app);
+        featuresRoutes(app);
+        const serverUrl = await app.listen({ port: 0, host: '127.0.0.1' });
+        onTestFinished(() => app.close());
+        await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [configuration.activeServerId]: {
+            id: configuration.activeServerId, name: 'Stop Home', serverUrl, webappUrl: serverUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+            homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] } } } }));
+
+        const unavailable = async (): Promise<never> => { throw new Error('Fixture provider has no credential binding'); };
+        const authority = createManagedProviderOperationAuthority({ purposeBindingOwner: createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+            selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
+            projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
+        }) });
+        const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => owner.id });
+        const adapter = createDaemonManagedMachineActionAdapter({ credentials, machineId: controller.machineId,
+            serverId: configuration.activeServerId, serverBaseUrl: serverUrl,
+            installationIdentity: { installationId, privateKey: keys.secretKey },
+            resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: controller.machineId }),
+            managedProviderOperationAuthority: authority,
+            acquireRuntimeRegistryLease: async () => ({ registry: native.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }),
+            observeActionExecution: operations.observeExecution,
+        });
+        await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
+        const executor = createCliActionExecutorFromCredentials({
+            credentials, readCredentials: async () => credentials, serverId: configuration.activeServerId,
+            serverApiUrl: serverUrl, serverIdentityId: homeId, machineId: controller.machineId,
+            externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: installationId,
+            pluginActionExecutionOwner: 'current_process', managedMachineAction: adapter, runActionOperation: operations.runActionOperation,
+            actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
+                approvalWaivedSurfaces: { 'machines.managed.power.set': ['cli'], 'action.invoke': ['cli'] } }) },
+        });
+        const stop = async (managedId: string) => {
+            const requestId = randomUUID();
+            const actionId = 'machines.managed.power.set';
+            const input = { managedId, homeId, when: 'now', intent: 'stop', expectedRevision: 0 };
+            const target = { kind: 'machine' as const, machineId: controller.machineId };
+            const root = await auth.mintExternalActionExecutionAuthorization({
+                serverIdentityId: homeId, accountId: owner.id, authentication: { kind: 'account', tokenEpoch: 0 },
+                actionId, machineId: controller.machineId, target, requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, input, target }),
+            }, { input });
+            const authorization = await projectExternalActionRequesterHttpAuthorization({
+                authorization: root, serverId: configuration.activeServerId, serverIdentityId: homeId,
+                serverHttpBaseUrl: serverUrl, target, installationId, privateKey: keys.secretKey, rootAdmitted: true,
+            });
+            if (!authorization) throw new Error('Expected requester HTTP authority');
+            const result = await executor.execute(actionId, input, {
+                surface: 'cli', authority: 'present_user', actionRequestId: requestId,
+                externalActionTarget: target, externalActionExecutionAuthorization: authorization,
+            });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+            const scope = { machineId: controller.machineId, accountId: owner.id };
+            const receipt = () => operations.store.findByRequestIdentity(scope, 'machines.managed.power.set', requestId);
+            return receipt;
+        };
+
+        const immediate = await stop((await row()).id);
+        await vi.waitFor(() => expect(immediate()).toMatchObject({ state: 'succeeded' }));
+
+        state = 'running';
+        stopBehavior = 'delayed';
+        const delayedRow = await row();
+        const delayed = await stop(delayedRow.id);
+        await vi.waitFor(() => expect(delayed()).toMatchObject({
+            state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' },
+        }));
+        const uncertain = delayed()!;
+        state = 'archived';
+        const refreshControllerObservation = async () => {
+            const errors: unknown[] = [];
+            const runtime = createDaemonManagedMachinePolicyRuntime({
+                readCensus: signal => readManagedMachinePolicyCensus({ homeId, controller, custodianAccountId: owner.id,
+                    privateKey: keys.secretKey, token, serverUrl, signal }),
+                reconcileObservation: adapter.reconcileObservation, executePolicy: adapter.executePolicy,
+                onUnavailable: error => errors.push(error),
+            });
+            try { await runtime.notifyChanged(); } finally { await runtime.stop(); }
+            expect(errors).toEqual([]);
+        };
+        await refreshControllerObservation();
+        expect(delayed()).toMatchObject({ operationId: uncertain.operationId, state: 'succeeded' });
+        expect(delayed()!.revision).toBeGreaterThan(uncertain.revision);
+        expect(stopRequests).toBe(2);
+
+        state = 'running';
+        stopBehavior = 'refused';
+        const failed = await stop((await row()).id);
+        await vi.waitFor(() => expect(failed()).toMatchObject({ state: 'failed', error: { errorCode: 'native_not_found' } }));
+        const refusal = failed();
+        state = 'archived';
+        await refreshControllerObservation();
+        expect(failed()).toEqual(refusal);
+        expect(stopRequests).toBe(3);
     }));
