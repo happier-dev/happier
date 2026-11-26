@@ -18826,7 +18826,7 @@ settingsSession: {
       returnScripts: "Voltar para Scripts",
       draftTitle: ({ project }: { project: string }) => `Configurar ${project}`,
       draftDescription: "Um agente lê o repositório e escreve o arquivo do projeto com você. Edite o que quiser antes de começar.",
-      draftFootnote: ({ workspace, machine }: { workspace: string; machine: string }) => `Cria em ${workspace} em ${machine}. Revise e edite antes de enviar: nada começa até você tocar em Enviar.`,
+      draftFootnote: 'Nada começa até você tocar em Enviar. Revise e edite antes.',
       sessionAsk: ({ machine }: { machine: string }) => `Executar a configuração em ${machine}?`,
       sessionAskScope: "Até mudar cobre este projeto em qualquer máquina, até a configuração mudar",
       allowUntilChanged: "Permitir até mudar",

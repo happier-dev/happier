@@ -14288,7 +14288,7 @@ settingsSession: {
           returnScripts: "返回指令碼",
           draftTitle: ({ project }: { project: string }) => `設定 ${project}`,
           draftDescription: "代理會讀取儲存庫，並與你一起撰寫專案檔案。開始前可以隨意編輯。",
-          draftFootnote: ({ workspace, machine }: { workspace: string; machine: string }) => `在 ${machine} 上的 ${workspace} 中撰寫。傳送前可檢查和編輯：按下傳送前不會開始任何操作。`,
+          draftFootnote: '按下傳送前不會開始任何操作。請先檢查和編輯。',
           sessionAsk: ({ machine }: { machine: string }) => `在 ${machine} 上執行設定？`,
           sessionAskScope: "「直到變更」適用於任何機器上的此專案，直到設定變更",
           allowUntilChanged: "允許直到變更",

@@ -11,6 +11,7 @@ import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { INSTRUMENT_STRIP_LINE_HEIGHT_PX } from '@/components/sessions/agentInput/instrumentStrip/instrumentStripStyles';
+import { useStatusRowLineLeads } from '@/components/sessions/agentInput/instrumentStrip/statusRowTrailingActions';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -40,7 +41,11 @@ export const NewSessionDraftComposerActions = React.memo(function NewSessionDraf
     // window does the same while the soft keyboard is up: its accessory (lower, pin) joins the row then, and the
     // labelled Start another would squeeze the machine line to a stub.
     const keyboardOpen = useKeyboardHeight() > 0;
-    const icons = (useNewSessionEmbeddedHost()?.kind === 'docked' && !isMobileLayoutWidth(width)) || (compact && keyboardOpen);
+    // A blocker on the status line (an agent that needs sign-in, then Sign in) is the row's message: these
+    // secondary actions go quiet before it truncates (DESIGN-ACCEPT-4 R3: 'Claude need… Sign in' beside a full
+    // '+ Start another' at 390).
+    const lineLeads = useStatusRowLineLeads();
+    const icons = (useNewSessionEmbeddedHost()?.kind === 'docked' && !isMobileLayoutWidth(width)) || (compact && keyboardOpen) || lineLeads;
     const runDelete = React.useCallback(() => {
         fireAndForget(props.onDelete(), { tag: 'NewSessionDraftComposerActions.delete' });
     }, [props.onDelete]);

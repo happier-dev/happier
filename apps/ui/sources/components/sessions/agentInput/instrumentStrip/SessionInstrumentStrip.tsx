@@ -31,6 +31,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { instrumentStripStyles } from './instrumentStripStyles';
 import { useInstrumentStripModel } from './useInstrumentStripModel';
 import { InstrumentFrame } from './InstrumentFrame';
+import { StatusRowLineLeadsContext } from './statusRowTrailingActions';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /** Below this available width, instruments drop their labels/icons to icon-only. */
@@ -443,7 +444,9 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                 overflowing: they wrap beneath the status, which keeps its own row (lab `m-pick-Aprogp`). */}
             {props.statusTrailingActions != null ? (
                 <View style={instrumentStripStyles.trailingActions}>
-                    {props.statusTrailingActions}
+                    <StatusRowLineLeadsContext.Provider value={props.connectionStatus?.action != null}>
+                        {props.statusTrailingActions}
+                    </StatusRowLineLeadsContext.Provider>
                 </View>
             ) : null}
 

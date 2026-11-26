@@ -39,6 +39,7 @@ import {
     NEW_SESSION_DRAFT_COMPOSER_ACTION_SIZE,
     NewSessionDraftComposerActions,
 } from './NewSessionDraftComposerActions';
+import { StatusRowLineLeadsContext } from '@/components/sessions/agentInput/instrumentStrip/statusRowTrailingActions';
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (!style) return {};
@@ -91,6 +92,27 @@ describe('NewSessionDraftComposerActions', () => {
         if (!startAnother) throw new Error('Expected Start another');
         expect(startAnother.props.accessibilityLabel).toBe('sessionDrafts.startAnother');
         expect(screen.findAll((node) => String(node.type) === 'Text' && node.props.children === 'sessionDrafts.startAnother')).toHaveLength(0);
+        await pressTestInstanceAsync(startAnother);
+        expect(onStartAnother).toHaveBeenCalledOnce();
+        await screen.unmount();
+    });
+
+    // DESIGN-ACCEPT-4 R3: at 390 'Claude need… Sign in' truncated beside a full '+ Start another'.
+    it('draws both actions as named quiet icons while the status line carries a blocker', async () => {
+        windowState.width = 390;
+        const onStartAnother = vi.fn();
+        const screen = await renderScreen(
+            <StatusRowLineLeadsContext.Provider value>
+                <NewSessionDraftComposerActions deleteDisabled={false} onStartAnother={onStartAnother} onDelete={vi.fn(async () => undefined)} />
+            </StatusRowLineLeadsContext.Provider>,
+        );
+        const startAnother = screen.findByTestId('new-session-draft-start-another');
+        const deleteAction = screen.findByTestId('new-session-draft-delete');
+        if (!startAnother || !deleteAction) throw new Error('Expected both draft actions');
+        expect(startAnother.props.accessibilityLabel).toBe('sessionDrafts.startAnother');
+        expect(deleteAction.props.accessibilityLabel).toBe('sessionDrafts.delete.action');
+        expect(screen.findAll((node) => String(node.type) === 'Text'
+            && (node.props.children === 'sessionDrafts.startAnother' || node.props.children === 'sessionDrafts.delete.action'))).toHaveLength(0);
         await pressTestInstanceAsync(startAnother);
         expect(onStartAnother).toHaveBeenCalledOnce();
         await screen.unmount();

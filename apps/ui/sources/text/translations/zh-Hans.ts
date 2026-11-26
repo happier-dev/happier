@@ -18338,7 +18338,7 @@ settingsSession: {
       returnScripts: "返回脚本",
       draftTitle: ({ project }: { project: string }) => `设置 ${project}`,
       draftDescription: "智能体会读取仓库，并与你一起编写项目文件。开始前可以随意编辑。",
-      draftFootnote: ({ workspace, machine }: { workspace: string; machine: string }) => `在 ${machine} 上的 ${workspace} 中编写。发送前可检查和编辑：按下发送前不会开始任何操作。`,
+      draftFootnote: '按下发送前不会开始任何操作。请先检查和编辑。',
       sessionAsk: ({ machine }: { machine: string }) => `在 ${machine} 上运行设置？`,
       sessionAskScope: "“直到变更”适用于任意机器上的此项目，直到设置发生变化",
       allowUntilChanged: "允许直到变更",

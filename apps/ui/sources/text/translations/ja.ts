@@ -18632,7 +18632,7 @@ settingsSession: {
       returnScripts: "スクリプトに戻る",
       draftTitle: ({ project }: { project: string }) => `${project} をセットアップ`,
       draftDescription: "エージェントがリポジトリを読み、あなたと一緒にプロジェクトファイルを書きます。開始前に何でも編集できます。",
-      draftFootnote: ({ workspace, machine }: { workspace: string; machine: string }) => `${machine} の ${workspace} で作成します。送信前に確認・編集できます。送信を押すまで何も始まりません。`,
+      draftFootnote: '送信を押すまで何も始まりません。先に確認・編集できます。',
       sessionAsk: ({ machine }: { machine: string }) => `${machine} でセットアップを実行しますか？`,
       sessionAskScope: "「変更されるまで」は、セットアップが変わるまで、どのマシンでもこのプロジェクトに適用されます",
       allowUntilChanged: "変更されるまで許可",

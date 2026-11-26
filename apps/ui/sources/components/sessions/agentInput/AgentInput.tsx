@@ -1025,6 +1025,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     webVariableSectionContentInset: {
         paddingHorizontal: theme.space.s8,
     },
+    /** Short of height, the section's content fits its viewport: the rail shrinks, the prompt's line stays. */
+    webVariableSectionContentShrinks: {
+        flexShrink: 1,
+        minHeight: 0,
+    },
     composerPresentationEffects: {
         gap: theme.space.s4,
         paddingHorizontal: theme.space.s8,
@@ -4139,16 +4144,26 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             );
         }
 
+        // The rail gives up height before the prompt does, as on native: its viewport shrinks and scrolls while the
+        // prompt keeps at least one line (DESIGN-ACCEPT-4 R1, 200% zoom). Its content reports its natural height,
+        // so the prompt's budget never grows into the room the rail gave up.
         return (
-            <View
-                testID="agent-input-variable-content-before-input"
-                onLayout={(event) => {
-                    updateLayoutHeight(setVariableContentBeforeInputHeightPx, event.nativeEvent.layout.height);
-                }}
+            <ScrollView
+                testID="agent-input-attachment-rail-viewport"
+                style={styles.nativeKeyboardVariableSection}
+                showsVerticalScrollIndicator={false}
+                alwaysBounceVertical={false}
             >
-                {composerPresentationFeedback}
-                <WebDropTargetView {...trayDropZoneHandlers} testID="agent-input-attachment-drop-target">{attachmentsRow}</WebDropTargetView>
-            </View>
+                <View
+                    testID="agent-input-variable-content-before-input"
+                    onLayout={(event) => {
+                        updateLayoutHeight(setVariableContentBeforeInputHeightPx, event.nativeEvent.layout.height);
+                    }}
+                >
+                    {composerPresentationFeedback}
+                    <WebDropTargetView {...trayDropZoneHandlers} testID="agent-input-attachment-drop-target">{attachmentsRow}</WebDropTargetView>
+                </View>
+            </ScrollView>
         );
     };
 
@@ -4383,6 +4398,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 contentContainerStyle={[
                     styles.nativeKeyboardVariableSectionContent,
                     styles.webVariableSectionContentInset,
+                    styles.webVariableSectionContentShrinks,
                     embeddedPanel ? styles.embeddedTextSectionContent : null,
                 ]}
                 keyboardShouldPersistTaps="handled"

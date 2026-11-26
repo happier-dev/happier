@@ -339,7 +339,7 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
     });
     const hoveredChip = chipHover.mode !== 'closed' ? chipHover.target : null;
     return <>
-        <div ref={hostRef} data-composer-editor="" style={style} />
+        <div ref={hostRef} data-composer-editor="" data-testid={props.testID ? `${props.testID}-viewport` : undefined} style={style} />
         {hoveredChip ? <ComposerChipHoverCard target={hoveredChip} panelHoverProps={chipHover.panelHoverProps} onRequestClose={chipHover.close} /> : null}
     </>;
 });

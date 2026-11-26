@@ -152,6 +152,18 @@ describe('SessionInstrumentStrip', () => {
         expect(tree!.root.findAll((n) => n.props?.testID === 'host-status-action')).toHaveLength(1);
     });
 
+    // DESIGN-ACCEPT-4 R3: a blocker and its way forward lead the row, so the host's actions go quiet before it truncates.
+    it('tells the host actions when the line carries a blocker with its way forward, and only then', async () => {
+        const { useStatusRowLineLeads } = await import('./statusRowTrailingActions');
+        const HostAction = () => React.createElement('HostStatusAction', { testID: 'host-status-action', leads: useStatusRowLineLeads() });
+        const blocker = { text: 'Claude needs sign-in.', color: '#b60', dotColor: '#b60', action: { label: 'Sign in', onPress: vi.fn() } };
+        act(() => { tree = create(<SessionInstrumentStrip connectionStatus={blocker} statusTrailingActions={<HostAction />} />); });
+        const leads = () => tree!.root.findAll((n) => n.props?.testID === 'host-status-action')[0]!.props.leads;
+        expect(leads()).toBe(true);
+        act(() => { tree!.update(<SessionInstrumentStrip connectionStatus={{ ...blocker, action: undefined }} statusTrailingActions={<HostAction />} />); });
+        expect(leads()).toBe(false);
+    });
+
     it('reserves its row while empty unless the host collapses it, and shows content either way', () => {
         const emptyHostHeight = () => {
             const host = tree!.root.findAll((n) => typeof n.type === 'string' && typeof n.props?.onLayout === 'function')[0]!;

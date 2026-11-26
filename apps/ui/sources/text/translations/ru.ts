@@ -18672,7 +18672,7 @@ settingsSession: {
       returnScripts: "Назад к скриптам",
       draftTitle: ({ project }: { project: string }) => `Настроить ${project}`,
       draftDescription: "Агент читает репозиторий и вместе с вами пишет файл проекта. Измените что угодно перед началом.",
-      draftFootnote: ({ workspace, machine }: { workspace: string; machine: string }) => `Создаётся в ${workspace} на ${machine}. Проверьте и отредактируйте перед отправкой: ничего не начнётся, пока вы не нажмёте «Отправить».`,
+      draftFootnote: 'Ничего не начнётся, пока вы не нажмёте «Отправить». Сначала проверьте и отредактируйте.',
       sessionAsk: ({ machine }: { machine: string }) => `Запустить настройку на ${machine}?`,
       sessionAskScope: "«Пока не изменится» действует для этого проекта на любой машине, пока не изменится настройка",
       allowUntilChanged: "Разрешить, пока не изменится",

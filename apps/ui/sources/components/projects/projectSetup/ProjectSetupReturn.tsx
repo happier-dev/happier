@@ -189,7 +189,7 @@ export const ProjectSetupDraftHeader = React.memo(
   },
 );
 
-/** Below the seeded composer: the exact authoring target, and that nothing starts before Send. */
+/** Below the seeded composer: nothing starts before Send. The eyebrow names the Project and the composer's chip the Machine, so the note names neither. */
 export const ProjectSetupDraftFootnote = React.memo(
   function ProjectSetupDraftFootnote(
     props: Readonly<{ origin: PluginUiNewSessionSeedOriginV1 }>,
@@ -203,7 +203,7 @@ export const ProjectSetupDraftFootnote = React.memo(
       <View testID="project-setup-draft-footnote" style={[styles.footnote, column]}>
         <Icon name="info" size={14} color={theme.colors.text.tertiary} />
         <Text style={[styles.footnoteText, { color: theme.colors.text.tertiary }]}>
-          {t('projects.authoring.draftFootnote', { workspace: target.project, machine: target.machine })}
+          {t('projects.authoring.draftFootnote')}
         </Text>
       </View>
     );

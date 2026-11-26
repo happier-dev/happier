@@ -18594,7 +18594,7 @@ settingsSession: {
       returnScripts: "Retour aux scripts",
       draftTitle: ({ project }: { project: string }) => `Configurer ${project}`,
       draftDescription: "Un agent lit le dépôt et écrit le fichier de projet avec toi. Modifie ce que tu veux avant de commencer.",
-      draftFootnote: ({ workspace, machine }: { workspace: string; machine: string }) => `Rédigé dans ${workspace} sur ${machine}. Relis et modifie avant d’envoyer : rien ne démarre avant que tu appuies sur Envoyer.`,
+      draftFootnote: 'Rien ne démarre avant que tu appuies sur Envoyer. Relis et modifie d’abord.',
       sessionAsk: ({ machine }: { machine: string }) => `Exécuter la configuration sur ${machine} ?`,
       sessionAskScope: "« Jusqu’à modification » couvre ce projet sur n’importe quelle machine, jusqu’à ce que la configuration change",
       allowUntilChanged: "Autoriser jusqu’à modification",

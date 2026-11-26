@@ -22089,7 +22089,7 @@ const enProjects = {
     returnScripts: 'Back to Scripts',
     draftTitle: ({ project }: { project: string }) => `Set up ${project}`,
     draftDescription: "An agent reads the repo and writes the project file with you. Edit anything before you start.",
-    draftFootnote: ({ workspace, machine }: { workspace: string; machine: string }) => `Author in ${workspace} on ${machine}. Review and edit before sending: nothing starts until you press Send.`,
+    draftFootnote: 'Nothing starts until you press Send. Review and edit first.',
     sessionAsk: ({ machine }: { machine: string }) => `Run setup on ${machine}?`,
     sessionAskScope: "Until it changes covers this project on any machine, until setup changes",
     allowUntilChanged: "Allow until it changes",

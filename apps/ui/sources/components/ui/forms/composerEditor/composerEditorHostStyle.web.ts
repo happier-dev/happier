@@ -66,6 +66,9 @@ export function resolveComposerEditorHostStyle(
     paddingLeft: input.paddingLeft,
     paddingRight: input.paddingRight,
     maxHeight,
+    // However little room its host leaves, the field shows one whole line of the prompt; the box is border-box,
+    // so the line sits inside the padding (DESIGN-ACCEPT-4 R1: at 200% zoom only descenders showed).
+    minHeight: `calc(1lh + ${input.paddingTop ?? 0}px + ${input.paddingBottom ?? 0}px)`,
     overflowY: 'auto',
     overscrollBehavior: 'contain',
     scrollbarWidth: 'none',

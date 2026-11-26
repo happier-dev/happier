@@ -18545,7 +18545,7 @@ settingsSession: {
       returnScripts: "Wróć do skryptów",
       draftTitle: ({ project }: { project: string }) => `Skonfiguruj ${project}`,
       draftDescription: "Agent czyta repozytorium i razem z tobą pisze plik projektu. Edytuj, co chcesz, zanim zaczniesz.",
-      draftFootnote: ({ workspace, machine }: { workspace: string; machine: string }) => `Tworzenie w ${workspace} na ${machine}. Przejrzyj i edytuj przed wysłaniem: nic nie startuje, dopóki nie naciśniesz Wyślij.`,
+      draftFootnote: 'Nic nie startuje, dopóki nie naciśniesz Wyślij. Najpierw przejrzyj i edytuj.',
       sessionAsk: ({ machine }: { machine: string }) => `Uruchomić konfigurację na ${machine}?`,
       sessionAskScope: "„Do zmiany” obejmuje ten projekt na dowolnej maszynie, dopóki konfiguracja się nie zmieni",
       allowUntilChanged: "Zezwól do zmiany",
