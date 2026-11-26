@@ -16,6 +16,8 @@ import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { buildWorkflowDefinitionCandidate } from '@/sync/domains/workflows/workflowAuthoring';
 import type { CustomModalInjectedProps } from '@/modal';
+import { listWorkflowDraftDifferences } from '@/sync/domains/workflows/workflowDraftDifferences';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { useWorkflowCardModal } from '../run/useWorkflowCardModal';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
@@ -101,32 +103,34 @@ const styles = StyleSheet.create((theme) => ({
         maxWidth: '100%',
         minWidth: 0,
     },
-    /** The Compare card's body: the card's own text inset, so the documents start on the title's edge. */
+    /** The Compare card's body: the card's own text inset, so its lines start on the title's edge. */
     comparison: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
         gap: theme.space.s12,
         alignSelf: 'stretch',
         paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx,
         paddingBottom: HAPPIER_PAGE_METRICS.cardPaddingPx,
     },
-    comparisonPane: {
-        // Side by side from 280 each; a narrower column stacks them, each at the column's width.
-        flexGrow: 1,
-        flexShrink: 1,
-        flexBasis: 280,
-        minWidth: 0,
-        gap: theme.space.s4,
+    comparisonLead: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.secondary,
     },
-    // The reading role gives the documents a size the text-size preference scales; mono keeps them code.
-    document: {
-        ...Typography.variant('reading'),
-        ...Typography.mono(),
+    // One differing part: its name, and on the same line what differs about it.
+    difference: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        columnGap: theme.space.s12,
+        paddingVertical: theme.space.s4,
+    },
+    differenceLabel: {
+        ...Typography.variant('body'),
         color: theme.colors.text.primary,
+        flexShrink: 1,
+        minWidth: 0,
     },
 }));
 
-/** A conflict's Compare is the one place exact revisions appear. */
+/** A conflict's Compare is the one place exact revisions appear, behind its Technical details. */
 export function formatWorkflowArtifactRevision(revision: WorkflowArtifactRevisionV1): string {
     return `h${revision.headerVersion} · b${revision.bodyVersion}`;
 }
@@ -142,24 +146,50 @@ type WorkflowSaveComparisonProps = Readonly<{
     testID: string;
 }>;
 
-/** Your edits beside the newer saved version: side by side when there is room, stacked otherwise. */
+const DIFFERENCE_WORD = {
+    changed: 'workflows.page.saveStatus.compareChanged',
+    onlyLocal: 'workflows.page.saveStatus.compareOnlyYours',
+    onlyCurrent: 'workflows.page.saveStatus.compareOnlyNewer',
+} as const;
+
+/**
+ * What differs between your edits and the newer saved version, named as the editor names it: the steps by
+ * their names, the Workflow's name and its settings. The exact documents stay behind Technical details.
+ */
 function WorkflowSaveComparisonSheet(props: CustomModalInjectedProps & WorkflowSaveComparisonProps): React.ReactElement {
+    const { localDraft, currentDraft, currentRevision } = props;
+    const rows = React.useMemo(() => {
+        const differences = listWorkflowDraftDifferences(localDraft, currentDraft);
+        const changed = t(DIFFERENCE_WORD.changed);
+        return [
+            ...(differences.name ? [{ key: 'name', label: t('workflows.page.saveStatus.compareName'), word: changed }] : []),
+            ...differences.blocks.map(block => ({ key: `block:${block.blockId}`, label: block.label, word: t(DIFFERENCE_WORD[block.kind]) })),
+            ...(differences.settings ? [{ key: 'settings', label: t('workflows.page.saveStatus.compareSettings'), word: changed }] : []),
+        ];
+    }, [localDraft, currentDraft]);
+    const technicalLines = React.useMemo(() => [
+        { key: 'yours', label: t('workflows.page.saveStatus.yourEdits'), value: readableDraft(localDraft) },
+        { key: 'newer', label: t('workflows.page.saveStatus.newerVersion'), value: readableDraft(currentDraft) },
+        ...(currentRevision === null ? [] : [{
+            key: 'revision', label: t('workflows.page.saveStatus.compareRevision'), value: formatWorkflowArtifactRevision(currentRevision),
+        }]),
+    ], [localDraft, currentDraft, currentRevision]);
     return (
         <View testID={props.testID} style={styles.comparison}>
-            <View style={styles.comparisonPane}>
-                <Text style={styles.status}>{t('workflows.page.saveStatus.yourEdits')}</Text>
-                <Text selectable style={styles.document}>{readableDraft(props.localDraft)}</Text>
-            </View>
-            <View style={styles.comparisonPane}>
-                <Text style={styles.status}>
-                    {props.currentRevision === null
-                        ? t('workflows.page.saveStatus.newerVersion')
-                        : t('workflows.page.saveStatus.newerVersionRevision', {
-                            revision: formatWorkflowArtifactRevision(props.currentRevision),
-                        })}
-                </Text>
-                <Text selectable style={styles.document}>{readableDraft(props.currentDraft)}</Text>
-            </View>
+            <Text style={styles.comparisonLead}>
+                {rows.length === 0 ? t('workflows.page.saveStatus.compareSame') : t('workflows.page.saveStatus.compareIntro')}
+            </Text>
+            {rows.length === 0 ? null : (
+                <View accessibilityRole="list">
+                    {rows.map(row => (
+                        <View key={row.key} testID={`${props.testID}-${row.key}`} accessibilityRole="text" style={styles.difference}>
+                            <Text style={styles.differenceLabel}>{row.label}</Text>
+                            <Text style={styles.status}>{row.word}</Text>
+                        </View>
+                    ))}
+                </View>
+            )}
+            <TechnicalDetailsDisclosure testID={`${props.testID}-technical`} title={t('workflows.run.technicalDetails')} lines={technicalLines} />
         </View>
     );
 }

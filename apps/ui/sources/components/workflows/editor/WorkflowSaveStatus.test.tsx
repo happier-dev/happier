@@ -62,10 +62,12 @@ describe('WorkflowSaveStatus', () => {
                 state={{ kind: 'conflict', conflict: { currentDraft, currentRevision: { headerVersion: 2, bodyVersion: 2 } } }}
                 localDraft={localDraft} onSaveAsCopy={() => {}} testIDPrefix="roles" /></ModalProvider>);
             const documents = () => screen.findAll(node => typeof node.type === 'string' && node.props.selectable === true)
-                .map(node => String(node.props.children));
+                .map(node => String(node.props.children)).filter(text => text.startsWith('{'));
             // Comparison content is only materialized while the person asks to inspect it.
             expect(documents()).toHaveLength(0);
             await screen.pressByTestIdAsync('roles-compare');
+            // The exact documents sit behind the sheet's Technical details.
+            await screen.pressByTestIdAsync('roles-comparison-sheet-technical');
             const panes = documents();
             expect(panes).toHaveLength(2);
             const local: unknown = JSON.parse(panes[0]!);
@@ -202,10 +204,40 @@ describe('WorkflowSaveStatus', () => {
         expect(screen.getTextContent()).toContain('workflows.save.conflictTitle');
         expect(screen.getTextContent()).toContain('workflows.save.conflictBody');
         await screen.pressByTestIdAsync('workflow-editor-compare');
+        await screen.pressByTestIdAsync('workflow-editor-comparison-sheet-technical');
         expect(screen.getTextContent()).toContain('Review local changes');
         expect(screen.getTextContent()).toContain('Review remote changes');
         await screen.pressByTestIdAsync('workflow-editor-save-as-copy');
         expect(saveAsCopy).toHaveBeenCalledTimes(1);
+    });
+
+    it('says what differs in step names and words, with the exact documents only behind Technical details (R14 MUST 5)', async () => {
+        const { WorkflowSaveStatus } = await import('./WorkflowSaveStatus');
+        const step = (id: string, name: string, text: string) => ({ kind: 'step' as const, id, name,
+            document: { text, references: [], attachments: [] }, input: [], result: { kind: 'text' as const } });
+        const localDraft = { ...draft, blocks: [step('review', 'Check the diff', 'Look closely'), step('notify', 'Tell the team', 'Post it'),
+            step('tag', 'Tag the release', 'Tag it')] };
+        const currentDraft = { ...draft, draftId: 'current-draft', name: 'Review v2',
+            blocks: [step('review', 'Check the diff', 'Skim it'), step('archive', 'Archive the branch', 'Archive'), step('tag', 'Tag the release', 'Tag it')] };
+        const { ModalProvider } = await import('@/modal/ModalProvider');
+        const screen = await renderScreen(<ModalProvider><WorkflowSaveStatus
+            state={{ kind: 'conflict', conflict: { currentDraft, currentRevision: { headerVersion: 7, bodyVersion: 9 } } }}
+            localDraft={localDraft} onSaveAsCopy={() => {}} testIDPrefix="diff" /></ModalProvider>);
+        await screen.pressByTestIdAsync('diff-compare');
+        const text = screen.getTextContent();
+        // The differing parts, named as the editor names them, each with what differs about it.
+        for (const expected of ['workflows.page.saveStatus.compareName', 'Check the diff', 'workflows.page.saveStatus.compareChanged',
+            'Tell the team', 'workflows.page.saveStatus.compareOnlyYours', 'Archive the branch', 'workflows.page.saveStatus.compareOnlyNewer']) {
+            expect(text).toContain(expected);
+        }
+        // An unchanged step is not listed; no raw definition or revision at rest.
+        expect(text).not.toContain('Tag the release');
+        expect(text).not.toContain('"kind"');
+        expect(text).not.toContain('h7');
+        // The exact documents and revision stay one press away.
+        await screen.pressByTestIdAsync('diff-comparison-sheet-technical');
+        expect(screen.getTextContent()).toContain('"kind"');
+        expect(screen.getTextContent()).toContain('h7 · b9');
     });
 
     it('omits Compare when the current Artifact cannot be read while keeping save-as-copy available', async () => {
