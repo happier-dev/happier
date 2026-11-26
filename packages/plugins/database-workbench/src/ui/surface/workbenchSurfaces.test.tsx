@@ -55,6 +55,17 @@ import { WORKBENCH_PAGE_ARTIFACT_ID, WORKBENCH_PAGE_VIEW_ID } from './views.js';
 import { encodeWorkbenchRootSubPath } from './subPath.js';
 import { PLUGIN_MANIFEST, plugin } from '../../manifest.js';
 
+/**
+ * The app's phone sheet at the host boundary: the host draws the content as its bottom sheet and pins the footer the
+ * Popover requested under it, as the app's floating sheet does.
+ */
+function phoneSheet(input: Parameters<PluginUiPresentationHost['renderPopover']>[0], maxHeight: number) {
+  return <>
+    {input.content({ presentation: 'sheet', maxHeight, requestClose: input.onRequestClose })}
+    {input.sheet?.footer ?? null}
+  </>;
+}
+
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -432,9 +443,7 @@ describe('Database workbench surfaces', () => {
                 reviewedInput = input;
                 return control.press(presentation.title);
               }} />,
-            renderPopover: input => input.content({
-              presentation: 'sheet', maxHeight: 240, requestClose: input.onRequestClose,
-            }),
+            renderPopover: input => phoneSheet(input, 240),
           }}
         >
           {renderPage(context)}
@@ -516,7 +525,7 @@ describe('Database workbench surfaces', () => {
       surface: context => <Profiler id="Workbench" onRender={commits}><PluginUiHostPresentationScope
         environment={projectHappierUiEnvironment(context.surface)} presentationHost={{
           renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, databaseWorkbench,
-          renderPopover: input => input.content({ presentation: 'sheet', maxHeight: 240, requestClose: input.onRequestClose }),
+          renderPopover: input => phoneSheet(input, 240),
         }}>{renderPage(context)}</PluginUiHostPresentationScope></Profiler>,
       subPath: encodeWorkbenchRootSubPath(target),
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
@@ -1172,9 +1181,7 @@ describe('Database workbench surfaces', () => {
         environment={projectHappierUiEnvironment(context.surface)}
         presentationHost={{
           renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, databaseWorkbench,
-          renderPopover: input => input.open ? input.content({
-            presentation: 'sheet', maxHeight: 10_000, requestClose: input.onRequestClose,
-          }) : null,
+          renderPopover: input => input.open ? phoneSheet(input, 10_000) : null,
         }}>
         {renderPage(context)}
       </PluginUiHostPresentationScope>,
@@ -1248,7 +1255,7 @@ describe('Database workbench surfaces', () => {
       surface: context => <PluginUiHostPresentationScope
         environment={projectHappierUiEnvironment(context.surface)}
         presentationHost={{ renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, databaseWorkbench,
-          renderPopover: input => input.open ? input.content({ presentation: 'sheet', maxHeight: 10_000, requestClose: input.onRequestClose }) : null }}>
+          renderPopover: input => input.open ? phoneSheet(input, 10_000) : null }}>
         {renderPage(context)}
       </PluginUiHostPresentationScope>,
       launchInput: projectNativeJsonValueForTransport({ scope, descriptor: connected }), subPath: 'data/public/invoices',

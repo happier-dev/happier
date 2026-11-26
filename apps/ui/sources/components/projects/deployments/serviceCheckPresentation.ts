@@ -649,6 +649,8 @@ export type ServiceCheckListFacts = Readonly<{
   titleIdentifier: boolean;
   /** The checked endpoint or routes, available separately from the heading. */
   targetLabel: string | null;
+  /** That endpoint as a row's meta: only what the title does not already name (its path past the titled host). */
+  targetMeta: string | null;
   kind: string | null;
   every: string | null;
   lastResult: string | null;
@@ -679,6 +681,22 @@ export type ServiceCheckListFacts = Readonly<{
 }>;
 
 /**
+ * A check's address as its row's meta, after its title has named the host ("HTTP · billing.acme.dev"): the path beyond
+ * it ("/health"), or nothing when the address is that host. A title that is the address itself says none (design N2).
+ */
+function addressBeyondTitle(
+  definition: Pick<ServiceCheckDefinitionFacts, 'targetLabel' | 'titleTarget'> | null,
+  titleIsAddress: boolean,
+): string | null {
+  const label = definition?.targetLabel ?? null;
+  if (label === null || titleIsAddress) return null;
+  const titled = definition?.titleTarget;
+  if (titled?.kind !== 'host' || !label.startsWith(titled.label)) return label;
+  const rest = label.slice(titled.label.length);
+  return rest === '' || rest === '/' ? null : rest;
+}
+
+/**
  * One Checks row with its name, kind, cadence and the shown target's results: a failing target first, else the definition's,
  * else the first. Its bars, response, cause and failing time are that target's; the uptime is the row's lowest.
  */
@@ -704,6 +722,7 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
     title: named.title,
     titleIdentifier: named.identifier,
     targetLabel: definition?.targetLabel ?? null,
+    targetMeta: addressBeyondTitle(definition, named.identifier),
     kind: definition?.name ?? null,
     every: definition ? formatServiceCheckPeriod(definition.periodMs) : null,
     lastResult: word ? [word, shown?.result.latencyMs === undefined ? null : formatServiceCheckLatency(shown.result.latencyMs)]

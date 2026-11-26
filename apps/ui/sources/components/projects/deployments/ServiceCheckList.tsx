@@ -608,7 +608,7 @@ const CheckByline = React.memo(function CheckByline(
           // not repeated. How often stays whole; the address ends the line, where an ellipsis cuts only its tail.
           : (row.native.enabled ? facts.observationDisclosure : null)
             ?? ([facts.kind && !facts.title.startsWith(facts.kind) ? facts.kind : null,
-              every, facts.titleIdentifier ? null : facts.targetLabel].filter(Boolean).join(' · ') || null);
+              every, facts.targetMeta].filter(Boolean).join(' · ') || null);
   const meta = {
     ...Typography.variant('meta'),
     color: theme.colors.text.secondary,

@@ -67,6 +67,17 @@ it('Monitoring lists what needs the person first, says healthy checks quietly, a
   expect(screen.findHostByTestId('services.checks.row.a-ok.t-ok')).toBeTruthy();
 });
 
+// Design review N2: a host the title names is said once; the row's meta keeps only the path beyond it.
+it('says an HTTP check\'s host once, in its title, and keeps only the path as meta', async () => {
+  const screen = await renderScreen(
+    <ServiceCheckList testID="monitoring.checks" rows={[row('ok', 'billing.acme.dev/health', results('up', 142))]}
+      scope={{ serverId: 'server-1', accountId: 'account-1' } as never} selection={SELECTION} accessibilityLabel="Checks" />,
+  );
+  const text = screen.getTextContent();
+  expect(text.match(/billing\.acme\.dev/g)).toHaveLength(1);
+  expect(text).toContain('/health');
+});
+
 // The row and its opened detail use the Check kind and saved target together.
 it('names an opened Check by what it checks, as its row does', async () => {
   const rows = [row('down', 'n8n.acme.dev', results('down', 900))];

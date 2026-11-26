@@ -104,7 +104,7 @@ function httpRow(target: 'billing.acme.dev/health' | 'n8n.acme.dev'): ManagedCon
     kind: 'configuredCheck', key, scope: SCOPE, automationId: `automation-${key}`, triggerId: 'trigger-1',
     native: { name: target, templateVersion: 1, enabled: true, triggers: [] } as never,
     definitionFacts: { kind: 'available', observerMachineId: COLLECTOR, checks: [{ checkId: 'http', name: 'HTTP',
-      targetLabel: target, titleTarget: { kind: 'host', label: target }, periodMs: MINUTE, domainId: null, keyFlow: null }] },
+      targetLabel: target, titleTarget: { kind: 'host', label: new URL(`https://${target}`).hostname }, periodMs: MINUTE, domainId: null, keyFlow: null }] },
     lastResults: { kind: 'available', checks: [{ checkId: 'http', result: recent.at(-1)!, recentResults: recent,
       recentResultsCoverage: 'complete', history: { ...history('passing'), uptimePercent: down ? 93.1 : 99.98 },
       ...(down ? { failingSince: NOW - 6 * MINUTE, failureStreak: 6 } : {}) }] },
