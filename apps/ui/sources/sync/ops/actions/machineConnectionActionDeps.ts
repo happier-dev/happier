@@ -128,7 +128,7 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
         machineAddSshTaskAction: createMachineAddSshTaskAction(options.runner),
         localDaemonServiceAction: createLocalDaemonServiceAction(options),
         machineAddLocalStart: createMachineAddLocalSetupAction(options.runner),
-        machineAddLocalCancel: createMachineAddLocalCancelAction(),
+        machineAddLocalCancel: createMachineAddLocalCancelAction(options.runner),
         homeReconnect: async (input, context) => {
             context.signal?.throwIfAborted();
             if (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, input.serverId)) {

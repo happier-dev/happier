@@ -209,7 +209,9 @@ describe('machine add flow lifetime', () => {
             expect(await executor.execute('machines.add.local.start', { serverId }, context))
                 .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
             expect(manual.bridge.start).not.toHaveBeenCalled();
-            const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.add.local.start': ['agent'] } });
+            const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+                'machines.add.local.start': ['agent'], 'machines.add.local.cancel': ['agent'],
+            } });
             expect(await executor.execute('machines.add.local.start', { serverId, password: 'private' }, { ...context, actionsSettings }))
                 .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
             publishLocalDaemonStatus(manual.runner, { serviceInstalled: true, daemonRunning: true, needsAuth: false,
@@ -225,12 +227,13 @@ describe('machine add flow lifetime', () => {
                 activeRelayUrl: 'https://local-action.example.test', activeAccountId: 'alice', installService: true, startService: true, verifyService: true,
             } });
             expect(readMachineAddFlowDraft()).toMatchObject({ serverId, path: 'thisComputer', thisComputerTask: { taskId: 'personal-home-task-1', starting: false } });
-            expect(await executor.execute('machines.add.local.cancel', { taskId: 'another-task' }, context))
+            const cancelContext = { ...context, actionsSettings };
+            expect(await executor.execute('machines.add.local.cancel', { taskId: 'another-task' }, cancelContext))
                 .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
-            expect(await executor.execute('machines.add.local.cancel', { taskId: 'personal-home-task-1' }, { ...context, expectedAccountId: 'bob' }))
+            expect(await executor.execute('machines.add.local.cancel', { taskId: 'personal-home-task-1' }, { ...cancelContext, expectedAccountId: 'bob' }))
                 .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
             expect(manual.bridge.cancel).not.toHaveBeenCalled();
-            expect(await executor.execute('machines.add.local.cancel', { taskId: 'personal-home-task-1' }, context))
+            expect(await executor.execute('machines.add.local.cancel', { taskId: 'personal-home-task-1' }, cancelContext))
                 .toEqual({ ok: true, result: { taskId: 'personal-home-task-1' } });
             expect(manual.bridge.cancel).toHaveBeenCalledWith('personal-home-task-1');
             expect(readMachineAddFlowDraft().startedAtMs).toBeNull();
@@ -265,6 +268,18 @@ describe('machine add flow lifetime', () => {
                 activeRelayUrl: 'https://cli-choice.example.test', activeAccountId: 'alice', reconsiderCli: true,
                 installService: true, startService: true, verifyService: true,
             } });
+            const cancelInput = { taskId: 'personal-home-task-1' };
+            expect(await executor.execute('machines.add.local.cancel', cancelInput, context))
+                .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+            const cancelContext = { ...context, actionsSettings: normalizeActionsSettingsV1({
+                v: 1, approvalWaivedSurfaces: { 'machines.add.local.cancel': ['agent'] },
+            }) };
+            expect(await executor.execute('machines.add.local.cancel', cancelInput, { ...cancelContext, expectedAccountId: 'bob' }))
+                .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+            expect(manual.bridge.cancel).not.toHaveBeenCalled();
+            expect(await executor.execute('machines.add.local.cancel', cancelInput, cancelContext))
+                .toEqual({ ok: true, result: cancelInput });
+            expect(manual.bridge.cancel).toHaveBeenCalledWith(cancelInput.taskId);
         } finally { await act(async () => discardMachineAdd()); storage.setState(previous); }
     });
 

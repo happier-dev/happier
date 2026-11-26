@@ -26,6 +26,7 @@ import { useAppAccountIdentity } from './useThisComputerConnection';
 import { readThisComputerServiceRows, type ThisComputerServiceRow } from '@/sync/domains/server/relayDrift/thisComputerConnection';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { LOCAL_DAEMON_SERVICE_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/localDaemonService';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -474,26 +475,23 @@ export function useLocalDaemonControl(options: Readonly<{
                 : commandLineSnapshot && commandLineSnapshot.result == null
                     ? commandLineSnapshot.taskId
                     : null;
-            if (setupTaskId) {
-                void runner.cancel(setupTaskId);
-                return;
-            }
-            // A standalone start or CLI update is canceled through the same Action agents use.
             const serviceTaskId = startSnapshot && startSnapshot.result == null
                 ? startSnapshot.taskId
                 : cliUpdateSnapshot && cliUpdateSnapshot.result == null
                     ? cliUpdateSnapshot.taskId
                     : null;
-            if (!serviceTaskId) {
+            if (!setupTaskId && !serviceTaskId) {
                 return;
             }
             const serverId = activeServerSnapshot.serverId;
-            void executeAction(LOCAL_DAEMON_SERVICE_CANCEL_ACTION_ID_V1, { serverId, taskId: serviceTaskId }, {
+            const actionId = setupTaskId ? MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1 : LOCAL_DAEMON_SERVICE_CANCEL_ACTION_ID_V1;
+            const input = setupTaskId ? { taskId: setupTaskId } : { serverId, taskId: serviceTaskId };
+            void executeAction(actionId, input, {
                 surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId,
                 ...(appAccountId ? { expectedAccountId: appAccountId } : {}),
             }).then(result => requireActionSuccess(result)).catch((error: unknown) => {
                 setLastErrorMessage(readSystemTaskStartErrorMessage(error) ?? t('settings.systemTaskStartFailed'));
             });
-        }, [activeServerSnapshot.serverId, appAccountId, cliUpdateSnapshot, commandLineSnapshot, executeAction, repairSnapshot, runner, startSnapshot]),
+        }, [activeServerSnapshot.serverId, appAccountId, cliUpdateSnapshot, commandLineSnapshot, executeAction, repairSnapshot, startSnapshot]),
     };
 }

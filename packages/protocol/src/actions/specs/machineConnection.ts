@@ -302,8 +302,8 @@ function createMachineConnectionActionSpecs() {
       { path: 'purpose', title: 'Relay repair only', widget: 'text' }] },
   },
   {
-    id: 'machines.add.local.cancel', approval: { result: 'required' }, title: 'Cancel this computer setup',
-    description: 'Cancel the retained enrollment task through its existing system-task owner. Omit taskId to cancel its pending native start.',
+    id: 'machines.add.local.cancel', approval: { result: 'required' }, approvalPolicy: { agentDefault: 'authority' }, title: 'Cancel this computer setup',
+    description: 'Cancel a retained local enrollment, relay repair, or command-line change. Omit taskId to cancel a pending Add setup start.',
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
     bindings: { mcpToolName: 'machines_add_local_cancel' },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },

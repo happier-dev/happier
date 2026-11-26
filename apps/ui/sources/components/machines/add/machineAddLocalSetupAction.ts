@@ -2,6 +2,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import { buildLocalMachineSetupSystemTaskSpec } from '@/components/systemTasks/buildLocalMachineSetupSystemTaskSpec';
+import { matchesThisComputerSetupScope } from '@/components/systemTasks/thisComputerSetup/thisComputerSetupScope';
 import { readLocalDaemonSharedState, startLocalComputerSetup } from '@/components/settings/machines/localControl/localDaemonSharedState';
 import { readLocalDaemonStatusData, refreshLocalDaemonStatus, type LocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { confirmThisComputerAccountMove } from '@/components/settings/machines/localControl/thisComputerConnectionPresentation';
@@ -18,7 +19,7 @@ import { readMachineAddFlowDraft, updateMachineAddFlowDraft } from './machineAdd
 import { beginMachineAddWatch, hasRunningMachineAddTask, startMachineAddTask } from './machineAddTaskLifetime';
 
 /** Cancellation consumes the start owner's retained task custody, including pending starts. */
-export function createMachineAddLocalCancelAction(): NonNullable<ActionExecutorDeps['machineAddLocalCancel']> {
+export function createMachineAddLocalCancelAction(runnerOverride?: SystemTaskRunner): NonNullable<ActionExecutorDeps['machineAddLocalCancel']> {
     return async ({ taskId }, context) => {
         const fail = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
         const active = getActiveServerSnapshot();
@@ -29,22 +30,33 @@ export function createMachineAddLocalCancelAction(): NonNullable<ActionExecutorD
         if (context.expectedAccountId && context.expectedAccountId !== scope.accountId
             || context.runtimeAccountId && context.runtimeAccountId !== scope.accountId) return fail('action_account_scope_changed');
         const retained = readMachineAddFlowDraft();
-        const handle = retained.thisComputerTask;
-        if (!handle || !retained.serverId || !areServerProfileIdentifiersEquivalent(retained.serverId, serverId)) return fail('target_unavailable');
-        if (!areAccountSettingsScopesEqual(handle.accountScope, scope)) return fail('action_account_scope_changed');
+        const handle = retained.serverId && areServerProfileIdentifiersEquivalent(retained.serverId, serverId)
+            && (!taskId || retained.thisComputerTask?.taskId === taskId) ? retained.thisComputerTask : null;
+        if (handle && !areAccountSettingsScopesEqual(handle.accountScope, scope)) return fail('action_account_scope_changed');
         if (!taskId) {
-            if (!handle.starting || !handle.startPromise) return fail('target_unavailable');
+            if (!handle?.starting || !handle.startPromise) return fail('target_unavailable');
             handle.unsubscribeCompletion?.();
             // The existing promise owner cancels an id that arrives after this release.
             updateMachineAddFlowDraft(draft => draft.thisComputerTask !== handle ? draft
                 : { ...draft, thisComputerTask: null, startedAtMs: null, baseline: null });
             return { pendingCanceled: true };
         }
-        if (handle.taskId !== taskId || !handle.runner.getSnapshot(taskId)) return fail('target_unavailable');
-        try { await handle.runner.cancel(taskId); }
+        const runner = handle?.runner ?? runnerOverride ?? getSystemTasksRunner();
+        if (!handle) {
+            const profile = getServerProfileById(serverId);
+            if (!profile || readLocalDaemonSharedState(runner).setup.taskId !== taskId
+                || !matchesThisComputerSetupScope(runner.getTaskSpec?.(taskId) ?? null, {
+                    serverId, expectedRelayUrl: profile.serverUrl, expectedAccountId: scope.accountId,
+                })) return fail('target_unavailable');
+        }
+        const snapshot = runner.getSnapshot(taskId);
+        if (!snapshot || snapshot.result != null) return fail('target_unavailable');
+        try { await runner.cancel(taskId); }
         catch { return fail('machine_enroll_cancel_failed'); }
-        handle.unsubscribeCompletion?.();
-        updateMachineAddFlowDraft(draft => draft.thisComputerTask !== handle ? draft : { ...draft, startedAtMs: null, baseline: null });
+        if (handle) {
+            handle.unsubscribeCompletion?.();
+            updateMachineAddFlowDraft(draft => draft.thisComputerTask !== handle ? draft : { ...draft, startedAtMs: null, baseline: null });
+        }
         return { taskId };
     };
 }
