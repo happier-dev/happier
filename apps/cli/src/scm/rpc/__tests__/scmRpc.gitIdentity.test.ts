@@ -19,7 +19,7 @@ describe.each(['rpc', 'action'] as const)('SCM requester identity through %s', e
     { worktree: false, label: 'explicit repository choice', guest: true, person: true, local: true, expected: 'Test User <test@example.com>' },
     { worktree: true, label: 'worktree-local repository choice', guest: true, person: true, local: true, expected: 'Worktree Person <worktree@example.test>' },
     { worktree: false, label: 'guest on shared host', guest: true, person: true, local: false, expected: 'Guest Person <guest@example.test>' },
-    { worktree: false, label: 'guest without identity', guest: true, person: false, local: false, expected: null },
+    { worktree: false, label: 'guest without repository or person identity describes none despite owner global identity', guest: true, person: false, local: false, expected: null },
     { external: true, worktree: false, label: 'external custodian native fallback', guest: false, person: false, local: false, expected: 'Host Person <host@example.test>' },
     { use: true, external: true, worktree: false, label: 'external guest Use without identity', guest: true, person: false, local: false, expected: null },
     { external: true, worktree: false, label: 'external guest Manage without identity', guest: true, person: false, local: false, expected: null },
@@ -40,6 +40,9 @@ describe.each(['rpc', 'action'] as const)('SCM requester identity through %s', e
     if (!test.local) {
       runGit(cwd, ['config', '--unset', 'user.name']);
       runGit(cwd, ['config', '--unset', 'user.email']);
+    }
+    if (test.guest && !test.person && !test.local) {
+      expect(runGit(cwd, ['var', 'GIT_COMMITTER_IDENT'])).toMatch(/^Host Person <host@example\.test> /);
     }
     if (test.worktree) {
       runGit(cwd, ['config', 'extensions.worktreeConfig', 'true']);
