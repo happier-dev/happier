@@ -699,6 +699,35 @@ describe('the Session Info page Automations section', () => {
     expect(automationHttp.mock.calls.some(([url, init]) => url.pathname === '/v3/automations' && init?.method === 'POST')).toBe(false);
   });
 
+  it('does not offer Each commit without a published Session-bound after-commit producer', async () => {
+    const { findActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const { serializeActionSpec } = await import('@happier-dev/protocol/actions/actionCatalog');
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { buildResourceWorkflowTriggerStartOptions } = await import('./workflowTriggerStarts');
+    const { projectWorkflowHostActionSpecs } = await import('../presentation/workflowActionCatalog');
+    const commit = findActionSpec(RPC_METHODS.SCM_COMMIT_CREATE);
+    if (!commit) throw new Error('The published commit Action must exist');
+    // Generic after-Action settlement is live. The Session binder has not published
+    // a Session operand for this Action, so it cannot start this Session's habit.
+    const published = serializeActionSpec(commit, { includeOutputSchema: false });
+    expect(published.automation?.after).toBe(true);
+    expect(published.automation?.subjectKinds).not.toContain('session');
+    expect(buildResourceWorkflowTriggerStartOptions({
+      subject: { kind: 'session', serverId: home.serverId, sessionId: 'session-1' },
+      actions: projectWorkflowHostActionSpecs([commit], undefined, 'automation'), events: [], machineId: 'machine-a',
+    })).toEqual([]);
+
+    answer([]);
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
+    await vi.waitFor(() => expect(screen.findByTestId('review-habit:off')?.props.accessibilityState).toMatchObject({ checked: true }));
+    expect(screen.findByTestId('review-habit:eachCommit')).toBeNull();
+    await screen.pressByTestIdAsync('review-habit:eachTurn');
+    await settle();
+    expect(screen.findByTestId('review-habit-reviewer-setup')).not.toBeNull();
+    expect(screen.findByTestId('review-habit:eachCommit')).toBeNull();
+    expect(automationHttp.mock.calls.some(([url, init]) => url.pathname === '/v3/automations' && init?.method === 'POST')).toBe(false);
+  });
+
   it('stays on the Info page with its section and a way to add the first automation', async () => {
     answer([]);
     const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
