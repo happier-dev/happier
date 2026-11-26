@@ -112,19 +112,54 @@ describe('resolveProviderPermissionForHappierAction', () => {
   );
 
   it('keeps plan mode reversible through its own session mode and goal controls', () => {
+    const callerSession = { sessionId: 'caller-session', serverId: 'home' };
     for (const actionId of ['session.mode.set', 'session.goal.set', 'session.goal.clear'] as const) {
       expect(resolveProviderPermissionForHappierAction({
         toolName: 'happier_action_execute',
-        input: { actionId },
+        input: { actionId, input: { sessionId: callerSession.sessionId } },
         permissionMode: 'plan',
+        callerSession,
       })).toEqual({ decision: 'approved', actionId });
+
+      const otherSession = { toolName: 'happier_action_execute',
+        input: { actionId, input: { sessionId: 'other-session' } }, callerSession };
+      expect.soft(resolveProviderPermissionForHappierAction({ ...otherSession, permissionMode: 'plan' }))
+        .toMatchObject({ decision: 'denied', actionId, reasonCode: 'permission_exceeds_ceiling' });
+      expect(resolveProviderPermissionForHappierAction({ ...otherSession, permissionMode: 'default' }))
+        .toEqual({ decision: 'approved', actionId });
 
       expect(resolveProviderPermissionForHappierAction({
         toolName: 'happier_action_execute',
         input: { actionId },
-        permissionMode: 'read-only',
+        permissionMode: 'read-only', callerSession,
       })).toMatchObject({ decision: 'denied', actionId, reasonCode: 'permission_exceeds_ceiling' });
     }
+  });
+
+  it('preserves contextual self targeting and checks alternate Plan tool operands', () => {
+    const callerSession = { sessionId: 'caller-session', serverId: 'home' };
+    const decide = (toolName: string, input: unknown) =>
+      resolveProviderPermissionForHappierAction({ toolName, input, callerSession, permissionMode: 'plan' });
+
+    expect(decide('mcp__happier__session_mode_set', { modeId: 'default' })).toMatchObject({ decision: 'approved' });
+    expect(decide('mcp__happier__session_mode_set', { sessionId: 'self', modeId: 'default' })).toMatchObject({ decision: 'approved' });
+    const explicit = { selector: 'sessions', addresses: [callerSession] };
+    expect(decide('happier_action_execute', {
+      actionId: 'session.mode.set', input: { sessionId: explicit, modeId: 'default' },
+    })).toMatchObject({ decision: 'approved' });
+    expect(decide('happier_action_execute', {
+      actionId: 'session.mode.set', input: JSON.stringify({ sessionId: { ...explicit,
+        addresses: [{ ...callerSession, serverId: 'other-home' }] }, modeId: 'default' }),
+    })).toMatchObject({ decision: 'denied', reasonCode: 'permission_exceeds_ceiling' });
+
+    expect(decide('Bash', { command: buildHappierToolsShellBridgeCommand([
+      'call', '--source', 'happier', '--tool', 'session_mode_set',
+      '--args-json', '{"sessionId":"other-session","modeId":"default"}', '--json',
+    ]) })).toMatchObject({ decision: 'denied', reasonCode: 'permission_exceeds_ceiling' });
+    expect(resolveProviderPermissionForHappierAction({
+      toolName: 'mcp__happier__session_mode_set', input: { sessionId: callerSession.sessionId, modeId: 'default' },
+      permissionMode: 'plan',
+    })).toMatchObject({ decision: 'denied', reasonCode: 'permission_exceeds_ceiling' });
   });
 
   it('leaves unknown and non-Happier provider tools with the provider permission owner', () => {

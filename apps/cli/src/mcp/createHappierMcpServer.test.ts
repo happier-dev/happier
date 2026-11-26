@@ -2336,6 +2336,22 @@ describe('createHappierMcpServer', () => {
     }), { getPermissionMode: () => mode });
   });
 
+  it('refuses another Session’s mode and goal controls at the Plan Action ingress', async () => {
+    const sessionId = 'c111111111111111111111114';
+    await withTitleHost(sessionId, () => accountSettingsParse({}), async fixture => {
+      const other = 'c111111111111111111111115';
+      const requests = [
+        { actionId: 'session.mode.set', input: { sessionId: other, modeId: 'default' } },
+        { actionId: 'session.goal.set', input: { sessionId: other, objective: 'Review the patch' } },
+        { actionId: 'session.goal.clear', input: { sessionId: other } },
+      ];
+      for (const args of requests) {
+        const result = await fixture.runtime.executeTool({ toolName: 'action_execute', args });
+        expect.soft(result, args.actionId).toMatchObject({ ok: false, errorCode: 'permission_exceeds_ceiling' });
+      }
+    }, { getPermissionMode: () => 'plan' });
+  });
+
   it('uses account action settings for in-session MCP approval policy when provided', async () => {
     const settings = accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {
       'session.title.set': { approvalRequiredSurfaces: ['agent'] },

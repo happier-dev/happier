@@ -13,7 +13,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import { normalizeExecutionRunToolResult } from './executionRunToolResult';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
-import { bindContextualActionToolInput } from './actionToolContext';
+import { bindContextualActionToolInput, normalizeActionExecuteInput } from './actionToolContext';
 import { materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -269,19 +269,6 @@ function resolveExpectedContributorOccurrenceId(params: Readonly<{
       .filter((value): value is string => Boolean(value)),
   );
   return occurrences.size === 1 ? [...occurrences][0] : undefined;
-}
-
-function normalizeActionExecuteInput(input: unknown): unknown {
-  if (typeof input !== 'string') return input;
-
-  const trimmed = input.trim();
-  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return input;
-
-  try {
-    return JSON.parse(trimmed) as unknown;
-  } catch {
-    return input;
-  }
 }
 
 function isInputRecord(value: unknown): value is Record<string, unknown> {

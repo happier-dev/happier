@@ -273,6 +273,9 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       toolName,
       input,
       permissionMode,
+      ...(permissionMode === 'plan' ? {
+        callerSession: { sessionId: this.session.sessionId, serverId: this.session.getServerBinding().serverId },
+      } : {}),
     });
     if (happierActionPermission.decision) {
       // Happier Actions enforce their own enablement, authorization, and

@@ -39,10 +39,11 @@ Legacy note:
 - when Happier sees legacy `permissionMode=plan`, it maps that to **Mode = Plan** for compatible providers
 
 In 0.3 development, an effective `plan` permission lets the Agent read through
-Happier Actions. It can also switch the Session mode, set its native goal, or
-clear that goal, subject to each Action's usual rules. Other write-like Actions,
-such as saving a Workflow draft, are refused with `permission_exceeds_ceiling`
-whether the Agent calls them directly or through its native tool approval flow.
+Happier Actions. It can also switch the mode of its own Session, set that
+Session's native goal, or clear it, subject to each Action's usual rules.
+Other write-like Actions, such as saving a Workflow draft or changing another
+Session's mode, receive `permission_exceeds_ceiling` through both direct calls
+and native tool approval.
 
 ## Session modes
 

@@ -741,6 +741,7 @@ export function createHappierMcpServer(
   };
   const executor = toolSurface === 'agent' ? createHappierActionIngressExecutor({
     executor: turnExecutor,
+    callerSession: { sessionId: boundCallerSessionId, serverId },
     readPermission: () => ({
       mode: resolveAgentCallerPermissionMode(),
       witness: (client.getActiveTurnAdmissionWitness

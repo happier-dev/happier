@@ -10,6 +10,19 @@ import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCata
 
 export type { SessionBoundActionToolContext } from '@happier-dev/protocol/actions/actionToolContext';
 
+export function normalizeActionExecuteInput(input: unknown): unknown {
+  if (typeof input !== 'string') return input;
+
+  const trimmed = input.trim();
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return input;
+
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return input;
+  }
+}
+
 export function resolveActionToolContextualDefaults(params: Readonly<{
   actionId: string;
   input?: unknown;
