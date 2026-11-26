@@ -6541,7 +6541,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `serverId` (text, required): Home
 - `environmentId` (text): Environment
 - `deploymentId` (text, required): Deployment receipt
-- `projection` (text): Projection
+- `projection` (select): Projection
 
 ## `deployments.receipts.list`
 
@@ -13276,6 +13276,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `default` (select): Default
+- `loading` (select): Loading
 - `tools` (json): Tools
 - `serverId` (text, required): Server id
 
@@ -18435,6 +18436,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `cwd` (text): cwd
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18453,6 +18455,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `cwd` (text): cwd
 - `path` (text): path
 - `expectedHash` (text): Expected file hash
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18472,6 +18475,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `name` (text): name
 - `strategy` (text): strategy
 - `overwriteCurrentBranchStash` (boolean): overwrite Current Branch Stash
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18491,6 +18495,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `name` (text): name
 - `checkout` (boolean): checkout
 - `startPoint` (text): start Point
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18508,6 +18513,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `includeRemotes` (boolean): include Remotes
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `workEvidence` (json): Work evidence
@@ -18526,6 +18532,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `sourceRef` (text): source Ref
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18543,6 +18550,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `operation` (text): operation
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18560,6 +18568,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `operation` (text): operation
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18577,6 +18586,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `operation` (text): operation
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18594,6 +18604,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `sourceRef` (text): source Ref
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18611,6 +18622,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `entries` (json): entries
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18629,6 +18641,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `cwd` (text): cwd
 - `paths` (text_list): paths
 - `patch` (textarea): patch
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18647,6 +18660,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `cwd` (text): cwd
 - `paths` (text_list): paths
 - `patch` (textarea): patch
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18664,6 +18678,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `commit` (text): commit
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18686,6 +18701,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `allowPublishedAmend` (boolean): Acknowledge published HEAD rewrite
 - `scope` (json): scope
 - `patches` (json): patches
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `expectedHeadOid` (json): Expected head oid
@@ -18712,6 +18728,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `candidateOid` (text): Known candidate commit
 - `expectedHeadOid` (text): Expected parent
 - `expectedRef` (text): Expected target ref
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18729,6 +18746,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `expectedHeadOid` (text): Observed HEAD commit
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18747,6 +18765,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `cwd` (text): cwd
 - `path` (text): path
 - `side` (text): side
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18764,6 +18783,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `paths` (text_list): paths
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -18781,6 +18801,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `commit` (text): commit
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `beforeTreeOid` (text): Before tree oid
@@ -18800,6 +18821,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `cwd` (text): cwd
 - `path` (text): path
 - `area` (text): area
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `previousPath` (json): Previous path
@@ -19221,6 +19243,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `selector.side` (text): Side
 - `selector.area` (text): Area
 - `maxBytes` (number): Preview byte budget
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19257,6 +19280,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text, required): Repository directory
 - `providerKind` (select): Hosting provider
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `providerId` (text): Provider id
@@ -19298,6 +19322,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `remoteUrlKind` (select): Remote URL kind
 - `remoteConflictStrategy` (select): Remote conflict strategy
 - `pushCurrentBranch` (boolean): Push current branch
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `providerId` (text): Provider id
@@ -19334,6 +19359,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `skip` (text): skip
 - `query` (text): query
 - `range` (text): range
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `revisionRange` (json): Revision range
@@ -19355,6 +19381,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `prReference.number` (text): Pull request number
 - `prReference.url` (text): Pull request URL
 - `prReference.headBranch` (text): Head branch
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19374,6 +19401,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `prReference.number` (text): Pull request number
 - `prReference.url` (text): Pull request URL
 - `prReference.headBranch` (text): Head branch
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `workEvidence` (json): Work evidence
@@ -19396,6 +19424,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `base` (text): Base branch
 - `head` (text): Head branch
 - `state` (select): State
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `workEvidence` (json): Work evidence
@@ -19416,6 +19445,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `providerId` (text): Provider id
 - `base` (text, required): Base branch
 - `head` (text, required): Head branch
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `includeTemplate` (boolean): Include template
@@ -19439,6 +19469,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `title` (text): Title
 - `body` (textarea): Body
 - `draft` (boolean): Draft
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `headRepositoryNameWithOwner` (text): Head repository name with owner
@@ -19462,6 +19493,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `prReference.url` (text): Pull request URL
 - `prReference.headBranch` (text): Head branch
 - `mode` (select): Mode
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19487,6 +19519,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `title` (text): Pull request title
 - `body` (textarea): Pull request body
 - `defaultBranchPushPolicy` (select): Default-branch push policy
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19506,6 +19539,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `name` (text): name
 - `fetchUrl` (text): fetch Url
 - `pushUrl` (text): push Url
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19524,6 +19558,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `cwd` (text): cwd
 - `remote` (text): remote
 - `branch` (text): branch
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `dirtyPolicy` (select): Dirty policy
@@ -19545,6 +19580,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `remote` (text): remote
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19566,6 +19602,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `branch` (text): branch
 - `dirtyPolicy` (text): dirty Policy
 - `reconcile` (text): reconcile
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `pushMode` (select): Push mode
@@ -19588,6 +19625,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `branch` (text): branch
 - `pushMode` (text): push Mode
 - `expectedRemoteOid` (text): expected Remote Oid
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `dirtyPolicy` (select): Dirty policy
@@ -19608,6 +19646,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `name` (text): name
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19627,6 +19666,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `name` (text): name
 - `fetchUrl` (text): fetch Url
 - `pushUrl` (text): push Url
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19681,6 +19721,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text, required): Repository directory
 - `initialBranch` (text): Initial branch
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19699,6 +19740,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `cwd` (text, required): Repository directory
 - `confirmed` (boolean, required): Confirm stale index-lock removal
 - `confirmationToken` (text, required): Confirmation token
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19733,6 +19775,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `stashRef` (text): stash Ref
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19750,6 +19793,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `message` (textarea): message
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19767,6 +19811,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `stashRef` (text): stash Ref
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19784,6 +19829,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `includeAll` (boolean): include All
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19801,6 +19847,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `stashRef` (text): stash Ref
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19819,6 +19866,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `cwd` (text): cwd
 - `stashRef` (text): stash Ref
 - `maxBytes` (text): max Bytes
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19837,6 +19885,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionId` (text): Session
 - `cwd` (text): cwd
 - `includeWorktreeStatus` (boolean): include Worktree Status
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 - `operationStateVersion` (number): Operation state version
@@ -19877,6 +19926,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `displayName` (text): display Name
 - `baseRef` (text): base Ref
 - `branchMode` (text): branch Mode
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19893,6 +19943,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `cwd` (text): cwd
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19913,6 +19964,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `confirmed` (boolean): confirmed
 - `authorizationToken` (text): authorization Token
 - `skipCleanup` (boolean): Remove without cleanup
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -19930,6 +19982,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `cwd` (text): cwd
 - `worktreePaths` (text_list): worktree Paths
+- `gitIdentity` (json): Git identity
 - `backendPreference` (json): Backend preference
 - `outcomeVersion` (number): Outcome version
 
@@ -22762,7 +22815,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `none` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -22796,7 +22849,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `none` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -23687,7 +23740,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `sessions.spawn.capabilities.preview`
 
-**Preview session capabilities** — No additional description is published.
+**Preview session capabilities** — Preview the selected Machine’s session capabilities. If preview returns machine_unreachable, ask the person to reconnect the selected Machine before trying again. If it returns invalid_input, ask the person to correct the Machine, Agent or directory selection before trying again.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -26219,6 +26272,52 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionRef` (json, required): Session ref
 - `version` (text, required): Version
 
+## `tools.call`
+
+**Call a session tool** — Invoke one tool under its own permission and approval policy.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `cli`, `agent`, `mcp`, `rpc`, `api`.
+
+### Input guidance
+
+- `source` (text, required): Source
+- `tool` (text, required): Tool
+- `args` (json): Args
+
+## `tools.describe`
+
+**Describe a session tool** — Read the input schema and call signature for one tool.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `cli`, `agent`, `mcp`, `rpc`, `api`.
+
+### Input guidance
+
+- `source` (text, required): Source
+- `tool` (text, required): Tool
+
+## `tools.search`
+
+**Search session tools** — Find available Happier Actions and configured MCP tools.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `cli`, `agent`, `mcp`, `rpc`, `api`.
+
+### Input guidance
+
+- `query` (text): Query
+- `limit` (integer): Limit
+
 ## `transcript.follow`
 
 **Follow session transcript** — Create or refresh a retained bounded transcript follow lease.
@@ -28650,6 +28749,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `expectedRevision` (number, required): Observed Run revision — Use run.revision from the current workflow.run.get response. A stale revision is refused; reread before deciding again.
 - `runId` (text, required): Run id
+- `machineId` (text): Machine id
 
 ## `workflow.run.delete`
 
@@ -28791,7 +28891,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `targetSessionId` (text): Destination Session — Filter Runs that write into this Session; this does not change their execution placement.
 - `cursor` (text): Cursor
 - `limit` (integer): Limit
-- `projection` (text): Projection
+- `projection` (select): Projection
 - `runId` (text): Run id
 - `runIds` (text_list): Run ids
 - `invocationProvenance` (json): Invocation provenance

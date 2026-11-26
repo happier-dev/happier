@@ -219,12 +219,12 @@ terminal observations, and validates the declared terminal result. Losing the
 invoke response leaves the outcome uncertain; observation recovery does not
 invoke the Action again.
 
-Qualified plugin Action schema preparation is implemented: the exact execution
-machine's merged catalog selects the current occurrence, and the daemon reads
-that contribution's input and output schemas on demand. Missing or stale
-contributions and missing output schemas fail preparation. This establishes
-the schema path, not blanket support for every qualified Action as a Workflow
-leaf or an execution-run completion declaration. Use the canonical
+Qualified plugin Actions exposed to Agents can run as Workflow steps with
+Machine or Account placement. For a Machine step, the execution Machine's
+catalog selects the contribution and its schemas. For an Account step, the
+Run starter's Account supplies the Action contract, connected sources and
+approval policy. If that Action requires the invoking app, the step reports
+that the app is unavailable. Use the canonical
 [Action contribution contract](/plugins/api/actions-tools-commands) for invocation.
 
 These are current 0.3 development contracts, not release or loaded-runtime

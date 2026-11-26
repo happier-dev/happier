@@ -53,6 +53,10 @@ admitted Runs can finish. If the Machine loses your saved sign-in context, the
 typed refusal asks you to re-save the schedule on that Machine, or start a direct
 Run again.
 
+If you own the shared Machine, open its Machine page and find **Other people’s
+Runs**. You can choose **Stop** and confirm for an active Run started there by a
+guest or Team member. The starter can see that you stopped it.
+
 In current development source, saving an unchanged workflow writes nothing and
 keeps its saved revision. **Discard changes** on a saved workflow restores its
 saved version immediately, with **Undo** available; it does not ask for another
@@ -357,9 +361,10 @@ Actions do not run these checks. A plugin Action whose input chooses between a
 preview and a write is checked only for its write operation.
 
 Before checks can wait for a Workflow or start a notification without waiting
-for its result. Waiting checks continue the original Action only after they
-pass; a trigger may instead let a person approve after a failed check. The
-Action's normal approval still applies. When you start an Action, one card
+for its result. A passing check lets the original Action continue. With
+`ask`, you can choose to continue if the check fails or ends without a verdict.
+A stopped check or one Happier cannot confirm has ended keeps the Action blocked.
+The Action's normal approval still applies. When you start an Action, one card
 covers its matching shared Before and After triggers that need your consent.
 These Workflows run in your Account on your Machine. An After trigger you
 allow runs only if the eventual outcome matches its **Only when** condition.
@@ -749,6 +754,11 @@ It queues rather than executing synchronously: the assigned daemon picks it up
 when it is available. If the machine is asleep, the run waits rather than
 failing.
 
+In 0.3 development, an occurrence that no Machine has claimed stays queued.
+Open it to see why it is waiting. To end the wait, choose **Stop** in the Run
+list or **Cancel** in the occurrence details. If the Run is waiting for capacity,
+its status reads **Waits for a free start slot on** followed by the Machine name.
+
 From a terminal:
 
 ```bash
@@ -786,11 +796,16 @@ Definitions have four leaf kinds:
   Each step can run in a Session or as a background run.
 - **Action** invokes one declared host or plugin Action with typed input bindings.
   An Action that declares execution-run completion waits for those Runs and uses
-  its terminal result.
+  its terminal result. Plugin Actions available to Agents can run as steps
+  when placed on a Machine or an Account.
 - **Run a workflow** executes another definition as an inline nested frame in
   the same Run. Its inputs and child definition are frozen at admission.
 - **Wait for you** waits for a human response without starting an Agent. If it
   declares a result contract, the response must satisfy it.
+
+A step that acts on a Session uses the permissions of whoever started the Run.
+The Action keeps its usual approval rules, with no additional approval for
+running it from a Workflow.
 
 In current 0.3 development source, an Action's text field can also hold workflow
 values inside its words, such as `https://example.com/builds?branch=` followed by

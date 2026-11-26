@@ -5912,12 +5912,12 @@ retaining native launch ids before observation; no manual Resume is needed while
 the coordinator holds the invocation. Typed
 terminal output is checked against the frozen schema. The exact-machine
 materialization host reads host catalog contracts through its host adapter and
-qualified contributed Action schemas through `daemon.plugins.actions.schemas.read`,
-bound to the merged catalog's current `occurrenceId`. Missing, unavailable, stale
-or output-schema-less contributions fail preparation. This schema path is
-implemented; it is not proof that every qualified Action is executable as a
-Workflow leaf or has an Execution Run completion declaration. The one-shot
-executor and completion owner still decide invocation and terminal settlement.
+Machine-placed plugin Action schemas through `daemon.plugins.actions.schemas.read`,
+bound to the merged catalog's current `occurrenceId`. For Account-placed
+plugin Actions the host adapter reads the Run starter's Account contract.
+Missing, unavailable, stale or output-schema-less contributions fail
+preparation. The one-shot executor and completion owner still decide
+invocation and terminal settlement.
 Proven pre-invoke validation failures, prepared refusals and finished typed Action
 failures are ordinary failed leaves that `collect_outcomes` can collect. For a
 declaring Action, a typed terminal failure is collectable only after native
