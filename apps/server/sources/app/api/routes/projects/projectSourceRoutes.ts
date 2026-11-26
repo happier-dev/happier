@@ -1,5 +1,7 @@
 import { z } from 'zod/mini';
 import { extend, omit } from 'zod/mini';
+import { PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
+import { homeDomainActionPathForMethod } from '../actions/homeDomainActionRoute';
 import {
     ProjectSourcesListInputV1Schema, ProjectSourcesListOutputV1Schema,
     ProjectSourcesReadInputV1Schema, ProjectSourcesReadOutputV1Schema,
@@ -57,7 +59,7 @@ export function projectSourceRoutes(app: Fastify, deps: ProjectSourceRouteDeps =
     const defaultsResponse = { 200: ProjectDeploymentDefaultsOutputV1Schema,
         400: ProjectDeploymentDefaultsFailureV1Schema, 403: ProjectDeploymentDefaultsFailureV1Schema,
         404: ProjectDeploymentDefaultsFailureV1Schema, 409: ProjectDeploymentDefaultsFailureV1Schema };
-    app.get('/v1/projects/:id/deployment-defaults', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true, schema: {
+    app.get(homeDomainActionPathForMethod(PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1, 'GET'), { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true, schema: {
         params, querystring: omit(ProjectDeploymentDefaultsReadInputV1Schema, { projectSourceId: true }), response: defaultsResponse,
     } }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send({ ok: false, error: 'project_defaults_invalid' });

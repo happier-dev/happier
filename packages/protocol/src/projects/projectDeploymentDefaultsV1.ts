@@ -31,6 +31,11 @@ export const ProjectDeploymentDefaultsReadInputV1Schema = lazyZodSchema(() => z.
   serverId: ProjectSourcesReadInputV1Schema.shape.serverId,
   projectSourceId: ProjectSourceV1Schema.shape.id,
 }));
+/** The new read Action uses the existing signed GET route's parameter name. */
+export const ProjectDeploymentDefaultsReadActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  serverId: ProjectDeploymentDefaultsReadInputV1Schema.shape.serverId,
+  id: ProjectDeploymentDefaultsReadInputV1Schema.shape.projectSourceId,
+}));
 const defaultsRevision = lazyZodSchema(() => z.number().check(z.int(), z.minimum(0)));
 export const ProjectDeploymentDefaultsSetInputV1Schema = lazyZodSchema(() => z.extend(ProjectDeploymentDefaultsReadInputV1Schema, {
   expectedSourceRevision: ProjectSourceV1Schema.shape.revision,

@@ -52,6 +52,10 @@ export type ProjectSourcesActionInputById = {
             sourceId?: string | undefined;
         };
     };
+    readonly "projects.deploymentDefaults.read": {
+        serverId: string;
+        id: string;
+    };
     readonly "projects.deploymentDefaults.set": {
         serverId: string;
         projectSourceId: string;
@@ -636,6 +640,20 @@ export type ProjectSourcesActionResultById = {
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
+        };
+    };
+    readonly "projects.deploymentDefaults.read": {
+        ok: false;
+        error: 'project_defaults_access_denied' | 'project_defaults_conflict' | 'project_defaults_content_unavailable' | 'project_defaults_invalid' | 'project_defaults_unavailable';
+    } | {
+        ok: true;
+        projectSourceId: string;
+        sourceRevision: number;
+        revision: number;
+        content: null | {
+            contentArtifactId: string;
+            contentHeaderVersion: number;
+            contentBodyVersion: number;
         };
     };
     readonly "projects.deploymentDefaults.set": {

@@ -103,10 +103,10 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { encodeDeploymentChildExecutionV1, decodeDeploymentChildExecutionV1, verifyExternalActionMachineRequestV1, createDeploymentChildExecutionProofV1, projectDeploymentChildExecutionProofV1,
     encodeReviewedActionChildHttpProofV1, type DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
     EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
-    EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, projectDeploymentPreparationAdmissionV1,
+    EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, projectDeploymentPreparationAdmissionV1,
     projectExternalActionDeploymentNativeEnvelopeAdmissionV1, projectDeploymentNativeAdmissionV1, projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1, projectDeploymentReadAdmissionV1,
     projectRegistryAppUpdateAdmissionV1, createDeploymentDomainContentArtifactIdV1,
     createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
@@ -129,6 +129,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1,
     DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
@@ -9715,6 +9717,40 @@ describe('deployment children retain their controller Action authority', () => {
             expect((await get(`/v1/projects/sources/${foreign.environment.projectSourceId}?serverId=${serverId}`, 'projects.sources.read')).statusCode).toBe(401);
             expect((await get(`/v1/projects/${foreign.environment.projectSourceId}/deployment-defaults?serverId=${serverId}`)).statusCode).toBe(401);
             expect((await get(`/v1/artifacts/${foreign.environment.contentArtifactId}`)).statusCode).toBe(401);
+        }, { authentication: 'real' });
+    });
+
+    it.each(['owned', 'foreign'] as const)('applies Source admission to a signed Project Defaults root (%s)', async ownership => {
+        const requester = await fixture('account', 'account', { readableEnvironment: true });
+        const sourceOwner = ownership === 'owned' ? requester : await fixture('account', 'account', { readableEnvironment: true });
+        const actionId = PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1;
+        const input = { serverId, id: sourceOwner.environment.projectSourceId };
+        const target = { kind: 'machine' as const, machineId: requester.controller.id };
+        const requestId = crypto.randomUUID();
+        const bearer = await auth.createToken(requester.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(app => { registerExternalActionRoutes(app); projectSourceRoutes(app); }, async app => {
+            const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${bearer}` },
+                payload: { v: 1, machineId: target.machineId, envelope: { v: 1, requestId, target, input } } });
+            expect(minted.statusCode).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            const { method, path } = bindHomeDomainActionHttpRequestV1(actionId, input);
+            const response = await app.inject({ method: 'GET', url: path, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId: actionId, target,
+                    installationId: requester.controller.installationId, requestId, method, path,
+                    privateKey: requester.controller.keys.secretKey }),
+            } });
+            if (ownership === 'owned') {
+                expect(response.statusCode).toBe(200);
+                expect(response.json()).toMatchObject({ ok: true, projectSourceId: input.id, revision: 0, content: null });
+            } else {
+                expect(response.statusCode).toBe(404);
+                expect(response.json()).toEqual({ ok: false, error: 'project_defaults_unavailable' });
+            }
         }, { authentication: 'real' });
     });
 

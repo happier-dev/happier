@@ -5,6 +5,8 @@ import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor
 import { updatePersonalProjectContextV1 } from '../../projects/projectContextV1.js';
 import { ProjectAccountOrganizationV1Schema } from '../../projects/projectAccountRowsV1.js';
 import { bindHomeDomainActionHttpRequestV1 } from '../homeDomainActionFamily.js';
+import { PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1 } from './projectSourcesActionIdsV1.js';
+import { getActionDefinitionForCatalogSurface } from '../actionCatalog.js';
 import { resolveActionSdkMethodName } from '../actionSdkMethodNames.js';
 import { ApprovalRequestSchema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
 import { ProjectSourcesCreateInputV1Schema, ProjectSourceV1Schema, type ProjectSourceV1 } from '../../projects/sources/projectSourceV1.js';
@@ -54,6 +56,30 @@ describe('Project Source Action admission', () => {
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({ name: 'Production', owner: { kind: 'account', accountId: 'alice' } });
     expect(sources[0]?.repository).toEqual(input.repository);
+  });
+
+  it('opens a Project defaults reference on the same Home read for the UI and agent', async () => {
+    const id = PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1;
+    const input = { serverId: 'home', id: 'source' };
+    const output = { ok: true, projectSourceId: 'source', sourceRevision: 3, revision: 1,
+      content: { contentArtifactId: 'defaults', contentHeaderVersion: 1, contentBodyVersion: 1 } };
+    const requests: unknown[] = [];
+    const executor = createActionExecutor({
+      homeDomainAction: async ({ actionId, input: admitted }) => {
+        requests.push(bindHomeDomainActionHttpRequestV1(actionId, admitted));
+        return output;
+      },
+    });
+    for (const surface of ['ui', 'agent'] as const) {
+      expect(getActionDefinitionForCatalogSurface({ surface, id })).toMatchObject({
+        description: expect.any(String), inputSchema: expect.any(Object), approval: { result: 'required' },
+      });
+      expect(await executor.execute(id, input, { surface, serverId: 'home', authority: 'present_user',
+        actionCaller: { kind: 'host' } })).toEqual({ ok: true, result: output });
+    }
+    expect(requests).toEqual(Array.from({ length: 2 }, () => ({
+      method: 'GET', path: '/v1/projects/source/deployment-defaults?serverId=home', body: undefined,
+    })));
   });
 
   it('sets shared deployment defaults through the registered Home Action and strict content CAS', async () => {

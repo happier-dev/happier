@@ -15214,6 +15214,21 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedRevision` (json, required): Reviewed organization revision
 - `intent` (json, required): Personal context edit
 
+## `projects.deploymentDefaults.read`
+
+**Read Project deployment defaults** — Read the current defaults revision and its protected content reference for a Project Source you can access.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home id
+- `id` (text, required): Project source
+
 ## `projects.deploymentDefaults.set`
 
 **Set Project deployment defaults** — Save or clear one shared Project defaults leaf under Source and content revisions. Existing Environments keep their configured values.

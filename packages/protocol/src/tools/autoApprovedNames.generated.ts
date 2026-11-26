@@ -322,6 +322,7 @@ export const autoApprovedNames: readonly string[] = Object.freeze([
   "plugins_settings_list",
   "plugins_settings_secret_status",
   "projects_context_update",
+  "projects_deployment_defaults_read",
   "projects_execution_output_copy",
   "projects_execution_output_open",
   "projects_execution_output_read",

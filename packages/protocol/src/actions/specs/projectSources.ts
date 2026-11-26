@@ -11,9 +11,9 @@ import {
   ProjectSourcesDeleteInputV1Schema, ProjectSourcesDeleteOutputV1Schema,
   ProjectSourcesMoveToTeamInputV1Schema, ProjectSourcesMoveToTeamOutputV1Schema,
 } from '../../projects/sources/projectSourceV1.js';
-import { ProjectDeploymentDefaultsSetInputV1Schema, ProjectDeploymentDefaultsOutputV1Schema } from '../../projects/projectDeploymentDefaultsV1.js';
+import { ProjectDeploymentDefaultsReadActionInputV1Schema, ProjectDeploymentDefaultsSetInputV1Schema, ProjectDeploymentDefaultsOutputV1Schema } from '../../projects/projectDeploymentDefaultsV1.js';
 import { SourceSetupRequirementsV1Schema } from '../../projects/projectSetupChangeV1.js';
-import { PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from './projectSourcesActionIdsV1.js';
+import { PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1, PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from './projectSourcesActionIdsV1.js';
 
 
 const common = {
@@ -29,6 +29,7 @@ type ProjectSourceActionSchemas = {
   'projects.sources.update': { inputSchema: typeof ProjectSourcesUpdateInputV1Schema; outputSchema: typeof ProjectSourcesUpdateOutputV1Schema };
   'projects.sources.delete': { inputSchema: typeof ProjectSourcesDeleteInputV1Schema; outputSchema: typeof ProjectSourcesDeleteOutputV1Schema };
   'projects.sources.moveToTeam': { inputSchema: typeof ProjectSourcesMoveToTeamInputV1Schema; outputSchema: typeof ProjectSourcesMoveToTeamOutputV1Schema };
+  [PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1]: { inputSchema: typeof ProjectDeploymentDefaultsReadActionInputV1Schema; outputSchema: typeof ProjectDeploymentDefaultsOutputV1Schema; };
   'projects.deploymentDefaults.set': { inputSchema: typeof ProjectDeploymentDefaultsSetInputV1Schema; outputSchema: typeof ProjectDeploymentDefaultsOutputV1Schema };
 };
 type ProjectSourceActionSpec = {
@@ -42,6 +43,26 @@ type ProjectSourceActionSpec = {
   }>;
 }[keyof ProjectSourceActionSchemas];
 export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] = lazyActionSpecArray(() => [
+  {
+    ...common, id: PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1, approval: { result: 'required' },
+    title: 'Read Project deployment defaults',
+    description: 'Read the current defaults revision and its protected content reference for a Project Source you can access.',
+    safety: 'safe', sideEffectClass: 'read',
+    requiredAuthority: 'account_automation',
+    automationPrimarySubject: { kind: 'app', field: 'id' },
+    approvalScope: { subjectKinds: ['app'], project: (input) => {
+      const target = ProjectDeploymentDefaultsReadActionInputV1Schema.parse(input);
+      return { subjects: [{ kind: 'app', serverId: target.serverId, projectSourceId: target.id }] };
+    } },
+    surfaces: { ...common.surfaces, voice: false },
+    bindings: { mcpToolName: 'projects_deployment_defaults_read' },
+    cli: { acceptsServerId: true, commands: [{ path: ['projects', 'deployment-defaults', 'read'], visibility: 'canonical' }] },
+    serverTransport: { method: 'GET', path: '/v1/projects/:id/deployment-defaults' },
+    inputSchema: ProjectDeploymentDefaultsReadActionInputV1Schema, outputSchema: ProjectDeploymentDefaultsOutputV1Schema,
+    invocationServerIdForInput: actionInputServerId(ProjectDeploymentDefaultsReadActionInputV1Schema, input => input.serverId),
+    inputHints: { fields: [{ path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'id', title: 'Project source', widget: 'text', required: true }] },
+  },
   {
     ...common, id: 'projects.deploymentDefaults.set', approval: { result: 'required' },
     automationPrimarySubject: { kind: 'app', field: 'projectSourceId' },

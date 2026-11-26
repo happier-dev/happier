@@ -1,11 +1,11 @@
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ProjectDeploymentDefaultsOutputV1Schema, ProjectDeploymentDefaultsPayloadV1Schema } from '@happier-dev/protocol/projects/projectDeploymentDefaultsV1';
 import type { DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
-import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
+import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { createProjectSourceActionDeps } from './projectSourceActions';
 
 function refuse(code: string): never { throw Object.assign(new Error(code), { code }); }
@@ -18,11 +18,14 @@ export async function readProjectDeploymentDefaults(lifetime: ServerAccountScope
         const serverId = account.serverIdentityId ?? account.serverId;
         const source = await createProjectSourceActionDeps(account).projectSourcesRead({ serverId, sourceId: projectSourceId }, { signal });
         if (!source.ok) return refuse('errorCode' in source ? source.errorCode : source.error);
-        const response = await requestHomeDomain({ scope: account.accountLifetime.scope,
-            path: `/v1/projects/${encodeURIComponent(projectSourceId)}/deployment-defaults?serverId=${encodeURIComponent(serverId)}`,
-            method: 'GET', input: undefined, schema: ProjectDeploymentDefaultsOutputV1Schema, effect: 'read', signal, requestAuthority: account });
-        if (!response.ok) return refuse(homeDomainFailureCode(response.failure));
-        const metadata = response.value;
+        const execute = scopedHomeActionExecutor(account.accountLifetime.scope, {
+            homeDomainReadCurrentness: () => lifetime.isCurrent() && !signal.aborted,
+        });
+        const response = await execute(PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1, { serverId, id: projectSourceId }, {
+            serverId: account.serverId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, signal,
+        });
+        if (!response.ok) return refuse(response.errorCode ?? response.error);
+        const metadata = ProjectDeploymentDefaultsOutputV1Schema.parse(response.result);
         if (!metadata.ok) return refuse(metadata.error);
         if (metadata.projectSourceId !== projectSourceId || metadata.sourceRevision !== source.source.revision) return refuse('project_defaults_conflict');
         let preferences: DeploymentCreationDefaultsV1 = {};

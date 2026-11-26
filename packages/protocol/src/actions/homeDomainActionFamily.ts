@@ -23,6 +23,7 @@ import {
   type ManagedGitHubAppActionIdV1,
 } from '../identity/githubApps.js';
 import { getActionSpec } from './actionSpecs.js';
+import { PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 import { bindHomeDomainHttpRequestV1, type HomeDomainHttpRequestV1 } from './homeDomainHttpBinding.js';
 import { HomeGovernanceErrorV1Schema, projectAccountErasureDeploymentActionDetailsV1 } from '../home/governance/errors.js';
 import { HomeSettingsInvalidErrorV1Schema } from '../home/governance/settings.js';
@@ -70,6 +71,7 @@ export const HOME_DOMAIN_ACTION_IDS_V1 = [
   'session.delete',
   'session.section.set',
   'session.tags.set',
+  PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1,
   'projects.deploymentDefaults.set',
 ] as const;
 
@@ -87,6 +89,7 @@ export type HomeDomainActionIdV1 =
   | typeof ACTION_ID_FAMILIES_V1.review_reads[number]
   | ReviewHumanActionIdV1
   | 'session.delete' | 'session.section.set' | 'session.tags.set'
+  | typeof PROJECT_DEPLOYMENT_DEFAULTS_READ_ACTION_ID_V1
   | 'projects.deploymentDefaults.set';
 
 export const HomeDomainActionIdV1Schema = lazyZodSchema(() => z.enum(HOME_DOMAIN_ACTION_IDS_V1));
