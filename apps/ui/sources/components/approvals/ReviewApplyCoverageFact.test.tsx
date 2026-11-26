@@ -138,6 +138,7 @@ beforeEach(async () => {
     generation: 1,
   });
   storage.getState().activateProfileScope({ serverId, accountId: 'alice' });
+  storage.setState({ settingsScope: { serverId, accountId: 'alice' } });
 });
 
 function facts() {
@@ -164,6 +165,16 @@ const partialLine = () => [
 it('names the reviewers that did not finish when coverage is partial', async () => {
   answerReview('partial');
   storeRound();
+  storage.getState().applyArtifacts([{
+    id: reviewId,
+    title: 'Security sweep',
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Security sweep' },
+    isDecrypted: true,
+    headerVersion: 1,
+    seq: 1,
+    createdAt: 1,
+    updatedAt: 1,
+  }]);
   const screen = await renderScreen(facts());
   try {
     await waitForHomeGovernance(() =>
@@ -171,6 +182,10 @@ it('names the reviewers that did not finish when coverage is partial', async () 
     );
     for (const part of partialLine())
       expect(screen.getTextContent()).toContain(part);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Security sweep'));
+    expect(screen.getTextContent()).not.toContain(reviewId);
+    await screen.pressByTestIdAsync('approvals.technical-details.header');
+    expect(screen.getTextContent()).toContain(reviewId);
   } finally {
     await screen.unmount();
   }

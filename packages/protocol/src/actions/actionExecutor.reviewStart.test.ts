@@ -16,6 +16,7 @@ import { startExecutionRunWithSelectionV1 } from './executor/executionRuns.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import { createScmCapabilities } from '../scm/index.js';
 import { SessionAccessGrantSetActionInputV1Schema } from '../sessions/access/sessionAccessActionsV1.js';
+import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 
 const comparisonId = 'c'.repeat(64);
 
@@ -209,7 +210,11 @@ describe('createActionExecutor (review.start)', () => {
     expect(reviewId).not.toBe('');
     const round = (await records.read(reviewId))?.rounds[0];
     expect(round?.reviewerDisplayNames).toMatchObject({ 'step-1-reviewer-1': name, 'step-2-reviewer-1': name });
-    expect(round?.reviewerAgentIds).toEqual({ 'step-1-reviewer-1': agentId, 'step-2-reviewer-1': agentId });
+    expect(round?.reviewerAgentIds).toEqual({
+      'step-1-reviewer-1': agentId,
+      'step-1-reviewer-2': 'happier.agent.codex/codex',
+      'step-2-reviewer-1': agentId,
+    });
     expect(round?.reviewerOutcomes).toEqual(expect.arrayContaining([
       expect.objectContaining({ reviewerId: 'step-1-reviewer-1', displayName: name, agentId }),
       expect.objectContaining({ reviewerId: 'step-2-reviewer-1', displayName: name, agentId }),
@@ -218,12 +223,17 @@ describe('createActionExecutor (review.start)', () => {
       { sessionId: 'reviewer-session', serverId: 'reviewer-home' }]);
     expect(catalogs).toEqual(nameSource !== 'Agent label' ? [] : ['reviewer-machine']);
   });
-  it('retains the selected model reviewer’s qualified Agent identity even when launch is refused', async () => {
+  it('retains the selected model reviewer’s Agent catalog title and qualified identity even when launch is refused', async () => {
     const records = createInMemoryReviewRecordPortV1();
     const agentTarget = { kind: 'agent', identity: { pluginId: 'review.plugin', localId: 'reviewer' } } as const;
+    const other = { ...agentTarget, identity: { ...agentTarget.identity, pluginId: 'other.plugin' } };
     let reviewId = '';
     const executor = createActionExecutor({
       reviewRecords: () => records,
+      agentsBackendsList: async () => ({ items: [
+        { targetKey: buildBackendTargetKeyV2(other), agentTarget: other, label: 'Wrong Agent', enabled: true },
+        { targetKey: buildBackendTargetKeyV2(agentTarget), agentTarget, label: 'Custom reviewer', enabled: true },
+      ] }),
       workflowAction: async invocation => {
         const request = WorkflowRunStartRequestV1Schema.parse(invocation.input);
         reviewId = ReviewRoundBindingV1Schema.parse(request.inputs?.reviewRound).reviewId;
@@ -236,7 +246,7 @@ describe('createActionExecutor (review.start)', () => {
     }, { surface: 'ui', serverId: 'home', defaultSessionId: 'source', defaultSessionMachineId: 'machine-1' });
     expect(result).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
     expect((await records.read(reviewId))?.rounds[0]).toMatchObject({
-      reviewerDisplayNames: { 'step-1-reviewer-1': 'review.plugin/reviewer' },
+      reviewerDisplayNames: { 'step-1-reviewer-1': 'Custom reviewer' },
       reviewerAgentIds: { 'step-1-reviewer-1': 'review.plugin/reviewer' },
     });
   });

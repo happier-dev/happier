@@ -22,6 +22,7 @@ import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
 import { ReviewFindingSeveritySchema } from './reviewFindingClassification.js';
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
+import { parseBackendTargetKeyV2, readBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 
 /**
  * Canonical, cross-surface input contract for starting reviews.
@@ -140,22 +141,26 @@ export function reviewReviewerDisplayNamesForStartV1(input: Pick<ReviewStartInpu
     readSessionLabel ? reviewer => ({ displayName: readSessionLabel(reviewer) }) : undefined).reviewerDisplayNames;
 }
 
-/** Projects admitted roster identities; callers supply facts from their existing Session read. */
+/** Projects the admitted roster with display facts from the Session and Agent catalog owners. */
 export function reviewReviewerIdentitiesForStartV1(input: Pick<ReviewStartInput, 'reviewers' | 'steps'>,
   readEngineLabel?: (reviewer: ReviewEngineReviewerSelectionV1, id: string) => string | undefined,
   readSessionIdentity?: (reviewer: Extract<ReviewReviewerSelectionV1, { kind: 'session' }>) => Readonly<{ displayName?: string; agentId?: string }> | undefined,
+  readModelLabel?: (reviewer: Extract<ReviewReviewerSelectionV1, { kind: 'model' }>) => string | undefined,
 ): Readonly<{ reviewerDisplayNames: Readonly<Record<string, string>>; reviewerAgentIds: Readonly<Record<string, string>> }> {
   const reviewerDisplayNames: Record<string, string> = {};
   const reviewerAgentIds: Record<string, string> = {};
   for (const { reviewer, id } of reviewExecutableRosterForStartV1(input)) {
     const sessionIdentity = reviewer.kind === 'session' ? readSessionIdentity?.(reviewer) : undefined;
+    const engineKey = reviewer.kind === 'engine' && !reviewer.runnerAgentTarget
+      ? readBackendTargetKeyV2(reviewer.engineId)
+        ?? readBackendTargetKeyV2({ kind: 'backend', backendId: reviewer.engineId }) : null;
+    const engineTarget = engineKey ? parseBackendTargetKeyV2(engineKey) : null;
     const agentTarget = reviewer.kind === 'model' ? reviewer.launch.agentTarget
-      : reviewer.kind === 'engine' ? reviewer.runnerAgentTarget : undefined;
+      : reviewer.kind === 'engine' ? reviewer.runnerAgentTarget ?? (engineTarget?.kind === 'agent' ? engineTarget : undefined)
+      : undefined;
     const agentId = agentTarget ? buildQualifiedPluginContributionKey(agentTarget.identity) : sessionIdentity?.agentId;
-    const name = reviewer.kind === 'engine'
-      ? reviewer.teamCredentialModel?.modelId ?? reviewer.modelSelection?.modelId ?? reviewer.modelId
-        ?? readEngineLabel?.(reviewer, id) ?? reviewer.engineId
-      : reviewer.kind === 'model' ? agentId
+    const name = reviewer.kind === 'engine' ? readEngineLabel?.(reviewer, id)
+      : reviewer.kind === 'model' ? readModelLabel?.(reviewer)
       : reviewer.kind === 'session' ? sessionIdentity?.displayName
       : undefined;
     if (name) reviewerDisplayNames[id] = name;

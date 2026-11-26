@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { ReviewStartInputSchema, reviewReviewerIdentitiesForStartV1 } from './reviewStart.js';
 
 describe('ordered Review reviewer admission', () => {
-  it('retains an explicitly selected engine model in the admitted reviewer name', () => {
+  it('uses the admitted catalog name for a reviewer with an explicitly selected engine model', () => {
     const input = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: 'muse',
       modelId: 'meta/muse-spark-1.3-contributor' }], instructions: 'Review.' });
     expect(reviewReviewerIdentitiesForStartV1(input, () => 'Muse').reviewerDisplayNames).toEqual({
-      'step-1-reviewer-1': 'meta/muse-spark-1.3-contributor',
+      'step-1-reviewer-1': 'Muse',
     });
   });
 

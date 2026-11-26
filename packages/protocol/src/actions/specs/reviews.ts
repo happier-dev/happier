@@ -288,6 +288,10 @@ function createReviewActionSpecs(): readonly [
     placements: [],
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     bindings: { mcpToolName: 'review_apply', voiceClientToolName: 'review_apply' },
+    approvalPresentation: {
+      referenceForField: (path, value) => path === 'reviewId' && typeof value === 'string'
+        ? { kind: 'artifact', id: value, unavailableWithoutName: true } : undefined,
+    },
     inputHints: { title: 'Apply accepted review findings', fields: [
       { path: 'sessionId', title: 'Session', widget: 'select', optionsSourceId: 'sessions',
         description: 'Destination Session when sending. Omit when preparing a prompt.' },
