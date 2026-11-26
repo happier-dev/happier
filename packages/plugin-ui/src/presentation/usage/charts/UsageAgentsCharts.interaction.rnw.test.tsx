@@ -59,6 +59,10 @@ describe('Agent chart exact data targets', () => {
     </ChartInteractionProvider>);
     try {
       const drawn = [...chart.container.querySelectorAll('path[fill-opacity="0.9"]')].map((path) => path.getAttribute('d'));
+      expect(drawn).toEqual([
+        'M4,162.4C360,162.4 360,7.6 716,7.6L716,164C360,164 360,164 4,164Z',
+        'M4,6C360,6 360,6 716,6L716,7.6C360,7.6 360,162.4 4,162.4Z',
+      ]);
       const windows: number[][] = [];
       for (const index of [0, 1]) {
         const hit = chart.container.querySelector(`path[data-testid="chart.week.${index}.claude"]`);
@@ -201,6 +205,28 @@ describe('Agent chart exact data targets', () => {
       expect(chart.container.querySelector('[role="table"]')!.textContent).toContain('1,234.567');
       expect(chart.container.textContent).toContain('—');
       expect(chart.container.textContent).not.toContain('Not reported');
+    } finally { chart.unmount(); }
+  });
+
+  it('qualifies the River cohort inline, in the tooltip and in Values while keeping a no-mix week unknown', () => {
+    const chart = mount(<UsageAgentRiver {...common} model={{ width: 'amount',
+      coverage: { short: 'Partial', long: 'Accounting history is incomplete' },
+      weeks: [
+        { start: 'Reported', end: 'Reported end', partial: false, total: 12, shares: [{ agentId: 'claude', share: 1 }] },
+        { start: 'No mix', end: 'No mix end', partial: false, total: 38, shares: null },
+      ] }} labels={{ week: String, partialWeek: String, inline: (name, share) => name + ' ' + percent(share), caption: '',
+        unknownAgent: 'Unknown agent', values: { ...values, weekColumn: 'Week', totalColumn: 'Total', formatTotal: String, percent } }} />);
+    try {
+      expect(chart.container.querySelector('svg')?.textContent).toContain('Claude Code 100% · Partial');
+      expect(target(chart.container, 'Claude Code · Reported: 100% · Partial').dataset.subtitle).toContain('Accounting history is incomplete');
+      target(chart.container, 'Claude Code · No mix: —');
+      act(() => chart.container.querySelector<HTMLButtonElement>('[aria-expanded="false"]')!.click());
+      const table = chart.container.querySelector('[role="table"]')!;
+      expect(table.textContent).toContain('Reported12100% · Partial');
+      expect(table.textContent).toContain('No mix38—');
+      const marks = [...chart.container.querySelectorAll('path[fill-opacity="0.9"]')].map(path => path.getAttribute('d'));
+      expect(marks).toHaveLength(1);
+      expect(marks[0]).not.toContain('716,'); // The second week has no mark at its axis tick.
     } finally { chart.unmount(); }
   });
 

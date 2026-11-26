@@ -754,12 +754,25 @@ const COVERAGE_REASON_KEYS = {
   unknown_token_categories: 'usage.board.page.coverageReason_unknown_token_categories',
 } satisfies Record<UsageAnalyticsCoverage['reasons'][number], TranslationKeyNoParams>;
 
+function readAdmittedAccountingGap(accounting: UsageQueryResultSlice['accounting']): 'partial' | 'unknown' | undefined {
+  if (!accounting) return undefined;
+  const coverage = accounting.coverage;
+  if (!coverage) return 'unknown';
+  if (coverage.status !== 'complete') return coverage.status;
+  return !coverage.range.complete || coverage.reasons.length > 0 ? 'partial' : undefined;
+}
+
+function usageAccountingCoverageReasons(coverage: UsageAnalyticsCoverage | undefined): string[] {
+  return [...new Set(coverage?.reasons ?? [])].map(reason => t(COVERAGE_REASON_KEYS[reason]));
+}
+
 /** Sources this body depends on that are not complete, worded once under the content. */
 export function readUsageCoverageGaps(
   slice: UsageQueryResultSlice,
   sources: readonly string[],
 ): readonly UsageQuerySourceState[] {
-  const accounting = sources.includes('accounting') ? slice.accounting?.coverage : undefined;
+  const accountingValue = sources.includes('accounting') ? slice.accounting : undefined;
+  const accounting = accountingValue?.coverage;
   const dependent = new Set([...sources, ...(accounting?.sources.map(source => source.source) ?? [])]);
   const quotaRequested = sources.includes('quota');
   const gaps = readUsageSourceStates(slice, sources).filter(source => source.status !== 'available');
@@ -777,15 +790,10 @@ export function readUsageCoverageGaps(
       ? [read.current.fetchedAtMs] : []);
     gaps.push({ source: 'quota', status: 'partial', ...(clocks.length ? { asOfMs: Math.min(...clocks) } : {}) });
   }
-  if (sources.includes('accounting') && slice.accounting && !accounting
-    && !gaps.some(source => source.source === 'accounting')) {
-    gaps.unshift({ source: 'accounting', status: 'unknown' });
-  }
-  if (accounting && (accounting.status !== 'complete' || accounting.range.complete !== true || accounting.reasons.length > 0)
-    && !gaps.some(source => source.source === 'accounting')) {
-    const asOfMs = slice.sources.find(source => source.source === 'accounting')?.asOfMs;
-    gaps.unshift({ source: 'accounting', status: accounting.status === 'complete' ? 'partial' : accounting.status,
-      ...(asOfMs === undefined ? {} : { asOfMs }) });
+  const accountingGap = readAdmittedAccountingGap(accountingValue);
+  if (accountingGap && !gaps.some(source => source.source === 'accounting')) {
+    const asOfMs = accounting ? slice.sources.find(source => source.source === 'accounting')?.asOfMs : undefined;
+    gaps.unshift({ source: 'accounting', status: accountingGap, ...(asOfMs === undefined ? {} : { asOfMs }) });
   }
   const unique = new Map<string, UsageQuerySourceState>();
   const severity = { available: 0, unsupported: 1, unknown: 2, stale: 3, partial: 4, not_loaded: 5, pending: 6, error: 7 };
@@ -931,6 +939,19 @@ export function UsageScopeRefusalLine(props: Readonly<{
   );
 }
 
+/** Coverage of the displayed accounting values. The replacement read has its own disclosure. */
+export function usageAdmittedAccountingCoverage(accounting: UsageQueryResultSlice['accounting']): Readonly<{ short: string; long: string }> | undefined {
+  const status = readAdmittedAccountingGap(accounting);
+  if (!status) return undefined;
+  return {
+    short: t('usage.board.charts.coveragePartialShort'),
+    long: [
+      formatUsageCoverageHeadline([{ source: 'accounting', status }], usageSourceTitle('accounting')),
+      ...usageAccountingCoverageReasons(accounting?.coverage),
+    ].join(' · '),
+  };
+}
+
 /** One wording owner for the page's Sources chooser and the failed or pending line. */
 export function usageCoverageDescription(slice: UsageQueryResultSlice, sources: readonly string[]): string {
   const gaps = readUsageCoverageGaps(slice, sources);
@@ -940,7 +961,7 @@ export function usageCoverageDescription(slice: UsageQueryResultSlice, sources: 
   const newer = gaps.filter(needsNewerServer);
   const rest = gaps.filter(gap => !needsNewerServer(gap) && !isUsageWorkOffline(gap) && !isUsageQuotaOwnershipUnproven(gap) && !usageScopeRefusalCode(gap));
   const reasons = sources.includes('accounting')
-    ? [...new Set(slice.accounting?.coverage?.reasons ?? [])].map(reason => t(COVERAGE_REASON_KEYS[reason])) : [];
+    ? usageAccountingCoverageReasons(slice.accounting?.coverage) : [];
   return [
     ...(rest.length ? [formatUsageCoverageHeadline(rest, nameGaps(rest))] : []),
     ...(gaps.some(isUsageQuotaOwnershipUnproven) ? [t('connectedServices.errors.quotaOwnershipUnproven', {})] : []),

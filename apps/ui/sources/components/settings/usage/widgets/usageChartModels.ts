@@ -363,19 +363,21 @@ export function projectUsageAgentShares(calendar: UsageAgentCalendar, metric: Us
     .sort((a, b) => compareUsageMeasurementsDescending(a.share, b.share));
 }
 
-export function projectUsageRiverModel(calendar: UsageAgentCalendar, metric: UsageChartMetric): UsageRiverModel | null {
+export function projectUsageRiverModel(calendar: UsageAgentCalendar, metric: UsageChartMetric,
+  coverage?: UsageRiverModel['coverage']): UsageRiverModel | null {
   const weeks = calendar.weeks.map(week => {
     const total = readUsageCalendarMetric(week.totals, metric);
     const tokenMix = calendar.weeklyAgentMix.find(mix => mix.startMs === week.startMs);
-    return { ...projectUsageRiverWeekRange(week, calendar.timeZoneOffsetMinutes), total,
-      shares: total === null ? null : metric === 'tokens' ? (tokenMix?.mix.map(({ agentId, share }) => ({ agentId, share })) ?? [])
-        : week.agents.flatMap(entry => {
-          const value = readUsageCalendarMetric(entry.metrics, metric);
-          return value !== null && total > 0 ? [{ agentId: entry.agentId, share: value / total }] : [];
-        }),
-    };
+    const measuredShares = metric === 'tokens'
+      ? tokenMix?.mix.map(({ agentId, share }) => ({ agentId, share })) ?? []
+      : week.agents.flatMap(entry => {
+        const value = readUsageCalendarMetric(entry.metrics, metric);
+        return value !== null && total !== null && total > 0 ? [{ agentId: entry.agentId, share: value / total }] : [];
+      });
+    const shares = total !== null && (measuredShares.length || total === 0 && !coverage) ? measuredShares : null;
+    return { ...projectUsageRiverWeekRange(week, calendar.timeZoneOffsetMinutes), total, shares };
   });
-  return weeks.length >= 2 ? { width: 'amount', weeks } : null;
+  return weeks.length >= 2 ? { width: 'amount', weeks, ...(coverage ? { coverage } : {}) } : null;
 }
 
 /**

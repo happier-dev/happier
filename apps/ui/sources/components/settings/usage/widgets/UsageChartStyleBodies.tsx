@@ -12,7 +12,7 @@ import { useWidgetFrameBodyCaption, useWidgetFrameBodyIdentity } from '@/compone
 import { usageCrewLabels, usageOrbitLabels, usagePlanetLabels, usageShippedLabels, usageSkyLabels } from './usageChartLabels';
 import { formatUsageDuration } from './usageHowYouWorkPresentation';
 import {
-  UsageBodyInsufficient, UsageBodyNothingYet, UsageBodyReadFailed, UsageBodyReading, UsageCoverageLine, isUsageReadFailed, isUsageReadOutstanding, usagePeriodPhrase, type UsageBodyProps,
+  UsageBodyInsufficient, UsageBodyNothingYet, UsageBodyReadFailed, UsageBodyReading, UsageCoverageLine, isUsageReadFailed, isUsageReadOutstanding, usageAdmittedAccountingCoverage, usagePeriodPhrase, type UsageBodyProps,
 } from './usageBodyKit';
 import { useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
 import {
@@ -273,7 +273,10 @@ export function UsageRiverStyleBody(props: UsageChartStyleBodyProps) {
   useStyleCaption(t('usage.board.charts.inputRiver'), usageChartMetricName(resolveUsageChartMetric(props.query.metric, 'tokens'), props.slice.howYouWork?.agentCalendar?.periodSummary.totals.tokensFromParts));
   const calendar = useCalendar(props);
   const metric = resolveUsageChartMetric(props.query.metric, 'tokens');
-  const model = React.useMemo(() => calendar ? projectUsageRiverModel(calendar, metric) : null, [calendar, metric]);
+  const accounting = props.slice.accounting;
+  const model = React.useMemo(() => calendar
+    ? projectUsageRiverModel(calendar, metric, usageAdmittedAccountingCoverage(accounting))
+    : null, [calendar, metric, accounting]);
   const agents = React.useMemo(() => [...new Set((model?.weeks ?? []).flatMap((week) => (week.shares ?? []).flatMap(row => row.agentId === null ? [] : [row.agentId])))].map(host.agent), [model, host.agent]);
   if (!model || !usageRiverHasShape(model)) return <UsageChartPending slice={props.slice} onRetry={props.model.refresh} testID={props.testID} title={t('usage.board.charts.riverEmptyTitle')} reason={t('usage.board.charts.riverEmptyReason')} />;
   // Weeks were read but no agent holds a share of any: the chart has nothing to draw, so it says so like its siblings.

@@ -780,6 +780,26 @@ describe('Usage chart models', () => {
     }
   });
 
+  it('keeps a measured River total with missing composition distinct from a measured zero', () => {
+    const weeks = [
+      bucket(0, { tokens: 12 }, [['claude', { tokens: 12 }]]),
+      bucket(7, { tokens: 38 }),
+      bucket(14, { tokens: 0 }),
+    ].map(week => ({ ...week, endMs: week.startMs + 7 * DAY }));
+    const value = calendar({
+      period: { startMs: START, endMs: START + 21 * DAY },
+      weeks,
+      weeklyAgentMix: [
+        { startMs: weeks[0]!.startMs, endMs: weeks[0]!.endMs,
+          mix: [{ agentId: 'claude', share: 1, coverage: 'partial' }] },
+        { startMs: weeks[1]!.startMs, endMs: weeks[1]!.endMs, mix: [] },
+        { startMs: weeks[2]!.startMs, endMs: weeks[2]!.endMs, mix: [] },
+      ],
+    });
+    expect(projectUsageRiverModel(value, 'tokens')?.weeks.map(({ total, shares }) => [total, shares]))
+      .toEqual([[12, [{ agentId: 'claude', share: 1 }]], [38, null], [0, []]]);
+  });
+
   it('retains both clipped weeks and nullable members from the canonical weekly mix', () => {
     const startMs = START + 3 * DAY,
       endMs = START + 10 * DAY + 3_600_000;

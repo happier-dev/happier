@@ -3,7 +3,7 @@ import { WidgetFrameBodyCaptionContext } from '@/components/widgets/frame/widget
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ChartDatum, HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart, UsageConstellation } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, HappierDataMetric, HappierDataRows, HappierDataTable, RankedRows, StackedSeriesChart, UsageAgentRiver, UsageConstellation } from '@happier-dev/plugin-ui/presentation';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui/components';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsageComparisonQuery, resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -292,6 +292,110 @@ describe('one selected money basis across Usage bodies', () => {
     // The separate facts stay beneath as supporting detail, each with its own token basis.
     expect(metrics.find(metric => metric.props.testID === 'facts.fact.reported')?.props.size).toBe('stat');
     expect(metrics.find(metric => metric.props.testID === 'facts.fact.invoice')?.props.value).toBe(0.2);
+  });
+
+  it('carries incomplete accounting and its admitted cause into the Agent river share, including during refresh', async () => {
+    const base = mountedCosts(false, 12);
+    const startMs = Date.UTC(2026, 9, 26);
+    const endMs = startMs + 14 * day;
+    const query = normalizeUsageQuery({
+      ...base.query, period: { startMs, endMs }, metric: 'tokens', includeActivity: true, includeSessionEvidence: false,
+    });
+    const accounting = base.slice.accounting!;
+    const [row] = accounting.contributions!;
+    const partial = {
+      ...accounting,
+      coverage: {
+        status: 'partial' as const, range: { startMs, endMs, complete: false }, reasons: ['incomplete_history' as const],
+        sources: [{ source: 'runtime', path: 'runtime' as const, status: 'available' as const, eventCount: 1, historyComplete: true }],
+        missingDimensions: [], ranked: [],
+      },
+      totals: { ...accounting.totals, eventCount: 1, tokens: row!.tokens, cost: row!.cost },
+      contributions: [{ ...row!, modelId: 'claude-haiku-4-5', observedAtMs: startMs + 1 }],
+    };
+    const body = (status: 'partial' | 'pending') => {
+      const slice = resolveUsagePageAggregation({ queries: [query],
+        accounting: [{ query, status, value: partial }],
+        howYouWork: [{ query, asOfMs: endMs, detail: { status: 'available', facts: [] } }],
+      }, bundledUsageModelPriceCatalog).results[0]!;
+      return <UsageFlowWidget {...base} query={query} slice={slice} presentation={{ style: 'agentRiver' }}
+        id="usage_flow" testID="river" />;
+    };
+    const screen = await renderScreen(body('partial'));
+    const chart = () => screen.findByType(UsageAgentRiver);
+    expect(chart().props.model.weeks[0]?.shares).toEqual([{ agentId: 'claude', share: 1 }]);
+    const coverage = {
+      short: t('usage.board.charts.coveragePartialShort'),
+      long: [
+        t('usage.board.page.coveragePartial', { sources: usageSourceTitle('accounting') }),
+        t('usage.board.page.coverageReason_incomplete_history'),
+      ].join(' · '),
+    };
+    expect(chart().props.model.coverage).toEqual(coverage);
+    await screen.update(body('pending'));
+    expect(chart().props.model.weeks[0]?.shares).toEqual([{ agentId: 'claude', share: 1 }]);
+    expect(chart().props.model.coverage).toEqual(coverage);
+  });
+
+  it('keeps the displayed River shares and exact values while an accounting refresh is pending or failed', async () => {
+    const base = mountedCosts(false, 12);
+    const startMs = Date.UTC(2026, 9, 26);
+    const endMs = startMs + 14 * day;
+    const query = normalizeUsageQuery({
+      ...base.query, period: { startMs, endMs }, metric: 'tokens', includeActivity: true, includeSessionEvidence: false,
+    });
+    const accounting = {
+      ...base.slice.accounting!,
+      coverage: {
+        status: 'complete' as const, range: { startMs, endMs, complete: true }, reasons: [],
+        sources: [{ source: 'runtime', path: 'runtime' as const, status: 'available' as const, eventCount: 2, historyComplete: true }],
+        missingDimensions: [], ranked: [],
+      },
+      contributions: base.slice.accounting!.contributions!.map((row, index) => ({
+        ...row, agentId: index === 0 ? 'claude' : 'codex', modelId: index === 0 ? 'claude-haiku-4-5' : 'gpt-5',
+        observedAtMs: startMs + index * 7 * day + 1,
+      })),
+    };
+    const body = (snapshot: Parameters<typeof resolveUsagePageAggregation>[0]['accounting']) => {
+      const slice = resolveUsagePageAggregation({
+        queries: [query], accounting: snapshot,
+        howYouWork: [{ query, asOfMs: endMs, detail: { status: 'available', facts: [] } }],
+      }, bundledUsageModelPriceCatalog).results[0]!;
+      return <UsageFlowWidget {...base} query={query} slice={slice} presentation={{ style: 'agentRiver' }}
+        id="usage_flow" testID="river" />;
+    };
+    const screen = await renderScreen(body([{ query, status: 'available', value: accounting }]));
+    const chart = () => screen.findByType(UsageAgentRiver);
+    await act(async () => {
+      chart().findAll(node => node.props.testID === 'river.riverChart' && typeof node.props.onLayout === 'function')[0]!
+        .props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 800, height: 190 } } });
+    });
+    await screen.pressByTestIdAsync('river.riverChart-values-toggle');
+    const marks = () => [...new Set(chart().findAll(node => node.props.fillOpacity === 0.9 && typeof node.props.d === 'string')
+      .map(node => node.props.d))];
+    const shares = () => [...new Set(chart().findAll(node => typeof node.props.testID === 'string'
+      && node.props.testID.startsWith('river.riverChart.week.') && node.props.datum)
+      .map(node => node.props.datum.value))].sort();
+    const exactValues = () => screen.findByType(HappierDataTable).props.rows;
+    const drawn = marks();
+    const measured = exactValues();
+    expect(drawn).toHaveLength(2);
+    expect(shares()).toEqual(['0%', '100%']);
+    expect(measured).toHaveLength(2);
+    expect(chart().props.model.coverage).toBeUndefined();
+
+    const updates = [
+      { status: 'pending', notice: t('usage.board.page.coveragePending', { sources: usageSourceTitle('accounting') }) },
+      { status: 'error', errorCode: 'usage_query_failed', notice: t('usage.board.page.coverageFailed', { sources: usageSourceTitle('accounting') }) },
+    ] as const;
+    for (const { notice, ...snapshot } of updates) {
+      await screen.update(body([{ query, ...snapshot, value: accounting }]));
+      expect.soft(marks()).toEqual(drawn);
+      expect.soft(shares()).toEqual(['0%', '100%']);
+      expect.soft(exactValues()).toEqual(measured);
+      expect.soft(chart().props.model.coverage).toBeUndefined();
+      expect.soft(screen.getTextContent()).toContain(notice);
+    }
   });
 
   it('draws no empty river plot when weeks were read but no agent recorded a share (C7)', async () => {

@@ -263,6 +263,8 @@ export function UsageCrew(props: AgentsProps & Readonly<{ model: readonly UsageA
 export type UsageRiverModel = Readonly<{
   /** `amount`: width = the week's metric total; `level`: width = the week's labelled intensity (public), never an amount. */
   width: 'amount' | 'level' | 'share';
+  /** The host's coverage notice when these shares are only of the admitted facts. */
+  coverage?: UsageAgentShare['coverage'];
   /** Null in composition-only mode: equal width, with no implied weekly amount. */
   weeks: readonly Readonly<{ start: string; end: string; partial: boolean; total: number | null;
     /** Null is an unreported composition; an empty array is a measured week with no shares. */
@@ -277,8 +279,10 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
   const [width, onLayout] = useUsageChartWidth(props.width);
   const unknown = formatHappierDataValue(null, undefined, props.labels.values.unknownLabel);
   const svgText = useUsageChartSvgText(props.theme);
-  const weeks = props.model.weeks;
-  const shareOf = (week: UsageRiverModel['weeks'][number], id: string | null) => week.shares === null ? null : week.shares.find(entry => entry.agentId === id)?.share ?? 0;
+  const { weeks, coverage } = props.model;
+  const shareOf = (week: UsageRiverModel['weeks'][number], id: string | null) => week.shares === null
+    ? null : week.shares.find(entry => entry.agentId === id)?.share ?? (coverage ? null : 0);
+  const qualify = (value: string) => coverage ? `${value} · ${coverage.short}` : value;
   const weight = (week: UsageRiverModel['weeks'][number]) => props.model.width === 'share' ? 1 : week.total ?? 0;
   const height = width !== null && width < 480 ? 150 : 190;
   // Every member with a share, the unattributed one included (it is part of the composition, never dropped).
@@ -288,22 +292,38 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
   const rows = weeks.map((week) => [week.partial ? props.labels.partialWeek(week.start, week.end) : props.labels.week(week.start), week.total === null ? unknown : formatHappierDataValueWithPrecision(formatHappierDataValue(week.total), props.labels.values.formatTotal(week.total)),
     ...order.slice().reverse().map((id) => {
       const share = shareOf(week, id);
-      return share === null ? unknown : formatHappierDataValueWithPrecision(exactPercent(share), props.labels.values.percent(share));
+      return share === null ? unknown : qualify(formatHappierDataValueWithPrecision(exactPercent(share), props.labels.values.percent(share)));
     })] as const);
   return <UsageChartColumn testID={props.testID} onLayout={onLayout}>
     <ChartDrawing style={{ height }} accessibilityLabel={props.label}>
       {width !== null && weeks.length >= 2 ? (() => {
         const max = Math.max(...weeks.map(weight)) || 1;
-        const mid = (height - 20) / 2, half = mid - 6, x = (index: number) => 4 + (index / (weeks.length - 1)) * (width - 8);
+        const inset = 4;
+        const mid = (height - 20) / 2, half = mid - 6, x = (index: number) => inset + (index / (weeks.length - 1)) * (width - 2 * inset);
         let floor = weeks.map((week) => -(weight(week) / max) * half);
         const bands = order.map((id) => {
           const low = floor.slice();
-          const high = weeks.map((week, index) => low[index]! + ((shareOf(week, id) ?? 0) * weight(week) / max) * half * 2);
+          const shares = weeks.map(week => shareOf(week, id));
+          const high = weeks.map((week, index) => low[index]! + ((shares[index] ?? 0) * weight(week) / max) * half * 2);
           floor = high;
-          const top = high.map((value, index) => [x(index), mid - value] as const);
-          const bottom = low.map((value, index) => [x(index), mid - value] as const).reverse();
-          const d = `${usageSmoothPath(top)}L${r1(bottom[0]![0])},${r1(bottom[0]![1])}${usageSmoothPath(bottom).replace(/^M[^C]*/u, '')}Z`;
-          return { id, low, high, d };
+          const segments: string[] = [];
+          let start = 0;
+          for (let end = 0; end <= weeks.length; end++) {
+            if (end < weeks.length && shares[end] !== null) continue;
+            if (end === start + 1) {
+              // A single witnessed week has a mark of its own instead of sloping to zero across a gap.
+              const left = r1(x(start) - inset), right = r1(x(start) + inset);
+              const top = r1(mid - high[start]!), bottom = r1(mid - low[start]!);
+              segments.push(`M${left},${top}H${right}V${bottom}H${left}Z`);
+            } else if (end > start) {
+              const top = high.slice(start, end).map((value, offset) => [x(start + offset), mid - value] as const);
+              const bottom = low.slice(start, end).map((value, offset) => [x(start + offset), mid - value] as const).reverse();
+              segments.push(`${usageSmoothPath(top)}L${r1(bottom[0]![0])},${r1(bottom[0]![1])}${usageSmoothPath(bottom).replace(/^M[^C]*/u, '')}Z`);
+            }
+            start = end + 1;
+          }
+          const d = segments.join('');
+          return { id, low, high, d, shares };
         });
         const colour = (id: string | null) => agentOf(props.agents, id)?.color ?? props.theme.colors.mutedText;
         const leaders = order.slice(-2).reverse();
@@ -320,10 +340,10 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
               const room = (at: number) => (band.high[at]! - band.low[at]!) * (weeks.length > 2 && (at === 0 || at === weeks.length - 1) ? 0.6 : 1);
               for (let at = 0; at < weeks.length; at++) if (!used.has(at) && (index < 0 || room(at) > room(index))) index = at;
               if (index < 0 || band.high[index]! - band.low[index]! < 16) return null;
-              const share = shareOf(weeks[index]!, id);
+              const share = band.shares[index] ?? null;
               if (share === null) return null;
               used.add(index);
-              const text = props.labels.inline(shortName(props.agents, id, props.labels.unknownAgent), share);
+              const text = qualify(props.labels.inline(shortName(props.agents, id, props.labels.unknownAgent), share));
               // The label is drawn semibold in the body role; it keeps the card's inset from either edge of the river.
               const half = (text.length * (svgText.styles.body.fontSize ?? 13) * 0.66) / 2;
               const inset = HAPPIER_WIDGET_FRAME_METRICS.cardInsetPx;
@@ -334,18 +354,20 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
           {weeks.map((week, index) => index % 3 === 0 || index === weeks.length - 1 ? svgText.draw({ x: x(index), y: height - 3,
             anchor: index === weeks.length - 1 ? 'end' : index === 0 ? 'start' : 'middle', text: props.labels.week(week.start) }, `w${index}`) : null)}
         </Svg>{bands.flatMap((band) => weeks.map((week, index) => {
-          const share = shareOf(week, band.id);
+          const share = band.shares[index] ?? null;
           const left = index === 0 ? 0 : (x(index - 1) + x(index)) / 2;
           const right = index === weeks.length - 1 ? width : (x(index) + x(index + 1)) / 2;
           return <ChartPathMark key={`${band.id}-${index}`} testID={`${props.testID}.week.${index}.${band.id}`} d={band.d} strokeWidth={0} hitMode="fill"
             datum={{ keyboard: false, label: `${props.label} · ${fullName(props.agents, band.id, props.labels.unknownAgent)} · ${week.partial ? props.labels.partialWeek(week.start, week.end) : props.labels.week(week.start)}`,
-              value: share === null ? unknown : exactPercent(share), subtitle: week.total === null ? undefined : `${props.labels.values.totalColumn}: ${formatHappierDataValue(week.total)} · ${props.labels.values.formatTotal(week.total)}`, color: colour(band.id) }}
+              value: share === null ? unknown : qualify(exactPercent(share)),
+              subtitle: [week.total === null ? null : `${props.labels.values.totalColumn}: ${formatHappierDataValue(week.total)} · ${props.labels.values.formatTotal(week.total)}`, coverage?.long]
+                .filter(Boolean).join(' · ') || undefined, color: colour(band.id) }}
             bounds={{ x: left, y: 0, width: right - left, height }}
             focusBounds={{ x: left, y: mid - band.high[index]!, width: right - left, height: band.high[index]! - band.low[index]! }} />;
         }))}</>;
       })() : null}
     </ChartDrawing>
-    <UsageChartCaption theme={props.theme}>{props.labels.caption}</UsageChartCaption>
+    <UsageChartCaption theme={props.theme}>{[props.labels.caption, coverage?.long].filter(Boolean).join(' · ')}</UsageChartCaption>
     <UsageChartValues theme={props.theme} label={props.label} labels={props.labels.values} testID={props.testID}
       table={{ columns: [{ label: props.labels.values.weekColumn }, { label: props.labels.values.totalColumn },
         ...order.slice().reverse().map((id) => ({ label: shortName(props.agents, id, props.labels.unknownAgent), priority: 'secondary' as const }))], rows }} />
