@@ -16,6 +16,8 @@ import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/reviewEngines';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
 import { createDeferred, createMachineFixture, createPlainMachineRowFixture, createPlainAccountEncryptionCurrentnessFixture, createRenderCommitCounter, createSessionFixture, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
@@ -45,8 +47,10 @@ import { resetTeamsDirectoryEngineForTests } from '@/sync/engine/teams/teamsDire
 import { resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import { ensureSessionDraftRepositoryHydrated } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
-import { createArtifactListHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createArtifactListHttpResponse, createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import '@/sync/syncEngine';
 import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
@@ -384,16 +388,22 @@ describe('real execution Run launch admission', () => {
     });
     it('starts a detached review through the real launch context without injecting a Session', async () => {
         restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
+        await loadSyncSingletonForTests();
         const { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema }
             = await import('@happier-dev/protocol/actions/externalActionApi');
         const { computeExternalActionRequestEnvelopeDigestV1 }
             = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
-        const { input, home, machine } = await launchFixture();
+        const { input, home, machine } = await launchFixture({ interactive: true });
         const launchSettings = settingsParse({ ...settingsDefaults, experiments: true,
             featureToggles: { 'execution.runs': true } });
+        const comparisonId = 'a'.repeat(64);
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => boundary.accountId, encryptionMode: 'plain' });
         const httpStarts: unknown[] = [];
         installLaunchHomeHttpBoundary(async (url, init) => {
             const path = new URL(String(url)).pathname;
+            const artifactResponse = artifacts.handle(path, init);
+            if (artifactResponse) return artifactResponse;
+            if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(createPlainProjectAccountRowListFixture());
             if (path === '/v1/actions/execution.run.start/execution-authorization') {
                 const mint = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
                 return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-root', binding: {
@@ -428,6 +438,12 @@ describe('real execution Run launch admission', () => {
         boundary.rpc.mockImplementation(async request => {
             if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return supportedCapabilities;
             if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return supportedDescribeCapabilities;
+            if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return ScmComparisonCaptureOutputSchema.parse({
+                success: true, comparison: { id: comparisonId, source: { kind: 'workingTree' },
+                    repository: { rootPath: '/work/rejoined' }, endpoints: { before: 'HEAD', after: 'workingTree' },
+                    inventory: { state: 'complete', reasons: [], files: [] } },
+                metadata: { source: { kind: 'workingTree' }, sourceKey: comparisonId },
+            });
             return { error: 'Method not found', errorCode: 'METHOD_NOT_FOUND' };
         });
         const hook = await renderHook(() => useExecutionRunLaunchContext(null, home.id, { machineId: machine.id, cwd: '/work/rejoined' }));
@@ -437,7 +453,7 @@ describe('real execution Run launch admission', () => {
         expect(inventory, JSON.stringify({ inventory, methods: boundary.rpc.mock.calls.map(([request]) => request.method) }))
             .toMatchObject({ ok: true, inventory: { items: expect.arrayContaining([expect.objectContaining({ engineId: 'claude', enabled: true })]) } });
         const outcome = await startReviewOfComparison({ sessionId: null, machineId: machine.id, serverId: home.id,
-            cwd: '/work/rejoined', comparison: { kind: 'workingTree' }, comparisonId: 'detached-evidence', instructions: 'Review.',
+            cwd: '/work/rejoined', comparison: { kind: 'workingTree' }, comparisonId, instructions: 'Review.',
             plan: resolveReviewWalkthroughPlan({ engines: inventory.ok ? projectReviewWalkthroughEngines(inventory.inventory) : [],
                 reviewers: reviewReviewersForEngineIdsV1(['claude']), walkthrough: false, narratorEngineId: null }),
             start: actionInput => hook.getCurrent().startAction('review.start', actionInput, 'detached-review'),
@@ -446,7 +462,7 @@ describe('real execution Run launch admission', () => {
             .toMatchObject({ ok: true, reviewRunIds: ['detached-review-run'] });
         expect(httpStarts).toEqual([
             expect.objectContaining({ target: { kind: 'machine', machineId: machine.id }, input: expect.objectContaining({
-                cwd: '/work/rejoined', intent: 'review', intentInput: expect.objectContaining({ comparisonId: 'detached-evidence' }),
+                cwd: '/work/rejoined', intent: 'review', intentInput: expect.objectContaining({ comparisonId }),
             }) }),
         ]);
         expect(boundary.rpc.mock.calls.filter(([request]) => request.method === 'execution.run.start')).toEqual([]);
