@@ -57,8 +57,10 @@ negotiated agent state rather than a static list.
 Conversations created by the pinned server in 0.2.21 and earlier still resume.
 When the CLI does not have the requested conversation but the pinned server's
 store in the same profile does, Happier copies it into the CLI's store and opens it
-under the same ID. The original files stay where they were. Resuming any
-Antigravity conversation needs the `agy` CLI.
+under the same ID. The original files stay where they were. The `agy` CLI's own
+conversation list may show a title it derives for such a conversation; the
+session title in Happier does not change. Resuming any Antigravity conversation
+needs the `agy` CLI.
 
 In development builds, choose the machine and project in the new-session composer
 to discover the available modes before launch. The chosen starting mode is applied
