@@ -3,7 +3,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { buildBootstrapRootCommand, type ManagedNativeBootstrapIO } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
-import { MachineEffectInternalRecordSchema, MachineEffectInternalRequestSchema } from './effectInternalProtocol';
+import { MachineEffectInternalRecordSchema } from './effectInternalProtocol';
 import type { MachineSetupBoundTargetBasisV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupExclusionV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
@@ -41,7 +41,7 @@ async function invokeBoundMachineSetup(input: BoundInterpreter, request: Machine
   };
   const response = await input.transport.exec({ command: buildBootstrapRootCommand([input.binaryPath, 'machine', 'effect-internal',
     `--operation-id=${input.operationId}`].map(safeBashSingleQuote).join(' ')),
-    input: JSON.stringify(MachineEffectInternalRequestSchema.parse(request)) + '\n', signal,
+    input: JSON.stringify(request) + '\n', signal,
     onStdoutChunk: chunk => { if (chunk) { streamed = true; consume(chunk); } } });
   if (!streamed) consume(response.stdout);
   if (pending.trim()) consume('\n');

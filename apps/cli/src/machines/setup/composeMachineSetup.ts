@@ -277,8 +277,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         if (!facts) return observed;
         const selected = resolveCombinedActionWorkflowHostV1({ actionId: 'machines.setup.apply', ...facts,
           targetMachineIds: [request.input.machineId] });
-        return MachineSetupPlanResultV1Schema.parse({ ...observed,
-          review: { ...observed.review, host: selected.review } });
+        return { ...observed, review: { ...plan.data.review, host: selected.review } } satisfies MachineSetupPlanResultV1;
       }
       const input = MachineSetupCombinedPlanInputV1Schema.parse(request.input);
       if (input.targets.some(target => target.homeId !== input.homeId)) return failure('server_scope_mismatch');

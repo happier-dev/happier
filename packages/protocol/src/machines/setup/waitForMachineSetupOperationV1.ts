@@ -5,7 +5,7 @@ import type { ActionExecuteFailure } from '../../actions/executor/types.js';
 export async function waitForMachineSetupOperationV1(
   operationId: string,
   observe: (request: ActionOperationGetV2Request) => Promise<unknown>,
-): Promise<ActionExecuteFailure | null> {
+): Promise<Omit<ActionExecuteFailure, 'automationNotices'> | null> {
   const settled = ActionOperationGetV1ResponseSchema.parse(await observe({ operationId, waitForTerminal: true }));
   if (settled.kind !== 'found') return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
   if (settled.operation.state === 'succeeded') return null;

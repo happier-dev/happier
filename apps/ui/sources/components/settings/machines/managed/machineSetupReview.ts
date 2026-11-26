@@ -1,4 +1,4 @@
-import { machineSetupApplyTargetFromPlanV1, MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupApplyInputV1Schema,
+import { machineSetupApplyTargetFromPlanV1, MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema,
     type MachineSetupAppChildV1, type MachineSetupApplyInputV1, type MachineSetupCombinedPlanResultV1,
     type MachineSetupPlanResultV1, type MachineSetupPlanInputV1, type MachineSetupPlanUnavailableTargetV1, type MachineSetupSourceApplyV1,
     type MachineSetupPlanReviewV1, type MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -197,10 +197,11 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
         sourcePresentations.push({ homeId: expected.homeId, machineId: expected.machineId, sources: presentations, ...(reviewedScripts ? { scripts: reviewedScripts } : {}) });
     }
     if (!admitted.length) return { ok: false, errorCode: 'machine_offline', error: 'machine_offline', details: { targets: unavailableTargets } };
-    if (combined?.success && combined.data.review.machineId === null) return fail('machine_unavailable');
+    const machineId = combined?.success ? combined.data.review.machineId : params.machineId.trim();
+    if (machineId === null) return fail('machine_unavailable');
     return { ok: true, ...(combined?.success ? { review: combined.data.review } : {}), facts,
         ...(sourcePresentations.length ? { sourcePresentations } : {}),
-        ...(unavailableTargets.length ? { unavailableTargets } : {}), input: MachineSetupApplyInputV1Schema.parse({
-        homeId: params.homeId, machineId: combined?.success ? combined.data.review.machineId : params.machineId, targets: admitted,
-    }) };
+        ...(unavailableTargets.length ? { unavailableTargets } : {}), input: {
+        homeId: params.homeId.trim(), machineId, targets: admitted,
+    } };
 }

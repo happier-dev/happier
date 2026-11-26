@@ -4,12 +4,12 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { randomBytes } from 'node:crypto';
 import {
     PROJECT_TRUST_ACCOUNT_SCOPED_BLOB_KIND_V1, PROJECT_TRUST_ROUTE_V1,
-    ProjectTrustListResponseV1Schema, ProjectTrustMutationRequestV1Schema, ProjectTrustMutationResponseV1Schema,
+    ProjectTrustListResponseV1Schema, ProjectTrustMutationResponseV1Schema,
     ProjectTrustReadResponseV1Schema, ProjectTrustValueV1Schema, QualifiedProjectTrustProjectV1Schema,
     StoredProjectTrustValueV1Schema,
     assertProjectTrustValueForProjectV1,
     PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
-    type ProjectTrustContentV1, type ProjectTrustMutationResponseV1, type ProjectTrustValueV1, type QualifiedProjectTrustProjectV1,
+    type ProjectTrustContentV1, type ProjectTrustMutationRequestV1, type ProjectTrustMutationResponseV1, type ProjectTrustValueV1, type QualifiedProjectTrustProjectV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -136,7 +136,7 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
         await assertCurrent();
         return response.data;
     }
-    async function mutate(body: ReturnType<typeof ProjectTrustMutationRequestV1Schema.parse>): Promise<ProjectTrustMutationResponseV1> {
+    async function mutate(body: ProjectTrustMutationRequestV1): Promise<ProjectTrustMutationResponseV1> {
         const parsed = ProjectTrustMutationResponseV1Schema.safeParse(await request('mutate', body));
         if (!parsed.success) return fail('outcome_unknown');
         return parsed.data;
@@ -182,8 +182,7 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
                 return resolveProjectTeardownConsent(await trust, reviewedEffectDigest);
             };
         },
-        async list(projectInput?: QualifiedProjectTrustProjectV1): Promise<Array<Readonly<{ project: QualifiedProjectTrustProjectV1; revision: number; value: ProjectTrustValueV1 }>>> {
-            const project = projectInput === undefined ? undefined : QualifiedProjectTrustProjectV1Schema.parse(projectInput);
+        async list(project?: QualifiedProjectTrustProjectV1): Promise<Array<Readonly<{ project: QualifiedProjectTrustProjectV1; revision: number; value: ProjectTrustValueV1 }>>> {
             const context = await modeContext();
             const parsed = StoredTrustListResponseSchema.safeParse(await request('list', project ? { project } : {}));
             if (!parsed.success) return fail('project_trust_storage_unavailable');
@@ -198,18 +197,16 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
             // Only the human-decision consumer calls this producer; Action input has no grant arm.
             if (decision.authority !== 'present_user') return fail('project_setup_consent_required');
             if (decision.reviewedEffectDigest !== decision.currentEffectDigest) return fail('project_setup_effect_changed');
-            const value = ProjectTrustValueV1Schema.parse({ project: decision.project, reviewedEffectDigest: decision.reviewedEffectDigest, approvedAtMs: decision.approvedAtMs });
+            const value: ProjectTrustValueV1 = { project: decision.project, reviewedEffectDigest: decision.reviewedEffectDigest, approvedAtMs: decision.approvedAtMs };
             const context = await modeContext();
             const content = context.cipher.seal(value);
-            const body = ProjectTrustMutationRequestV1Schema.parse({ project: value.project, expectedRevision: decision.expectedRevision, content });
-            return mutate(body);
+            return mutate({ project: value.project, expectedRevision: decision.expectedRevision, content });
         },
         async revoke(revocation: Readonly<{ project: QualifiedProjectTrustProjectV1; expectedRevision: number; expectedEffectDigest: string }>): Promise<ProjectTrustMutationResponseV1 | Readonly<{ status: 'notFound' }>> {
             const row = await read(revocation.project);
             if (row.status !== 'present') return { status: 'notFound' };
             if (row.revision !== revocation.expectedRevision || row.value.reviewedEffectDigest !== revocation.expectedEffectDigest) return { status: 'conflict', revision: row.revision };
-            const body = ProjectTrustMutationRequestV1Schema.parse({ project: row.value.project, expectedRevision: row.revision, content: null });
-            return mutate(body);
+            return mutate({ project: row.value.project, expectedRevision: row.revision, content: null });
         },
     };
 }

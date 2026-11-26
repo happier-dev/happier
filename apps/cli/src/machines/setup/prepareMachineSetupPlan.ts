@@ -79,7 +79,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   groupRefreshNative?: DaemonGroupRefreshNative;
 }>): Promise<MachineSetupLocalPlanResultV1 | ActionExecuteFailure> {
   const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
-  const input = MachineSetupLocalPlanInputV1Schema.parse(params.input);
+  const { input } = params;
   const current = params.current;
   if (current.status !== 'ready') return { ok: false, errorCode: `machine_setup_content_${current.status}`,
     error: `machine_setup_content_${current.status}` };
@@ -280,7 +280,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     entry.pluginId, entry.definition.id, entry.definition.revision,
   ]))).map(entry => ({ ref: { pluginId: entry.pluginId, recipeId: entry.definition.id, revision: entry.definition.revision },
     title: entry.definition.title }));
-  return MachineSetupLocalPlanResultV1Schema.parse({ desiredRevision: current.policy.revision,
+  return { desiredRevision: current.policy.revision,
     sources, exclusions, ...(current.policy.sourceFacts ? { sourceFacts: current.policy.sourceFacts } : {}),
     ...(sources.some(source => source.setup.items?.some(item => item.kind === 'app'))
       ? { appOrigins: readMachineSetupAppOriginsV1(current.policy.sources, sources) } : {}),
@@ -289,5 +289,5 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     ...(recipeTitles === undefined ? {} : { recipeTitles }),
     support, ...(input.mode !== undefined || recipePlans.length ? { recipePlans } : {}),
     ...(review ? { review } : {}),
-  });
+  };
 }

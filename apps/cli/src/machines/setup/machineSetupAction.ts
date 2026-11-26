@@ -5,7 +5,7 @@ import { observeMachineSetupInitialPresence } from './initialPresence';
 import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { MachineSetupResolveResultV1Schema, MachineSetupResolvedSourceV1Schema, MachineSetupReportInputV1Schema, MachineSetupApplyResultV1Schema,
+import { MachineSetupResolveResultV1Schema, MachineSetupResolvedSourceV1Schema, type MachineSetupReportInputV1,
   machineSetupSourceApplyOriginKeyV1,
   type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
@@ -33,7 +33,7 @@ import { machineRecipesProjectionFamily, machineSetupPresetsProjectionFamily } f
 import type { MachineSetupNativeCommand, MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import { machineSetupTargetUnavailable, requestMachineSetupHome, type MachineSetupInstallation } from './machineSetupHomeRequest';
-import { machineSetupPlanNeedsHomeSources } from './machineSetupPlanHomeSources';
+import { hasOnlyLocalSetupSources } from './machineSetupPlanHomeSources';
 import { prepareMachineSetupApps, type MachineSetupAppPreparationHost } from './prepareMachineSetupApps';
 import { prepareMachineSetupAcceptedAppRuns } from './acceptedAppRuns';
 import { machineSetupPlansRequireAdministratorV1 } from '@happier-dev/cli-common/machineSetup';
@@ -121,11 +121,9 @@ async function resolveLocalMachineSetupSources(params: Readonly<{
       resolvedSources: resolvedSources.data,
       ...(resolved.creation === undefined ? {} : { creation: resolved.creation }) };
   };
-  const hasOpaque = requested.some(source => source.kind === 'accountPresetOpaque');
-  if (!hasOpaque) {
-    const parsed = MachineSetupSourceV1Schema.safeParse(pending);
-    if (!parsed.success || !sameStrictJsonValue(resolved.sources, requested)) return null;
-    return finish(parsed.data);
+  if (hasOnlyLocalSetupSources(pending)) {
+    if (!sameStrictJsonValue(resolved.sources, requested)) return null;
+    return finish(pending);
   }
   // Home selects the actor's recipient envelope; installed custody still owns native effects.
   const requester = readRequesterAccountActionTransportContext(params.context.externalActionExecutionAuthorization);
@@ -255,14 +253,13 @@ export function createMachineSetupPlanAction(params: Readonly<{
       }
     } else if (wireSources !== undefined) {
       const managedContinuation = context.externalActionExecutionAuthorization?.binding.managedContinuation;
-      const needsOpaqueOpen = machineSetupPlanNeedsHomeSources(input);
+      const needsOpaqueOpen = !hasOnlyLocalSetupSources(wireSources);
       if ((managedContinuation && input.mode !== 'effects') || ((managedContinuation || needsOpaqueOpen)
         && (!params.installation || !params.apiMachine.resolveMachineSetupRuntime))) return fail('admission_unavailable');
       try {
-        let localSources: MachineSetupSourceV1 | null;
+        let localSources: MachineSetupSourceV1;
         if (!managedContinuation && !needsOpaqueOpen) {
-          const parsed = MachineSetupSourceV1Schema.safeParse(wireSources);
-          localSources = parsed.success ? parsed.data : null;
+          localSources = wireSources;
         } else {
           const retained = !managedContinuation && current.status === 'ready'
             ? readRetainedManagedOpaqueSetupSourcesV1(wireSources, current.policy.sources) : undefined;
@@ -270,7 +267,6 @@ export function createMachineSetupPlanAction(params: Readonly<{
           if ('failure' in opened) return opened.failure;
           localSources = opened.sources;
         }
-        if (!localSources) return fail('machine_setup_response_invalid');
         localInput = { ...inputWithoutSources, sources: localSources };
         const capturedSources = localSources;
         reviewedWireSources = wireSources.map((source, index) => {
@@ -393,7 +389,7 @@ export function createMachineSetupRemoveAction(params: MachineSetupActionParamet
 
 function createMachineSetupTargetAction(params: MachineSetupActionParameters, mode: 'apply' | 'remove'): MachineSetupTargetAction {
   return async ({ input, context, signal }) => {
-    const fail = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
+    const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
     const lifetime = signal ?? context.signal ?? new AbortController().signal;
     if (input.machineId !== params.machineId || input.homeId !== params.homeId) return fail('target_mismatch');
     const admission = context.machineAdmission;
@@ -437,9 +433,9 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
       const report = async (state: 'running' | 'succeeded' | 'failed', errorCode?: string) => {
         if (!creation) return;
         try {
-          await request('/v1/machines/setup/report', MachineSetupReportInputV1Schema.parse({ homeId: input.homeId, machineId: input.machineId,
+          await request('/v1/machines/setup/report', { homeId: input.homeId, machineId: input.machineId,
             presetId: creation.preset.id, presetRevision: creation.preset.revision, managedId: creation.managedId, state,
-            operation: { operationId }, ...(errorCode ? { errorCode } : {}) }));
+            operation: { operationId }, ...(errorCode ? { errorCode } : {}) } satisfies MachineSetupReportInputV1);
         } catch (error) {
           if (state === 'running') throw error;
           // Publishing a settled outcome cannot replace the native result.
@@ -468,7 +464,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         const wireSources = input.sources;
         let sources: MachineSetupSourceV1;
         const retained = managedContinuation ? undefined : readRetainedManagedOpaqueSetupSourcesV1(wireSources, current.policy.sources);
-        if (managedContinuation || wireSources.some(source => source.kind === 'accountPresetOpaque')) {
+        if (managedContinuation || !hasOnlyLocalSetupSources(wireSources)) {
           const resolved = await resolveHomeMachineSetupCopies(actionSourcesForHome(wireSources, retained),
             managedContinuation !== undefined, async body => await request('/v1/machines/setup/resolve', {
               homeId: input.homeId, machineId: input.machineId, ...body,
@@ -479,9 +475,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           sources = opened.sources;
           creation = opened.creation;
         } else {
-          const parsed = MachineSetupSourceV1Schema.safeParse(wireSources);
-          if (!parsed.success) return fail('machine_setup_response_invalid');
-          sources = parsed.data;
+          sources = wireSources;
         }
         const originalSources = sources;
         const continuingScripts = mayContinueScripts
@@ -736,7 +730,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             installationId: params.installation.installationId, entries: input.recipePlans,
             nativeHostKeys: receiverHostKeys, planIndexOffset: planned.removalPlans?.length ?? 0 });
           if (backupReceivers.length) return { ok: true, result: {
-            ...MachineSetupApplyResultV1Schema.parse(result.result), backupReceivers,
+            ...result.result, backupReceivers,
           } };
         }
         return result;

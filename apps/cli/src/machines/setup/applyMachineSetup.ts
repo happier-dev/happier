@@ -29,6 +29,7 @@ import { basename, dirname, join, resolve, posix } from 'node:path';
 import { userInfo } from 'node:os';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import type { MachineSetupOperationReferenceV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { executeHostFiniteTerminalProcess } from '@/terminal/pty/finiteProcess';
 import { resolveFiniteTerminalShell } from '@/terminal/pty/shells';
 import { prepareProjectNativeToolchain, ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
@@ -164,8 +165,10 @@ export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], re
   }, sources: execution.sources, retainedToolchain };
 }
 
+type MachineSetupExecutionResult = ActionExecuteFailure | Readonly<{ ok: true; result: MachineSetupOperationReferenceV1 }>;
+
 export async function applyMachineSetup(input: ApplyMachineSetupInput,
-  prepared = prepareMachineSetupStages(Array.isArray(input.setup) ? input.setup : [input.setup], input.recipePlans, input.exclusions, input.sourceChange, input.boundBasis)): Promise<ActionExecuteResult> {
+  prepared = prepareMachineSetupStages(Array.isArray(input.setup) ? input.setup : [input.setup], input.recipePlans, input.exclusions, input.sourceChange, input.boundBasis)): Promise<MachineSetupExecutionResult> {
   if (!prepared.ok) return prepared;
   const plans = [...(input.removalPlans ?? []).map(entry => entry.plan), ...(input.recipePlans ?? []).map(entry => entry.plan)];
   const operationId = input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId;
@@ -180,7 +183,7 @@ export async function applyMachineSetup(input: ApplyMachineSetupInput,
     retainedToolchain: prepared.retainedToolchain, plans, taskKind: 'machine.setup.apply.v1' });
 }
 
-export async function removeMachineSetup(input: RemoveMachineSetupInput): Promise<ActionExecuteResult> {
+export async function removeMachineSetup(input: RemoveMachineSetupInput): Promise<MachineSetupExecutionResult> {
   if (input.plans.some(plan => plan.basis.kind !== 'setup' || plan.basis.machineId !== input.machineId)) {
     return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
   }
@@ -194,7 +197,7 @@ export async function applyMachineSetupUpdates(input: Omit<ApplyMachineSetupInpu
   return await startMachineSetup({ ...input, setup: {}, sources: [], plans: [input.plan], taskKind: 'machine.setup.apply.v1' });
 }
 
-async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<ActionExecuteResult> {
+async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<MachineSetupExecutionResult> {
   const signal = input.signal ?? input.operation.signal;
   const operationId = input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId;
   if (signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
@@ -212,7 +215,7 @@ async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<Acti
   const publishTask = (taskId: string, prompt?: MachineSudoPasswordPromptV1) => {
     snapshot.update({ domainRef: { ...attachment, setupTask: { id: taskId, taskKind, ...(prompt ? { prompt } : {}) } } });
   };
-  let outcome: ActionExecuteResult | undefined;
+  let outcome: MachineSetupExecutionResult | undefined;
   const task = await owner.startAdmitted({ run: async context => {
     const emit: typeof context.emit = event => { context.emit(event); snapshot.emit(event); };
     const result = await applyMachineSetupWithNativeAdmission({ ...input, operation,
@@ -247,7 +250,7 @@ async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<Acti
   } finally { signal.removeEventListener('abort', cancel); }
 }
 
-async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupInput): Promise<ActionExecuteResult> {
+async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupInput): Promise<MachineSetupExecutionResult> {
   const signal = input.signal ?? input.operation.signal;
   const operationId = input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId;
   if (signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
@@ -292,8 +295,8 @@ async function applyMachineSetupWithNativeAdmission(input: AdmittedMachineSetupI
   }
 }
 
-async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUnsettledNativeProcess: () => void): Promise<ActionExecuteResult> {
-  const fail = (code: string): ActionExecuteResult => ({ ok: false, errorCode: code, error: code });
+async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUnsettledNativeProcess: () => void): Promise<MachineSetupExecutionResult> {
+  const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
   const environmentIo = input.boundTarget ? { ...input.environmentIo, run: input.boundTarget.run } : input.environmentIo;
   const targetPath = input.boundTarget ? posix : { basename, dirname, join, resolve };
   const platform = input.platform ?? process.platform;
@@ -385,7 +388,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
   let terminalId: string | undefined;
   const terminals: { install?: string; setup?: string } = {};
   let env: Readonly<Record<string, string>> = hostEnv;
-  const run = async (phase: string, command: string, args: readonly string[], launchEnv: Readonly<Record<string, string>>, failureCode: string, step?: number) => {
+  const run = async (phase: string, command: string, args: readonly string[], launchEnv: Readonly<Record<string, string>>, failureCode: string, step?: number): Promise<ActionExecuteResult> => {
     if (signal.aborted) return fail('cancelled');
     if (input.produceProcessEnvironment) launchEnv = (await input.produceProcessEnvironment(launchEnv, signal)).environment;
     if (input.boundTarget) {

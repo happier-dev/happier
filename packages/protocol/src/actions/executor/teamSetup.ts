@@ -51,9 +51,10 @@ export async function runTeamSetupBatch(
         serverId: input.serverId, machineId: input.machineId, operationId, waitForTerminal: true,
       }, context);
       const failure = observed.ok
-        ? await waitForMachineSetupOperationV1(operationId, async () => observed.result) : observed;
+        ? await waitForMachineSetupOperationV1(operationId, async () => observed.result)
+        : ActionExecuteFailureSchema.parse(observed);
       if (failure) {
-        machineSettlement = ActionExecuteFailureSchema.parse(failure);
+        machineSettlement = failure;
         break;
       }
     } else {
