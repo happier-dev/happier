@@ -85,6 +85,41 @@ describe.runIf(process.platform === 'linux')('Session tool bootstrap over the Un
     } finally { await connection.close(); await fixture.close(); }
   });
 
+  it('derives unlistedTools confinement from Session metadata even without explicit profile flag and separates inner approval ids', async () => {
+    vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
+    const confined = await openCodeModeMcpFixture({ featureEnabled: true, servers: [server],
+      profile: { scriptRunnerEnabled: true },
+      session: { getMetadataSnapshot: () => ({ unlistedTools: 'deny' }) as never },
+    });
+    const confinedConn = await connectSessionMcpClient(confined.profile.sessionMcpContext!);
+    try {
+      expect(confined.profile.codeMode).toEqual({ bootstrap: false, scriptRunner: false });
+      expect(confined.profile.agentEnvironment?.HAPPIER_CLI_BIN).toBeUndefined();
+      const listed = await confinedConn.client.listTools({ _meta: { [SESSION_MCP_TOOL_SOURCES_META_KEY]: true } });
+      expect(listed.tools.some(tool => bootstrapNames.includes(tool.name)
+        || tool._meta?.[SESSION_MCP_TOOL_SOURCE_META_KEY] === 'records')).toBe(false);
+    } finally { await confinedConn.close(); await confined.close(); }
+
+    const handleToolCall = vi.fn(async () => ({ decision: 'approved' as const }));
+    const approved = await openCodeModeMcpFixture({ featureEnabled: true, servers: [server],
+      profile: { mcpPermissionHandler: { handleToolCall } as never },
+    });
+    const approvedConn = await connectSessionMcpClient(approved.profile.sessionMcpContext!);
+    try {
+      const outcome = await approvedConn.client.callTool({
+        name: 'tools_call',
+        arguments: { source: 'records', tool: 'count', args: { namespace: 'ns', key: 'k' } },
+        _meta: { 'happier/tool-call-id': 'outer-call-1' },
+      });
+      expect(outcome.structuredContent).toMatchObject({ ok: true });
+      expect(handleToolCall).toHaveBeenCalledTimes(1);
+      const [innerRequestId, wireName] = handleToolCall.mock.calls[0] as unknown as [string, string];
+      expect(wireName).toBe('mcp__records__count');
+      expect(innerRequestId).not.toBe('outer-call-1');
+      expect(innerRequestId).toContain('outer-call-1:');
+    } finally { await approvedConn.close(); await approved.close(); }
+  });
+
   it('uses snapshot discovery without a spawn, then retains one process across five calls without rereading Home', async () => {
     vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
     const root = await mkdtemp(join(tmpdir(), 'happier-session-code-mode-'));

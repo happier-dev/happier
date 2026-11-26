@@ -8,6 +8,7 @@ import { codeModeStdioServer, createCodeModePermissionFixture, openCodeModeMcpFi
 import { SESSION_MCP_CONTEXT_FILE_ENV } from '@/mcp/runtime/sessionMcpLocalContext';
 import * as sessionMcpClient from '@/mcp/runtime/sessionMcpLocalClient';
 import { handleToolsCommand } from './tools';
+import { runToolsScript } from './toolsRun';
 
 describe('tools run', () => {
   it.runIf(process.platform === 'linux')('calls an Action, reuses a stateful stdio server, and awaits a real tool approval on one socket', async () => {
@@ -90,6 +91,27 @@ describe('tools run', () => {
       expect(readCredentials).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(process, 'platform', platform);
+      process.exitCode = exitCode;
+      output.restore();
+    }
+  });
+
+  it('aborts a non-tool awaited script on the first signal and closes the connection cleanly', async () => {
+    const exitCode = process.exitCode;
+    const output = captureStdoutJsonOutput();
+    const close = vi.fn(async () => undefined);
+    const controller = new AbortController();
+    try {
+      const running = runToolsScript({
+        argv: ['--code', 'await new Promise(() => {});'],
+        connect: async () => ({ execute: vi.fn(), close }),
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 15);
+      await running;
+      expect(output.json()).toMatchObject({ ok: false, error: { code: 'cancelled' } });
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
       process.exitCode = exitCode;
       output.restore();
     }

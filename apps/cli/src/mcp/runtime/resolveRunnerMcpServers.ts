@@ -366,7 +366,9 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   const featureSnapshot = scopedSession.getServerFeaturesSnapshot?.();
   const codeModeEnabled = featureSnapshot?.status === 'ready'
     && readServerEnabledBit(featureSnapshot.features, 'sessions.codeMode') === true;
-  const readConfinement = () => params.unlistedTools === 'deny' || String(scopedSession.getPermissionMode?.()) === 'no_tools';
+  const readConfinement = () => params.unlistedTools === 'deny'
+    || (scopedSession.getMetadataSnapshot?.() ?? params.sessionMetadata)?.unlistedTools === 'deny'
+    || String(scopedSession.getPermissionMode?.()) === 'no_tools';
   const scriptRunner = codeModeEnabled && params.scriptRunnerEnabled === true
     && supportsSessionMcpLocalTransport() && !readConfinement();
   let codeMode = { bootstrap: scriptRunner, scriptRunner };
@@ -566,8 +568,10 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       if (!params.mcpPermissionHandler) return { ok: false, errorCode: 'approval_required', error: 'Tool approval is required.' };
       const witness = scopedSession.getActiveTurnAdmissionWitness?.();
       const mode = String(scopedSession.getPermissionMode?.() ?? 'default');
-      const decision = await params.mcpPermissionHandler.handleToolCall(input.toolCallId ?? randomUUID(),
-        formatMcpToolWireNameV1(input.source, input.toolName), input.args, {
+      const wireName = formatMcpToolWireNameV1(input.source, input.toolName);
+      const requestId = input.toolCallId ? `${input.toolCallId}:${wireName}:${randomUUID()}` : randomUUID();
+      const decision = await params.mcpPermissionHandler.handleToolCall(requestId,
+        wireName, input.args, {
           buildNativeChoices: facts => createMcpPermissionChoices('mcp.tool', facts.mcpTool),
           signal,
           ...(witness ? { turnId: witness.turnId, causalPermissionAuthority: witness.causalPermissionAuthority ?? null } : {}),

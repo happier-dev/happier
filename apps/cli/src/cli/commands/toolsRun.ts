@@ -100,7 +100,15 @@ export async function runToolsScript(params: Readonly<{
     const happier = actionProxy((tool, args) => tools.call({ source: 'happier', tool, args }));
     const mcp = mcpProxy((source, tool, args) => tools.call({ source, tool, args }));
     const run = new AsyncFunction('tools', 'happier', 'mcp', 'console', 'signal', `"use strict";\n${code}`);
-    const result = await run(tools, happier, mcp, scriptConsole, signal);
+    const result = await new Promise<unknown>((resolve, reject) => {
+      if (signal.aborted) { reject(signal.reason ?? new Error('Cancelled.')); return; }
+      const onAbort = () => reject(signal.reason ?? new Error('Cancelled.'));
+      signal.addEventListener('abort', onAbort, { once: true });
+      Promise.resolve(run(tools, happier, mcp, scriptConsole, signal)).then(
+        value => { signal.removeEventListener('abort', onAbort); resolve(value); },
+        error => { signal.removeEventListener('abort', onAbort); reject(error); },
+      );
+    });
     signal.throwIfAborted();
     await writeJsonStdout(values.raw ? result ?? null : { ok: true, result: result ?? null, calls });
   } catch (error) {
