@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Dimensions } from 'react-native';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -111,7 +112,7 @@ describe('/reviews live host', () => {
         const artifact = { id: reviewId, sourceServerId: serverId, title: 'Retained Review', isDecrypted: true,
             header: { kind: REVIEW_ARTIFACT_KIND_V1, v: 1 as const, reviewId, title: 'Retained Review' },
             body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
-            ownerAccountId: 'alice', access: 'owner' as const, storageMode: 'plain' as const, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+            ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } satisfies DecryptedArtifact;
         const screen = await renderScreen(surface === 'list' ? <ReviewsListHost />
             : surface === 'detail' ? <ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />
             : <ReviewSummaryHost reviewId={reviewId} />);
