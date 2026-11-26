@@ -4,6 +4,8 @@ import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation'
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { RowArrivalReveal } from '@/components/settings/shell/SettingRow';
@@ -286,9 +288,13 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                 ...(creation.wakeOnAcceptedMessage !== undefined ? { wakeOnAcceptedMessage: creation.wakeOnAcceptedMessage } : {}),
                 ...(creation.simultaneousLimit ? { simultaneousLimit: creation.simultaneousLimit } : {}) } }));
     };
+    const openApproval = () => navigate(buildApprovalHref(approval.approvalId!, props.serverId));
+    useCurrentUiContextLocalCommands(approval.approvalId ? [{
+        key: 'approval.open', title: t('approvals.details'), invoke: openApproval,
+    }] : []);
     const approvalNotice = approval.approvalId ? <AttentionBanner testID="machine-preset.approval" tone="neutral"
         title={t('approvals.title')} description={t('approvals.status.open')}
-        action={{ label: t('approvals.details'), onPress: () => navigate(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}`) }} /> : null;
+        action={{ label: t('approvals.details'), onPress: openApproval }} /> : null;
     const keyPending = describeManagedPresetKeyPending(detail.state.error);
     const readFailure = !visiblePreset && !detail.state.loading && !keyPending
         ? describeManagedPresetReadFailure(detail.state.error, teamDenied) : null;

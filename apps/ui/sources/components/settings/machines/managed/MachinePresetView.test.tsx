@@ -23,6 +23,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import {
@@ -111,6 +113,10 @@ installMachinesSettingsCommonModuleMocks({
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 // Transform the real owners after the transport/platform boundaries, outside the case budget.
 const { MachinePresetView, MachinePresetScreen } = await import('./MachinePresetView');
 const { ManagedMachineDetailScreen } = await import('./ManagedMachineDetail');
@@ -516,6 +522,58 @@ async function seedConfiguration(serverId: string, image = false,
 }
 
 describe('reachable preset detail', () => {
+  it('lets the agent open Details while the first preset read awaits approval', async () => {
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    // The terminal bearer narrows this UI read to Account automation, whose Ask opens a durable approval.
+    const accountId = 'owner';
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId, session: 'terminal-test' })).toString('base64url')}.test`;
+    const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://preset-approval.test',
+      serverIdentityId: preset.homeId, accountId, credentials: { token } });
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId };
+    storage.setState({ profileScope: scope, settingsScope: scope });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    await harness.requireUiApproval(serverId, 'machines.presets.get');
+    const authority = captureActiveServerAccountScopeLifetime();
+    function Publication() {
+      const commands = useCurrentUiContextComposedCommands();
+      usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+      return null;
+    }
+    const surface = (visible: boolean) => <CurrentUiContextCommandsProvider authority={authority}>
+      <Publication />{visible ? <MachinePresetView serverId={scope.serverId} presetId={preset.id} /> : null}
+    </CurrentUiContextCommandsProvider>;
+    const screen = await renderMountedCurrentUiContext(surface(true));
+    try {
+      const control = 'machine-preset.approval.action';
+      await waitForHomeGovernance(() => expect(screen.findByTestId(control)).not.toBeNull());
+      const [approval] = harness.artifacts(serverId).list();
+      if (!approval) throw new Error('Expected the persisted preset read approval');
+      const expectedRoute = buildApprovalHref(approval.id, scope.serverId);
+      await screen.pressByTestIdAsync(control);
+      expect(route.push.mock.calls).toEqual([[expectedRoute]]);
+      const executor = createDefaultActionExecutor();
+      const readCommands = async () => {
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        if (!read.ok) throw new Error(`Expected current context, got ${read.errorCode}`);
+        return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+      };
+      const inventory = await readCommands();
+      expect(inventory.map(command => command.title)).toEqual([t('approvals.details')]);
+      const commandId = inventory[0]!.id;
+      await act(async () => {
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId }, { surface: 'agent' })).toMatchObject({ ok: true });
+      });
+      expect(route.push.mock.calls).toEqual([[expectedRoute], [expectedRoute]]);
+      await screen.update(surface(false));
+      expect(screen.findByTestId(control)).toBeNull();
+      expect(await readCommands()).toEqual([]);
+      expect(await executor.execute('ui.current_context.command.invoke', { commandId }, { surface: 'agent' })).toMatchObject({ ok: false });
+    } finally { await screen.unmount(); }
+  });
+
   it('explains how to get the key for an authorized Team preset without offering a premature retry', async () => {
     const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
     const { sealManagedMachinePresetContentV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');

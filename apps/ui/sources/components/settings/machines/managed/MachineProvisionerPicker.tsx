@@ -9,6 +9,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
@@ -310,9 +312,13 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
 function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     const { approval, router, cards, waiting, waitingFor, scope, scopeState, homeUnreachable, catalog, compact, localDescription,
         sectionScope, shown, reading, pageSections, retryMachineList, setUpThisComputer } = useMachineProvisionerCatalog(props);
+    const openApproval = () => router.push(buildApprovalHref(approval.approvalId!, props.serverId) as never);
+    useCurrentUiContextLocalCommands(approval.approvalId ? [{
+        key: 'approval.open', title: t('approvals.details'), invoke: openApproval,
+    }] : []);
     return <View testID="managed-picker">
         {approval.approvalId ? <AttentionBanner testID="managed-picker.approval" title={t('approvals.title')} description={t('approvals.status.open')}
-            action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
+            action={{ label: t('approvals.details'), onPress: openApproval }} /> : null}
         {(props.presetOnly || !scope.hasCandidates) && !shown && catalog.error ? <SurfaceStateCard testID="managed-picker.unavailable" kind="error"
             title={t('managedMachines.providers.unavailable')} diagnosticCode={catalog.error}
             diagnosticDetail={describeManagedProvisionerFailure(catalog.error)} action={{ label: t('common.retry'), onPress: catalog.refresh }} />

@@ -28,6 +28,8 @@ import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { runtimeRepairSources } from '../../../../../../../packages/plugins/devcontainer/src/machine/runtimeRepair';
 
@@ -49,6 +51,11 @@ installApprovalCommonModuleMocks({
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { t } = await import('@/text');
 const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { resetMachineProjectionReadsForTests } = await import('@/sync/ops/machineContributionRegistryProjection');
@@ -63,6 +70,12 @@ function ProjectionReadiness(props: Readonly<{ serverId: string }>) {
     return <View testID="managed-repair.projection" accessibilityLabel={projection.phase} accessibilityHint={projection.failureReason} />;
 }
 
+function PublishCommands() {
+    const commands = useCurrentUiContextComposedCommands();
+    usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+    return null;
+}
+
 describe('mounted provisioner repair', () => {
     it.each(['picker', 'guide', 'crabbox', 'configuration', 'configuration.optionsPrerequisite', 'approval.picker', 'configuration.approval', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable', 'projectionOffline', 'projectionTransportUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
         const surface = scenario.startsWith('configuration') ? 'configuration' : 'picker';
@@ -72,7 +85,9 @@ describe('mounted provisioner repair', () => {
         const projectionFailure = scenario === 'projectionOffline' ? 'machine-unavailable'
             : scenario === 'projectionTransportUnavailable' ? 'transport-unavailable' : undefined;
         const serverId = await harness.addHome({ name: 'Build', serverUrl: `https://build-${scenario}.example`, serverIdentityId: `srv_build_${scenario}`, accountId: 'owner', currentAccount: true });
-        await harness.addHome({ name: 'Other', serverUrl: 'https://other.example', serverIdentityId: 'srv_other', accountId: 'other' });
+        const bindsApprovalNavigation = scenario === 'approval.picker';
+        await harness.addHome({ name: 'Other', serverUrl: 'https://other.example', serverIdentityId: 'srv_other', accountId: 'other',
+            ...(bindsApprovalNavigation ? { active: false } : {}) });
         const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
         onTestFinished(clearPluginAccountAvailabilityProjection);
         replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
@@ -212,10 +227,21 @@ describe('mounted provisioner repair', () => {
         const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const { ModalProvider } = await import('@/modal');
-        const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><ProjectionReadiness serverId={serverId} />{surface === 'picker' ? <MachineProvisionerPicker serverId={serverId} />
+        const contents = <ModalProvider><ListPresentationProvider value="page"><ProjectionReadiness serverId={serverId} />{surface === 'picker' ? <MachineProvisionerPicker serverId={serverId} />
             : <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
                 {...(optionsPrerequisite ? { initialEnrollmentIdentity: { kind: 'existingUser', role: 'adopted' } as const } : {})}
-                initialController={{ machineId: 'controller', installationId: 'installation' }} />}</ListPresentationProvider></ModalProvider>);
+                initialController={{ machineId: 'controller', installationId: 'installation' }} />}</ListPresentationProvider></ModalProvider>;
+        const screen = bindsApprovalNavigation ? await (async () => {
+            const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+            const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+            const { storage } = await import('@/sync/domains/state/storage');
+            const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
+            storage.setState({ profileScope: scope, settingsScope: scope });
+            publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+            return renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+                <PublishCommands />{contents}
+            </CurrentUiContextCommandsProvider>);
+        })() : await renderScreen(contents);
         // The picker resolves the published controller; configuration receives the selected controller handoff.
         const group = readMachineProvisionerSessionPlacementV1(provisioner.descriptor, {})?.kind === 'controller-local' ? 'local' : 'cloud-sandboxes';
         const card = surface === 'picker' ? `managed-picker.provisioners.${group}.${buildQualifiedPluginContributionKey(contribution)}.action`
@@ -324,7 +350,33 @@ describe('mounted provisioner repair', () => {
             }).toEqual({ approvalPresented: true, failures: [], checks: 0 });
             expect(repaired).toBe(false);
             expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(checksBeforeRepair);
-            await act(async () => { await settleRepairApproval!(); });
+            if (bindsApprovalNavigation) {
+                const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+                const executor = createDefaultActionExecutor();
+                const readCommands = async () => {
+                    const result = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+                    if (!result.ok) throw new Error(`Expected picker current context, got ${result.errorCode}`);
+                    return CurrentUiContextSnapshotV1Schema.parse(result.result).commands;
+                };
+                const [approval] = harness.artifacts(serverId).list();
+                if (!approval) throw new Error('Expected the persisted Controller repair approval');
+                const expectedRoute = buildApprovalHref(approval.id, serverId);
+                await screen.pressByTestIdAsync(`${approvalId}.action`);
+                expect(boundary.navigate.mock.calls).toEqual([[expectedRoute]]);
+                const inventory = await readCommands();
+                expect(inventory.map(command => command.title)).toEqual([t('approvals.details')]);
+                const commandId = inventory[0]!.id;
+                await act(async () => {
+                    expect(await executor.execute('ui.current_context.command.invoke', { commandId }, { surface: 'agent' }))
+                        .toMatchObject({ ok: true });
+                });
+                expect(boundary.navigate.mock.calls).toEqual([[expectedRoute], [expectedRoute]]);
+                await act(async () => { await settleRepairApproval!(); });
+                await waitForHomeGovernance(() => expect(screen.findByTestId(approvalId)).toBeNull());
+                expect(await readCommands()).toEqual([]);
+                expect(await executor.execute('ui.current_context.command.invoke', { commandId }, { surface: 'agent' }))
+                    .toMatchObject({ ok: false });
+            } else await act(async () => { await settleRepairApproval!(); });
         }
         if (scenario === 'guide') {
             // The guide opened but the tool is still missing: the card asks to look again instead of offering the guide once more.
@@ -365,7 +417,7 @@ describe('mounted provisioner repair', () => {
             }
         });
         expect(harness.requests.some(request => request.path.endsWith('/acquire'))).toBe(false);
-        expect(boundary.navigate).not.toHaveBeenCalled();
+        expect(boundary.navigate).toHaveBeenCalledTimes(bindsApprovalNavigation ? 2 : 0);
         await screen.unmount();
     });
 });
