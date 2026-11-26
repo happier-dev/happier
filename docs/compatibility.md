@@ -10802,6 +10802,13 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 dispatch can carry the paths from admitted Session uploads in
+`sessionAttachmentPaths`. Claude resolves relative paths against the original
+Session or Run workspace, then supplies absolute paths to its file tools under
+the existing tool policy. Older messages retain their attachment listing and
+Claude SDK images still use the existing verified byte input. The new field
+is optional and exists only during dispatch.
+
 Unreleased 0.3 native Session and Execution Run assistant deltas can include
 `phase` with the Agent's `commentary`, `partial_answer`, or `final_answer`
 classification. Codex joins it by item ID. An omitted phase means the Agent

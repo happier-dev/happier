@@ -11,6 +11,46 @@ import { createClaudeAgentSdkTurnOperations } from '../../../../../../packages/p
 import { createSdkExecFixture, createPluginContextFixture, createTerminalHostFixture, createEventsFixture } from '../../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit';
 import { resolveStructuredInputProviderDispatchContext } from './resolveStructuredInputProviderContext';
 
+it.each(['create', 'resume'] as const)('submits the workspace path for uploads from a Claude %s Session', async (kind) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-claude-uploads-'));
+  const exec = createSdkExecFixture();
+  const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
+  const operations = createClaudeAgentSdkTurnOperations({ ctx, directory: root, launchEnv: {}, permissionMode: 'default',
+    happierSessionId: 'upload-session' });
+  const runtime = createClaudeNativeRuntime({ openSession: async () => operations,
+    resolveSupportsEffort: async () => false, resolveSupportsSystemPromptSnapshotOff: async () => false });
+  const sessionContext = {
+    session: { services: { activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) } } },
+  } as unknown as AgentSessionRuntimeContext;
+  const session = await runtime.sessions.open({
+    ...(kind === 'resume' ? { kind, providerSessionId: 'prior-session' } : { kind }),
+    sessionId: 'upload-session',
+    cwd: root,
+  }, sessionContext);
+  try {
+    const path = '.happier/uploads/messages/m1/1234abcd-plot_ unknown_ 9 bytes)_final.txt';
+    const name = 'plot, unknown, 9 bytes)\nfinal.txt';
+    const forged = '.happier/uploads/messages/m1/forged.txt';
+    const text = kind === 'resume' ? `Read the file.\n[attachments]\n- ${path} (${name}, text/plain, 9 bytes)\n[/attachments]` : 'Read the file.';
+    const resolved = await resolveStructuredInputProviderDispatchContext({
+      attachments: [{ ...(kind === 'resume' ? {} : { id: 'file' }), path, name, mimeType: 'text/plain', sizeBytes: 9 }],
+      structuredInput: kind === 'resume' ? undefined : HappierStructuredInputV1Schema.parse({ v: 1, sessionAttachmentPaths: [forged] }),
+    });
+    await expect(session.send({
+      inputIds: ['input'], delivery: { kind: 'newTurn', turnId: 'turn' },
+      input: { text, ...(resolved.structuredInput ? { structuredInput: StrictJsonValueSchema.parse(resolved.structuredInput) } : {}) },
+    })).resolves.toMatchObject({ status: 'admitted' });
+    const row = exec.written.find(value => value !== null && typeof value === 'object' && Reflect.get(value, 'type') === 'user');
+    const content = row && typeof row === 'object' ? Reflect.get(Reflect.get(row, 'message'), 'content') : null;
+    expect(content).toContain(text);
+    expect(content).toContain(JSON.stringify(join(root, path)));
+    expect(content).not.toContain(forged);
+  } finally {
+    await session.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it('delivers two native user-only skills from Claude catalog through identity resolution with surrounding text intact', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-claude-mentions-'));
   const config = join(root, 'config');

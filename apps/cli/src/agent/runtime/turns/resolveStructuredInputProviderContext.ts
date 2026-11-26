@@ -803,11 +803,14 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
   onDiagnostic?: (diagnostic: StructuredInputResolutionDiagnostic) => void;
 }>): Promise<StructuredInputProviderDispatchContext> {
   const envelope = params.structuredInput;
+  const uploadedAttachments = params.attachments ?? [];
   if (!envelope) {
     return Object.freeze({
-      structuredInput: envelope,
+      structuredInput: uploadedAttachments.length
+        ? AgentDispatchStructuredInputV1Schema.parse({ v: 1, sessionAttachmentPaths: uploadedAttachments.map(upload => upload.path) })
+        : envelope,
       promptContext: Object.freeze({
-        references: Object.freeze({ uploads: params.attachments ?? [] }),
+        references: Object.freeze({ uploads: uploadedAttachments }),
       }),
     });
   }
@@ -878,6 +881,9 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
   // pre-existing dispatch projection before parsing the exact final schema.
   delete resolvedEnvelope.composerAttachments;
   delete resolvedEnvelope.resolvedComposerAttachments;
+  delete resolvedEnvelope.sessionAttachmentPaths;
+  const uploads = [...uploadedAttachments, ...sessionMediaInputs.files];
+  if (uploads.length) resolvedEnvelope.sessionAttachmentPaths = uploads.map(upload => upload.path);
   if (sources.mentions.length > 0) {
     // D-4's precedence owner says mentions[] wins when it is populated. Replace that raw
     // enumeration with the dispatch projection, while legacy-only envelopes remain legible
@@ -920,7 +926,7 @@ export async function resolveStructuredInputProviderDispatchContext(params: Read
     composerReferences: composerContextEntries,
     composerAttachments: attachmentProjection.contextEntries,
     composerAttachmentInputs: attachments,
-    uploads: [...(params.attachments ?? []), ...sessionMediaInputs.files],
+    uploads,
     imageInputs: structuredInput.imageInputs ?? [],
     skillMentions: structuredInput.skillMentions ?? [],
     vendorPluginMentions: structuredInput.vendorPluginMentions ?? [],
