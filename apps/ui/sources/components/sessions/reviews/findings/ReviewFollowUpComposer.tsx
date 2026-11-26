@@ -153,6 +153,7 @@ export function ReviewFollowUpComposer(props: Readonly<{
                 value={displayedText}
                 placeholder={props.placeholder}
                 inputAccessibilityLabel={props.placeholder}
+                submitAccessibilityLabel={t('common.send')}
                 onChangeText={onChangeText}
                 structuredInputMentions={document.structuredInputMentions}
                 onStructuredInputMentionsChange={onMentionsChange}

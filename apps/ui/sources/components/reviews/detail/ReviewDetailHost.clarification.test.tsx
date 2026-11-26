@@ -6,6 +6,7 @@ import type { ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { changeTextTestInstance, standardCleanup } from '@/dev/testkit';
+import { t } from '@/text';
 import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainV2SessionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -98,6 +99,7 @@ it('retains partial results and question states through an unavailable refresh, 
     const input = composer!.findAll(node => node.props.testID === 'new-session-composer-input' && typeof node.props.onChangeText === 'function')[0]!;
     await act(async () => changeTextTestInstance(input, 'Why is this still a defect?'));
     const send = composer!.findAll(node => node.props.testID === 'new-session-composer-send' && typeof node.props.onPress === 'function')[0]!;
+    expect(send.props.accessibilityLabel).toBe(t('common.send'));
     await act(async () => { await send.props.onPress(); });
     await vi.waitFor(() => expect(fixture!.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ACTION)
       .map(request => ({ targetId: request.targetId, payload: request.payload }))).toEqual([
