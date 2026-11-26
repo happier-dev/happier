@@ -1123,7 +1123,7 @@ export function createPluginUiResourceStore(input: Readonly<{
       });
       return facade;
     },
-    replaceRetainedValues(replace): void {
+    replaceRetainedValues(replace: Parameters<ReturnType<typeof createPluginUiResourceStore>['replaceRetainedValues']>[0]): void {
       if (!isStoreCurrent()) return;
       const listeners = new Set<() => void>();
       const replacements: MutableEntry[] = [];
