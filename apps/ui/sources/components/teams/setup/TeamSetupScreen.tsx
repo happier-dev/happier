@@ -522,10 +522,12 @@ function TeamSetupPlanPage(
         onRetry: () => { void resources.sources.controller.load(); },
       }}
       hasPreset={hasPreset}
+      // A sign-in is the person's own Machine and Account: the Machine's sign-in owner admits it, never the Team's
+      // write availability, which closes during every routine Team revalidation and moved the page on cold arrival.
       signIns={machineId && githubServiceKey && included.some(source => source.repository?.provider.kind === 'github') ? (
         <MachineSignInsSection serverId={context.scope.serverId} machineId={machineId}
           machineName={machineName ?? t('teams.join.setupPage.yourMachine')}
-          presented={presented} editable={context.canMutate && !running}
+          presented={presented} editable={!running}
           connectedServiceKey={githubServiceKey} />
       ) : null}
       machinePlan={machinePlan}
