@@ -278,6 +278,10 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
             return option;
         };
         const selectedIds = new Set([...model.selectedIds, ...addedOptions.map(option => option.id)]);
+        // Search and kind filters narrow choices, never the summary of what is already chosen.
+        const allSections = [...addedSection, ...agentSections.map(section => section.kind === 'static'
+            ? { ...section, title: undefined, rightAccessory: undefined, count: undefined, options: section.options.map(decorate) }
+            : section), ...peopleSections];
         const isState = (option: SelectionListOption) => option.id.startsWith('sessions:');
         const candidates = agentSections.flatMap(section => section.kind === 'static'
             ? section.options.filter(option => !isState(option)).map(option => ({ option, category: categoryOf.get(section.id) ?? 'session' }))
@@ -290,17 +294,14 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
                 .map(section => section.kind === 'static'
                     ? { ...section, title: undefined, rightAccessory: undefined, count: undefined, options: section.options.map(decorate) }
                     : section);
-            return { step: { ...model.rootStep, sections }, selectedIds, added };
+            return { step: { ...model.rootStep, sections }, allSections, selectedIds, added };
         }
         // A short list shows whole, people after it; only a longer one folds (people then wait inside Show all).
         // A search reaches every row, so it never searches only the folded picks.
         const foldable = candidates.length > WHO_PREVIEW.total && whoQuery.trim() === '';
         if (expanded || !foldable) {
             // Each row names its kind in its line, so the agent groups read as one list.
-            const sections = agentSections.map(section => section.kind === 'static'
-                ? { ...section, title: undefined, rightAccessory: undefined, count: undefined, options: section.options.map(decorate) }
-                : section);
-            return { step: { ...model.rootStep, sections: [...addedSection, ...sections, ...peopleSections, ...addSection] }, selectedIds, added };
+            return { step: { ...model.rootStep, sections: [...allSections, ...addSection] }, allSections, selectedIds, added };
         }
         // Lab flows `ask`: a short mixed list of top picks. Whatever is chosen (or open) leads, then the
         // owner's first new agents, Session and Bot, in the order the owner already ranks them.
@@ -343,14 +344,14 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
             options: [...addedOptions, ...top.map(decorate), ...stateRows, showAll, ...(addRow ? [addRow] : [])] };
         // People live inside Show all; ones already chosen stay in sight.
         return { step: { ...model.rootStep, inputPlaceholder: peopleChosen ? model.rootStep.inputPlaceholder : undefined,
-            sections: [topSection, ...(peopleChosen ? peopleSections : [])] }, selectedIds, added };
+            sections: [topSection, ...(peopleChosen ? peopleSections : [])] }, allSections, selectedIds, added };
     }, [addAgent, addedLabels, addedMachines, addedSelections, busy, details, detailId, editModel, expanded, onChoose, onReplace, participants?.input.people?.chosen, model.rootStep, model.selectedIds, openRecipe, source.sections, startAdd, theme.colors.text.secondary, whoFilter, whoQuery]);
     const chosenStep = React.useMemo<SelectionListStep>(() => {
-        const staticIds = new Set(display.step.sections.flatMap(section => section.kind === 'static'
+        const staticIds = new Set(display.allSections.flatMap(section => section.kind === 'static'
             ? section.options.map(option => option.id) : []));
         const dynamicSelectedIds = [...display.selectedIds].filter(id => !staticIds.has(id));
-        return { ...display.step, inputPlaceholder: undefined,
-            sections: display.step.sections.flatMap((section): SelectionListSectionDescriptor[] => {
+        return { ...model.rootStep, inputPlaceholder: undefined,
+            sections: display.allSections.flatMap((section): SelectionListSectionDescriptor[] => {
                 if (section.kind !== 'static') return dynamicSelectedIds.length === 0 ? [] : [{ ...section,
                     resolverKey: JSON.stringify([section.resolverKey, dynamicSelectedIds]),
                     resolve: async (_query, signal) => {
@@ -362,7 +363,7 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
                 return options.length > 0 ? [{ ...section, options }] : [];
             }),
         };
-    }, [display.step, display.selectedIds]);
+    }, [display.allSections, display.selectedIds, model.rootStep]);
     const hasChosen = chosenStep.sections.length > 0 || display.added.length > 0;
     const choosingWho = whoEditing || !hasChosen;
     // Lab dpRev: the Who list always offers its search and, when it mixes kinds, one chip per kind beneath it.

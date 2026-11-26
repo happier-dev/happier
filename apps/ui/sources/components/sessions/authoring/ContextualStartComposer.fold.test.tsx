@@ -155,6 +155,21 @@ describe('ContextualStartComposerBody Who list (lab flows `ask`)', () => {
     expect(screen.getTextContent()).not.toContain('model 2');
     await screen.unmount();
   });
+  it('shows every chosen kind after Done even when the choices were narrowed to People', async () => {
+    const base = source({ models: 1, sessions: 1, bots: 0, selected: ['model:0', 'account:alice'] });
+    const current: ContextualStartSource = { ...base, search: { value: '', onChange: () => undefined },
+      sections: [{ category: 'person', section: { kind: 'static', id: 'people', options: [
+        { id: 'account:alice', label: 'Alice', onSelect: () => undefined },
+      ] } }, ...base.sections.slice(1)] };
+    const screen = await renderScreen(<Composer source={current} />);
+    await screen.pressByTestIdAsync('contextual-start-change-who');
+    await screen.pressByTestIdAsync('contextual-start-who-filter:person');
+    expect(screen.getTextContent()).not.toContain('model 0');
+    await screen.pressByTestIdAsync('contextual-start-done-who');
+    expect(screen.getTextContent()).toContain('model 0');
+    expect(screen.getTextContent()).toContain('Alice');
+    await screen.unmount();
+  });
   it('folds a long list to mixed top picks with what is chosen first, then opens everything and people on Show all', async () => {
     const screen = await renderScreen(
       <Composer
