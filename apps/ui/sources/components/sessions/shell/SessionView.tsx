@@ -5678,17 +5678,18 @@ function SessionViewLoaded({
                     }
                     : transitionSubmission;
                 const isScopeCurrent = () => areServerAccountScopesEqual(activeServerAccountScope, getActiveServerAccountScope());
+                const issuedSubmission = existingSubmission?.localId === destination.localId ? existingSubmission : {
+                    localId: destination.localId,
+                    input: transitionInput,
+                    currentness: {
+                        text: previousMessage,
+                        mentions: semanticDraftSnapshot.structuredInputMentions ?? [],
+                        attachmentDraftIds: attachmentDrafts.map((draft) => draft.id),
+                    },
+                };
                 const { disposition, result } = await continueSessionWithArmedAgent(submissionForDispatch, {
                     isCurrent: isScopeCurrent,
-                    onBeforeTransitionDispatch: () => inSessionAgentPicker.recordArmedContinuationSubmission({
-                        localId: destination.localId,
-                        input: transitionInput,
-                        currentness: {
-                            text: previousMessage,
-                            mentions: semanticDraftSnapshot.structuredInputMentions ?? [],
-                            attachmentDraftIds: attachmentDrafts.map((draft) => draft.id),
-                        },
-                    }),
+                    onBeforeTransitionDispatch: () => inSessionAgentPicker.recordArmedContinuationSubmission(issuedSubmission),
                 });
                 if (!isScopeCurrent()) return;
                 if (result === null) {
@@ -5701,7 +5702,9 @@ function SessionViewLoaded({
                 // promise about the next message.
                 // A draft clear is consumed by the one compare-clear owner below,
                 // which needs the nested snapshot to remain available first.
-                if (disposition.arm === 'clear' && disposition.draft !== 'clear') {
+                if (result.type === 'rejected') {
+                    inSessionAgentPicker.clearArmedContinuationSubmissionIfCurrent(issuedSubmission, disposition.arm);
+                } else if (disposition.arm === 'clear' && disposition.draft !== 'clear') {
                     inSessionAgentPicker.clearArmedContinuation();
                 }
                 // The outcome itself is recorded, not its rendering: the banner

@@ -688,6 +688,35 @@ describe('useInSessionAgentPickerControls arm draft', () => {
             expect(readPersistedArm()?.intent.selection.connectedServices).toBeUndefined();
         });
 
+        it('allows another account after releasing a refused submission', async () => {
+            const hook = await renderControls();
+            await armTarget(hook, 'agent:codex');
+            await act(async () => {
+                hook.getCurrent().setArmedContinuationConnectedServices(CHOSEN);
+            });
+            const localId = hook.getCurrent().armedContinuationLocalId;
+            if (!localId) throw new Error('Expected armed continuation identity');
+            const submitted = {
+                localId,
+                input: { localId, text: 'Keep this message', meta: {} },
+                currentness: { text: 'Keep this message', mentions: [], attachmentDraftIds: [] },
+            };
+            await act(async () => {
+                expect(hook.getCurrent().recordArmedContinuationSubmission(submitted)).toBe(true);
+            });
+            await act(async () => {
+                expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submitted, 'keep')).toBe(true);
+            });
+
+            expect(hook.getCurrent().armedContinuation?.selection.connectedServices).toEqual(CHOSEN);
+            expect(readPersistedArm()?.submission).toBeUndefined();
+            const next = { v: 1 as const, bindingsByServiceId: { openai: { source: 'native' as const } } };
+            await act(async () => {
+                hook.getCurrent().setArmedContinuationConnectedServices(next);
+            });
+            expect(readPersistedArm()?.intent.selection.connectedServices).toEqual(next);
+        });
+
         it('restores the chosen account with the arm after a remount', async () => {
             existingSessionDraftSemanticValues.write(SCOPE, 'session-1', 'routing.agentContinuation', {
                 backendTargetKey: 'agent:codex',
