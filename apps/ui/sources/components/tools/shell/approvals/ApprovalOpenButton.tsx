@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 /** The compact header control of an approval card that opens the request's own page or tool call. */
 export const ApprovalOpenButton = React.memo(function ApprovalOpenButton(props: Readonly<{
@@ -11,6 +12,9 @@ export const ApprovalOpenButton = React.memo(function ApprovalOpenButton(props: 
     onPress: () => void;
 }>) {
     const { theme } = useUnistyles();
+    useCurrentUiContextLocalCommands([{
+        key: 'approval.open', title: t('toolView.open'), invoke: props.onPress,
+    }], { contextKey: props.testID });
     return (
         <Pressable
             testID={props.testID}

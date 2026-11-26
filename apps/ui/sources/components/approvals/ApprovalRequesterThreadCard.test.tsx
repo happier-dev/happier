@@ -11,6 +11,23 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { getStorage } from '@/sync/domains/state/storage';
 import { useDiscussionRequesterApprovals } from '@/sync/store/hooks';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+
+vi.mock('socket.io-client', async importOriginal =>
+  (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+
+function Publication() {
+  const commands = useCurrentUiContextComposedCommands();
+  const enrichment = React.useMemo(() => ({ commands }), [commands]);
+  usePublishCurrentUiContext(enrichment);
+  return null;
+}
 
 vi.mock('@expo/vector-icons', async () =>
   (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock(),
@@ -200,6 +217,41 @@ describe('ApprovalRequesterThreadCard operation actor', () => {
       chrome: expect.objectContaining({ phonePresentation: 'sheet' }),
     }));
     expect(screen.findByTestId('approval-requester-thread-approve')).toBeNull();
+  });
+
+  it('publishes only the visible stale review navigation and retires its address with the card', async () => {
+    const home = await createPlainArtifactHomeFixture('https://requester-review.test');
+    const modal = vi.spyOn(Modal, 'show').mockReturnValue('requester-review');
+    const approval = approvalOf(request => ({ ...decided(request), status: 'failed', updatedAtMs: 30,
+      execution: { executedAtMs: 30, ok: false, effectAttempted: false,
+        errorCode: 'approval_stale', error: 'approval_stale' } }));
+    function Surface({ visible }: { visible: boolean }) {
+      return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+        <Publication />{visible ? <ApprovalRequesterThreadCard approval={approval} serverId={home.home.id} /> : null}
+      </CurrentUiContextCommandsProvider>;
+    }
+    try {
+      const screen = await renderMountedCurrentUiContext(<Surface visible />);
+      const executor = createDefaultActionExecutor();
+      const commands = async () => {
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        if (!read.ok) throw new Error('Expected requester review context');
+        return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+      };
+      const inventory = await commands();
+      expect(inventory.map(command => command.title).sort()).toEqual([t('approvals.review'), t('toolView.open')].sort());
+      const review = inventory.find(command => command.title === t('approvals.review'))!;
+      await React.act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+        { commandId: review.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+      expect(modal).toHaveBeenCalledWith(expect.objectContaining({ props: expect.objectContaining({
+        artifactId: approval.artifact.id, serverId: home.home.id,
+      }) }));
+      await screen.update(<Surface visible={false} />);
+      expect(await commands()).toEqual([]);
+      expect(await executor.execute('ui.current_context.command.invoke', { commandId: review.id }, { surface: 'agent' }))
+        .toMatchObject({ ok: false });
+      await screen.unmount();
+    } finally { await standardCleanup(); await home.dispose(); modal.mockRestore(); }
   });
 
   it('says the admitted credential the operation used, apart from who asked and who confirmed', async () => {

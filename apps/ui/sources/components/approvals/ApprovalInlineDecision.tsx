@@ -11,6 +11,7 @@ import { t } from '@/text';
 import { ActionApprovalFieldsCard } from './ActionApprovalFieldsCard';
 import { useActionApprovalReview } from './actionApprovalReview';
 import { ApprovalDecisionBar } from './ApprovalDecisionBar';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 function isTargetActionRequest(request: ApprovalRequest | TargetActionApprovalRequestV1): request is TargetActionApprovalRequestV1 {
   return 'kind' in request && request.kind === 'plugin_target_action';
@@ -83,6 +84,9 @@ export function ApprovalInlineDecisionBar(props: Readonly<{
   approveLabel?: string;
 }>) {
   const { decision } = props;
+  useCurrentUiContextLocalCommands(!decision.decidesHere && decision.deciding === null ? [{
+    key: 'approval.review.open', title: props.openPageLabel, invoke: props.onOpenPage,
+  }] : [], { contextKey: props.testIDPrefix });
   const failure = decision.failure ? presentApprovalFailure(decision.failure.cause) : null;
   const refusal = readApprovalDecisionFailure(decision.failure?.cause);
   const diagnosticDetail = refusal && failure?.code

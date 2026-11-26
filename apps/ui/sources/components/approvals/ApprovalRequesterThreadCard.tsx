@@ -15,6 +15,7 @@ import { ApprovalDecisionFooter } from '@/components/tools/shell/approvals/Appro
 import { useFailedApprovalDismissal } from '@/components/tools/shell/approvals/failedApprovalDismissal';
 import { ApprovalPromptChrome } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
 import { ApprovalOpenButton } from '@/components/tools/shell/approvals/ApprovalOpenButton';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import {
   workStatusGlyphColor,
   workStatusWordStyle,
@@ -147,6 +148,9 @@ const RequesterConfirmationThreadCard = React.memo(
       setReviewRequested(true);
       review.reopen();
     }, [review.reopen]);
+    useCurrentUiContextLocalCommands(state.kind === 'stale' ? [{
+      key: 'approval.review.open', title: t('approvals.review'), invoke: openReview,
+    }] : [], { contextKey: artifact.id });
     const openPage = React.useCallback(() => {
       router.push(
         buildApprovalHref(

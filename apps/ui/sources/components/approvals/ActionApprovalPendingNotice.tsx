@@ -16,6 +16,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
 import { useIsInsideItemSection } from '@/components/ui/lists/sectionLeadingColumn';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 /**
  * Core's binding of the shared pending-approval notice (`HappierApprovalPendingNotice`, plugin-ui):
@@ -40,6 +41,9 @@ export const ActionApprovalPendingNotice = React.memo(function ActionApprovalPen
     presentation?: 'row' | 'inline' | 'banner' | 'line';
     testID?: string;
 }>) {
+    useCurrentUiContextLocalCommands([{
+        key: 'approval.review.open', title: props.openLabel ?? t('approvals.review'), invoke: props.onOpenApproval,
+    }], { contextKey: props.testID });
     if (props.presentation === 'banner' || props.presentation === 'line') {
         return <SharedApprovalPendingNotice {...props} presentation={props.presentation} />;
     }
