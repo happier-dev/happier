@@ -3,6 +3,7 @@ import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { buildReviewCommentFixture, createSessionFixture, createRootLayoutFeaturesResponse, createTestSessionTranscriptSource, flushHookEffects, renderWithSessionTranscriptSource, storePlainReviewCommentFixture, wrapWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { loadReviewRunComments, resetReviewRunCommentsForTests } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
@@ -10,10 +11,11 @@ import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { createReducer, reducer } from "@happier-dev/session-core/reducer";
 import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { ReviewCommentTransitionRequestV1Schema, type ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ScmDiffSummaryGenerateSuccessSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { deriveTranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import type { UserTextMessage } from "@happier-dev/session-core/messages";
+import type { Message, UserTextMessage } from "@happier-dev/session-core/messages";
 import { resolveTranscriptToolRouteMessageId } from "@/components/sessions/transcript/transcriptSessionCommon";
 import type { MediaStageProps } from '@/components/ui/media/stage/mediaStageItems';
 import { DEFAULT_SESSION_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
@@ -155,10 +157,6 @@ vi.mock('expo-clipboard', () => ({
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
-}));
-
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: () => true,
 }));
 
 let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
@@ -1704,24 +1702,47 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             v: { role: 'user', content: { type: 'text', text: expect.stringContaining('@happier/plan.adopt') } } } });
     });
 
-    it('can apply accepted findings by sending a structured user message to the parent session', async () => {
-        submitMessageSpy.mockClear();
+    it.each(['review_findings.v1', 'review_findings.v2'] as const)(
+        'persists a decision from %s across remount and applies its current comment revision', async (kind) => {
         const { MessageView } = await import('./MessageView');
-        const comment = {
+        let comment: ReviewCommentV1 = {
             ...buildReviewCommentFixture({
-                id: 'comment-f1', sessionId: 's1', runId: 'run_1', state: 'open', serverRevision: 7,
+                id: 'comment-f1', sessionId: 's1', runId: 'run_1', state: 'proposed', serverRevision: 7,
             }),
             findingId: 'f1',
-            reviewTriageStatus: 'accept' as const,
+            reviewTriageStatus: undefined,
         };
-        const served = await serveStructuredSubmitHome(
-            (request) => request.path === '/v1/reviews/comments' && request.method === 'GET'
-                ? Response.json({ items: [storePlainReviewCommentFixture(comment)], cursor: null })
-                : undefined,
-        );
+        // Recipient input belongs to Account pending delivery; the Session read supplies
+        // its actual access projection to the Action instead of inferring it from the row.
+        const session = createSessionFixture({ id: 's1', accessLevel: 'edit', active: true, pendingVersion: 2 });
+        const sessionHttp = createSessionMetadataHttpBoundary(() => ({ s1: session }));
+        // HTTP owns retained state here; the mounted card, comment repository, and Action
+        // executor stay real, including the CAS request and final pending-message transport.
+        const served = await serveStructuredSubmitHome((request) => {
+            const sessionResponse = sessionHttp.handle(request.url, { method: request.method,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+            if (sessionResponse) return sessionResponse;
+            if (request.path === '/v1/reviews/comments' && request.method === 'GET') {
+                return Response.json({ items: [storePlainReviewCommentFixture(comment)], cursor: null });
+            }
+            if (request.path === '/v1/reviews/comments/comment-f1/transition' && request.method === 'POST') {
+                if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
+                    return Response.json({ error: 'invalid_request' }, { status: 400 });
+                }
+                const transition = ReviewCommentTransitionRequestV1Schema.parse({ ...request.body, commentId: comment.id });
+                if (transition.expectedState !== comment.state || transition.expectedServerRevision !== comment.serverRevision) {
+                    return Response.json({ error: 'review_comment_conflict' }, { status: 409 });
+                }
+                comment = { ...comment, state: transition.toState, reviewTriageStatus: transition.reviewTriageStatus,
+                    serverRevision: comment.serverRevision + 1 };
+                return Response.json({ comment: storePlainReviewCommentFixture(comment) });
+            }
+            return undefined;
+        });
         const scope = { serverId: served.homes.review!.id, accountId: 'account-1' };
+        getStorage().getState().applySessions([{ ...session, serverId: scope.serverId }]);
 
-        const message: any = {
+        const message = {
             kind: 'tool-call',
             id: 'msg-tool-1',
             localId: null,
@@ -1740,10 +1761,11 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             children: [],
             meta: {
                 happier: {
-                    kind: 'review_findings.v1',
+                    kind,
                     payload: {
                         runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
                         summary: 'All good.',
+                        ...(kind === 'review_findings.v2' ? { overviewMarkdown: 'Review overview.', questions: [], assumptions: [] } : {}),
                         findings: [
                             {
                                 id: 'f1',
@@ -1757,15 +1779,15 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                             },
                         ],
                         triage: {
-                            findings: [{ id: 'f1', status: 'accept' }],
+                            findings: [{ id: 'f1', status: 'reject' }],
                         },
                         generatedAtMs: 1,
                     },
                 },
             },
-        };
+        } satisfies Message;
 
-        const screen = await renderScreen(
+        const mount = () => renderScreen(
             <MessageView
                 message={message}
                 metadata={null}
@@ -1779,31 +1801,53 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                 navigate: null,
             },
         );
+        const screen = await mount();
         await act(async () => {
             await loadReviewRunComments({ scope, sessionId: 's1', runId: 'run_1' });
         });
         await flushHookEffects();
-        expect(screen.findByTestId('review-finding:f1')).not.toBeNull();
-
-        expect(screen.findByTestId('review-findings-publish-accepted')).not.toBeNull();
-        await screen.pressByTestIdAsync('review-findings-publish-accepted');
-        await flushHookEffects();
-
-        expect(submitMessageSpy).toHaveBeenCalledTimes(1);
-        const [sessionId, text, _displayText, metaOverrides] = submitMessageSpy.mock.calls[0] as any[];
-        expect(sessionId).toBe('s1');
-        expect(String(text)).toContain('reviews.comments.transition');
-        expect(String(text)).toContain('reviews.comments.setDisposition');
-        expect(metaOverrides).toBeUndefined();
-        await expect(submitMessageSpy.mock.results[0]!.value).resolves.toMatchObject({
-            type: 'wake_pending', persistence: 'pending', wake: { attempted: false, state: 'not_needed' },
+        expect(screen.findByTestId('review-findings-publish-accepted')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('review-findings-apply-triage')).toBeNull();
+        await screen.pressByTestIdAsync('review-finding-triage:f1:accept');
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(comment).toMatchObject({ state: 'open', reviewTriageStatus: 'accept', serverRevision: 8 });
+            expect(screen.findByTestId('review-finding-triage:f1:accept')?.props.accessibilityState).toMatchObject({ checked: true });
         });
-        const writes = served.requests.filter(request => (
+        expect(served.requests.filter(request => request.path.endsWith('/transition')).map(request => request.body)).toEqual([
+            expect.objectContaining({ expectedState: 'proposed', expectedServerRevision: 7, toState: 'open', reviewTriageStatus: 'accept' }),
+        ]);
+
+        await act(async () => { screen.unmount(); });
+        // Release the loaded projection too: the next mount must read the retained HTTP choice.
+        resetReviewRunCommentsForTests();
+        const remounted = await mount();
+        await act(async () => {
+            await loadReviewRunComments({ scope, sessionId: 's1', runId: 'run_1' });
+        });
+        await flushHookEffects();
+        expect(remounted.findByTestId('review-finding-triage:f1:accept')?.props.accessibilityState).toMatchObject({ checked: true });
+        expect(remounted.findByTestId('review-findings-apply-triage')).toBeNull();
+        await remounted.pressByTestIdAsync('review-findings-publish-accepted');
+        const writes = () => served.requests.filter(request => (
             request.path === '/v2/sessions/s1/pending' && request.method === 'POST'
         ));
-        expect(writes).toHaveLength(1);
-        expect(writes[0]?.body).toMatchObject({ requestedAction: { v: 1, kind: 'enqueue' }, content: { t: 'plain',
-            v: { role: 'user', content: { type: 'text', text: expect.stringContaining('reviews.comments.transition') } } } });
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            const visible = remounted.findAll(node => typeof node.type === 'string')
+                .flatMap(node => node.children.filter(child => typeof child === 'string')).join('\n');
+            expect(writes(), visible).toHaveLength(1);
+        });
+        expect(writes()[0]?.body).toMatchObject({ requestedAction: { v: 1, kind: 'steer_if_active' }, content: { t: 'plain',
+            v: { role: 'user', content: { type: 'text' } } } });
+        for (const text of [
+            expect.stringContaining('reviews.comments.transition'),
+            expect.stringContaining('reviews.comments.setDisposition'),
+            expect.stringContaining('comment-f1'),
+            expect.stringMatching(/"expectedServerRevision"\s*:\s*8/),
+        ]) {
+            expect(writes()[0]?.body).toMatchObject({ content: { v: { content: { text } } } });
+        }
     });
 
     it.each([
