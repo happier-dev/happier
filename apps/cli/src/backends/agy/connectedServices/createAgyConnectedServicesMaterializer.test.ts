@@ -2,7 +2,6 @@ import { lstat, mkdir, readFile, readdir, realpath, utimes, writeFile } from 'no
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
-import { AGY_OAUTH_CLIENT_ID, AGY_OAUTH_CLIENT_SECRET, AGY_OAUTH_TOKEN_URL } from '@happier-dev/agents';
 import { materializeConnectedServicesForSpawn } from '@/daemon/connectedServices/materialize/materializeConnectedServicesForSpawn';
 import { resolveConnectedServiceHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -20,9 +19,8 @@ describe('Antigravity connected-service materialization through the catalog', ()
     await withTempDir('agy-copied-restart-', async cwd => {
       const native = join(cwd, 'native');
       await mkdir(join(native, 'config', 'skills'), { recursive: true });
-      await mkdir(join(native, 'antigravity-acp'), { recursive: true });
+      await mkdir(join(native, 'antigravity-cli'), { recursive: true });
       await writeFile(join(native, 'config', 'skills', 'SKILL.md'), 'native skill');
-      await writeFile(join(native, 'antigravity-acp', 'trusted_workspaces.json'), '{}');
       const materialize = (key: string) => materializeConnectedServicesForSpawn({
         agentId: 'agy', materializationKey: key, activeServerDir: cwd,
         baseDir: join(cwd, 'materialized'), sessionDirectory: cwd,
@@ -39,7 +37,7 @@ describe('Antigravity connected-service materialization through the catalog', ()
       const second = await materialize('second');
       expect(second!.env.GEMINI_HOME).toBe(home);
       expect((await readdir(join(home, 'config'))).filter(name => name.includes('.local-'))).toEqual([]);
-      expect((await readdir(join(home, 'antigravity-acp'))).filter(name => name.includes('.local-'))).toEqual([]);
+      expect((await readdir(join(home, 'antigravity-cli'))).filter(name => name.includes('.local-'))).toEqual([]);
       const after = await lstat(copiedSkill);
       expect(after.ino).toBe(before.ino);
       expect(after.mtimeMs).toBe(before.mtimeMs);
@@ -53,8 +51,8 @@ describe('Antigravity connected-service materialization through the catalog', ()
   it('imports private conversation sidecars and brain before switching isolated state to shared', async () => {
     await withTempDir('agy-isolated-shared-', async cwd => {
       const native = join(cwd, 'native');
-      await mkdir(join(native, 'antigravity-acp'), { recursive: true });
-      await writeFile(join(native, 'antigravity-acp', 'acp_token.json'), 'native credential');
+      await mkdir(join(native, 'antigravity-cli'), { recursive: true });
+      await writeFile(join(native, 'antigravity-cli', 'antigravity-oauth-token'), 'native credential');
       const materialize = (key: string, stateMode: 'isolated' | 'shared') => materializeConnectedServicesForSpawn({
         agentId: 'agy', materializationKey: key, activeServerDir: cwd,
         baseDir: join(cwd, 'materialized'), sessionDirectory: cwd,
@@ -71,33 +69,30 @@ describe('Antigravity connected-service materialization through the catalog', ()
         ['conversations/session-a.meta', new TextEncoder().encode('{"id":"session-a"}')],
         ['brain/session-a/artifact.md', new TextEncoder().encode('private artifact')],
       ] as const;
-      await mkdir(join(home, 'antigravity-acp', 'conversations'), { recursive: true });
-      await mkdir(join(home, 'antigravity-acp', 'brain', 'session-a'), { recursive: true });
-      for (const [path, bytes] of privateFiles) await writeFile(join(home, 'antigravity-acp', path), bytes);
-      await writeFile(join(home, 'antigravity-acp', 'unknown-private.json'), 'account-local');
+      await mkdir(join(home, 'antigravity-cli', 'conversations'), { recursive: true });
+      await mkdir(join(home, 'antigravity-cli', 'brain', 'session-a'), { recursive: true });
+      for (const [path, bytes] of privateFiles) await writeFile(join(home, 'antigravity-cli', path), bytes);
+      await writeFile(join(home, 'antigravity-cli', 'unknown-private.json'), 'account-local');
       const shared = await materialize('shared', 'shared');
       expect(shared!.env.GEMINI_HOME).toBe(home);
       for (const [path, bytes] of privateFiles) {
-        expect(new Uint8Array(await readFile(join(home, 'antigravity-acp', path)))).toEqual(bytes);
-        expect(new Uint8Array(await readFile(join(native, 'antigravity-acp', path)))).toEqual(bytes);
+        expect(new Uint8Array(await readFile(join(home, 'antigravity-cli', path)))).toEqual(bytes);
+        expect(new Uint8Array(await readFile(join(native, 'antigravity-cli', path)))).toEqual(bytes);
       }
-      expect(await realpath(join(home, 'antigravity-acp', 'conversations'))).toBe(join(native, 'antigravity-acp', 'conversations'));
-      expect(await realpath(join(home, 'antigravity-acp', 'brain'))).toBe(join(native, 'antigravity-acp', 'brain'));
-      expect(await readFile(join(native, 'antigravity-acp', 'acp_token.json'), 'utf8')).toBe('native credential');
-      await expect(lstat(join(native, 'antigravity-acp', 'unknown-private.json'))).rejects.toMatchObject({ code: 'ENOENT' });
-      expect(JSON.parse(await readFile(join(home, 'antigravity-acp', 'acp_token.json'), 'utf8'))).toMatchObject({ refresh_token: 'fixture-refresh' });
+      expect(await realpath(join(home, 'antigravity-cli', 'conversations'))).toBe(join(native, 'antigravity-cli', 'conversations'));
+      expect(await realpath(join(home, 'antigravity-cli', 'brain'))).toBe(join(native, 'antigravity-cli', 'brain'));
+      expect(await readFile(join(native, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8')).toBe('native credential');
+      await expect(lstat(join(native, 'antigravity-cli', 'unknown-private.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(JSON.parse(await readFile(join(home, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8'))).toMatchObject({ token: { refresh_token: 'fixture-refresh' } });
     });
   });
   it('leaves account credentials untouched when its selected group target is no longer current', async () => {
     await withTempDir('agy-group-currentness-', async cwd => {
       const home = resolveConnectedServiceHomeDir({ activeServerDir: cwd, serviceId: 'antigravity', profileId: record.profileId, agentId: 'agy' });
-      const tokenPath = join(home, 'antigravity-acp', 'acp_token.json');
-      const settingsPath = join(home, 'antigravity-acp', 'settings.json');
-      await mkdir(join(home, 'antigravity-acp'), { recursive: true });
-      const currentToken = JSON.stringify({ refresh_token: 'current-grant', project_id: 'current-project' });
-      const currentSettings = JSON.stringify({ auth: { type: 'oauth-personal' } });
+      const tokenPath = join(home, 'antigravity-cli', 'antigravity-oauth-token');
+      await mkdir(join(home, 'antigravity-cli'), { recursive: true });
+      const currentToken = JSON.stringify({ auth_method: 'consumer', token: { refresh_token: 'current-grant' } });
       await writeFile(tokenPath, currentToken);
-      await writeFile(settingsPath, currentSettings);
       const selection = {
         kind: 'group', serviceId: 'antigravity', groupId: 'team', activeProfileId: record.profileId,
         fallbackProfileId: record.profileId, generation: 7, credentialRevision: null, record, policy: null,
@@ -114,13 +109,12 @@ describe('Antigravity connected-service materialization through the catalog', ()
         }),
       });
       expect(await readFile(tokenPath, 'utf8')).toBe(currentToken);
-      expect(await readFile(settingsPath, 'utf8')).toBe(currentSettings);
       expect(result?.diagnostics).toContainEqual(expect.objectContaining({
         severity: 'blocking', reason: 'authoritative_group_target_changed_before_materialization',
       }));
     });
   });
-  it('reuses the selected account home and preserves its private history and discovered project on restart', async () => {
+  it('reuses the selected account home and preserves its private history on restart', async () => {
     await withTempDir('agy-durable-account-', async cwd => {
       const materialize = (key: string) => materializeConnectedServicesForSpawn({
         agentId: 'agy', materializationKey: key, activeServerDir: cwd, baseDir: join(cwd, 'materialized'), sessionDirectory: cwd,
@@ -130,27 +124,26 @@ describe('Antigravity connected-service materialization through the catalog', ()
       const first = await materialize('first-session');
       const home = resolveConnectedServiceHomeDir({ activeServerDir: cwd, serviceId: 'antigravity', profileId: 'a', agentId: 'agy' });
       expect(first!.env.GEMINI_HOME).toBe(home);
-      await mkdir(join(home, 'antigravity-acp', 'conversations'), { recursive: true });
-      await mkdir(join(home, 'antigravity-acp', 'brain', 'session-a'), { recursive: true });
-      await writeFile(join(home, 'antigravity-acp', 'conversations', 'session-a.db'), 'private conversation');
-      await writeFile(join(home, 'antigravity-acp', 'brain', 'session-a', 'artifact.md'), 'private artifact');
-      const tokenPath = join(home, 'antigravity-acp', 'acp_token.json');
-      const token: unknown = JSON.parse(await readFile(tokenPath, 'utf8'));
-      await writeFile(tokenPath, JSON.stringify({ ...(token as Record<string, unknown>), project_id: 'runtime-discovered-project' }));
+      await mkdir(join(home, 'antigravity-cli', 'conversations'), { recursive: true });
+      await mkdir(join(home, 'antigravity-cli', 'brain', 'session-a'), { recursive: true });
+      await writeFile(join(home, 'antigravity-cli', 'conversations', 'session-a.db'), 'private conversation');
+      await writeFile(join(home, 'antigravity-cli', 'brain', 'session-a', 'artifact.md'), 'private artifact');
+      const tokenPath = join(home, 'antigravity-cli', 'antigravity-oauth-token');
+      await writeFile(tokenPath, 'logged out');
       const restarted = await materialize('second-session');
       expect(restarted!.env.GEMINI_HOME).toBe(home);
       expect(restarted!.cleanupOnFailure).toBeNull();
       expect(restarted!.cleanupOnExit).toBeNull();
-      expect(await readFile(join(home, 'antigravity-acp', 'conversations', 'session-a.db'), 'utf8')).toBe('private conversation');
-      expect(await readFile(join(home, 'antigravity-acp', 'brain', 'session-a', 'artifact.md'), 'utf8')).toBe('private artifact');
-      expect(JSON.parse(await readFile(tokenPath, 'utf8'))).toMatchObject({ project_id: 'runtime-discovered-project' });
+      expect(await readFile(join(home, 'antigravity-cli', 'conversations', 'session-a.db'), 'utf8')).toBe('private conversation');
+      expect(await readFile(join(home, 'antigravity-cli', 'brain', 'session-a', 'artifact.md'), 'utf8')).toBe('private artifact');
+      expect(JSON.parse(await readFile(tokenPath, 'utf8'))).toMatchObject({ token: { refresh_token: 'fixture-refresh' } });
     });
   });
   it('keeps isolated account histories private across A to B and same-account refresh despite a prior home', async () => {
     await withTempDir('agy-isolated-accounts-', async cwd => {
       const native = join(cwd, 'native');
-      await mkdir(join(native, 'antigravity-acp', 'conversations'), { recursive: true });
-      await writeFile(join(native, 'antigravity-acp', 'conversations', 'native.db'), 'native conversation');
+      await mkdir(join(native, 'antigravity-cli', 'conversations'), { recursive: true });
+      await writeFile(join(native, 'antigravity-cli', 'conversations', 'native.db'), 'native conversation');
       const materialize = (key: string, selected: ConnectedServiceCredentialRecordV1, previousMaterializedRoot?: string) => materializeConnectedServicesForSpawn({
         agentId: 'agy', materializationKey: key, activeServerDir: cwd,
         baseDir: join(cwd, 'materialized'), sessionDirectory: cwd, previousMaterializedRoot,
@@ -161,10 +154,10 @@ describe('Antigravity connected-service materialization through the catalog', ()
       });
       const a = await materialize('account-a', record);
       const aHome = a!.env.GEMINI_HOME;
-      await mkdir(join(aHome, 'antigravity-acp', 'conversations'), { recursive: true });
-      await mkdir(join(aHome, 'antigravity-acp', 'brain', 'private-a'), { recursive: true });
-      await writeFile(join(aHome, 'antigravity-acp', 'conversations', 'private-a.db'), 'account-a conversation');
-      await writeFile(join(aHome, 'antigravity-acp', 'brain', 'private-a', 'artifact.md'), 'account-a artifact');
+      await mkdir(join(aHome, 'antigravity-cli', 'conversations'), { recursive: true });
+      await mkdir(join(aHome, 'antigravity-cli', 'brain', 'private-a'), { recursive: true });
+      await writeFile(join(aHome, 'antigravity-cli', 'conversations', 'private-a.db'), 'account-a conversation');
+      await writeFile(join(aHome, 'antigravity-cli', 'brain', 'private-a', 'artifact.md'), 'account-a artifact');
       const selectedB: ConnectedServiceCredentialRecordV1 = {
         ...record, profileId: 'b', oauth: { ...record.oauth,
           refreshToken: 'account-b-refresh', accessToken: 'account-b-access', providerAccountId: 'account-b',
@@ -174,22 +167,22 @@ describe('Antigravity connected-service materialization through the catalog', ()
       const bHome = b!.env.GEMINI_HOME;
       expect(bHome).not.toBe(aHome);
       for (const home of [bHome, native]) {
-        await expect(lstat(join(home, 'antigravity-acp', 'conversations', 'private-a.db'))).rejects.toMatchObject({ code: 'ENOENT' });
-        await expect(lstat(join(home, 'antigravity-acp', 'brain', 'private-a', 'artifact.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(lstat(join(home, 'antigravity-cli', 'conversations', 'private-a.db'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(lstat(join(home, 'antigravity-cli', 'brain', 'private-a', 'artifact.md'))).rejects.toMatchObject({ code: 'ENOENT' });
       }
       const refreshed = await materialize('refresh-a', { ...record, oauth: { ...record.oauth, accessToken: 'refreshed-a' } }, aHome);
       expect(refreshed!.env.GEMINI_HOME).toBe(aHome);
-      expect(await readFile(join(aHome, 'antigravity-acp', 'conversations', 'private-a.db'), 'utf8')).toBe('account-a conversation');
-      expect(await readFile(join(aHome, 'antigravity-acp', 'brain', 'private-a', 'artifact.md'), 'utf8')).toBe('account-a artifact');
+      expect(await readFile(join(aHome, 'antigravity-cli', 'conversations', 'private-a.db'), 'utf8')).toBe('account-a conversation');
+      expect(await readFile(join(aHome, 'antigravity-cli', 'brain', 'private-a', 'artifact.md'), 'utf8')).toBe('account-a artifact');
       for (const home of [aHome, bHome]) {
-        await expect(lstat(join(home, 'antigravity-acp', 'conversations', 'native.db'))).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(lstat(join(home, 'antigravity-cli', 'conversations', 'native.db'))).rejects.toMatchObject({ code: 'ENOENT' });
       }
-      expect(await readFile(join(native, 'antigravity-acp', 'conversations', 'native.db'), 'utf8')).toBe('native conversation');
-      expect(JSON.parse(await readFile(join(aHome, 'antigravity-acp', 'acp_token.json'), 'utf8'))).toMatchObject({ token: 'refreshed-a' });
-      expect(JSON.parse(await readFile(join(bHome, 'antigravity-acp', 'acp_token.json'), 'utf8'))).toMatchObject({ token: 'account-b-access' });
+      expect(await readFile(join(native, 'antigravity-cli', 'conversations', 'native.db'), 'utf8')).toBe('native conversation');
+      expect(JSON.parse(await readFile(join(aHome, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8'))).toMatchObject({ token: { access_token: 'refreshed-a' } });
+      expect(JSON.parse(await readFile(join(bHome, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8'))).toMatchObject({ token: { access_token: 'account-b-access' } });
     });
   });
-  it('writes only known OAuth scopes and keeps temporary probes outside durable history', async () => {
+  it('keeps temporary probes outside durable history', async () => {
     await withTempDir('agy-probe-account-', async cwd => {
       const durable = resolveConnectedServiceHomeDir({ activeServerDir: cwd, serviceId: 'antigravity', profileId: 'a', agentId: 'agy' });
       const selected: ConnectedServiceCredentialRecordV1 = { ...record, oauth: { ...record.oauth, scope: 'cloud-platform userinfo.email' } };
@@ -199,59 +192,12 @@ describe('Antigravity connected-service materialization through the catalog', ()
         recordsByServiceId: new Map([['antigravity', selected]]),
       });
       expect(probe!.env.GEMINI_HOME).not.toBe(durable);
-      await mkdir(join(probe!.env.GEMINI_HOME, 'antigravity-acp', 'conversations'), { recursive: true });
-      await writeFile(join(probe!.env.GEMINI_HOME, 'antigravity-acp', 'conversations', 'probe-session.db'), 'probe conversation');
-      expect((await lstat(join(probe!.env.GEMINI_HOME, 'antigravity-acp', 'conversations'))).isSymbolicLink()).toBe(false);
-      await expect(lstat(join(cwd, '.gemini', 'antigravity-acp', 'conversations'))).rejects.toMatchObject({ code: 'ENOENT' });
-      expect(JSON.parse(await readFile(join(probe!.env.GEMINI_HOME, 'antigravity-acp', 'acp_token.json'), 'utf8'))).toMatchObject({ scopes: ['cloud-platform', 'userinfo.email'] });
+      await mkdir(join(probe!.env.GEMINI_HOME, 'antigravity-cli', 'conversations'), { recursive: true });
+      await writeFile(join(probe!.env.GEMINI_HOME, 'antigravity-cli', 'conversations', 'probe-session.db'), 'probe conversation');
+      expect((await lstat(join(probe!.env.GEMINI_HOME, 'antigravity-cli', 'conversations'))).isSymbolicLink()).toBe(false);
+      await expect(lstat(join(cwd, '.gemini', 'antigravity-cli', 'conversations'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(JSON.parse(await readFile(join(probe!.env.GEMINI_HOME, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8'))).toMatchObject({ token: { refresh_token: 'fixture-refresh' } });
       await expect(lstat(durable)).rejects.toMatchObject({ code: 'ENOENT' });
-      const unknown = await materializeConnectedServicesForSpawn({
-        agentId: 'agy', materializationKey: 'unknown', activeServerDir: cwd, baseDir: join(cwd, 'materialized'), sessionDirectory: cwd,
-        processEnv: { HOME: cwd }, recordsByServiceId: new Map([['antigravity', record]]),
-      });
-      expect(JSON.parse(await readFile(join(unknown!.env.GEMINI_HOME, 'antigravity-acp', 'acp_token.json'), 'utf8'))).toMatchObject({ scopes: [] });
-    });
-  });
-  it('does not carry a different grant project into a replacement account credential', async () => {
-    await withTempDir('agy-replaced-grant-', async cwd => {
-      const home = resolveConnectedServiceHomeDir({ activeServerDir: cwd, serviceId: 'antigravity', profileId: 'a', agentId: 'agy' });
-      await mkdir(join(home, 'antigravity-acp'), { recursive: true });
-      await writeFile(join(home, 'antigravity-acp', 'acp_token.json'), JSON.stringify({
-        client_id: AGY_OAUTH_CLIENT_ID, token_uri: AGY_OAUTH_TOKEN_URL,
-        refresh_token: 'previous-grant', project_id: 'previous-project',
-      }));
-      const result = await materializeConnectedServicesForSpawn({
-        agentId: 'agy', materializationKey: 'replace', activeServerDir: cwd, baseDir: join(cwd, 'materialized'), sessionDirectory: cwd,
-        processEnv: { HOME: cwd }, recordsByServiceId: new Map([['antigravity', record]]),
-      });
-      expect(JSON.parse(await readFile(join(result!.env.GEMINI_HOME, 'antigravity-acp', 'acp_token.json'), 'utf8'))).not.toHaveProperty('project_id');
-    });
-  });
-  it('keeps the registered OAuth issuer despite unrelated machine environment overrides', async () => {
-    await withTempDir('agy-configured-issuer-', async cwd => {
-      const result = await materializeConnectedServicesForSpawn({
-        agentId: 'agy', materializationKey: 'issuer', activeServerDir: cwd, baseDir: join(cwd, 'materialized'), sessionDirectory: cwd,
-        processEnv: { HOME: cwd,
-          HAPPIER_CONNECTED_SERVICES_ANTIGRAVITY_OAUTH_CLIENT_ID: 'fixture-client',
-          HAPPIER_CONNECTED_SERVICES_ANTIGRAVITY_OAUTH_CLIENT_SECRET: 'fixture-client-secret',
-          HAPPIER_CONNECTED_SERVICES_ANTIGRAVITY_OAUTH_TOKEN_URL: 'https://issuer.example.test/token',
-        }, recordsByServiceId: new Map([['antigravity', record]]),
-      });
-      expect(JSON.parse(await readFile(join(result!.env.GEMINI_HOME, 'antigravity-acp', 'acp_token.json'), 'utf8'))).toMatchObject({
-        client_id: AGY_OAUTH_CLIENT_ID, client_secret: AGY_OAUTH_CLIENT_SECRET, token_uri: AGY_OAUTH_TOKEN_URL,
-      });
-    });
-  });
-  it('preserves only the selected consumer project in the private token instead of GCP business settings', async () => {
-    await withTempDir('agy-selected-project-', async cwd => {
-      const selected: ConnectedServiceCredentialRecordV1 = { ...record, oauth: { ...record.oauth, raw: { project_id: 'selected-consumer-project' } } };
-      const result = await materializeConnectedServicesForSpawn({
-        agentId: 'agy', materializationKey: 'project', activeServerDir: cwd, baseDir: join(cwd, 'materialized'), sessionDirectory: cwd,
-        processEnv: { HOME: cwd }, recordsByServiceId: new Map([['antigravity', selected]]),
-        accountSettings: { connectedServicesProviderStateSharingSettingsV1: { v: 1, defaults: { configMode: 'isolated', stateMode: 'isolated' }, byAgentId: {} } },
-      });
-      expect(JSON.parse(await readFile(join(result!.env.GEMINI_HOME, 'antigravity-acp', 'acp_token.json'), 'utf8'))).toMatchObject({ project_id: 'selected-consumer-project' });
-      expect(JSON.parse(await readFile(join(result!.env.GEMINI_HOME, 'antigravity-acp', 'settings.json'), 'utf8'))).toEqual({ auth: { type: 'oauth-personal' } });
     });
   });
   it('establishes declared shared child directories on the first connected launch', async () => {
@@ -262,20 +208,20 @@ describe('Antigravity connected-service materialization through the catalog', ()
         processEnv: { HOME: cwd, GEMINI_HOME: native }, recordsByServiceId: new Map([['antigravity', record]]),
       });
       expect(result).not.toBeNull();
-      await expect(realpath(join(result!.env.GEMINI_HOME, 'antigravity-acp', 'conversations'))).resolves.toBe(join(native, 'antigravity-acp', 'conversations'));
-      await expect(realpath(join(result!.env.GEMINI_HOME, 'antigravity-acp', 'brain'))).resolves.toBe(join(native, 'antigravity-acp', 'brain'));
+      await expect(realpath(join(result!.env.GEMINI_HOME, 'antigravity-cli', 'conversations'))).resolves.toBe(join(native, 'antigravity-cli', 'conversations'));
+      await expect(realpath(join(result!.env.GEMINI_HOME, 'antigravity-cli', 'brain'))).resolves.toBe(join(native, 'antigravity-cli', 'brain'));
+      await expect(realpath(join(result!.env.GEMINI_HOME, 'antigravity-cli', 'annotations'))).resolves.toBe(join(native, 'antigravity-cli', 'annotations'));
     });
   });
   it('keeps the auth parent private while inheriting config and sharing conversation sidecars and brain', async () => {
     await withTempDir('agy-materialized-', async (cwd) => {
       const native = join(cwd, 'native');
-      await mkdir(join(native, 'antigravity-acp', 'conversations'), { recursive: true });
-      await mkdir(join(native, 'antigravity-acp', 'brain', 'session-a'), { recursive: true });
+      await mkdir(join(native, 'antigravity-cli', 'conversations'), { recursive: true });
+      await mkdir(join(native, 'antigravity-cli', 'brain', 'session-a'), { recursive: true });
       await mkdir(join(native, 'config', 'skills'), { recursive: true });
       await writeFile(join(native, 'config', 'skills', 'SKILL.md'), 'native skill');
-      await writeFile(join(native, 'antigravity-acp', 'acp_token.json'), 'native credential');
-      await writeFile(join(native, 'antigravity-acp', 'trusted_workspaces.json'), '{}');
-      await writeFile(join(native, 'antigravity-acp', 'conversations', 'session-a.db-wal'), 'wal');
+      await writeFile(join(native, 'antigravity-cli', 'antigravity-oauth-token'), 'native credential');
+      await writeFile(join(native, 'antigravity-cli', 'conversations', 'session-a.db-wal'), 'wal');
       const materialize = (key: string, profileId: string) => materializeConnectedServicesForSpawn({
         agentId: 'agy', materializationKey: key, activeServerDir: cwd, baseDir: join(cwd, 'materialized'), sessionDirectory: cwd,
         processEnv: { HOME: cwd, GEMINI_HOME: native }, recordsByServiceId: new Map([['antigravity', { ...record, profileId }]]),
@@ -286,22 +232,22 @@ describe('Antigravity connected-service materialization through the catalog', ()
       expect(b).not.toBeNull();
       const aHome = a!.env.GEMINI_HOME;
       const bHome = b!.env.GEMINI_HOME;
-      expect(a!.env).toMatchObject({ AGY_ACP_FORCE_FILE_STORAGE: '1' });
-      expect(a!.env.HOME).toBeUndefined();
+      // File token storage is scoped to the provider child at launch, never to the session environment.
+      expect(a!.env).not.toHaveProperty('AGY_CLI_FORCE_FILE_TOKEN_STORAGE');
+      expect(a!.env).not.toHaveProperty('HOME');
       expect(aHome).not.toBe(bHome);
-      expect((await lstat(join(aHome, 'antigravity-acp'))).isSymbolicLink()).toBe(false);
-      expect(await realpath(join(aHome, 'antigravity-acp', 'conversations'))).toBe(await realpath(join(native, 'antigravity-acp', 'conversations')));
-      expect(await realpath(join(aHome, 'antigravity-acp', 'brain'))).toBe(await realpath(join(native, 'antigravity-acp', 'brain')));
+      expect((await lstat(join(aHome, 'antigravity-cli'))).isSymbolicLink()).toBe(false);
+      expect(await realpath(join(aHome, 'antigravity-cli', 'conversations'))).toBe(await realpath(join(native, 'antigravity-cli', 'conversations')));
+      expect(await realpath(join(aHome, 'antigravity-cli', 'brain'))).toBe(await realpath(join(native, 'antigravity-cli', 'brain')));
       expect(await readFile(join(aHome, 'config', 'skills', 'SKILL.md'), 'utf8')).toBe('native skill');
-      expect(await readFile(join(bHome, 'antigravity-acp', 'conversations', 'session-a.db-wal'), 'utf8')).toBe('wal');
-      const token = JSON.parse(await readFile(join(aHome, 'antigravity-acp', 'acp_token.json'), 'utf8'));
-      expect(token).toMatchObject({ refresh_token: 'fixture-refresh', token: 'fixture-access', expiry: '2033-05-18T03:33:20Z' });
-      expect(JSON.parse(await readFile(join(aHome, 'antigravity-acp', 'settings.json'), 'utf8'))).toEqual({ auth: { type: 'oauth-personal' } });
-      await writeFile(join(aHome, 'antigravity-acp', 'acp_token.json'), 'logged out');
-      await writeFile(join(aHome, 'antigravity-acp', 'trusted_workspaces.json'), '{"a":true}');
-      expect(await readFile(join(native, 'antigravity-acp', 'acp_token.json'), 'utf8')).toBe('native credential');
-      expect(await readFile(join(bHome, 'antigravity-acp', 'acp_token.json'), 'utf8')).not.toBe('logged out');
-      expect(await readFile(join(native, 'antigravity-acp', 'trusted_workspaces.json'), 'utf8')).toBe('{}');
+      expect(await readFile(join(bHome, 'antigravity-cli', 'conversations', 'session-a.db-wal'), 'utf8')).toBe('wal');
+      const token = JSON.parse(await readFile(join(aHome, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8'));
+      expect(token).toEqual({ auth_method: 'consumer', id_token_email: 'a@example.test', token: {
+        access_token: 'fixture-access', refresh_token: 'fixture-refresh', token_type: 'Bearer', expiry: '2033-05-18T03:33:20.000Z', expires_in: expect.any(Number),
+      } });
+      await writeFile(join(aHome, 'antigravity-cli', 'antigravity-oauth-token'), 'logged out');
+      expect(await readFile(join(native, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8')).toBe('native credential');
+      expect(await readFile(join(bHome, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8')).not.toBe('logged out');
     });
   });
 });

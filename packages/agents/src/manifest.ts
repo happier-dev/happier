@@ -567,9 +567,7 @@ export const AGENTS_CORE = {
                 continuityMode: 'restart_shared_state_required',
                 supportedTransitions: ['same_connected_group'],
                 providerStateSharingRequired: {
-                    // Native login runs `agy acp` while connected accounts run the pinned server;
-                    // their conversation stores differ, so only connected-to-connected can continue.
-                    supportedTransitions: ['connected_to_connected'],
+                    supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
                 },
             },
             providerStateSharing: {
@@ -599,8 +597,8 @@ export const AGENTS_CORE = {
         },
         handoff: { vendorStateTransfer: 'unsupported' },
         // Interactive `agy` stays the system-first terminal/local-control surface.
-        // ACP sessions (`agy acp` or the pinned `agy_acp_server`) never share session identity
-        // with it until a real create → list/load round trip proves equivalence.
+        // `agy acp` sessions never share session identity with it until a real
+        // create → list/load round trip proves equivalence.
         localControl: { supported: true, topology: 'exclusive', attachStrategy: 'tmux' },
         tools: { delivery: 'native_mcp', support: 'supported' },
         media: {
