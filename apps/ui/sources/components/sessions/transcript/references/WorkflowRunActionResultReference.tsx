@@ -150,28 +150,15 @@ function MountedWorkflowRunReference(props: Readonly<{
             transcriptSource.navigate?.(createWorkflowRunRoute(runId, props.serverId));
         });
     };
-    const needsReview = status?.bucket === 'needs_you';
     const pointer = notice?.transcriptPointer;
     const held = summary?.heldStep;
     const permission = held?.kind === 'child_session_permission' ? held : null;
     const reviewInvocationId = (permission === null ? held?.invocationId : undefined)
         ?? (notice?.wake === 'needs_you' && pointer?.kind === 'workflow_run' && pointer.runId === runId
             ? pointer.invocationRecordId : undefined);
-    const review = (): void => {
-        if (permission !== null) {
-            navigateWithBlurOnWeb(() => transcriptSource.navigate?.(buildScopedSessionRouteHref({
-                sessionId: permission.sessionId, serverId: props.serverId,
-            })));
-            return;
-        }
-        if (!reviewInvocationId) {
-            open();
-            return;
-        }
-        navigateWithBlurOnWeb(() => {
-            transcriptSource.navigate?.(createWorkflowInvocationRoute(runId, reviewInvocationId, props.serverId));
-        });
-    };
+    const attentionHref = permission !== null
+        ? buildScopedSessionRouteHref({ sessionId: permission.sessionId, serverId: props.serverId })
+        : reviewInvocationId ? createWorkflowInvocationRoute(runId, reviewInvocationId, props.serverId) : null;
     // A workflow written for this task has no source in the library; only it can be saved as one.
     const sourceless = summary?.sourceArtifactId === null;
     const facts: HappierWorkUpdateCardFact[] = summary ? [{
@@ -203,9 +190,10 @@ function MountedWorkflowRunReference(props: Readonly<{
                 actions={canNavigate ? (
                     <>
                         {sourceless && summary ? <SaveRunAsWorkflowAction runId={runId} serverId={props.serverId} /> : null}
-                        {needsReview
+                        {status?.bucket === 'needs_you' && attentionHref !== null
                             ? <RoundButton testID={`transcript-workflow-run-${runId}-review`} size="small" display="default"
-                                title={permission === null ? t('inbox.work.rows.review') : t('runs.openSession')} onPress={review} />
+                                title={permission === null ? t('inbox.work.rows.review') : t('runs.openSession')}
+                                onPress={() => navigateWithBlurOnWeb(() => transcriptSource.navigate?.(attentionHref))} />
                             : <RoundButton testID={`transcript-workflow-run-${runId}-open`} size="small" display="secondary"
                                 title={t('workflows.run.open')} accessibilityLabel={[t('workflows.run.open'), title].join(', ')} onPress={open} />}
                     </>

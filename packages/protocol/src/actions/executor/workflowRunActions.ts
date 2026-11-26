@@ -3028,7 +3028,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             let resultProvenance: WorkflowProgressEnvelopeV1['resultProvenance'];
             let startWaitReason: WorkflowRunSummaryV1['startWaitReason'] = null;
             let stepProgressCurrentness = openRootProgress(run.id, rootProgressByRunId[run.id], undefined, run.ownerAccountId).stepProgressCurrentness;
-            let heldStep: WorkflowRunSummaryV1['heldStep'] = args.input.attention === 'required' ? null : undefined;
+            const hasHeldProjection = Object.hasOwn(heldProgressByRunId, run.id);
+            let heldStep: WorkflowRunSummaryV1['heldStep'] = hasHeldProjection || args.input.attention === 'required' ? null : undefined;
             try {
               const census = WorkflowRunRecipientCensusResponseV1Schema.parse(keyCensusByRunId[run.id]);
               // Control access is admitted by the Home even before the Machine seals the snapshot.
@@ -3077,7 +3078,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               assertRunResourceRestriction(args.context, { machineId: accepted.machineId,
                 project: accepted.workspaceTarget.project }, deps.normalizeAbsolutePath);
               matchesResource = true;
-              if (args.input.attention === 'required') {
+              if (hasHeldProjection) {
                 // Summarized rows name the hold without opening the frozen program.
                 heldStep = projectHeldStep(heldProgressByRunId[run.id], run.id, census.ownerAccountId, resolved.encryption,
                   path => acceptedOpen ? authoredStepContext(openProgram(), path) : summarizedStepContext(stepNames, path));

@@ -4,6 +4,7 @@ import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionRes
 import { serializeWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, type WorkflowDefinitionV1 } from "@happier-dev/protocol/workflows";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { materializeWorkflowAcceptedSnapshotFixture } from "@/testkit/workflowAcceptedSnapshot";
 import { automationAccountCurrentnessSelect, deriveAutomationAccountCurrentnessWitness } from "@/app/automations/automationAccountCurrentness";
 import * as service from "./workflowRunService";
@@ -210,7 +211,7 @@ describe("workflow Run live state", () => {
         })).rejects.toMatchObject({ code: "currentness_conflict" });
     });
 
-    it("returns the same first held invocation on exact and attention reads and clears it after settlement", async () => {
+    it("returns the same held invocation on exact GET, exact-ID list, and attention reads", async () => {
         const seeded = await seed();
         const stranger = await seed();
         const { input } = await admit(seeded);
@@ -220,18 +221,33 @@ describe("workflow Run live state", () => {
                 mode: "plain", binding: { v: 1, purpose: "invocation_progress", accountId: seeded.accountId, runId: input.runId,
                     recordId: id, sequence: String(position), parentRecordId: null, memberOrdinal: String(position), attempt: "0" },
                 progress: { kind: "happier.workflow-progress.v1", invocationPath: { blockId: "work", scope: [] },
-                    blockKind: "step", attempt: "0", logicalInvocationRecordId: id },
+                    blockKind: "step", attempt: "0", logicalInvocationRecordId: id,
+                    ...(position === 4 ? { execution: { kind: "session", sessionId: "child-session", localInputId: "child-input" },
+                        sessionPermissionPending: true } : {}) },
             }));
             await db.workflowRunInvocation.create({ data: { id, runId: input.runId, sequence: BigInt(position),
                 memberOrdinal: BigInt(position), attempt: 0n, lifecycle: "waiting_for_review", contentEnvelope } });
         }
         const request = { accountId: seeded.accountId, attention: "required" as const, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES };
+        const exactList = { accountId: seeded.accountId, runIds: [input.runId], invocationProvenance: [], pageByteLimit: request.pageByteLimit };
+        async function exactRead() {
+            const reads: string[] = [];
+            const stop = observeSqliteRequests({ before({ model, action }) {
+                if (model) reads.push(`${model}.${action}`);
+            } });
+            try { return { page: await service.listWorkflowRuns(exactList), reads }; }
+            finally { stop(); }
+        }
         expect(await service.listWorkflowRuns(request)).toMatchObject({ heldProgressByRunId: {
             [input.runId]: { index: { id: ids[0], lifecycle: "waiting_for_review" }, contentEnvelope: expect.any(String) },
         }, runs: [{ id: input.runId, heldCount: 5 }] });
-        expect(await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId }))
+        const review = await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId });
+        expect(review)
             .toMatchObject({ run: { heldCount: 5 },
                 heldProgress: { index: { id: ids[0], lifecycle: "waiting_for_review" }, contentEnvelope: expect.any(String) } });
+        const exactReview = await exactRead();
+        expect.soft(exactReview.page)
+            .toMatchObject({ heldProgressByRunId: { [input.runId]: review.heldProgress } });
         expect(await service.listWorkflowRuns({ ...request, accountId: stranger.accountId })).toMatchObject({ runs: [], heldProgressByRunId: {} });
         await db.workflowRunInvocation.update({ where: { id: ids[0] }, data: { lifecycle: "completed" } });
         expect(await service.listWorkflowRuns(request)).toMatchObject({ heldProgressByRunId: { [input.runId]: { index: { id: ids[1] } } },
@@ -243,20 +259,32 @@ describe("workflow Run live state", () => {
         expect(await service.listWorkflowRuns({ ...request, attention: undefined })).not.toHaveProperty("heldProgressByRunId");
         expect(await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId }))
             .toMatchObject({ run: { heldCount: 0 }, heldProgress: null });
+        const exactSettled = await exactRead();
+        expect.soft(exactSettled.page).toMatchObject({ heldProgressByRunId: { [input.runId]: null } });
 
         // The Home can index an approval wait, but only the authorized reader
         // can distinguish a child permission from other sealed approvals.
         const pending = ids.slice(3);
         await db.workflowRunInvocation.updateMany({ where: { id: { in: pending } }, data: { lifecycle: "waiting_for_approval" } });
         const approvalCandidates = pending.map(id => ({ index: { id, lifecycle: "waiting_for_approval" } }));
-        expect(await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId }))
-            .toMatchObject({ run: { heldCount: 0 }, heldProgress: approvalCandidates });
+        const approval = await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId });
+        expect(approval).toMatchObject({ run: { heldCount: 0 }, heldProgress: approvalCandidates });
         expect(await service.listWorkflowRuns(request)).toMatchObject({ heldProgressByRunId: { [input.runId]: approvalCandidates } });
+        const exactPermission = await exactRead();
+        expect.soft(exactPermission.page)
+            .toMatchObject({ heldProgressByRunId: { [input.runId]: approval.heldProgress } });
+        expect(exactReview.reads.toSorted()).toEqual(exactSettled.reads.toSorted());
+        expect(exactPermission.reads.toSorted()).toEqual(exactSettled.reads.toSorted());
+        expect(exactSettled.reads.filter(read => read.startsWith('WorkflowRunInvocation.')).toSorted())
+            .toEqual(['WorkflowRunInvocation.findMany', 'WorkflowRunInvocation.groupBy']);
         const denied = { accountId: stranger.accountId, runId: input.runId };
         await expect(service.getWorkflowRunInvocation({ ...denied, invocationId: pending[0]! })).rejects.toMatchObject({ code: "run_not_found" });
         await expect(service.getWorkflowRun(denied)).rejects.toMatchObject({ code: "run_not_found" });
         expect(await service.listWorkflowRuns({ ...request, accountId: stranger.accountId }))
             .toMatchObject({ runs: [], heldProgressByRunId: {} });
+        const deniedPage = await service.listWorkflowRuns({ ...exactList, accountId: stranger.accountId });
+        expect.soft(deniedPage.runs).toEqual([]);
+        expect.soft(deniedPage.heldProgressByRunId).toEqual({});
     });
 
     it("keeps Needs-you membership actionable and consistent across list, detail, wait and definition summaries", async () => {

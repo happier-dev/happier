@@ -66,8 +66,19 @@ export function workflowRunAttentionWhere(viewerAccountId: string): Prisma.Autom
 export async function readWorkflowRunInvocationAttentionInTx(tx: Pick<Tx, 'workflowRunInvocation'>, runIds: readonly string[]): Promise<ReadonlySet<string>> {
     if (runIds.length === 0) return new Set();
     const rows = await tx.workflowRunInvocation.groupBy({ by: ['runId'],
-        where: { runId: { in: [...runIds] }, lifecycle: { in: [...attention.invocations] } } });
+        where: invocationAttentionWhere(runIds) });
     return new Set(rows.map(row => row.runId));
+}
+
+function invocationAttentionWhere(runIds: readonly string[]): Prisma.WorkflowRunInvocationWhereInput {
+    return { runId: { in: [...runIds] }, lifecycle: { in: [...attention.invocations] } };
+}
+
+/** Replaces the membership-only index read when a page also needs the first held invocation. */
+export async function readWorkflowRunInvocationHoldIndexInTx(tx: Pick<Tx, 'workflowRunInvocation'>, runIds: readonly string[]) {
+    if (runIds.length === 0) return [];
+    return tx.workflowRunInvocation.groupBy({ by: ['runId', 'lifecycle'],
+        where: invocationAttentionWhere(runIds), _min: { sequence: true } });
 }
 
 /** Identifiers are owner-authored, never caller input; values stay bound parameters. */

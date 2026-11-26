@@ -52,7 +52,7 @@ import { log } from '@/utils/logging/log';
 
 import { assertWorkflowStoredEnvelopeOuterForMode, WorkflowStoredContentError } from "./runs/storedContent";
 import { workflowRunAttentionWhere, workflowRunSqlIdentifier, workflowRunFailureUnseen,
-    readWorkflowRunInvocationAttentionInTx, workflowRunAttentionSql, workflowRunFailureUnseenSql, workflowRunInvocationAttentionSql } from "./workflowRunAttention";
+    readWorkflowRunInvocationAttentionInTx, readWorkflowRunInvocationHoldIndexInTx, workflowRunAttentionSql, workflowRunFailureUnseenSql, workflowRunInvocationAttentionSql } from "./workflowRunAttention";
 import { admitWorkflowRunLifecycleAutomationRunsTx } from "@/app/automations/automationRunLifecycleAdmission";
 import {
     WorkflowRunAccessError, resolveWorkflowRunAccessInTx, readWorkflowRunKeyProjectionInTx, readWorkflowRunWithKeyProjectionInTx,
@@ -235,10 +235,11 @@ function projectRun(row: WorkflowRunRow, viewerAccountId: string = row.accountId
     };
 }
 
-async function projectRunInTx(tx: Tx, row: NarrowedWorkflowRunRow<typeof workflowRunProjectionSelect>, viewerAccountId: string = row.accountId): Promise<WorkflowRunSummaryV1> {
-    const attention = await readWorkflowRunInvocationAttentionInTx(tx, [row.id]);
+async function projectRunInTx(tx: Tx, row: NarrowedWorkflowRunRow<typeof workflowRunProjectionSelect>, viewerAccountId: string = row.accountId,
+    attention?: ReadonlySet<string>): Promise<WorkflowRunSummaryV1> {
+    const attentionIds = attention ?? await readWorkflowRunInvocationAttentionInTx(tx, [row.id]);
     const continuation = await readWorkflowRunFrontierContinuationsInTx(tx, [row]);
-    return projectRun({ ...row, invocationAttentionRequired: attention.has(row.id), frontierContinuationAvailable: continuation.has(row.id) }, viewerAccountId);
+    return projectRun({ ...row, invocationAttentionRequired: attentionIds.has(row.id), frontierContinuationAvailable: continuation.has(row.id) }, viewerAccountId);
 }
 
 async function loadAccountModeTx(tx: Tx, accountId: string, runId?: string): Promise<"plain" | "e2ee"> {
@@ -1029,18 +1030,11 @@ export async function getWorkflowRun(params: Readonly<{ accountId: string; runId
         assertWorkflowStoredEnvelopeOuterForMode({ raw: row.workflowAcceptedSnapshotEnvelope, mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: keyCensus.ownerAccountId, runId: params.runId } });
         if (checkpointEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: checkpointEnvelope, mode, binding: { v: 1, purpose: "checkpoint", accountId: keyCensus.ownerAccountId, runId: params.runId } });
         if (resultEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: resultEnvelope, mode, binding: { v: 1, purpose: "final_result", accountId: keyCensus.ownerAccountId, runId: params.runId } });
-        const root = await tx.workflowRunInvocation.findFirst({ where: { runId: params.runId,
-            parentRecordId: null, sequence: 0n, memberOrdinal: 0n, attempt: 0n }, select: invocationSelect });
-        const run = await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId);
-        const held = run.invocationAttentionRequired && run.heldCount
-            ? await tx.workflowRunInvocation.findFirst({ ...firstHeldWorkflowInvocation,
-                where: { runId: row.id, ...firstHeldWorkflowInvocation.where } })
-            : null;
-        const approvalHolds = !held && run.invocationAttentionRequired
-            ? await readApprovalHoldCandidatesInTx(tx, [row.id]) : [];
+        const progress = await readWorkflowRunProjectionProgressInTx(tx, [row], "held");
+        const run = await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId, progress.attentionIds);
         return { run, managedCreationId: row.managedCreationId, acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope, checkpointEnvelope, resultEnvelope, keyCensus,
-            rootProgress: projectWorkflowInvocationProgress(root, keyCensus),
-            heldProgress: projectWorkflowHeldProgress(held, approvalHolds, keyCensus) };
+            rootProgress: projectWorkflowInvocationProgress(progress.rootsByRunId.get(row.id), keyCensus),
+            heldProgress: projectWorkflowHeldProgress(progress.heldByRunId.get(row.id), progress.approvalHoldsByRunId.get(row.id) ?? [], keyCensus) };
     }, { isolationLevel: "ReadCommitted", transactionClass: "workflow-get-run" });
 }
 
@@ -1292,6 +1286,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
 }>) {
     if (params.limit !== undefined && (!Number.isSafeInteger(params.limit) || params.limit <= 0)) throw new WorkflowRunServiceError("invalid_input");
     const membershipOnly = params.projection === "membership";
+    const includeHeld = !membershipOnly && (params.attention === "required" || params.runId !== undefined || params.runIds !== undefined);
     // A row reads its sealed display summary; the frozen program travels only
     // to pages that name authored steps, or for Runs admitted before summaries.
     const programRequired = !membershipOnly && workflowRunListRequiresAcceptedProgramV1(params);
@@ -1303,7 +1298,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
     // filter, so a cursor minted for a collection page cannot be replayed as
     // an exact read or vice versa. The lookup itself stays the lean list
     // projection with exact opaque accepted/root sidecars, uniform keyset
-    // pagination. Only attention pages add the first held invocation; no history or usage reads.
+    // pagination. Exact-ID and attention pages include the same held projection as detail.
     // Destinations remain private; the Action owner filters opened snapshots.
     // Bind its selection to the same storage cursor to reject cross-filter replay.
     const queryKey = JSON.stringify({ accountId: params.accountId, sourceArtifactId: params.sourceArtifactId ?? null, runId: params.runId ?? null,
@@ -1362,19 +1357,8 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         })).map(row => [row.id, row.workflowAcceptedSnapshotEnvelope]));
         const candidateRows = snapshots === null ? pageRows
             : pageRows.map(row => snapshots.has(row.id) ? { ...row, workflowAcceptedSnapshotEnvelope: snapshots.get(row.id) ?? null } : row);
-        const roots = membershipOnly || candidateRows.length === 0 ? [] : await tx.workflowRunInvocation.findMany({
-            where: { runId: { in: candidateRows.map((row) => row.id) }, parentRecordId: null,
-                sequence: 0n, memberOrdinal: 0n, attempt: 0n }, select: invocationSelect,
-        });
-        // One bounded relation per visible page member, matching the Inbox's first-hold intent.
-        // Keep the ordinary execution-exists relation independent of attention membership.
-        const canReadHolds = !membershipOnly && params.attention === "required";
-        const reviewRunIds = canReadHolds ? candidateRows.filter(row => row.state !== "cancelled" && row._count.workflowInvocations > 0)
-            .map(row => row.id) : [];
-        const heldRuns = reviewRunIds.length === 0 ? [] : await tx.automationRun.findMany({
-            where: { id: { in: reviewRunIds } },
-            select: { id: true, workflowInvocations: { ...firstHeldWorkflowInvocation, take: 1 } },
-        });
+        const progress = await readWorkflowRunProjectionProgressInTx(tx, candidateRows,
+            membershipOnly ? "membership" : includeHeld ? "held" : "root");
         const candidateIds = new Set(candidateRows.map(row => row.id));
         const selectedReferences = params.invocationProvenance?.filter(ref => candidateIds.has(ref.runId)
             && ref.invocationRecordIds.length > 0) ?? [];
@@ -1383,24 +1367,10 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
             where: { OR: selectedReferences.map(ref => ({ runId: ref.runId, id: { in: [...ref.invocationRecordIds] } })) },
             select: invocationSelect,
         });
-        // The same page-sized invocation index supplies the independent hold
-        // constituent even when failure alone admitted an attention member.
-        const attentionIds = await readWorkflowRunInvocationAttentionInTx(tx, candidateRows.map(row => row.id));
-        const heldByRunId = new Map(heldRuns.flatMap(row => row.workflowInvocations.map(hold => [row.id, hold] as const)));
-        const approvalRunIds = canReadHolds ? candidateRows.filter(row => attentionIds.has(row.id) && !heldByRunId.has(row.id))
-            .map(row => row.id) : [];
-        const approvalHoldsByRunId = new Map<string, InvocationRow[]>();
-        if (approvalRunIds.length > 0) {
-            for (const hold of await readApprovalHoldCandidatesInTx(tx, approvalRunIds)) {
-                const holds = approvalHoldsByRunId.get(hold.runId);
-                if (holds) holds.push(hold);
-                else approvalHoldsByRunId.set(hold.runId, [hold]);
-            }
-        }
         const continuation = await readWorkflowRunFrontierContinuationsInTx(tx, candidateRows);
         const pageKeys = readPageKeys
             ? await withWorkflowRunAccess(() => readPageKeys(tx, candidateRows.map(candidate => candidate.id))) : null;
-        return { candidateRows, roots, heldByRunId, approvalHoldsByRunId, selectedInvocations, attentionIds, continuation, pageKeys, batchHasMore: rows.length > batchSize };
+        return { candidateRows, ...progress, selectedInvocations, continuation, pageKeys, batchHasMore: rows.length > batchSize };
     };
     // Exact page bytes depend on validation. Capture request visibility once,
     // then acquire further SQL pages under the same admitted authority while
@@ -1424,9 +1394,8 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
             let collectedBytes = 2;
             let captured = firstBatch;
             for (;;) {
-                const { candidateRows, roots, heldByRunId, approvalHoldsByRunId, selectedInvocations, attentionIds, continuation, pageKeys, batchHasMore } = captured;
+                const { candidateRows, rootsByRunId, heldByRunId, approvalHoldsByRunId, selectedInvocations, attentionIds, continuation, pageKeys, batchHasMore } = captured;
                 const { candidates, bounded } = await timeWebLatencyPhase('workflow.list.materialize', () => {
-                    const rootsByRunId = new Map(roots.map(row => [row.runId, row]));
                     const candidates = candidateRows.map((candidate) => {
                         if (membershipOnly) return { ...candidate, frontierContinuationAvailable: continuation.has(candidate.id), invocationAttentionRequired: attentionIds.has(candidate.id),
                             workflowAcceptedSnapshotEnvelope: null, workflowDisplaySummaryEnvelope: null, keyCensus: null, rootProgress: null, heldProgress: null, invocationProgress: [] };
@@ -1469,12 +1438,12 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                             ...(row.workflowDisplaySummaryEnvelope !== null ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.workflowDisplaySummaryEnvelope)}`] : []),
                             `${JSON.stringify(row.id)}:${JSON.stringify(row.keyCensus)}`,
                             `${JSON.stringify(row.id)}:${JSON.stringify(row.rootProgress)}`,
-                            ...(params.attention === "required" ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.heldProgress)}`] : []),
+                            ...(includeHeld ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.heldProgress)}`] : []),
                             ...(params.invocationProvenance ? [`${JSON.stringify(row.id)}:${JSON.stringify(row.invocationProgress)}`] : []),
                         ],
                         emptyPage: (nextCursor) => ({ ...(membershipOnly ? { projection: "membership" } : {}),
                             runs: [], acceptedEnvelopesByRunId: {}, keyCensusByRunId: {}, rootProgressByRunId: {},
-                            ...(params.attention === "required" ? { heldProgressByRunId: {} } : {}),
+                            ...(includeHeld ? { heldProgressByRunId: {} } : {}),
                             ...(params.invocationProvenance ? { invocationProgressByRunId: {} } : {}), ...(nextCursor ? { nextCursor } : {}) }),
                         nextCursorFor: (row) => encodeKeysetCursorV1({ queryKey, parts: [row.createdAt.toISOString(), row.id] }),
                         hasMoreAfter: (candidateIndex) => candidateIndex < candidates.length - 1 || batchHasMore,
@@ -1503,7 +1472,8 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         ...(displayEnvelopes.length > 0 ? { displayEnvelopesByRunId: Object.fromEntries(displayEnvelopes) } : {}),
         keyCensusByRunId: Object.fromEntries(page.rows.flatMap(row => row.keyCensus ? [[row.id, row.keyCensus] as const] : [])),
         rootProgressByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.map((row) => [row.id, row.rootProgress])),
-        ...(params.attention === "required" ? { heldProgressByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.map(row => [row.id, row.heldProgress])) } : {}),
+        ...(includeHeld || params.attention === "required"
+            ? { heldProgressByRunId: Object.fromEntries(membershipOnly ? [] : page.rows.map(row => [row.id, row.heldProgress])) } : {}),
         ...(params.invocationProvenance ? { invocationProgressByRunId: Object.fromEntries(page.rows.map(row => [row.id, row.invocationProgress])) } : {}),
         ...(page.hasMore && last ? { nextCursor: encodeKeysetCursorV1({ queryKey, parts: [last.createdAt.toISOString(), last.id] }) } : {}),
     };
@@ -1816,20 +1786,59 @@ export async function listWorkflowRunsForRecovery(params: PageOptions & Readonly
 
 export const invocationSelect = { id: true, runId: true, sequence: true, parentRecordId: true, memberOrdinal: true, attempt: true, contentRevision: true, lifecycle: true, contentEnvelope: true, createdAt: true, updatedAt: true } as const;
 export type InvocationRow = Prisma.WorkflowRunInvocationGetPayload<{ select: typeof invocationSelect }>;
-const firstHeldWorkflowInvocation = {
-    where: { lifecycle: "waiting_for_review" }, orderBy: { sequence: "asc" }, select: invocationSelect,
-} as const;
 
 export function projectInvocation(row: InvocationRow) {
     return { id: row.id, runId: row.runId, sequence: projectWorkflowBigIntV1(row.sequence), parentRecordId: row.parentRecordId, memberOrdinal: projectWorkflowBigIntV1(row.memberOrdinal), attempt: projectWorkflowBigIntV1(row.attempt), contentRevision: projectWorkflowBigIntV1(row.contentRevision), lifecycle: row.lifecycle as WorkflowInvocationLifecycleV1, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString() };
 }
 
-/** The kind of an approval hold is private. Forward only indexed, live candidates, batched for a page. */
-async function readApprovalHoldCandidatesInTx(tx: Tx, runIds: string[]) {
-    return await tx.workflowRunInvocation.findMany({
-        where: { runId: { in: runIds }, lifecycle: "waiting_for_approval" },
-        orderBy: { sequence: "asc" }, select: invocationSelect,
+/** Read roots and held candidates in one body query after the existing attention index read. */
+async function readWorkflowRunProjectionProgressInTx(tx: Tx, rows: readonly { id: string; state: string }[],
+    detail: "membership" | "root" | "held") {
+    const runIds = rows.map(row => row.id);
+    const holdIndex = detail === "held" ? await readWorkflowRunInvocationHoldIndexInTx(tx, runIds) : null;
+    const attentionIds = holdIndex === null ? await readWorkflowRunInvocationAttentionInTx(tx, runIds)
+        : new Set(holdIndex.map(row => row.runId));
+    const rootsByRunId = new Map<string, InvocationRow>();
+    const heldByRunId = new Map<string, InvocationRow>();
+    const approvalHoldsByRunId = new Map<string, InvocationRow[]>();
+    if (detail === "membership" || runIds.length === 0) return { attentionIds, rootsByRunId, heldByRunId, approvalHoldsByRunId };
+
+    const root = { parentRecordId: null, sequence: 0n, memberOrdinal: 0n, attempt: 0n };
+    const rootWhere = { runId: { in: runIds }, ...root };
+    const holds: Prisma.WorkflowRunInvocationWhereInput[] = [];
+    const reviews = new Map<string, bigint>();
+    const approvals = new Set<string>();
+    const cancelled = new Set(rows.filter(row => row.state === "cancelled").map(row => row.id));
+    for (const entry of holdIndex ?? []) {
+        if (cancelled.has(entry.runId)) continue;
+        if (entry.lifecycle === "waiting_for_review" && entry._min.sequence !== null) {
+            reviews.set(entry.runId, entry._min.sequence);
+            holds.push({ runId: entry.runId, sequence: entry._min.sequence, lifecycle: "waiting_for_review" });
+        }
+        if (entry.lifecycle === "waiting_for_approval") approvals.add(entry.runId);
+    }
+    // Reviews take precedence. The Home can select live approval candidates,
+    // while only the authorized reader can open them and identify child permissions.
+    for (const runId of reviews.keys()) approvals.delete(runId);
+    if (approvals.size > 0) holds.push({ runId: { in: [...approvals] }, lifecycle: "waiting_for_approval" });
+    const invocations = await tx.workflowRunInvocation.findMany({
+        where: holds.length === 0 ? rootWhere : { OR: [rootWhere, ...holds] }, select: invocationSelect,
+        ...(approvals.size > 0 ? { orderBy: { sequence: "asc" } } : {}),
     });
+    for (const invocation of invocations) {
+        const { runId, sequence, lifecycle } = invocation;
+        if (sequence === root.sequence && invocation.parentRecordId === root.parentRecordId
+            && invocation.memberOrdinal === root.memberOrdinal && invocation.attempt === root.attempt) {
+            rootsByRunId.set(runId, invocation);
+        }
+        if (lifecycle === "waiting_for_review" && reviews.get(runId) === sequence) heldByRunId.set(runId, invocation);
+        if (lifecycle === "waiting_for_approval" && approvals.has(runId)) {
+            const candidates = approvalHoldsByRunId.get(runId);
+            if (candidates) candidates.push(invocation);
+            else approvalHoldsByRunId.set(runId, [invocation]);
+        }
+    }
+    return { attentionIds, rootsByRunId, heldByRunId, approvalHoldsByRunId };
 }
 
 function projectWorkflowHeldProgress(review: InvocationRow | null | undefined, approvalHolds: readonly InvocationRow[],

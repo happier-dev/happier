@@ -2743,17 +2743,22 @@ describe('shared Account workflow run owner', () => {
         return { ...snapshot, run: { ...snapshot.run, state: 'waiting_for_review', heldCount }, heldProgress: heldFact };
       }
       if (operation.operation !== 'list') throw new Error('attention_must_not_read_per_run_detail');
+      const request = WorkflowRunListRequestV1Schema.parse(operation.request);
+      const carriesHold = request.attention === 'required' || request.runIds?.includes(runId);
       return { runs: [{ ...snapshot.run, state: 'waiting_for_review', attentionRequired: true, invocationAttentionRequired: true, heldCount }],
         acceptedEnvelopesByRunId: carrier === 'snapshot' ? { [runId]: snapshot.acceptedEnvelope } : {},
         ...(carrier === 'summary' ? { displayEnvelopesByRunId: { [runId]: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowRunDisplaySummaryStoredEnvelopeV1({
           mode: 'plain', binding: { v: 1, purpose: 'display_summary', accountId: 'account-1', runId },
           displaySummary: projectWorkflowRunDisplaySummaryV1(accepted) })) } } : {}),
-        keyCensusByRunId: { [runId]: snapshot.keyCensus }, heldProgressByRunId: { [runId]: heldFact } };
+        keyCensusByRunId: { [runId]: snapshot.keyCensus },
+        ...(carriesHold ? { heldProgressByRunId: { [runId]: heldFact } } : {}) };
     } }));
     const expectedHeldStep = waitOnly ? { invocationId: index.id, label: 'wait' }
       : { invocationId: index.id, label: 'Review the changelog', laneLabel: 'Changelog' };
     const result = await owner.execute({ actionId: 'workflow.run.list', input: { attention: 'required' }, context: {} });
     expect(result).toMatchObject({ runs: [{ heldCount, heldStep: expectedHeldStep }] });
+    expect(await owner.execute({ actionId: 'workflow.run.list', input: { runIds: [runId] }, context: {} }))
+      .toMatchObject({ runs: [{ heldCount, heldStep: expectedHeldStep }] });
     const get = () => owner.execute({ actionId: 'workflow.run.get', input: { runId, includeUsage: false }, context: {} });
     if (carrier === 'snapshot') expect(WorkflowRunGetResultV1Schema.parse(await get()).run.heldStep).toEqual(expectedHeldStep);
     for (const unavailable of [null, { index: { ...index, lifecycle: 'completed' }, contentEnvelope },

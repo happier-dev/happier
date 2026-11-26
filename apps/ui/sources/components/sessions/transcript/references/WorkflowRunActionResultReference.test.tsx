@@ -9,6 +9,7 @@ import {
     materializeWorkflowAcceptedSnapshotV1} from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import {
     sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
+    sealWorkflowProgressStoredEnvelopeV1,
     serializeWorkflowStoredContentEnvelopeV1,
 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 
@@ -256,6 +257,38 @@ describe('inline transcript workflow Run result', () => {
         // The accepted private title, read from the same exact Run summary.
         expect(text).toContain('Release audit');
         expect(text).not.toContain('workflows.run.untitled');
+    });
+
+    it.each(['review', 'permission'] as const)('opens the held %s from the exact-ID read without a worker notice', async (kind) => {
+        const invocationId = '1a8caff9-8a78-4ccd-834f-bcd497773024';
+        const childSessionId = 'child-session';
+        const body = await getResult('running');
+        const identity = { recordId: invocationId, sequence: '1', parentRecordId: null, memberOrdinal: '0', attempt: '0' };
+        const now = '2026-09-08T10:05:00.000Z';
+        const fact = {
+            index: { id: invocationId, runId: RUN_ID, sequence: identity.sequence, parentRecordId: null,
+                memberOrdinal: '0', attempt: '0', contentRevision: '1', createdAt: now, updatedAt: now,
+                lifecycle: kind === 'review' ? 'waiting_for_review' : 'waiting_for_approval' },
+            contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, purpose: 'invocation_progress', accountId: ACCOUNT_ID, runId: RUN_ID, ...identity },
+                progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'wait', scope: [] },
+                    blockKind: 'wait', attempt: '0', logicalInvocationRecordId: invocationId,
+                    ...(kind === 'permission' ? { sessionPermissionPending: true,
+                        execution: { kind: 'session', sessionId: childSessionId, localInputId: 'child-input' } } : {}) },
+            })),
+        };
+        home.answer(serverId, STORAGE_ROUTE, { body: { ...body,
+            runs: body.runs.map(run => ({ ...run, attentionRequired: true, invocationAttentionRequired: true })),
+            heldProgressByRunId: { [RUN_ID]: kind === 'review' ? fact : [fact] },
+        } });
+        const screen = await renderCardRow();
+        await settle();
+
+        await screen.pressByTestIdAsync(`transcript-workflow-run-${RUN_ID}-review`);
+        expect(pushSpy.mock.calls).toEqual([[kind === 'review'
+            ? `/workflows/runs/${RUN_ID}?invocationId=${invocationId}&serverId=${encodeURIComponent(serverId)}`
+            : `/session/${childSessionId}?serverId=${encodeURIComponent(serverId)}`]]);
+        expect(rowReads()).toHaveLength(1);
     });
 
     /**
