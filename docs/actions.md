@@ -4129,6 +4129,13 @@ to the captured invocation, not the query. Scope and cost-basis fields may
 follow context independently through the general input-field contract; metric
 and breakdown remain own values.
 
+For an admitted API-token invocation that names Environment targets,
+`apiTokenGrant` projects the usage read onto the requested app sources in
+those Environments. The reader and delivery both consume the projected queries.
+When the batch has no permitted app sources, the grant owner returns
+`credential_scope_denied` with reason `environment_not_granted`. A grant
+without Environment targets retains its existing usage scope.
+
 A named All period resolves to an end-only accounting request. Its calendar uses
 the first observed day of the selected population, while retaining every real
 accounting fact. Explicit epoch and custom ranges keep their requested bounds.

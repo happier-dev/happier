@@ -41,6 +41,12 @@ secret later. Choose full access or a limited grant covering the Actions,
 sessions and computers it needs. A limited grant can also restrict models,
 permission modes and websites. Content access is a separate choice.
 
+If a token can run `usage.query` and its grant names specific Environments,
+select the app sources for those Environments. Happier excludes app sources
+outside the grant from usage and cost totals. A request with no permitted app
+sources returns `credential_scope_denied`. A token with Account-wide access
+can still query usage across the Account.
+
 Approvals are opt-in per token. Enabling them lets it decide tool-use prompts
 and requests in its granted targets, including requests it started itself.
 It cannot change root tokens, security or plugin trust. A token answering an Agent's

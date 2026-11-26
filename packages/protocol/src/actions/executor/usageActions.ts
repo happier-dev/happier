@@ -1,6 +1,7 @@
 import { normalizeUsageQuery, normalizeUsageQueryBatchInput, getUsageQueryKey, UsageQueryBatchInputSchema, type UsageQueryBatchInput } from '../../inputs/usageQuery.js';
 import { UsageQueryBatchResultSchema, type UsageQueryBatchResult } from '../../usage/resolveUsagePageAggregation.js';
 import { UsageExportInputSchema, buildUsageFileResult } from '../../usage/usageExport.js';
+import { projectApiTokenUsageQueryV1 } from '../../auth/apiTokenGrant.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext } from './types.js';
 import type { UsageActionId } from '../specs/usage.js';
@@ -75,7 +76,9 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
       : failure('usage_price_catalog_invalid');
   }
   const read = async (input: UsageQueryBatchInput): Promise<UsageQueryBatchResult | ActionExecuteFailure> => {
-    const { queries } = normalizeUsageQueryBatchInput(input);
+    const scope = projectApiTokenUsageQueryV1(context.externalActionCredential?.grant, input);
+    if (!scope.ok) return scope;
+    const { queries } = normalizeUsageQueryBatchInput(scope.input);
     const raw = await ports.query({ queries }, context, readChild);
     if (context.signal?.aborted) return failure('cancelled');
     const refusal = readActionFailureEnvelope(raw);
@@ -188,5 +191,7 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
   const slice = queried.results[0];
   if (!slice?.accounting) return failure('usage_accounting_unavailable');
   const asOfMs = slice.sources.find(source => source.source === 'accounting')?.asOfMs ?? null;
-  return { ok: true, result: buildUsageFileResult(request, slice.accounting, asOfMs) };
+  return { ok: true, result: buildUsageFileResult({
+    ...request, query: { ...request.query, sources: slice.shownQuery.sources },
+  }, slice.accounting, asOfMs) };
 }

@@ -11,6 +11,8 @@ import { resolveInputOptions } from '../inputs/inputOptions.js';
 import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
 import * as usageDelivery from '../usage/projectUsageQueryDelivery.js';
 import * as strictJson from '../plugins/contributions/strictJsonValue.js';
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
+import { USAGE_QUERY_ACTION_ID_V1 } from '../usage/usageActionIdsV1.js';
 
 const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
   tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
@@ -20,6 +22,49 @@ const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, agents
 // Check the supplied authenticated transport ports before adapting this fixture
 // to the cross-family executor; unrelated family ports are unreachable here.
 describe('personal usage Action execution', () => {
+  describe('API-token Environment usage scope', () => {
+    const allowed = 'app_calls:staging';
+    const outside = 'app_calls:production';
+    const environmentGrant = ApiTokenGrantV1Schema.parse({
+      ...API_TOKEN_FULL_GRANT_V1,
+      actions: { families: [], ids: [USAGE_QUERY_ACTION_ID_V1] },
+      targets: { sessions: [], machines: ['machine-1'], environments: ['staging'] },
+    });
+
+    function read(sources: string[], grant: ApiTokenGrantV1) {
+      // Simulate the usage data transport with one priced event per read source.
+      const queryUsage: NonNullable<ActionExecutorDeps['usageActions']>['query'] = async ({ queries }) =>
+        resolveUsagePageAggregation({ queries, accounting: queries.map(query => ({
+          query, status: 'available', value: { ...accounting, totals: { ...accounting.totals,
+            eventCount: query.sources.length, cost: { ...accounting.totals.cost, reportedUsd: query.sources.length } } },
+        })) }, bundledUsageModelPriceCatalog);
+      const executor = createActionExecutor({ usageActions: { query: queryUsage } } as ActionExecutorDeps);
+      return executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [{ sources }] }, {
+        surface: 'api',
+        externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
+        externalActionCredential: { accountId: 'account-1', principalId: 'account-1', credentialId: 'token-1', grant },
+      });
+    }
+
+    it('reads and prices only the granted Environment in a mixed-source query', async () => {
+      expect(await read([allowed, outside], environmentGrant)).toMatchObject({ ok: true, result: { results: [
+        { shownQuery: { sources: [allowed] }, accounting: { totals: { eventCount: 1, cost: { reportedUsd: 1 } } } },
+      ] } });
+    });
+
+    it('refuses an exclusively out-of-scope query', async () => {
+      expect(await read([outside], environmentGrant)).toMatchObject({
+        ok: false, errorCode: 'credential_scope_denied', details: { reason: 'environment_not_granted' },
+      });
+    });
+
+    it('retains all requested app usage for an Account-wide token', async () => {
+      expect(await read([allowed, outside], API_TOKEN_FULL_GRANT_V1)).toMatchObject({ ok: true, result: { results: [
+        { shownQuery: { sources: [outside, allowed] }, accounting: { totals: { eventCount: 2, cost: { reportedUsd: 2 } } } },
+      ] } });
+    });
+  });
+
   it('delivers complete Work with bytes proportional to contributions sharing an outcome', async () => {
     const heavy = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 },
       includeQuotaHistory: true, includeSessionEvidence: true, includeTranscriptEvidence: true, includeWorkEvidence: true });

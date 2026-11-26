@@ -27,6 +27,8 @@ import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemp
 import { ManagedPresetSelectionV1Schema } from '../machines/managed/managedConfigurationV1.js';
 import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
 import type { ManagedAcquireInputV1 } from '../machines/managed/actionsV1.js';
+import type { UsageQueryBatchInput } from '../inputs/usageQuery.js';
+import { usageAppCallsSourceId } from '../usage/usageVocabularyV1.js';
 
 /** Exact non-content preset route captured by Session root admission. */
 export const ApiTokenSessionPresetAcquisitionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -169,6 +171,23 @@ export const API_TOKEN_FULL_GRANT_V1: ApiTokenGrantV1 = Object.freeze({
 
 export function isApiTokenGrantRestrictedV1(grant: ApiTokenGrantV1): boolean {
   return grant.actions !== null || grant.targets !== null || grant.models !== null || grant.permissionModes !== null || grant.create !== null || grant.automationIds != null;
+}
+
+/** Applies the admitted credential's Environment scope before any usage operands are read. */
+export function projectApiTokenUsageQueryV1(grant: ApiTokenGrantV1 | undefined, input: UsageQueryBatchInput) {
+  const environments = grant?.targets?.environments;
+  if (!environments?.length) return { ok: true, input } as const;
+
+  const allowedSources = new Set(environments.map(usageAppCallsSourceId));
+  const queries = input.queries.flatMap(query => {
+    const sources = query.sources.filter(source => allowedSources.has(source));
+    if (!sources.length) return [];
+    return [sources.length === query.sources.length ? query : { ...query, sources }];
+  });
+  return queries.length ? { ok: true, input: { queries } } as const : {
+    ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+    details: { reason: 'environment_not_granted' satisfies ApiTokenGrantDenialReasonV1 },
+  } as const;
 }
 
 const DISCOVERY_IDS: ReadonlySet<string> = new Set(API_TOKEN_DISCOVERY_ACTION_IDS_V1);
