@@ -47,13 +47,15 @@ it.each(['stored_session', 'api_token'] as const)('forwards an asleep CLI origin
         const requests: string[] = [];
         const queries: unknown[] = [];
         expect(resolveManagedMachineWakeStateV1(managed, machineId)).toBe('asleep');
+        const machine = { id: machineId, active: false, kind: 'persistent',
+            installationId: 'sleeping-installation', revokedAt: null, replacedByMachineId: null,
+            managedMachineRef: { homeId: managed.homeId, managedId: managed.id },
+            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
         // Only HTTP and the local daemon transport are substituted; the CLI owner and its parsers stay real.
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-            if (url.endsWith('/v1/machines')) return { status: 200, data: [{ id: machineId, active: false, kind: 'persistent',
-                revokedAt: null, replacedByMachineId: null,
-                managedMachineRef: { homeId: managed.homeId, managedId: managed.id },
-                access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }] };
+            if (url.endsWith(`/v1/machines/${machineId}`)) return { status: 200, data: { machine } };
+            if (url.endsWith('/v1/machines')) return { status: 200, data: [machine] };
             throw new Error(`Unexpected HTTP read: ${url}`);
         });
         vi.spyOn(axios, 'request').mockImplementation(async request => {
