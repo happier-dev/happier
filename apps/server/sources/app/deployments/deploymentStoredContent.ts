@@ -193,7 +193,8 @@ export async function updateDeploymentStoredContentInTx(tx: Tx, actorAccountId: 
     const result = await updateArtifactTx(tx, {
         actorUserId: actorAccountId, artifactId: reference.contentArtifactId,
         expectedRevision: { headerVersion: reference.contentHeaderVersion, bodyVersion: reference.contentBodyVersion },
-        expectedHeaderVersion: input.expectedHeaderVersion, kind: input.kind,
+        // The admitted deployment row fixes the kind even when an opaque writer omits its query hint.
+        expectedHeaderVersion: input.expectedHeaderVersion, kind: expectedStoredKind,
         approvalState: input.approvalState, approvalSessionId: input.approvalSessionId,
         ...(input.header === undefined ? {} : { header: { bytes: privacyKit.decodeBase64(input.header), expectedVersion: reference.contentHeaderVersion } }),
         ...(input.body === undefined ? {} : { body: { bytes: privacyKit.decodeBase64(input.body), expectedVersion: reference.contentBodyVersion } }),
