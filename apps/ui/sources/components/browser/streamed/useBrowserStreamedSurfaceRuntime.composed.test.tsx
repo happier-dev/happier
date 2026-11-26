@@ -1,6 +1,7 @@
 // Cross-app composition keeps the real daemon/server path in this test without
 // adding their source and package-local aliases to the UI compiler program.
 import * as React from 'react';
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -1507,7 +1508,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 expect(details?.onPress).toBeTypeOf('function');
                 await act(async () => { details?.onPress?.(); });
                 expect(alert).toHaveBeenLastCalledWith(t('approvals.technicalDetails'), expect.any(String));
-                const technicalDetails = JSON.parse(alert.mock.calls.at(-1)![1]!);
+                const technicalDetails = readActionFailureDetails(alert.mock.calls.at(-1)![1]!);
                 expect(technicalDetails).toMatchObject({ code: 'owner_disconnected' });
                 return;
             }

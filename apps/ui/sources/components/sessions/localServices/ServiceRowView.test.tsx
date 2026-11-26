@@ -151,7 +151,8 @@ describe('ServiceRowView', () => {
         const start = vi.fn(async () => ({ ok: false, errorCode: 'action_outcome_unknown', error: 'action_outcome_unknown' }));
         const screen = await renderScreen(<ServiceRowView row={row} onStartLauncherTarget={start} testID="row" />);
         await pressTestInstanceAsync(screen.findByTestId('row-start'), 'row-start');
-        expect(screen.getTextContent()).toContain('outcome is unknown');
+        const { t } = await import('@/text');
+        expect(screen.getTextContent()).toContain(t('errors.scmOutcomeUnknown'));
         expect(screen.getTextContent()).not.toContain('Could not start');
         expect(screen.findByTestId('row-failure.action')).toBeNull();
         expect(screen.findByTestId('row-start')).toBeNull();
@@ -869,7 +870,8 @@ describe('ServiceRowView', () => {
         );
         expect(expanded.findByTestId('row-copy-address')).toBeTruthy();
         expect(expanded.findByTestId('row-public-preview-exposure:public_preview_1-countdown')).toBeTruthy();
-        expect(expanded.getTextContent()).toContain('Public link');
+        const { t } = await import('@/text');
+        expect(expanded.getTextContent()).toContain(t('localServices.publicPreview.secretLinkMode'));
         // The secret link stays masked until the user reveals it, and so does its QR code.
         expect(expanded.findAllByTestId('row-public-preview-exposure:public_preview_1-qr')).toHaveLength(0);
         await pressTestInstanceAsync(

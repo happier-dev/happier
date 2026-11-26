@@ -687,7 +687,12 @@ describe('Project Add machine modal', () => {
         await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
         await act(async () => { modal.submit().props.onPress(); });
         await vi.waitFor(() => expect(workspace.home.requestsFor('/v1/actions/projects.open')).toHaveLength(1));
-        await vi.waitFor(() => expect(technicalCode(modal.screen)).toBe('machine_manage_required'));
+        await vi.waitFor(() => expect(technicalCode(modal.screen)).toBe('credential_scope_denied'));
+        const technicalLines = modal.screen.findAllByType(TechnicalDetailsDisclosure)
+            .find(node => node.props.testID === 'workspace-sync-add-machine-technical-details')?.props.lines;
+        expect(technicalLines).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'causeCode', value: 'machine_manage_required' }),
+        ]));
         expect(statusLine(modal.screen)?.props.title).not.toContain('machine_manage_required');
         expect(ExternalActionRequestEnvelopeV1Schema.parse(workspace.home.requestsFor('/v1/actions/projects.open')[0]!.input).input).toMatchObject({ materialization: { kind: path === 'source attach' ? 'attach' : 'sync' } });
         expect(requestId).not.toBe('');

@@ -263,7 +263,7 @@ describe('LocalServicePublicPreviewControls (consequence sheet before create)', 
                 await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalled());
             });
             expect(rpc).toHaveBeenCalledOnce();
-            expect(modalSpies.alert.mock.calls.at(-1)?.[1]).toBe(t('localServices.actions.failure.refused', { servicesActionOffered: false }));
+            expect(modalSpies.alert.mock.calls.at(-1)?.[1]).toBe(t('errors.permissionDenied'));
             expect(copyToClipboard).not.toHaveBeenCalled();
             const details = modalSpies.alert.mock.calls.at(-1)?.[2]?.find(button => button.text === t('common.details'));
             expect(details).toBeTruthy();
