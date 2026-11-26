@@ -92,7 +92,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
 
     return <ModalCommands bridge={config.commandBridge} commands={[
         { key: 'input', title: config.title, invoke: input => {
-            if (input === undefined) return { ok: true, result: { value: inputValue } };
+            if (input === undefined) return true;
             if (!isJsonObject(input) || typeof input.value !== 'string') return false;
             setInputValue(input.value);
             return { ok: true, result: { value: input.value } };

@@ -93,7 +93,7 @@ describe('CustomModal shared dismissal commands', () => {
         account.dispose();
     });
 
-    it('shares prompt draft, continue and cancel commands with the mounted input and buttons', async () => {
+    it('shares prompt setters and buttons without publishing the seeded or typed secure-text field', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-source-prompt.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
         const server = home.homes.a!;
@@ -102,7 +102,7 @@ describe('CustomModal shared dismissal commands', () => {
         const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
         let answer: Promise<string | null> | undefined;
         const confirmingActor = vi.fn();
-        let show: (() => void) | undefined;
+        let show: ((inputType?: 'secure-text') => void) | undefined;
         let confirmation: Promise<boolean> | undefined;
         let showConfirmation: (() => void) | undefined;
         let acknowledgement: Promise<void> | undefined;
@@ -110,8 +110,9 @@ describe('CustomModal shared dismissal commands', () => {
         const acknowledged = vi.fn();
         function Opener() {
             const Bridge = useCurrentUiContextCommandBridge();
-            show = () => { answer = Modal.prompt('Source folder', undefined, { commandBridge: Bridge,
-                defaultValue: '/original', confirmText: 'Continue', onConfirmContext: confirmingActor }); };
+            show = inputType => { answer = Modal.prompt('Source folder', undefined, { commandBridge: Bridge, inputType,
+                defaultValue: inputType ? 'fixture-seeded-secret' : '/original',
+                confirmText: 'Continue', onConfirmContext: confirmingActor }); };
             showConfirmation = () => { confirmation = Modal.confirm('Remove source?', undefined, {
                 commandBridge: Bridge, confirmText: 'Remove', destructive: true }); };
             showAlert = () => { acknowledgement = Modal.alertAsync('Folder unavailable', undefined,
@@ -131,10 +132,11 @@ describe('CustomModal shared dismissal commands', () => {
             return executor.execute('ui.current_context.command.invoke', { commandId: command!.id,
                 ...(input === undefined ? {} : { input }) }, { surface: 'agent' });
         };
-        await act(async () => { expect(await invoke('Source folder', { value: '/agent' })).toMatchObject({ ok: true }); });
+        await act(async () => { expect(await invoke('Source folder', { value: '/agent' }))
+            .toMatchObject({ ok: true, result: { value: { value: '/agent' } } }); });
         expect(screen.findByTestId('web-prompt-input')!.props.value).toBe('/agent');
         await act(async () => { screen.findByTestId('web-prompt-input')!.props.onChangeText('/ui'); });
-        expect(await invoke('Source folder')).toMatchObject({ ok: true, result: { value: '/ui' } });
+        expect.soft(await invoke('Source folder')).toMatchObject({ ok: true, result: { value: null } });
         await act(async () => { await invoke('Continue'); });
         expect(await answer).toBe('/ui');
         expect(confirmingActor).toHaveBeenCalledWith(expect.objectContaining({ surface: 'agent' }));
@@ -142,6 +144,13 @@ describe('CustomModal shared dismissal commands', () => {
         await act(async () => { show!(); });
         await screen.pressByTestIdAsync('web-prompt-cancel');
         expect(await answer).toBeNull();
+        await act(async () => { show!('secure-text'); });
+        expect(screen.findByTestId('web-prompt-input')!.props.secureTextEntry).toBe(true);
+        expect.soft(await invoke('Source folder')).toMatchObject({ ok: true, result: { value: null } });
+        await act(async () => { screen.findByTestId('web-prompt-input')!.props.onChangeText('fixture-typed-secret'); });
+        expect.soft(await invoke('Source folder')).toMatchObject({ ok: true, result: { value: null } });
+        await act(async () => { expect(await invoke('Continue')).toMatchObject({ ok: true, result: { value: null } }); });
+        expect(await answer).toBe('fixture-typed-secret');
         await act(async () => { showConfirmation!(); });
         await act(async () => { await invoke('Remove'); });
         expect(await confirmation).toBe(true);
@@ -166,7 +175,8 @@ describe('CustomModal shared dismissal commands', () => {
         expect(acknowledged).toHaveBeenCalledTimes(2);
     });
 
-    it('commits a Source folder confirmed by an agent after the real prompt closes', async () => {
+    it.each(['person confirms', 'person cancels', 'agent sets and confirms'] as const)(
+      'keeps the Source folder draft private when the %s', async flow => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://source-folder-confirm.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
         const server = home.homes.a!;
@@ -221,12 +231,27 @@ describe('CustomModal shared dismissal commands', () => {
             return executor.execute('ui.current_context.command.invoke', { commandId: command!.id,
                 ...(input === undefined ? {} : { input }) }, { surface: 'agent' });
         };
-        await act(async () => { await invoke(t('usage.board.sources.folderPromptTitle'), { value: '/agent/folder' }); });
-        await act(async () => { await invoke(t('common.ok')); });
-        await vi.waitFor(() => expect(roots).toEqual(['/agent/folder']));
-        expect(actors).toEqual([expect.objectContaining({ surface: 'agent' })]);
+        const fieldCommand = t('usage.board.sources.folderPromptTitle');
+        expect.soft(await invoke(fieldCommand)).toMatchObject({ ok: true, result: { value: null } });
+        const draft = '/fixture/draft-folder';
+        if (flow === 'agent sets and confirms') {
+            await act(async () => { expect(await invoke(fieldCommand, { value: draft }))
+                .toMatchObject({ ok: true, result: { value: { value: draft } } }); });
+            await act(async () => { await invoke(t('common.ok')); });
+        } else {
+            await act(async () => { screen.findByTestId('web-prompt-input')!.props.onChangeText(draft); });
+            expect.soft(await invoke(fieldCommand)).toMatchObject({ ok: true, result: { value: null } });
+            await screen.pressByTestIdAsync(flow === 'person cancels' ? 'web-prompt-cancel' : 'web-prompt-confirm');
+        }
         await vi.waitFor(() => expect(screen.findByTestId('web-prompt-input')).toBeNull());
-        expect(screen.getTextContent()).toContain('/agent/folder');
+        if (flow === 'person cancels') {
+            expect(roots).toEqual([]);
+            expect(screen.getTextContent()).toContain('/original');
+        } else {
+            await vi.waitFor(() => expect(roots).toEqual([draft]));
+            expect(actors).toEqual([expect.objectContaining({ surface: flow === 'agent sets and confirms' ? 'agent' : 'ui' })]);
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(draft));
+        }
     });
 
     it.each(['button', 'shell', 'agent'] as const)('uses one guarded shared close request through %s and retires its command', async surface => {
