@@ -1,5 +1,5 @@
-import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
 import { findSavedNotificationServerProfile } from './resolveNotificationPermissionTarget';
 
@@ -28,7 +28,7 @@ function readIdentity(value: unknown): AgentRequestNotificationIdentity | null {
 
 /** Current OS inventory supplies presentation demand. The caller supplies proof of settlement. */
 export async function dismissSettledAgentRequestNotifications(
-    isSettled: (identity: AgentRequestNotificationIdentity) => boolean,
+    resolveSettlement: (identity: AgentRequestNotificationIdentity) => AgentRequestNotificationIdentity | null,
     onPresentedSessions?: (sessionIds: Set<string>) => void,
 ): Promise<void> {
     const notifications = await loadExpoNotifications();
@@ -39,13 +39,16 @@ export async function dismissSettledAgentRequestNotifications(
     });
     onPresentedSessions?.(new Set(presented.map(({ identity }) => identity.sessionId)));
     for (const { identifier, identity } of presented) {
-        if (isSettled(identity)) await notifications.dismissNotificationAsync(identifier);
+        const settled = resolveSettlement(identity);
+        if (settled && identity.accountId === settled.accountId
+            && areServerProfileIdentifiersEquivalent(identity.serverId, settled.serverId)
+            && identity.kind === settled.kind && identity.sessionId === settled.sessionId
+            && identity.requestId === settled.requestId && identity.occurrenceId === settled.occurrenceId) {
+            await notifications.dismissNotificationAsync(identifier);
+        }
     }
 }
 
 export function dismissConfirmedAgentRequestNotification(settled: AgentRequestNotificationIdentity): Promise<void> {
-    return dismissSettledAgentRequestNotifications((notice) =>
-        areServerAccountScopesEqual(notice, settled) && notice.kind === settled.kind
-        && notice.sessionId === settled.sessionId && notice.requestId === settled.requestId
-        && notice.occurrenceId === settled.occurrenceId);
+    return dismissSettledAgentRequestNotifications(() => settled);
 }

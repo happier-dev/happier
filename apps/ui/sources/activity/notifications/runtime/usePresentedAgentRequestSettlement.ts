@@ -2,7 +2,6 @@ import * as React from 'react';
 import { AppState, Platform } from 'react-native';
 
 import { storage } from '@/sync/domains/state/storage';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { subscribeActiveServer } from '@/sync/domains/server/serverProfiles';
 import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
@@ -22,10 +21,13 @@ export function usePresentedAgentRequestSettlement(): () => void {
 
         const sweep = () => dismissSettledAgentRequestNotifications((notice) => {
             // Read the active scope and completed state after the native inventory await.
-            if (disposed || !areServerAccountScopesEqual(getActiveServerAccountScope(), notice)) return false;
-            const agentState = storage.getState().sessions[notice.sessionId]?.agentState;
-            return agentState?.completedRequests?.[notice.requestId]?.occurrenceId === notice.occurrenceId
-                && agentState?.requests?.[notice.requestId]?.occurrenceId !== notice.occurrenceId;
+            const scope = getActiveServerAccountScope();
+            if (disposed || !scope) return null;
+            const { sessionId, requestId, kind } = notice;
+            const agentState = storage.getState().sessions[sessionId]?.agentState;
+            const occurrenceId = agentState?.completedRequests?.[requestId]?.occurrenceId;
+            if (!occurrenceId || agentState?.requests?.[requestId]?.occurrenceId === occurrenceId) return null;
+            return { ...scope, sessionId, requestId, kind, occurrenceId };
         }, (sessionIds) => {
             if (!disposed) presentedSessionIds = sessionIds;
         });
