@@ -13,11 +13,12 @@ export const STEP_DOOR_WIDTH_PX = 380;
 
 /**
  * The drawn height of every field on a signed-out step (a link, an address, an email, a password, a select), set once
- * by the signed-out shell for everything in it: the height of the step's call to action (`StepPrimaryButton`, a `large`
- * pill, 40 px), so a field and the button under it read as one set. Between the page control height (32), which is a
- * configuration row's density, and a hero field (48), which outweighs the step's heading (owner, 2026-11-26).
+ * by the signed-out shell for everything in it: the drawn height of the step's call to action (`StepPrimaryButton`,
+ * a `large` pill, 42 px with its border; the first-open lab draws its fields at 42 too), so a field and the button
+ * under it read as one set. It sits between the page control height (32), a configuration row's density, and a hero
+ * field (48), which outweighed the step's heading (owner, 2026-11-26).
  */
-export const STEP_FIELD_HEIGHT_PX = 40;
+export const STEP_FIELD_HEIGHT_PX = 42;
 
 /**
  * The parts every signed-out form is made of, so Login, the email forms and Connect to a Home read as
