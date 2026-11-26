@@ -337,6 +337,7 @@ describe('SessionAccessEditor', () => {
                 { teamId: 'design', label: 'Design' },
             ],
         } })} actions={intent} presentation="full" />);
+        expect(screen.getTextContent()).toContain('Primary Team');
         expect(screen.findByTestId('session-access-context-personal')).toBeNull();
         await screen.pressByTestIdAsync('session-access-context');
         await screen.pressByTestIdAsync('session-access-context-personal');
