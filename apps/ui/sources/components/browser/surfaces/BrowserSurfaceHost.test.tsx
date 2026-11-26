@@ -835,7 +835,10 @@ describe('BrowserSurfaceHost', () => {
                 .toEqual(expect.arrayContaining([expect.objectContaining({ viewId: opening.viewId })])));
             await flushHookEffects();
             expect(browserPanelPane!.scopeState?.details.isOpen ?? false).toBe(false);
-            expect(browserPanelPane!.scopeState?.details.tabs ?? []).toHaveLength(0);
+            expect(browserPanelPane!.scopeState?.details.tabs).toMatchObject([
+                { resource: { browserSessionId: 'session_1', viewId: opening.viewId,
+                    target: { kind: 'streamedBrowser', targetId: 'source:discovered-root' } } },
+            ]);
             // A real child announces its opener. Reconnect discovery with that popup present;
             // it must still use the existing workspace tab opener, unlike root adoption.
             await screen.update(render(false));
@@ -848,6 +851,7 @@ describe('BrowserSurfaceHost', () => {
             }];
             await screen.update(render(true));
             await vi.waitFor(() => expect(browserPanelPane!.scopeState?.details.tabs).toMatchObject([
+                { resource: { viewId: opening.viewId } },
                 { resource: { viewId: 'discovered-child' } },
             ]));
         } finally { browserStreamBoundary.views = []; await screen.unmount(); }

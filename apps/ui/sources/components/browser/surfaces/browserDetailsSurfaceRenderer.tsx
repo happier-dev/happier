@@ -457,9 +457,9 @@ export function createBrowserViewDetailsSurfaceRenderer(
                 : launchpadResource && input.callbacks.replaceTab
                     // The launchpad opens a page in its own tab (in place): the tab is then named by that page.
                     ? (change: BrowserSurfaceViewStateChange) => {
-                        const title = change.title?.trim();
-                        if (!title || title === input.tab.title) return;
-                        input.callbacks.replaceTab?.(input.tab.key, { ...input.tab, title }, {
+                        const nextTab = resolveBrowserViewTargetReplacementTab(change);
+                        const title = change.title?.trim() || nextTab.title;
+                        input.callbacks.replaceTab?.(input.tab.key, { ...nextTab, title }, {
                             intent: input.tab.isPinned ? 'pinned' : input.tab.isPreview ? 'preview' : 'default',
                         });
                     }

@@ -128,6 +128,7 @@ export type BrowserSurfaceViewTargetChange = Readonly<{
 export type BrowserSurfaceViewStateChange = Readonly<{
     browserSessionId: string;
     viewId: string;
+    target: BrowserViewTargetV1;
     title: string | null;
     currentUrl: string | null;
 }>;
@@ -434,7 +435,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     const reportedViewRef = React.useRef<Readonly<{ resetKey: typeof resetKey; view: BrowserSurfaceViewStateChange }> | null>(null);
     React.useEffect(() => {
         if (!focusedView) return;
-        const view = { browserSessionId: focusedView.browserSessionId, viewId: focusedView.viewId,
+        const view = { browserSessionId: focusedView.browserSessionId, viewId: focusedView.viewId, target: focusedView.target,
             title: focusedView.title, currentUrl: focusedView.currentUrl };
         const previous = reportedViewRef.current;
         reportedViewRef.current = { resetKey, view };
