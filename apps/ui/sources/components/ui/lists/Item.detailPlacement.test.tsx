@@ -161,17 +161,39 @@ describe('Item page row detail placement', () => {
     expect(sharesTitleColumn(screen, visibleDetail(screen), 'Fork')).toBe(true);
   });
 
-  it('keeps a row\'s facts under its name and moves a short value after them when it goes beneath', async () => {
-    // All deployments on a 390 phone: a long Environment name sent "2d ago" beneath, between the name and its facts.
-    const screen = await renderDetailRow('0.2.10', 'DEF-EDITOR-1110-stored-r121', true, 'NLDW3-5-36-33 · Compose');
-    await layout(screen, { row: 358, detail: 44, title: 230, titleText: 'DEF-EDITOR-1110-stored-r121' });
+  it('places a described row\'s value under its label, before the description, on a phone row', async () => {
+    // Approval page at 390 (design owner, 2026-11-26 11:24Z): "Delivery · Not sent" beside a four-line description.
+    // The value is the answer and the description explains it, so a described row's value goes directly under the
+    // label on a phone, however short the label and the value: the row's shape decides, not a fit measurement.
+    const description = 'The message stays here until its Machine is back online.';
+    const screen = await renderDetailRow('0.2.10', 'Delivery', false, description);
+    await layout(screen, { row: 358, detail: 44, title: 60, titleText: 'Delivery' });
     const detail = visibleDetail(screen);
-    expect(sharesTitleColumn(screen, detail, 'DEF-EDITOR-1110-stored-r121')).toBe(true);
+    expect(sharesTitleColumn(screen, detail, 'Delivery')).toBe(true);
     const column = screen.findAll((node) => typeof node.type === 'string'
       && node.findAll((child: Node) => child === detail).length > 0
-      && node.findAll((child: Node) => child.props?.children === 'NLDW3-5-36-33 · Compose').length > 0)[0]!;
-    const order = column.findAll((node: Node) => node === detail || node.props?.children === 'NLDW3-5-36-33 · Compose');
-    expect(order[0]).not.toBe(detail);
+      && node.findAll((child: Node) => child.props?.children === description).length > 0)[0]!;
+    const order = column.findAll((node: Node) => node === detail || node.props?.children === description);
+    expect(order[0]).toBe(detail);
+  });
+
+  it('keeps a moved value\'s ink but not its trailing alignment', async () => {
+    // The approval page's "Status · Failed" is rose beside its label; under it on a phone it must stay rose.
+    const { Item } = await import('./Item');
+    const { ListPresentationProvider } = await import('./listPresentation');
+    const screen = await renderScreen(
+      <ListPresentationProvider value="page">
+        <Item title="Status" detail="0.2.10" subtitle="The machine didn't accept the request."
+          detailStyle={{ color: 'rgb(190, 18, 60)', textAlign: 'right' }} detailTestID="detail" />
+      </ListPresentationProvider>,
+    );
+    await layout(screen, { row: 358, detail: 44, title: 44, titleText: 'Status' });
+    const detail = visibleDetail(screen);
+    expect(sharesTitleColumn(screen, detail, 'Status')).toBe(true);
+    const { StyleSheet } = await import('react-native');
+    const style = StyleSheet.flatten(detail.props.style) as { color?: string; textAlign?: string };
+    expect(style.color).toBe('rgb(190, 18, 60)');
+    expect(style.textAlign).not.toBe('right');
   });
 
   it('keeps a summary trailing on a wide row', async () => {

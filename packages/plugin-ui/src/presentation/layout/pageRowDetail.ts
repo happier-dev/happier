@@ -11,10 +11,16 @@ export function resolveHappierPageRowDetailLayout(input: Readonly<{
   /** The adapter's actual trailing controls and their spacing. */
   trailingWidthPx: number;
   detailGapPx: number;
+  /** The row carries a description under its label: its shape, never a measurement of the description. */
+  described: boolean;
 }>): Readonly<{ beneath: boolean; inlineMaxWidthPx: number | null }> {
   if (!isHappierPageRowNarrow(input.rowWidthPx) || input.rowWidthPx === null) {
     return { beneath: false, inlineMaxWidthPx: null };
   }
+  // On a phone a described row's value is the answer to its label and the description explains it, so the value
+  // goes directly under the label, before the description, however short both are (design owner, 2026-11-26
+  // 11:24Z: "Delivery · Not sent" beside a four-line description). A row without one weighs the fit below.
+  if (input.described) return { beneath: true, inlineMaxWidthPx: null };
   const metrics = HAPPIER_PAGE_METRICS;
   const rowChromePx = 2 * input.rowInsetPx + (input.leadingColumnWidthPx > 0
     ? input.leadingColumnWidthPx + metrics.rowLeadingGapPx : 0);

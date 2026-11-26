@@ -824,6 +824,7 @@ export function HappierListItem({
     leadingColumnWidthPx: icon ? leadingWidthPx ?? HAPPIER_PAGE_METRICS.rowLeadingColumnPx : 0,
     trailingWidthPx: resolvedTheme ? resolvedTheme.spacing.small + (hasAccessory ? pageAccessoryWidthPx ?? 0 : 0) : 0,
     detailGapPx: resolvedTheme?.spacing.small ?? 0,
+    described,
   });
   const stackPageAccessory = (accessoryBelow === true && hasAccessory)
     || (pageSection !== null && hasAccessory && fieldMaxWidthPx === null && isHappierPageRowAccessoryStacked({

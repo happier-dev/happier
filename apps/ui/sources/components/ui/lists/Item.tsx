@@ -90,6 +90,20 @@ import {
 
 const NO_MARGINS = Object.freeze({ start: 0, end: 0 });
 
+/**
+ * What a value keeps when it moves under its label: its ink (a rose "Failed") and its face (a mono id), never its
+ * trailing-column layout (alignment, flex, widths), which belongs to the place it left.
+ */
+function readMovedDetailInk(style: StyleProp<TextStyle>): TextStyle | null {
+    const flat = RNStyleSheet.flatten(style) as TextStyle | undefined;
+    if (!flat) return null;
+    const ink: TextStyle = {};
+    if (flat.color !== undefined) ink.color = flat.color;
+    if (flat.fontFamily !== undefined) ink.fontFamily = flat.fontFamily;
+    if (flat.fontVariant !== undefined) ink.fontVariant = flat.fontVariant;
+    return Object.keys(ink).length > 0 ? ink : null;
+}
+
 /** A press target's horizontal margins (a column row's fill gutter), when its style states them. */
 function readHorizontalMargins(style: StyleProp<ViewStyle>): Readonly<{ start: number; end: number }> {
     const flat = RNStyleSheet.flatten(style) as ViewStyle | undefined;
@@ -1356,6 +1370,7 @@ function ItemRow(props: ItemProps & Readonly<{
             ? iconBoxSize ?? PAGE_LIST_METRICS.rowLeadingColumnPx : 0,
         trailingWidthPx: detailTrailingPx,
         detailGapPx: theme.space.s8,
+        described,
     });
     const handleDetailLayout = React.useCallback((event: LayoutChangeEvent) => {
         const widthPx = event.nativeEvent.layout.width;
@@ -1858,7 +1873,7 @@ function ItemRow(props: ItemProps & Readonly<{
         const detailBeneathNode = detailBeneath && detail ? renderPrimitiveText({
             value: detail,
             testID: detailTestID,
-            style: [styles.subtitle, subtitleSizeStyle, subtitleInkStyle],
+            style: [styles.subtitle, subtitleSizeStyle, subtitleInkStyle, readMovedDetailInk(detailStyle)],
         }) : null;
         const renderColumnMetaLine = (line: React.ReactNode) => columnTitleMeta == null ? line : (
             <View style={styles.columnMetaLine}>
@@ -1959,8 +1974,8 @@ function ItemRow(props: ItemProps & Readonly<{
                 ) : (
                     normalizeNodeForView(title)
                 )}
-                {/* A row's own facts stay under its name; a moved short value (a time) follows them, last. */}
-                {detailBeneath && detail && !subtitle ? detailBeneathNode : null}
+                {/* A moved value is the answer to the label: directly under it, before the description that explains it. */}
+                {detailBeneathNode}
                 {renderColumnMetaLine(subtitle || subtitleLeading ? (() => {
                     // A status mark carries its own word ("● Failed"): it stands on its own when the line has no text.
                     if (!subtitle) {
@@ -2042,7 +2057,6 @@ function ItemRow(props: ItemProps & Readonly<{
                         ellipsizeMode: subtitleEllipsizeMode,
                     });
                 })() : null)}
-                {detailBeneath && detail && subtitle ? detailBeneathNode : null}
                 {subtitleAccessoryNode ? (
                     <View style={{ marginTop: 0 }}>
                         {subtitleAccessoryNode}
