@@ -35,21 +35,26 @@ export type WorkflowsColumnView = 'definitions' | 'runs' | 'events';
  * space as the title ("All workflows ⌄", its spaces and filters), the magnifier that opens the library search, the
  * "⋯" and the "+" whose menu the bar's "+" opens too — with the Definitions | Runs switch and the spaces right under
  * it. The home below reads the same library controller, so it adds no second scope line or search.
+ * The page keeps its tabs and Definitions body in the same positions when wider chrome replaces this head.
  */
 export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
   props: Readonly<{
     view: WorkflowsColumnView;
     onSelectView: (view: WorkflowsColumnView) => void;
     ownsCreation: boolean;
-    pathname: string;
+    phone: boolean;
     definitionsContent: React.ReactNode;
+    pageHeader: React.ReactNode;
+    runsContent: React.ReactNode;
+    eventsContent: React.ReactNode;
   }>,
 ) {
   const presented = useLayoutPresentationActive();
+  const phone = props.phone;
   const definitions = props.view === 'definitions';
-  const libraryView = useWorkflowLibraryView(presented && definitions);
+  const libraryView = useWorkflowLibraryView(presented && phone && definitions);
   const eventsShown = props.view === 'events';
-  const events = useWorkflowsColumnEvents(presented && eventsShown);
+  const events = useWorkflowsColumnEvents(presented && phone && eventsShown);
   const spaceHeader = useWorkflowLibrarySpaceHeader(
     libraryView,
     'workflows-column-space',
@@ -65,7 +70,7 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
     lines: display.lines, onLines: display.setLines, details: workflowRowDetailChoices(display.details, extensions.details),
     onDetail: display.setDetail, onNewSection: createSection,
   }), [createSection, display.details, display.lines, display.setDetail, display.setLines, extensions.details]);
-  const runs = useWorkflowRunCollection(presented && runsShown);
+  const runs = useWorkflowRunCollection(presented && phone && runsShown);
   const runHeader = useWorkflowRunCollectionHeader(runs, 'workflows-column-runs-space');
   const runSearchQuery = runs.binding.searchQuery;
   const setRunSearchQuery = runs.setSearchQuery;
@@ -112,7 +117,7 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
   );
   return (
     <View testID="workflows-column" style={styles.column}>
-      <View
+      {phone ? <View
         testID="workflows-column:header"
         style={{ paddingTop: safeAreaTop }}
       >
@@ -174,22 +179,22 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
         />
         {spaceHeader.overlays}
         {runHeader.overlays}
-      </View>
+      </View> : props.pageHeader}
       {/* Both views stay built once shown and the switch only presents one: a switch never rebuilds a list. */}
       <RetainedPanelSurface isActive={definitions} hiddenMode="activity" testID="workflows-column:definitions">
-        <WorkflowsColumnLibraryContext.Provider value={lent}>
+        <WorkflowsColumnLibraryContext.Provider value={phone ? lent : null}>
           {props.definitionsContent}
         </WorkflowsColumnLibraryContext.Provider>
       </RetainedPanelSurface>
       {/* Runs are a page: the page list's rows and group labels, as the index (UI refinements 21:44Z, item 4). */}
       <RetainedPanelSurface isActive={props.view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
-        <WorkflowRunsPage model={runs} />
+        {phone ? <WorkflowRunsPage model={runs} /> : props.runsContent}
       </RetainedPanelSurface>
       <RetainedPanelSurface isActive={eventsShown} hiddenMode="activity" testID="workflows-column:events">
-        <ItemList presentation="grouped" style={styles.events}>
+        {phone ? <ItemList presentation="grouped" style={styles.events}>
           <WorkflowsColumnEventsRows feed={events.feed} scope={events.scope} filter={events.filter} surface="page"
             active={presented && eventsShown} />
-        </ItemList>
+        </ItemList> : props.eventsContent}
       </RetainedPanelSurface>
     </View>
   );

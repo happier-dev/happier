@@ -52,6 +52,7 @@ import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { WorkflowBuiltinMark } from '../presentation/WorkflowBuiltinMark';
+import { WorkflowRunsHome } from '../library/WorkflowRunsHome';
 import { useSettingRevealRequested } from '@/components/settings/shell/SettingRow';
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 import { readOpenWorkflowDefinition } from './workflowsColumnModel';
@@ -69,24 +70,28 @@ function readPathView(pathname: string): WorkflowsColumnView {
 }
 
 /** Definitions and the canonical Sessions list's Runs view share the destination's column. */
-export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readonly<{ surface?: 'plane' | 'page'; definitionsContent?: React.ReactNode }>) {
+export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readonly<{
+    surface?: 'plane' | 'page'; definitionsContent?: React.ReactNode;
+    navigationColumnVisible?: boolean; initialView?: 'runs';
+}>) {
     const access = useWorkflowsDestinationAccess();
     // On a phone the home's header actions would either fold into a second overflow of raw buttons
     // (navigation shows the title) or stack three buttons under the purpose line (a phone-sized web
     // window); the column's own "+" menu (lab `nav-N1m` rows, P1's one way to add) carries creation instead.
     const titleChrome = useNavigationTitleChromeShowsTitle();
     const phone = useViewportClass() === 'compact';
-    const ownsCreation = (titleChrome || phone) && props.definitionsContent !== undefined;
+    const pageChrome = props.navigationColumnVisible !== true;
+    const ownsCreation = pageChrome && (titleChrome || phone) && props.definitionsContent !== undefined;
     // A page with no navigation bar over it opens on its name, with the actions on the name's line, then the
     // switch, in both views (FIN-DESIGN-REVIEW L6). Under a native header the bar already carries the name.
-    const headsPage = !titleChrome && props.definitionsContent !== undefined;
+    const headsPage = pageChrome && !titleChrome && props.definitionsContent !== undefined;
     const creationRef = React.useRef<import('@/keyboard/focusReturn').FocusReturnTarget>(null);
     const setCreationRef = React.useCallback<NonNullable<React.ComponentProps<typeof WorkflowsLibraryHeaderActions>['controlRef']>>(
         target => { creationRef.current = target; }, []);
     const pathname = usePathname();
     const router = useRouter();
     const params = useGlobalSearchParams<{ trigger?: string }>();
-    const [view, setView] = React.useState<WorkflowsColumnView>(() => readPathView(pathname));
+    const [view, setView] = React.useState<WorkflowsColumnView>(() => props.initialView ?? readPathView(pathname));
     const selectView = useEventCallback((next: WorkflowsColumnView) => {
         setView(next);
         if (props.definitionsContent !== undefined) return;
@@ -97,7 +102,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     });
     // Agents reach Events through this mounted command; the person's own press selects the same view directly,
     // because the navigation column is not always the surface the current context resolves (QA-LIVE ship3).
-    useCurrentUiContextLocalCommands(access.kind === 'workflows' ? [{
+    useCurrentUiContextLocalCommands(access.kind === 'workflows' && pageChrome ? [{
         key: 'events', title: t('workflows.tabs.events'), invoke: () => selectView('events'),
     }] : [], { unbound: 'local' });
     const selectViewFromControl = selectView;
@@ -135,20 +140,8 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
         </View>;
     // Without a shell column, Definitions is the full home, not a second compact navigation list.
     // The same view owner still reaches Runs; the home carries its own page identity, actions and spaces.
-    if (props.definitionsContent !== undefined && access.kind === 'workflows' && headsPage && phone) {
-        // A phone's main screen: the main-screen head owns the title (the library's space), search and "+" (owner 11-11).
-        return <WorkflowsColumnCreationRefContext.Provider value={creationRef}>
-            <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
-                <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>
-                    <WorkflowsPhonePage view={view} onSelectView={selectViewFromControl} ownsCreation={ownsCreation} pathname={pathname}
-                        definitionsContent={props.definitionsContent} />
-                </WorkflowsColumnHeadsPageContext.Provider>
-            </WorkflowsColumnOwnsCreationContext.Provider>
-        </WorkflowsColumnCreationRefContext.Provider>;
-    }
     if (props.definitionsContent !== undefined && access.kind === 'workflows') {
-        return <WorkflowsColumnCreationRefContext.Provider value={creationRef}><View testID="workflows-column" style={styles.column}>
-            {headsPage ? (
+        const pageHeader = !pageChrome ? null : headsPage ? (
                 // The page's name, then the switch, on the library's own wide column, in both views (FIN-DESIGN-REVIEW L6).
                 <ListPresentationProvider value="page">
                     <PageFrame column="wide" content="column" style={styles.pageHead}>
@@ -159,23 +152,20 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
                         {viewTabs}
                     </PageFrame>
                 </ListPresentationProvider>
-            ) : viewTabs}
-            {/* Both views stay built once shown and the switch only presents one: a switch never rebuilds a list. */}
-            <RetainedPanelSurface isActive={view === 'definitions'} hiddenMode="activity" testID="workflows-column:definitions">
-                <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
-                    <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>{props.definitionsContent}</WorkflowsColumnHeadsPageContext.Provider>
-                </WorkflowsColumnOwnsCreationContext.Provider>
-            </RetainedPanelSurface>
-            <RetainedPanelSurface isActive={view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
-                {headsPage
-                    // Runs sit in the same wide column as the page's name and switch above them.
-                    ? <PageFrame column="wide" content="column" style={styles.pageRuns}><WorkflowsColumnRunsPage pathname={pathname} active={view === 'runs'} /></PageFrame>
-                    : <WorkflowsColumnRunsPage pathname={pathname} active={view === 'runs'} />}
-            </RetainedPanelSurface>
-            <RetainedPanelSurface isActive={view === 'events'} hiddenMode="activity" testID="workflows-column:events">
-                <WorkflowsColumnEventsPage active={view === 'events'} />
-            </RetainedPanelSurface>
-        </View></WorkflowsColumnCreationRefContext.Provider>;
+            ) : viewTabs;
+        return <WorkflowsColumnCreationRefContext.Provider value={creationRef}>
+            <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
+                <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>
+                    <WorkflowsPhonePage view={view} onSelectView={selectViewFromControl} ownsCreation={ownsCreation}
+                        phone={headsPage && phone}
+                        definitionsContent={props.definitionsContent} pageHeader={pageHeader}
+                        runsContent={!pageChrome ? <WorkflowRunsHome /> : headsPage
+                            ? <PageFrame column="wide" content="column" style={styles.pageRuns}><WorkflowsColumnRunsPage pathname={pathname} active={view === 'runs'} /></PageFrame>
+                            : <WorkflowsColumnRunsPage pathname={pathname} active={view === 'runs'} />}
+                        eventsContent={<WorkflowsColumnEventsPage active={view === 'events'} />} />
+                </WorkflowsColumnHeadsPageContext.Provider>
+            </WorkflowsColumnOwnsCreationContext.Provider>
+        </WorkflowsColumnCreationRefContext.Provider>;
     }
     const headerAction = access.kind === 'workflows' ? <WorkflowsColumnActions canCreate /> : null;
     if (access.kind === 'workflows') {

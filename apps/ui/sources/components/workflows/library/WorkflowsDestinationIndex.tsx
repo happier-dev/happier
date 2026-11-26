@@ -6,7 +6,6 @@ import { WorkflowsGate } from '@/components/workflows/gating/WorkflowsGate';
 import { useWorkflowsDestinationAccess } from '@/components/workflows/gating/workflowsDestinationAccess';
 
 import { WorkflowsLibraryHome } from './WorkflowsLibraryHome';
-import { WorkflowRunsHome } from './WorkflowRunsHome';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
@@ -42,9 +41,9 @@ export const WorkflowsDestinationIndex = React.memo(function WorkflowsDestinatio
         identity: { name: workflowsName },
     }), [hideWorkflowLabel, showWorkflowLabel, workflowsName]);
     const close = () => router.setParams({ authoringSessionId: undefined, authoringServerId: undefined });
-    const content = !columnVisible && access.kind === 'workflows'
-        ? <WorkflowsColumn surface="page" definitionsContent={<WorkflowsLibraryHome />} />
-        : <WorkflowsGate surface="destination">{props.view === 'runs' ? <WorkflowRunsHome /> : <WorkflowsLibraryHome />}</WorkflowsGate>;
+    // Sidebar placement changes the page's chrome, never the lifetime of its tabs or collection draft.
+    const content = <WorkflowsGate surface="destination"><WorkflowsColumn surface="page"
+        navigationColumnVisible={columnVisible} initialView={props.view} definitionsContent={<WorkflowsLibraryHome />} /></WorkflowsGate>;
     const main = <>{params.automationUnavailable === '1' ? <SurfaceStateCard testID="retired-automation-unavailable"
         size="line" kind="unavailable" title={t('workflows.triggers.legacy.notAvailable')} /> : null}
         <View style={{ flex: 1 }} collapsable={false}>{content}</View>

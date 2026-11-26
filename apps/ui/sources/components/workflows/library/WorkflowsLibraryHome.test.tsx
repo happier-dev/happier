@@ -1305,6 +1305,46 @@ describe('workflow library page anatomy', () => {
             expect(screen.findByTestId('workflow-examples:more')).not.toBeNull();
         }
     });
+    it('retains the unsaved Hunts filter and mounted library through pure responsive crossings', async () => {
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [] } };
+            if (actionId === 'workflow.trigger.list') return { ok: true, result: { sets: [] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
+        });
+        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        const destination = (columnVisible: boolean) => <AppShellColumnContext.Provider value={{ present: columnVisible, columnVisible }}>
+            <WorkflowsDestinationIndex />
+        </AppShellColumnContext.Provider>;
+        windowSize.width = 390;
+        const screen = await renderScreen(destination(false), { wrapper: Wrapper,
+            createNodeMock: () => ({
+                measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(40, 40, 120, 40),
+                scrollTo: () => {},
+            }),
+        });
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-home:firstVisit')).not.toBeNull());
+        await screen.pressByTestIdAsync('workflows-column-space-title');
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-column-space-menu-facet:view:"hunts"')).not.toBeNull());
+        await screen.pressByTestIdAsync('workflows-column-space-menu-facet:view:"hunts"');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const action = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, serverId: storage.getState().profileScope!.serverId };
+        const library = screen.findByType(WorkflowsLibraryHome);
+        for (const width of [800, 1440, 390]) {
+            // Only the window and its shell-column presentation change; the route and mounted destination stay put.
+            windowSize.width = width;
+            await screen.update(destination(width === 1440));
+            expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
+                result: { view: 'hunts', visibleKeys: ['builtin:repository-review'] } });
+            expect(screen.findByTestId('workflows-home:firstVisit')).toBeNull();
+            expect(screen.findByTestId('workflow-builtins:builtin:repository-review')).not.toBeNull();
+            expect(screen.findByTestId('workflow-builtins:builtin:keep-going')).toBeNull();
+            expect(screen.findByType(WorkflowsLibraryHome)).toBe(library);
+        }
+        expect(routerPush).not.toHaveBeenCalled();
+        windowSize.width = 800;
+    });
     it('keeps first-visit Workflows narrowed by the active Hunt filter and search', async () => {
         execute.mockImplementation(async (actionId: string) => {
             if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [] } };
