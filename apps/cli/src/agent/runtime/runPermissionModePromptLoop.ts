@@ -3,7 +3,7 @@ import type { PermissionMode } from '@/api/types';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import { resolveAppendSystemPromptBaseOverride } from '@/agent/runtime/permission/appendSystemPromptField';
+import { resolveAppendSystemPromptBaseOverride, resolveAppendSystemPromptQueueKeyValue } from '@/agent/runtime/permission/appendSystemPromptField';
 import {
   initializePermissionModeStateSync,
 } from '@/agent/runtime/permission/permissionModeStateSync';
@@ -108,6 +108,8 @@ async function waitForCommittedUserPromptBoundary(
   }));
 }
 
+export type DescribeUnavailableRuntimeReset = (cause: 'clear' | 'permission_change' | 'settings_change') => string;
+
 export async function runPermissionModePromptLoop(opts: {
   providerName: string;
   providerId?: string;
@@ -130,6 +132,7 @@ export async function runPermissionModePromptLoop(opts: {
   currentPermissionModeUpdatedAt: number;
   getCurrentPermissionMode?: () => PermissionMode;
   setCurrentPermissionMode: (mode: PermissionMode) => void;
+  guardPermissionModeRequests?: (accept: (mode: PermissionMode) => boolean) => void;
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
   initialResumeId?: string;
   strictInitialResume?: boolean;
@@ -153,12 +156,13 @@ export async function runPermissionModePromptLoop(opts: {
    * Present when this runtime cannot be reset (its provider process is the user's own terminal):
    * returns the notice shown instead of `/clear` or of a restart for changed queue settings.
    */
-  describeUnavailableRuntimeReset?: ((cause: 'clear' | 'settings_change') => string) | null;
+  describeUnavailableRuntimeReset?: DescribeUnavailableRuntimeReset | null;
 }): Promise<void> {
   let wasStarted = false;
   let currentModeHash: string | null = null;
   let launchPermissionMode: PermissionMode | null = null;
   let lastRequestedPermissionMode: PermissionMode | null = null;
+  let previousAppendSystemPrompt: ReturnType<typeof resolveAppendSystemPromptQueueKeyValue> | undefined;
   let pending: QueuedPermissionModeMessage | null = null;
   let storedSessionIdForResume: { value: string; origin: 'initial' | 'restart' } | null = null;
   let didReplaySeedBootstrap = false;
@@ -187,7 +191,7 @@ export async function runPermissionModePromptLoop(opts: {
     take: 50,
     applyMode: ({ mode, updatedAt }) => {
       if (launchPermissionMode !== null) {
-        refusePermissionChange(mode);
+        acceptPermissionMode(mode);
         return;
       }
       opts.setCurrentPermissionMode(mode);
@@ -280,12 +284,15 @@ export async function runPermissionModePromptLoop(opts: {
     return await overrideSync.flushPendingAfterStart() === true && !opts.shouldExit();
   };
 
-  function refusePermissionChange(mode: PermissionMode): void {
-    if (mode !== lastRequestedPermissionMode && mode !== launchPermissionMode) {
-      const notice = opts.describeUnavailableRuntimeReset?.('settings_change');
+  function acceptPermissionMode(mode: PermissionMode): boolean {
+    if (launchPermissionMode === null) return true;
+    const accepted = mode === launchPermissionMode;
+    if (!accepted && mode !== lastRequestedPermissionMode) {
+      const notice = opts.describeUnavailableRuntimeReset?.('permission_change');
       if (notice) postNotice(notice);
     }
     lastRequestedPermissionMode = mode;
+    return accepted;
   }
 
   const ensureRuntimeStarted = async (): Promise<{ startedFreshSessionForTurn: boolean }> => {
@@ -371,11 +378,13 @@ export async function runPermissionModePromptLoop(opts: {
   if (opts.startRuntimeBeforeFirstPrompt === true && !wasStarted) {
     await ensureFreshSessionSnapshotBeforeTurnBestEffort();
     if (opts.shouldExit()) return;
-    overrideSync.syncFromMetadata();
     if (opts.describeUnavailableRuntimeReset && opts.getCurrentPermissionMode) {
+      syncPermissionModeFromMetadata();
       launchPermissionMode = opts.getCurrentPermissionMode();
+      opts.guardPermissionModeRequests?.(acceptPermissionMode);
       opts.permissionHandler.setPermissionMode(launchPermissionMode);
     }
+    overrideSync.syncFromMetadata();
     const eagerStart = await ensureRuntimeStarted();
     if (opts.shouldExit()) return;
     pendingFreshSessionSystemPrompt = eagerStart.startedFreshSessionForTurn;
@@ -420,7 +429,14 @@ export async function runPermissionModePromptLoop(opts: {
     if (!message) continue;
 
     if (launchPermissionMode !== null) {
-      refusePermissionChange(message.mode.permissionMode);
+      // Messages queued before the startup lock can still carry an older request.
+      if (message.mode.permissionMode !== launchPermissionMode) acceptPermissionMode(message.mode.permissionMode);
+      const appendSystemPrompt = resolveAppendSystemPromptQueueKeyValue(message.mode);
+      if (previousAppendSystemPrompt !== undefined && appendSystemPrompt !== previousAppendSystemPrompt) {
+        const notice = opts.describeUnavailableRuntimeReset?.('settings_change');
+        if (notice) postNotice(notice);
+      }
+      previousAppendSystemPrompt = appendSystemPrompt;
       currentModeHash = message.hash;
     } else {
       opts.permissionHandler.setPermissionMode(message.mode.permissionMode);

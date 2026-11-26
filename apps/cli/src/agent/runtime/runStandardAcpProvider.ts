@@ -31,7 +31,7 @@ import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendAp
 import { initializeBackendRunSession, type InitializeBackendRunSessionOptions } from '@/agent/runtime/initializeBackendRunSession';
 import { registerRunnerTerminationHandlers, type RunnerTerminationHandlerRegistration } from '@/agent/runtime/runnerTerminationHandlers';
 import type { RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
-import { runPermissionModePromptLoop, type ProviderStartupControls, type ReadyNotificationTurnContext } from '@/agent/runtime/runPermissionModePromptLoop';
+import { runPermissionModePromptLoop, type DescribeUnavailableRuntimeReset, type ProviderStartupControls, type ReadyNotificationTurnContext } from '@/agent/runtime/runPermissionModePromptLoop';
 import { getSessionNotificationTitle } from '@/agent/runtime/readyNotificationContext';
 import { resolveReadyNotificationAssistantText } from '@/agent/runtime/readyNotificationAssistantText';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
@@ -181,7 +181,7 @@ export type StandardAcpProviderConfig = {
    * For providers whose runtime is the user's own terminal process and cannot be reset: the notice
    * shown instead of resetting for `/clear` or for queue settings that would need a restart.
    */
-  describeUnavailableRuntimeReset?: (cause: 'clear' | 'settings_change') => string;
+  describeUnavailableRuntimeReset?: DescribeUnavailableRuntimeReset;
   startRuntimeBeforeFirstPrompt?: boolean;
   /**
    * The provider/catalog declaration that this backend owns ACP `session/load` — the same
@@ -793,6 +793,7 @@ export async function runStandardAcpProvider(
       currentPermissionModeUpdatedAt: permissionModeState.getCurrentPermissionModeUpdatedAt(),
       getCurrentPermissionMode: () => permissionModeState.getCurrentPermissionMode() ?? 'default',
       setCurrentPermissionMode: permissionModeState.setCurrentPermissionMode,
+      guardPermissionModeRequests: permissionModeState.guardPermissionModeRequests,
       setCurrentPermissionModeUpdatedAt: permissionModeState.setCurrentPermissionModeUpdatedAt,
       initialResumeId: initialResumeId || undefined,
       strictInitialResume: initialResumeId.length > 0,

@@ -6,13 +6,14 @@ import { maybeUpdatePermissionModeMetadata } from './permissionModeMetadata';
 export function resolvePermissionModeForQueueingUserMessage(opts: {
   currentPermissionMode: PermissionMode | undefined;
   messagePermissionModeRaw: unknown;
+  acceptPermissionMode?: (mode: PermissionMode) => boolean;
   updateMetadata: (updater: (current: Metadata) => Metadata) => void;
   nowMs: () => number;
 }): { currentPermissionMode: PermissionMode | undefined; queuePermissionMode: PermissionMode } {
   let nextCurrentPermissionMode = opts.currentPermissionMode;
 
   const nextPermissionMode = normalizePermissionModeToIntent(opts.messagePermissionModeRaw);
-  if (nextPermissionMode) {
+  if (nextPermissionMode && opts.acceptPermissionMode?.(nextPermissionMode) !== false) {
     const res = maybeUpdatePermissionModeMetadata({
       currentPermissionMode: opts.currentPermissionMode,
       nextPermissionMode,

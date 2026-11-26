@@ -4,7 +4,7 @@ import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acp
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { Metadata } from '@/api/types';
+import type { Metadata, UserMessage } from '@/api/types';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -562,6 +562,8 @@ describe('runPermissionModePromptLoop', () => {
 
     let shouldExit = false;
     const readySpy = vi.fn();
+    const syncFromMetadata = vi.fn();
+    const flushPendingAfterStart = vi.fn(async () => {});
     const onAfterStart = vi.fn(async () => {
       shouldExit = true;
     });
@@ -574,7 +576,7 @@ describe('runPermissionModePromptLoop', () => {
       messageQueue: queue,
       permissionHandler,
       runtime,
-      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      createOverrideSynchronizer: () => ({ syncFromMetadata, flushPendingAfterStart }),
       messageBuffer,
       shouldExit: () => shouldExit,
       getAbortSignal: () => new AbortController().signal,
@@ -591,6 +593,18 @@ describe('runPermissionModePromptLoop', () => {
 
     expect(runtime.startOrLoad).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoad).toHaveBeenCalledWith({});
+    expect(syncFromMetadata).toHaveBeenCalledTimes(3);
+    expect(flushPendingAfterStart).toHaveBeenCalledTimes(2);
+    const startupOrder = [
+      syncFromMetadata.mock.invocationCallOrder[0]!,
+      syncFromMetadata.mock.invocationCallOrder[1]!,
+      runtime.startOrLoad.mock.invocationCallOrder[0]!,
+      flushPendingAfterStart.mock.invocationCallOrder[0]!,
+      syncFromMetadata.mock.invocationCallOrder[2]!,
+      flushPendingAfterStart.mock.invocationCallOrder[1]!,
+      onAfterStart.mock.invocationCallOrder[0]!,
+    ];
+    expect(startupOrder).toEqual([...startupOrder].sort((a, b) => a - b));
     expect(onAfterStart).toHaveBeenCalledTimes(1);
     expect(runtime.sendPrompt).not.toHaveBeenCalled();
     expect(readySpy).not.toHaveBeenCalled();
@@ -1696,11 +1710,73 @@ describe('runPermissionModePromptLoop', () => {
     expect(notices).toEqual(['cannot reset (settings_change)']);
   });
 
+  it.each(['refresh', 'during launch'] as const)('uses the effective permission mode when intent changes %s', async (phase) => {
+    const initial = createPromptLoopMetadata({ permissionMode: 'default', permissionModeUpdatedAt: 10 });
+    const requested = createPromptLoopMetadata({ permissionMode: 'read-only', permissionModeUpdatedAt: 20 });
+    let onUserMessage: Parameters<ApiSessionClient['onUserMessage']>[0] | undefined;
+    const notices: string[] = [];
+    const session = createMutableApiSessionClientFixture({ metadata: initial, overrides: {
+      onUserMessage: (handler) => { onUserMessage = handler; },
+      sendAgentMessage: (_provider, body) => {
+        if (body.type === 'message') notices.push(body.message);
+      },
+    } });
+    session.refreshSessionSnapshotFromServerBestEffort = async () => {
+      if (phase === 'refresh') session.__setMetadata(requested);
+    };
+    const state = createPermissionModeQueueState({ session, initialPermissionMode: 'default' });
+    const runtime = createRuntime();
+    const permissionHandler = createProviderEnforcedPermissionHandler({ session, logPrefix: '[PermissionStartupTest]' });
+    const setPermissionMode = vi.spyOn(permissionHandler, 'setPermissionMode');
+    const expectedMode = phase === 'refresh' ? 'read-only' : 'default';
+    const launchModes: Array<string | undefined> = [];
+    runtime.startOrLoad.mockImplementation(async () => {
+      launchModes.push(state.getCurrentPermissionMode());
+      const message = {
+        role: 'user', content: { type: 'text', text: 'web prompt' },
+        localId: 'local-web', meta: { permissionMode: 'read-only' },
+      } satisfies UserMessage;
+      await onUserMessage?.(message);
+      launchModes.push(state.getCurrentPermissionMode());
+    });
+    let ready = false;
+
+    await runPermissionModePromptLoop({
+      ...state,
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      permissionHandler,
+      runtime,
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => ready,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => { ready = true; },
+      getCurrentPermissionMode: () => state.getCurrentPermissionMode() ?? 'default',
+      currentPermissionModeUpdatedAt: 10,
+      formatPromptErrorMessage: String,
+      startRuntimeBeforeFirstPrompt: true,
+      describeUnavailableRuntimeReset: (cause) => `cannot reset (${cause})`,
+    });
+
+    expect(launchModes).toEqual([expectedMode, expectedMode]);
+    expect(session.__getMetadata()?.permissionMode).toBe(expectedMode);
+    expect(setPermissionMode).toHaveBeenLastCalledWith(expectedMode);
+    expect(runtime.sendPrompt).toHaveBeenCalledWith('web prompt');
+    expect(runtime.reset).not.toHaveBeenCalled();
+    expect(notices).toEqual(phase === 'during launch' ? ['cannot reset (permission_change)'] : []);
+  });
+
   it.each([['default', 'read-only'], ['read-only', 'default']] as const)(
     'keeps eager launch mode %s and reports a refused request for %s once',
     async (launchMode, requestedMode) => {
       const notices: string[] = [];
       const session = createMutableApiSessionClientFixture({ overrides: {
+        onUserMessage: () => {},
         sendAgentMessage: (_provider, body) => {
           if (body.type === 'message') notices.push(body.message);
         },
@@ -1710,12 +1786,14 @@ describe('runPermissionModePromptLoop', () => {
       const runtime = createRuntime();
       const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
       const modes = [
-        { permissionMode: launchMode, appendSystemPrompt: 'Extra context' },
-        { permissionMode: requestedMode },
-        { permissionMode: requestedMode, appendSystemPrompt: 'Extra context' },
         { permissionMode: launchMode },
+        { permissionMode: launchMode, appendSystemPrompt: 'Extra context' },
+        { permissionMode: requestedMode, appendSystemPrompt: 'Extra context' },
+        { permissionMode: requestedMode, appendSystemPrompt: 'Extra context' },
+        { permissionMode: launchMode, appendSystemPrompt: 'Extra context' },
       ];
       let ready = 0;
+      const noticesByPrompt: string[][] = [];
       const enqueue = () => queue.push({ text: `web prompt ${ready}`, localId: `local-${ready}` }, modes[ready]!);
       enqueue();
       const launchConfig = { getCurrentPermissionMode: () => launchMode };
@@ -1736,6 +1814,7 @@ describe('runPermissionModePromptLoop', () => {
         keepAlive: () => {},
         setThinking: () => {},
         sendReady: () => {
+          noticesByPrompt.push([...notices]);
           if (++ready >= modes.length) return;
           session.__setMetadata(createPromptLoopMetadata({
             permissionMode: modes[ready]!.permissionMode,
@@ -1751,7 +1830,8 @@ describe('runPermissionModePromptLoop', () => {
         describeUnavailableRuntimeReset: (cause) => `cannot reset (${cause})`,
       });
 
-      expect(notices).toEqual(['cannot reset (settings_change)']);
+      expect(noticesByPrompt[1]).toEqual(['cannot reset (settings_change)']);
+      expect(notices).toEqual(['cannot reset (settings_change)', 'cannot reset (permission_change)']);
       expect(runtime.reset).not.toHaveBeenCalled();
       expect(runtime.sendPrompt).toHaveBeenCalledTimes(modes.length);
       expect(permissionHandler.setPermissionMode.mock.calls).toEqual([[launchMode]]);

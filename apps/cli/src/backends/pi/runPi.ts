@@ -135,9 +135,15 @@ function createSharedTerminalConfig(opts: PiRunOptions): StandardAcpProviderConf
     shouldRenderTerminalDisplay: () => false,
     resolveKeepAliveMode: () => 'local',
     // A reset would re-adopt the same live Pi session while claiming a fresh one.
-    describeUnavailableRuntimeReset: (cause) => (cause === 'clear'
-      ? 'This Pi session runs in your terminal, so Happier cannot clear it. To start fresh, quit Pi and run `happier pi` again.'
-      : 'The requested settings do not apply to this live Pi session. Pi keeps the permissions it started with. To change them, quit Pi and run `happier pi` again.'),
+    describeUnavailableRuntimeReset: (cause) => {
+      if (cause === 'clear') {
+        return 'This Pi session runs in your terminal, so Happier cannot clear it. To start fresh, quit Pi and run `happier pi` again.';
+      }
+      if (cause === 'permission_change') {
+        return 'The requested permission mode does not apply to this live Pi session. Pi keeps the permissions it started with. To change them, quit Pi and run `happier pi` again.';
+      }
+      return 'The changed prompt settings do not apply to this live Pi session. To apply new prompt settings, quit Pi and run `happier pi` again.';
+    },
     createRuntime: (params) => {
       // Created with the runtime: Pi exiting ends the runner through its termination path.
       const host = sharedTerminal ?? createPiSharedTerminalHost({ requestRunnerTermination: params.requestRunnerTermination });
