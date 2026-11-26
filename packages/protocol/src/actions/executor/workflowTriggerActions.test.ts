@@ -810,7 +810,7 @@ describe('trigger source display provenance', () => {
     } });
     const result = WorkflowTriggerListResultV1Schema.parse(await host.list({ healthSource: { sourceInstanceIds: ['production-health'] } }));
     expect(result).toMatchObject({ healthSources: [{ sourceInstanceId: 'production-health', source, observer,
-      enabled: true, automationId: saved.set.automationId, triggerId: saved.triggerId }] });
+      enabled: true, automationId: saved.set.automationId, triggerId: saved.triggerId, templateVersion: 1 }] });
     expect((await host.list({ healthSource: { sourceInstanceIds: ['missing'] } }))).toMatchObject({ healthSources: [] });
     const read = createAccountHealthCheckSourceReaderV1({ automations: f.deps.automations,
       resolveEncryption: async () => encryption });
@@ -873,11 +873,11 @@ describe('trigger source display provenance', () => {
       .resolves.toMatchObject({ set: { automationId: 'health-0', enabled: false } });
     const listed = await host.list({ healthSource: { environmentId: 'production' } });
     expect(listed.healthSources).toEqual([
-      expect.objectContaining({ automationId: 'health-0', enabled: false }),
+      expect.objectContaining({ automationId: 'health-0', enabled: false, templateVersion: 2 }),
       expect.objectContaining({ automationId: 'health-1', enabled: true }),
     ]);
     const exactSource = await host.list({ healthSource: { sourceInstanceIds: ['shared-source'] } });
-    expect(exactSource.healthSources).toEqual([expect.objectContaining({ automationId: 'health-1', enabled: true })]);
+    expect(exactSource.healthSources).toEqual([expect.objectContaining({ automationId: 'health-1', enabled: true, templateVersion: 1 })]);
   });
 
   it.each(['plain', 'e2ee'] as const)('projects each retained %s receipt Event subject without creating an Environment lifecycle binding', async mode => {

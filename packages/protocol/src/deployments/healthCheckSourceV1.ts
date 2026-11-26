@@ -269,7 +269,8 @@ export const HealthCheckSetupPreviewResultV1Schema = lazyZodSchema(() => z.stric
     mode: z.literal('preview'), sourceConfig: HealthCheckSetupDraftV1Schema,
     destinationSelectionContext: z.optional(MachineTargetV1Schema),
     testContext: z.optional(z.strictObject({ serverId: id, machineId: id,
-        sourceInstanceId: AutomationEventSourceInstanceIdV1Schema, expectedSourceRevision: keyword })),
+        sourceInstanceId: AutomationEventSourceInstanceIdV1Schema, expectedSourceRevision: keyword,
+        templateVersion: z.optional(z.number().check(z.int(), z.minimum(1))) })),
 }));
 export type HealthCheckSetupPreviewResultV1 = z.infer<typeof HealthCheckSetupPreviewResultV1Schema>;
 export const HealthCheckSetupPreviewResultV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSetupPreviewResultV1Schema));

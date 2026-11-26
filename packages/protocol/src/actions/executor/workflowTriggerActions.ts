@@ -390,7 +390,7 @@ async function* readSavedHealthCheckCandidates(deps: SavedHealthCheckReadDeps,
       yield { sourceInstanceId, revision: `${row.id}:${trigger.id}:${trigger.revision}`,
         source: source.data, enabled: row.enabled && trigger.enabled,
         observer: trigger.observation.kind === 'checkpointedPull' ? trigger.observation.watcher : null,
-        automationId: row.id, triggerId: trigger.id } satisfies WorkflowTriggerHealthSourceV1;
+        automationId: row.id, triggerId: trigger.id, templateVersion: row.templateVersion } satisfies WorkflowTriggerHealthSourceV1;
     }
   }
 }

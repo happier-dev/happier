@@ -373,6 +373,7 @@ export const WorkflowTriggerHealthSourceV1Schema = lazyZodSchema(() => z.strictO
   observer: AutomationCheckpointedPullObservationSchema.shape.watcher,
   automationId: asProtocolZod(AutomationIdV1Schema),
   triggerId: AutomationTriggerIdSchema,
+  templateVersion: z.optional(z.number().check(z.int(), z.minimum(1))),
 }));
 export type WorkflowTriggerHealthSourceV1 = z.infer<typeof WorkflowTriggerHealthSourceV1Schema>;
 export const WorkflowTriggerListResultV1Schema = lazyZodSchema(() => z.strictObject({

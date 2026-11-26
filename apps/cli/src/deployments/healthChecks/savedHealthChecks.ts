@@ -194,7 +194,9 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         : retained?.observer?.machineId ?? caller.machineId;
                     const testContext = retained && machineId && retained.source.alerts !== undefined
                         && createCanonicalJsonSigningInput(sourceConfig.alerts) === createCanonicalJsonSigningInput(retained.source.alerts)
-                        ? { serverId: input.serverId, machineId, sourceInstanceId: retained.sourceInstanceId, expectedSourceRevision: retained.revision } : undefined;
+                        ? { serverId: input.serverId, machineId, sourceInstanceId: retained.sourceInstanceId,
+                            expectedSourceRevision: retained.revision,
+                            ...(retained.templateVersion === undefined ? {} : { templateVersion: retained.templateVersion }) } : undefined;
                     return HealthCheckSetupPreviewResultV1Schema.parse({ mode, sourceConfig,
                         ...(machineId ? { destinationSelectionContext: { serverId: input.serverId, machineId } } : {}),
                         ...(testContext ? { testContext } : {}) });

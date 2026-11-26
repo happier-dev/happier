@@ -106,6 +106,7 @@ describe('explicit saved heartbeat enrollment', () => {
             config: { host: 'web.example', port: 443 }, periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] };
         let sourceReads = 0;
         let configured = true;
+        let templateVersion: number | undefined = 7;
         let observer: { machineId: string; machineInstallationId: string; pluginId: string; materializationId: string } | null = {
             machineId: 'remote-observer', machineInstallationId: 'remote-installation', pluginId: caller.pluginId, materializationId: 'installed' };
         const host = createSavedHealthChecksHost({ serverId: 'profile-home', homeServerIdentityId: 'profile-home',
@@ -115,6 +116,7 @@ describe('explicit saved heartbeat enrollment', () => {
             readSavedSource: (id, signal) => readSavedHealthCheckSourceForHost({ sourceInstanceId: id, signal }, {
                 async list() { sourceReads++; return { sets: [], healthSources: configured ? [{ sourceInstanceId,
                     revision: 'saved-revision', enabled: true, source,
+                    ...(templateVersion === undefined ? {} : { templateVersion }),
                     observer,
                     automationId: 'saved-health', triggerId: '11111111-1111-4111-8111-111111111111' }] : [] }; },
             }),
@@ -128,7 +130,8 @@ describe('explicit saved heartbeat enrollment', () => {
         const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { healthChecks: services } });
         try {
             expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject, alerts })).toMatchObject({
-                testContext: { serverId: 'profile-home', machineId: 'remote-observer', sourceInstanceId, expectedSourceRevision: 'saved-revision' },
+                testContext: { serverId: 'profile-home', machineId: 'remote-observer', sourceInstanceId,
+                    expectedSourceRevision: 'saved-revision', templateVersion: 7 },
                 destinationSelectionContext: { serverId: 'profile-home', machineId: 'remote-observer' },
             });
             expect(sourceReads).toBe(1);
@@ -136,6 +139,7 @@ describe('explicit saved heartbeat enrollment', () => {
                 alerts: { channels: [], phases: ['open'] } })).not.toHaveProperty('testContext');
             // A saved source whose observer retired tests from the current caller instead.
             observer = null;
+            templateVersion = undefined;
             expect(await kit.invokeAction('health/setup', { v: 1, mode: 'preview', subject, alerts })).toMatchObject({
                 testContext: { serverId: 'profile-home', machineId: 'observer', sourceInstanceId, expectedSourceRevision: 'saved-revision' },
             });
