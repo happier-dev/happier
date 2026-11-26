@@ -12,12 +12,19 @@ import { t } from '@/text';
 export const STEP_DOOR_WIDTH_PX = 380;
 
 /**
+ * The drawn height of every field on a signed-out step (a link, an address, an email, a password, a select), set once
+ * by the signed-out shell for everything in it: the height of the step's call to action (`StepPrimaryButton`, a `large`
+ * pill, 40 px), so a field and the button under it read as one set. Between the page control height (32), which is a
+ * configuration row's density, and a hero field (48), which outweighs the step's heading (owner, 2026-11-26).
+ */
+export const STEP_FIELD_HEIGHT_PX = 40;
+
+/**
  * The parts every signed-out form is made of, so Login, the email forms and Connect to a Home read as
  * one anatomy (owner review 11-16): a field's label over its control, one line under the control that
  * says what it is for or why it was refused, and a thin "or" between two ways to do the same thing.
- * The control is the shared `FieldTextInput` at the page control height, its touch target reached by
- * the hit area rather than drawn (a password: `PasswordField` in the page presentation, the same box);
- * an action beside a field is a `normal` `RoundButton`, the same height. A field's parts sit in a
+ * The control is the shared `FieldTextInput` at {@link STEP_FIELD_HEIGHT_PX}, its touch target reached by
+ * the hit area rather than drawn (a password: `PasswordField`, a choice: the field select, the same box). A field's parts sit in a
  * `StepFieldGroup`, and a form's groups stand a section apart.
  */
 /**

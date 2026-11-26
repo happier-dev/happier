@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HappierFieldBoxHeightScope } from '@happier-dev/plugin-ui/presentation';
 
 import { useGlyphFieldTap } from '@/components/atmosphere/glyph/useHomeGlyphField';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { GlassAtmosphereScope } from '@/components/ui/glass/glassRuntimeEnvironment';
 
+import { STEP_FIELD_HEIGHT_PX } from './StepFormParts';
 import { WelcomeAtmosphere } from './WelcomeAtmosphere';
 import { WorkflowPanel, type WorkflowPanelPresentation } from './WorkflowPanel';
 import { useUnauthShellLayout } from './useUnauthShellLayout';
@@ -120,7 +122,10 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                   * actions as wide as the column like every other choice here.
                   */}
                 <SurfaceStateSizeProvider size="phone">
-                    {props.children}
+                    {/* Every field of every step stands at one height, the step's call to action's. */}
+                    <HappierFieldBoxHeightScope heightPx={STEP_FIELD_HEIGHT_PX}>
+                        {props.children}
+                    </HappierFieldBoxHeightScope>
                 </SurfaceStateSizeProvider>
             </WorkflowPanel>
             </GlassAtmosphereScope>

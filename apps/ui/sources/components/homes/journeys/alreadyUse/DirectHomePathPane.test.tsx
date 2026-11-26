@@ -5,13 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
-import { flattenTestStyle, renderScreen } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit';
 import type { SystemTasksBridge } from '@/components/systemTasks/types';
 import { t } from '@/text';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 import { DirectHomePathPane } from './DirectHomePathPane';
-import { JourneyPanePresentationContext } from './journeyPaneKit';
 
 const network = vi.hoisted(() => ({ fetch: vi.fn() }));
 const os = vi.hoisted(() => ({ bridge: null as SystemTasksBridge | null }));
@@ -141,21 +140,5 @@ describe('Direct Home address outcome', () => {
         await screen.pressByTestIdAsync('already-use-happier.home-connect');
         await vi.waitFor(() => expect(onHomeConnected).toHaveBeenCalledWith(expect.objectContaining({ serverUrl: 'https://accounts.example.test' })));
         await screen.unmount();
-    });
-
-    it('draws the address input at the lab step size', async () => {
-        const screen = await renderScreen(
-            <JourneyPanePresentationContext.Provider value="step">
-                <DirectHomePathPane initialAddress="" onHomeConnected={() => {}} onLeave={() => {}} />
-            </JourneyPanePresentationContext.Provider>,
-        );
-
-        try {
-            const style = flattenTestStyle(screen.findByTestId('already-use-happier.home-address')!.props.style);
-            expect(style.minHeight).toBe(46);
-            expect(style.fontSize).toBeGreaterThanOrEqual(14);
-        } finally {
-            await screen.unmount();
-        }
     });
 });

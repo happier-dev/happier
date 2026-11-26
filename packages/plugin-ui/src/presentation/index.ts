@@ -10,6 +10,8 @@ export * from './index.public.js';
 export { HappierSeriesTrailingReadingContext } from './data/StackedSeriesChart.js';
 // Host-only: core's type scale draws the compact title and its inline control in the same text flow.
 export { HappierPageHeaderInlineTitleContext } from './layout/PageHeader.js';
+// Host-only: a host surface that stands its controls at one height of its own (a signed-out step) scopes its field boxes to it.
+export { HappierFieldBoxHeightScope, useHappierFieldBoxScopeHeight } from './form/FieldBox.js';
 // Host-only: which text edge a section's plain action stands on (`start` once it drops beneath the section's text), so a
 // host action row can order its controls for that edge from the header's own measured decision.
 export { HappierTextActionEdgeContext } from './interaction/textActionEdge.js';

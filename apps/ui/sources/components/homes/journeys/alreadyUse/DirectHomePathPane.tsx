@@ -230,7 +230,6 @@ export function DirectHomePathPane(props: Readonly<{
                     <StepForm>
                         <StepFieldGroup>
                             <FieldTextInput
-                                size="step"
                                 testID="already-use-happier.home-address"
                                 value={address}
                                 onChangeText={(value) => {
@@ -245,6 +244,7 @@ export function DirectHomePathPane(props: Readonly<{
                                 returnKeyType="go"
                                 onSubmitEditing={submitAddress}
                                 monospace
+                                placeholderIsValue
                                 textAlign="center"
                             />
                             <View style={styles.centredLine}>

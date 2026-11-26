@@ -1,6 +1,6 @@
 import type { SurfaceAddress } from '../themeSurface.js';
 import { useThemeSurfaceBinding } from '../themeSurfaceBinding.js';
-import { useCallback, useContext, type ReactNode, type Ref } from 'react';
+import { createContext, useCallback, useContext, type ReactNode, type Ref } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import { HAPPIER_RADIUS_V1 } from '../../environment/radius.js';
@@ -149,6 +149,22 @@ export function resolveHappierFieldBoxLabel(input: Readonly<{
   };
 }
 
+/**
+ * The drawn height of every field box below it, text fields and select triggers alike, where a host's surface sets its
+ * controls at one height of its own (a signed-out step stands its fields at its call to action's height). Outside a
+ * scope a field box is the page control height. Host-only: plugin surfaces keep the page control height.
+ */
+const HappierFieldBoxHeightContext = createContext<number | null>(null);
+
+export function HappierFieldBoxHeightScope(props: Readonly<{ heightPx: number; children: ReactNode }>) {
+  return <HappierFieldBoxHeightContext.Provider value={props.heightPx}>{props.children}</HappierFieldBoxHeightContext.Provider>;
+}
+
+/** The scope's field height, or `null` outside a scope (the page control height). */
+export function useHappierFieldBoxScopeHeight(): number | null {
+  return useContext(HappierFieldBoxHeightContext);
+}
+
 /** The field box's own shape; colours come from the caller. */
 export const HAPPIER_FIELD_BOX_SHAPE: HappierPortableStyle = Object.freeze({
   minHeight: HAPPIER_FIELD_BOX_METRICS.minHeightPx,
@@ -191,6 +207,7 @@ export type HappierFieldBoxTriggerProps = Readonly<{
 export function HappierFieldBoxTrigger({ colors, leading, children, trailing, span, density, boxRef }: HappierFieldBoxTriggerProps) {
   const paintColor = useHappierMaterialColorResolver();
   const rowLayout = useContext(HappierPageRowFieldLayoutContext);
+  const scopeHeightPx = useHappierFieldBoxScopeHeight();
   const chip = density === 'chip';
   const resolvedSpan = chip ? 'intrinsic' : span === 'column' && rowLayout
     ? rowLayout.stacked ? 'row' : rowLayout.maxWidthPx === null ? 'column' : 'content'
@@ -223,6 +240,7 @@ export function HappierFieldBoxTrigger({ colors, leading, children, trailing, sp
         borderColor: colors.borderColor,
         // A field is a control: it keeps its own fill on every plane, a popover's glass included (WF-ACCEPT-1119B 6).
         backgroundColor: paintColor(colors.backgroundColor, undefined, 'solidControl'),
+        ...(scopeHeightPx !== null && !chip ? { minHeight: scopeHeightPx } : {}),
       }, happierRaisedEdgeStyle(colors.edge), colors.focusRing ? happierFocusRingStyle({ visible: true, color: colors.focusRing }) : null]}
     >
       {leading ?? null}
@@ -287,6 +305,8 @@ export function resolveHappierFieldTextInputMetrics(input: Readonly<{
   /** @deprecated A finger's target never grows the drawn field; the input fills the box instead. Ignored. */
   nativeMinimumTargetSize?: number;
   presentation?: HappierFieldTextPresentation;
+  /** The field box's drawn height ({@link useHappierFieldBoxScopeHeight}); the page control height by default. */
+  heightPx?: number;
 }>): Readonly<{
   fontSize: number;
   lineHeight: number;
@@ -322,7 +342,7 @@ export function resolveHappierFieldTextInputMetrics(input: Readonly<{
     lineHeight: line,
     padding: 0,
     margin: 0,
-    minHeight: HAPPIER_FIELD_BOX_METRICS.minHeightPx - 2 * HAPPIER_FIELD_BOX_METRICS.borderWidthPx,
+    minHeight: (input.heightPx ?? HAPPIER_FIELD_BOX_METRICS.minHeightPx) - 2 * HAPPIER_FIELD_BOX_METRICS.borderWidthPx,
   };
 }
 
@@ -364,6 +384,7 @@ const HAPPIER_FIELD_DOCUMENT_SHAPE: HappierPortableStyle = Object.freeze({
 export function HappierFieldTextBox(props: HappierFieldTextBoxProps) {
   const surfaceBinding = useThemeSurfaceBinding(props.themeSurface ?? { surface: 'input', part: 'root' });
   const paintColor = useHappierMaterialColorResolver();
+  const scopeHeightPx = useHappierFieldBoxScopeHeight();
   return (
     <View
       style={[
@@ -389,6 +410,7 @@ export function HappierFieldTextBox(props: HappierFieldTextBoxProps) {
           {...{ dataSet: surfaceBinding.dataSet }}
           style={[
             HAPPIER_FIELD_BOX_SHAPE,
+            scopeHeightPx !== null ? { minHeight: scopeHeightPx } : null,
             // A field is a control: it keeps its own fill on every plane, a popover's glass included (WF-ACCEPT-1119B 6).
             { justifyContent: 'center', borderColor: props.colors.borderColor, backgroundColor: paintColor(props.colors.backgroundColor, undefined, 'solidControl') },
             happierRaisedEdgeStyle(props.colors.edge),

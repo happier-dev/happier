@@ -1,6 +1,6 @@
 import { resolveThemeSurfaceState } from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
-import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { useHappierFieldBoxScopeHeight, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import * as React from 'react';
 import {
@@ -16,9 +16,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { FIELD_BOX_METRICS, resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-
-/** The drawn focal field height used by the signed-out address step. */
-const STEP_FIELD_HEIGHT_PX = 48;
 
 export type FieldTextInputProps = Readonly<{
     value: string;
@@ -40,8 +37,6 @@ export type FieldTextInputProps = Readonly<{
      */
     invalid?: boolean;
     multiline?: boolean;
-    /** A focal, single-line field on a signed-out step uses the step's larger control size. */
-    size?: 'step';
     /** A multiline field's minimum height, in lines (default 3): a JSON document needs more room than a note. */
     minLines?: number;
     /** A multiline field grows with its text so the whole value stays visible (a decision, a title); `document` always does. */
@@ -102,18 +97,15 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
         const textSurfaceStyle = themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'input', part: 'text', state: surfaceState } : undefined);
         const invalid = Boolean(props.error) || props.invalid === true;
         const presentation = props.presentation ?? 'field';
+        // A surface that sets its controls at one height of its own (a signed-out step) draws this box at that height.
+        const scopeHeightPx = useHappierFieldBoxScopeHeight();
         const inputMetrics = resolveHappierFieldTextInputMetrics({
             multiline: props.multiline,
             minLines: props.minLines,
             presentation,
+            ...(scopeHeightPx === null ? {} : { heightPx: scopeHeightPx }),
         });
-        const stepSize = props.size === 'step' && !props.multiline;
-        const stepMetrics = stepSize ? {
-            ...Typography.variant('label'),
-            minHeight: STEP_FIELD_HEIGHT_PX - 2 * FIELD_BOX_METRICS.borderWidthPx,
-            ...(props.monospace ? Typography.mono() : null),
-        } : null;
-        const hitArea = useHappierHitArea({ restingStyle: () => [inputMetrics, stepMetrics] });
+        const hitArea = useHappierHitArea({ restingStyle: () => inputMetrics });
         const colors = resolveFieldBoxColors(theme, invalid ? 'invalid' : 'idle', presentation);
         // A document grows with its text instead of scrolling inside a fixed box.
         const grows = (presentation === 'document' || props.growWithText === true) && props.multiline === true;
@@ -189,8 +181,7 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                         // The mono face is for what is typed (a path, a command); an empty field's placeholder is
                         // prose ("Whole repository") on an ordinary configuration field, unless it is the value
                         // the empty field stands for.
-                        props.monospace && (props.value || props.placeholderIsValue) && !stepSize ? styles.inputMono : null,
-                        stepMetrics,
+                        props.monospace && (props.value || props.placeholderIsValue) ? styles.inputMono : null,
                         grows && contentHeight !== null ? { height: Math.max(contentHeight, 0) } : null,
                         props.textAlign ? { textAlign: props.textAlign, fontVariant: ['tabular-nums'] } : null,
                         // A right-aligned value keeps a word space before its trailing unit.

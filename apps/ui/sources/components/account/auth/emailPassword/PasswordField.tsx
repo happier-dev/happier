@@ -1,4 +1,4 @@
-import { HappierPressable, happierRaisedEdgeStyle } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, happierRaisedEdgeStyle, useHappierFieldBoxScopeHeight } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View, type NativeSyntheticEvent, type TextInputKeyPressEventData } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -46,9 +46,10 @@ export type PasswordFieldProps = Readonly<{
  */
 export const PasswordField = React.memo(function PasswordField(props: PasswordFieldProps) {
     const { theme } = useUnistyles();
-    // On a configuration page the password shares the page's one field shape (`fieldBox`) with the
-    // text fields beside it; sign-in and recovery screens keep their larger frame.
-    const pageField = useListPresentation() === 'page';
+    // On a configuration page or a signed-out step the password shares the one field shape (`fieldBox`) with the
+    // text fields beside it, at the scope's height on a step; elsewhere (a dialog) it keeps its larger frame.
+    const scopeHeightPx = useHappierFieldBoxScopeHeight();
+    const pageField = useListPresentation() === 'page' || scopeHeightPx !== null;
     const pageColors = pageField ? resolveFieldBoxColors(theme, props.error ? 'invalid' : 'idle') : null;
     const [revealed, setRevealed] = React.useState(false);
     const [capsLockOn, setCapsLockOn] = React.useState(false);
@@ -83,6 +84,7 @@ export const PasswordField = React.memo(function PasswordField(props: PasswordFi
                 association — only the glyph and the secure-entry flag. */}
             <View style={pageColors ? [
                 fieldBoxShapeStyle,
+                scopeHeightPx !== null ? { minHeight: scopeHeightPx } : null,
                 styles.pageFrame,
                 { borderColor: pageColors.borderColor, backgroundColor: pageColors.backgroundColor },
                 happierRaisedEdgeStyle(pageColors.edge),

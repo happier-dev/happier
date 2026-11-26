@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { HappierMaterialRoleProvider } from '../layout/Surface.js';
-import { HappierFieldBoxTrigger, HappierFieldTextBox } from './FieldBox.js';
+import { HAPPIER_FIELD_BOX_METRICS, HappierFieldBoxHeightScope, HappierFieldBoxTrigger, HappierFieldTextBox } from './FieldBox.js';
 
 /**
  * WF-ACCEPT-1119B item 6: on a popover (the floating glass plane) the field box took the plane's translucent coat, so
@@ -56,4 +56,27 @@ describe('field box on a floating plane', () => {
       }
     },
   );
+});
+
+describe('field box height scope', () => {
+  const drawnMinHeights = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLElement>('*'))
+    .filter((node) => getComputedStyle(node).borderTopWidth === '1px')
+    .map((node) => getComputedStyle(node).minHeight);
+
+  it.each(['text box', 'select trigger'] as const)('draws a %s at its scope\'s height and at the page control height outside one', (kind) => {
+    const field = kind === 'text box' ? (
+      <HappierFieldTextBox colors={FIELD}><TextInput accessibilityLabel="Email" /></HappierFieldTextBox>
+    ) : (
+      <HappierFieldBoxTrigger colors={FIELD}><Text>SSH agent</Text></HappierFieldBoxTrigger>
+    );
+    const scoped = mountThroughReactNativeWeb(<HappierFieldBoxHeightScope heightPx={40}>{field}</HappierFieldBoxHeightScope>);
+    const page = mountThroughReactNativeWeb(field);
+    try {
+      expect(drawnMinHeights(scoped.container)).toEqual(['40px']);
+      expect(drawnMinHeights(page.container)).toEqual([`${HAPPIER_FIELD_BOX_METRICS.minHeightPx}px`]);
+    } finally {
+      scoped.unmount();
+      page.unmount();
+    }
+  });
 });

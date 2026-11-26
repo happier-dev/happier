@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { glyphFieldDurationS, glyphFrame } from '@happier-dev/brand/glyph-scene';
 import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
-import { Text, TextInput } from 'react-native';
+import { Text, TextInput, View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +13,12 @@ import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFram
 import { GlyphSurface, type GlyphSurfaceProps } from '@/components/atmosphere/glyph/GlyphSurface';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
+import { PasswordField } from '@/components/account/auth/emailPassword/PasswordField';
+import { FIELD_BOX_METRICS } from '@/components/ui/forms/fieldBox';
+
+import { STEP_FIELD_HEIGHT_PX } from './StepFormParts';
 import { UnauthenticatedSplitShell } from './UnauthenticatedSplitShell';
 import type { UnauthShellLayout } from './useUnauthShellLayout';
 
@@ -92,6 +98,25 @@ function flattenStyle(style: unknown): Record<string, unknown> {
         return style as Record<string, unknown>;
     }
     return {};
+}
+
+/** The drawn heights of the bordered field boxes under a probe: every field box draws its 1 px border. */
+function drawnFieldHeights(probe: { findAll: (predicate: (node: { type: unknown; props: Record<string, unknown> }) => boolean) => Array<{ props: Record<string, unknown> }> } | null): number[] {
+    if (!probe) return [];
+    return probe.findAll((node) => typeof node.type === 'string' && flattenStyle(node.props.style).borderWidth === FIELD_BOX_METRICS.borderWidthPx
+        && typeof flattenStyle(node.props.style).minHeight === 'number')
+        .map((node) => Number(flattenStyle(node.props.style).minHeight));
+}
+
+function StepFields() {
+    return (
+        <>
+            <View testID="probe-link"><FieldTextInput value="" onChangeText={() => {}} accessibilityLabel="Pairing link" monospace /></View>
+            <View testID="probe-address"><FieldTextInput value="" onChangeText={() => {}} accessibilityLabel="Your Home's address" monospace placeholderIsValue textAlign="center" /></View>
+            <View testID="probe-password"><PasswordField testID="password" label="Password" value="" onChangeText={() => {}} autoComplete="current-password" /></View>
+            <View testID="probe-select"><ValueFieldSelect testID="auth-method" label="Authentication method" items={[{ id: 'agent', title: 'SSH agent' }]} selectedId="agent" onSelect={() => {}} fill /></View>
+        </>
+    );
 }
 
 describe('UnauthenticatedSplitShell', () => {
@@ -398,6 +423,26 @@ describe('UnauthenticatedSplitShell', () => {
             expect(pane.height - Number(band.minHeight)).toBeGreaterThan(limb - 48);
             await screen.unmount();
         }
+    });
+
+    it('stands every field of a step at one height, its call to action\'s, while the same fields keep the page control height elsewhere', async () => {
+        for (const layout of ['desktop', 'compact'] as const) {
+            setLayoutFixture(layout);
+            const screen = await renderScreen(
+                <UnauthenticatedSplitShell stepId="auth_restore" isWelcomeStep={false}>
+                    <StepFields />
+                </UnauthenticatedSplitShell>,
+            );
+            for (const probe of ['probe-link', 'probe-address', 'probe-password', 'probe-select']) {
+                expect({ probe, heights: drawnFieldHeights(screen.findHostByTestId(probe) as never) }).toEqual({ probe, heights: [STEP_FIELD_HEIGHT_PX] });
+            }
+            await screen.unmount();
+        }
+        const page = await renderScreen(<StepFields />);
+        for (const probe of ['probe-link', 'probe-address', 'probe-select']) {
+            expect(drawnFieldHeights(page.findHostByTestId(probe) as never)).toEqual([FIELD_BOX_METRICS.minHeightPx]);
+        }
+        await page.unmount();
     });
 
     it('renders no footer accessory slot when the host passes none', async () => {
