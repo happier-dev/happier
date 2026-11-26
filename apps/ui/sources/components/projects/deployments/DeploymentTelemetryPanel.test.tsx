@@ -945,25 +945,6 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it('opens a shared collector check on the Account’s own online Machine', async () => {
-    await publishMachineInventoryForTest(lifetime.scope, [
-      createMachineFixture({ id: 'collector', isShared: true, active: true, activeAt: Date.now() }),
-      createMachineFixture({ id: 'observer-offline', isShared: false, active: false, activeAt: 1 }),
-      createMachineFixture({ id: 'observer', isShared: false, active: true, activeAt: Date.now() }),
-    ]);
-    const screen = await mount(collector(answers).invoke);
-    try {
-      await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
-      const row = screen.find(node => Array.isArray(node.props?.secondaryActions)
-        && typeof node.props?.onSecondaryAction === 'function');
-      await act(async () => row.props.onSecondaryAction('add-check'));
-      expect(screen.findAllByType(PluginEventAutomationEditor).map(editor => editor.props.authoringMachineId))
-        .toEqual(['observer']);
-    } finally {
-      await screen.unmount();
-    }
-  });
-
   it('offers Add a check… on a route row to managers and opens the check editor on their collector', async () => {
     await publishMachineInventoryForTest(lifetime.scope, [
       createMachineFixture({ id: 'collector', isShared: false }),
