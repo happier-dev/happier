@@ -18,6 +18,7 @@ import { Text } from '@/components/ui/text/Text';
 import type { SimulatorPreviewActions } from '@/sync/domains/devices/simulator/useSimulatorPreview';
 import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { simulatorStreamStyles } from './styles';
 import { resolveSimulatorVideoUnsupportedReason } from './videoSupport';
@@ -27,6 +28,17 @@ export function isSimulatorStreamLive(phase: SimulatorPreviewViewModel['stream']
 }
 
 export type SimulatorBarStatus = Readonly<{ label: string; variant: StreamStatusDotVariant }>;
+
+function SimulatorViewerMenuTrigger(props: Readonly<Partial<React.ComponentProps<typeof IconButton>> & {
+  toggle: () => void;
+  testID: string;
+}>): React.ReactElement {
+  const { toggle, ...buttonProps } = props;
+  useCurrentUiContextLocalCommands([{ key: 'simulator.menu.toggle', title: t('simulatorPreview.viewer.more'),
+    invoke: toggle }], { contextKey: props.testID });
+  return <IconButton {...buttonProps} variant="plain" iconName="dots-three" iconSize={ICON_SIZE.md}
+    accessibilityLabel={t('simulatorPreview.viewer.more')} onPress={toggle} />;
+}
 
 /**
  * The bar's one status: only a live device has one here (who has it). Opening, connecting,
@@ -80,6 +92,12 @@ export function SimulatorViewerBar(
   const [menuOpen, setMenuOpen] = React.useState(false);
   const { viewModel, actions } = props;
   const resource = viewModel.resource;
+  const hideControls = React.useCallback(() => {
+    setMenuOpen(false);
+    props.onHideControls?.();
+  }, [props.onHideControls]);
+  useCurrentUiContextLocalCommands(resource && menuOpen && props.onHideControls ? [{ key: 'simulator.controls.hide',
+    title: t('simulatorPreview.viewer.hideControls'), invoke: hideControls }] : [], { contextKey: resource?.simulatorId });
   if (!resource) return null;
   const device = viewModel.devices.find(
     (entry) => entry.simulatorId === resource.simulatorId,
@@ -222,6 +240,10 @@ export function SimulatorViewerBar(
             categoryTitles={{ devices: t('simulatorPreview.viewer.switchDevice') }}
             separateCategories
             onSelect={(id) => {
+              if (id === 'hide-controls') {
+                hideControls();
+                return;
+              }
               setMenuOpen(false);
               if (id.startsWith('device:')) {
                 const simulatorId = id.slice('device:'.length);
@@ -231,20 +253,10 @@ export function SimulatorViewerBar(
               }
               else if (id === 'power-off') props.onPowerOff();
               else if (id === 'renew') void actions.renewLease?.();
-              else if (id === 'hide-controls') props.onHideControls?.();
             }}
             matchTriggerWidth={false}
             popoverAnchorAlign="end"
-            trigger={({ toggle }) => (
-              <IconButton
-                testID={`${props.testID}-more`}
-                variant="plain"
-                iconName="dots-three"
-                iconSize={ICON_SIZE.md}
-                accessibilityLabel={t('simulatorPreview.viewer.more')}
-                onPress={toggle}
-              />
-            )}
+            trigger={({ toggle }) => <SimulatorViewerMenuTrigger toggle={toggle} testID={`${props.testID}-more`} />}
           />
         ) : null}
     </View>

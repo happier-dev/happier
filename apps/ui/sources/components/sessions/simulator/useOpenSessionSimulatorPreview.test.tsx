@@ -7,6 +7,10 @@ vi.mock('socket.io-client', async (importOriginal) =>
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
   ).createSocketIoClientBoundary(importOriginal),
 );
+// The renderer has no browser portal or window measurement; keep the real menu beneath that boundary.
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+  (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal),
+);
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import {
   DaemonSimulatorPreviewSnapshotRequestV1Schema,
@@ -198,6 +202,12 @@ async function invokeCommand(title: string) {
   return executor.execute('ui.current_context.command.invoke', { commandId: command!.id }, context);
 }
 
+async function mountedCommands() {
+  const read = await createDefaultActionExecutor().execute('ui.current_context.read', {}, { surface: 'agent', authority: 'present_user' });
+  if (!read.ok) throw new Error('Current context unavailable');
+  return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+}
+
 function simulatorTabs() {
   const details = runtime.pane.scopeState?.details;
   return (details?.tabs ?? []).filter(
@@ -207,6 +217,61 @@ function simulatorTabs() {
 }
 
 describe('useOpenSessionSimulatorPreview', () => {
+  it('publishes the complete visible preview controls and retires hidden control addresses', async () => {
+    showViewer = true;
+    try {
+      const screen = await mount();
+      const base = [t('simulatorPreview.title'),
+        `${t('simulatorPreview.viewer.switchDevice')}: iPhone 16`,
+        `${t('simulatorPreview.viewer.switchDevice')}: iPhone 17`];
+      const inventory = async (...titles: string[]) => vi.waitFor(async () => {
+        expect((await mountedCommands()).map(command => command.title).sort()).toEqual([...base, ...titles].sort());
+      });
+      await inventory(t('simulatorPreview.viewer.tools'), t('simulatorPreview.viewer.more'));
+      await act(async () => {
+        screen.findHostByTestId('command-preview')!.props.onLayout({ nativeEvent: { layout: { width: 350, height: 700, x: 0, y: 0 } } });
+      });
+      await inventory(t('simulatorPreview.viewer.tools'), t('simulatorPreview.viewer.more'));
+      await act(async () => { expect(await invokeCommand(t('simulatorPreview.viewer.more'))).toMatchObject({ ok: true }); });
+      await inventory(t('simulatorPreview.viewer.tools'), t('simulatorPreview.viewer.more'), t('simulatorPreview.viewer.hideControls'));
+      const hide = (await mountedCommands()).find(command => command.title === t('simulatorPreview.viewer.hideControls'))!;
+      await screen.pressByTestIdAsync('command-preview-bar-more');
+      await inventory(t('simulatorPreview.viewer.tools'), t('simulatorPreview.viewer.more'));
+      await act(async () => { expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
+        { commandId: hide.id }, { surface: 'agent', authority: 'present_user' })).toMatchObject({ ok: false }); });
+      expect(screen.findHostByTestId('command-preview-bar')).toBeTruthy();
+      await act(async () => { expect(await invokeCommand(t('simulatorPreview.viewer.tools'))).toMatchObject({ ok: true }); });
+      expect(screen.findHostByTestId('command-preview-sidebands')).toBeTruthy();
+      await inventory(t('simulatorPreview.viewer.closeTools'), t('simulatorPreview.viewer.more'));
+      await screen.pressByTestIdAsync('command-preview-sidebands-close');
+      expect(screen.findHostByTestId('command-preview-sidebands')).toBeNull();
+      await screen.pressByTestIdAsync('command-preview-bar-tools');
+      const close = (await mountedCommands()).find(command => command.title === t('simulatorPreview.viewer.closeTools'))!;
+      await act(async () => { expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
+        { commandId: close.id }, { surface: 'agent', authority: 'present_user' })).toMatchObject({ ok: true }); });
+      expect(screen.findHostByTestId('command-preview-sidebands')).toBeNull();
+      await act(async () => { expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
+        { commandId: close.id }, { surface: 'agent', authority: 'present_user' })).toMatchObject({ ok: false }); });
+      expect(screen.findHostByTestId('command-preview-sidebands')).toBeNull();
+      await act(async () => { expect(await invokeCommand(t('simulatorPreview.viewer.more'))).toMatchObject({ ok: true }); });
+      await inventory(t('simulatorPreview.viewer.tools'), t('simulatorPreview.viewer.more'), t('simulatorPreview.viewer.hideControls'));
+      await act(async () => { expect(await invokeCommand(t('simulatorPreview.viewer.hideControls'))).toMatchObject({ ok: true }); });
+      expect(screen.findHostByTestId('command-preview-bar')).toBeNull();
+      await inventory(t('simulatorPreview.viewer.showControls'));
+      await act(async () => { expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
+        { commandId: hide.id }, { surface: 'agent', authority: 'present_user' })).toMatchObject({ ok: false }); });
+      expect(screen.findHostByTestId('command-preview-bar')).toBeNull();
+      await screen.pressByTestIdAsync('command-preview-show-controls');
+      expect(screen.findHostByTestId('command-preview-bar')).toBeTruthy();
+      await act(async () => { expect(await invokeCommand(t('simulatorPreview.viewer.more'))).toMatchObject({ ok: true }); });
+      await inventory(t('simulatorPreview.viewer.tools'), t('simulatorPreview.viewer.more'), t('simulatorPreview.viewer.hideControls'));
+      await screen.pressByTestIdAsync('command-preview-bar-hide-controls');
+      await inventory(t('simulatorPreview.viewer.showControls'));
+      await act(async () => { expect(await invokeCommand(t('simulatorPreview.viewer.showControls'))).toMatchObject({ ok: true }); });
+      expect(screen.findHostByTestId('command-preview-bar')).toBeTruthy();
+      await inventory(t('simulatorPreview.viewer.tools'), t('simulatorPreview.viewer.more'));
+    } finally { showViewer = false; }
+  });
   it('opens a cold Session menu by agent intent before discovering and opening the preview', async () => {
     showRealMenu = true;
     try {
@@ -237,7 +302,7 @@ describe('useOpenSessionSimulatorPreview', () => {
       await act(async () => { result = await invokeCommand(`${t('session.detailsPanel.closeTabA11y')}: a.txt`); });
       expect(runtime.pane.scopeState?.details.tabs).toHaveLength(1);
       expect(decisions).toBe(1);
-      expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action', error: 'stale_surface' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'stale_surface', error: 'stale_surface' });
     } finally { unregister(); }
     await act(async () => { expect(await invokeCommand(`${t('session.detailsPanel.closeTabA11y')}: a.txt`)).toMatchObject({ ok: true }); });
     expect(runtime.pane.scopeState?.details.tabs).toHaveLength(0);

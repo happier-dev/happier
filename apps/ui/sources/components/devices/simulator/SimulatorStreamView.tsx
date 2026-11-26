@@ -4,6 +4,7 @@ import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/m
 import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol/devices/simulator/v1';
 
 import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { LiveStreamPlayer, type LiveStreamPlayerDisplayState } from '@/components/stream/LiveStreamPlayer';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { SimulatorPreviewStreamState } from '@/sync/domains/devices/simulator/types';
@@ -85,9 +86,13 @@ export function SimulatorStreamView(props: Readonly<{
         canWatch: props.controls.canWatch,
     });
     const captureUnavailable = props.resource.capture.status === 'unavailable';
-    const retry = props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined;
     // A browser that cannot decode the video is a cause of its own: retrying never helps.
     const videoUnsupportedReason = stage === 'unavailable' ? null : resolveSimulatorVideoUnsupportedReason(props.playerState);
+    const retry = props.onRetry && !captureUnavailable && !videoUnsupportedReason
+        && (stage === 'unavailable' || stage === 'stopped' || stage === 'held' && props.playerState.phase === 'stopped')
+        ? { label: t('common.retry'), onPress: props.onRetry } : undefined;
+    useCurrentUiContextLocalCommands(retry ? [{ key: 'simulator.stream.retry', title: retry.label,
+        invoke: retry.onPress }] : [], { contextKey: props.resource.simulatorId });
 
     if (stage === 'unavailable' || videoUnsupportedReason) {
         const reasonCode = videoUnsupportedReason ?? (captureUnavailable
@@ -97,7 +102,7 @@ export function SimulatorStreamView(props: Readonly<{
             <StateStage testID={props.testID}>
                 <SimulatorUnavailableState
                     reasonCode={reasonCode}
-                    action={captureUnavailable || videoUnsupportedReason ? undefined : retry}
+                    action={retry}
                     testID={props.testID}
                 />
             </StateStage>
@@ -153,7 +158,7 @@ export function SimulatorStreamView(props: Readonly<{
                             ? t('simulatorPreview.viewer.reconnecting')
                             : t('streamPlayer.status.stopped')}
                         busy={props.playerState.phase === 'reconnecting'}
-                        action={props.playerState.phase === 'reconnecting' ? undefined : retry}
+                        action={retry}
                     />
                 </>
             ) : null}

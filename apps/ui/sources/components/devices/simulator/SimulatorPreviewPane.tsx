@@ -35,12 +35,6 @@ export function SimulatorPreviewPane(props: Readonly<{
     testID: string;
 }>): React.ReactElement {
     const { viewModel, actions } = props;
-    useCurrentUiContextLocalCommands(actions.selectDevice ? viewModel.devices
-        .filter(device => device.state !== 'stopped')
-        .map(device => ({ key: `simulator.select:${device.simulatorId}`,
-            title: `${t('simulatorPreview.viewer.switchDevice')}: ${device.label}`,
-            invoke: () => actions.selectDevice?.(device.simulatorId),
-        })) : [], { contextKey: props.sessionId ?? props.testID });
     const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
     const [paneWidth, setPaneWidth] = React.useState(0);
     const [toolsOpen, setToolsOpen] = React.useState(false);
@@ -65,8 +59,22 @@ export function SimulatorPreviewPane(props: Readonly<{
                 .map(line => `${line.label}: ${line.value}`).join('\n'),
         };
     }, [inventoryFailure]);
-    const toggleTools = React.useCallback(() => setToolsOpen((current) => !current), []);
     const closeTools = React.useCallback(() => setToolsOpen(false), []);
+    const openTools = React.useCallback(() => setToolsOpen(true), []);
+    const toggleTools = toolsShown ? closeTools : openTools;
+    const hideControls = React.useCallback(() => setControlsHidden(true), []);
+    const showControls = React.useCallback(() => setControlsHidden(false), []);
+    const onHideControls = stacked ? hideControls : undefined;
+    useCurrentUiContextLocalCommands([
+        ...(actions.selectDevice ? viewModel.devices.filter(device => device.state !== 'stopped').map(device => ({
+            key: `simulator.select:${device.simulatorId}`,
+            title: `${t('simulatorPreview.viewer.switchDevice')}: ${device.label}`,
+            invoke: () => actions.selectDevice?.(device.simulatorId),
+        })) : []),
+        ...(resource && !immersive ? [{ key: 'simulator.tools.toggle',
+            title: toolsShown ? t('simulatorPreview.viewer.closeTools') : t('simulatorPreview.viewer.tools'), invoke: toggleTools }] : []),
+        ...(resource && immersive ? [{ key: 'simulator.controls.show', title: t('simulatorPreview.viewer.showControls'), invoke: showControls }] : []),
+    ], { contextKey: props.sessionId ?? props.testID });
     const retry = actions.openStream ? () => { void actions.openStream?.(); } : undefined;
     const operations = useSimulatorDeviceOperation(actions);
     const runOperation = operations.run;
@@ -117,7 +125,7 @@ export function SimulatorPreviewPane(props: Readonly<{
                                 actions={actions}
                                 toolsOpen={toolsShown}
                                 onToggleTools={toggleTools}
-                                onHideControls={stacked ? () => setControlsHidden(true) : undefined}
+                                onHideControls={onHideControls}
                                 stacked={stacked}
                                 onStartDevice={(simulatorId) => { void startDevice(simulatorId); }}
                                 onPowerOff={powerOff}
@@ -132,7 +140,7 @@ export function SimulatorPreviewPane(props: Readonly<{
                                     controls={viewModel.controls}
                                     playerState={viewModel.stream}
                                     resource={resource}
-                                    onRetry={retry}
+                                    onRetry={stacked && toolsShown ? undefined : retry}
                                     testID={`${props.testID}-stream`}
                                 />
                                 {viewModel.controls.canControl ? (
@@ -153,7 +161,7 @@ export function SimulatorPreviewPane(props: Readonly<{
                                             iconName="arrows-in"
                                             accessibilityLabel={t('simulatorPreview.viewer.showControls')}
                                             tooltip={t('simulatorPreview.viewer.showControls')}
-                                            onPress={() => setControlsHidden(false)}
+                                            onPress={showControls}
                                         />
                                     </View>
                                 ) : null}

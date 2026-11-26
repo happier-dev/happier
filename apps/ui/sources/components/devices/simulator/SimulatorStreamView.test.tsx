@@ -5,6 +5,8 @@ import type { ReactTestInstance, ReactTestRenderer } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol/devices/simulator/v1';
+// Collect the real mounted-command graph before the individual renderer cases start.
+import './SimulatorStreamView';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');

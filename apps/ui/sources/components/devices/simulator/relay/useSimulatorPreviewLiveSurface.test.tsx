@@ -23,9 +23,15 @@ import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/m
 import { DirectRouteGrantScopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import { createMachineFixture, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { ServerScopedMachineLiveStreamRelaySocket } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineLiveStreamRelaySocket';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { t } from '@/text';
 
 const network = await installSessionOpsNetworkBoundary();
 const home = await network.addHome('https://simulator-stream.test', 'account-a');
@@ -163,7 +169,7 @@ describe('Simulator preview inventory', () => {
             await vi.waitFor(() => expect(hook.getCurrent().viewModel?.snapshotRefreshState).toBe('error'));
             if (phase === 'after a device is listed') expect(hook.getCurrent().viewModel?.resource).toEqual(availableResource);
             const { viewModel, actions } = hook.getCurrent();
-            expect(viewModel).toMatchObject({ snapshotFailure: refusal });
+            expect(viewModel).toMatchObject({ snapshotFailure: { ...refusal, error: refusal.errorCode } });
             if (!viewModel || !actions) throw new Error('Expected the Simulator viewer after the refused inventory refresh');
             const { SimulatorPreviewPane } = await import('../SimulatorPreviewPane');
             const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
@@ -223,6 +229,88 @@ describe('useSimulatorPreviewLiveSurface', () => {
             expect(daemonStarts).toHaveLength(2);
         });
         await hook.unmount();
+    });
+    it('offers only the visible Retry command and sends agent and pressed recovery through the relay owner', async () => {
+        await loadSyncSingletonForTests();
+        const fixture = await createPlainArtifactHomeFixture(home.serverUrl, {
+            accountId: home.accountId, currentAccount: true, serverFeatures: features(),
+            handleRequest: async (path, init) => await network.request(new URL(path, home.serverUrl), init) ?? null,
+        });
+        storage.getState().applyMachines([createMachineFixture({ id: 'daemon_1', storageMode: 'plain', activeAt: Date.now() })]);
+        try {
+            const fake = createSocket();
+            const { useSimulatorPreviewLiveSurface } = await import('./useSimulatorPreviewLiveSurface');
+            const { SimulatorPreviewPane } = await import('../SimulatorPreviewPane');
+            const { SimulatorStreamView } = await import('../SimulatorStreamView');
+            function Stream() {
+                const preview = useSimulatorPreviewLiveSurface({
+                    runtime: { serverId: home.id, viewerId: 'viewer_1', selectedSimulatorId: 'sim_1', resources, nowMs },
+                    relay: { socket: fake.socket, createStreamId },
+                });
+                const model = preview.viewModel;
+                return model && preview.actions ? <SimulatorPreviewPane viewModel={model}
+                    actions={preview.actions} testID="command-preview" /> : null;
+            }
+            const screen = await renderMountedCurrentUiContext(<Stream />);
+            try {
+                const executor = createDefaultActionExecutor();
+                const context = { surface: 'agent', authority: 'present_user' } as const;
+                const commands = async () => {
+                    const result = await executor.execute('ui.current_context.read', {}, context);
+                    if (!result.ok) throw new Error('Current context unavailable');
+                    return CurrentUiContextSnapshotV1Schema.parse(result.result).commands;
+                };
+                const stop = async () => act(async () => fake.deliver({
+                    v: 1, sourceMachineId: 'daemon_1', targetMachineId: 'daemon_1', viewerSocketId: 'viewer-socket-1',
+                    message: { kind: 'control', control: { v: 1, streamId: daemonStarts.at(-1)!.startRequest.streamId,
+                        kind: 'stop', reasonCode: 'capture_stopped' } },
+                }));
+                const baseTitles = [t('simulatorPreview.viewer.tools'), t('simulatorPreview.viewer.more'),
+                    `${t('simulatorPreview.viewer.switchDevice')}: iPhone 16`];
+                const inventory = async (...titles: string[]) => expect((await commands()).map(command => command.title).sort())
+                    .toEqual([...baseTitles, ...titles].sort());
+                await vi.waitFor(() => expect(daemonStarts).toHaveLength(1));
+                expect((await commands()).map(command => command.title).sort()).toEqual([
+                    t('simulatorPreview.viewer.tools'), `${t('simulatorPreview.viewer.switchDevice')}: iPhone 16`,
+                ].sort());
+                await act(async () => screen.findHostByTestId('command-preview')!.props.onLayout({
+                    nativeEvent: { layout: { width: 350, height: 700, x: 0, y: 0 } },
+                }));
+                await inventory();
+                await stop();
+                await vi.waitFor(() => {
+                    const stream = screen.findAllByType(SimulatorStreamView)[0];
+                    expect(screen.findHostByTestId('command-preview-stream-stopped-action'), JSON.stringify({
+                        phase: stream?.props.playerState.phase, capture: stream?.props.resource.capture.status,
+                        canWatch: stream?.props.controls.canWatch, onRetry: typeof stream?.props.onRetry,
+                        toolsCovered: screen.findHostByTestId('command-preview-sidebands') !== null,
+                    })).toBeTruthy();
+                });
+                await inventory(t('common.retry'));
+                const retry = (await commands()).find(command => command.title === t('common.retry'))!;
+                await screen.pressByTestIdAsync('command-preview-bar-tools');
+                expect((await commands()).map(command => command.title).sort()).toEqual([
+                    t('simulatorPreview.viewer.closeTools'), t('simulatorPreview.viewer.more'),
+                    `${t('simulatorPreview.viewer.switchDevice')}: iPhone 16`,
+                ].sort());
+                await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: retry.id }, context))
+                    .toMatchObject({ ok: false }); });
+                expect(daemonStarts).toHaveLength(1);
+                await screen.pressByTestIdAsync('command-preview-sidebands-close');
+                await inventory(t('common.retry'));
+                const visibleRetry = (await commands()).find(command => command.title === t('common.retry'))!;
+                await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: visibleRetry.id }, context)).toMatchObject({ ok: true }); });
+                await vi.waitFor(() => expect(daemonStarts).toHaveLength(2));
+                await inventory();
+                await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: visibleRetry.id }, context))
+                    .toMatchObject({ ok: false }); });
+                expect(daemonStarts).toHaveLength(2);
+                await stop();
+                await screen.pressByTestIdAsync('command-preview-stream-stopped-action');
+                await vi.waitFor(() => expect(daemonStarts).toHaveLength(3));
+                await inventory();
+            } finally { await screen.unmount(); }
+        } finally { await fixture.dispose(); }
     });
     it('keeps the runtime additive without a relay socket', async () => {
         const hook = await mount();

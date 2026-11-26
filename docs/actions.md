@@ -11734,6 +11734,11 @@ the head/base query needed to reconcile it.
 
 ## Current mounted UI context (0.3 development)
 
+The phone-preview tools panel, viewer menu, Hide/Show controls and offered stream
+Retry publish through the same mounted inventory. Header and sideband Close use
+the same tools callback; Retry uses the existing relay lifecycle and is absent
+while the tools panel hides the stream.
+
 Home Customize, widget-area Organize and Project widget Expand/Collapse also
 publish through this command owner. They use the human controls' same callbacks
 and remain local to the mounted layout and viewer, without a persistence write.
