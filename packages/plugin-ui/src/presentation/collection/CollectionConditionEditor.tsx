@@ -37,6 +37,8 @@ import {
   isCollectionConditionOptionPicked,
 } from './conditionModel.js';
 import { HAPPIER_DISCLOSURE_CHEVRON_METRICS, HappierDisclosureChevron } from './DisclosureChevron.js';
+import type { HappierLocalDateTimeFieldProps } from '../form/LocalDateTimeField.js';
+import { parseHappierLocalDateTime, toHappierLocalDateTimeDraft } from '../form/localDateTimeValue.js';
 
 /**
  * The one condition editor (lab `clfilter:filter`, P6 §4.1): a filter as a list of conditions —
@@ -67,6 +69,8 @@ export type HappierCollectionConditionIcon =
   | 'check';
 
 export type HappierCollectionConditionEditorHost = Readonly<{
+  /** The shared date/time field on the host's theme and platform picker. */
+  DateTimeField?: ComponentType<Omit<HappierLocalDateTimeFieldProps, 'theme' | 'picker'>>;
   /** One run of text in an anatomy role (the host owns type and ink). */
   Text: ComponentType<
     Readonly<{
@@ -117,6 +121,8 @@ export type HappierCollectionConditionEditorHost = Readonly<{
 }>;
 
 export type HappierCollectionConditionEditorLabels = Readonly<{
+  /** Enables absolute time authoring when the host supplies its date/time field. */
+  dateTime?: Readonly<{ date: string; time: string; from: string; to: string; apply: string }>;
   title: string;
   clear: string;
   add: string;
@@ -479,6 +485,10 @@ export const HappierCollectionConditionEditor = memo(
     const toggleOperator = useCallback(
       (row: CollectionConditionRow) => {
         if (row.operator === 'unavailable') return;
+        if (row.field.kind === 'time' && host.DateTimeField && labels.dateTime) {
+          setOpenFieldId(row.fieldId);
+          return;
+        }
         const next = row.field.operators.find(
           (operator) => operator !== row.operator,
         );
@@ -501,7 +511,7 @@ export const HappierCollectionConditionEditor = memo(
           },
         });
       },
-      [model.rows, onChange],
+      [host.DateTimeField, labels.dateTime, model.rows, onChange],
     );
 
     const countLabel =
@@ -549,6 +559,9 @@ export const HappierCollectionConditionEditor = memo(
       });
       return custom ? (
         <View testID={`collection-filter-values:${field.id}`}>{custom}</View>
+      ) : field.kind === 'time' && host.DateTimeField && labels.dateTime ? (
+        <TimeValues key={rowForField(field.id)?.id ?? field.id} field={field} row={rowForField(field.id)} host={host}
+          DateTimeField={host.DateTimeField} copy={labels.dateTime} labels={labels} onChange={onChange} close={close} />
       ) : (
         <ValueList
           field={field}
@@ -831,8 +844,66 @@ function addableFields(
       !visible.has(field.id) &&
       (props.addableFieldIds === undefined ||
         props.addableFieldIds.has(field.id)) &&
-      (field.valueOptions.length > 0 || props.renderValuePicker !== undefined),
+      (field.valueOptions.length > 0 || props.renderValuePicker !== undefined
+        || (field.kind === 'time' && props.host.DateTimeField !== undefined && props.labels.dateTime !== undefined)),
   );
+}
+
+/** Draft absolute bounds locally; the registry remains the writer of the selected condition. */
+function TimeValues(props: Readonly<{
+  field: CollectionConditionField;
+  row: CollectionConditionRow | null;
+  host: HappierCollectionConditionEditorHost;
+  DateTimeField: NonNullable<HappierCollectionConditionEditorHost['DateTimeField']>;
+  copy: NonNullable<HappierCollectionConditionEditorLabels['dateTime']>;
+  labels: HappierCollectionConditionEditorLabels;
+  onChange: (edit: CollectionConditionEdit) => void;
+  close: () => void;
+}>) {
+  const { field, row, host, DateTimeField, copy, labels } = props;
+  const original = (index: number) => {
+    const value = row?.values[index];
+    return typeof value === 'number' ? value : null;
+  };
+  const draft = (value: number | null) => value === null ? { date: '', time: '' } : toHappierLocalDateTimeDraft(new Date(value));
+  const [operator, setOperator] = useState(() => row?.operator !== undefined && row.operator !== 'unavailable'
+    ? row.operator : field.operators[0]!);
+  const [from, setFrom] = useState(() => draft(original(0)));
+  const [to, setTo] = useState(() => draft(original(1)));
+  const instant = (value: typeof from, index: number) => {
+    const saved = original(index);
+    const savedDraft = draft(saved);
+    return saved !== null && value.date === savedDraft.date && value.time === savedDraft.time
+      ? saved : parseHappierLocalDateTime(value);
+  };
+  const fromMs = instant(from, 0);
+  const toMs = instant(to, 1);
+  const valid = fromMs !== null && (operator !== 'between' || (toMs !== null && fromMs <= toMs));
+  const prefix = `collection-filter-time:${field.id}`;
+  const { Text, Button } = host;
+  return <View testID={`collection-filter-values:${field.id}`} style={{ gap: 12, padding: 12 }}>
+    <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+      {field.operators.map(choice => <HappierPressable key={choice} accessibilityRole="radio"
+        accessibilityLabel={labels.operators[choice]} checked={operator === choice}
+        testID={`${prefix}:operator:${choice}`} onPress={() => setOperator(choice)} style={{ padding: 8 }}>
+        <Text role="operator">{labels.operators[choice]}</Text>
+      </HappierPressable>)}
+    </View>
+    {operator === 'between' ? <Text role="field">{copy.from}</Text> : null}
+    <DateTimeField value={from} onChange={setFrom} testIDPrefix={`${prefix}:from`}
+      labels={{ date: copy.date, time: copy.time, pastInstant: '' }} />
+    {operator === 'between' ? <>
+      <Text role="field">{copy.to}</Text>
+      <DateTimeField value={to} onChange={setTo} testIDPrefix={`${prefix}:to`}
+        labels={{ date: copy.date, time: copy.time, pastInstant: '' }} />
+    </> : null}
+    <Button label={copy.apply} tone="primary" disabled={!valid} testID={`${prefix}:apply`} onPress={() => {
+      if (!valid || fromMs === null) return;
+      const condition = { fieldId: field.id, operator, values: operator === 'between' ? [fromMs, toMs!] : [fromMs] };
+      props.onChange(row ? { type: 'change', rowId: row.id, condition } : { type: 'add', condition });
+      props.close();
+    }} />
+  </View>;
 }
 
 type PressStyle = (

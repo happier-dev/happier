@@ -63,6 +63,7 @@ const REVIEW_FILTER_FIELD_ICONS = Object.freeze({
   state: 'circle-half',
   sourceKind: 'lightning',
   needsDecision: 'hourglass',
+  updated: 'calendar',
 } as const);
 /** One Reviews draft for every mounted Reviews list. */
 const reviewsListDraft = createCollectionSpaceDraftStore<'review'>();
@@ -266,6 +267,7 @@ export function useReviewsSpaceHeader(
         needsDecision: {
           label: t('reviewWalkthrough.collection.fieldPending'),
         },
+        updated: { label: t('sessionsList.conditionUpdated') },
       },
     }),
     [],

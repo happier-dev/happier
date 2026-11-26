@@ -26,6 +26,51 @@ const { useCollectionSpaceHeader } = await import('./useCollectionSpaceHeader');
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); viewport.width = 1440; viewport.height = 1000; });
 
+it('authors a historical Review Updated range through the shared condition editor', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => new DOMRect(100, 120, 340, 250));
+    const base = createDefaultCollectionSpaceV1('review');
+    let current: ReviewListFilterV1 = {};
+    function Header() {
+        const [filters, setFilters] = React.useState<ReviewListFilterV1>({});
+        const header = useCollectionSpaceHeader({ entityKind: 'review', testIDPrefix: 'review-time', defaultName: 'Reviews',
+            view: { spaces: [base], selectedSpaceId: base.id, selectedSpace: base, activeSpace: base,
+                spacesEnabled: true, spacesReady: true, spaceSettingsScope: { serverId: 'home', accountId: 'alice' },
+                filters, setFilters: next => { current = next; setFilters(next); return true; } },
+            registry: reviewListFilterFieldsV1, bindings: {}, defaultIcon: base.icon });
+        return <>{header.titleControl}{header.filterButton}{header.strip}{header.conditionRow}{header.overlays}</>;
+    }
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const button = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    const click = async (id: string) => { expect(button(id), id).not.toBeNull(); await act(async () => button(id)!.click()); };
+    const type = async (id: string, value: string) => {
+        const input = button(id) as HTMLInputElement;
+        expect(input, id).not.toBeNull();
+        await act(async () => {
+            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+    };
+    try {
+        await act(async () => root.render(<HappierUiPlatformProvider platform={{ platform: 'web', colorScheme: 'light' }}><Header /></HappierUiPlatformProvider>));
+        await click('review-time-filter-open');
+        await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+        await click('collection-filter-field:updated');
+        await click('collection-filter-time:updated:operator:between');
+        await type('collection-filter-time:updated:from-date-input', '2020-01-02');
+        await type('collection-filter-time:updated:from-time-input', '09:00');
+        await type('collection-filter-time:updated:to-date-input', '2020-01-03');
+        await type('collection-filter-time:updated:to-time-input', '10:00');
+        await click('collection-filter-time:updated:apply');
+        expect(current).toEqual({ updated: { op: 'between', fromMs: new Date(2020, 0, 2, 9).getTime(), toMs: new Date(2020, 0, 3, 10).getTime() } });
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
 it.each([true, false])('keeps the Save as space form visible and interactive with spaces enabled=%s', async spacesEnabled => {
     vi.useFakeTimers();
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {

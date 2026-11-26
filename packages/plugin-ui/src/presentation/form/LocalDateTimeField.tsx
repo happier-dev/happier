@@ -33,8 +33,8 @@ export type HappierLocalDateTimePickerRequest = Readonly<{
   anchorRef: RefObject<unknown>;
   /** The reading the picker starts from: the typed moment when it parses, otherwise now. */
   value: Date;
-  /** The earliest day the picker offers. */
-  minimumDate: Date;
+  /** The earliest day the picker offers, when the caller constrains it. */
+  minimumDate?: Date;
   /** The picked moment; the field takes the part it asked for and keeps the other. */
   onChange: (value: Date) => void;
   onDismiss: () => void;
@@ -51,8 +51,8 @@ export type HappierLocalDateTimePickerHost = Readonly<{
 }>;
 
 export type HappierLocalDateTimeFieldProps = Readonly<{
-  /** The instant the reading must be after; also the picker's earliest day. */
-  nowMs: number;
+  /** When supplied, the reading must be after this instant; omitted for historical readings. */
+  nowMs?: number;
   value: HappierLocalDateTimeDraft;
   onChange: (value: HappierLocalDateTimeDraft) => void;
   labels: Readonly<{ date: string; time: string; pastInstant: string }>;
@@ -69,7 +69,7 @@ const PICKER_BUTTON_WIDTH = 40;
 
 /**
  * One local date and time, typed or picked: a date field and a time field, each with the host's picker
- * behind its own button, and one message when the reading is not a future moment. It owns no domain
+ * behind its own button, and one message when the reading violates a supplied future bound. It owns no domain
  * meaning; the caller decides what the instant is for (a reminder, a lease's end, an expiry), what the
  * fields are called, and what to do while the reading does not resolve
  * (`resolveHappierFutureLocalDateTime` returns `null`).
@@ -86,7 +86,7 @@ export function HappierLocalDateTimeField(
   const timeAnchorRef = useRef<View | null>(null);
   const parsed = parseHappierLocalDateTime(props.value);
   const pickerValue = useMemo(
-    () => new Date(parsed ?? props.nowMs),
+    () => new Date(parsed ?? props.nowMs ?? Date.now()),
     [parsed, props.nowMs],
   );
 
@@ -165,7 +165,7 @@ export function HappierLocalDateTimeField(
             mode: pickerMode,
             anchorRef: pickerMode === 'date' ? dateAnchorRef : timeAnchorRef,
             value: pickerValue,
-            minimumDate: new Date(props.nowMs),
+            ...(props.nowMs === undefined ? {} : { minimumDate: new Date(props.nowMs) }),
             onDismiss: () => setPickerMode(null),
             onChange: (picked) =>
               props.onChange(
@@ -181,7 +181,7 @@ export function HappierLocalDateTimeField(
               ),
           })
         : null}
-      {parsed !== null && parsed <= props.nowMs ? (
+      {parsed !== null && props.nowMs !== undefined && parsed <= props.nowMs ? (
         <HappierValidationMessage
           message={props.labels.pastInstant}
           testID={`${props.testIDPrefix}-past-instant`}

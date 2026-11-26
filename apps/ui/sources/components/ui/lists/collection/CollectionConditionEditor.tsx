@@ -19,6 +19,7 @@ import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { LocalDateTimeEditor } from '@/components/ui/dateTime/LocalDateTimeEditor';
 
 const stylesheet = StyleSheet.create((theme) => ({
   title: {
@@ -173,6 +174,7 @@ function ConditionFieldIcon(props: Readonly<{ fieldId: string }>) {
 }
 
 const APP_CONDITION_HOST: HappierCollectionConditionEditorHost = Object.freeze({
+  DateTimeField: LocalDateTimeEditor,
   Text: ConditionText,
   Icon: ConditionIcon,
   FieldIcon: ConditionFieldIcon,
@@ -195,16 +197,25 @@ export const CollectionConditionEditor = React.memo(function CollectionCondition
   props: CollectionConditionEditorProps,
 ) {
   const { fieldIcons, ...editor } = props;
+  const labels = { ...editor.labels, dateTime: editor.labels.dateTime ?? dateTimeLabels() };
   return (
     <ConditionFieldIconsContext.Provider value={fieldIcons ?? null}>
-      <HappierCollectionConditionEditor {...editor} host={APP_CONDITION_HOST} />
+      <HappierCollectionConditionEditor {...editor} labels={labels} host={APP_CONDITION_HOST} />
     </ConditionFieldIconsContext.Provider>
   );
 });
 
+function dateTimeLabels(): NonNullable<HappierCollectionConditionEditorLabels['dateTime']> {
+  return {
+    date: t('sessionsList.reminders.dateLabel'), time: t('sessionsList.reminders.timeLabel'),
+    from: t('sessionsList.conditionTimeFrom'), to: t('sessionsList.conditionTimeTo'), apply: t('common.apply'),
+  };
+}
+
 /** The editor's own words (Filter · Clear, Add filter, operators, the count), the same in every list. */
 export function buildCollectionConditionEditorLabels(): HappierCollectionConditionEditorLabels {
   return {
+    dateTime: dateTimeLabels(),
     title: t('sessionsList.conditionTitle'),
     clear: t('sessionsList.conditionClear'),
     add: t('sessionsList.conditionAdd'),

@@ -550,13 +550,14 @@ function SelectSegmented(props: SelectProps): ReactElement {
 
 /**
  * A local wall-clock reading: `YYYY-MM-DD` and `HH:mm` where the reader is. Read the instant it names
- * with `resolveHappierFutureLocalDateTime` from `@happier-dev/plugin-ui/components`.
+ * with `parseHappierLocalDateTime`, or `resolveHappierFutureLocalDateTime` when a future instant is required,
+ * from `@happier-dev/plugin-ui/components`.
  */
 export type LocalDateTimeValue = HappierLocalDateTimeDraft;
 
 export type LocalDateTimeFieldProps = Readonly<{
-  /** The instant the reading must be after; also the picker's earliest day. */
-  nowMs: number;
+  /** When supplied, the reading must be after this instant; omitted for historical readings. */
+  nowMs?: number;
   value: LocalDateTimeValue;
   onChange: (value: LocalDateTimeValue) => void;
   labels: Readonly<{ date: string; time: string; pastInstant: string }>;

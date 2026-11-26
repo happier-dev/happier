@@ -446,6 +446,11 @@ server list share that filter schema. Each authorized candidate query applies
 the range before its page limit, and continuation is bound to the full filter.
 This is an unreleased 0.3 input addition; matching Protocol and server consumers
 are required, and older strict request readers reject the new operand.
+The shared condition editor authors Before, After and Between through the existing
+local date/time field and platform calendar, then emits absolute epoch bounds to
+the registry. Historical filters omit the field's optional future constraint;
+reminders and expiry callers keep supplying theirs. Opening and applying an
+unchanged bound preserves its original millisecond precision.
 Their actual members live in the organization owner's
 `ResourceSpaceMembership` relation, scoped by the organizing Account, space and
 Artifact id. They are never stored as a settings inventory, Session tags or

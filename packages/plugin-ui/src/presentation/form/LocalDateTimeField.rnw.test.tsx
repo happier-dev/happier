@@ -89,7 +89,7 @@ describe('local date-time field', () => {
       dateButton.click();
     });
     expect(query(view, 'picker:date')).not.toBeNull();
-    expect(request!.minimumDate.getTime()).toBe(NOW);
+    expect(request!.minimumDate?.getTime()).toBe(NOW);
     expect(request!.value.getTime()).toBe(
       new Date(2026, 8, 10, 9, 25).getTime(),
     );

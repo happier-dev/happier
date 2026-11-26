@@ -76,7 +76,7 @@ function CalendarPicker(props: DateTimePickerPopoverProps) {
         new Intl.DateTimeFormat(undefined, { weekday: 'narrow' }).format(new Date(2024, 0, MONDAY.getDate() + index, 12))), []);
     const monthLabel = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(visibleMonth);
     const selectedOrdinal = dayOrdinal(props.value);
-    const minimumOrdinal = dayOrdinal(props.minimumDate);
+    const minimumOrdinal = props.minimumDate === undefined ? undefined : dayOrdinal(props.minimumDate);
     const todayOrdinal = dayOrdinal(new Date());
 
     return <View testID="date-time-picker-date-picker" style={styles.calendar}>
@@ -92,7 +92,7 @@ function CalendarPicker(props: DateTimePickerPopoverProps) {
             {days.map((day) => {
                 const ordinal = dayOrdinal(day);
                 const selected = ordinal === selectedOrdinal;
-                const disabled = ordinal < minimumOrdinal;
+                const disabled = minimumOrdinal !== undefined && ordinal < minimumOrdinal;
                 const outsideMonth = day.getMonth() !== visibleMonth.getMonth();
                 return <Pressable
                     key={ordinal}

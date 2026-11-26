@@ -18,6 +18,7 @@ import type { HappierTypeRole } from '../presentation/text/typeScale.js';
 import { Button } from './Button.js';
 import { PluginUiIconGlyph, type IconName } from './Icon.js';
 import { usePluginTheme } from './PluginUiProvider.js';
+import { LocalDateTimeField } from './Form.js';
 
 const TEXT: Readonly<
   Record<
@@ -141,6 +142,7 @@ function usePluginConditionColors() {
 
 const PLUGIN_CONDITION_HOST: HappierCollectionConditionEditorHost =
   Object.freeze({
+    DateTimeField: LocalDateTimeField,
     Text: PluginConditionText,
     Icon: PluginConditionIcon,
     SearchField: PluginConditionSearch,
