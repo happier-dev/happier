@@ -3467,6 +3467,18 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 },
             }) : null;
         if (accountAttempt?.matched) return projectContributedActionExecuteResult(accountAttempt.result);
+        if (accountActivationSources && accountTarget) {
+            // A child already on the Account host bypasses current-process
+            // selection. Admit its target after checking its caller.
+            if (!await accountActivationSources.revalidate(request.caller.pluginId, request.signal)) {
+                return { status: 'failed', code: 'plugin_action_generation_retired',
+                    message: 'The Account caller is retired', actionHandlerInvocation: 'notStarted' };
+            }
+            if (!await accountActivationSources.revalidate(request.action.pluginId, request.signal)) {
+                return { status: 'failed', code: 'plugin_action_generation_retired',
+                    message: 'The Account target is retired', actionHandlerInvocation: 'notStarted' };
+            }
+        }
         const attempt = await executeContributedAction({
             runtimeRegistry,
             ...(params?.accountExecution && sessionCredentials ? {
@@ -3511,13 +3523,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 caller: request.caller,
                 ...(request.initiatingActionCaller ? { initiatingActionCaller: request.initiatingActionCaller } : {}),
                 ...(request.sessionId ? { defaultSessionId: request.sessionId } : {}),
-                ...(params?.accountExecution || request.beforeHandlerInvocation ? { beforeHandlerInvocation: async () => {
-                    if (params?.accountExecution
-                        && await accountActivationSources?.revalidate(request.caller.pluginId, request.signal) !== true) {
-                        throw new PluginError({ code: 'plugin_action_generation_retired', message: 'The Account caller is retired' });
-                    }
-                    await request.beforeHandlerInvocation?.();
-                } } : {}),
+                ...(request.beforeHandlerInvocation ? { beforeHandlerInvocation: request.beforeHandlerInvocation } : {}),
                 signal: request.readObservation ? composePluginConsumerSignal(request.action.pluginId, request.signal) : request.signal,
             },
         });

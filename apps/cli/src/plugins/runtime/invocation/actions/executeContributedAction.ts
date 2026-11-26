@@ -860,6 +860,7 @@ export async function executeContributedAction(params: Readonly<{
     let announceLiveAsk: ((artifactId: string) => void) | undefined;
     const liveAsk = observeOperation && trackedOperation && admissionResponse && params.daemonHoldsApprovalWaiter
       ? new Promise<string>(resolve => { announceLiveAsk = resolve; }) : undefined;
+    let waitedForApproval = false;
     // The pressing person reviews in their own UI: the parent carries its review
     // back for a digest-bound re-press. Never a self-approval Artifact.
     const requestCurrentIntent = ownPressChild
@@ -874,12 +875,20 @@ export async function executeContributedAction(params: Readonly<{
             || action.definition.approvalInputCustody === 'live_only'
             || (projectedInput?.confidentialPaths.length ?? 0) > 0
             || (accountTarget && !runtimeRegistry.resolveCurrentPluginApprovalReplayPlacement);
+          const currentIntentRequest = accountTarget || (liveOnly && announceLiveAsk) ? {
+            ...request,
+            onLiveApprovalRequested: (artifactId: string) => {
+              waitedForApproval = true;
+              request.onLiveApprovalRequested?.(artifactId);
+              if (liveOnly) announceLiveAsk?.(artifactId);
+            },
+          } : request;
           const requestedSurface = request.invocationSurface ?? request.surface;
           const deferredSurface = requestedSurface === 'api' || requestedSurface === 'cli'
             || requestedSurface === 'agent' || requestedSurface === 'mcp' ? requestedSurface : null;
           const needsApprovalPlacement = (deferredSurface !== null || sharedRequester)
             && pluginActionRequiresPresentUserIntent(request.action, requestedSurface, request.action.input);
-          if (!liveOnly && !needsApprovalPlacement) return await params.requestCurrentIntent!(request);
+          if (!liveOnly && !needsApprovalPlacement) return await params.requestCurrentIntent!(currentIntentRequest);
           const retainedInput = { action: { pluginId: request.action.pluginId, localId: request.action.localId },
             input: projectedInput?.input ?? request.action.input };
           const requesterAdmission = resolveApprovalRequesterConfirmationV1({ context: params.approvalContext,
@@ -977,9 +986,8 @@ export async function executeContributedAction(params: Readonly<{
             return { status: 'unavailable', code: 'approval_requester_unavailable' };
           }
           const result = await params.requestCurrentIntent!({
-            ...request,
+            ...currentIntentRequest,
             ...(liveOnly ? { approvalInputCustody: 'live_only' } : {}),
-            ...(liveOnly && announceLiveAsk ? { onLiveApprovalRequested: announceLiveAsk } : {}),
             ...(placement ? { replayPlacement: placement } : {}),
             ...(executionOriginV1 ? { executionOriginV1 } : {}),
             ...(requesterConfirmation ? { requesterConfirmation } : {}),
@@ -1058,13 +1066,12 @@ export async function executeContributedAction(params: Readonly<{
       ...(params.context.operationProgress
         ? { operationProgress: params.context.operationProgress }
         : {}),
-      ...(params.admittedManagedProviderOperation || params.admittedConnectedAccountPurposeBinding || params.context.beforeHandlerInvocation || params.inheritedTargetedOperation || (accountTarget && runtimeRegistry.revalidateAccountExecution)
+      ...(params.admittedManagedProviderOperation || params.admittedConnectedAccountPurposeBinding || params.context.beforeHandlerInvocation || params.inheritedTargetedOperation || (accountTarget && requestCurrentIntent && runtimeRegistry.revalidateAccountExecution)
         ? { beforeHandlerInvocation: async () => {
             await params.context.beforeHandlerInvocation?.();
             await params.inheritedTargetedOperation?.beforeHandlerInvocation();
-            // Approval may wait while Account availability changes. Admit the
-            // callee after the caller's admission, once, before its handler.
-            if (accountTarget && runtimeRegistry.revalidateAccountExecution
+            // The live waiter crosses a new admission boundary before effects.
+            if (waitedForApproval && accountTarget && runtimeRegistry.revalidateAccountExecution
               && !await runtimeRegistry.revalidateAccountExecution(pluginId, params.context.signal)) {
               throw new PluginError({ code: 'plugin_action_generation_retired', message: 'The Account target is retired' });
             }

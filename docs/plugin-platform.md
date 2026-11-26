@@ -3656,8 +3656,9 @@ An Account Action's request census admits its selected release. The host reuses
 the contribution projection while the Account's selected declaration generation
 is unchanged. Reference recovery works from manifests already decoded at
 ingress. The request census settles Home custody for a handler that starts
-immediately. An answered approval re-reads the Account selection and
-credential before the handler starts.
+immediately. On the mounted Account host, a child Action admits its target
+after checking its caller. An invocation that waits for live approval re-reads
+the Account selection and credential before the handler starts.
 
 A successful Collection writer claim is retained for its declaration and live
 Account across a daemon's registry replacements and plugin re-activations. Equal

@@ -174,13 +174,15 @@ it.each([
         });
         let rotatedDuringRead = false;
         let retiredCalleeDuringCallerRead = false;
+        let approvedExecutionIntentReads = 0;
         app.addHook('onSend', async (request, _reply, payload) => {
-            if (scenario !== 'callee_retire_during_caller_read' || !approvalArtifactId
+            if (!approvalArtifactId
                 || request.url !== PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']
-                || readApproval().qualifiedActionId !== `${pluginId}/actions/record-source`
                 || readApproval().status !== 'executing') return payload;
             const read = PluginAvailabilityIntentReadActionInputV1Schema.parse(request.body);
-            if (read.pluginId === pluginId && !retiredCalleeDuringCallerRead) {
+            if (read.pluginId === pluginId) approvedExecutionIntentReads++;
+            if (scenario === 'callee_retire_during_caller_read'
+                && read.pluginId === pluginId && !retiredCalleeDuringCallerRead) {
                 // Disable only the executing callee while the live caller's
                 // currentness read settles, regardless of validation order.
                 setPluginEnabled(effectPluginId, false);
@@ -359,6 +361,7 @@ it.each([
             expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
             expect(readApproval().executionOriginV1).toMatchObject({ actionId: 'action.invoke', serverIdentityId });
             const result = await invoking;
+            if (scenario === 'approve') expect(approvedExecutionIntentReads).toBe(1);
             if (scenario === 'callee_retire_during_caller_read') {
                 expect(retiredCalleeDuringCallerRead).toBe(true);
                 expect(await readCurrentAccountPluginExecutionSelection({ credentials, serverUrl: endpoint, pluginId }))
