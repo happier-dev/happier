@@ -165,3 +165,28 @@ it('draws a Key flow row’s 24-hour response from the collector, not from its r
   expect(calls).toHaveLength(1);
   expect(facts.response24h).toEqual([]);
 });
+
+// P8 U2: Monitoring's Response leads with the saved check's own result (its value, window and limit), and names the
+// collector history beside it as separately windowed, so the failing value is said once.
+it('leads a Key flow row’s Response with the saved result and names the collector history’s scope', async () => {
+  const { reader } = recordingReader();
+  const latest = { status: 'down' as const, observedAt: NOW, latencyMs: 1420, evidence: { kind: 'none' },
+    measurements: { measure: 'p95', value: 1420, unit: 'ms', basis: 'metric_points', producers: [],
+      window: { since: NOW - 600_000, until: NOW }, completeness: 'complete', reasons: [] } };
+  const check = row('keyFlow', keyFlow, latest);
+  const facts = serviceCheckListFacts(check);
+  const screen = await renderScreen(
+    <ServiceCheckCollectorTrendReaderContext.Provider value={reader}>
+      <ItemList><ServiceCheckList rows={[check]} scope={{ serverId: 'server-1', accountId: 'account-1' }} grouping="attention"
+        selection={{ selectedKey: null, onSelect() {}, onSelectedRow() {} }}
+        testID="monitoring-response" accessibilityLabel="Monitoring" /></ItemList>
+    </ServiceCheckCollectorTrendReaderContext.Provider>,
+  );
+  const cell = screen.findByTestId('services.checks.row.automation-keyFlow.trigger-1:column:response');
+  expect(facts.valueText).not.toBeNull();
+  expect(facts.ruleText).not.toBeNull();
+  const readout = cell?.findAll(node => typeof node.props.accessibilityLabel === 'string')[0]?.props.accessibilityLabel;
+  expect(readout).toBe([facts.valueText, facts.ruleText, 'Collector history · 24 h'].join(' · '));
+  // The failing value is said once on the row.
+  expect(screen.getTextContent().split(facts.valueText!).length - 1).toBe(1);
+});

@@ -3,7 +3,10 @@ import { Platform, Pressable, type StyleProp, type View, type ViewStyle } from '
 
 import { DeferredAnchoredTooltip } from './DeferredAnchoredTooltip';
 
-/** Focusable help text, with no action unless the text itself is the control. */
+/**
+ * Focusable help text, with no action unless the text itself is the control. A pointer shows it on hover and a
+ * keyboard on focus (web); touch holds it above the finger for as long as a long press lasts (native).
+ */
 export function Tooltip(props: Readonly<{
     /** Empty: the host stays but shows no help text. */
     label: string;
@@ -20,6 +23,8 @@ export function Tooltip(props: Readonly<{
     const anchorRef = React.useRef<View | null>(null);
     const [hovered, setHovered] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
+    const [held, setHeld] = React.useState(false);
+    const touchReadout = Platform.OS !== 'web' && props.label !== '';
     return (
         <Pressable
             ref={anchorRef}
@@ -32,11 +37,16 @@ export function Tooltip(props: Readonly<{
             onHoverOut={() => setHovered(false)}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
+            onLongPress={touchReadout ? () => setHeld(true) : undefined}
+            onPressOut={touchReadout ? () => setHeld(false) : undefined}
             style={props.style}
         >
             {props.children}
             {Platform.OS === 'web' && props.label !== '' && (hovered || focused) ? (
                 <DeferredAnchoredTooltip activationKey={`${hovered}:${focused}`} anchorRef={anchorRef} label={props.label} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
+            ) : null}
+            {touchReadout && held ? (
+                <DeferredAnchoredTooltip activationKey="held" anchorRef={anchorRef} label={props.label} placement="top" testID={props.testID ? `${props.testID}-tooltip` : undefined} />
             ) : null}
         </Pressable>
     );

@@ -164,7 +164,9 @@ it('names a failing Key flow by its flow and says its measurement, as Failing ra
   expect(text).toContain('Checkout');
   expect(text).toContain('Failing');
   expect(text).not.toContain('Down');
-  expect(text).toMatch(/p95 1\.42/);
+  // Wide, the Response column states the measured value once; line 2 says what it was judged on (P8 U2).
+  expect(text.match(/1\.42/g)).toHaveLength(1);
+  expect(text).toMatch(/p95 · last 10 min · limit 800/);
   expect(text).not.toContain('usually');
 });
 

@@ -260,6 +260,7 @@ export function ServiceCheckList(
           stale={staleOf(row)}
           loading={settling}
           columns={layout?.fieldColumns === true}
+          resultInColumn={layout?.shownColumnKeys?.has('response') === true}
         />
       ),
       bylineLead: (row, layout) =>
@@ -384,29 +385,41 @@ const CheckRowBars = React.memo(function CheckRowBars(
   );
 });
 
-/** Response · 24 h (D36 2A): the retained responses as a small line, then the latest. */
+/**
+ * The saved check's own result, as Monitoring states it: its value (a Key flow's measured value in the unit of its
+ * measure), the colour of a failing result, the window and limit it was judged on, and what the line beside it shows —
+ * a Key flow's separately windowed collector history, or the check's own retained responses.
+ */
+function useCheckResult(facts: ServiceCheckListFacts) {
+  const { theme } = useUnistyles();
+  const value = facts.valueText ?? (facts.latencyMs === null ? null : formatServiceCheckLatency(facts.latencyMs));
+  const tone = facts.lastTone === 'danger' ? theme.colors.state.danger.textForeground
+    : facts.lastTone === 'warning' ? theme.colors.state.warning.textForeground : null;
+  const history = facts.collectorTrend ? t(`${m}.collectorHistory24h`) : t(`${m}.columnResponse24h`);
+  return { value, tone, history, readout: [value, facts.ruleText, history].filter(Boolean).join(' · ') };
+}
+
+/** Response · 24 h (D36 2A): the saved result leads (said once, in its tone), then the history as a small ink line. */
 function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts; scope: ManagedConfiguredCheckRow['scope'] }>) {
   const { theme } = useUnistyles();
   const { collectorTrend, latencyMs } = props.facts;
+  const result = useCheckResult(props.facts);
   // A saved route check can measure error rate and still have a collector latency series for Response.
-  if (latencyMs === null && collectorTrend?.config.measure.kind !== 'route') return null;
-  const tone =
-    props.facts.status === 'degraded'
-      ? theme.colors.state.warning.textForeground
-      : theme.colors.text.secondary;
+  if (latencyMs === null && result.value === null && collectorTrend?.config.measure.kind !== 'route') return null;
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
-      <ServiceCheckResponseTrend facts={props.facts} scope={props.scope} form="line" label={t(`${m}.columnResponse24h`)} />
-      {latencyMs === null ? null : (
+    <View accessible accessibilityLabel={result.readout}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
+      <ServiceCheckResponseTrend facts={props.facts} scope={props.scope} form="line" label={result.history} />
+      {result.value === null ? null : (
         <Text
           style={{
             ...Typography.variant('meta'),
-            color: tone,
+            color: result.tone ?? theme.colors.text.secondary,
             fontVariant: ['tabular-nums'],
           }}
           numberOfLines={1}
         >
-          {formatServiceCheckLatency(latencyMs)}
+          {result.value}
         </Text>
       )}
     </View>
@@ -445,22 +458,23 @@ function CheckCardBody(props: Readonly<{ facts: ServiceCheckListFacts; scope: Ma
 function CheckCardFacts(props: Readonly<{ facts: ServiceCheckListFacts; scope: ManagedConfiguredCheckRow['scope'] }>) {
   const { theme } = useUnistyles();
   const uptime = serviceCheckUptimeText(props.facts.uptimePercent);
-  const value = props.facts.latencyMs === null ? null : formatServiceCheckLatency(props.facts.latencyMs);
-  const tone = props.facts.status === 'down'
-    ? theme.colors.state.danger.textForeground
-    : props.facts.status === 'degraded'
-      ? theme.colors.state.warning.textForeground
-      : theme.colors.text.primary;
-  if (!uptime && !value) return null;
+  const result = useCheckResult(props.facts);
+  if (!uptime && !result.value) return null;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: theme.space.s12, minHeight: HAPPIER_DATA_METRICS.plotHeightPx }}>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <ServiceCheckResponseTrend facts={props.facts} scope={props.scope} form="area" label={t(`${m}.columnResponse24h`)} />
+        <ServiceCheckResponseTrend facts={props.facts} scope={props.scope} form="area" label={result.history} />
       </View>
-      <View style={{ alignItems: 'flex-end' }}>
-        {value ? (
-          <Text style={{ ...Typography.variant('label', 'semiBold'), color: tone, fontVariant: ['tabular-nums'] }} numberOfLines={1}>
-            {value}
+      {/* The saved result leads the card's figures: its value, then the window and limit it was judged on. */}
+      <View style={{ alignItems: 'flex-end' }} accessible accessibilityLabel={[result.readout, uptime ? t(`${m}.uptimeOverDays`, { percent: uptime }) : null].filter(Boolean).join(' · ')}>
+        {result.value ? (
+          <Text style={{ ...Typography.variant('label', 'semiBold'), color: result.tone ?? theme.colors.text.primary, fontVariant: ['tabular-nums'] }} numberOfLines={1}>
+            {result.value}
+          </Text>
+        ) : null}
+        {props.facts.ruleText ? (
+          <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary }} numberOfLines={1}>
+            {props.facts.ruleText}
           </Text>
         ) : null}
         {uptime ? (
@@ -542,6 +556,8 @@ const CheckByline = React.memo(function CheckByline(
     stale: boolean;
     loading: boolean;
     columns: boolean;
+    /** The Response column states the saved result: line 2 then says what it was judged on, not the value again. */
+    resultInColumn?: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -569,7 +585,7 @@ const CheckByline = React.memo(function CheckByline(
       ? t(`${m}.staleByline`, { machine: observer })
       : failing
         ? [
-            facts.causeText,
+            props.resultInColumn && facts.valueText !== null ? facts.ruleText ?? facts.causeText : facts.causeText,
             facts.failingSince === null
               ? null
               : t(`${m}.failingSince`, {

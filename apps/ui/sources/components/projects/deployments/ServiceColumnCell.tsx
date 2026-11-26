@@ -1,16 +1,42 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import type { AdmittedPluginListFilterFieldV1 } from '@happier-dev/plugin-sdk/ui';
 import { Text } from '@/components/ui/text/Text';
 import { Tooltip } from '@/components/ui/overlays/Tooltip';
 import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
 import type { DeploymentEnvironmentBylineFact, DeploymentEnvironmentResourceColumn } from './deploymentEnvironmentColumns';
-import { useServiceColumnValue } from './ServiceColumnResources';
+import { useServiceColumnValue, type ServiceColumnValue } from './ServiceColumnResources';
 import { formatServiceCheckLatency, formatServiceCheckShare, serviceCheckWindowEnds } from './serviceCheckPresentation';
 import { ServiceTrendChart } from './ServiceTrendChart';
 
-/** A scalar and its picture. The tooltip and accessible text preserve the producer's full value and window. */
+/**
+ * The one readout of a contributed Services fact, for a column cell and a folded byline fact alike: its title, the
+ * producer's full value and unit, where it comes from, its window and producers, and how complete the measurement is.
+ */
+function serviceFieldReadout(fact: Pick<DeploymentEnvironmentBylineFact, 'title' | 'source'> & Readonly<{
+  field: AdmittedPluginListFilterFieldV1 }>, value: ServiceColumnValue | null, locale: string): string {
+  const scalar = value?.value;
+  const declared = fact.field.declaration.value;
+  const full = new Intl.NumberFormat(locale, { maximumSignificantDigits: 21 });
+  const fullValue = scalar === null || scalar === undefined ? t('common.unavailable')
+    : typeof scalar === 'number' && declared.kind === 'number'
+      ? declared.unit === '1' ? new Intl.NumberFormat(locale, { style: 'percent', maximumSignificantDigits: 21 }).format(scalar)
+        : declared.unit === '{request}' ? t('projects.deployments.monitoring.keyFlowRequests', { count: scalar, formatted: full.format(scalar) })
+          : declared.unit === '{issue}' ? full.format(scalar) : `${full.format(scalar)} ${declared.unit}`
+      : Array.isArray(scalar) ? scalar.join(', ') : String(scalar);
+  const measurement = value?.provenance;
+  const windowEnds = measurement ? serviceCheckWindowEnds(measurement.window.since, measurement.window.until, Date.now()) : null;
+  return [`${fact.title} ${fullValue}`, fact.source,
+    ...(measurement && windowEnds ? [`${windowEnds[0]} – ${windowEnds[1]}`,
+      ...measurement.producers.map(producer => [producer.serviceName, producer.serviceVersion, producer.serviceInstanceId].filter(Boolean).join(' · ')),
+      ...(measurement.basis === 'sampled_spans' || measurement.basis === 'mixed_telemetry' ? [t('deploymentTelemetry.measurement.sampled')] : []),
+      ...(measurement.completeness === 'partial' ? [t('deploymentTelemetry.measurement.partial')]
+        : measurement.completeness === 'unknown' ? [t('deploymentTelemetry.measurement.unknown')] : [])] : [])].filter(Boolean).join(' · ');
+}
+
+/** A scalar and its picture. The readout (hover, focus, long press) and accessible text carry the full value and window. */
 export function ServiceColumnCell(props: Readonly<{ column: DeploymentEnvironmentResourceColumn;
   environmentId: string; collectorMachineId: string | null }>) {
   const { theme } = useUnistyles();
@@ -19,18 +45,7 @@ export function ServiceColumnCell(props: Readonly<{ column: DeploymentEnvironmen
   const scalar = value?.value;
   const text = scalar === null || scalar === undefined ? '—' : typeof scalar === 'number'
     ? new Intl.NumberFormat(locale, { maximumSignificantDigits: 21 }).format(scalar) : Array.isArray(scalar) ? scalar.join(', ') : String(scalar);
-  const measurement = value?.provenance;
-  const declared = props.column.field.declaration.value;
-  const fullValue = scalar === null || scalar === undefined ? t('common.unavailable') : typeof scalar === 'number' && declared.kind === 'number'
-    ? declared.unit === '{request}' ? t('projects.deployments.monitoring.keyFlowRequests', { count: scalar, formatted: text })
-      : `${text} ${declared.unit}` : text;
-  const windowEnds = measurement ? serviceCheckWindowEnds(measurement.window.since, measurement.window.until, Date.now()) : null;
-  const label = [props.column.title, fullValue, props.column.source,
-    ...(measurement && windowEnds ? [`${windowEnds[0]} – ${windowEnds[1]}`,
-      ...measurement.producers.map(producer => [producer.serviceName, producer.serviceVersion, producer.serviceInstanceId].filter(Boolean).join(' · ')),
-      ...(measurement.basis === 'sampled_spans' || measurement.basis === 'mixed_telemetry' ? [t('deploymentTelemetry.measurement.sampled')] : []),
-      ...(measurement.completeness === 'partial' ? [t('deploymentTelemetry.measurement.partial')]
-        : measurement.completeness === 'unknown' ? [t('deploymentTelemetry.measurement.unknown')] : [])] : [])].filter(Boolean).join(' · ');
+  const label = serviceFieldReadout(props.column, value, locale);
   const points = React.useMemo(() => (value?.trend ?? []).map(interval => ({
     id: String(interval.at), x: interval.at, y: interval.value,
   })), [value?.trend]);
@@ -46,8 +61,12 @@ export function ServiceColumnCell(props: Readonly<{ column: DeploymentEnvironmen
   </Tooltip>;
 }
 
+/**
+ * A fact folded into a row's second line ("Latency 182 ms"): the compact figure on the line, the full readout through
+ * the shared tooltip on hover, keyboard focus and a long press. A tap still opens the row's Environment (`onOpen`).
+ */
 export function ServiceBylineFact(props: Readonly<{ fact: DeploymentEnvironmentBylineFact;
-  environmentId: string; collectorMachineId: string | null }>) {
+  environmentId: string; collectorMachineId: string | null; testID?: string; onOpen?: () => void }>) {
   const value = useServiceColumnValue({ ...props, pluginId: props.fact.pluginId, field: props.fact.field, includeTrend: false });
   const { theme } = useUnistyles();
   const locale = getPreferredLanguage();
@@ -60,19 +79,11 @@ export function ServiceBylineFact(props: Readonly<{ fact: DeploymentEnvironmentB
         : declared.unit === '{issue}' ? new Intl.NumberFormat(locale).format(scalar)
           : `${new Intl.NumberFormat(locale).format(scalar)} ${declared.unit}`
     : Array.isArray(scalar) ? scalar.join(', ') : String(scalar);
-  const label = `${props.fact.title} ${text}`;
-  const fullValue = typeof scalar === 'number' && declared.kind === 'number'
-    ? declared.unit === '1'
-      ? new Intl.NumberFormat(locale, { style: 'percent', maximumSignificantDigits: 21 }).format(scalar)
-      : [new Intl.NumberFormat(locale, { maximumSignificantDigits: 21 }).format(scalar),
-        declared.unit === '{issue}' ? null : declared.unit].filter(Boolean).join(' ')
-    : text;
-  const measurement = value?.provenance;
-  const windowEnds = measurement && serviceCheckWindowEnds(measurement.window.since, measurement.window.until, Date.now());
-  const accessibilityLabel = [`${props.fact.title} ${fullValue}`, props.fact.source, windowEnds?.join(' – '),
-    measurement?.basis === 'sampled_spans' ? t('deploymentTelemetry.measurement.sampled') : null,
-    measurement?.completeness === 'partial' ? t('deploymentTelemetry.measurement.partial') : null,
-  ].filter(Boolean).join(' · ');
-  return <Text variant="meta" style={{ color: theme.colors.text.secondary }} accessibilityLabel={accessibilityLabel}
-    numberOfLines={1}>{label}</Text>;
+  const readout = serviceFieldReadout(props.fact, value, locale);
+  // The fact keeps its own width and gives way last: the deploy text before it ellipsizes first (lab phone row).
+  return <Tooltip testID={props.testID} label={readout} accessibilityLabel={readout} onPress={props.onOpen}
+    style={{ flexShrink: 0, minWidth: 0 }}>
+    <Text variant="meta" style={{ color: theme.colors.text.secondary, ...Typography.tabular() }}
+      numberOfLines={1}>{`${props.fact.title} ${text}`}</Text>
+  </Tooltip>;
 }

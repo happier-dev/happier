@@ -15,6 +15,7 @@ import { HAPPIER_PAGE_METRICS, HappierColumnEdgeContext } from '@happier-dev/plu
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { ItemGroup, ItemGroupDefaultSurfaceProvider } from '@/components/ui/lists/ItemGroup';
 import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosition';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -163,6 +164,8 @@ function DeploymentEnvironmentRowsBody(props: DeploymentEnvironmentRowsProps & R
     },
     [byId, openBackups, router, serverId],
   );
+  // A folded fact's tap opens its row's Environment; stable, so the anatomy is not rebuilt per arrival.
+  const openRow = useEventCallback((environmentId: string) => open(environmentId));
   const openTab = React.useCallback((row: Row, tab: EnvironmentRowMenuTab) => {
     router.push(deploymentEnvironmentRoute({ serverId, projectSourceId: row.projectSourceId, environmentId: row.environmentId, tab }));
   }, [router, serverId]);
@@ -223,7 +226,9 @@ function DeploymentEnvironmentRowsBody(props: DeploymentEnvironmentRowsProps & R
         return <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1, gap: theme.space.s8 }}>
           {line ? <Text variant="meta" style={meta} numberOfLines={1}>{line}</Text> : null}
           {facts.map(fact => <ServiceBylineFact key={fact.field.id} fact={fact}
-            environmentId={row.environmentId} collectorMachineId={row.collectorMachineId} />)}
+            environmentId={row.environmentId} collectorMachineId={row.collectorMachineId}
+            testID={`${props.testID}.row.${row.environmentId}:byline:${fact.field.id}`}
+            onOpen={() => openRow(row.environmentId)} />)}
         </View>;
       },
       bylineLead: (row, layout) =>
@@ -246,7 +251,7 @@ function DeploymentEnvironmentRowsBody(props: DeploymentEnvironmentRowsProps & R
       // The name (then its reason, ellipsized) narrows to this floor before a chosen column gives way (UI refinements 11-17).
       titleMinWidth: DEPLOYMENT_ENVIRONMENT_TITLE_MIN_WIDTH,
     };
-  }, [hereMachine, contributed, props.testID, theme.colors.text.secondary, theme.space.s2, theme.space.s8]);
+  }, [hereMachine, contributed, openRow, props.testID, theme.colors.text.secondary, theme.space.s2, theme.space.s8]);
   const list = <ServicesPageList<Row>
         testID={props.testID}
         model={model}

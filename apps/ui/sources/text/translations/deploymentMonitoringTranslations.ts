@@ -16,6 +16,7 @@ const en = {
   checksAtLeast: ({ count }: Count) => count === 1 ? '1+ check' : `${count}+ checks`,
   columnRecent: ({ count }: Count) => `Last ${count} checks`,
   columnResponse24h: 'Response · 24 h',
+  collectorHistory24h: 'Collector history · 24 h',
   waiting: 'Waiting for the first check',
   staleState: ({ time }: Time) => `Not checked since ${time}`,
   staleByline: ({ machine }: { machine: string }) =>
@@ -97,6 +98,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ comprovació' : `${count}+ comprovacions`,
     columnRecent: ({ count }: Count) => `Últimes ${count} comprovacions`,
     columnResponse24h: 'Resposta · 24 h',
+    collectorHistory24h: 'Historial del col·lector · 24 h',
     waiting: 'Esperant la primera comprovació',
     staleState: ({ time }: Time) => `Sense comprovar des de les ${time}`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -175,6 +177,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ Prüfung' : `${count}+ Prüfungen`,
     columnRecent: ({ count }: Count) => `Letzte ${count} Prüfungen`,
     columnResponse24h: 'Antwortzeit · 24 h',
+    collectorHistory24h: 'Collector-Verlauf · 24 h',
     waiting: 'Wartet auf die erste Prüfung',
     staleState: ({ time }: Time) => `Nicht geprüft seit ${time}`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -253,6 +256,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ comprobación' : `${count}+ comprobaciones`,
     columnRecent: ({ count }: Count) => `Últimas ${count} comprobaciones`,
     columnResponse24h: 'Respuesta · 24 h',
+    collectorHistory24h: 'Historial del colector · 24 h',
     waiting: 'Esperando la primera comprobación',
     staleState: ({ time }: Time) => `Sin comprobar desde las ${time}`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -331,6 +335,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ vérification' : `${count}+ vérifications`,
     columnRecent: ({ count }: Count) => `${count} dernières vérifications`,
     columnResponse24h: 'Réponse · 24 h',
+    collectorHistory24h: 'Historique du collecteur · 24 h',
     waiting: 'En attente de la première vérification',
     staleState: ({ time }: Time) => `Non vérifié depuis ${time}`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -411,6 +416,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ controllo' : `${count}+ controlli`,
     columnRecent: ({ count }: Count) => `Ultimi ${count} controlli`,
     columnResponse24h: 'Risposta · 24 h',
+    collectorHistory24h: 'Cronologia del collector · 24 h',
     waiting: 'In attesa del primo controllo',
     staleState: ({ time }: Time) => `Non controllato dalle ${time}`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -489,6 +495,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => `${count}+ 件のチェック`,
     columnRecent: ({ count }: Count) => `直近 ${count} 回のチェック`,
     columnResponse24h: '応答 · 24 時間',
+    collectorHistory24h: 'コレクターの履歴 · 24 時間',
     waiting: '最初のチェックを待っています',
     staleState: ({ time }: Time) => `${time} 以降チェックされていません`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -565,6 +572,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => `Kontrole: ${count}+`,
     columnRecent: ({ count }: Count) => `Ostatnie sprawdzenia (${count})`,
     columnResponse24h: 'Odpowiedź · 24 h',
+    collectorHistory24h: 'Historia kolektora · 24 h',
     waiting: 'Czeka na pierwsze sprawdzenie',
     staleState: ({ time }: Time) => `Nie sprawdzano od ${time}`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -641,6 +649,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ verificação' : `${count}+ verificações`,
     columnRecent: ({ count }: Count) => `Últimas ${count} verificações`,
     columnResponse24h: 'Resposta · 24 h',
+    collectorHistory24h: 'Histórico do coletor · 24 h',
     waiting: 'À espera da primeira verificação',
     staleState: ({ time }: Time) => `Sem verificação desde as ${time}`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -719,6 +728,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => `Проверок: ${count}+`,
     columnRecent: ({ count }: Count) => `Последние проверки (${count})`,
     columnResponse24h: 'Ответ · 24 ч',
+    collectorHistory24h: 'История коллектора · 24 ч',
     waiting: 'Ожидает первой проверки',
     staleState: ({ time }: Time) => `Не проверялось с ${time}`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -796,6 +806,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => `${count}+ 项检查`,
     columnRecent: ({ count }: Count) => `最近 ${count} 次检查`,
     columnResponse24h: '响应 · 24 小时',
+    collectorHistory24h: '收集器历史 · 24 小时',
     waiting: '等待第一次检查',
     staleState: ({ time }: Time) => `自 ${time} 起未检查`,
     staleByline: ({ machine }: { machine: string }) =>
@@ -872,6 +883,7 @@ export const deploymentMonitoringTranslations = {
     checksAtLeast: ({ count }: Count) => `${count}+ 項檢查`,
     columnRecent: ({ count }: Count) => `最近 ${count} 次檢查`,
     columnResponse24h: '回應 · 24 小時',
+    collectorHistory24h: '收集器歷史 · 24 小時',
     waiting: '等待第一次檢查',
     staleState: ({ time }: Time) => `自 ${time} 起未檢查`,
     staleByline: ({ machine }: { machine: string }) =>

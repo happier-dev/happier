@@ -139,6 +139,14 @@ it.each([
         expect.soft(screen.findAll(node => typeof node.props.accessibilityLabel === 'string'
             && node.props.accessibilityLabel.includes('Latency')
             && /1[,\s]?234[.,]567/u.test(node.props.accessibilityLabel)).length).toBeGreaterThan(0);
+        // The folded fact's full readout (value, unit, source) is held above the finger for a long press, then let go.
+        const latency = `phone-services.row.env-phone:byline:${buildQualifiedPluginContributionKey({ pluginId: harness.pluginId, localId: 'latency' })}`;
+        await act(async () => { screen.findHostByTestId(latency)!.props.onLongPress(); });
+        await vi.waitFor(() => expect(screen.findByTestId(`${latency}-tooltip`)).not.toBeNull());
+        const readout = screen.findAll(node => node.props.testID === `${latency}-tooltip` && typeof node.props.label === 'string')[0];
+        expect(readout?.props.label).toMatch(/^Latency 1[,\s]?234[.,]567 ms · Service facts/u);
+        await act(async () => { screen.findHostByTestId(latency)!.props.onPressOut(); });
+        expect(screen.findByTestId(`${latency}-tooltip`)).toBeNull();
         const request = { entity: 'service', serverId: scope.serverId, environmentIds: ['env-phone'] };
         await vi.waitFor(() => expect(requests).toEqual([...(wideColumn ? [request] : []), { ...request, includeTrend: false }]));
     } finally { await screen.unmount(); unpublish(); await harness.dispose(); }
