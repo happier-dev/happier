@@ -107,6 +107,7 @@ type ObservedRun = Readonly<ActionCompletionRun & { outcome: ExecutionRunTermina
 function perRunOutcome({ key, runId, outcome }: ObservedRun) {
   return {
     key, runId, outcome: outcome.kind, ...runTiming(outcome),
+    ...(outcome.questionSummary ? { questionSummary: outcome.questionSummary } : {}),
     ...(outcome.kind === 'failed' && outcome.runtimeIssueV1 ? { runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(outcome.runtimeIssueV1) } : {}),
     ...(outcome.kind !== 'completed' && outcome.code ? { errorCode: outcome.code } : {}),
   };

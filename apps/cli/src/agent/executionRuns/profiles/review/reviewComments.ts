@@ -4,7 +4,7 @@ import { ReviewRoundBindingV1Schema, type ReviewRoundBindingV1, type ReviewRecor
 import { prepareReviewRoundV1 } from '@happier-dev/protocol/reviews/prepareReviewRoundV1';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { ScmComparisonSourceSchema, type ScmComparison } from '@happier-dev/protocol/scm/comparison';
-import { ReviewPublicationEvidenceSchema } from '@happier-dev/protocol/reviews/reviewPublicationEvidence';
+import { projectReviewQuestionSummaryV1, ReviewPublicationEvidenceSchema } from '@happier-dev/protocol/reviews/reviewPublicationEvidence';
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
 import { createReviewFindingIdentityV1, createReviewFindingMessageHashV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
@@ -121,12 +121,13 @@ export function createReviewRunCommentService(deps: Readonly<{
         throw Object.assign(new Error('Artifact content is unavailable'), { code: 'artifact_content_unavailable' });
       }
       const evidence = ReviewPublicationEvidenceSchema.parse(record(run.structuredMeta?.payload) ?? record(run.latestToolResult) ?? {});
+      const questionSummary = projectReviewQuestionSummaryV1(run.structuredMeta?.payload ?? run.latestToolResult);
       const outcome = run.status === 'cancelled' ? 'cancelled'
         : run.status === 'failed' || run.status === 'timeout' ? 'failed' : 'completed';
       await deps.reviewRecords.settle({ ...binding.data,
         outcome,
         reviewerOutcomes: typeof input.reviewReviewerId === 'string' ? [{ key: input.reviewReviewerId, runId: run.runId,
-          outcome, reviewOutcome: evidence.reviewOutcome, quality: evidence.quality, materialization: evidence.materialization,
+          outcome, ...(questionSummary ? { questionSummary } : {}), reviewOutcome: evidence.reviewOutcome, quality: evidence.quality, materialization: evidence.materialization,
           startedAt: run.startedAtMs, ...(run.finishedAtMs === undefined ? {} : { finishedAt: run.finishedAtMs }) }] : [],
         finishedAt: run.finishedAtMs ?? Date.now(), summary: run.summary,
         runs: [{ kind: 'execution', runId: run.runId, machineId: deps.scope.workspace.machineId,

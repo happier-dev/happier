@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { ExecutionRunGetResponseSchema, type ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import type { ReviewRunReferenceV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import type { ReviewArtifactV1, ReviewRunReferenceV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 import { resolveReviewFollowUpAvailability } from '@/components/sessions/reviews/findings/reviewFollowUpAvailability';
 import { normalizeReviewFindingsMessagePayload } from '@/components/sessions/reviews/messages/reviewFindingsMessageDisplay';
@@ -55,9 +55,25 @@ const referenceKey = (reference: Reference) => JSON.stringify([reference.machine
  */
 export function useReviewQuestionRuns(params: Readonly<{
     runs: readonly ReviewRunReferenceV1[] | undefined;
+    round?: ReviewArtifactV1['rounds'][number];
     accountLifetime: ServerAccountScopeLifetime | null;
     enabled: boolean;
 }>) {
+    const round = params.round;
+    const summaries = round?.state !== 'running' ? round?.reviewerQuestionSummaries : undefined;
+    const liveEnabled = params.enabled && summaries === undefined;
+    const storedMembers = React.useMemo((): readonly ReviewRunMember[] => {
+        if (!params.enabled || summaries === undefined) return EMPTY_MEMBERS;
+        return summaries.map(summary => {
+            const reference = round?.runs.find(run => run.kind === 'execution' && run.runId === summary.runRef.runId);
+            const sessionId = reference?.kind === 'execution' ? reference.sessionId ?? null : null;
+            return { runId: summary.runRef.runId, backendId: summary.runRef.backendId,
+                reviewerLabel: round?.reviewerDisplayNames?.[summary.reviewerId] ?? summary.runRef.backendId,
+                sessionId, followUp: resolveReviewFollowUpAvailability(summary.runRef, { sessionId }),
+                overviewMarkdown: '', questions: summary.questions, assumptions: summary.assumptions,
+                findings: [], commentByFindingId: EMPTY_COMMENTS, originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {} };
+        });
+    }, [params.enabled, summaries, round]);
     const runs = params.runs ?? EMPTY_RUNS;
     const references = React.useMemo(() => runs.filter((run): run is Reference => run.kind === 'execution'), [runs]);
     const lifetime = params.accountLifetime;
@@ -65,7 +81,7 @@ export function useReviewQuestionRuns(params: Readonly<{
     const [snapshot, setSnapshot] = React.useState<Readonly<{ key: string; reads: readonly Read[]; loading: boolean }>>({ key: '', reads: EMPTY_READS, loading: false });
     const [retryVersion, retry] = React.useReducer(value => value + 1, 0);
     React.useEffect(() => {
-        if (!params.enabled || !lifetime || references.length === 0) return;
+        if (!liveEnabled || !lifetime || references.length === 0) return;
         const controller = new AbortController();
         const pending = new Set<Reference>();
         let loading = false;
@@ -130,15 +146,15 @@ export function useReviewQuestionRuns(params: Readonly<{
             if (event.source === 'connected' && areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) void load();
         }, { reconnect: 'refresh' });
         return () => { controller.abort(); activity.forEach(dispose => dispose()); reconnect(); };
-    }, [params.enabled, lifetime, references, key, retryVersion]);
-    const reads = snapshot.key === key ? snapshot.reads : EMPTY_READS;
+    }, [liveEnabled, lifetime, references, key, retryVersion]);
+    const reads = liveEnabled && snapshot.key === key ? snapshot.reads : EMPTY_READS;
     const members = React.useMemo(() => reads.length > 0 ? reads.flatMap(read => read.member ? [read.member] : []) : EMPTY_MEMBERS, [reads]);
     const runReads = React.useMemo(() => reads.length > 0 ? new Map(reads.map(read => [read.runId, read])) : EMPTY_RUN_READS, [reads]);
     const unavailableReason = reads.find(read => read.unavailableReason === 'temporarily_unavailable')?.unavailableReason
         ?? reads.find(read => read.unavailableReason !== null)?.unavailableReason;
     let state: ReviewQuestionRunsState;
     if (unavailableReason) state = { kind: 'unavailable', reason: unavailableReason };
-    else if (params.enabled && references.length > 0 && (snapshot.key !== key || snapshot.loading)) state = { kind: 'loading' };
-    else state = { kind: members.some(member => member.questions.length > 0) ? 'ready' : 'no_questions' };
-    return { members, runs: runReads, state, retry };
+    else if (liveEnabled && references.length > 0 && (snapshot.key !== key || snapshot.loading)) state = { kind: 'loading' };
+    else state = { kind: (summaries === undefined ? members : storedMembers).some(member => member.questions.length > 0) ? 'ready' : 'no_questions' };
+    return { members: summaries === undefined ? members : storedMembers, runs: runReads, state, retry };
 }

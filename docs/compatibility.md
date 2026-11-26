@@ -10815,6 +10815,15 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 settled Review rounds retain optional `reviewerQuestionSummaries`
+in the existing Artifact body. Native terminal publication and Workflow completion
+receipts supply each reviewer's questions, assumptions and run provenance to the
+record settlement owner. Findings reads this projection without contacting a
+Machine; running rounds and older settled rounds without it retain live reads.
+An empty array means settlement retained no questions. No envelope, Account-mode,
+server metadata, migration or wire epoch changes; strict development readers need
+matching Protocol and UI sources.
+
 Unreleased 0.3 dispatch can carry the paths from admitted Session uploads in
 `sessionAttachmentPaths`. Claude resolves relative paths against the original
 Session or Run workspace, then supplies absolute paths to its file tools under

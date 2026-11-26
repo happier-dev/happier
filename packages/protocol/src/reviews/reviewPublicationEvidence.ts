@@ -1,6 +1,28 @@
+import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { readRecord } from '../inputs/inputRecords.js';
+import { ReviewQuestionSchema } from './ReviewQuestion.js';
+import { ReviewAssumptionSchema } from './ReviewAssumption.js';
+import { ExecutionRunStructuredRunRefSchema } from '../messages/structured/executionRunStructuredRunRef.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
+
+/** The bounded question/assumption projection already shown by Review detail; no findings or transcript. */
+export const ReviewQuestionSummaryV1Schema = lazyZodSchema(() => z.strictObject({
+  runRef: z.strictObject(ExecutionRunStructuredRunRefSchema.shape),
+  questions: z.array(z.strictObject(ReviewQuestionSchema.shape)),
+  assumptions: z.array(z.strictObject(ReviewAssumptionSchema.shape)),
+}));
+export type ReviewQuestionSummaryV1 = z.infer<typeof ReviewQuestionSummaryV1Schema>;
+
+/** Project native structured output at its existing boundary, retaining every visible question. */
+export function projectReviewQuestionSummaryV1(value: unknown): ReviewQuestionSummaryV1 | undefined {
+  const raw = readRecord(value);
+  if (!raw) return undefined;
+  const parsed = createStoredReadSchema(ReviewQuestionSummaryV1Schema).safeParse({ runRef: raw.runRef,
+    questions: raw.questions ?? [], assumptions: raw.assumptions ?? [] });
+  return parsed.success ? parsed.data : undefined;
+}
 
 /** A model's short assessment of the code reviewed in this round. */
 export const ReviewQualityV1Schema = lazyZodSchema(() => z.strictObject({
@@ -30,6 +52,7 @@ export type ReviewPublicationEvidence = z.infer<typeof ReviewPublicationEvidence
 
 /** Host-observed execution and publication evidence for one admitted selection. */
 export const ReviewReviewerOutcomeV1Schema = lazyZodSchema(() => z.strictObject({
+  questionSummary: z.optional(ReviewQuestionSummaryV1Schema),
   key: z.string().check(z.minLength(1)), runId: z.optional(z.string().check(z.minLength(1))),
   outcome: z.enum(['completed', 'failed', 'cancelled', 'launch_failed']),
   reviewOutcome: z.optional(z.enum(['complete', 'partial', 'failed', 'unavailable'])),

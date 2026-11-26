@@ -4,6 +4,7 @@ import {
   projectReviewReviewerOutcomeV1,
   projectReviewRoundOutcomeV1,
   ReviewQualityV1Schema,
+  ReviewQuestionSummaryV1Schema,
   ReviewReviewerOutcomeV1Schema,
   type ReviewQualityAggregationV1,
   type ReviewReviewerOutcomeV1,
@@ -105,6 +106,9 @@ export const ReviewArtifactBodyV1Schema = z.strictObject({ v: z.literal(1), roun
   reviewerQuality: z.optional(z.array(ReviewRoundReviewerQualityV1Schema)),
   medianQualityScore: z.optional(z.number().check(z.minimum(1), z.maximum(5))),
   reviewerOutcomes: z.optional(z.array(ReviewRoundReviewerOutcomeV1Schema)),
+  reviewerQuestionSummaries: z.optional(z.array(lazyZodSchema(() => z.strictObject({
+    reviewerId: z.string().check(z.minLength(1)), ...ReviewQuestionSummaryV1Schema.shape,
+  })))),
   summary: z.optional(z.string()),
 })) });
 export type ReviewArtifactBodyV1 = z.infer<typeof ReviewArtifactBodyV1Schema>;
@@ -280,7 +284,10 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       const outcome = reviewerOutcomes.length === 0 ? input.outcome
         : reviewerOutcomes.every(reviewer => reviewer.outcome === 'cancelled') ? 'cancelled'
         : projectReviewRoundOutcomeV1(round.reviewerIds, input.reviewerOutcomes ?? []);
-      const nextRound = { ...round, state: outcome, finishedAt: input.finishedAt, runs: [...input.runs],
+      const reviewerQuestionSummaries = (input.reviewerOutcomes ?? []).flatMap(reviewer =>
+        round.reviewerIds.includes(reviewer.key) && reviewer.questionSummary
+          ? [{ reviewerId: reviewer.key, ...reviewer.questionSummary }] : []);
+      const nextRound = { ...round, reviewerQuestionSummaries, state: outcome, finishedAt: input.finishedAt, runs: [...input.runs],
         ...(reviewerQuality.length ? { reviewerQuality } : {}),
         ...(reviewerOutcomes.length ? { reviewerOutcomes } : {}),
         ...(outcome === 'completed' && reviewerQuality.length > 0 ? { medianQualityScore: medianReviewerScore(reviewerQuality) } : {}),

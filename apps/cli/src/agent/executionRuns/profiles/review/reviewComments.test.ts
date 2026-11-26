@@ -328,11 +328,14 @@ describe('canonical review Run comments', () => {
     await finishExecutionRun({ runId: initial.runId, next: { status, finishedAtMs: 2 }, toolResult: { output: { findings: [] } },
       ...(status === 'succeeded' ? { structuredMeta: { kind: 'review_findings.v2', payload: {
         runRef: { runId: initial.runId, callId: initial.callId, backendId: initial.backendId }, summary: 'Clean',
-        overviewMarkdown: 'Clean', findings: [], questions: [], assumptions: [], generatedAtMs: 2 } } } : {}),
+        overviewMarkdown: 'Clean', findings: [], questions: [{ id: 'q', text: 'Boundary?', status: 'open' }], assumptions: [{ id: 'a', text: 'Single writer' }], generatedAtMs: 2 } } } : {}),
       runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
       enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites, reviewComments: comments });
     expect((await records.read(reviewRound.reviewId))?.rounds[0]).toMatchObject({
       state: status === 'succeeded' ? 'completed' : status,
+      reviewerQuestionSummaries: status === 'succeeded' ? [{ reviewerId: 'claude',
+        runRef: { runId: initial.runId, callId: initial.callId, backendId: initial.backendId },
+        questions: [{ id: 'q', text: 'Boundary?', status: 'open' }], assumptions: [{ id: 'a', text: 'Single writer' }] }] : [],
       runs: [{ kind: 'execution', runId: initial.runId, machineId: workspace.machineId, sessionId: initial.sessionId }],
     });
   });
@@ -367,8 +370,6 @@ describe('canonical review Run comments', () => {
     expect(runs.get(initial.runId)?.error).toBeUndefined();
     });
   });
-
-
 
   it('stores no Project secret the review Agent echoed once its launch registration is released', async () => {
     return runWithScmAccountScope('account', async () => {

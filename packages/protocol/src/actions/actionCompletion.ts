@@ -14,7 +14,7 @@ import { ExecutionRunStartRunCreationSchema, type ExecutionRunStartRunCreation }
 import { ExecutionRunOutputObservationSchema, type ExecutionRunOutputObservation } from '../reviews/reviewNarration.js';
 import { ScmDiffSummaryGenerateOutputSchema, type ScmDiffSummaryReviewRun } from '../scm/diffSummary.js';
 import { ScmDiffSummaryResultErrorCodeSchema } from '../scm/diffSummaryResult.js';
-import { ReviewPublicationEvidenceSchema, type ReviewPublicationMaterialization, type ReviewReviewerOutcomeV1 } from '../reviews/reviewPublicationEvidence.js';
+import { projectReviewQuestionSummaryV1, ReviewPublicationEvidenceSchema, type ReviewPublicationMaterialization, type ReviewReviewerOutcomeV1 } from '../reviews/reviewPublicationEvidence.js';
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from './operations/v1.js';
 import type { DeploymentReceiptResultV1 } from '../deployments/deploymentActionsV1.js';
 import type { WorkflowRunWaitResultV1 } from '../workflows/actionsV1.js';
@@ -28,7 +28,7 @@ export type ActionCompletionLaunchFailure = Readonly<{ key: string; errorCode: s
 export type ReviewRunMaterialization = ReviewPublicationMaterialization;
 
 /** Terminal evidence supplied by the execution-run observation owner, never an Action poll. */
-export type ExecutionRunTerminalObservation =
+export type ExecutionRunTerminalObservation = (
   | Readonly<{
     kind: 'completed'; result: JsonValue;
     reviewedFingerprint?: string | null;
@@ -39,11 +39,12 @@ export type ExecutionRunTerminalObservation =
   }>
   | Readonly<{ kind: 'failed'; code: string; inputDispatch?: 'not_attempted'; runtimeIssueV1?: SessionRuntimeIssueV1; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
   | Readonly<{ kind: 'cancelled'; code?: string; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
-  | Readonly<{ kind: 'outcome_uncertain'; code: string }>;
+  | Readonly<{ kind: 'outcome_uncertain'; code: string }>) & Readonly<{ questionSummary?: ReviewReviewerOutcomeV1['questionSummary'] }>;
 /** A settled run carries its own start and finish from the run record, in epoch ms. */
 export type ExecutionRunTerminalObservationWithTiming = ExecutionRunTerminalObservation & Readonly<{ startedAt?: number; finishedAt?: number }>;
 type NativeRunSnapshot = Readonly<{
   run: Pick<ExecutionRunGetResponse['run'], 'status' | 'error'> & Partial<Pick<ExecutionRunGetResponse['run'], 'startedAtMs' | 'finishedAtMs'>>;
+  reviewFindings?: ExecutionRunGetResponse['reviewFindings'];
   latestToolResult?: unknown;
   structuredMeta?: ExecutionRunGetResponse['structuredMeta'];
 }>;
@@ -53,7 +54,8 @@ export function readActionCompletionRunObservationV1(native: NativeRunSnapshot,
   observation?: ExecutionRunOutputObservation): ExecutionRunTerminalObservationWithTiming {
   const settled = readNativeRunTerminalObservation(native, observation);
   if (settled.kind === 'outcome_uncertain') return settled;
-  return { ...settled, ...(native.run.startedAtMs === undefined ? {} : { startedAt: native.run.startedAtMs }),
+  const questionSummary = projectReviewQuestionSummaryV1(native.reviewFindings ?? native.structuredMeta?.payload ?? native.latestToolResult);
+  return { ...settled, ...(questionSummary ? { questionSummary } : {}), ...(native.run.startedAtMs === undefined ? {} : { startedAt: native.run.startedAtMs }),
     ...(native.run.finishedAtMs === undefined ? {} : { finishedAt: native.run.finishedAtMs }) };
 }
 

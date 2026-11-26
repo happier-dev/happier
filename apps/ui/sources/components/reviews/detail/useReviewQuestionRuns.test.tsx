@@ -59,3 +59,35 @@ it('distinguishes an unreachable reviewer, missing retained output, and a succes
         await screen.unmount();
     }
 });
+
+it.each(['settled', 'running', 'legacy'] as const)('%s round reads only the required execution runs', async kind => {
+    const runs = ['r1', 'r2'].map(runId => ({ kind: 'execution' as const, machineId: 'm1', runId }));
+    fixture = await createSessionFilesViewFixture({ serverUrl: 'https://review-summary.test', rpc: request => {
+        if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+        if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return { ok: false, errorCode: 'execution_run_not_found' };
+        return undefined;
+    } });
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { useReviewQuestionRuns } = await import('./useReviewQuestionRuns');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    const round = { ordinal: 1, state: kind === 'running' ? 'running' as const : 'completed' as const,
+        startedAt: 1, finishedAt: kind === 'running' ? null : 2, reviewerIds: ['first'], runs,
+        reviewerDisplayNames: { first: 'Security' },
+        ...(kind === 'legacy' ? {} : { reviewerQuestionSummaries: [{ reviewerId: 'first',
+            runRef: { runId: 'r1', callId: 'call', backendId: 'claude' },
+            questions: [{ id: 'q', text: 'Which boundary?', status: 'open' as const }],
+            assumptions: [{ id: 'a', text: 'Single writer' }] }] }) };
+    let latest: ReturnType<typeof useReviewQuestionRuns> | undefined;
+    function Reader() { latest = useReviewQuestionRuns({ runs, round, accountLifetime: lifetime, enabled: true }); return null; }
+    const screen = await fixture.render(<Reader />);
+    try {
+        if (kind === 'settled') {
+            expect(latest?.state).toEqual({ kind: 'ready' });
+            expect(latest?.members).toMatchObject([{ reviewerLabel: 'Security', questions: round.reviewerQuestionSummaries![0]!.questions,
+                assumptions: round.reviewerQuestionSummaries![0]!.assumptions }]);
+        } else {
+            await vi.waitFor(() => expect(latest?.state.kind).toBe('unavailable'));
+        }
+        expect(fixture.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)).toHaveLength(kind === 'settled' ? 0 : 2);
+    } finally { await screen.unmount(); }
+});

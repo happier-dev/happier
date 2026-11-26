@@ -236,3 +236,16 @@ describe('Action completion contract', () => {
     expect(starts).toBe(0);
   });
 });
+
+it('carries native reviewer questions through terminal receipts without another execution read', () => {
+  const questionSummary = { runRef: { runId: 'run', callId: 'call', backendId: 'claude' },
+    questions: [{ id: 'q', text: 'Boundary?', status: 'open' as const }], assumptions: [{ id: 'a', text: 'Single writer' }] };
+  const outcome = readActionCompletionRunObservationV1({ run: { status: 'succeeded' }, latestToolResult: {
+    ...questionSummary, questions: questionSummary.questions.map(question => ({ ...question, future: 'retained-extra' })),
+    summary: 'Review', overviewMarkdown: 'Review', findings: [], generatedAtMs: 1,
+    materialization: { kind: 'complete' }, commentIds: [],
+  } });
+  const terminal = reviewStartExecutionRunCompletion.terminal({ intent: 'review', sessionId: null,
+    results: [{ key: 'first', ok: true, result: { runId: 'run' } }] }, [{ key: 'first', runId: 'run', outcome }]);
+  expect(terminal).toMatchObject({ perEngineOutcome: [{ questionSummary }] });
+});

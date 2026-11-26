@@ -36,3 +36,25 @@ describe('Review workflow settlement', () => {
     expect(writes).toBe(2);
   });
 });
+
+it('retains every question and assumption with reviewer provenance through Workflow settlement', async () => {
+  const { createInMemoryReviewRecordPortV1 } = await import('../reviews/reviewArtifactV1.testkit.js');
+  const records = createInMemoryReviewRecordPortV1();
+  const reviewRound = await records.start({ reviewId: 'questions', title: 'Questions', subjectKind: 'repository',
+    sourceKind: 'workflow', reviewerIds: ['first', 'second'], reviewerDisplayNames: { first: 'Security', second: 'Correctness' }, startedAt: 1 });
+  const questionSummary = { runRef: { runId: 'run', callId: 'call', backendId: 'claude' },
+    questions: [{ id: 'q', text: 'Which boundary?', status: 'open' }, { id: 'q2', text: 'Who owns it?', status: 'answered' }],
+    assumptions: [{ id: 'a', text: 'Single writer' }] };
+  const result = await createActionExecutor({ reviewRecords: () => records }).execute('review.settle_round', {
+    reviewRound, reviewerResults: [{ reviewRound, reviewedFingerprint: null, commentIds: [],
+      perEngineOutcome: [{ key: 'first', runId: 'run', outcome: 'completed', materialization: { kind: 'complete' }, questionSummary },
+        { key: 'second', runId: 'run2', outcome: 'completed', materialization: { kind: 'complete' },
+          questionSummary: { ...questionSummary, runRef: { ...questionSummary.runRef, runId: 'run2' } } }] }],
+  }, { surface: 'ui', actionCaller: { kind: 'workflowRun', runId: 'workflow-run',
+    authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'read-only' } } });
+  expect(result.ok).toBe(true);
+  expect((await records.read('questions'))?.rounds[0]?.reviewerQuestionSummaries).toEqual([
+    { reviewerId: 'first', ...questionSummary },
+    { reviewerId: 'second', ...questionSummary, runRef: { ...questionSummary.runRef, runId: 'run2' } },
+  ]);
+});

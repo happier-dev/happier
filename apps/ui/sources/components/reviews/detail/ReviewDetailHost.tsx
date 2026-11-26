@@ -374,7 +374,7 @@ export function ReviewDetailHost(props: Readonly<{
   [comments.comments, record, round]);
   // The round's reviewer runs: questions on Findings, who ran and how it ended on Runs and Activity, and which
   // reviewer didn't finish on the page's notice line.
-  const questionRuns = useReviewQuestionRuns({ runs: round?.runs, accountLifetime: binding,
+  const questionRuns = useReviewQuestionRuns({ runs: round?.runs, round, accountLifetime: binding,
     enabled: presented && (activeTab === 'findings' || (round?.state === 'running' && (activeTab === 'runs' || activeTab === 'activity'))) });
   // Every reviewer the Review named across its rounds: one name per reviewer in every round, notice and Retry title.
   const roster = React.useMemo(() => record ? reviewRosterOf(record.rounds) : undefined, [record]);
