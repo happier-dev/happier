@@ -5,7 +5,7 @@ import { markAccountChanged, type AccountChangePublication } from "@/app/changes
 import { buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
 import { afterTx, type Tx } from "@/storage/inTx";
 import { buildAccountConnectedServicesProjection } from "../account/connectedServicesProjection";
-import { publishAccountCredentialSourceTeamsChangedInTx } from "@/app/teams/teamChanges";
+import { publishAccountCredentialSourceTeamsChangedInTx, type AccountCredentialSourceChange } from "@/app/teams/teamChanges";
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { buildConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
 import { logger } from '@/utils/logging/log';
@@ -16,6 +16,8 @@ export async function recordConnectedServiceAccountProfileChange(params: Readonl
     service?: QualifiedConnectedAccountServiceRef;
     reason?: 'credential-create' | 'credential-replace' | 'credential-delete' | 'credential-health'
         | 'legacy-credential' | 'configuration' | 'group' | 'group-delete' | 'encryption-migration';
+    /** The source owner's observation; omitted means the Team-read source may have changed. */
+    sourceChange?: AccountCredentialSourceChange;
 }>): Promise<AccountChangePublication> {
     const env = await readHomeEffectiveEnv({ tx: params.tx });
     const projection = await buildAccountConnectedServicesProjection({
@@ -28,7 +30,8 @@ export async function recordConnectedServiceAccountProfileChange(params: Readonl
         accountId: params.accountId,
         ...buildConnectedServicesAccountChangeV1(params.service),
     });
-    await publishAccountCredentialSourceTeamsChangedInTx(params.tx, { accountId: params.accountId, service: params.service });
+    await publishAccountCredentialSourceTeamsChangedInTx(params.tx, { accountId: params.accountId, service: params.service,
+        change: params.sourceChange ?? 'source' });
     afterTx(params.tx, () => {
         logger.debug({ reason: params.reason ?? 'unspecified', serviceKind: params.service?.localId ?? null },
             'Connected service Account change committed');

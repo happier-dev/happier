@@ -16,7 +16,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
-import { acquireAccountCredentialSourceTeamAdmissionInTx } from '@/app/teams/teamChanges';
+import { acquireAccountCredentialSourceTeamAdmissionInTx, type AccountCredentialSourceChange } from '@/app/teams/teamChanges';
 import { db } from "@/storage/db";
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
@@ -78,6 +78,8 @@ export type QualifiedConnectedServiceCredentialMutationResult =
         status: "written";
         credentialRevision: string;
         configurationRevision: string | null;
+        /** Whether the source identity Team resolution reads changed beyond the credential revision. */
+        sourceChange: AccountCredentialSourceChange;
     }>
     | Readonly<{
         status: "superseded";
@@ -576,7 +578,7 @@ export type QualifiedConnectedAccountSourceIdentity = Readonly<{
 }>;
 
 function projectQualifiedConnectedAccountSourceIdentity(
-    current: NonNullable<Awaited<ReturnType<typeof readCurrentByQualifiedRef>>>,
+    current: Readonly<{ id: string; metadata: unknown; configurationRevision: string | null; authenticationModeId: string }>,
 ): QualifiedConnectedAccountSourceIdentity | null {
     const projection = resolveQualifiedConnectedAccountStoredMetadata({
         rowId: current.id,
@@ -920,6 +922,7 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
             status: "written",
             credentialRevision: preparedCreate.credentialRevision,
             configurationRevision: preparedCreate.configurationRevision,
+            sourceChange: "source",
         };
     }
     if (params.expectedCredentialRevision !== currentCredentialRevision) {
@@ -1087,6 +1090,7 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
             status: "written",
             credentialRevision,
             configurationRevision,
+            sourceChange: "source",
         };
     }
 
@@ -1135,7 +1139,27 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
         status: "written",
         credentialRevision,
         configurationRevision: currentConfigurationRevision,
+        sourceChange: isQualifiedConnectedAccountCredentialRotation({ current, metadata }) ? "credential_rotation" : "source",
     };
+}
+
+/**
+ * A rotation changes the credential and its revision but nothing else of the
+ * source identity Team resolution reads (lifetime, status, export contract and
+ * failure, configuration and authentication mode), e.g. a healthy token refresh.
+ */
+function isQualifiedConnectedAccountCredentialRotation(input: Readonly<{
+    current: NonNullable<Awaited<ReturnType<typeof readCurrentByQualifiedRef>>>;
+    metadata: QualifiedConnectedServiceCredentialStoredMetadataV4;
+}>): boolean {
+    const withoutRevision = (identity: QualifiedConnectedAccountSourceIdentity | null) => {
+        if (identity === null) return null;
+        const { credentialRevision: _revision, ...rest } = identity;
+        return rest;
+    };
+    const previous = withoutRevision(projectQualifiedConnectedAccountSourceIdentity(input.current));
+    const next = withoutRevision(projectQualifiedConnectedAccountSourceIdentity({ ...input.current, metadata: input.metadata }));
+    return previous !== null && next !== null && sameStrictJsonValue(previous, next);
 }
 
 export async function mutateQualifiedConnectedServiceCredentialInTx(
@@ -1387,6 +1411,7 @@ export async function settlePreparedQualifiedConnectedServiceCredentialCreate(
                 credentialRevision: prepared.write.credentialRevision,
                 configurationRevision:
                     prepared.write.configurationRevision,
+                sourceChange: "source",
             };
         }
         return supersededPreparedCreateResult({ current });
@@ -1435,6 +1460,7 @@ export async function mutateQualifiedConnectedServiceCredential(
                 accountId: canonicalParams.accountId,
                 service: canonicalParams.ref.service,
                 reason: 'credential-replace',
+                sourceChange: result.sourceChange,
             });
         }
         return result;

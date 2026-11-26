@@ -8,7 +8,7 @@ import { resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } 
 import { resolveTeamCredentialCapabilities } from '../capabilities';
 import { qualifyTeamCredentialOperationInTx } from './resourceRead';
 import { resolveTeamCredentialEntitlementInTx } from './resourceAccess';
-import { readTeamCredentialAllowedRoutes } from './resourceDeliveryRead';
+import { hasTeamCredentialNonBrokeredRoute } from './resourceDeliveryRead';
 import { hasTeamCredentialDirectDeliveryActivityInTx, hasTeamCredentialResourceDirectDeliveryActivityInTx } from './resourceActivity';
 
 const usageResourceSelect = {
@@ -16,19 +16,6 @@ const usageResourceSelect = {
     groupGrants: { select: { deliveryMode: true } },
     memberGrants: { select: { deliveryMode: true } },
 } as const;
-
-function hasDirectRoute(resource: Readonly<{
-    allMembersDeliveryMode: string | null;
-    groupGrants: readonly Readonly<{ deliveryMode: string }>[];
-    memberGrants: readonly Readonly<{ deliveryMode: string }>[];
-}>) {
-    return [resource.allMembersDeliveryMode, ...resource.groupGrants.map(grant => grant.deliveryMode),
-        ...resource.memberGrants.map(grant => grant.deliveryMode)].some(mode => {
-        if (mode === null) return false;
-        const routes = readTeamCredentialAllowedRoutes(mode);
-        return routes.success && routes.data.some(route => route !== 'brokered');
-    });
-}
 
 async function authorizeResourceUsageInTx(tx: Tx, accountId: string, resourceId: string,
     authentication: TeamOperationAuthenticationContext) {
@@ -45,7 +32,7 @@ async function authorizeResourceUsageInTx(tx: Tx, accountId: string, resourceId:
         const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, authentication);
         if (!qualification.ok) return qualification;
         return { ok: true as const, resource, manager: true as const,
-            directUsePossible: hasDirectRoute(resource)
+            directUsePossible: hasTeamCredentialNonBrokeredRoute(resource)
                 || await hasTeamCredentialResourceDirectDeliveryActivityInTx(tx, { resourceId }) };
     }
     const entitlement = await resolveTeamCredentialEntitlementInTx(tx, { resourceId, accountId });
@@ -100,7 +87,7 @@ export async function authorizeTeamCredentialUsageSubjectInTx(tx: Tx, accountId:
         resourceIds: subject.kind === 'home' ? null : [...new Set([
             ...resources.map(resource => resource.id), ...retained.map(event => event.resourceId),
         ])],
-        directUsePossible: resources.some(hasDirectRoute)
+        directUsePossible: resources.some(hasTeamCredentialNonBrokeredRoute)
             || await hasTeamCredentialResourceDirectDeliveryActivityInTx(tx,
                 subject.kind === 'team' ? { teamId: subject.teamId } : { kind: 'home' }),
     };

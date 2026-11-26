@@ -4,6 +4,7 @@ import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHA
 import { readDiscussionGrantAudienceForTeamsInTx, reconcileDiscussionGrantAudienceForTeamsInTx } from "@/app/discussions/accessService";
 import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { readTeamCredentialSourceBinding } from './credentials/sourceBindingRead';
+import { hasTeamCredentialNonBrokeredRoute } from './credentials/resourceDeliveryRead';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 /**
@@ -77,14 +78,26 @@ export async function readTeamChangePublicationAudienceInTx(
     return [...new Set([...teamAccountIds, ...discussionAccountIds])].sort();
 }
 
+/**
+ * `discussions: 'unchanged'` is for publishers whose mutation cannot change
+ * Team or Group membership, so Team-granted Discussion audiences stay as they
+ * are: credential source and recipient material changes. Reconciling there
+ * re-published every Team-granted Discussion to its readers on each write.
+ */
 async function publishTeamsChangedInTx(
     tx: Tx,
     input: Readonly<{ teamIds: readonly string[]; additionalAccountIds?: readonly string[]; excludeAccountIds?: readonly string[] }>,
-    entityId: typeof TEAM_CHANGE_ENTITY_ID | typeof TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1 = TEAM_CHANGE_ENTITY_ID,
+    options: Readonly<{
+        entityId?: typeof TEAM_CHANGE_ENTITY_ID | typeof TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1;
+        discussions: 'reconcile' | 'unchanged';
+    }> = { discussions: 'reconcile' },
 ): Promise<number> {
     const teamIds = [...new Set(input.teamIds)].sort();
     if (teamIds.length === 0) return 0;
-    await reconcileDiscussionGrantAudienceForTeamsInTx(tx, { teamIds, additionalAccountIds: input.additionalAccountIds });
+    const entityId = options.entityId ?? TEAM_CHANGE_ENTITY_ID;
+    if (options.discussions === 'reconcile') {
+        await reconcileDiscussionGrantAudienceForTeamsInTx(tx, { teamIds, additionalAccountIds: input.additionalAccountIds });
+    }
     const recipients = await readTeamsChangedAudienceInTx(tx, { ...input, teamIds });
     beforeAccountChangePublication(tx, recipients, async () => {
         const current = await readTeamsChangedAudienceInTx(tx, { ...input, teamIds });
@@ -155,7 +168,8 @@ export async function publishTeamCredentialMaterialChangedInTx(
     tx: Tx,
     input: Readonly<{ teamId: string }>,
 ): Promise<number> {
-    return await publishTeamsChangedInTx(tx, { teamIds: [input.teamId] }, TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1);
+    return await publishTeamsChangedInTx(tx, { teamIds: [input.teamId] },
+        { entityId: TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, discussions: 'unchanged' });
 }
 
 /**
@@ -200,31 +214,56 @@ export async function readAccountTeamMembershipsChangeAudienceInTx(
 }
 
 /**
+ * What a Connected Account source write changed, as the source owner observed it.
+ *
+ * - `source`: the source identity Team resolution reads (lifetime, status,
+ *   export contract and failure, configuration) may have changed.
+ * - `credential_rotation`: only the credential content and its revision
+ *   changed, as on a healthy token refresh. Brokered delivery keeps using the
+ *   custodian's credential and stays ready; only direct material, whose source
+ *   version embeds the revision, becomes stale.
+ */
+export type AccountCredentialSourceChange = 'source' | 'credential_rotation';
+
+/**
  * Invalidates Team credential projections whose readiness depends on a source
  * Account's Connected Account or Pool state. Source mutation stays owned by the
  * connected-service repository; this owner only expands its current resource
- * references into the ordinary Team-change audience.
+ * references into the ordinary Team-change audience. A source write cannot
+ * change Team membership, so Discussion audiences are left alone.
  */
 export async function publishAccountCredentialSourceTeamsChangedInTx(
     tx: Tx,
-    input: Readonly<{ accountId: string; service?: QualifiedConnectedAccountServiceRef }>,
+    input: Readonly<{ accountId: string; service?: QualifiedConnectedAccountServiceRef; change?: AccountCredentialSourceChange }>,
 ): Promise<number> {
-    const teamIds = await readAccountCredentialSourceTeamIdsInTx(tx, input.accountId, input.service);
+    const teamIds = await readAccountCredentialSourceTeamIdsInTx(tx, input.accountId, input.service, input.change ?? 'source');
     return await publishTeamsChangedInTx(tx, {
         teamIds,
         // Departed custodians retain their source administration projection.
         additionalAccountIds: [input.accountId],
-    });
+    }, { discussions: 'unchanged' });
 }
 
 async function readAccountCredentialSourceTeamIdsInTx(
     tx: Tx, accountId: string, service?: QualifiedConnectedAccountServiceRef,
+    change: AccountCredentialSourceChange = 'source',
 ): Promise<readonly string[]> {
+    const rotation = change === 'credential_rotation';
     const resources = await tx.teamCredentialResource.findMany({
         where: { custodianAccountId: accountId },
-        select: { teamId: true, sourceBindingJson: service !== undefined },
+        select: {
+            teamId: true, sourceBindingJson: service !== undefined,
+            directSourceVersionsJson: rotation, allMembersDeliveryMode: rotation,
+            groupGrants: rotation ? { select: { deliveryMode: true } } : false,
+            memberGrants: rotation ? { select: { deliveryMode: true } } : false,
+        },
     });
-    const affected = service ? resources.filter(resource => {
+    // A rotation reaches only resources that read the revision: a published
+    // direct source version, or a grant that may still publish one.
+    const revisionReaders = rotation ? resources.filter(resource => resource.directSourceVersionsJson != null
+        || hasTeamCredentialNonBrokeredRoute({ allMembersDeliveryMode: resource.allMembersDeliveryMode ?? null,
+            groupGrants: resource.groupGrants ?? [], memberGrants: resource.memberGrants ?? [] })) : resources;
+    const affected = service ? revisionReaders.filter(resource => {
         const parsed = readTeamCredentialSourceBinding(resource.sourceBindingJson);
         // A corrupt binding cannot establish irrelevance. Preserve the wake
         // that lets current admission withdraw any previously issued material.
@@ -233,16 +272,17 @@ async function readAccountCredentialSourceTeamIdsInTx(
         if (source.kind === 'provider_connection') return false;
         const sourceService = source.kind === 'connected_account' ? source.target.account.service : source.target.service;
         return sourceService.pluginId === service.pluginId && sourceService.localId === service.localId;
-    }) : resources;
+    }) : revisionReaders;
     return [...new Set(affected.map(({ teamId }) => teamId))].sort();
 }
 
-/** Complete live publication recipients of credential-source changes. */
+/** Complete live publication recipients of credential-source changes: the
+ * Team audience of every source the Account custodies (no Discussion arm). */
 export async function readAccountCredentialSourceTeamAdmissionAccountIdsInTx(
     tx: Tx, input: Readonly<{ accountId: string }>,
 ): Promise<readonly string[]> {
     const teamIds = await readAccountCredentialSourceTeamIdsInTx(tx, input.accountId);
-    const accountIds = await readTeamChangePublicationAudienceInTx(tx, { teamIds, additionalAccountIds: [input.accountId] });
+    const accountIds = await readTeamsChangedAudienceInTx(tx, { teamIds, additionalAccountIds: [input.accountId] });
     return [...new Set([input.accountId, ...accountIds])].sort();
 }
 

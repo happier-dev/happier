@@ -35,6 +35,21 @@ export function readTeamCredentialAllowedRoutes(value: string): StoredRead<TeamC
         : { success: false };
 }
 
+/** Whether any stored grant can deliver outside the custodian's broker. Only
+ * those routes read source credential material (and its revision) directly. */
+export function hasTeamCredentialNonBrokeredRoute(resource: Readonly<{
+    allMembersDeliveryMode: string | null;
+    groupGrants: readonly Readonly<{ deliveryMode: string }>[];
+    memberGrants: readonly Readonly<{ deliveryMode: string }>[];
+}>): boolean {
+    return [resource.allMembersDeliveryMode, ...resource.groupGrants.map(grant => grant.deliveryMode),
+        ...resource.memberGrants.map(grant => grant.deliveryMode)].some(mode => {
+        if (mode === null) return false;
+        const routes = readTeamCredentialAllowedRoutes(mode);
+        return routes.success && routes.data.some(route => route !== 'brokered');
+    });
+}
+
 /** Audience ordering is meaningless; stable encoding preserves equal writes. */
 export function serializeTeamCredentialAllowedRoutes(routes: TeamCredentialAllowedRoutesV1): string {
     const admitted = TeamCredentialAllowedRoutesV1Schema.parse(routes);
