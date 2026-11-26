@@ -228,7 +228,7 @@ export async function registerMachineActionHomeHttp(app: FastifyInstance, input:
     const privateKey = decodeBase64(input.installation.privateKey, 'base64url');
     const publicKey = decodeBase64(input.installation.publicKey, 'base64url');
     const lifetime = new AbortController();
-    const currentnessChannel = await createRequesterCurrentnessSocketHarness();
+    const currentnessChannel = await createRequesterCurrentnessSocketHarness({ preserveScopedRpcOrigin: true });
     onTestFinished(async () => { lifetime.abort(); await currentnessChannel.close(); });
     const rpc = new RpcHandlerManager({ scopePrefix: input.machineId, encryptionMode: 'plain', logger: () => {} });
     registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: input.executor });

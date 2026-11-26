@@ -8,10 +8,10 @@ it.each([
     { transports: ['polling'], settled: 'polling' },
     { transports: ['websocket'], settled: 'websocket' },
     { transports: ['polling', 'websocket'], settled: 'websocket' },
-])('settles both ends of the genuine channel before host setup ($transports)', async ({ transports, settled }) => {
+])('redirects scoped RPC by default and settles the genuine channel ($transports)', async ({ transports, settled }) => {
     const channel = await createRequesterCurrentnessSocketHarness();
     onTestFinished(() => channel.close());
-    const connection = createUserScopedSocketConnection({ token: 'fixture-token' });
+    const connection = createUserScopedSocketConnection({ token: 'fixture-token', clientPurpose: 'scoped-rpc' });
     connection.socket.io.opts.transports = transports;
     await connection.transport.connect();
     await channel.settleTransport();

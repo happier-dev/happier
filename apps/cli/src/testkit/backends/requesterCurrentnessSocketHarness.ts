@@ -25,7 +25,10 @@ export type RequesterCurrentnessSocketHarness = Readonly<{
 }>;
 
 /** Real Socket.IO channel; only the network endpoint is redirected from Home to loopback. */
-export async function createRequesterCurrentnessSocketHarness(): Promise<RequesterCurrentnessSocketHarness> {
+export async function createRequesterCurrentnessSocketHarness(input: Readonly<{
+    /** Keep a separately installed signed receiver's scoped RPC endpoint. */
+    preserveScopedRpcOrigin?: boolean;
+}> = {}): Promise<RequesterCurrentnessSocketHarness> {
     const http = createServer();
     const server = new Server(http, { path: '/v1/updates' });
     await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
@@ -35,7 +38,7 @@ export async function createRequesterCurrentnessSocketHarness(): Promise<Request
     const clients: Socket[] = [];
     const failedUpgrades = new WeakSet<Socket>();
     const redirect = vi.spyOn(sockets, 'createUserScopedSocketConnection').mockImplementation(options => {
-        if (options.clientPurpose === 'scoped-rpc') return createUserScopedSocketConnection(options);
+        if (input.preserveScopedRpcOrigin && options.clientPurpose === 'scoped-rpc') return createUserScopedSocketConnection(options);
         const connection = createUserScopedSocketConnection({ ...options, serverUrl });
         // This is the genuine network socket, with default event typing at the test boundary.
         const client = connection.socket as Socket;
