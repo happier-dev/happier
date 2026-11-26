@@ -67,6 +67,7 @@ export function createCatalogDefinedAcpBackend(
     initialSessionModeId: options.initialSessionModeId,
     mcpServers: config.mcpServers === 'drop' ? undefined : options.mcpServers,
     permissionHandler: options.permissionHandler,
+    formElicitation: config.formElicitation === true,
     permissionMode: options.permissionMode,
     getPermissionMode: options.getPermissionMode,
     providerTurnSource: options.providerTurnSource,

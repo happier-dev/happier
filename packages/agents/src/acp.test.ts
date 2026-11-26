@@ -68,6 +68,7 @@ describe('built-in ACP config', () => {
       supportsModels: 'auto',
       promptImageSupport: 'auto',
       mcpServers: 'pass',
+      formElicitation: true,
     });
   });
 

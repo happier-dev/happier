@@ -117,6 +117,7 @@ import { mapStopReasonToAcpTurnOutcome, readPromptStopReason } from './backend/t
 import { abortPendingAcpPermissionRequests } from './backend/permissions/acpPermissionFinalization';
 import { SessionControlApplyError } from '@/agent/runtime/sessionControlApplyError';
 import { buildAcpPromptContentBlocks } from './prompt/buildAcpPromptContentBlocks';
+import { buildAcpFormElicitationRegistration } from './elicitation/acpFormElicitation';
 import type {
   InFlightSteerDeliveryIdentity,
   InFlightSteerPromptOptions,
@@ -611,6 +612,7 @@ export function buildInitializeRequest(params: {
   planUpdates?: boolean;
   initializeMeta?: Record<string, unknown>;
   initializeClientCapabilitiesMeta?: Record<string, unknown>;
+  formElicitation?: boolean;
 }): InitializeRequest {
   const fsEnabled = isAcpFsEnabled();
   const initializeMeta =
@@ -627,6 +629,7 @@ export function buildInitializeRequest(params: {
     clientCapabilities: {
       ...(initializeClientCapabilitiesMeta ? { _meta: initializeClientCapabilitiesMeta } : {}),
       ...(params.planUpdates ? { plan: {} } : {}),
+      ...(params.formElicitation ? { elicitation: { form: {} } } : {}),
       fs: {
         readTextFile: fsEnabled,
         writeTextFile: fsEnabled,
@@ -813,6 +816,12 @@ export interface AcpBackendOptions {
 
   /** Provider-owned handlers for non-standard ACP extension requests/notifications. */
   extensionHandlers?: AcpExtensionHandlers;
+
+  /**
+   * Advertise ACP form elicitation and answer `elicitation/create` through the session's structured
+   * question owner. Takes effect only with a `permissionHandler`, which owns those questions.
+   */
+  formElicitation?: boolean;
 
   /** Provider-owned request metadata for an exactly correlated secondary prompt-completion signal. */
   promptCompletion?: Readonly<{
@@ -2114,12 +2123,17 @@ export class AcpBackend implements AgentBackend {
         },
       } satisfies Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'>);
     }
+    const formElicitationHandler = this.options.formElicitation === true
+      ? this.options.permissionHandler ?? null
+      : null;
     this.connection = await createAcpClientConnection({
       name: 'happier-cli',
       transport: stream,
       isAuthenticationSetupFailure: this.options.isAuthenticationSetupFailure,
       handlers: clientHandlers,
-      extensions: this.options.extensionHandlers,
+      extensions: formElicitationHandler
+        ? [...(this.options.extensionHandlers ?? []), buildAcpFormElicitationRegistration(formElicitationHandler)]
+        : this.options.extensionHandlers,
       createExtensionContext: (method, sdkSignal, sessionId) => (
         this.createExtensionHandlerContext(method, sdkSignal, sessionId)
       ),
@@ -2132,6 +2146,7 @@ export class AcpBackend implements AgentBackend {
       planUpdates: this.planStatePublisher !== null,
       initializeMeta: this.options.initializeMeta,
       initializeClientCapabilitiesMeta: this.options.initializeClientCapabilitiesMeta,
+      formElicitation: formElicitationHandler !== null,
     });
 
     // Some ACP agents (notably Gemini CLI) can swallow early stdin before their ACP
@@ -3317,6 +3332,12 @@ export class AcpBackend implements AgentBackend {
   private responseCompletionTimeout: NodeJS.Timeout | null = null;
   private responseCompletionTimeoutRejecter: (() => void) | null = null;
   private pendingPromptResponseTurnGeneration: number | null = null;
+  /**
+   * Steering prompts sent with session/prompt that have not answered yet, for one turn generation.
+   * Agents that steer by superseding (agy acp) answer the earlier prompt with a stop reason as soon
+   * as the steer arrives and keep working; the turn ends when the newest outstanding prompt answers.
+   */
+  private outstandingSteerPrompts: Readonly<{ generation: number; count: number }> | null = null;
   private idleStatusDeferredUntilPromptResponse = false;
 
   private observeAcpTransportMessageWritten(message: unknown): void {
@@ -3456,6 +3477,10 @@ export class AcpBackend implements AgentBackend {
     }
     emitPromptUsage(promptResponse);
     const stopReason = readPromptStopReason(promptResponse);
+    if (stopReason && this.countOutstandingSteerPrompts(turnGeneration) > 0) {
+      // A newer steering prompt superseded this one; the turn continues until that prompt answers.
+      return true;
+    }
     if (!stopReason) {
       const shouldReplayDeferredIdle =
         this.idleStatusDeferredUntilPromptResponse &&
@@ -3470,6 +3495,15 @@ export class AcpBackend implements AgentBackend {
 
     this.finalizeTurnOutcome(mapStopReasonToAcpTurnOutcome(stopReason));
     return true;
+  }
+
+  private countOutstandingSteerPrompts(turnGeneration: number): number {
+    return this.outstandingSteerPrompts?.generation === turnGeneration ? this.outstandingSteerPrompts.count : 0;
+  }
+
+  private adjustOutstandingSteerPrompts(turnGeneration: number, delta: 1 | -1): void {
+    const count = Math.max(0, this.countOutstandingSteerPrompts(turnGeneration) + delta);
+    this.outstandingSteerPrompts = count > 0 ? { generation: turnGeneration, count } : null;
   }
 
   private abortPendingPermissionsForCurrentTurn(reason: string): void {
@@ -4045,10 +4079,16 @@ export class AcpBackend implements AgentBackend {
     // This method is used for in-flight steering while a primary prompt is already running.
     const transportWriteReceipt = this.createAcpPromptTransportWriteReceipt(this.acpSessionId);
     const transportWriteSentinel = Symbol('acp-steer-transport-write');
-    const promptPromise = connection.peer.prompt(promptRequest);
+    this.adjustOutstandingSteerPrompts(turnGeneration, 1);
+    const promptPromise = connection.peer.prompt(promptRequest)
+      .finally(() => this.adjustOutstandingSteerPrompts(turnGeneration, -1));
     const finalResponseEvidence: Promise<AcpPromptExactFinalResponseEvidence> = promptPromise
       .then((response): AcpPromptExactFinalResponseEvidence => {
-        this.handlePromptResponseForTurn(response, turnGeneration, () => {});
+        // An open provider continuation owns its turn's completion; a steer answered while it is
+        // active must not close that generation behind the continuation source.
+        if (this.providerTurn?.generation !== turnGeneration) {
+          this.handlePromptResponseForTurn(response, turnGeneration, () => {});
+        }
         return { kind: 'exact_final_response', response };
       })
       .catch((error: unknown) => {

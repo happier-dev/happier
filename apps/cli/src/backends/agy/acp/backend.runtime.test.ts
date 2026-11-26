@@ -29,6 +29,7 @@ async function writeAgyFixture(dir: string, version: string): Promise<string> {
     require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
       const request = JSON.parse(line);
       if (request.method !== 'initialize') fs.appendFileSync(${JSON.stringify(join(dir, 'requests.jsonl'))}, JSON.stringify(request.method) + '\\n');
+      else fs.appendFileSync(${JSON.stringify(join(dir, 'capabilities.jsonl'))}, JSON.stringify(request.params.clientCapabilities) + '\\n');
       const result = request.method === 'initialize'
         ? { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} },
             agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } } }
@@ -64,6 +65,21 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
         await backend.startSession();
         expect(await readLaunches(dir)).toEqual([{ args: args.map(arg => arg === 'PROFILE' ? profile : arg), fileTokenStorage: null }]);
       } finally { await backend.dispose(); }
+    });
+  });
+
+  it('offers structured question forms only when the session can answer them', async () => {
+    await withTempDir('agy-launch-', async dir => {
+      vi.stubEnv('GEMINI_HOME', '');
+      const agy = await writeAgyFixture(dir, '1.5.18');
+      const permissionHandler = { handleToolCall: async () => ({ decision: 'denied' as const }) };
+      for (const options of [{ permissionHandler }, {}]) {
+        const backend = await createAgyAcpBackend({ cwd: dir, env: { HAPPIER_AGY_PATH: agy }, ...options });
+        try { await backend.startSession(); } finally { await backend.dispose(); }
+      }
+      const capabilities = (await readFile(join(dir, 'capabilities.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(capabilities[0]).toMatchObject({ elicitation: { form: {} } });
+      expect(capabilities[1]).not.toHaveProperty('elicitation');
     });
   });
 

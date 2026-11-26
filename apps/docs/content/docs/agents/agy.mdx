@@ -79,7 +79,18 @@ existing context indicator.
 
 Happier sends no static permission-mode override for Antigravity and preserves your agent
 configuration unless you choose otherwise in the session.
-The mode picker uses the server's advertised modes. `agy acp` advertises a Plan mode.
+The mode picker lists exactly the modes `agy acp` advertises for the session: Default,
+Accept edits and Plan, plus Auto on accounts and platforms where the Antigravity CLI
+offers it. Auto approves edits inside the workspace and runs commands in Antigravity's
+terminal sandbox, asking only before commands that would leave it. Happier does not
+add Auto when the CLI does not advertise it.
+
+## Questions and images
+
+When Antigravity asks you a question with its question tool, Happier shows it as a
+structured question card with the offered choices and an **Other** answer, and sends your
+answer back to the agent. Declining the question tells Antigravity that you skipped
+it. Images you attach to a message are sent to Antigravity with the prompt.
 
 ## MCP tools
 

@@ -18,6 +18,8 @@ export type BuiltInAcpConfig = Readonly<{
   promptImageSupport: BuiltInAcpYesNoAuto;
   /** Whether Happier's MCP server list is passed to the ACP session/new request. */
   mcpServers?: 'pass' | 'drop';
+  /** Advertise ACP form elicitation (`elicitation/create`) and answer it as structured questions. */
+  formElicitation?: boolean;
   /** A mode id, or ordered candidates resolved against advertised modes. Null means no override. */
   permissionModeMapping?: Readonly<Partial<Record<PermissionMode, string | readonly string[] | null>>>;
 }>;
@@ -84,6 +86,8 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
     supportsModels: 'auto',
     promptImageSupport: 'auto',
     mcpServers: 'pass',
+    // agy 1.5.18 `ask_question` sends form elicitations; without the capability it prints the options as text.
+    formElicitation: true,
   },
   fx: {
     agentId: 'fx',
