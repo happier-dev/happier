@@ -315,14 +315,23 @@ export function isCloudConnectAuthenticateResultV1(value: unknown): value is Clo
     return record.ok === false && typeof record.code === 'string';
 }
 
-export type ConnectedServiceQuotaFetchErrorCode =
-    | 'auth_failure'
-    | 'missing_auth'
-    | 'network'
-    | 'malformed'
-    | 'provider_backoff';
+const quotaFetchErrorCodes = [
+    'auth_failure',
+    'missing_auth',
+    'network',
+    'malformed',
+    'provider_backoff',
+] as const;
+
+export type ConnectedServiceQuotaFetchErrorCode = typeof quotaFetchErrorCodes[number];
 
 export class ConnectedServiceQuotaFetchError extends Error {
+    /** Decode the SDK's bounded category from an operation failure for retained diagnostics. */
+    static readCode(error: unknown): ConnectedServiceQuotaFetchErrorCode | undefined {
+        if (typeof error !== 'object' || error === null || !('quotaFetchErrorCode' in error)) return undefined;
+        return quotaFetchErrorCodes.find(code => code === error.quotaFetchErrorCode);
+    }
+
     readonly status: number | null;
     readonly retryAfterMs: number | null;
     readonly resetAtMs: number | null;

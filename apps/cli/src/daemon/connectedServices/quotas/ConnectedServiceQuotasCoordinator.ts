@@ -106,7 +106,7 @@ import {
   type ConnectedServiceQuotaPersistenceScheduler,
 } from './createConnectedServiceQuotaPersistenceScheduler';
 import { createQuotaPersistenceBackoff } from './createQuotaPersistenceBackoff';
-import type { ConnectedServiceQuotaFetcher } from './types';
+import { QuotaFetchError, type ConnectedServiceQuotaFetcher, type QuotaFetchErrorCode } from './types';
 import { RuntimeAccountIdentityIndex } from './identity/RuntimeAccountIdentityIndex';
 import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS, resolveConnectedServiceQuotasDaemonOptions } from './resolveConnectedServiceQuotasDaemonOptions';
 import { resolveSessionsSharingProviderAccount } from './identity/resolveSessionsSharingProviderAccount';
@@ -165,11 +165,14 @@ import {
   resolveQualifiedConnectedAccountServiceForIngressServiceId,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 
+const PLUGIN_USAGE_UNAVAILABLE = 'plugin_connected_account_usage_unavailable';
+
 type ScheduledQuotaRecordTrace = {
   due: boolean;
   reason: 'parked' | 'scheduled' | 'backoff' | 'read' | 'unavailable' | 'current' | 'poll';
   nextDueDelayMs: number | null;
   providerOutcome: 'ok' | 'failed' | 'retry-after' | null;
+  quotaFailure?: QuotaFetchErrorCode | typeof PLUGIN_USAGE_UNAVAILABLE;
   writeResult: 'written' | 'unchanged' | 'refused' | null;
 };
 
@@ -4261,8 +4264,10 @@ export class ConnectedServiceQuotasCoordinator {
       if (!deferred) {
         this.applyFailureBackoff({ now, key, error });
         const retry = this.failureStateByBindingKey.get(key);
-        if (input.trace?.providerOutcome === 'failed' && retry?.providerDirected) {
-          input.trace.providerOutcome = 'retry-after';
+        if (input.trace?.providerOutcome === 'failed') {
+          input.trace.quotaFailure = QuotaFetchError.readCode(error)
+            ?? (isRecord(error) && error.code === PLUGIN_USAGE_UNAVAILABLE ? PLUGIN_USAGE_UNAVAILABLE : undefined);
+          if (retry?.providerDirected) input.trace.providerOutcome = 'retry-after';
         }
       }
       // A missed background poll leaves the last Home observation intact.
@@ -4908,6 +4913,7 @@ export class ConnectedServiceQuotasCoordinator {
         reason: trace.due ? `due:${trace.reason}` : `not-due:${trace.reason}`,
         nextDueDelayMs: trace.nextDueDelayMs,
         providerOutcome: trace.providerOutcome,
+        ...(trace.quotaFailure ? { quotaFailure: trace.quotaFailure } : {}),
         writeResult: trace.writeResult,
       });
     }

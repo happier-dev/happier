@@ -142,6 +142,7 @@ import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from '../../.
 async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAccountProfileV4, now: number, options?: Readonly<{
   organizationQuota?: true;
   failQuota?: boolean;
+  nativeFailure?: Readonly<Record<string, unknown>>;
   scriptedObservation?: true;
   unavailableProfileIds?: readonly string[];
   retryAfterMs?: number;
@@ -178,6 +179,7 @@ async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAcc
           if (await context.credentials.get('token') !== 'fixture-token') throw new Error('Unexpected quota credential');
           await (await import('node:fs/promises')).appendFile(${JSON.stringify(marker)}, context.account.accountId + '\\n');
           ${options?.retryAfterMs !== undefined || options?.resetAtMs !== undefined ? `throw Object.assign(new Error('Provider quota backoff'), ${JSON.stringify({ status: 429, retryAfterMs: options?.retryAfterMs, resetAtMs: options?.resetAtMs, quotaFetchErrorCode: 'provider_backoff' })});` : ''}
+          ${options?.nativeFailure ? `throw Object.assign(new Error('Private provider failure'), ${JSON.stringify(options.nativeFailure)});` : ''}
           const backoff = ${JSON.stringify(options?.retryAfterMsByProfileId ?? {})}[context.account.accountId];
           if (backoff) throw Object.assign(new Error('Provider quota backoff'), { status: 429, retryAfterMs: backoff, quotaFetchErrorCode: 'provider_backoff' });
           if (${JSON.stringify(options?.unavailableProfileIds ?? [])}.includes(context.account.accountId)) throw new Error('Provider quota unavailable');
@@ -342,6 +344,80 @@ it.each(['covered-observation', 'exhausted-backoff'] as const)('bounds unchanged
     expect(requests).toEqual({ accounts: 1, quotas: 5, summaries: 4 });
   }
   expect(await providerInvocations()).toBe(failing ? 'quota-account\n' : '');
+});
+
+it.each([
+  { name: 'SDK network failure', failure: { quotaFetchErrorCode: 'network', providerCode: '-32082' }, loggedCode: 'network' },
+  {
+    name: 'empty native Muse usage response',
+    // The native Muse replay of an empty usage/refresh result throws this PluginError.
+    failure: { code: 'plugin_connected_account_usage_unavailable', details: { reason: 'safe_source_unavailable' }, retryable: false },
+    loggedCode: 'plugin_connected_account_usage_unavailable',
+  },
+  {
+    name: 'unrecognized error codes',
+    failure: { quotaFetchErrorCode: 'private-provider-value', code: 'private-plugin-code', providerCode: '-32082' },
+    loggedCode: undefined,
+  },
+])('reports only the bounded failure cause for repeated failed quota probes ($name)', async ({ failure, loggedCode }) => {
+  let now = 1_000_000;
+  const interval = 60_000;
+  const profile: QualifiedConnectedAccountProfileV4 = {
+    ref: { service: { pluginId: 'example.quota-work', localId: 'account' }, accountId: 'quota-account' },
+    status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+    credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationRevision: null, configurationReady: true,
+    providerIdentity: { accountId: 'provider-quota-account' }, scopes: [],
+  };
+  const fixture = await createQualifiedQuotaRuntimeFixture(profile, now, {
+    nativeFailure: failure,
+  });
+  const traces: unknown[] = [];
+  const log = vi.spyOn(logger, 'infoFile').mockImplementation((message, fields) => {
+    if (message === '[DAEMON RUN] Scheduled quota record') traces.push(fields);
+  });
+  onTestFinished(() => log.mockRestore());
+  const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v4/connect/qualified/provider-account-usage/day-summaries') {
+      return { status: 200, data: { summaries: [], missingDays: [] } };
+    }
+    throw new Error('Unexpected quota fixture route');
+  });
+  onTestFinished(() => get.mockRestore());
+  const writes = vi.fn(async () => ({ success: true, source: { status: 'linked' as const } }));
+  const coordinator = new ConnectedServiceQuotasCoordinator({
+    credentials: fixture.credentials, quotaFetchers: [], discoveryEnabled: false,
+    probeIntervalMs: interval, now: () => now, randomBytes: length => new Uint8Array(length),
+    api: { getAccountEncryptionMode: async () => 'plain',
+      getConnectedServiceQuotaSnapshotSealed: async () => null, getConnectedServiceCredentialSealed: async () => null },
+    qualifiedConnectedAccountRuntime: {
+      resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
+      listScheduledAccounts: async () => [profile], readQuota: async () => null,
+      writeProviderAccountUsage: writes,
+    },
+  });
+  onTestFinished(() => coordinator.disposeInBandQuotaPersistence());
+  const tick = () => runWithServerHttpBaseUrl('https://quota-work.test', () => coordinator.tickOnce());
+  await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: interval });
+  now += interval - 1;
+  await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: 1 });
+  expect(await readFile(fixture.marker, 'utf8')).toBe('quota-account\n');
+  now++;
+  await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: interval });
+  expect(await readFile(fixture.marker, 'utf8')).toBe('quota-account\nquota-account\n');
+
+  const attempts = traces.filter(trace => isRecord(trace) && trace.providerOutcome === 'failed');
+  expect(attempts).toHaveLength(2);
+  expect(writes.mock.calls.length).toBeGreaterThan(0);
+  const diagnostics = JSON.stringify(attempts);
+  expect(diagnostics).not.toContain('Private provider failure');
+  expect(diagnostics).not.toContain('-32082');
+  expect(diagnostics).not.toContain('safe_source_unavailable');
+  expect(diagnostics).not.toContain('private-plugin-code');
+  for (const trace of attempts) {
+    expect(trace).toMatchObject({ providerOutcome: 'failed', nextDueDelayMs: interval });
+    expect(isRecord(trace) ? trace.quotaFailure : null).toBe(loggedCode);
+  }
 });
 
 it.each([1, 2])('reads one day index per record after processing two due profiles over %i records', async (recordCount) => {
