@@ -8,6 +8,7 @@ import type { AgentTerminalLaunchPlan, AgentTerminalLaunchRequest } from './surf
 import type { AgentSessionCatalogChangedEventV1, AgentSessionIdleCompactionPreferenceV1, AgentUsageObservedPayloadV1, AssistantMessagePhaseV1 } from './sessionProtocolTypes.js';
 export type { AgentSessionIdleCompactionPreferenceV1 } from './sessionProtocolTypes.js';
 
+import type { AgentSessionRuntimeEventV1 as ProtocolAgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { JsonValue, PluginJsonSchema } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
 import type { PluginDiagnosticData } from '../diagnostics.js';
@@ -490,14 +491,7 @@ export type AgentSessionRuntimeEvent =
       agentRollbackOrdinal?: number;
       providerCheckpoint?: AgentSessionProviderCheckpoint;
     }>
-  | Readonly<{
-      sequence: number;
-      sessionId: string;
-      emittedAtMs: number;
-      kind: 'runtime-activity-snapshot';
-      state: 'active' | 'idle' | 'unknown';
-      activeCount: number;
-    }>
+  | Readonly<Extract<ProtocolAgentSessionRuntimeEventV1, { kind: 'runtime-activity-snapshot' }>>
   | Readonly<{
       sequence: number;
       sessionId: string;

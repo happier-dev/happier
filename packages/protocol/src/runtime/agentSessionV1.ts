@@ -105,6 +105,7 @@ const RuntimeActivitySnapshotEventSchema = lazyZodSchema(() => (<T extends z.Zod
   kind: z.literal('runtime-activity-snapshot'),
   state: z.enum(['active', 'idle', 'unknown']),
   activeCount: SessionRuntimeActivitySlotActiveCountSchema,
+  scheduledWake: z.optional(z.strictObject({ pendingUntil: z.nullable(SafeIntegerSchema) })),
 })).check(z.superRefine((value, context) => {
   if (value.state === 'active') {
     if (value.activeCount <= 0) {

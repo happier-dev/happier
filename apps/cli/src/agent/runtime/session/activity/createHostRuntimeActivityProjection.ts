@@ -13,14 +13,14 @@ export type HostRuntimeActivityState = 'active' | 'idle' | 'unknown';
 export type HostRuntimeActivitySnapshot = Readonly<{
   state: HostRuntimeActivityState;
   activeCount: number;
-}>;
+} & Pick<Extract<AgentSessionRuntimeEventV1, { kind: 'runtime-activity-snapshot' }>, 'scheduledWake'>>;
 type HostRuntimeActivityPublication = Readonly<{
   state: HostRuntimeActivityState;
   activeCount: number;
 }>;
 
 type AgentRuntimeActivitySnapshot = HostRuntimeActivitySnapshot;
-type ExecutionRunsActivitySnapshot = HostRuntimeActivitySnapshot;
+type ExecutionRunsActivitySnapshot = HostRuntimeActivityPublication;
 
 type AgentRuntimeBinding = Readonly<{
   observeEvent(event: AgentSessionRuntimeEventV1): Promise<void>;
@@ -225,6 +225,7 @@ export function createHostRuntimeActivityProjection(options: Readonly<{
           await reportAgentRuntimeSnapshot({
             state: event.state,
             activeCount: event.activeCount,
+            ...(event.scheduledWake ? { scheduledWake: event.scheduledWake } : {}),
           });
         },
         async revoke() {

@@ -1249,9 +1249,14 @@ export function createClaudeAgentSdkTurnOperations(
         payload: Readonly<Record<string, unknown>>,
         ownerScope?: object,
         ownedSubmitSignal?: AbortSignal,
+        wakeOwner = ownerScope,
     ): Promise<void> {
         if (runtimeDisposed) return;
         const observedAt = Date.now();
+        if ((wakeOwner !== undefined)
+            && providerActivityLedger.observeScheduledWakeHook(payload, observedAt, wakeOwner)) {
+            await reconcileProviderTaskRuntimeActivityForCurrentQuery('scheduled-wake');
+        }
         const lifecycle = readClaudeTaskLifecycleEnvelope(payload);
         const bufferedNativeStart = !memberTranscriptProof && lifecycle?.knownOnly === true && lifecycle.resumed === true
             && (orderedSourceBinding?.providerSessionId !== providerSessionId || !orderedSourceBinding.handle);
@@ -1501,7 +1506,7 @@ export function createClaudeAgentSdkTurnOperations(
                     await hooks?.observeSessionHook({ providerSessionId: nativeSessionId, payload });
                     const ownedSubmitSignal = payload.hook_event_name === 'UserPromptSubmit'
                         && readTurnId && (activeQuery === turnQuery || retainedIdleQuery?.query === turnQuery) ? signal : undefined;
-                    await observeSessionHook(nativeSessionId, payload, undefined, ownedSubmitSignal);
+                    await observeSessionHook(nativeSessionId, payload, undefined, ownedSubmitSignal, turnQuery);
                 },
             },
             onMessageReceived(message) {
@@ -1510,10 +1515,16 @@ export function createClaudeAgentSdkTurnOperations(
                     const sameSession = !nativeSessionId || !providerSessionId || nativeSessionId === providerSessionId;
                     if (!sameSession && isSdkSystemMessage(message)
                         && (message.subtype === 'init' || message.subtype === 'compact_boundary')) inference = null;
+                    if (sameSession && isSdkResultMessage(message)) inference = null;
                     if (sameSession && message.type === 'stream_event' && isRecord(message.event)
                         && message.event.type === 'message_start') {
                         const start = isRecord(message.event.message) ? message.event.message : null;
                         const id = readString(start?.id);
+                        if (id && inference === null && activeQuery !== turnQuery
+                            && (retainedIdleQuery?.query === turnQuery || backgroundQueries.has(turnQuery))
+                            && providerActivityLedger.clearScheduledWake(turnQuery)) {
+                            reconcileProviderTaskRuntimeActivityForCurrentQuery('native-turn-start');
+                        }
                         inference = id ? { id, sessionId: nativeSessionId, startedAtMs: Date.now() } : null;
                     }
                     if (sameSession && isSdkAssistantMessage(message) && inference
@@ -1617,8 +1628,8 @@ export function createClaudeAgentSdkTurnOperations(
         return didObserveActivity;
     }
 
-    function reconcileProviderTaskRuntimeActivityForCurrentQuery(reason: string): void {
-        publishClaudeProviderTaskInventory({
+    function reconcileProviderTaskRuntimeActivityForCurrentQuery(reason: string): Promise<void> {
+        return publishClaudeProviderTaskInventory({
             ledger: providerActivityLedger,
             runtimeActivityPublisher,
             logger: params.ctx.logger,
@@ -2933,6 +2944,9 @@ export function createClaudeAgentSdkTurnOperations(
                 }
             }
             await turnQuery.interrupt();
+            if (providerActivityLedger.clearScheduledWake(turnQuery)) {
+                reconcileProviderTaskRuntimeActivityForCurrentQuery('scheduled-wake-interrupted');
+            }
             backgroundQueries.delete(turnQuery);
             settleUserCancelledTurn(turnQuery);
             if (currentTurnId === cancelledTurnId) currentTurnId = null;
@@ -3082,6 +3096,7 @@ export function createClaudeAgentSdkTurnOperations(
                     activeCompletion = null;
                     lastTurnCompletionFailure = null;
                     backgroundQueries.clear();
+                    providerActivityLedger.clearScheduledWake();
                     reconcileProviderTaskRuntimeActivityForCurrentQuery('runtime-dispose');
                     turnInFlight = false;
                     pendingSubmission = null;

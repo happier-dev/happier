@@ -129,8 +129,8 @@ export function publishClaudeRuntimeActivityUpdate(params: Readonly<{
   logPrefix: string;
   promise: Promise<void>;
   reason: string;
-}>): void {
-  void params.promise.catch((error) => {
+}>): Promise<void> {
+  return params.promise.catch((error) => {
     params.logger.debug(`${params.logPrefix} failed to publish runtime activity ${params.reason}`, { error });
   });
 }
@@ -141,8 +141,8 @@ export function publishClaudeProviderTaskInventory(params: Readonly<{
   ledger: ReturnType<typeof createClaudeProviderActivityLedger>;
   runtimeActivityPublisher: ClaudeRuntimeActivityPublisher;
   reason: string;
-}>): void {
-  publishClaudeRuntimeActivityUpdate({
+}>): Promise<void> {
+  return publishClaudeRuntimeActivityUpdate({
     logger: params.logger,
     logPrefix: params.logPrefix,
     promise: params.runtimeActivityPublisher.publish(params.ledger.getSnapshot()),

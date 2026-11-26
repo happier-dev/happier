@@ -1,6 +1,8 @@
 import { readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
 import { readClaudeProviderIdentityValue, readClaudeTranscriptProviderSessionId } from '../../../../protocol/providerIdentity.js';
 import { normalizeClaudeAgentSdkProviderTaskId } from './providerTaskStatus.js';
+import { isSidechainSessionHook } from '../../../hooks/sidechain.js';
+import type { ClaudeRuntimeActivityProjection } from '../../shared/runtimeActivityPublisher.js';
 import type { SDKHookResponseMessage } from '../../../sdk/types.js';
 
 export type ClaudeProviderTaskIdentity = Readonly<{ sessionId: string; taskId: string }>;
@@ -30,11 +32,7 @@ export type ClaudeProviderTaskEvent = Readonly<{
   interruptTarget: ClaudeProviderTaskInterruptTarget | null;
 }>;
 
-export type ClaudeProviderActivitySnapshot = Readonly<
-  | { state: 'active'; activeCount: number }
-  | { state: 'idle'; activeCount: 0 }
-  | { state: 'unknown'; activeCount: 0 }
->;
+export type ClaudeProviderActivitySnapshot = ClaudeRuntimeActivityProjection;
 
 export type ClaudeProviderActivityLedgerOptions = Readonly<{
   onSnapshotChanged?: (snapshot: ClaudeProviderActivitySnapshot) => void;
@@ -349,6 +347,8 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
     | { kind: 'terminal'; observed: boolean }
     | { kind: 'source-baseline'; observed: false };
   const ownerObservations = new Map<object, OwnerObservation>();
+  type ScheduledWake = NonNullable<ClaudeProviderActivitySnapshot['scheduledWake']>;
+  let wake: Readonly<{ ownerScope?: object; value: ScheduledWake }> | undefined;
 
   const activeEntries = (ownerScope?: object): LedgerEntry[] => [...entries.values()]
     .filter((entry) => entry.phase === 'active'
@@ -364,19 +364,64 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
 
   const getSnapshot = (): ClaudeProviderActivitySnapshot => {
     const activeCount = activeEntries().filter((entry) => entry.observed).length;
-    if (activeCount > 0) return { state: 'active', activeCount };
+    const scheduledWake = wake ? { scheduledWake: wake.value } : {};
+    if (activeCount > 0) return { state: 'active', activeCount, ...scheduledWake };
     return observationPhase !== 'lost' && ![...ownerObservations.values()].some((owner) => owner.kind !== 'completed-query' && !owner.observed) && activeEntries().length === 0
-      ? { state: 'idle', activeCount: 0 }
-      : { state: 'unknown', activeCount: 0 };
+      ? { state: 'idle', activeCount: 0, ...scheduledWake }
+      : { state: 'unknown', activeCount: 0, ...scheduledWake };
   };
 
   const notifyIfChanged = (previous: ClaudeProviderActivitySnapshot): void => {
     const next = getSnapshot();
-    if (previous.state === next.state && previous.activeCount === next.activeCount) return;
+    if (previous.state === next.state && previous.activeCount === next.activeCount
+      && previous.scheduledWake?.pendingUntil === next.scheduledWake?.pendingUntil) return;
     options?.onSnapshotChanged?.(next);
   };
 
+  function ownsScheduledWake(ownerScope?: object): boolean {
+    return wake !== undefined && (ownerScope === undefined || wake.ownerScope === ownerScope);
+  }
+
+  function clearScheduledWake(ownerScope?: object): boolean {
+    if (!ownsScheduledWake(ownerScope)) return false;
+    const previous = getSnapshot();
+    wake = undefined;
+    notifyIfChanged(previous);
+    return true;
+  }
+
   return Object.freeze({
+    clearScheduledWake,
+    observeScheduledWakeHook(row: Readonly<Record<string, unknown>>, observedAt: number, ownerScope?: object): boolean {
+      if (observationPhase === 'stopped' || (ownerScope !== undefined && !ownerObservations.has(ownerScope))
+        || isReplayClaudeAgentSdkMessage(row) || isSidechainSessionHook(row)) return false;
+      const eventName = readHookEventName(row);
+      if (eventName === 'UserPromptSubmit' || eventName === 'SessionEnd') return clearScheduledWake(ownerScope);
+
+      let pendingUntil: number | null;
+      if (eventName === 'Stop' && Array.isArray(row.session_crons)) {
+        // Stop carries Claude's current scheduler inventory. The cron expression is not an exact
+        // deadline because Claude can shift firing time and uses its own local timezone.
+        if (row.session_crons.length === 0) return clearScheduledWake(ownerScope);
+        const singleOneShot = row.session_crons.length === 1 && record(row.session_crons[0])?.recurring === false;
+        pendingUntil = singleOneShot && wake?.ownerScope === ownerScope ? wake?.value.pendingUntil ?? null : null;
+      } else if (eventName === 'PostToolUse' && readToolName(row) === 'ScheduleWakeup') {
+        const input = readToolInput(row);
+        if (input?.stop === true) return clearScheduledWake(ownerScope);
+        const delaySeconds = input?.delaySeconds;
+        if (typeof delaySeconds !== 'number' || delaySeconds <= 0) return false;
+        pendingUntil = Math.round(observedAt + delaySeconds * 1_000);
+        if (!Number.isSafeInteger(pendingUntil)) return false;
+      } else {
+        return false;
+      }
+
+      if (wake?.value.pendingUntil === pendingUntil && wake.ownerScope === ownerScope) return false;
+      const previous = getSnapshot();
+      wake = { ownerScope, value: { pendingUntil } };
+      notifyIfChanged(previous);
+      return true;
+    },
     registerOwner(ownerScope: object): void {
       ownerObservations.set(ownerScope, { kind: 'query', observed: true, toolCalls: new Map() });
     },
@@ -560,8 +605,12 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
       // An ended whole provider cannot be made live or unknown by its delayed observer callbacks.
       if (ownerScope === undefined && observationPhase === 'stopped') return;
       const scopedOwner = ownerScope === undefined ? undefined : ownerObservations.get(ownerScope);
-      if (ownerScope !== undefined && (!scopedOwner || scopedOwner.kind === 'completed-query')) return;
+      if (ownerScope !== undefined && (!scopedOwner || scopedOwner.kind === 'completed-query')) {
+        clearScheduledWake(ownerScope);
+        return;
+      }
       const previous = getSnapshot();
+      if (ownsScheduledWake(ownerScope)) wake = undefined;
       if (ownerScope === undefined) observationPhase = 'lost';
       else {
         const owner = ownerObservations.get(ownerScope);
@@ -579,6 +628,7 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
     noteProviderStopped(ownerScope?: object): void {
       if (ownerScope !== undefined && ownerObservations.get(ownerScope)?.kind === 'source-baseline') return;
       const previous = getSnapshot();
+      if (ownsScheduledWake(ownerScope)) wake = undefined;
       if (ownerScope !== undefined) ownerObservations.delete(ownerScope);
       for (const [key, entry] of entries) {
         if (entry.awaitingChildren === true && (ownerScope === undefined || entry.ownerScope === ownerScope)) {

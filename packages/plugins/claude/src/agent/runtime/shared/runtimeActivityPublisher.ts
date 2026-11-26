@@ -1,10 +1,7 @@
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
-export type ClaudeRuntimeActivityProjection = Readonly<
-  | { state: 'active'; activeCount: number }
-  | { state: 'idle'; activeCount: 0 }
-  | { state: 'unknown'; activeCount: 0 }
->;
+type ActivityEvent = Extract<AgentSessionRuntimeEvent, { kind: 'runtime-activity-snapshot' }>;
+export type ClaudeRuntimeActivityProjection = Readonly<Pick<ActivityEvent, 'state' | 'activeCount' | 'scheduledWake'>>;
 
 export type ClaudeRuntimeActivityPublisher = Readonly<{
   publish(projection: ClaudeRuntimeActivityProjection): Promise<void>;
@@ -24,8 +21,7 @@ export function createClaudeRuntimeActivityPublisher(params: Readonly<{
     sessionId: params.sessionId,
     emittedAtMs: Date.now(),
     sequence: sequence++,
-    state: projection.state,
-    activeCount: projection.activeCount,
+    ...projection,
   });
 
   const emit = (projection: ClaudeRuntimeActivityProjection): void => {
@@ -47,6 +43,7 @@ export function createClaudeRuntimeActivityPublisher(params: Readonly<{
         if (
           current.state === projection.state
           && current.activeCount === projection.activeCount
+          && current.scheduledWake?.pendingUntil === projection.scheduledWake?.pendingUntil
         ) return;
         emit(projection);
         current = projection;

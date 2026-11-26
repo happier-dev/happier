@@ -437,6 +437,21 @@ describe('AgentRuntimeJsonValueV1Schema', () => {
 });
 
 describe('AgentSessionRuntimeEventV1Schema', () => {
+  it('preserves a scheduled wake independently of the task count', () => {
+    const idle = {
+      kind: 'runtime-activity-snapshot', sequence: 1, sessionId: 'session-1', emittedAtMs: 1,
+      state: 'idle', activeCount: 0,
+    };
+    expect(AgentSessionRuntimeEventV1Schema.parse(idle)).toEqual(idle);
+    for (const pendingUntil of [120_000, null]) {
+      const event = { ...idle, scheduledWake: { pendingUntil } };
+      expect(AgentSessionRuntimeEventV1Schema.parse(event)).toEqual(event);
+    }
+    for (const scheduledWake of [{ pendingUntil: -1 }, { pendingUntil: 1.5 }, { pendingUntil: 1, prompt: 'private' }]) {
+      expect(AgentSessionRuntimeEventV1Schema.safeParse({ ...idle, scheduledWake }).success).toBe(false);
+    }
+  });
+
   it('accepts only internally consistent complete runtime activity snapshots', () => {
     const base = { kind: 'runtime-activity-snapshot', sequence: 1, sessionId: 'session-1', emittedAtMs: 1 } as const;
 

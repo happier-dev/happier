@@ -772,8 +772,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
     sessionId: params.happierSessionId,
   });
 
-  function publishProviderTaskInventory(reason: string): void {
-    publishClaudeProviderTaskInventory({
+  function publishProviderTaskInventory(reason: string): Promise<void> {
+    return publishClaudeProviderTaskInventory({
       logger: params.ctx.logger,
       logPrefix: '[ClaudeUnifiedTerminal]',
       ledger: providerActivityLedger,
@@ -2105,6 +2105,9 @@ export function createClaudeUnifiedTerminalTurnOperations(
             observeNativeWorkflowHook(providerSessionId, payload, observedAt);
           }
           // Runtime Activity observes the authenticated hook before identity/sidechain routing.
+          if (providerActivityLedger.observeScheduledWakeHook(payload, observedAt)) {
+            await publishProviderTaskInventory('scheduled-wake');
+          }
           // SubagentStart may refresh only an admitted ID; SubagentStop may clear only its exact ID.
           if (!bufferedNativeStart) observeProviderTaskActivity(payload, providerSessionId);
           const lifecycleObservation = mapClaudeUnifiedHookLifecyclePayload(payload, params.happierSessionId);
@@ -2404,6 +2407,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     const turnId = state.activeTurnId;
     if (!turnId || publishedLifecycleStartTurnIds.has(turnId)) return;
     publishedLifecycleStartTurnIds.add(turnId);
+    if (providerActivityLedger.clearScheduledWake()) publishProviderTaskInventory('native-turn-start');
     // A new turn supersedes any pending turn-end/idle dialog re-arm from the previous turn.
     clearTurnEndDialogProbe();
     publishClaudeUnifiedTurnStart({
@@ -3927,6 +3931,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       if (handle) {
         await params.ctx.agentRuntime.terminalHost.interruptTurn(handle);
       }
+      if (providerActivityLedger.clearScheduledWake()) await publishProviderTaskInventory('scheduled-wake-interrupted');
       publishActiveTurnCancelled(Date.now(), 'user');
       state.turnInFlight = false;
       state.activeTurnId = null;
@@ -4093,7 +4098,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       ));
     },
     async disposeProviderSession(reason) {
-      if (providerActivityLedger.hasActiveProviderTasks()) {
+      if (providerActivityLedger.hasActiveProviderTasks() || providerActivityLedger.getSnapshot().scheduledWake) {
         reconcileProviderActivityAfterHostLoss(false);
       }
       state.disposed = true;

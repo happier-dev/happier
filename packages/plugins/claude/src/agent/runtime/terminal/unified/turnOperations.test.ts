@@ -3707,6 +3707,55 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
+  it('clears a terminal scheduled wake on the next authenticated prompt', async () => {
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const transcripts = createManualTranscriptFollowFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+      transcripts: transcripts.service,
+    });
+    const providerSessionId = 'claude-provider-session-1';
+    const runtime = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+      ctx,
+      directory: '/tmp/claude-project',
+      happierSessionId: 'happy-session-terminal-scheduled-wake',
+      hostPreference: 'zellij',
+      launchEnv: {},
+      permissionMode: 'default',
+      knownProviderSession: {
+        providerSessionId,
+        transcriptPath: '/tmp/claude-provider-session-1.jsonl',
+      },
+    })).operations;
+    const snapshots: AgentSessionRuntimeEvent[] = [];
+    runtime.subscribeCanonicalAgentSessionEvents(event => {
+      if (event.kind === 'runtime-activity-snapshot') snapshots.push(event);
+    });
+
+    try {
+      await runtime.startProviderSession();
+      const hookRequest = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0];
+      if (!hookRequest?.onSessionHook) throw new Error('session hook server was not started');
+
+      await hookRequest.onSessionHook(providerSessionId, {
+        hook_event_name: 'Stop',
+        session_id: providerSessionId,
+        session_crons: [{ id: 'loop', schedule: '*/5 * * * *', recurring: true, prompt: 'continue' }],
+      });
+      expect(snapshots.at(-1)).toMatchObject({ state: 'idle', activeCount: 0, scheduledWake: { pendingUntil: null } });
+
+      await hookRequest.onSessionHook(providerSessionId, {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: providerSessionId,
+        prompt: 'continue',
+      });
+      expect(snapshots.at(-1)).toMatchObject({ state: 'idle', activeCount: 0 });
+      expect(snapshots.at(-1)).not.toHaveProperty('scheduledWake');
+    } finally {
+      await runtime.resetOrDisposeRuntime();
+    }
+  });
+
   it('settles exact admitted tasks only from trusted native notification provenance', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();

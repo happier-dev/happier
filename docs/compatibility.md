@@ -10833,6 +10833,14 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 native `runtime-activity-snapshot` events may include a closed
+`scheduledWake` object with `pendingUntil`. A number is an estimated Unix epoch
+timestamp in milliseconds. Null means the Agent reports a wake without an exact
+time. An omitted object means the snapshot carries no reported wake. Existing
+snapshots still parse. Strict development hosts use matching Protocol and Plugin
+SDK sources. The runner keeps this fact in memory with the native activity slot.
+The server's activity projection keeps its existing schema.
+
 Unreleased 0.3 settled Review rounds retain optional `reviewerQuestionSummaries`
 in the existing Artifact body. Native terminal publication and Workflow completion
 receipts supply each reviewer's questions, assumptions and run provenance to the

@@ -2669,6 +2669,79 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     }
   });
 
+  it.each(['scheduled', 'ordinary', 'cancelled', 'cron-only'] as const)('reports the wake state after a %s SDK turn', async (kind) => {
+    const exec = createSdkExecFixture();
+    const runtime = expectRuntimeEnvelope(createClaudeAgentSdkTurnOperations({
+      ctx: createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+        exec: exec.service,
+      }),
+      directory: '/tmp/claude-project',
+      launchEnv: {},
+      permissionMode: 'default',
+      happierSessionId: 'happy-session-scheduled-wake',
+    })).operations;
+    const snapshots: AgentSessionRuntimeEvent[] = [];
+    runtime.subscribeCanonicalAgentSessionEvents(event => {
+      if (event.kind === 'runtime-activity-snapshot') snapshots.push(event);
+    });
+    const providerSessionId = 'claude-provider-session-1';
+    try {
+      runtime.beginTurnLifecycle();
+      await runtime.sendTurnPrompt('First turn');
+      const observedAt = Date.now();
+      if (kind === 'scheduled' || kind === 'cancelled') {
+        await exec.emitSessionHook(providerSessionId, {
+          hook_event_name: 'PostToolUse',
+          tool_name: 'ScheduleWakeup',
+          tool_input: { delaySeconds: 120, reason: 'check again', prompt: 'continue', noop: false },
+          tool_response: 'Scheduled wakeup',
+        });
+      }
+      if (kind === 'cancelled') {
+        expect(snapshots.at(-1)).toHaveProperty('scheduledWake');
+        await exec.emitSessionHook(providerSessionId, {
+          hook_event_name: 'PostToolUse',
+          tool_name: 'ScheduleWakeup',
+          tool_input: { stop: true },
+        });
+        expect(snapshots.at(-1)).not.toHaveProperty('scheduledWake');
+      }
+      await exec.emitSessionHook(providerSessionId, {
+        hook_event_name: 'Stop',
+        session_crons: kind === 'scheduled' || kind === 'cron-only'
+          ? [{ id: 'wake-1', schedule: '0 12 1 1 *', recurring: kind === 'cron-only', prompt: 'continue' }]
+          : [],
+      });
+      await exec.emit({ type: 'result', subtype: 'success', session_id: providerSessionId });
+      await runtime.waitForTurnCompletion({ timeoutMs: 1_000 });
+
+      if (kind === 'scheduled') {
+        expect(snapshots.at(-1)).toMatchObject({ activeCount: 0, scheduledWake: { pendingUntil: expect.any(Number) } });
+        const snapshot = snapshots.at(-1);
+        if (snapshot?.kind !== 'runtime-activity-snapshot' || typeof snapshot.scheduledWake?.pendingUntil !== 'number') {
+          throw new Error('Expected the scheduled wake timestamp');
+        }
+        expect(snapshot.scheduledWake.pendingUntil).toBeGreaterThanOrEqual(observedAt + 120_000);
+        expect(snapshot.scheduledWake.pendingUntil).toBeLessThanOrEqual(Date.now() + 120_000);
+        expect(snapshots.filter(event => 'scheduledWake' in event)).toHaveLength(1);
+        await exec.emit({
+          type: 'stream_event',
+          session_id: providerSessionId,
+          event: { type: 'message_start', message: { id: 'native-wake-message' } },
+        });
+        await vi.waitFor(() => expect(snapshots.at(-1)).not.toHaveProperty('scheduledWake'));
+      } else if (kind === 'cron-only') {
+        expect(snapshots.at(-1)).toMatchObject({ activeCount: 0, scheduledWake: { pendingUntil: null } });
+        await exec.emitSessionHook(providerSessionId, { hook_event_name: 'SessionEnd' });
+        expect(snapshots.at(-1)).not.toHaveProperty('scheduledWake');
+      } else if (kind === 'ordinary') {
+        expect(snapshots.every(event => !('scheduledWake' in event))).toBe(true);
+      }
+    } finally {
+      await runtime.resetOrDisposeRuntime();
+    }
+  });
+
   it('uses the SDK permission callback when a session hook plugin cannot be created', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();

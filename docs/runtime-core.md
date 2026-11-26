@@ -3601,6 +3601,14 @@ that completed observation into unknown Activity. Lost observations, pending
 source baselines and unfinished native tasks retain their existing conservative
 state. This is a development-source correction pending fresh loaded replay.
 
+In 0.3 development source, Claude's native Runtime Activity snapshot can also
+carry `scheduledWake` while the Session is waiting for a provider-scheduled
+prompt. The activity ledger observes successful `ScheduleWakeup` calls and
+reconciles them with the scheduler inventory in Claude's `Stop` hook when
+available. A new turn, a native cancellation, or the end of observation clears
+the fact. Monitor watches still follow the background-task lifecycle. The
+runner retains the wake on the native activity slot for local consumers.
+
 Machine and Session RPC dispatch in 0.3 development source uses the existing
 [`RpcHandlerManager`](../apps/cli/src/api/rpc/RpcHandlerManager.ts) for one
 content-free completion record. It measures dispatch through reply encoding and
