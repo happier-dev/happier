@@ -140,6 +140,26 @@ describe("session publisher presence on SQLite", () => {
         }
     });
 
+    it("settles an idle publisher's reported wake independently of its activity count", async () => {
+        const seeded = await seed();
+        const presence = createSessionPublisherPresence({ now: () => seeded.fence });
+        const socket = {};
+        const idle = { state: "idle", activeCount: 0 } as const;
+        const publish = (completeSnapshot: unknown) => presence.publishSnapshot({
+            socket, binding: seeded.binding, completeSnapshot,
+        });
+        expect(await publish(idle)).toMatchObject({ status: "applied" });
+        const scheduledWake = { pendingUntil: null };
+        expect(await publish({ ...idle, scheduledWake })).toMatchObject({ status: "applied",
+            projection: { runtimeActivityState: "idle", runtimeActivityActiveCount: 0,
+                runtimeActivityScheduledWake: scheduledWake } });
+        expect(await publish({ ...idle, scheduledWake })).toMatchObject({ status: "unchanged" });
+        const cleared = await publish(idle);
+        expect(cleared).toMatchObject({ status: "applied" });
+        if (cleared.status !== "applied") throw new Error("expected withdrawal to apply");
+        expect(cleared.projection).not.toHaveProperty("runtimeActivityScheduledWake");
+    });
+
     it("rejects Activity from a replaced publisher without overwriting its successor", async () => {
         const seeded = await seed();
         const presence = createSessionPublisherPresence({ now: () => seeded.fence });

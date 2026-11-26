@@ -1,4 +1,4 @@
-import { hasActiveSessionRuntimeActivity } from '../runtime/activity/sessionRuntimeActivity.js';
+import { hasActiveSessionRuntimeActivity, hasPendingSessionRuntimeScheduledWake } from '../runtime/activity/sessionRuntimeActivity.js';
 import type { PrimaryTurnStatusV1 } from '../control/runtimeIssueV1.js';
 import {
   normalizeAwarenessCountV1,
@@ -114,7 +114,8 @@ export function resolveAwarenessCurrentnessV1(params: Readonly<{
     || typeof params.runtime.active === 'boolean'
     || typeof params.runtime.thinking === 'boolean'
     || (params.runtime.activityState ?? null) !== null
-    || typeof params.runtime.activityActiveCount === 'number';
+    || typeof params.runtime.activityActiveCount === 'number'
+    || params.runtime.scheduledWake !== undefined;
   return {
     lifecycle: hasLifecycleEvidence ? 'observed' : 'unavailable',
     runtime: hasRuntimeEvidence ? 'observed' : 'unavailable',
@@ -263,7 +264,8 @@ export function projectSessionAwarenessRuntimeV1(
   const activity = { state: runtime.activityState, activeCount: normalizeAwarenessCountV1(runtime.activityActiveCount) };
   const reportedActiveCount = !archived && hasActiveSessionRuntimeActivity(activity) ? activity.activeCount : 0;
   const backgroundActive = !archived && !working
-    && (reportedActiveCount > 0 || (input.managedWorkingCount ?? 0) > 0);
+    && (reportedActiveCount > 0 || (input.managedWorkingCount ?? 0) > 0
+      || hasPendingSessionRuntimeScheduledWake(runtime.scheduledWake, nowMs));
 
   // Pending facts and runtime reachability are orthogonal. A host can observe the runtime's
   // active projection without owning a presence channel (the CLI V2 row is the concrete case).

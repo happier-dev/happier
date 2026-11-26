@@ -33,7 +33,7 @@ describe('createHostRuntimeActivityProjection', () => {
     expect(projection.readAgentRuntimeSnapshot()).toEqual({ state: 'unknown', activeCount: 0 });
   });
 
-  it('retains and clears a scheduled wake on the native slot without publishing a count change', async () => {
+  it('publishes and withdraws a scheduled wake without altering the activity state or count', async () => {
     const enqueue = vi.fn(async () => undefined);
     const projection = createHostRuntimeActivityProjection({
       sessionId: 'session-1', agentRuntimeApplicability: 'supported',
@@ -49,9 +49,17 @@ describe('createHostRuntimeActivityProjection', () => {
     const scheduledWake = { pendingUntil: 120_000 };
     await runtime.observeEvent({ ...idle, sequence: 2, scheduledWake });
     expect(projection.readAgentRuntimeSnapshot()).toEqual({ state: 'idle', activeCount: 0, scheduledWake });
-    await runtime.observeEvent({ ...idle, sequence: 3 });
+    expect(enqueue).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      op: { kind: 'set', value: { state: 'idle', activeCount: 0, scheduledWake } },
+    }));
+    await runtime.observeEvent({ ...idle, sequence: 3, scheduledWake: { ...scheduledWake } });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    await runtime.observeEvent({ ...idle, sequence: 4 });
     expect(projection.readAgentRuntimeSnapshot()).toEqual({ state: 'idle', activeCount: 0 });
-    expect(enqueue).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledTimes(2);
+    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({
+      op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+    }));
   });
 
   it('reads not-applicable native activity as idle even while execution runs are active', async () => {

@@ -17,9 +17,24 @@ export function hasActiveSessionRuntimeActivity(
   return input?.state === 'active' && typeof input.activeCount === 'number' && input.activeCount > 0;
 }
 
+/** Omission withdraws the observation. An explicit null is a pending wake without a deadline. */
+export const SessionRuntimeScheduledWakeSchema = lazyZodSchema(() => z.strictObject({
+  pendingUntil: z.nullable(z.number().check(z.int(), z.nonnegative())),
+}));
+export type SessionRuntimeScheduledWake = z.infer<typeof SessionRuntimeScheduledWakeSchema>;
+
+export function hasPendingSessionRuntimeScheduledWake(
+  scheduledWake: SessionRuntimeScheduledWake | undefined,
+  nowMs: number,
+): boolean {
+  return scheduledWake !== undefined
+    && (scheduledWake.pendingUntil === null || scheduledWake.pendingUntil > nowMs);
+}
+
 const SessionRuntimeActivityTupleSchema = lazyZodSchema(() => z.strictObject({
   state: SessionRuntimeActivityStateSchema,
   activeCount: z.number().check(z.int(), z.nonnegative(), z.maximum(SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX)),
+  scheduledWake: z.optional(SessionRuntimeScheduledWakeSchema),
 }).check(z.superRefine((value, context) => {
   const activeShape = value.activeCount > 0;
   const inactiveShape = value.activeCount === 0;
@@ -37,6 +52,7 @@ export type SessionRuntimeActivitySnapshot = z.infer<typeof SessionRuntimeActivi
 export const SessionRuntimeActivityProjectionSchema = lazyZodSchema(() => z.strictObject({
   state: SessionRuntimeActivityStateSchema,
   activeCount: z.number().check(z.int(), z.nonnegative(), z.maximum(SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX)),
+  scheduledWake: z.optional(SessionRuntimeScheduledWakeSchema),
   observedAt: z.nullable(z.number().check(z.int(), z.nonnegative(), z.int())),
   revision: z.number().check(z.int(), z.nonnegative(), z.int()),
 }).check(z.superRefine((value, context) => {
@@ -49,7 +65,7 @@ export const SessionRuntimeActivityProjectionSchema = lazyZodSchema(() => z.stri
     });
   }
   if (value.revision === 0) {
-    if (value.state !== 'unknown' || value.activeCount !== 0 || value.observedAt !== null) {
+    if (value.state !== 'unknown' || value.activeCount !== 0 || value.observedAt !== null || value.scheduledWake !== undefined) {
       context.addIssue({
         code: 'custom',
         message: 'Revision zero is reserved for the exact unknown baseline',
@@ -87,13 +103,14 @@ export function parseSessionRuntimeActivityProjectionFields(
   const presentFields = SESSION_RUNTIME_ACTIVITY_PROJECTION_FIELD_NAMES.filter((field) => (
     Object.prototype.hasOwnProperty.call(record, field) && record[field] !== undefined
   ));
-  if (presentFields.length === 0) return { kind: 'absent' };
+  if (presentFields.length === 0) return { kind: record.runtimeActivityScheduledWake === undefined ? 'absent' : 'invalid' };
   if (presentFields.length !== SESSION_RUNTIME_ACTIVITY_PROJECTION_FIELD_NAMES.length) {
     return { kind: 'invalid' };
   }
   const parsed = SessionRuntimeActivityProjectionSchema.safeParse({
     state: record.runtimeActivityState,
     activeCount: record.runtimeActivityActiveCount,
+    ...(record.runtimeActivityScheduledWake !== undefined ? { scheduledWake: record.runtimeActivityScheduledWake } : {}),
     observedAt: record.runtimeActivityObservedAt,
     revision: record.runtimeActivityRevision,
   });
@@ -117,6 +134,7 @@ export function mergeSessionRuntimeActivityProjection(
   if (parsed.data.revision < current.revision) return { decision: 'ignore_stale', projection: current };
   const identical = current.state === parsed.data.state
     && current.activeCount === parsed.data.activeCount
+    && current.scheduledWake?.pendingUntil === parsed.data.scheduledWake?.pendingUntil
     && current.observedAt === parsed.data.observedAt;
   return identical
     ? { decision: 'ignore_identical', projection: current }

@@ -43,7 +43,7 @@ import { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } from '@happier-dev/protoc
 import { ExactSessionTurnEndMutationV1Schema, SessionTurnMutationActionV1Schema, SessionTurnMutationV1Schema, type SessionTurnMutationActionV1, type SessionTurnMutationDecisionV1, type SessionTurnMutationReceiptV1, type SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { sanitizeSessionRuntimeIssueV1, type PrimaryTurnStatusV1, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { SessionRuntimeActivityProjectionSchema, SessionRuntimeActivitySnapshotSchema, type SessionRuntimeActivityState } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { SessionRuntimeActivityProjectionSchema, SessionRuntimeActivitySnapshotSchema, type SessionRuntimeActivityState, type SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SessionTranscriptObservationProvenanceV1Schema, isRecoveredHistoryTranscriptObservationProvenance, type SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionInputAdmissionReceiptV1Schema, type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -2129,6 +2129,7 @@ export type UpdateSessionAgentStateResult =
 export type SessionRuntimeActivityProjectionUpdate = {
     runtimeActivityState: SessionRuntimeActivityState;
     runtimeActivityActiveCount: number;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     runtimeActivityObservedAt: number | null;
     runtimeActivityRevision: number;
 };
@@ -2154,6 +2155,7 @@ function normalizeRuntimeActivityInteger(value: unknown): number | null {
 function parseStoredRuntimeActivityProjection(value: Readonly<{
     runtimeActivityState?: unknown;
     runtimeActivityActiveCount?: unknown;
+    runtimeActivityScheduledWake?: unknown;
     runtimeActivityObservedAt?: unknown;
     runtimeActivityRevision?: unknown;
 }>): SessionRuntimeActivityProjectionUpdate | null {
@@ -2164,6 +2166,7 @@ function parseStoredRuntimeActivityProjection(value: Readonly<{
     const parsed = SessionRuntimeActivityProjectionSchema.safeParse({
         state: value.runtimeActivityState,
         activeCount: value.runtimeActivityActiveCount,
+        ...(value.runtimeActivityScheduledWake != null ? { scheduledWake: value.runtimeActivityScheduledWake } : {}),
         observedAt,
         revision,
     });
@@ -2171,6 +2174,7 @@ function parseStoredRuntimeActivityProjection(value: Readonly<{
     return {
         runtimeActivityState: parsed.data.state,
         runtimeActivityActiveCount: parsed.data.activeCount,
+        ...(parsed.data.scheduledWake ? { runtimeActivityScheduledWake: parsed.data.scheduledWake } : {}),
         runtimeActivityObservedAt: parsed.data.observedAt,
         runtimeActivityRevision: parsed.data.revision,
     };
@@ -2178,10 +2182,11 @@ function parseStoredRuntimeActivityProjection(value: Readonly<{
 
 function runtimeActivityProjectionEquals(
     a: SessionRuntimeActivityProjectionUpdate,
-    b: Pick<SessionRuntimeActivityProjectionUpdate, "runtimeActivityState" | "runtimeActivityActiveCount">,
+    b: Pick<SessionRuntimeActivityProjectionUpdate, "runtimeActivityState" | "runtimeActivityActiveCount" | "runtimeActivityScheduledWake">,
 ): boolean {
     return a.runtimeActivityState === b.runtimeActivityState
-        && a.runtimeActivityActiveCount === b.runtimeActivityActiveCount;
+        && a.runtimeActivityActiveCount === b.runtimeActivityActiveCount
+        && a.runtimeActivityScheduledWake?.pendingUntil === b.runtimeActivityScheduledWake?.pendingUntil;
 }
 
 export async function clearSessionRuntimeActivityProjectionInTx(params: {
@@ -2254,11 +2259,13 @@ export async function writeSessionRuntimeActivityProjectionInTx(params: {
     sessionId: string;
     state: unknown;
     activeCount: unknown;
+    scheduledWake?: unknown;
 }): Promise<SessionRuntimeActivityProjectionInTxResult> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const snapshot = SessionRuntimeActivitySnapshotSchema.safeParse({
         state: params.state,
         activeCount: params.activeCount,
+        ...(params.scheduledWake !== undefined ? { scheduledWake: params.scheduledWake } : {}),
     });
     if (!sessionId || !snapshot.success) {
         return { status: "rejected", reason: "invalid-params" };
@@ -2270,6 +2277,7 @@ export async function writeSessionRuntimeActivityProjectionInTx(params: {
         select: {
             runtimeActivityState: true,
             runtimeActivityActiveCount: true,
+            runtimeActivityScheduledWake: true,
             runtimeActivityObservedAt: true,
             runtimeActivityRevision: true,
         },
@@ -2285,6 +2293,7 @@ export async function writeSessionRuntimeActivityProjectionInTx(params: {
     const candidate: SessionRuntimeActivityProjectionUpdate = {
         runtimeActivityState: snapshot.data.state,
         runtimeActivityActiveCount: snapshot.data.activeCount,
+        ...(snapshot.data.scheduledWake ? { runtimeActivityScheduledWake: snapshot.data.scheduledWake } : {}),
         runtimeActivityObservedAt: normalizedCurrent.runtimeActivityObservedAt,
         runtimeActivityRevision: normalizedCurrent.runtimeActivityRevision,
     };
@@ -2309,6 +2318,7 @@ export async function writeSessionRuntimeActivityProjectionInTx(params: {
         data: {
             runtimeActivityState: projection.runtimeActivityState,
             runtimeActivityActiveCount: projection.runtimeActivityActiveCount,
+            runtimeActivityScheduledWake: projection.runtimeActivityScheduledWake ?? prismaRuntime.DbNull,
             runtimeActivityObservedAt: BigInt(projection.runtimeActivityObservedAt!),
             runtimeActivityRevision: BigInt(projection.runtimeActivityRevision),
         },
@@ -2334,6 +2344,7 @@ export async function writeSessionRuntimeActivityObserverLossInTx(params: {
         select: {
             runtimeActivityState: true,
             runtimeActivityActiveCount: true,
+            runtimeActivityScheduledWake: true,
             runtimeActivityObservedAt: true,
             runtimeActivityRevision: true,
         },
@@ -2364,7 +2375,7 @@ async function readSessionRuntimeActivityPublisherInTx(tx: Tx, params: SessionRu
         where: { id: params.sessionId },
         select: {
             active: true, archivedAt: true, lastActiveAt: true, publisherGenerationLastActiveAt: true,
-            runtimeActivityState: true, runtimeActivityActiveCount: true,
+            runtimeActivityState: true, runtimeActivityActiveCount: true, runtimeActivityScheduledWake: true,
             runtimeActivityObservedAt: true, runtimeActivityRevision: true,
         },
     });
@@ -2381,10 +2392,12 @@ async function readSessionRuntimeActivityPublisherInTx(tx: Tx, params: SessionRu
 export async function updateSessionRuntimeActivityProjection(params: SessionRuntimeActivityPublisher & {
     state: unknown;
     activeCount: unknown;
+    scheduledWake?: unknown;
 }): Promise<AuthorizedSessionRuntimeActivityProjectionResult> {
     const snapshot = SessionRuntimeActivitySnapshotSchema.safeParse({
         state: params.state,
         activeCount: params.activeCount,
+        ...(params.scheduledWake !== undefined ? { scheduledWake: params.scheduledWake } : {}),
     });
     if (!snapshot.success) return { status: "rejected", reason: "invalid-params" };
     // Reoffering the already committed snapshot changes no state, timestamp or
@@ -2398,6 +2411,7 @@ export async function updateSessionRuntimeActivityProjection(params: SessionRunt
         return runtimeActivityProjectionEquals(projection, {
             runtimeActivityState: snapshot.data.state,
             runtimeActivityActiveCount: snapshot.data.activeCount,
+            ...(snapshot.data.scheduledWake ? { runtimeActivityScheduledWake: snapshot.data.scheduledWake } : {}),
         }) ? { status: "unchanged", projection, recipientCursors: [] } : null;
     }, { transactionClass: "session.runtime-activity" });
     if (unchanged) return unchanged;
@@ -2411,8 +2425,7 @@ export async function updateSessionRuntimeActivityProjection(params: SessionRunt
         const activity = await writeSessionRuntimeActivityProjectionInTx({
             tx,
             sessionId: params.sessionId,
-            state: snapshot.data.state,
-            activeCount: snapshot.data.activeCount,
+            ...snapshot.data,
         });
         if (activity.status === "rejected") return activity;
         if (activity.status === "unchanged") return { ...activity, recipientCursors: [] };

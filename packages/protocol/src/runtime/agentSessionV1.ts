@@ -8,7 +8,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
 import { SessionInputCausalPermissionAuthorityV1Schema } from '../sessions/messages/sessionInputAdmission.js';
 import type { AgentPermissionIntentV1 as CanonicalAgentPermissionIntentV1 } from './permissionIntentV1.js';
-import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
+import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX, SessionRuntimeScheduledWakeSchema } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
 import { StrictJsonValueSchema, type JsonValue as StrictJsonValue } from '../json/strictJsonValue.js';
 import { AGENT_SESSION_RUNTIME_EVENT_KINDS_V1 } from './eventKindsV1.js';
 import { AgentRuntimeDiagnosticDataV1Schema } from './agentRuntimeDiagnosticV1.js';
@@ -105,7 +105,7 @@ const RuntimeActivitySnapshotEventSchema = lazyZodSchema(() => (<T extends z.Zod
   kind: z.literal('runtime-activity-snapshot'),
   state: z.enum(['active', 'idle', 'unknown']),
   activeCount: SessionRuntimeActivitySlotActiveCountSchema,
-  scheduledWake: z.optional(z.strictObject({ pendingUntil: z.nullable(SafeIntegerSchema) })),
+  scheduledWake: z.optional(SessionRuntimeScheduledWakeSchema),
 })).check(z.superRefine((value, context) => {
   if (value.state === 'active') {
     if (value.activeCount <= 0) {

@@ -1,7 +1,7 @@
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '../control/runtimeIssueV1.js';
 import type { SessionUsageLimitRecoveryPresentationV1 } from '../state/valueSchemas/usageLimitRecovery.js';
 import type { SessionManagerV1, SessionManagedSessionsV1 } from '../follow/sessionManagerV1.js';
-import type { SessionRuntimeActivityState } from '../runtime/activity/sessionRuntimeActivity.js';
+import type { SessionRuntimeActivityState, SessionRuntimeScheduledWake } from '../runtime/activity/sessionRuntimeActivity.js';
 import type { SessionWorkStateV1 } from '../work/state/sessionWorkStateV1.js';
 import type { SessionStatusProgressV1, SessionWorkDisplayV1 } from '../work/state/sessionWorkStatePrimary.js';
 import type { SessionWorkflowActivityHeadlineV1 } from '../work/workflow/sessionWorkflowActivityHeadlineV1.js';
@@ -68,6 +68,7 @@ export type SessionRuntimeAwarenessInputV1 = Readonly<{
   resumingAtMs?: number | null;
   activityState?: SessionRuntimeActivityState | null;
   activityActiveCount?: number | null;
+  scheduledWake?: SessionRuntimeScheduledWake;
   controlServiceability?: 'servable' | 'recoverable_unservable' | null;
 }>;
 

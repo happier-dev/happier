@@ -1568,6 +1568,7 @@ model Session {
     runtimeActivityState         String                       @default("unknown")
     runtimeActivityActiveCount   Int                          @default(0)
     runtimeActivityObservedAt    BigInt?
+    runtimeActivityScheduledWake Json?
     runtimeActivityRevision      BigInt                       @default(0)
     latestReadyEventSeq             Int?
     latestReadyEventAt              DateTime?

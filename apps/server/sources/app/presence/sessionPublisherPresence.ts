@@ -744,8 +744,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         const activity = await writeSessionRuntimeActivityProjectionInTx({
             tx,
             sessionId: binding.sessionId,
-            state: snapshot.state,
-            activeCount: snapshot.activeCount,
+            ...snapshot,
         });
         if (activity.status === "rejected") return activity;
 
@@ -1073,8 +1072,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         return await updateSessionRuntimeActivityProjection({
             ...registration.binding,
             boundCommittedFence: registration.committedFence,
-            state: snapshot.state,
-            activeCount: snapshot.activeCount,
+            ...snapshot,
         });
     });
 

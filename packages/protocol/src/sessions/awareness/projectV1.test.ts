@@ -29,6 +29,23 @@ function input(
 }
 
 describe('projectSessionAwarenessV1 — operational semantics', () => {
+  it('holds a completed turn while the reported wake is pending without inventing a running job', () => {
+    const completed = input({ lifecycle: { latestTurnStatus: 'completed' } });
+    const pending = (pendingUntil: number | null) => ({
+      ...completed,
+      runtime: { ...completed.runtime, activityState: 'idle' as const, activityActiveCount: 0,
+        scheduledWake: { pendingUntil } },
+    });
+    for (const next of [pending(NOW + 1), pending(null)]) {
+      const projection = projectSessionAwarenessV1(next);
+      expect(projection.runtime).toBe('background_active');
+      expect(projection.runningWorkCount).toBeUndefined();
+      expect(projection.operational.reasons).not.toContain('ready');
+    }
+    for (const next of [pending(NOW), pending(NOW - 1), completed]) {
+      expect(projectSessionAwarenessV1(next).operational.reasons).toContain('ready');
+    }
+  });
   it('presents startup-lock waiting without overriding requests or retaining it after disconnect', () => {
     const waiting = input({ runtime: { presence: 'online', active: true, workStatus: 'waiting_for_startup_lock' },
       pending: { queuedInputCount: 1 } });

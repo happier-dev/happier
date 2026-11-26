@@ -54,6 +54,7 @@ const REPORT_SESSION_SELECT = {
     thinkingAt: true,
     runtimeActivityState: true,
     runtimeActivityActiveCount: true,
+    runtimeActivityScheduledWake: true,
     runtimeActivityObservedAt: true,
     runtimeActivityRevision: true,
     pendingPermissionRequestCount: true,
@@ -85,6 +86,7 @@ function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
     const parsedActivity = liveFacts ? parseSessionRuntimeActivityProjectionFields({
         runtimeActivityState: row.runtimeActivityState,
         runtimeActivityActiveCount: row.runtimeActivityActiveCount,
+        ...(row.runtimeActivityScheduledWake != null ? { runtimeActivityScheduledWake: row.runtimeActivityScheduledWake } : {}),
         runtimeActivityObservedAt: readLatestTurnStatusObservedAt(row.runtimeActivityObservedAt),
         runtimeActivityRevision: readLatestTurnStatusObservedAt(row.runtimeActivityRevision),
     }) : null;
@@ -100,6 +102,7 @@ function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
             thinkingAtMs: liveFacts ? row.thinkingAt?.getTime() ?? null : null,
             activityState: activity?.state ?? null,
             activityActiveCount: activity?.activeCount ?? null,
+            scheduledWake: activity?.scheduledWake,
         },
         pending: liveFacts ? {
             hasPendingPermissionRequests: row.pendingPermissionRequestCount + row.pendingSharedActionConfirmationCount > 0,
@@ -112,21 +115,23 @@ function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
     const attention = projectSessionViewerAttention({ row, latestFailureSeq: input.latestFailureSeq,
         viewerAccountId: input.accountId, discussion: QUIET_SESSION_PERSONAL_DISCUSSION_FACTS,
         qualifiedTeamIds: input.qualifiedTeamIds, now: nowMs });
+    const operational = projectSessionAwarenessOperationalV1({ runtime, lifecycle });
+    const finished = lifecycle.latestTurnStatus === 'completed' && operational.reasons.includes('ready');
     const status = readSessionAwarenessWorkStatusV1({ awareness: {
         runtime: runtime.runtime,
         freshness: runtime.freshness,
         lifecycle: resolveSessionAwarenessLifecycleV1(lifecycle, false),
-        operational: projectSessionAwarenessOperationalV1({ runtime, lifecycle }),
+        operational,
         viewer: { attention },
     } });
     const inboxAttention = resolveSessionInboxAttentionV1({ personalAttention: attention,
         hasBlockedPendingDelivery: liveFacts && row.pendingBlockedCount > 0,
-        working: status.bucket === 'working', ready: lifecycle.latestTurnStatus === 'completed' });
+        working: status.bucket === 'working', ready: finished });
     return {
         // Public runtime/lifecycle facts share Work's Protocol precedence. Content availability
         // remains a client verdict; no encryption/readability assertion is made by this count.
         status,
-        finished: lifecycle.latestTurnStatus === 'completed',
+        finished,
         needsYou: inboxAttention.section !== null && inboxAttention.type !== null && resolveInboxItemAttentionV1(inboxAttention.type).interrupt,
         // The existing presence publisher/timeout owns Session.active; only its own turn can stall it.
         stalled: liveFacts && !runtime.archived && isProjectedSessionStalledV1({ active: row.active, latestTurnStatus: lifecycle.latestTurnStatus }),

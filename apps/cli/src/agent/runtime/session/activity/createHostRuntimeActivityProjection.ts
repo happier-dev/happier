@@ -1,4 +1,4 @@
-import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX, type SessionRuntimeActivitySnapshot, type SessionRuntimeActivityState } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SESSION_RUNTIME_ACTIVITY_SLOT_ACTIVE_COUNT_MAX } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime';
 import {
@@ -9,18 +9,9 @@ import type { RuntimeActivityApplicability } from './runtimeActivityApplicabilit
 
 export type { RuntimeActivityApplicability } from './runtimeActivityApplicability';
 
-export type HostRuntimeActivityState = 'active' | 'idle' | 'unknown';
-export type HostRuntimeActivitySnapshot = Readonly<{
-  state: HostRuntimeActivityState;
-  activeCount: number;
-} & Pick<Extract<AgentSessionRuntimeEventV1, { kind: 'runtime-activity-snapshot' }>, 'scheduledWake'>>;
-type HostRuntimeActivityPublication = Readonly<{
-  state: HostRuntimeActivityState;
-  activeCount: number;
-}>;
-
-type AgentRuntimeActivitySnapshot = HostRuntimeActivitySnapshot;
-type ExecutionRunsActivitySnapshot = HostRuntimeActivityPublication;
+export type HostRuntimeActivityState = SessionRuntimeActivityState;
+export type HostRuntimeActivitySnapshot = Readonly<SessionRuntimeActivitySnapshot>;
+type ExecutionRunsActivitySnapshot = Readonly<Pick<HostRuntimeActivitySnapshot, 'state' | 'activeCount'>>;
 
 type AgentRuntimeBinding = Readonly<{
   observeEvent(event: AgentSessionRuntimeEventV1): Promise<void>;
@@ -63,7 +54,7 @@ export function createInitialHostRuntimeActivityMutation(params: Readonly<{
     deliveryClass: 'durable_best_effort',
     source: 'runtime',
     observedAt: params.observedAt,
-    op: { kind: 'set', value: toPublication(snapshot) },
+    op: { kind: 'set', value: snapshot },
   });
 }
 
@@ -86,34 +77,30 @@ function validateSnapshot(
 }
 
 function aggregate(
-  agentRuntime: AgentRuntimeActivitySnapshot,
+  agentRuntime: HostRuntimeActivitySnapshot,
   executionRuns: ExecutionRunsActivitySnapshot,
 ): HostRuntimeActivitySnapshot {
+  const scheduledWake = agentRuntime.scheduledWake;
   const active = [agentRuntime, executionRuns].filter((snapshot) => snapshot.state === 'active');
   if (active.length > 0) {
     const activeCount = active.reduce((count, snapshot) => count + snapshot.activeCount, 0);
     if (!Number.isSafeInteger(activeCount) || activeCount > SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX) {
       throw new RangeError('Aggregated Runtime Activity count exceeds the public bound');
     }
-    return Object.freeze({ state: 'active', activeCount });
+    return Object.freeze({ state: 'active', activeCount, ...(scheduledWake ? { scheduledWake } : {}) });
   }
-  return agentRuntime.state === 'unknown' || executionRuns.state === 'unknown'
+  const inactive = agentRuntime.state === 'unknown' || executionRuns.state === 'unknown'
     ? UNKNOWN
     : IDLE;
-}
-
-function toPublication(snapshot: HostRuntimeActivitySnapshot): HostRuntimeActivityPublication {
-  return Object.freeze({
-    state: snapshot.state,
-    activeCount: snapshot.activeCount,
-  });
+  return scheduledWake ? Object.freeze({ ...inactive, scheduledWake }) : inactive;
 }
 
 function equalPublication(
-  left: HostRuntimeActivityPublication,
-  right: HostRuntimeActivityPublication,
+  left: HostRuntimeActivitySnapshot,
+  right: HostRuntimeActivitySnapshot,
 ): boolean {
-  return left.state === right.state && left.activeCount === right.activeCount;
+  return left.state === right.state && left.activeCount === right.activeCount
+    && left.scheduledWake?.pendingUntil === right.scheduledWake?.pendingUntil;
 }
 
 export function createHostRuntimeActivityProjection(options: Readonly<{
@@ -125,14 +112,14 @@ export function createHostRuntimeActivityProjection(options: Readonly<{
   onPublicationError?(error: unknown, snapshot: HostRuntimeActivitySnapshot): void;
 }>): HostRuntimeActivityProjection {
   const initialAgentRuntimeApplicability = options.agentRuntimeApplicability;
-  let agentRuntime: AgentRuntimeActivitySnapshot = initialAgentRuntimeApplicability === 'not_applicable'
+  let agentRuntime: HostRuntimeActivitySnapshot = initialAgentRuntimeApplicability === 'not_applicable'
     ? IDLE
     : UNKNOWN;
   let executionRuns: ExecutionRunsActivitySnapshot = { state: 'idle', activeCount: 0 };
-  let acceptedSnapshot: HostRuntimeActivityPublication | null = null;
+  let acceptedSnapshot: HostRuntimeActivitySnapshot | null = null;
   let desiredPublication: Readonly<{
     id: number;
-    snapshot: HostRuntimeActivityPublication;
+    snapshot: HostRuntimeActivitySnapshot;
     result: Promise<void>;
   }> | null = null;
   let nextPublicationId = 0;
@@ -142,7 +129,7 @@ export function createHostRuntimeActivityProjection(options: Readonly<{
   let disposed = false;
   let publicationTail = Promise.resolve();
 
-  const enqueueSnapshot = (snapshot: HostRuntimeActivityPublication): void | Promise<void> =>
+  const enqueueSnapshot = (snapshot: HostRuntimeActivitySnapshot): void | Promise<void> =>
     options.enqueueRegisteredSessionStateFieldMutation(
       createRegisteredSessionStateFieldMutation({
         sessionId: options.sessionId,
@@ -155,8 +142,7 @@ export function createHostRuntimeActivityProjection(options: Readonly<{
 
   const publishCurrentSnapshot = (force: boolean): Promise<void> => {
     if (disposed) return publicationTail;
-    const next = aggregate(agentRuntime, executionRuns);
-    const publication = toPublication(next);
+    const publication = aggregate(agentRuntime, executionRuns);
     if (!force && desiredPublication && equalPublication(desiredPublication.snapshot, publication)) {
       return desiredPublication.result;
     }
@@ -201,7 +187,7 @@ export function createHostRuntimeActivityProjection(options: Readonly<{
 
   observeFireAndForgetPublication(publishIfChanged());
 
-  const reportAgentRuntimeSnapshot = async (snapshot: AgentRuntimeActivitySnapshot): Promise<void> => {
+  const reportAgentRuntimeSnapshot = async (snapshot: HostRuntimeActivitySnapshot): Promise<void> => {
     if (disposed) return;
     validateSnapshot(snapshot, 'agentRuntime');
     agentRuntime = Object.freeze({ ...snapshot });

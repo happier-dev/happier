@@ -219,7 +219,7 @@ import { SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT, SESSION_RUNTIME_ACTIVITY_CLOSE
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionActionConfirmationsV1Schema, SessionActionConfirmationResponseTargetV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
 import { SessionMessageAcceptedDeliveryFactsV1Schema, SessionMessageAcceptedDeliveryFactsV1StoredSchema, type SessionMessageAcceptedDeliveryContentV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
-import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { SessionRuntimeActivitySnapshotSchema, SessionRuntimeScheduledWakeSchema, type SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SESSION_FOLLOW_OBSERVE_PENDING_EVENT_V1, SESSION_FOLLOW_ACKNOWLEDGE_EVENT_V1, SessionFollowObservePendingRequestV1Schema, SessionFollowObservePendingResponseV1Schema, SessionFollowAcknowledgeRequestV1Schema, SessionFollowAcknowledgeResponseV1Schema, type SessionFollowObservePendingRequestV1, type SessionFollowObservePendingResponseV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { ACCOUNT_VOICE_FOLLOW_OBSERVE_PENDING_EVENT_V1, ACCOUNT_VOICE_FOLLOW_ACKNOWLEDGE_EVENT_V1, AccountVoiceFollowObservePendingRequestV1Schema, AccountVoiceFollowObservePendingResponseV1Schema, AccountVoiceFollowAcknowledgeRequestV1Schema, AccountVoiceFollowAcknowledgeResponseV1Schema } from '@happier-dev/protocol/sessions/follow/accountVoiceFollowTransportV1';
 import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionAgentPublisherPublicationV1Schema, DiscussionAgentPublisherResponseV1Schema, type DiscussionAgentPublisherPublicationInputV1 } from '@happier-dev/protocol/discussions/api';
@@ -401,6 +401,7 @@ function adaptDurableMutationSocket(
 type RuntimeActivityProjectionWrite = Readonly<{
     runtimeActivityState: 'active' | 'idle' | 'unknown';
     runtimeActivityActiveCount: number;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
 }>;
 export type StartupSessionPublisherAuthorityClaimResult =
     | Readonly<{ status: 'claimed' }>
@@ -413,12 +414,15 @@ type RuntimeActivityProjectionSettlement = Readonly<{
     projection: Readonly<{
         runtimeActivityState: 'active' | 'idle' | 'unknown';
         runtimeActivityActiveCount: number;
+        runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
         runtimeActivityObservedAt: number | null;
         runtimeActivityRevision: number;
     }>;
 }>;
 
-type RuntimeActivityProjectionForPendingDrain = PendingQueueRuntimeActivityProjection;
+type RuntimeActivityProjectionForPendingDrain = PendingQueueRuntimeActivityProjection & Readonly<{
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
+}>;
 
 function clearRuntimeActivityProjectionWrite(): RuntimeActivityProjectionWrite {
     return {
@@ -430,7 +434,9 @@ function clearRuntimeActivityProjectionWrite(): RuntimeActivityProjectionWrite {
 function readRuntimeActivityProjectionForPendingDrain(value: unknown): RuntimeActivityProjectionForPendingDrain {
     if (!value || typeof value !== 'object') return {};
     const record = value as Record<string, unknown>;
+    const wake = SessionRuntimeScheduledWakeSchema.safeParse(record.runtimeActivityScheduledWake);
     return {
+        ...(wake.success ? { runtimeActivityScheduledWake: wake.data } : {}),
         runtimeActivityState: record.runtimeActivityState,
         runtimeActivityActiveCount: record.runtimeActivityActiveCount,
         runtimeActivityObservedAt: record.runtimeActivityObservedAt,
@@ -455,6 +461,7 @@ function readRuntimeActivityProjectionWriteFromRegisteredMutation(
     return {
         runtimeActivityState: parsed.data.state,
         runtimeActivityActiveCount: parsed.data.activeCount,
+        ...(parsed.data.scheduledWake ? { runtimeActivityScheduledWake: parsed.data.scheduledWake } : {}),
     };
 }
 
@@ -1479,6 +1486,8 @@ export class ApiSessionClient extends EventEmitter {
                             committedProjection: {
                                 state: settlement.projection.runtimeActivityState,
                                 activeCount: settlement.projection.runtimeActivityActiveCount,
+                                ...(settlement.projection.runtimeActivityScheduledWake
+                                    ? { scheduledWake: settlement.projection.runtimeActivityScheduledWake } : {}),
                                 observedAt: settlement.projection.runtimeActivityObservedAt,
                                 revision: settlement.projection.runtimeActivityRevision,
                             },
@@ -2136,6 +2145,7 @@ export class ApiSessionClient extends EventEmitter {
                             return {
                                 state: projection.runtimeActivityState,
                                 activeCount: projection.runtimeActivityActiveCount,
+                                ...(projection.runtimeActivityScheduledWake ? { scheduledWake: projection.runtimeActivityScheduledWake } : {}),
                             } as const;
                         }
                     }
@@ -3037,7 +3047,8 @@ export class ApiSessionClient extends EventEmitter {
                 workStatus: this.agentState?.workStatus,
                 activityState: activityState === 'active' || activityState === 'idle' || activityState === 'unknown'
                     ? activityState : undefined,
-                activityActiveCount: typeof activityActiveCount === 'number' ? activityActiveCount : undefined },
+                activityActiveCount: typeof activityActiveCount === 'number' ? activityActiveCount : undefined,
+                scheduledWake: this.runtimeActivityProjection.runtimeActivityScheduledWake },
             pending: { hasPendingPermissionRequests: requests.includes('permission'), hasPendingUserActionRequests: requests.includes('user_action'),
                 pendingRequestObservedAtMs: nowMs },
             work: readSessionWorkStateV1FromMetadata(this.metadata),
@@ -3910,10 +3921,7 @@ export class ApiSessionClient extends EventEmitter {
         return this.getStoredContentEncryptionContext();
     }
 
-    private async updateRuntimeActivityProjectionExact(projection: Readonly<{
-        runtimeActivityState: 'active' | 'idle' | 'unknown';
-        runtimeActivityActiveCount: number;
-    }>, mutationId = resolveRuntimeActivitySnapshotMutationId(
+    private async updateRuntimeActivityProjectionExact(projection: RuntimeActivityProjectionWrite, mutationId = resolveRuntimeActivitySnapshotMutationId(
         this.sessionId,
     )): Promise<RuntimeActivityProjectionSettlement> {
         await this.waitForSessionSocketOnlineForAckWrite(
@@ -3961,6 +3969,7 @@ export class ApiSessionClient extends EventEmitter {
             mutationId,
             state: projection.runtimeActivityState,
             runtimeActivityActiveCount: projection.runtimeActivityActiveCount,
+            runtimeActivityScheduledWake: projection.runtimeActivityScheduledWake,
             readRetainedContext: () => this.socket === socket
                 ? this.readUndispatchedRetainedPendingContext() : undefined,
         });

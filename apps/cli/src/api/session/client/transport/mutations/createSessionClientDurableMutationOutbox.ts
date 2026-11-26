@@ -1507,6 +1507,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             && current.identity.admissionOrder === custody.identity.admissionOrder
             && current.value.state === custody.value.state
             && current.value.activeCount === custody.value.activeCount
+            && current.value.scheduledWake?.pendingUntil === custody.value.scheduledWake?.pendingUntil
         ) return;
         publishRuntimeActivityTail({ custody, settlement: null });
     }

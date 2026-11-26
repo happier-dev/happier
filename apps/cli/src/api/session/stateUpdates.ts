@@ -1,3 +1,4 @@
+import type { SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { backoff } from '@/utils/time';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT, SessionRuntimeActivitySnapshotAckSchema, SessionRuntimeActivitySnapshotRequestSchema, type SessionRuntimeActivitySnapshotAck, type SessionRuntimeActivitySnapshotRequest } from '@happier-dev/protocol/sessions/runtime/activity/transport';
@@ -37,12 +38,14 @@ export async function updateSessionRuntimeActivityProjectionWithAck(opts: {
     mutationId: string;
     state: 'active' | 'idle' | 'unknown';
     runtimeActivityActiveCount: number;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     readRetainedContext?: () => SessionRuntimeActivitySnapshotRequest['retainedContext'];
 }): Promise<Readonly<{
     disposition: 'applied' | 'unchanged';
     projection: Readonly<{
     runtimeActivityState: 'active' | 'idle' | 'unknown';
     runtimeActivityActiveCount: number;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     runtimeActivityObservedAt: number | null;
     runtimeActivityRevision: number;
     }>;
@@ -56,6 +59,7 @@ export async function updateSessionRuntimeActivityProjectionWithAck(opts: {
             snapshot: {
                 state: opts.state,
                 activeCount: opts.runtimeActivityActiveCount,
+                ...(opts.runtimeActivityScheduledWake ? { scheduledWake: opts.runtimeActivityScheduledWake } : {}),
             },
         });
         const rawAnswer = await emitSocketWithAck<unknown>({
@@ -93,6 +97,7 @@ export async function updateSessionRuntimeActivityProjectionWithAck(opts: {
                 projection: {
                     runtimeActivityState: answer.projection.state,
                     runtimeActivityActiveCount: answer.projection.activeCount,
+                    ...(answer.projection.scheduledWake ? { runtimeActivityScheduledWake: answer.projection.scheduledWake } : {}),
                     runtimeActivityObservedAt: answer.projection.observedAt,
                     runtimeActivityRevision: answer.projection.revision,
                 },
