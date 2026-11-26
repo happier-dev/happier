@@ -373,6 +373,14 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                     expect(await opened.connection.execute({ operation: 'statement.run', target, mode: 'read', statement }))
                         .toMatchObject({ ok: true, results: [{ columns: [{ name: 'duplicate' }, { name: 'duplicate' }, { name: 'exact' }],
                         rows: [{ cells: [{ type: 'null' }, { type: 'text', value: '' }, { type: 'integer', value: '9223372036854775807' }] }] }] });
+                    const binaryExpression = engine === 'postgresql' ? "decode('00ff', 'hex')" : "CAST(X'00FF' AS BINARY(2))";
+                    const binaryColumn = { name: 'payload', semanticType: 'binary' };
+                    const readBinary = (predicate: string) => opened.connection.execute({ operation: 'statement.run', target, mode: 'read',
+                        statement: { sql: `SELECT ${binaryExpression} AS payload${predicate}`, parameters: [] } });
+                    expect(await readBinary('')).toMatchObject({ ok: true, results: [{ columns: [binaryColumn],
+                        rows: [{ cells: [{ type: 'binary', encoding: 'base64', value: 'AP8=' }] }] }] });
+                    expect(await readBinary(' WHERE 1 = 0')).toMatchObject({ ok: true,
+                        results: [{ columns: [binaryColumn], rows: [] }] });
                     if (pg) {
                         const sizes = await readDeploymentDatabaseSizesV1({
                             environment: { ...detail.environment, serverId: target.environment.serverId, runtimeTargetLinkId: link.id },
