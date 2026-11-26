@@ -9,12 +9,22 @@ type ResultDecodeFailure = Extract<ReturnType<typeof decodeExecutionRunProfileRe
  * side is kept (schema path, keyword, and AJV's schema-worded message), never the instance pointer, which can name a
  * key the model wrote, and only the one issue the summary reads (AUTO-FIX-W16 item 4, REVIEW-DELTA7 F2).
  */
-export function invalidProfileResultOutput(lead: string, decoded: ResultDecodeFailure): ExecutionRunProfileBoundedCompleteResult {
+export function describeInvalidProfileResult(decoded: ResultDecodeFailure, lead = 'Agent output did not match the required result contract') {
   const first = decoded.issues?.[0];
   const issue = first ? { schemaPath: first.schemaPath, keyword: first.keyword, message: first.message } : null;
   return {
+    code: 'invalid_output',
+    message: `${lead} (${decoded.reason}${issue ? `: ${issue.schemaPath} ${issue.message}` : ''}).`,
+    reason: decoded.reason,
+    ...(issue ? { issue } : {}),
+  };
+}
+
+export function invalidProfileResultOutput(lead: string, decoded: ResultDecodeFailure): ExecutionRunProfileBoundedCompleteResult {
+  const { message, ...error } = describeInvalidProfileResult(decoded, lead);
+  return {
     status: 'failed',
-    summary: `${lead} (${decoded.reason}${issue ? `: ${issue.schemaPath} ${issue.message}` : ''}).`,
-    toolResultOutput: { error: { code: 'invalid_output', reason: decoded.reason, ...(issue ? { issue } : {}) } },
+    summary: message,
+    toolResultOutput: { error },
   };
 }

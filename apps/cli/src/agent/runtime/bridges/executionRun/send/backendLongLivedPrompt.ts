@@ -39,6 +39,7 @@ import { readRuntimeTurnFailureAlreadySurfacedEvent } from '@/agent/runtime/turn
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
 import { projectExecutionRunInputTurn } from '../runOccurrenceWitness';
 import { redactExecutionRunResultValue } from '@/agent/executionRuns/profiles/shared/redactExecutionRunResultValue';
+import { describeInvalidProfileResult } from '@/agent/executionRuns/profiles/shared/invalidResultOutput';
 
 function buildObservedTurnResult(
   contract: ExecutionRunResultContractV1 | undefined,
@@ -457,12 +458,14 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         ? ctrl2.lastInputTurn : undefined;
       const completedTurnId = observedTurn?.turnId ?? turnId;
       if (localInputId) {
+        const error = observedTurn?.error ?? (decoded.ok ? undefined
+          : projectExecutionRunError(describeInvalidProfileResult(decoded)));
         ctrl2.lastInputTurn = {
           ...observedTurn,
           turnId: completedTurnId,
           inputIds: [localInputId],
-          state: decoded.ok ? 'completed' : 'failed',
-          ...(result ? { result } : {}),
+          state: error ? 'failed' : 'completed',
+          ...(error ? { error } : result ? { result } : {}),
         };
         ctrl2.currentInputPermissionRequestStore?.releaseResponseTarget();
         ctrl2.currentInputPermissionRequestStore = undefined;

@@ -5208,8 +5208,12 @@ or released availability. The corridor does not restart the parent Session.
 
 In current 0.3 development source, a failed exact Run input turn retains the
 existing `ExecutionRunErrorSchema` as optional `inputTurns.last.error`, including
-its sanitized `runtimeIssueV1`. Codex native errors retain the classifier's
+its sanitized `runtimeIssueV1`. Native errors retain the classifier's
 retryability, reported reset time and vendor request identity when supplied.
+If a long-lived turn returns output that fails its result contract, the exact
+input carries `invalid_output` and the decoder's reason. The Workflow reads
+the matching turn's error first and falls back to the Run error for older
+turn records. The exact-input error does not include the agent's raw output.
 An idle retained Run can remain `running` while its last input failed; Run details
 present that turn's issue and recovery through `presentSessionRuntimeIssue`.
 The server-readable Session socket carries only the input-turn witness, excluding

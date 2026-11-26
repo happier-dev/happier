@@ -506,12 +506,19 @@ describe('Workflow detached Execution Run step execution', () => {
         error: { code: 'execution_run_failed', message: 'Launch failed before native input admission' } } }),
     })).toEqual({ kind: 'outcome_uncertain', code: 'execution_run_input_not_observed' });
   });
-  it('retires terminal-parent custody without attributing a later input failure to completed A', async () => {
+  it('reports exact detached Claude turn failures and retires unmatched terminal-parent custody', async () => {
     let nativeInput: string | undefined;
+    const nativeFailureCause = {
+      phase: 'turn', failureReason: 'authentication_required', requestId: 'native-request-b',
+    } as const;
     const { runtime } = createTestExecutionRunHostRuntime({
       deliverInput: async (_runtimeId, _input, meta) => { nativeInput = meta?.localId ?? undefined; return { status: 'admitted' }; },
       waitForTurnCompletion: async () => {
-        if (nativeInput === 'B') throw createExecutionRunCodedError('claude_authentication_failed', 'OAuth token revoked');
+        if (nativeInput === 'B') {
+          throw Object.assign(createExecutionRunCodedError('claude_authentication_failed', 'Authentication required'), {
+            details: { failureCause: nativeFailureCause },
+          });
+        }
       },
     });
     const run: ExecutionRunState = {
@@ -533,9 +540,9 @@ describe('Workflow detached Execution Run step execution', () => {
     let firstFailureObservation: ReturnType<typeof observeWorkflowDetachedExecutionRunInput> | undefined;
     // Native execution, transcript/marker I/O and Home storage are the only substituted boundaries.
     // Admission, turn replacement, terminalization, projection, observation and recovery stay real.
-    const send = (localInputId: string) => sendBackendLongLivedRun({
+    const send = (localInputId: string, resultContract: NonNullable<ExecutionRunState['resultContract']> = { kind: 'text' }) => sendBackendLongLivedRun({
       runId: run.runId, params: { message: `Work on ${localInputId}`, delivery: 'prompt',
-        localInputId, resultContract: { kind: 'text' } }, runs, controllers,
+        localInputId, resultContract }, runs, controllers,
       budgetRegistry: null, createRuntime: () => runtime, maxTurns: null, getNowMs: () => 2,
       finishRun: async (runId, next, toolResult) => { await finishExecutionRun({ runId, next, toolResult,
         runs, controllers, budgetRegistry: null, parentProvider: 'daemon.executionRuns', sendAcp: async () => {},
@@ -543,7 +550,8 @@ describe('Workflow detached Execution Run step execution', () => {
       sendAcp: async () => {}, parentProvider: 'daemon.executionRuns', streamedTranscriptSession: null,
       writeActivityMarker: async () => {},
       onPublicStateUpdated: () => {
-        if (runs.get(run.runId)?.inputTurns?.last?.state === 'failed') {
+        const turn = runs.get(run.runId)?.inputTurns?.last;
+        if (turn?.state === 'failed' && turn.inputIds.includes('B')) {
           firstFailureObservation ??= observeWorkflowDetachedExecutionRunInput({ runId: run.runId, localInputId: 'B', get });
         }
       },
@@ -553,13 +561,21 @@ describe('Workflow detached Execution Run step execution', () => {
       await vi.waitFor(() => expect(runs.get(run.runId)?.inputTurns?.last?.state).toBe('completed'));
       expect(await observeWorkflowDetachedExecutionRunInput({ runId: run.runId, localInputId: 'A', get }))
         .toEqual({ kind: 'completed', result: '' });
+      expect(await send('invalid-result', { kind: 'json', schema: { type: 'object' } })).toEqual({ ok: true });
+      await vi.waitFor(() => expect(runs.get(run.runId)?.inputTurns?.last).toMatchObject({
+        inputIds: ['invalid-result'], state: 'failed',
+      }));
+      expect((await get()).run.status).toBe('running');
+      await expect(observeWorkflowDetachedExecutionRunInput({ runId: run.runId, localInputId: 'invalid-result', get }))
+        .resolves.toMatchObject({ kind: 'failed', code: 'invalid_output', message: expect.stringContaining('not_json') });
       expect(await send('B')).toEqual({ ok: true });
       await vi.waitFor(() => expect(runs.get(run.runId)?.status).toBe('failed'));
-      expect(await firstFailureObservation)
-        .toEqual({ kind: 'failed', code: 'claude_authentication_failed', message: 'OAuth token revoked' });
+      const expectedNativeFailure = { kind: 'failed', code: 'claude_authentication_failed',
+        message: 'Authentication required', runtimeIssueV1: { failureCause: nativeFailureCause } };
+      expect(await firstFailureObservation).toMatchObject(expectedNativeFailure);
       expect((await get()).run.inputTurns?.last).toMatchObject({ inputIds: ['B'], state: 'failed' });
       expect(await observeWorkflowDetachedExecutionRunInput({ runId: run.runId, localInputId: 'B', get }))
-        .toEqual({ kind: 'failed', code: 'claude_authentication_failed', message: 'OAuth token revoked' });
+        .toMatchObject(expectedNativeFailure);
       expect(await observeWorkflowDetachedExecutionRunInput({ runId: run.runId, localInputId: 'A', get }))
         .toEqual({ kind: 'outcome_uncertain', code: 'execution_run_input_not_observed' });
 

@@ -207,11 +207,12 @@ export async function observeWorkflowDetachedExecutionRunInput(params: Readonly<
   // custody. This is not a claim that the provider process has exited.
   if (turn.state === 'cancelled') return { kind: 'cancelled', code: 'execution_run_input_cancelled' };
   if (turn.state === 'failed') {
+    const error = turn.error ?? response.run.error;
     return {
-      kind: workflowRuntimeFailureKind(response.run.error?.runtimeIssueV1),
-      code: response.run.error?.code ?? 'execution_run_input_failed',
-      ...(response.run.error?.message ? { message: response.run.error.message } : {}),
-      ...(response.run.error?.runtimeIssueV1 ? { runtimeIssueV1: response.run.error.runtimeIssueV1 } : {}),
+      kind: workflowRuntimeFailureKind(error?.runtimeIssueV1),
+      code: error?.code ?? 'execution_run_input_failed',
+      ...(error?.message ? { message: error.message } : {}),
+      ...(error?.runtimeIssueV1 ? { runtimeIssueV1: error.runtimeIssueV1 } : {}),
     };
   }
   if (!turn.result) {
