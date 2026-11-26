@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -40,8 +41,9 @@ describe('Machine settings subscriptions', () => {
         { control: 'terminal', actionId: 'settings.set' },
         { control: 'roles', actionId: 'machines.roles.set' },
     ] as const)('explains the $control refusal and keeps the previous setting', async ({ control, actionId }) => {
-        const machine = createMachineFixture({ id: 'shop', isShared: false, active: true, activeAt: Date.now(),
-            metadata: { ...createMachineFixture().metadata!, platform: 'win32' } });
+        const machine = createHydratedPlainMachineFixture({ id: 'shop', accountId: 'account-a', machine: {
+            isShared: false, active: true, activeAt: Date.now(), metadata: { ...createMachineFixture().metadata!, platform: 'win32' },
+        } });
         await account.restore({ currentAccount: true, machines: [machine], settings: {
             actionsSettingsV1: { v: 1, actions: { [actionId]: { enabled: false } } },
         } });
@@ -218,7 +220,8 @@ describe('Machine settings subscriptions', () => {
     });
 
     it.each(['summary', 'windows'] as const)('%s ignores unrelated preferences and commits once for a consumed key', async kind => {
-        const machine = createMachineFixture({ metadata: { ...createMachineFixture().metadata!, platform: 'win32' } });
+        const base = createMachineFixture({ metadata: { ...createMachineFixture().metadata!, platform: 'win32' } });
+        const machine = createHydratedPlainMachineFixture({ id: base.id, accountId: 'account-a', machine: base });
         await account.restore({ waivedActions: ['settings.set'], machines: [machine], settings: {
             sessionTerminalHost: 'none', sessionUseTmux: false, sessionWindowsRemoteSessionLaunchMode: 'hidden',
         } });
