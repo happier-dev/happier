@@ -341,9 +341,15 @@ export function registerDaemonPluginChangeRoutes(
     }
     const lifetime = createDaemonControlRequestLifetime(request, reply);
     try {
-      return await (params.executeAction
+      const attempt = await (params.executeAction
         ? params.executeAction(parsed.data, lifetime.signal)
         : executeAppliedDaemonPluginAction(parsed.data, params.requestCurrentIntent, lifetime.signal));
+      const requestId = parsed.data.actionRequestId;
+      if (attempt.matched && !attempt.result.ok && requestId
+        && !('requestId' in attempt.result && typeof attempt.result.requestId === 'string')) {
+        return { ...attempt, result: { ...attempt.result, requestId } };
+      }
+      return attempt;
     } finally {
       lifetime.dispose();
     }

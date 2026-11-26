@@ -182,6 +182,7 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
     daemonState: null, daemonStateVersion: 0 });
   let browserMount: string | null = mountId;
   let selectedView: string | null = null;
+  let browserRefusesAction = false;
   // Socket boundary: the registered browser acknowledges only the mount it holds.
   const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
     expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
@@ -191,6 +192,8 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
     expect(request).toMatchObject({ action, input });
     if (browserMount === null) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
     expect(request.input).toMatchObject({ mountId: browserMount });
+    if (browserRefusesAction) return { ok: true, result: { ok: false, errorCode: 'contributed_action_unavailable',
+      error: 'current_ui_action_unavailable', actionHandlerInvocation: 'notStarted' } };
     selectedView = input.operation.viewId;
     return { ok: true, result: { ok: true, result: { status: 'applied' } } };
   } });
@@ -226,8 +229,9 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
     return response.json();
   } });
   const tools = createActionToolExecutorBridge({ executor, surface: 'agent' });
-  const invoke = (defaultSessionId = sessionId) =>
-    tools.executeActionByToolName('action_execute', { actionId, input: JSON.stringify(input) }, defaultSessionId);
+  const invoke = (defaultSessionId = sessionId, actionRequestId?: string) =>
+    tools.executeActionByToolName('action_execute', { actionId, input: JSON.stringify(input) },
+      defaultSessionId, { actionRequestId });
   try {
     // Control for the registered browser path with an already attributed call.
     expect(await executeClientAction({ v: 1, action, input, surface: 'agent', defaultSessionId: sessionId,
@@ -259,6 +263,13 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
     expect(await executor.execute('action.invoke', { action, input }, { surface: 'cli' }))
       .toMatchObject({ ok: true, result: { status: 'applied' } });
     expect(selectedView).toBe(input.operation.viewId);
+
+    browserRefusesAction = true;
+    selectedView = null;
+    expect(await invoke(sessionId, 'mounted-action-request')).toMatchObject({
+      ok: false, errorCode: 'contributed_action_unavailable', error: 'current_ui_action_unavailable', requestId: 'mounted-action-request',
+    });
+    expect(selectedView).toBeNull();
 
     browserMount = null;
     selectedView = null;

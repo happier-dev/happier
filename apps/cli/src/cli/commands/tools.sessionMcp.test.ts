@@ -185,9 +185,16 @@ describe('Agent tools Session MCP authority', () => {
   });
   it.runIf(supportsSessionMcpLocalTransport())('retains canonical failure diagnostics through the MCP producer and Session CLI reader', async () => {
     const boundary = await openSessionMcpBoundary();
+    const output = captureStdoutJsonOutput();
+    const previousExitCode = process.exitCode;
     try {
       await expect(executeSessionMcpAction('skills.read', { skillId: 'diagnostic' })).resolves.toEqual(diagnosticFailure);
-    } finally { await boundary.close(); }
+      await handleToolsCommand(['call', '--agent-bridge', '--source', 'happier', '--tool', 'action_execute',
+        '--args-json', JSON.stringify({ actionId: 'skills.read', input: { skillId: 'diagnostic' } }), '--json']);
+      expect(output.json()).toMatchObject({ ok: false, error: {
+        code: diagnosticFailure.errorCode, requestId: diagnosticFailure.requestId,
+      } });
+    } finally { output.restore(); process.exitCode = previousExitCode; await boundary.close(); }
   });
   it.runIf(process.platform === 'linux')('retains canonical executor diagnostics through the Action tool bridge and Session CLI reader', async () => {
     const executor = createActionExecutor({

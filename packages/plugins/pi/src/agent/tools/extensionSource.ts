@@ -170,6 +170,7 @@ function toResult(envelope) {
   }
   const error = envelope.error && typeof envelope.error === "object" ? envelope.error : {};
   const parts = ["code=" + (typeof error.code === "string" && error.code ? error.code : "unknown")];
+  if (typeof error.requestId === "string" && error.requestId) parts.push("requestId=" + error.requestId);
   if (typeof error.message === "string" && error.message) parts.push(error.message);
   if (Array.isArray(error.candidates) && error.candidates.length > 0) {
     parts.push("candidates: " + error.candidates.join(", "));

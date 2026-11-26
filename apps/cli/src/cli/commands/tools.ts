@@ -257,6 +257,8 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
             error: {
               code: result.errorCode,
               message: result.error,
+              ...(source === 'happier' && surface === 'agent' && 'requestId' in result && typeof result.requestId === 'string'
+                ? { requestId: result.requestId } : {}),
               ...(useSessionMcp && 'failureCause' in result && result.failureCause ? { failureCause: result.failureCause } : {}),
               ...(presentation ? { details: { message: presentation.message, messageTrust: presentation.messageTrust } } : {}),
               ...(candidates ? { candidates } : {}),

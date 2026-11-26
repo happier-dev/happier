@@ -426,7 +426,7 @@ describe('Pi Happier tools extension', () => {
     }
   });
 
-  it('throws when the Happier bridge returns a failed tool envelope', async () => {
+  it('throws the Happier bridge refusal with its request id', async () => {
     const root = mkdtempSync(join(tmpdir(), 'happier-pi-tools-error-test-'));
     try {
       const extensionPath = join(root, 'extension.mjs');
@@ -445,7 +445,7 @@ describe('Pi Happier tools extension', () => {
         }],
         launch: {
           executablePath: process.execPath,
-          argsPrefix: ['-e', 'process.stdout.write(JSON.stringify({ ok: false, error: { code: "action_failed", message: "expected failure" } }) + "\\n")', '--'],
+          argsPrefix: ['-e', 'process.stdout.write(JSON.stringify({ ok: false, error: { code: "action_failed", message: "expected failure", requestId: "diagnostic-action" } }) + "\\n")', '--'],
         },
       }));
       const module = await import(`${pathToFileURL(extensionPath).href}?${Math.random()}`);
@@ -466,7 +466,7 @@ describe('Pi Happier tools extension', () => {
       for (const handler of handlers.get('session_start') ?? []) await handler({});
 
       await expect(tools[0]?.execute('call-1', {}, undefined, undefined, { cwd: root }))
-        .rejects.toThrow('action_failed');
+        .rejects.toThrow(/action_failed.*diagnostic-action/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

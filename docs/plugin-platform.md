@@ -14903,6 +14903,11 @@ readers consume the extended closed error envelope together; no wire epoch or
 new presenter is introduced. Caller-authored
 HTML's existing restricted method ceiling is unchanged.
 
+The local daemon Action endpoint carries the caller's Action request ID on a
+refusal when the Action supplies no ID. The Agent shell bridge includes that ID
+in its JSON error when the Session tool supplies one. Pi includes the ID with
+the failure code in the tool result.
+
 `Action.Failure` accepts a Plugin UI execution from `useExecutePluginAction` or
 `projectPluginActionControlExecutionV1`. It uses the host presenter for the
 reason and safe details. An optional `onRetry` callback adds a recovery control

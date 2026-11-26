@@ -29,8 +29,10 @@ describe('Windows current-user Agent tools compatibility', () => {
       expected: { ok: false, error: { code: 'action_interception_rejected',
         message: 'Workflow-supplied reason (untrusted): "Review the check Run."',
         details: { message: 'Review the check Run.', messageTrust: 'workflow_supplied_untrusted' } } } },
-    { outcome: 'permission refusal', result: { ok: false, errorCode: 'permission_denied', error: 'Permission is required.' },
-      expected: { ok: false, error: { code: 'permission_denied', message: 'Permission is required.' } } },
+    { outcome: 'permission refusal', result: { ok: false, errorCode: 'permission_denied', error: 'Permission is required.',
+      requestId: 'native-windows-call' },
+      expected: { ok: false, error: { code: 'permission_denied', message: 'Permission is required.',
+        requestId: 'native-windows-call' } } },
   ])('keeps the credentialed Session RPC route and typed $outcome without Unix context', async ({ result, expected }) => {
     const sessionId = 'c123456789012345678901234';
     const app = fastify({ logger: false });

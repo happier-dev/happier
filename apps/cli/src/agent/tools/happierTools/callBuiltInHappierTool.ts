@@ -27,6 +27,7 @@ function normalizeNativeAgentToolResponse(value: unknown): Awaited<ReturnType<ty
   }
   if (response.ok === false && typeof response.errorCode === 'string' && typeof response.error === 'string') {
     return { ok: false, errorCode: response.errorCode, error: response.error,
+      ...(typeof response.requestId === 'string' && response.requestId ? { requestId: response.requestId } : {}),
       ...(Object.prototype.hasOwnProperty.call(response, 'details') ? { details: response.details } : {}) };
   }
   return { ok: false, errorCode: 'invalid_action_transport_output', error: 'invalid_action_transport_output' };
