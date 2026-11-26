@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios, { AxiosHeaders } from 'axios';
 import { ActionIdSchema, createActionExecutor } from '@happier-dev/protocol';
+import { ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1, type ActionAutomationNoticeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
+
+const unavailableAutomationNotices = [{ code: 'action_automations_not_checked',
+  reason: ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 }] satisfies ActionAutomationNoticeV1[];
 
 const io = vi.hoisted(() => vi.fn());
 // HTTP and Socket.IO are external boundaries; exact routing, codecs and RPC owners remain real.
@@ -30,8 +35,10 @@ describe('CLI machine terminal Action', () => {
       if (path === '/v1/machines') return { status: 200, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() }, data: replacementRows };
       if (!path.startsWith('/v1/machines/')) throw new Error(`Unexpected Home HTTP read: ${path}`);
       return { status: 200, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() },
-        data: { machine: { id: decodeURIComponent(path.slice('/v1/machines/'.length)),
-          storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } } };
+        data: { machine: MachinePublishedRowV1Schema.parse({ id: decodeURIComponent(path.slice('/v1/machines/'.length)),
+          managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null,
+          metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+          storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }) } };
     });
     bindApiSessionSocketMock(io, createApiSessionSocketStub({
       emitWithAck: async (event, payload) => {
@@ -80,7 +87,7 @@ describe('CLI machine terminal Action', () => {
     } else {
       expect(result).toEqual({ ok: true, result: scenario === 'background-work'
         ? { ok: false, status: 'busy', sessionId: 'session', diagnostics: { busySource: 'native_background_work' } }
-        : { ok: true, status: 'restarted', sessionId: 'session' } });
+        : { ok: true, status: 'restarted', sessionId: 'session' }, automationNotices: unavailableAutomationNotices });
       expect(requests).toEqual([
         { method: `worker:${RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_V2_GET}`, params: { sessionId: 'session' } },
         { method: `worker:${RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2}`, params: {
@@ -128,7 +135,7 @@ describe('CLI machine terminal Action', () => {
     }, { surface: 'cli', authority: 'present_user', serverId: 'home' }))
       .toEqual({ ok: true, result: scenario === 'different-session'
         ? { ok: false, status: 'partial_failure', sessionId: 'session', diagnostics: { errorCode: 'invalid_response' } }
-        : restartResult });
+        : restartResult, automationNotices: unavailableAutomationNotices });
     expect(requests).toEqual([
       { method: `worker:${RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET}`, params: { sessionId: 'session' } },
       { method: `worker:${RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART}`, params: {
@@ -138,7 +145,7 @@ describe('CLI machine terminal Action', () => {
     ]);
   });
   it('keeps retained observation, explicit Stop and output bytes on their original Machines after replacement', async () => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const credentials = { token: 'token', encryption: null };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
       sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
     replacementRows.push({ id: 'custodian', replacedByMachineId: 'replacement-custodian' },
@@ -182,7 +189,7 @@ describe('CLI machine terminal Action', () => {
     expect(axios.get).not.toHaveBeenCalledWith('https://home.invalid/v1/machines', expect.any(Object));
   });
   it('reads failed command output through the stored attachment and incumbent byte cursor', async () => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const credentials = { token: 'token', encryption: null };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
       sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
     const snapshot = { version: 1, operationId: 'operation', revision: 2, actionId: 'projects.script.run', state: 'failed',
@@ -210,7 +217,7 @@ describe('CLI machine terminal Action', () => {
     expect(requests.map(request => request.method)).toEqual(['custodian:actionOperation.get.v2']);
   });
   it('runs code text references through the existing workspace search dependency and exact Machine transport', async () => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const credentials = { token: 'token', encryption: null };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
       sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
     responses.push({ status: 'unavailable', reason: 'no_capable_server' }, { ok: true, files: [{ path: 'src/a.ts', matches: [{ line: 2, column16: 1, length16: 6,
@@ -226,7 +233,7 @@ describe('CLI machine terminal Action', () => {
   });
 
   it('composes semantic disk queries and restart without confusing Home and language-server ids', async () => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const credentials = { token: 'token', encryption: null };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
       sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
     const answer = { status: 'ok', kind: 'hover', fileHash: 'a'.repeat(64), sections: [
@@ -238,7 +245,7 @@ describe('CLI machine terminal Action', () => {
     const input = { machineId: 'machine', rootPath: '/project', path: 'src/a.ts', line: 2, symbol: 'needle', occurrence: 2 };
     expect(await executor.execute('code.hover.get', input, context)).toEqual({ ok: true, result: answer });
     expect(await executor.execute('code.restart', { machineId: 'machine', rootPath: '/project', serverId: 'typescript' }, context))
-      .toEqual({ ok: true, result: { status: 'ok' } });
+      .toEqual({ ok: true, result: { status: 'ok' }, automationNotices: unavailableAutomationNotices });
     expect(await executor.execute('code.hover.get', input, context))
       .toEqual({ ok: true, result: { status: 'unavailable', reason: 'update_required' } });
     expect(requests).toEqual([
@@ -251,7 +258,7 @@ describe('CLI machine terminal Action', () => {
   });
 
   it.each(['code.hover.get', 'code.restart'] as const)('keeps a slow %s reply cancellation-owned beyond the generic Machine deadline', async actionId => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const credentials = { token: 'token', encryption: null };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
       sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
     const answer = actionId === 'code.restart' ? { status: 'ok' } : { status: 'ok', kind: 'hover', fileHash: 'a'.repeat(64), sections: [] };
@@ -272,7 +279,8 @@ describe('CLI machine terminal Action', () => {
       await vi.advanceTimersByTimeAsync(20_001);
       expect(settled).toBe(false);
       releaseReply();
-      expect(await pending).toEqual({ ok: true, result: answer });
+      expect(await pending).toEqual({ ok: true, result: answer,
+        ...(actionId === 'code.restart' ? { automationNotices: unavailableAutomationNotices } : {}) });
       expect(controller.signal.aborted).toBe(false);
       sent = false;
       let releaseCancelledReply!: () => void;
@@ -296,7 +304,7 @@ describe('CLI machine terminal Action', () => {
   });
 
   it('searches workspace content through the exact machine transport with cancellation', async () => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const credentials = { token: 'token', encryption: null };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
       sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
     const controller = new AbortController();
@@ -344,7 +352,7 @@ describe('CLI machine terminal Action', () => {
     }
   });
   it('lists through the authenticated exact-machine transport and rejects unavailable credentials', async () => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const credentials = { token: 'token', encryption: null };
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials, sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }));
     responses.push({ ok: true, terminals: [] });
     expect(await executor.execute('machines.terminal.list', { serverId: 'home', machineId: 'machine' }, { surface: 'cli', authority: 'present_user', serverId: 'home' }))
@@ -355,13 +363,13 @@ describe('CLI machine terminal Action', () => {
       .toMatchObject({ ok: false, errorCode: 'terminal_transport_unavailable' });
   });
   it('opens the canonical PTY and preserves the exact Home and request', async () => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+    const credentials = { token: 'token', encryption: null };
     const executor = createActionExecutor({ ...createCliActionDeps({ token: credentials.token, credentials,
       sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null }) });
     responses.push({ ok: true, terminalId: 'pty', reused: true });
     expect(await executor.execute('machines.terminal.open', { serverId: 'home', machineId: 'machine', terminalKey: 'shell', cwd: '/project' }, {
       surface: 'cli', authority: 'present_user', serverId: 'home', presentUserConfirmation: { actionId: 'machines.terminal.open' },
-    })).toEqual({ ok: true, result: { ok: true, terminalId: 'pty', reused: true } });
+    })).toEqual({ ok: true, result: { ok: true, terminalId: 'pty', reused: true }, automationNotices: unavailableAutomationNotices });
     expect(requests).toEqual([{ method: `machine:${RPC_METHODS.DAEMON_TERMINAL_ENSURE}`, params: { terminalKey: 'shell', cwd: '/project' } }]);
     expect(axios.get).toHaveBeenCalledWith('https://home.invalid/v1/machines/machine', expect.any(Object));
   });
@@ -370,7 +378,7 @@ describe('CLI machine terminal Action', () => {
     const executor = createActionExecutor({ ...createCliActionDeps({ token: 'token', sessionId: 'session', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null,
       machineActionDirectTargetTransport: { machineId: 'exact', invoke } }) });
     expect(await executor.execute('machines.terminal.open', { serverId: 'home', machineId: 'other', terminalKey: 'shell' }, { surface: 'cli', serverId: 'home', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.terminal.open' } }))
-      .toMatchObject({ ok: false, errorCode: 'terminal_transport_unavailable' });
+      .toMatchObject({ ok: false, errorCode: 'machine_inventory_unavailable' });
     expect(invoke).not.toHaveBeenCalled();
   });
 });

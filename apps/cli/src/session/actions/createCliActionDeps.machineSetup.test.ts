@@ -2,6 +2,8 @@ import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor, getMachineSetupDesiredV1, MachineSetupPlanInputV1Schema } from '@happier-dev/protocol';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createMachineSetupPlanAction } from '@/machines/setup/machineSetupAction';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
@@ -18,8 +20,21 @@ it('plans a callable direct target with expired Home presence while retaining it
   ].map(({ activeAt, ...machine }) => ({ ...ExternalActionMachineBootstrapV1Schema.parse({ ...machine,
     revokedAt: null, replacedByMachineId: null }), activeAt }));
   vi.spyOn(axios, 'get').mockImplementation(async url => {
-    if (new URL(String(url)).pathname !== '/v1/machines') throw new Error('Only the Account roster is needed');
-    return { status: 200, data: roster };
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/machines') return { status: 200, data: roster };
+    const machine = roster.find(row => path === `/v1/machines/${row.id}`);
+    if (!machine) throw new Error(`Unexpected Account Machine read: ${path}`);
+    return { status: 200, data: { machine } };
+  });
+  vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    expect(new URL(String(url)).pathname).toBe('/v1/machines/read-batch');
+    const { machineIds } = MachineReadBatchRequestV1Schema.parse(body);
+    return { status: 200, data: MachineReadBatchResponseV1Schema.parse({ results: machineIds.map(machineId => {
+      const machine = roster.find(row => row.id === machineId);
+      return machine ? { machineId, status: 'found', machine: MachinePublishedRowV1Schema.parse({ ...machine,
+        managedMachineRef: null, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+      }) } : { machineId, status: 'not_found' };
+    }) }) };
   });
   const reads: string[] = [];
   const nativePlan = (machineId: string) => createMachineSetupPlanAction({ homeId: 'home', machineId, apiMachine: {

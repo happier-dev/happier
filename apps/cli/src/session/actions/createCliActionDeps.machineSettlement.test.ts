@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1, type ActionAutomationNoticeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MachineResourcesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import { createCliActionDeps } from './createCliActionDeps';
 
@@ -9,6 +10,8 @@ const credentials = { token: 'token', encryption: null };
 const params = { token: credentials.token, credentials, sessionId: 'cli-global', serverId: 'home',
   serverHttpBaseUrl: 'https://home.example.test', mode: 'plain', ctx: null } as const;
 const context = { surface: 'cli', authority: 'present_user', serverId: 'home' } as const;
+const unavailableAutomationNotices = [{ code: 'action_automations_not_checked',
+  reason: ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 }] satisfies ActionAutomationNoticeV1[];
 const processEffect = { actionId: 'machines.processes.kill',
   input: { machineId: 'selected', targets: [{ ref: 'process-ref', expect: { level: 'proven' } }], tree: false },
   receipt: { status: 'ended', outcomes: [{ ref: 'process-ref', outcome: 'ended' }] } } as const;
@@ -113,7 +116,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
     controller.abort();
     current = false;
     acknowledge();
-    expect(await result).toEqual({ ok: true, result: receipt });
+    expect(await result).toEqual({ ok: true, result: receipt, automationNotices: unavailableAutomationNotices });
   });
 
   for (const retirement of ['cancellation', 'credentials'] as const) {
@@ -135,7 +138,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
       expect(await Promise.race([dispatched.then(() => 'issued'), result])).toBe('issued');
       if (retirement === 'cancellation') controller.abort(); else current = false;
       acknowledge(action.receipt);
-      expect(await result).toEqual({ ok: true, result: action.receipt });
+      expect(await result).toEqual({ ok: true, result: action.receipt, automationNotices: unavailableAutomationNotices });
       expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: null }));
     });
 
@@ -155,7 +158,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
       expect(await Promise.race([dispatched.then(() => 'issued'), result])).toBe('issued');
       if (retirement === 'cancellation') controller.abort(); else current = false;
       acknowledge(action.receipt);
-      expect(await result).toMatchObject({ ok: false, errorCode: retirement === 'credentials' ? 'scope-retired' : 'action_failed' });
+      expect(await result).toMatchObject({ ok: false, errorCode: retirement === 'credentials' ? 'scope-retired' : 'cancelled' });
     });
 
     it(`retains target-local Activity Undo acknowledgement after ${retirement}`, async () => {
@@ -171,7 +174,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
       await dispatched;
       if (retirement === 'cancellation') controller.abort(); else current = false;
       acknowledge(guardUndo.receipt);
-      expect(await result).toEqual({ ok: true, result: guardUndo.receipt });
+      expect(await result).toEqual({ ok: true, result: guardUndo.receipt, automationNotices: unavailableAutomationNotices });
     });
   }
 
@@ -193,7 +196,8 @@ describe('CLI captured Machine acknowledgement settlement', () => {
     const executor = createActionExecutor(createCliActionDeps(params));
     expect(await executor.execute(action.actionId, action.input, {
       ...context, presentUserConfirmation: { actionId: action.actionId }, actionRequestId: 'admin-operation',
-    })).toEqual({ ok: true, result: action.receipt });
+    })).toEqual({ ok: true, result: action.receipt,
+      ...(action.actionId === 'machines.setup.adminAccess.set' ? { automationNotices: unavailableAutomationNotices } : {}) });
     expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'selected',
       method: action.actionId, request: { ...action.input, serverId: 'home' }, requestId: 'admin-operation',
       ...(action.actionId === 'machines.setup.adminAccess.set' ? { timeoutMs: null } : {}) }));
