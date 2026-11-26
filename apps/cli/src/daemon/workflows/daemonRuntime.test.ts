@@ -5,9 +5,15 @@ import fastify from 'fastify';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
+import { StoredTargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { ArtifactJsonCreateHttpInputV1Schema, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { PluginAccountStorageMutationRequestV1Schema, PluginAccountStorageMutationResponseV1Schema } from '@happier-dev/protocol/plugins/data/accountKvV1';
+import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createDaemonExternalActionContributedApprovalReplay } from '@/daemon/externalActions/createDaemonExternalActionContributedInvoker';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -145,10 +151,12 @@ import {
 // production-composition cases in this file; shutdown is terminal.
 afterAll(async () => { await pluginReloadController.shutdown(); });
 
-it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed', 'machine-placed'] as const)('resolves a %s qualified step through the production Workflow daemon without a Session', async scenario => {
-  const isGuest = scenario === 'guest';
+it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed', 'machine-placed', 'account-ask', 'account-ask-declined', 'account-ask-guest'] as const)('resolves a %s qualified step through the production Workflow daemon without a Session', async scenario => {
+  const isGuest = scenario === 'guest' || scenario === 'account-ask-guest';
   const isClient = scenario === 'client-placed';
   const isMachine = scenario === 'machine-placed';
+  const asks = scenario === 'account-ask' || scenario === 'account-ask-declined' || scenario === 'account-ask-guest';
+  const declines = scenario === 'account-ask-declined';
   const ownerId = 'workflow-account-plugin-owner';
   const accountId = isGuest ? 'workflow-account-plugin-guest' : ownerId;
   const machineId = 'shared-machine';
@@ -184,7 +192,7 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
       v: 1, actions: { [formatQualifiedPluginActionId(echoAction)]: { enabled: false } },
     } } } : {}),
   });
-  const triage = isGuest ? await import('../../../../../packages/plugins/triage/src/manifest') : null;
+  const triage = scenario === 'guest' ? await import('../../../../../packages/plugins/triage/src/manifest') : null;
   const authored = await registerAuthoredAccountActionRelease(app, accountId, triage ? { primary: {
     manifest: triage.PLUGIN_MANIFEST,
     projectRoot: resolve(import.meta.dirname, '../../../../../packages/plugins/triage'),
@@ -201,12 +209,36 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
     entryPath: resolve(import.meta.dirname, '../../../../../packages/plugin-sdk/fixtures/account-actions/src/index.ts'),
     manifestExport: null,
   } } : {});
-  const localId = triage ? (await import('../../../../../packages/plugins/triage/src/actions/resolveResourceProtocol')).TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 : isClient ? 'compose' : 'echo';
+  const localId = triage ? (await import('../../../../../packages/plugins/triage/src/actions/resolveResourceProtocol')).TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 : isClient ? 'compose' : asks ? 'write' : 'echo';
   const reference = isMachine ? { pluginId: machinePluginId, localId: machineActionLocalId }
     : { pluginId: authored.pluginId, localId };
   const actionId = formatQualifiedPluginActionId(reference);
   const input = triage ? { v: 1, resource: { kind: 'pullRequest', url: 'https://github.com/example/private/pull/17' } }
-    : { key: scenario === 'missing-app' ? 'compose' : 'from-the-starter' };
+    : { key: scenario === 'missing-app' ? 'compose' : 'from-the-starter', ...(asks ? { value: 'approved content' } : {}) };
+  const approvalCreated = Promise.withResolvers<string>();
+  const writes: Array<ReturnType<typeof PluginAccountStorageMutationRequestV1Schema.parse>> = [];
+  if (asks) {
+    const accountSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mocks.io, accountSocket);
+    app.addHook('onSend', async (request, reply, payload) => {
+      if (request.method !== 'POST' || reply.statusCode >= 400) return payload;
+      if (request.url === '/v1/artifacts') {
+        const artifact = ArtifactJsonCreateHttpInputV1Schema.parse(request.body);
+        approvalCreated.resolve(artifact.id);
+      } else if (request.routeOptions.url === '/v1/artifacts/:id') {
+        const { id } = request.params as { id: string };
+        accountSocket.trigger('update', UpdateContainerSchema.parse({
+          id: 'approval-change', seq: 1, createdAt: Date.now(), body: { t: 'account-change', entityIds: [id] },
+        }));
+      }
+      return payload;
+    });
+    app.get(`/v1/account/plugin-storage/${authored.pluginId}`, async () => ({ status: 'absent' }));
+    app.post(`/v1/account/plugin-storage/${authored.pluginId}`, async request => {
+      writes.push(PluginAccountStorageMutationRequestV1Schema.parse(request.body));
+      return PluginAccountStorageMutationResponseV1Schema.parse({ status: 'updated', revision: 1 });
+    });
+  }
   const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{
     kind: 'action', id: 'lookup', actionId,
     input: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, { kind: 'literal', value }])),
@@ -227,7 +259,9 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
       }], source: origin.kind === 'automation' ? { kind: 'automation', automationId: origin.automationId } : { kind: 'inline' },
       executionTarget: { kind: 'session' },
       workspaceTarget: { project: { machineId, directory: tmpdir(), checkoutRootPath: tmpdir() } },
-      ...(origin.kind === 'direct' ? { origin } : {}),
+      ...(origin.kind === 'direct' ? { origin: { ...origin,
+        ...(asks ? { authenticatedStarterV1: { requestRef: runId, requester: { serverId, accountId } } } : {}),
+      } } : {}),
       authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
     }),
   }));
@@ -242,11 +276,11 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
     if (request.url === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) accountSelectionReads++;
     if (request.headers.authorization === headers.Authorization) return;
     foreignAccountReads.push(request.url);
-    if (isGuest && request.headers.authorization === ownerBearer) return;
+    if (triage && request.headers.authorization === ownerBearer) return;
     await reply.code(401).send({ error: 'unauthorized' });
   });
   const sourceReads: string[] = [];
-  if (isGuest) {
+  if (triage) {
     const { PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1, PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1, PluginCollectionQueryRequestV1Schema } =
       await import('@happier-dev/protocol/plugins/data/collectionsV1');
     const { CORPUS_SOURCE_INSTANCES_COLLECTION } = await import('../../../../../packages/plugins/triage/src/corpus/collections/definitions');
@@ -316,7 +350,8 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
       const unavailable = async (): Promise<never> => { throw new Error('Account step must not dispatch a Machine effect'); };
       const runtime = createProductionDaemonWorkflowRuntime({ credentials, accountId, serverId });
       const diagnostics = vi.spyOn(logger, 'debug');
-      const result = await runtime.createCoordinatorForMachine({ machineId, serverIdentityId: serverId, savedSecretOperationContext,
+      const controller = new AbortController();
+      const running = runtime.createCoordinatorForMachine({ machineId, serverIdentityId: serverId, savedSecretOperationContext,
         machineAdmissionTransport: unavailable, machineActionDirectTargetTransport: { machineId, invoke: unavailable },
       })({ runId, attempt: 0, expectedRevision: storage.run().revision,
         ...(origin.kind === 'automation' ? { automationId: origin.automationId, automationCause: origin.cause,
@@ -324,7 +359,55 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
             workspace: { directory: tmpdir() }, executionTarget: { kind: 'session' }, inlineDefinition: definition,
           } }),
         } : { acceptedEnvelope }),
-        accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
+        accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, signal: controller.signal });
+      try {
+        if (asks) {
+          const artifactId = await Promise.race([approvalCreated.promise, running.then(result => {
+            throw new Error(`Account Workflow Action settled before approval: ${JSON.stringify(result)}`);
+          })]);
+          expect(writes).toEqual([]);
+          const artifact = authored.artifacts.read(artifactId);
+          if (!artifact) throw new Error('Missing pending approval Artifact');
+          expect(artifact).toMatchObject({ ownerAccountId: accountId, access: 'owner' });
+          const value = decodePlainArtifactStoredContent(artifact.body);
+          if (!value || typeof value !== 'object' || !('body' in value) || typeof value.body !== 'string') throw new Error('Missing approval body');
+          expect(StoredTargetActionApprovalRequestV1Schema.parse(JSON.parse(value.body))).toMatchObject({
+            status: 'open', qualifiedActionId: actionId,
+            executionOriginV1: { accountId, caller: { kind: 'workflowRun', runId,
+              authenticatedStarterV1: { requestRef: runId, requester: { serverId, accountId } } } },
+          });
+          const readLeaf = () => storage.rows().find(row => row.index.parentRecordId !== null);
+          await vi.waitFor(() => {
+            expect(readLeaf()?.index.lifecycle).toBe('waiting_for_approval');
+          });
+          const held = readLeaf()!;
+          expect(openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+            binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: held.index.id,
+              sequence: held.index.sequence, parentRecordId: held.index.parentRecordId,
+              memberOrdinal: held.index.memberOrdinal, attempt: held.index.attempt },
+            envelope: parseWorkflowStoredContentEnvelopeV1(held.contentEnvelope),
+          })).toMatchObject({ kind: 'available', content: {
+            execution: { output: { kind: 'approval_request_created', actionId: 'action.invoke', artifactId } },
+          } });
+          expect(writes).toEqual([]);
+          // The receiving daemon gets the starter's Account from authenticated Home ingress.
+          const deciding = createCliActionExecutorFromCredentials({
+            credentials, readCredentials: async () => credentials, serverId, serverIdentityId: serverId, serverApiUrl: home,
+            machineId, pluginActionExecutionOwner: 'current_process', admittedAccountEncryptionMode: 'plain',
+            targetActionApprovalReplay: createDaemonExternalActionContributedApprovalReplay({ credentials }),
+          });
+          const decision = await deciding.execute('approval.request.decide', { artifactId, decision: declines ? 'reject' : 'approve' }, {
+            surface: 'rpc', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
+            actionCaller: { kind: 'host' },
+          });
+          expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+        }
+      } catch (error) {
+        controller.abort();
+        await Promise.allSettled([running]);
+        throw error;
+      }
+      const result = await running;
       const refusal = scenario === 'missing-app' ? 'plugin_action_client_target_unavailable'
         : scenario === 'policy-disabled' ? 'action_disabled' : null;
       const admission = diagnostics.mock.calls.find(([message]) => message.includes('Trigger admission refused'))?.[1];
@@ -334,6 +417,15 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
           state: 'failed', reason: 'target_unavailable', admission: 'refused',
         });
         expect(storage.rows()).toEqual([]);
+        expect(foreignAccountReads).toEqual([]);
+        return;
+      }
+      if (asks) {
+        expect(result).toMatchObject(declines
+          ? { state: 'interrupted', reason: PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE }
+          : { state: 'succeeded' });
+        expect(writes).toEqual(declines ? [] : [expect.objectContaining({ expectedRevision: 'absent',
+          content: { t: 'plain', v: { v: 1, values: { 'from-the-starter': expect.objectContaining({ value: 'approved content' }) } } } })]);
         expect(foreignAccountReads).toEqual([]);
         return;
       }

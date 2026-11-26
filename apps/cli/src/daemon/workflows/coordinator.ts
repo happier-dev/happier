@@ -14,7 +14,7 @@ import { workflowBlockOrdinalV1 } from '@happier-dev/protocol/workflows/workflow
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import { prepareActionCompletionV1, resumeActionCompletionV1, type ActionCompletionResult, type ActionCompletionWorkflow } from '@happier-dev/protocol/actions/actionCompletion';
-import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionFailureCauseV1, type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, ActionCompletionRun, ActionCompletionOperation, ActionCompletionStateV1, ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
@@ -26,7 +26,7 @@ import { classifyServerEndpointError } from '@/api/client/classifyServerEndpoint
 import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
-import { readWorkflowActionApprovalSettlement } from './actionApproval';
+import { readWorkflowActionApprovalSettlement, type WorkflowActionApprovalContext } from './actionApproval';
 import { isWorkflowInlineAccountReadWithoutResult } from './actionReadRecovery';
 import { WorkflowInvocationSettlementFailure } from './invocationSettlementFailure';
 import { createWorkflowActionRequestIdV1 } from '@happier-dev/protocol/workflows/workflowSessionScopeV1';
@@ -2031,7 +2031,13 @@ async function executeActionBlock(
       workspaceTarget: { project: actionWorkspace }, workDepth: context.workDepth }, selected);
     const machineSetupAppBlockIds = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
       ? projectMachineSetupAcceptedAppBlockIds(input, context.materializedLeaves) : undefined;
-    const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, invocationRecordId, authorization: context.authorization,
+    const recordApprovalHold = async (approval: ActionApprovalRequestCreatedResult) => {
+      if (row?.execution?.kind !== 'action') throw new Error('workflow_invocation_fact_conflict');
+      row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'waiting_for_approval', reason: 'approval_required',
+        execution: { ...row.execution, output: approval } });
+      assertWorkflowAbortSignal(context);
+    };
+    const actionContext: WorkflowActionApprovalContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, invocationRecordId, authorization: context.authorization,
       source: context.source,
       workDepth: context.workDepth, workspace: actionWorkspace, ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
       ...(context.origin ? { origin: context.origin } : {}),
@@ -2039,6 +2045,10 @@ async function executeActionBlock(
       ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }),
       ...(selected.role ? { role: selected.role } : {}),
       ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId,
+      ...(contributedAction ? { workflowActionApprovalHold: {
+        actionRequestId,
+        onRequested: (artifactId: string) => recordApprovalHold({ kind: 'approval_request_created', actionId: 'action.invoke', artifactId }),
+      } } : {}),
       ...(machineSetupAppBlockIds ? { machineSetupAppBlockIds } : {}),
       ...(admittedStartDepth === undefined ? {} : { agentStartWorkDepth: admittedStartDepth,
         ...(selected.role ? { agentStartWorkspaceWrites: selected.role.workspaceWrites } : {}) }) };
@@ -2129,9 +2139,7 @@ async function executeActionBlock(
     if (approval?.success) {
       // The approval owner owns execution. Retain its exact correspondence before
       // observing settlement; reclaim joins the same receipt and never re-invokes.
-      row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'waiting_for_approval', reason: 'approval_required',
-        execution: { ...execution, output: approval.data } });
-      assertWorkflowAbortSignal(context);
+      await recordApprovalHold(approval.data);
       pendingApproval = approval;
       approvalHold = true;
     } else {

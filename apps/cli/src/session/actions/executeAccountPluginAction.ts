@@ -18,6 +18,7 @@ import { createCommittedContributedActionDefinitionLister, createCommittedContri
   createCommittedContributedActionSchemaReader, createRegistryInputTypeDeps,
   listRuntimeContributedActionDefinitions, projectDaemonContributedActionDefinition } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { WorkflowActionApprovalContext } from '@/daemon/workflows/actionApproval';
 import { createCredentialedTargetActionCurrentIntent } from './approvals/credentialedTargetActionCurrentIntent';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import type { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
@@ -241,7 +242,7 @@ async function executeInAccountRuntime(params: Parameters<typeof executeAccountP
   // This is an execution placement transfer. The answering App owns ordinary
   // Action admission, so a matching Agent request never executes here first.
   const execution = selectedAction?.definition.execution;
-  const origin = params.context;
+  const origin: WorkflowActionApprovalContext | undefined = params.context;
   const caller = origin?.actionCaller;
   const workflowInvocation = caller?.kind === 'workflowRun'
     && (params.actionId === ACTION_INVOKE_ACTION_ID_V1 || parseQualifiedPluginActionId(params.actionId) !== null);
@@ -317,6 +318,10 @@ async function executeInAccountRuntime(params: Parameters<typeof executeAccountP
   // Session or one-shot owner disposes it after its own lifetime.
   const lease = { registry, source: 'ephemeral' as const, durableRevision: -1, release: async () => {} };
   const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () => lease });
+  const requestCurrentIntent = createCredentialedTargetActionCurrentIntent(credentials, {
+    onApprovalRequested: params.host.onApprovalRequested,
+  });
+  const approvalHold = origin?.workflowActionApprovalHold;
   const executor = createActionExecutor({ ...params.deps,
     ...createRegistryInputTypeDeps(registry),
     listContributedActionDefinitions: list,
@@ -327,9 +332,12 @@ async function executeInAccountRuntime(params: Parameters<typeof executeAccountP
       ...(purposeRuntime ? { managedProviderOperationAuthority: createManagedProviderOperationAuthority({
         purposeBindingOwner: purposeRuntime.purposes,
       }) } : {}),
-      requestCurrentIntent: createCredentialedTargetActionCurrentIntent(credentials, {
-        onApprovalRequested: params.host.onApprovalRequested,
-      }),
+      requestCurrentIntent: workflowInvocation && approvalHold && approvalHold.actionRequestId === origin?.actionRequestId
+        ? request => requestCurrentIntent({ ...request, onLiveApprovalRequested: async artifactId => {
+          await approvalHold.onRequested(artifactId);
+          await request.onLiveApprovalRequested?.(artifactId);
+        } })
+        : requestCurrentIntent,
     }),
   });
   // Generic Action tools pass qualified plugin ids; the shared executor

@@ -1,3 +1,4 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { prepareActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import { ApprovalRequestPublicReadSchema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
@@ -14,6 +15,14 @@ import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 type ActionExecution = Extract<NonNullable<WorkflowProgressEnvelopeV1['execution']>, { kind: 'action' }>;
+
+/** In-process notification for the exact invocation whose approval waiter is already live. */
+export type WorkflowActionApprovalContext = ActionExecutorContext & Readonly<{
+  workflowActionApprovalHold?: Readonly<{
+    actionRequestId: string;
+    onRequested(artifactId: string): Promise<void>;
+  }>;
+}>;
 
 /** The coordinator claimed execution of this Ask. The installed receiver may spend only that same invocation. */
 export function matchesExecutingWorkflowStepApproval(input: Readonly<{
