@@ -31,6 +31,8 @@ import { createSessionPromptPlanResolver } from '@/agent/prompting/coding/sessio
 import { createAgentRuntimeDaemonServiceAuthorityFixture } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthority.testkit';
 import { resolveCurrentAgentRuntimeDaemonTurnContributions } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
 import { publishAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import { configuration } from '@/configuration';
+import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 
 const { loggerDebugMock } = vi.hoisted(() => ({
   loggerDebugMock: vi.fn(),
@@ -497,7 +499,7 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     loggerDebugMock.mockClear();
   });
 
-  it('projects the retained prompt-plan failure when its daemon endpoint goes away', async () => {
+  it('holds the retained prompt for a replacement daemon and projects settled prompt-plan refusals', async () => {
     await withTempDir('retained-prompt-daemon-', async directory => {
       const authority = await createAgentRuntimeDaemonServiceAuthorityFixture({ happyHomeDir: directory,
         runner: { pid: process.pid, processStartTimeMs: 1_717_171_717_000,
@@ -520,6 +522,16 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
       if (!address || typeof address === 'string') throw new Error('Missing test daemon HTTP address');
       const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => undefined);
       const runtime = createRuntime();
+      const runnerLifetime = new AbortController();
+      const replacementStarted = createDeferred<void>();
+      const replacement = createServer(servePrompt);
+      const originalStateFile = configuration.daemonStateFile;
+      const daemonStateFile = join(directory, 'daemon.state.json');
+      Object.assign(configuration, { daemonStateFile });
+      const publishDaemonReady = (httpPort: number) => writeJsonAtomicSync(daemonStateFile, {
+        pid: process.pid, httpPort, startedAt: Date.now(), startedWithCliVersion: 'fixture',
+      });
+      let replacementInputQueued = false;
       const unused = async (): Promise<never> => { throw new Error('Unexpected daemon operation'); };
       const prepare = createSessionPromptPlanResolver({
         opts: { credentials: { token: 'fixture', encryption: null } },
@@ -529,8 +541,10 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
         readNativeSessionId: () => 'provider-session-1',
         daemonBridge: {
           resolvePrompt: async ({ signal }) => {
+            if (replacementInputQueued) replacementStarted.resolve();
             const result = await resolveCurrentAgentRuntimeDaemonTurnContributions({
-              authority, requestId: 'retained-prompt', request: { kind: 'prompt' }, ...(signal ? { signal } : {}),
+              authority, requestId: 'retained-prompt', request: { kind: 'prompt' },
+              signal: replacementInputQueued ? runnerLifetime.signal : signal,
             });
             if (result.kind !== 'prompt') throw new Error('Wrong daemon contribution kind');
             return result;
@@ -546,6 +560,7 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
       });
       try {
         await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: address.port, capability: 'A'.repeat(43) });
+        publishDaemonReady(address.port);
         const cases = [
           { localId: 'authority-refusal', status: 403, responseCode: 'native_agent_privileged_effect_authority_unavailable',
             errorCode: 'native_agent_privileged_effect_authority_unavailable', actionPhase: 'agent_runtime.daemon_response',
@@ -555,17 +570,14 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
           { localId: 'broker-refusal', status: 200, responseCode: 'broker_unavailable',
             errorCode: 'broker_unavailable', actionPhase: 'agent_runtime.daemon_result' },
           { localId: 'lost-reply', errorCode: 'native_agent_privileged_effect_outcome_unknown', actionPhase: 'agent_runtime.daemon_response' },
-          { localId: 'offline-original', errorCode: 'ECONNREFUSED', actionPhase: 'agent_runtime.daemon_connect',
-            actionCause: { errorCode: 'ECONNREFUSED' } },
         ] as const;
         // Keep one runner and one loop. Advance the fixture only once the actual
         // Provider dispatch or the pre-turn failure completes.
         let next = 0;
         const configureNextEndpoint = async () => {
           const failure = cases[next];
-          if (!failure) return;
-          if (failure.localId === 'offline-original') await closeEndpoint();
-          else if (failure.localId === 'lost-reply') serve = (_request, response) => response.destroy();
+          if (!failure) return await closeEndpoint();
+          if (failure.localId === 'lost-reply') serve = (_request, response) => response.destroy();
           else serve = (_request, response) => {
             response.writeHead(failure.status, { 'content-type': 'application/json' });
             response.end(JSON.stringify({ ok: false, error: {
@@ -579,15 +591,35 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
           issues.push(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, ...context }));
           await configureNextEndpoint();
         });
-        const settlements = await runSingleSpecialCommand({
+        const running = runSingleSpecialCommand({
           text: 'control', localId: 'prompt-control', runtime, resolveFreshSessionSystemPrompt: prepare, onPromptFailure,
           nextOnReady: () => {
             const failure = cases[next];
-            if (failure) next += 1;
-            return failure ? { text: 'continue', localId: failure.localId } : undefined;
+            if (failure) {
+              next += 1;
+              return { text: 'continue', localId: failure.localId };
+            }
+            if (replacementInputQueued) return undefined;
+            replacementInputQueued = true;
+            return { text: 'continue after replacement', localId: 'during-replacement' };
           },
         });
+        await Promise.race([replacementStarted.promise, running]);
+        // Let the stopped listener refuse the connection with publication still withheld.
+        await new Promise(resolve => setTimeout(resolve, 100));
         expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+        expect(onPromptFailure).toHaveBeenCalledTimes(cases.length);
+        replacement.listen(0, '127.0.0.1');
+        await once(replacement, 'listening');
+        const replacementAddress = replacement.address();
+        if (!replacementAddress || typeof replacementAddress === 'string') throw new Error('Missing replacement HTTP address');
+        await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: replacementAddress.port, capability: 'B'.repeat(43) });
+        publishDaemonReady(replacementAddress.port);
+        const settlements = await running;
+        expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(2);
+        expect(runtime.sendTurnPrompt).toHaveBeenLastCalledWith(expect.stringMatching(/\n\ncontinue after replacement$/u), {
+          localId: 'during-replacement', localIds: ['during-replacement'],
+        });
         expect(onPromptFailure).toHaveBeenCalledTimes(cases.length);
         for (const [index, expected] of cases.entries()) {
           expect(settlements.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
@@ -610,6 +642,9 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
           });
         }
       } finally {
+        runnerLifetime.abort();
+        if (replacement.listening) await new Promise<void>(resolve => replacement.close(() => resolve()));
+        Object.assign(configuration, { daemonStateFile: originalStateFile });
         log.mockRestore();
         if (endpoint.listening) await closeEndpoint();
       }

@@ -1,6 +1,10 @@
 import { REASONING_EFFORT_NOT_ALLOWED } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { SessionBrokerApplicationFailureEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import { randomUUID } from 'node:crypto';
+import { on } from 'node:events';
+import { watch } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { basename, dirname } from 'node:path';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { configuration } from '@/configuration';
 import type { RequesterAgentStartPolicyV1 } from '@/daemon/sessionEncryption/requesterAgentStartPolicy';
@@ -27,6 +31,7 @@ import {
   HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
   readAgentRuntimeDaemonServiceAuthority,
   readCurrentRunnerAgentRuntimeDaemonServiceAuthority,
+  type AgentRuntimeDaemonServiceAuthorityDocumentV2,
   type AgentRuntimeDaemonServiceAuthorityExpectedInput,
 } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import { buildDaemonControlHttpHeaders, readDaemonControlHttpResponse } from '@/daemon/controlHttp';
@@ -41,7 +46,8 @@ import {
 } from './agentRuntimeDaemonPluginServicesProtocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { TeamCredentialDirectMaterialOperationError } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
-import { isProvenPreDispatchConnectionFailure } from '@/api/client/classifyServerEndpointError';
+import { isProvenPreDispatchConnectionFailure, readNormalizedConnectionErrorCode } from '@/api/client/classifyServerEndpointError';
+import { DaemonLocallyPersistedStateSchema } from '@/persistence';
 import { readMcpRequestAuthDiagnosticCode } from '@/mcp/runtime/mcpRequestAuth';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
@@ -884,15 +890,64 @@ export async function validateCurrentRunnerManagedServiceEndpointRead(
   );
 }
 
+type DaemonServiceDispatchInput = Readonly<{
+  authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;
+  createRequest(capability: string): AgentRuntimeDaemonServiceRequestV1;
+  timeoutMs?: number | null;
+  signal?: AbortSignal;
+}>;
+
+async function waitForReplacementTurnAuthority(
+  expected: AgentRuntimeDaemonServiceAuthorityExpectedInput,
+  incumbent: AgentRuntimeDaemonServiceAuthorityDocumentV2,
+  signal: AbortSignal,
+): Promise<AgentRuntimeDaemonServiceAuthorityDocumentV2 | null> {
+  const statePath = configuration.daemonStateFile;
+  signal.throwIfAborted();
+  try {
+    // Subscribe before the first read so a publication during the failed
+    // connection or while installing the watcher cannot strand this turn.
+    const watcher = watch(dirname(statePath), { persistent: false });
+    const changes = on(watcher, 'change', { signal, close: ['close'] });
+    try {
+      const readAttachment = async () => {
+        const content = await readFile(statePath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return null;
+          throw error;
+        });
+        if (content === null) return undefined;
+        const state = DaemonLocallyPersistedStateSchema.safeParse(JSON.parse(content));
+        if (!state.success || state.data.httpPort === 0) return undefined;
+
+        // The bootstrap publishes its listener after retained attachment and
+        // its currentness fence. The authority file alone is published earlier.
+        const current = await readAgentRuntimeDaemonServiceAuthority(expected);
+        if (current?.httpPort === state.data.httpPort
+          && (current.httpPort !== incumbent.httpPort || current.capability !== incumbent.capability)) {
+          return current;
+        }
+        // A successor ready without this runner's authority is a refusal.
+        return state.data.httpPort === incumbent.httpPort ? undefined : null;
+      };
+      const attachment = await readAttachment();
+      if (attachment !== undefined) return attachment;
+      for await (const [, filename] of changes) {
+        if (filename != null && filename !== basename(statePath)) continue;
+        const attachment = await readAttachment();
+        if (attachment !== undefined) return attachment;
+      }
+    } finally {
+      watcher.close();
+      await changes.return?.();
+    }
+  } catch {
+    signal.throwIfAborted();
+  }
+  return null;
+}
+
 export async function dispatchCurrentAgentRuntimeDaemonServiceRequest(
-  input: Readonly<{
-    authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;
-    createRequest(
-      capability: string,
-    ): AgentRuntimeDaemonServiceRequestV1;
-    timeoutMs?: number | null;
-    signal?: AbortSignal;
-  }>,
+  input: DaemonServiceDispatchInput,
 ): Promise<AgentRuntimeDaemonServiceResponseV1> {
   const authority =
     await readAgentRuntimeDaemonServiceAuthority(input.authority);
@@ -905,15 +960,6 @@ export async function dispatchCurrentAgentRuntimeDaemonServiceRequest(
     return unavailableResponse(undefined, { phase: 'agent_runtime.authority_read', errorClass: 'Error', errorCode: null, httpStatus: null });
   }
 
-  const issuedRequest = input.createRequest(authority.capability);
-  const request = AgentRuntimeDaemonServiceRequestV1Schema.parse({ ...issuedRequest,
-    context: { ...issuedRequest.context, ...(input.authority.executionRunSnapshotId
-      ? { executionRunSnapshotId: input.authority.executionRunSnapshotId } : {}) },
-  });
-  if (request.context.token !== authority.capability) {
-    return unavailableResponse();
-  }
-
   // Native launch preparation can await Project setup, approval and requester
   // admission. Its containing operation owns cancellation and any deadline;
   // elapsed transport time does not establish a failed privileged effect.
@@ -923,6 +969,33 @@ export async function dispatchCurrentAgentRuntimeDaemonServiceRequest(
   const signal = input.signal && timeoutSignal
     ? AbortSignal.any([input.signal, timeoutSignal])
     : input.signal ?? timeoutSignal ?? undefined;
+  return dispatchAtAuthority(input, authority, signal, timeoutSignal, true);
+}
+
+async function dispatchAtAuthority(
+  input: DaemonServiceDispatchInput,
+  authority: AgentRuntimeDaemonServiceAuthorityDocumentV2,
+  signal: AbortSignal | undefined,
+  timeoutSignal: AbortSignal | null,
+  allowAttachmentWait: boolean,
+): Promise<AgentRuntimeDaemonServiceResponseV1> {
+  const issuedRequest = input.createRequest(authority.capability);
+  const request = AgentRuntimeDaemonServiceRequestV1Schema.parse({ ...issuedRequest,
+    context: { ...issuedRequest.context, ...(input.authority.executionRunSnapshotId
+      ? { executionRunSnapshotId: input.authority.executionRunSnapshotId } : {}) },
+  });
+  if (request.context.token !== authority.capability) {
+    return unavailableResponse();
+  }
+
+  const operation = request.operation;
+  const waitForAttachment = allowAttachmentWait && input.signal && !input.authority.executionRunSnapshotId && (
+    operation.kind === 'turn.admission.authorize'
+    || (operation.kind === 'turn_contributions.resolve'
+      && operation.request.kind !== 'lifecycleHook'
+      && operation.request.kind !== 'composerAttachmentAccepted'
+      && operation.request.kind !== 'settleComposerStagedMedia')
+  );
 
   try {
     const response = await readDaemonControlHttpResponse({
@@ -1021,6 +1094,11 @@ export async function dispatchCurrentAgentRuntimeDaemonServiceRequest(
       isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition(error)
     ) {
       throw error;
+    }
+    if (waitForAttachment && signal && !signal.aborted && readNormalizedConnectionErrorCode(error) === 'ECONNREFUSED') {
+      const replacement = await waitForReplacementTurnAuthority(input.authority, authority, signal);
+      if (replacement) return dispatchAtAuthority(input, replacement, signal, timeoutSignal, false);
+      return unavailableResponse(undefined, projectActionFailureCauseV1(error, 'agent_runtime.daemon_connect'));
     }
     if (await didCurrentRunnerAuthorityRotate({
       expected: input.authority,

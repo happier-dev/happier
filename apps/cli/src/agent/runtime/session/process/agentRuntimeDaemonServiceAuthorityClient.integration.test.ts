@@ -11,6 +11,8 @@ import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
 import { createAgentRuntimeDaemonServiceAuthorityFixture as createTestAuthority } from './agentRuntimeDaemonServiceAuthority.testkit';
 
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
+import { configuration } from '@/configuration';
+import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 import { TeamCredentialDirectMaterialOperationError } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import {
   publishAgentRuntimeDaemonServiceAuthority,
@@ -52,6 +54,15 @@ const runnerIdentityMock = vi.hoisted(() => vi.fn());
 vi.mock('@/daemon/processIdentity', () => ({
   readProcessIdentityByPid: processIdentityMock,
 }));
+vi.mock('@/utils/loadUndici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/loadUndici')>();
+  return {
+    loadUndici: async () => {
+      const undici = await actual.loadUndici();
+      return vi.isMockFunction(globalThis.fetch) ? { ...undici, fetch: globalThis.fetch } : undici;
+    },
+  };
+});
 vi.mock(
   '@/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity',
   () => ({
@@ -1058,6 +1069,95 @@ describe('current Agent runtime daemon service authority client', () => {
       retryable: true,
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('holds retained prompt preparation across the daemon attachment gap', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-retained-turn-'));
+    roots.push(happyHomeDir);
+    const authority = await createTestAuthority({
+      happyHomeDir,
+      runner: {
+        pid: process.pid,
+        processStartTimeMs: 23_346,
+        processCommandHash: hashProcessCommand('happier runner --existing-session session-1'),
+        snapshotIdentity: 'snapshot:runner-a',
+      },
+    });
+    const requests: unknown[] = [];
+    const startDaemon = async () => {
+      const server = createServer(async (request, response) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(chunk);
+        requests.push(JSON.parse(Buffer.concat(chunks).toString()));
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({
+          ok: true,
+          result: { kind: 'turn_contributions', status: 'resolved',
+            contributions: { kind: 'transformAgentContext', payload: { input: 'prepared' } } },
+        }));
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
+      return {
+        port: address.port,
+        close: () => new Promise<void>(resolve => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        }),
+      };
+    };
+    const incumbent = await startDaemon();
+    const replacement = await startDaemon();
+    const lifetime = new AbortController();
+    const daemonStateFile = join(happyHomeDir, 'daemon.state.json');
+    const previousDaemonStateFile = configuration.daemonStateFile;
+    Object.assign(configuration, { daemonStateFile });
+    const publishReadyDaemon = (httpPort: number) => writeJsonAtomicSync(daemonStateFile, {
+      pid: process.pid, httpPort, startedAt: Date.now(), startedWithCliVersion: 'fixture',
+    });
+    const prepare = (requestId: string) => resolveCurrentAgentRuntimeDaemonTurnContributions({
+      authority, requestId, signal: lifetime.signal,
+      request: { kind: 'transformAgentContext', payload: { input: 'prompt' } },
+    });
+    try {
+      await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: incumbent.port, capability: 'A'.repeat(43) });
+      publishReadyDaemon(incumbent.port);
+      const prepared = { kind: 'transformAgentContext', payload: { input: 'prepared' } };
+      await expect(prepare('before-replacement')).resolves.toEqual(prepared);
+      await incumbent.close();
+
+      const pending = prepare('during-replacement');
+      const settled = vi.fn();
+      void pending.then(settled, settled);
+      // Give the old loopback connection time to refuse while attachment is held.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(settled).not.toHaveBeenCalled();
+      expect(requests).toHaveLength(1);
+
+      await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: replacement.port, capability: 'B'.repeat(43) });
+      expect(requests).toHaveLength(1);
+      publishReadyDaemon(replacement.port);
+      await expect(pending).resolves.toEqual(prepared);
+      expect(requests).toEqual([
+        expect.objectContaining({ operation: expect.objectContaining({ requestId: 'before-replacement' }) }),
+        expect.objectContaining({ operation: expect.objectContaining({ requestId: 'during-replacement' }) }),
+      ]);
+
+      await replacement.close();
+      const cancelled = prepare('runner-exits-during-replacement');
+      const cancelledAssertion = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      lifetime.abort();
+      await cancelledAssertion;
+      expect(requests).toHaveLength(2);
+    } finally {
+      lifetime.abort();
+      Object.assign(configuration, { daemonStateFile: previousDaemonStateFile });
+      await incumbent.close();
+      await replacement.close();
+    }
   });
 
   it('classifies a daemon-settled post-dispatch custody 503 as outcome unknown and keeps a quiescing 503 a proven pre-dispatch miss', async () => {
