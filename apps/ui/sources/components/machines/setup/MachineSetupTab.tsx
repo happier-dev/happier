@@ -9,6 +9,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { MachineInstallablesSection } from '@/components/machines/installables/MachineInstallablesSection';
+import { MachineResourcesAskBlock } from '@/components/machines/resources/ask/MachineResourcesAskBlock';
 import { useMachineToolsSummary } from '@/components/machines/installables/useMachineToolsSummary';
 import type { MachinePageTabBodyProps, MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
@@ -141,6 +142,7 @@ function MachineSetupRoot(
   const localize = usePluginLocalizedTextResolver({ projection });
   const serverIds = React.useMemo(() => [props.serverId], [props.serverId]);
   const [attachMenuOpen, setAttachMenuOpen] = React.useState(false);
+  const [signInsSettledFor, settleSignIns] = React.useState<string | null>(null);
   const browsePresets = editable && setup.plan !== null && setup.plan.sources.every(source => source.kind === 'direct');
   const locateMissingAddress = editable && setup.failure?.code === 'template_domain_required'
     && (setup.observation?.attachedPresets?.length ?? 0) > 0;
@@ -179,6 +181,11 @@ function MachineSetupRoot(
     localize={localize}
     presets={presetList}
   />;
+  // Ask an agent closes the tab's root here rather than in the page's footer, as on Overview: Sign-ins goes below it.
+  // Keyed, so its composer and draft stay mounted while the tab moves between its review and its sections.
+  const ask = (
+    <MachineResourcesAskBlock key="ask" serverId={props.serverId} machineId={props.machineId} machineName={machine} subject="setup" />
+  );
 
   if (setup.review) {
     return (
@@ -186,6 +193,7 @@ function MachineSetupRoot(
         <MachineSetupReviewHeading setup={setup} machineName={machine} />
         {attention}
         <MachineSetupReviewInPlace setup={setup} machineId={props.machineId} machineName={machine} />
+        {ask}
       </View>
     );
   }
@@ -259,6 +267,7 @@ function MachineSetupRoot(
           </ItemGroup>
         )}
         {toolsSection}
+        {ask}
       </View>
     );
   }
@@ -302,13 +311,16 @@ function MachineSetupRoot(
       </ItemGroup>
       {attention}
       {firstLoad ? (
-        // The two sections a checked setup always shows, held in place: the presets one is titled by what is attached,
-        // so its title waits too; each holds one row until it knows how many it has.
+        // The two sections a checked setup always shows, held in place, each holding one row and a title bar. What the
+        // check brings lands with them at once: a failure line above them, the preset rows (how many, how long), and the
+        // sections below them, so none of those moves anything already drawn (UI refinements ruling, delta check 23).
         <>
           <ItemGroup testID="machine-setup-loading" title={<SkeletonSectionTitle />}>
             <SkeletonItem testID="machine-setup-loading-preset" />
           </ItemGroup>
-          {recipesSection(<SkeletonItem testID="machine-setup-loading-recipes" />)}
+          <ItemGroup testID="machine-setup-loading-recipes-section" title={<SkeletonSectionTitle />}>
+            <SkeletonItem testID="machine-setup-loading-recipes" />
+          </ItemGroup>
         </>
       ) : (
         <>
@@ -521,16 +533,24 @@ function MachineSetupRoot(
           ) : null}
         </>
       )}
-      {toolsSection}
-      {/* Last: which CLIs this Machine has is known only once each has reported, seconds after the sections above have
-          settled, so its rows land below them and move nothing (UI refinements ruling, delta check 22). */}
-      <MachineSignInsSection
-        serverId={props.serverId}
-        machineId={props.machineId}
-        machineName={machine}
-        presented={presented}
-        editable={editable}
-      />
+      {firstLoad ? null : toolsSection}
+      {firstLoad ? null : ask}
+      {/* Last, below Ask an agent too: which CLIs this Machine has, and so how many rows, is known only once each has
+          reported, seconds after everything above has settled. The section reads from the start but shows once its report
+          has settled, whole, so neither its rows landing nor Ask an agent's composer settling above it moves anything on
+          screen (UI refinements rulings, delta checks 22 and 23). */}
+      {firstLoad ? null : (
+        <View style={signInsSettledFor === props.machineId ? undefined : styles.notYetShown}>
+          <MachineSignInsSection
+            serverId={props.serverId}
+            machineId={props.machineId}
+            machineName={machine}
+            presented={presented}
+            editable={editable}
+            onReportSettled={settleSignIns}
+          />
+        </View>
+      )}
     </View>
   );
 }
@@ -1124,4 +1144,5 @@ function describePreset(preset: MachineSetupPresetChoice): string {
 const styles = StyleSheet.create((theme) => ({
   rowActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   naturalWidth: { alignSelf: 'flex-start' },
+  notYetShown: { display: 'none' },
 }));

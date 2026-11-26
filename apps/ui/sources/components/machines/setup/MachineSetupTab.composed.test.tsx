@@ -1,4 +1,5 @@
 import * as React from 'react';
+import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
@@ -568,6 +569,9 @@ await sodium.ready;
 beforeEach(async () => {
   nativeRpc.replay = null;
   await harness.reset();
+  // The tab draws Ask an agent, whose embedded composer reads the device's draft storage.
+  const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+  await prepareSessionDraftPersistenceStorage();
   resetScopedHomeActionExecutorsForTests();
   // Retire the credential lifetime after failure diagnostics, before the next device reset.
   onTestFinished(() => harness.reset());
@@ -1800,7 +1804,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     await screen.unmount();
   });
 
-  it('holds the presets and recipes sections in place while the first check runs', async () => {
+  it('holds the presets and recipes sections in place while the first check runs, with nothing drawn below them', async () => {
     const home = await harness.addHome({
       name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
     });
@@ -1823,14 +1827,22 @@ describe('Machine → Setup tab (P-M1)', () => {
     await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-loading')).not.toBeNull());
     // The sections the checked setup shows are already standing, each holding one row.
     expect(screen.findByTestId('machine-setup-loading-preset')).not.toBeNull();
-    expect(screen.findByTestId('machine-setup-recipes')).not.toBeNull();
     expect(screen.findByTestId('machine-setup-loading-recipes')).not.toBeNull();
+    // Nothing is drawn below them yet: what the check brings (a failure line, the preset rows) lands with the sections
+    // under them, so none of it moves a section already on screen.
+    const sectionsBelow = ['machine-setup-tools-section', 'machine-resources-ask', 'machine-setup-sign-ins'];
+    for (const below of sectionsBelow) expect(screen.findByTestId(below), below).toBeNull();
     answerPlan();
     await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-recipes-none')).not.toBeNull());
     expect(screen.findByTestId('machine-setup-preset-none')).not.toBeNull();
     for (const held of ['machine-setup-loading', 'machine-setup-loading-preset', 'machine-setup-loading-recipes']) {
       expect(screen.findByTestId(held), held).toBeNull();
     }
+    // Ask an agent closes the tab's sections, and the Machine's sign-ins, whose rows land last, come after it.
+    const drawn = screen.findAll(node => typeof node.type === 'string' && sectionsBelow.includes(String(node.props.testID)))
+      .map(node => String(node.props.testID)).filter((id, index, ids) => ids.indexOf(id) === index);
+    expect(drawn.slice(0, 2)).toEqual(['machine-setup-tools-section', 'machine-resources-ask']);
+    if (drawn.length === 3) expect(drawn[2]).toBe('machine-setup-sign-ins');
     await screen.unmount();
   });
 

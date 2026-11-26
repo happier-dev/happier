@@ -256,10 +256,11 @@ export function MachinePageScreen() {
             active={tab}
             body={tabBody}
             barAccessoriesInBar={barAccessoriesInBar}
-            // Ask an agent closes every Resources tab's root (plan 60 AGW-11), never a page the tab pushes; Overview places it before its machine sections.
+            // Ask an agent closes every Resources tab's root (plan 60 AGW-11), never a page the tab pushes. Overview places it
+            // before its machine sections, and Setup before its Sign-ins, whose rows land last; both draw it themselves.
             footer={<MachineResourcesAskBlock serverId={serverId} machineId={machineId} machineName={target.machineSentenceName}
                 subject={tab.entry.id === 'setup' || tab.entry.id === 'security' ? tab.entry.id : 'resources'} />}
-            footerShown={tab.entry.id !== 'overview' && tab.entry.id !== 'plugin' && isMachinePageTabRoot(tab.params)}
+            footerShown={tab.entry.id !== 'overview' && tab.entry.id !== 'setup' && tab.entry.id !== 'plugin' && isMachinePageTabRoot(tab.params)}
             scrollOwned={ownsScroll}
         />
     );
