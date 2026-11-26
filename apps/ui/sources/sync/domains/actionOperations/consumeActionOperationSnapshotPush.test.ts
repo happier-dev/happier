@@ -82,7 +82,7 @@ describe('consumeActionOperationSnapshotPush', () => {
                     expectedRunningServiceIds: ['worker'], expectedRunningServicesKnown: true, dispatchStarted: true } } });
         // Only the Machine network transport disappears; parsing, admission scope,
         // revision checks and the actual surviving client store remain real.
-        const unavailable = (async () => { throw new Error('Target disconnected'); }) as ActionOperationRpc;
+        const unavailable = vi.fn(async () => { throw new Error('Target disconnected'); }) as unknown as ActionOperationRpc;
         await consumeActionOperationSnapshotPush({
             update: { type: 'action-operation-updated', machineId: 'machine-1', content: mode === 'plain'
                 ? { t: 'plain', v: reboot } : { t: 'encrypted', c: 'sealed' } },
@@ -91,8 +91,9 @@ describe('consumeActionOperationSnapshotPush', () => {
             readSnapshot: operationId => getActionOperation({ machineId: 'machine-1', serverId: 'home-1',
                 accountId: 'account-1', requireCurrentDomainFacts: true, operationId, rpc: unavailable }),
         });
+        expect(unavailable).not.toHaveBeenCalled();
         expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: reboot, snapshotComplete: true }]);
-        expect([...store.getSnapshot().machineObservationByKey.values()]).toEqual(['unavailable']);
+        expect([...store.getSnapshot().machineObservationByKey.values()]).toEqual(['available']);
     });
     it('does not let abandoned read cleanup discard a replacement observer\'s pending revision', async () => {
         const store = createActionOperationStore();
@@ -123,7 +124,7 @@ describe('consumeActionOperationSnapshotPush', () => {
         expect(beforeReplies).toBe(3);
         expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot, snapshotComplete: true }]);
     });
-    it('joins concurrent notifications of one new revision while a newer revision retains its own fresh read', async () => {
+    it('coalesces concurrent notifications per operation address while queueing a fresh read for a newer revision', async () => {
         const store = createActionOperationStore();
         const pending: Array<(response: Awaited<ReturnType<typeof readSnapshot>>) => void> = [];
         const read = vi.fn(() => new Promise<Awaited<ReturnType<typeof readSnapshot>>>(resolve => pending.push(resolve)));
@@ -135,9 +136,10 @@ describe('consumeActionOperationSnapshotPush', () => {
         expect(read).toHaveBeenCalledTimes(1);
         const newer: ActionOperationSnapshotV1 = { ...snapshot, revision: 3, state: 'succeeded', settledAt: 4, result: { sessionId: 'created' } };
         requests.push(consume(newer));
-        expect(read).toHaveBeenCalledTimes(2);
-        pending[1]!({ kind: 'found', operation: newer });
+        expect(read).toHaveBeenCalledTimes(1);
         pending[0]!({ kind: 'found', operation: snapshot });
+        await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+        pending[1]!({ kind: 'found', operation: newer });
         await Promise.all(requests);
         expect([...store.getSnapshot().operationsByKey.values()]).toEqual([{ serverId: 'home-1', snapshot: newer, snapshotComplete: true }]);
     });

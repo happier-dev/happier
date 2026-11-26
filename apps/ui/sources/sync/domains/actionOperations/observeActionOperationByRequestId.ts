@@ -39,6 +39,7 @@ export function observeActionOperation(input: OperationObservation & (
     return new Promise(resolve => {
         let finished = false;
         let reading = false;
+        let activeWaitOperationId: string | null = null;
         let changedWhileReading = false;
         let retained: ActionOperationSnapshotV1 | null = null;
         let retainedComplete = false;
@@ -87,6 +88,7 @@ export function observeActionOperation(input: OperationObservation & (
                 const selected = retained;
                 const operationId = selected?.operationId ?? input.operationId;
                 if (!operationId) return; // Publication or reconnect wakes this same observer; absence is not failure.
+                activeWaitOperationId = operationId;
                 const read = await getActionOperation({ ...input, signal: readController.signal,
                     operationId, waitForTerminal: true });
                 if (finished) return;
@@ -99,7 +101,7 @@ export function observeActionOperation(input: OperationObservation & (
                     return;
                 }
                 if (!matches(read.operation) || read.operation.operationId !== operationId) { finish(null); return; }
-                if (read.operation.revision < (retained?.revision ?? 0)) return;
+                if (read.operation.revision < (retained?.revision ?? 0)) { changedWhileReading = true; return; }
                 input.onUpdate?.(read.operation);
                 finish(read.operation);
             } catch (error) {
@@ -114,6 +116,7 @@ export function observeActionOperation(input: OperationObservation & (
                 }
             } finally {
                 reading = false;
+                activeWaitOperationId = null;
                 if (changedWhileReading) { changedWhileReading = false; void read(); }
             }
         };
@@ -128,12 +131,14 @@ export function observeActionOperation(input: OperationObservation & (
                 retained = operation;
                 retainedComplete = complete;
                 input.onUpdate?.(operation);
+                if (reading && activeWaitOperationId === operation.operationId
+                    && !(complete && isActionOperationTerminal(operation.state))) return;
                 void read();
             } });
         // Subscription immediately publishes a retained result when one exists.
         if (finished) { releaseObservation(); return; }
         releases.push(releaseObservation);
         releases.push(subscribeMachineRpcRecovery({ ...input, expectedAccountId: input.accountId }, () => { void read(); }));
-        void read();
+        if (!reading && !finished) void read();
     });
 }

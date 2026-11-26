@@ -271,15 +271,49 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     let previousDeploymentTargetLinks: readonly ActionOperationProjection[] = EMPTY_OPERATIONS;
     let previousDeploymentTargetLinksState: ActionOperationStoreSnapshot | null = null;
     let previousDeploymentTargetLinkQuery: DeploymentTargetLinkOperationQuery | null = null;
+    let previousInboxState: ActionOperationStoreSnapshot | null = null;
     let previousInbox: readonly InboxActionOperationEntry[] = EMPTY_INBOX_OPERATIONS;
     let previousActivitySummaryState: ActionOperationStoreSnapshot | null = null;
     let previousActivitySummary: ActionOperationActivitySummary = Object.freeze({ activeCount: 0, hasAttention: false });
     let previousInboxSummaryState: ActionOperationStoreSnapshot | null = null;
     let previousInboxSummary: InboxActionOperationSummary = Object.freeze({ count: 0, hasAttention: false });
     const projectionCache = new WeakMap<QualifiedActionOperation, ActionOperationProjection>();
-    const sessionCache = new Map<string, readonly ActionOperationProjection[]>();
-    const attemptsCache = new Map<string, readonly ActionOperationProjection[]>();
-    const serviceCache = new Map<string, readonly ActionOperationProjection[]>();
+    const createScopedListCache = () => {
+        let currentState: ActionOperationStoreSnapshot | null = null;
+        let current = new Map<string, readonly ActionOperationProjection[]>();
+        let previous = new Map<string, readonly ActionOperationProjection[]>();
+        return {
+            read(
+                state: ActionOperationStoreSnapshot,
+                key: string,
+                compute: () => readonly ActionOperationProjection[],
+            ): readonly ActionOperationProjection[] {
+                if (state !== currentState) {
+                    previous = state.operationsByKey.size === 0 ? new Map() : current;
+                    current = new Map();
+                    currentState = state;
+                }
+                if (state.operationsByKey.size === 0) return EMPTY_OPERATIONS;
+                const hit = current.get(key);
+                if (hit !== undefined) return hit;
+                const next = compute();
+                const prior = previous.get(key) ?? EMPTY_OPERATIONS;
+                const stable = next.length === 0
+                    ? EMPTY_OPERATIONS
+                    : hasSameItems(prior, next) ? prior : Object.freeze(next);
+                current.set(key, stable);
+                return stable;
+            },
+            clear() {
+                currentState = null;
+                current.clear();
+                previous.clear();
+            },
+        };
+    };
+    const sessionCache = createScopedListCache();
+    const attemptsCache = createScopedListCache();
+    const serviceCache = createScopedListCache();
 
     const readProjection = (state: ActionOperationStoreSnapshot, key: string, operation: QualifiedActionOperation): ActionOperationProjection => {
         const displayTitle = state.displayTitleByOperationKey.get(key);
@@ -316,6 +350,11 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             ? EMPTY_OPERATIONS
             : hasSameItems(previousAll, next) ? previousAll : Object.freeze(next);
         const active = nextAll.filter((operation) => !isActionOperationTerminal(operation.snapshot.state));
+        if (state.operationsByKey.size === 0) {
+            sessionCache.clear();
+            attemptsCache.clear();
+            serviceCache.clear();
+        }
         previousState = state;
         previousAll = nextAll;
         previousActive = active.length === 0
@@ -412,7 +451,6 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         if (!serverId || !query.accountId) return null;
         const workspaceKey = projectOperationWorkspaceKey({ ...query.workspace, serverId });
         if (!workspaceKey) return null;
-        selectAll(state);
         let selected: ActionOperationProjection | null = null;
         for (const [key, operation] of state.operationsByKey) {
             const snapshot = operation.snapshot;
@@ -430,7 +468,6 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     const selectForProjectOpen = (state: ActionOperationStoreSnapshot, query: ActionOperationProjectSourceQuery): ActionOperationProjection | null => {
         const serverId = normalizeActionOperationServerId(query.serverId);
         if (!serverId || !query.accountId || !query.machineId || !query.sourceId) return null;
-        selectAll(state);
         let selected: ActionOperationProjection | null = null;
         for (const [key, operation] of state.operationsByKey) {
             const { snapshot } = operation;
@@ -482,34 +519,31 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         const serverId = normalizeActionOperationServerId(query.serverId);
         if (!serverId || !query.accountId) return EMPTY_OPERATIONS;
         const key = JSON.stringify([serverId, query.accountId, query.machineId, query.refId]);
-        const services = new Map<string, ActionOperationProjection>();
-        for (const operation of selectAll(state)) {
-            const { snapshot } = operation;
-            const domain = snapshot.domainRef;
-            if (operation.serverId !== serverId || snapshot.scope.accountId !== query.accountId
-                || (snapshot.actionId !== 'projects.service.relocate' && snapshot.actionId !== 'localServices.launcher.start')
-                || (snapshot.actionId === 'projects.service.relocate' && snapshot.scope.machineId !== query.machineId)
-                || domain?.kind !== 'projectService' || domain.declaration.selection.kind !== 'manifest') continue;
-            const sourceMatches = domain.sourceWorkspace
-                ? areServerProfileIdentifiersEquivalent(domain.sourceWorkspace.serverId, serverId) && domain.sourceWorkspace.refId === query.refId
-                : areServerProfileIdentifiersEquivalent(domain.workspace.serverId, serverId) && domain.workspace.machineId === query.machineId
-                    && domain.workspace.workspaceId === query.refId;
-            if (!sourceMatches) continue;
-            const name = domain.declaration.selection.name;
-            const selected = services.get(name);
-            if (!selected || compareProjectServiceActionOperations(operation, selected) < 0) services.set(name, operation);
-        }
-        const next = [...services.values()];
-        const previous = serviceCache.get(key) ?? EMPTY_OPERATIONS;
-        const result = hasSameItems(previous, next) ? previous : Object.freeze(next);
-        serviceCache.set(key, result);
-        return result;
+        return serviceCache.read(state, key, () => {
+            const services = new Map<string, ActionOperationProjection>();
+            for (const operation of selectAll(state)) {
+                const { snapshot } = operation;
+                const domain = snapshot.domainRef;
+                if (operation.serverId !== serverId || snapshot.scope.accountId !== query.accountId
+                    || (snapshot.actionId !== 'projects.service.relocate' && snapshot.actionId !== 'localServices.launcher.start')
+                    || (snapshot.actionId === 'projects.service.relocate' && snapshot.scope.machineId !== query.machineId)
+                    || domain?.kind !== 'projectService' || domain.declaration.selection.kind !== 'manifest') continue;
+                const sourceMatches = domain.sourceWorkspace
+                    ? areServerProfileIdentifiersEquivalent(domain.sourceWorkspace.serverId, serverId) && domain.sourceWorkspace.refId === query.refId
+                    : areServerProfileIdentifiersEquivalent(domain.workspace.serverId, serverId) && domain.workspace.machineId === query.machineId
+                        && domain.workspace.workspaceId === query.refId;
+                if (!sourceMatches) continue;
+                const name = domain.declaration.selection.name;
+                const selected = services.get(name);
+                if (!selected || compareProjectServiceActionOperations(operation, selected) < 0) services.set(name, operation);
+            }
+            return [...services.values()];
+        });
     };
 
     const selectForManagedMachine = (state: ActionOperationStoreSnapshot, query: ActionOperationManagedMachineQuery) => {
         const serverId = normalizeActionOperationServerId(query.serverId);
         if (!serverId || !query.accountId || !query.machineId || !query.managedId) return null;
-        selectAll(state);
         let selected: ActionOperationProjection | null = null;
         for (const [key, operation] of state.operationsByKey) {
             const snapshot = operation.snapshot;
@@ -568,19 +602,14 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         const normalizedServerId = normalizeActionOperationServerId(address.serverId);
         if (!normalizedServerId || address.accountId === null || address.accountId === '') return EMPTY_OPERATIONS;
         const cacheKey = actionOperationSessionAddressKey({ ...address, serverId: normalizedServerId });
-        const operations = selectAll(state).filter((operation) => (
+        return sessionCache.read(state, cacheKey, () => selectAll(state).filter((operation) => (
             operation.serverId === normalizedServerId && operation.snapshot.scope.sessionId === address.sessionId
             && (address.accountId === undefined || operation.snapshot.scope.accountId === address.accountId)
-        ));
-        const cached = sessionCache.get(cacheKey) ?? EMPTY_OPERATIONS;
-        const stable = operations.length === 0
-            ? EMPTY_OPERATIONS
-            : hasSameItems(cached, operations) ? cached : Object.freeze(operations);
-        sessionCache.set(cacheKey, stable);
-        return stable;
+        )));
     };
 
     const selectInbox = (state: ActionOperationStoreSnapshot): readonly InboxActionOperationEntry[] => {
+        if (state === previousInboxState) return previousInbox;
         // selectAll orders settled operations newest first, so a work item's first failure is its latest attempt.
         const failuresByWorkItem = new Map<string, ActionOperationProjection[]>();
         const next = selectAll(state).flatMap((operation): readonly InboxActionOperationEntry[] => {
@@ -613,6 +642,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             }
             return [];
         });
+        previousInboxState = state;
         if (next.length === 0) {
             previousInbox = EMPTY_INBOX_OPERATIONS;
             return previousInbox;
@@ -629,15 +659,15 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     };
 
     const selectFailedAttempts = (state: ActionOperationStoreSnapshot, address: ActionOperationAddress): readonly ActionOperationProjection[] => {
+        if (state.operationsByKey.size === 0) {
+            attemptsCache.clear();
+            return EMPTY_OPERATIONS;
+        }
         const addressed = selectById(state, address);
         if (!addressed || addressed.snapshot.state !== 'failed') return EMPTY_OPERATIONS;
         const workItem = readActionOperationWorkItemKey(addressed);
-        const attempts = selectAll(state).filter(operation => operation.snapshot.state === 'failed'
-            && readActionOperationWorkItemKey(operation) === workItem);
-        const cached = attemptsCache.get(workItem) ?? EMPTY_OPERATIONS;
-        const stable = hasSameItems(cached, attempts) ? cached : Object.freeze(attempts);
-        attemptsCache.set(workItem, stable);
-        return stable;
+        return attemptsCache.read(state, workItem, () => selectAll(state).filter(operation => operation.snapshot.state === 'failed'
+            && readActionOperationWorkItemKey(operation) === workItem));
     };
 
     const selectHasUnseenTerminal = (state: ActionOperationStoreSnapshot) => selectAll(state).some((operation) => isUnseen(state, operation));

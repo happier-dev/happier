@@ -29,30 +29,68 @@ export function loadActionOperationAcknowledgements(scope: ServerAccountScope): 
     }
 }
 
-export function saveActionOperationAcknowledgements(scope: ServerAccountScope, entries: readonly ActionOperationAcknowledgement[]): void {
+function writeActionOperationAcknowledgements(scope: ServerAccountScope, entries: readonly ActionOperationAcknowledgement[]): boolean {
     try {
         const storage = getPersistenceStorage();
         const key = storageKey(scope);
         const raw = JSON.stringify({ version: 1, entries });
         if (storage.getString(key) !== raw) storage.set(key, raw);
+        return true;
     } catch (error) {
         log.log(`[actionOperations] Could not save local acknowledgements (${error instanceof Error ? error.name : 'unknown'})`);
+        return false;
     }
 }
+
+export function saveActionOperationAcknowledgements(scope: ServerAccountScope, entries: readonly ActionOperationAcknowledgement[]): void {
+    writeActionOperationAcknowledgements(scope, entries);
+}
+
+type PersistedAcknowledgementState = Readonly<{
+    scopeKey: string;
+    seenAt: number | undefined;
+    seenRevision: number | undefined;
+    dismissed: true | undefined;
+}>;
 
 /** Scoped local decisions; snapshots and transport observations stay in the live store. */
 export function createActionOperationAcknowledgementPersistence() {
     const scopes = new Map<string, ServerAccountScope>();
-    const metadataByKey = new Map<string, Readonly<{ scope: ServerAccountScope; operationId: string; machineId: string }>>();
+    const metadataByKey = new Map<string, Readonly<{ scope: ServerAccountScope; scopeKey: string; operationId: string; machineId: string }>>();
+    const persistedByKey = new Map<string, PersistedAcknowledgementState>();
+    const dirtyScopes = new Set<string>();
+
+    const recordOperationMetadata = (
+        state: Pick<ActionOperationStoreSnapshot, 'operationsByKey'>,
+        key: string,
+    ) => {
+        const operation = state.operationsByKey.get(key);
+        if (!operation) return;
+        const scope = { serverId: operation.serverId, accountId: operation.snapshot.scope.accountId };
+        metadataByKey.set(key, {
+            scope,
+            scopeKey: serverAccountScopeKeySuffix(scope),
+            operationId: operation.snapshot.operationId,
+            machineId: operation.snapshot.scope.machineId,
+        });
+    };
+
     return {
         hydrate(scope: ServerAccountScope): readonly ActionOperationAcknowledgement[] {
             const scopeKey = serverAccountScopeKeySuffix(scope);
             if (scopes.has(scopeKey)) return [];
             scopes.set(scopeKey, scope);
             const entries = loadActionOperationAcknowledgements(scope);
-            for (const entry of entries) metadataByKey.set(actionOperationAddressKey({ serverId: scope.serverId, operationId: entry.operationId }), {
-                scope, operationId: entry.operationId, machineId: entry.machineId,
-            });
+            for (const entry of entries) {
+                const key = actionOperationAddressKey({ serverId: scope.serverId, operationId: entry.operationId });
+                metadataByKey.set(key, { scope, scopeKey, operationId: entry.operationId, machineId: entry.machineId });
+                persistedByKey.set(key, {
+                    scopeKey,
+                    seenAt: entry.seenAt,
+                    seenRevision: entry.seenRevision,
+                    dismissed: entry.dismissed,
+                });
+            }
             return entries;
         },
         prune(scope: ServerAccountScope, retainMachine: (machineId: string) => boolean, retainedOperationKeys?: ReadonlySet<string>): readonly string[] {
@@ -61,30 +99,72 @@ export function createActionOperationAcknowledgementPersistence() {
                 if (metadata.scope.serverId !== scope.serverId || metadata.scope.accountId !== scope.accountId
                     || retainMachine(metadata.machineId) || retainedOperationKeys?.has(key)) continue;
                 metadataByKey.delete(key);
+                if (persistedByKey.has(key)) dirtyScopes.add(metadata.scopeKey);
                 removed.push(key);
             }
             return removed;
         },
         save(state: Pick<ActionOperationStoreSnapshot, 'operationsByKey' | 'seenAtByOperationKey' | 'dismissedRecentOperationKeys'>): void {
-            for (const [key, operation] of state.operationsByKey) {
-                if (!state.seenAtByOperationKey.has(key) && !state.dismissedRecentOperationKeys.has(key)) continue;
-                metadataByKey.set(key, { scope: { serverId: operation.serverId, accountId: operation.snapshot.scope.accountId },
-                    operationId: operation.snapshot.operationId, machineId: operation.snapshot.scope.machineId });
-            }
-            const entriesByScope = new Map<string, ActionOperationAcknowledgement[]>();
+            for (const key of state.seenAtByOperationKey.keys()) recordOperationMetadata(state, key);
+            for (const key of state.dismissedRecentOperationKeys) recordOperationMetadata(state, key);
+
             for (const [key, metadata] of metadataByKey) {
                 const seen = state.seenAtByOperationKey.get(key);
-                const dismissed = state.dismissedRecentOperationKeys.has(key);
-                if (!seen && !dismissed) continue;
-                const scopeKey = serverAccountScopeKeySuffix(metadata.scope);
-                const entries = entriesByScope.get(scopeKey) ?? [];
-                entries.push({ operationId: metadata.operationId, machineId: metadata.machineId, seenAt: seen?.seenAt,
-                    seenRevision: seen && seen.revision >= 0 ? seen.revision : undefined,
-                    dismissed: dismissed ? true : undefined });
-                entriesByScope.set(scopeKey, entries);
+                const dismissed = state.dismissedRecentOperationKeys.has(key) ? true : undefined;
+                const prev = persistedByKey.get(key);
+                if (!seen && !dismissed) {
+                    if (prev) dirtyScopes.add(metadata.scopeKey);
+                    continue;
+                }
+                const seenAt = seen?.seenAt;
+                const seenRevision = seen && seen.revision >= 0 ? seen.revision : undefined;
+                if (!prev || prev.scopeKey !== metadata.scopeKey || prev.seenAt !== seenAt
+                    || prev.seenRevision !== seenRevision || prev.dismissed !== dismissed) {
+                    dirtyScopes.add(metadata.scopeKey);
+                }
             }
-            for (const [scopeKey, scope] of scopes) saveActionOperationAcknowledgements(scope, entriesByScope.get(scopeKey) ?? []);
+            if (dirtyScopes.size === 0) return;
+
+            const entriesByScope = new Map<string, ActionOperationAcknowledgement[]>();
+            const nextPersistedByScope = new Map<string, Array<readonly [string, PersistedAcknowledgementState]>>();
+            for (const [key, metadata] of metadataByKey) {
+                if (!dirtyScopes.has(metadata.scopeKey)) continue;
+                const seen = state.seenAtByOperationKey.get(key);
+                const dismissed = state.dismissedRecentOperationKeys.has(key) ? true : undefined;
+                if (!seen && !dismissed) continue;
+                const seenAt = seen?.seenAt;
+                const seenRevision = seen && seen.revision >= 0 ? seen.revision : undefined;
+                const entries = entriesByScope.get(metadata.scopeKey) ?? [];
+                entries.push({
+                    operationId: metadata.operationId,
+                    machineId: metadata.machineId,
+                    seenAt,
+                    seenRevision,
+                    dismissed,
+                });
+                entriesByScope.set(metadata.scopeKey, entries);
+                const nextPersisted = nextPersistedByScope.get(metadata.scopeKey) ?? [];
+                nextPersisted.push([key, { scopeKey: metadata.scopeKey, seenAt, seenRevision, dismissed }]);
+                nextPersistedByScope.set(metadata.scopeKey, nextPersisted);
+            }
+            for (const scopeKey of [...dirtyScopes]) {
+                const scope = scopes.get(scopeKey);
+                if (!scope) continue;
+                if (!writeActionOperationAcknowledgements(scope, entriesByScope.get(scopeKey) ?? [])) continue;
+                dirtyScopes.delete(scopeKey);
+                for (const [key, prev] of persistedByKey) {
+                    if (prev.scopeKey === scopeKey) persistedByKey.delete(key);
+                }
+                for (const [key, entry] of nextPersistedByScope.get(scopeKey) ?? []) {
+                    persistedByKey.set(key, entry);
+                }
+            }
         },
-        reset(): void { scopes.clear(); metadataByKey.clear(); },
+        reset(): void {
+            scopes.clear();
+            metadataByKey.clear();
+            persistedByKey.clear();
+            dirtyScopes.clear();
+        },
     };
 }

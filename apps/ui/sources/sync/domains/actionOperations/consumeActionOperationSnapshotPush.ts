@@ -5,6 +5,7 @@ import {
     projectActionOperationListSnapshotV1,
     type ActionOperationGetV1Response,
     type ActionOperationRevisionEphemeralV1,
+    type ActionOperationSnapshotV1,
 } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -18,8 +19,32 @@ import {
     type QualifiedActionOperation,
 } from './qualifiedActionOperation';
 
-type PendingPushRefresh = Readonly<{ shouldContinue: () => boolean; promise: Promise<void> }>;
+type QueuedPushRefresh = Readonly<{
+    params: Parameters<typeof consumeActionOperationSnapshotPush>[0];
+    shouldContinue: () => boolean;
+    snapshot: ActionOperationSnapshotV1;
+}>;
+type PendingPushRefresh = {
+    revision: number;
+    shouldContinue: () => boolean;
+    promise: Promise<void>;
+    queued: QueuedPushRefresh | null;
+};
 const pushRefreshes = new WeakMap<ActionOperationStore, Map<string, PendingPushRefresh>>();
+
+function needsSnapshotAdmission(
+    retained: QualifiedActionOperation | undefined,
+    snapshot: ActionOperationSnapshotV1,
+): boolean {
+    if (!retained) return true;
+    if (canAdvanceActionOperationSnapshotV1(retained.snapshot, snapshot)) return true;
+    return retained.snapshotComplete !== true
+        && retained.snapshot.revision === snapshot.revision
+        && sameStrictJsonValue(
+            projectActionOperationListSnapshotV1(retained.snapshot),
+            projectActionOperationListSnapshotV1(snapshot),
+        );
+}
 
 export async function consumeActionOperationSnapshotPush(params: Readonly<{
     update: ActionOperationRevisionEphemeralV1;
@@ -54,10 +79,7 @@ export async function consumeActionOperationSnapshotPush(params: Readonly<{
     const store = params.store ?? actionOperationStore;
     const address = actionOperationAddressKey({ serverId: sourceServerId, operationId: snapshot.operationId });
     const retained = store.getSnapshot().operationsByKey.get(address);
-    if (retained && !canAdvanceActionOperationSnapshotV1(retained.snapshot, snapshot)
-        && !(retained.snapshotComplete !== true && retained.snapshot.revision === snapshot.revision
-            && sameStrictJsonValue(projectActionOperationListSnapshotV1(retained.snapshot),
-                projectActionOperationListSnapshotV1(snapshot)))) return;
+    if (!needsSnapshotAdmission(retained, snapshot)) return;
     // Reboot and successful Software Apply publish full Account-scoped facts
     // before the target daemon can disappear. Other notifications still need
     // the ordinary fresh read to supply their current domain facts.
@@ -68,23 +90,56 @@ export async function consumeActionOperationSnapshotPush(params: Readonly<{
         && snapshot.domainRef.machineId === snapshot.scope.machineId
         && areServerProfileIdentifiersEquivalent(snapshot.domainRef.serverId, sourceServerId)) {
         store.mergeSnapshots({ serverId: sourceServerId, snapshots: [snapshot], snapshotComplete: true });
+        const operation = store.getSnapshot().operationsByKey.get(address);
+        if (operation && sameStrictJsonValue(operation.snapshot, snapshot)) {
+            await params.onSnapshot?.(operation);
+        }
+        return;
     }
 
     let reads = pushRefreshes.get(store);
     if (!reads) { reads = new Map(); pushRefreshes.set(store, reads); }
     const key = JSON.stringify([address, snapshot.scope.accountId, snapshot.scope.machineId,
-        snapshot.scope.sessionId, snapshot.actionId, snapshot.revision]);
+        snapshot.scope.sessionId, snapshot.actionId]);
     const pending = reads.get(key);
-    if (pending?.shouldContinue()) { await pending.promise; return; }
-    // Join copies of this notification only. A new revision retains its fresh
-    // Machine admission; a retired Account observer cannot own a new read.
-    const promise = refreshActionOperationSnapshot({ ...params, store,
-        operation: { serverId: sourceServerId, snapshot } }).finally(() => {
-        if (reads.get(key)?.promise === promise) reads.delete(key);
+    if (pending?.shouldContinue()) {
+        if (snapshot.revision > pending.revision
+            && (!pending.queued || !pending.queued.shouldContinue() || snapshot.revision >= pending.queued.snapshot.revision)) {
+            pending.queued = { params, shouldContinue, snapshot };
+        }
+        await pending.promise;
+        return;
+    }
+    // Coalesce per operation address so rapid revisions never fan out into
+    // concurrent overlapping daemon reads, while preserving latest-revision
+    // fresh Machine admission and retiring abandoned observers cleanly.
+    const entry: PendingPushRefresh = {
+        revision: snapshot.revision,
+        shouldContinue,
+        queued: null,
+        promise: Promise.resolve(),
+    };
+    const run = async () => {
+        let current: QueuedPushRefresh = { params, shouldContinue, snapshot };
+        for (;;) {
+            await refreshActionOperationSnapshot({ ...current.params, store,
+                operation: { serverId: sourceServerId, snapshot: current.snapshot } });
+            if (reads.get(key) !== entry) return;
+            const next = entry.queued;
+            entry.queued = null;
+            if (!next || !next.shouldContinue()) return;
+            if (!needsSnapshotAdmission(store.getSnapshot().operationsByKey.get(address), next.snapshot)) return;
+            entry.revision = next.snapshot.revision;
+            entry.shouldContinue = next.shouldContinue;
+            current = next;
+        }
+    };
+    entry.promise = run().finally(() => {
+        if (reads.get(key) === entry) reads.delete(key);
         if (reads.size === 0 && pushRefreshes.get(store) === reads) pushRefreshes.delete(store);
     });
-    reads.set(key, { shouldContinue, promise });
-    await promise;
+    reads.set(key, entry);
+    await entry.promise;
 }
 
 /** Both notifications and terminal exit re-read the daemon through this admission path. */
