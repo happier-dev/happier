@@ -105,7 +105,7 @@ export async function readCurrentPrepareReviewWorkspace(
                     ...selectedInput, entryRef: expectedInput.entryRef,
                     observed: expectedInput.observed, lastKnownLocator: expectedInput.lastKnownLocator,
                 }, {
-                ...(selected.credentialRef === undefined ? {} : { expectedSelectedConnectedAccountRef: selected.credentialRef }),
+                expectedSelectedConnectedAccountRef: selected.credentialRef ?? null,
                 ...(options?.signal === undefined ? {} : { signal: options.signal }),
             }),
         ...(context.signal ? { signal: context.signal } : {}),

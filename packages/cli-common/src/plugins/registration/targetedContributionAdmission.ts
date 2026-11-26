@@ -470,9 +470,12 @@ function selectedActionInputForAction(
     if (accountPaths.length !== 1) {
         return Object.freeze({ kind: 'unavailable' as const });
     }
+    const nativeServicePath = action.definition.connectedAccountPurposeBindings
+        ?.find(binding => binding.path === accountPaths[0])?.nativeServicePath;
     return Object.freeze({
         kind: 'connectedAccount' as const,
         fieldPath: accountPaths[0]!,
+        ...(nativeServicePath === undefined ? {} : { nativeServicePath }),
     });
 }
 

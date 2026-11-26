@@ -1790,7 +1790,7 @@ describe('the Session-start wire', () => {
                     prepareCalls += 1;
                     expect(selectedOperation).toBe(operation);
                     expect(value).toEqual(projectTriagePrepareReviewWorkspaceInputV1(selectedRequest.request));
-                    expect(options).not.toHaveProperty('expectedSelectedConnectedAccountRef');
+                    expect(options).toMatchObject({ expectedSelectedConnectedAccountRef: null });
                     return { kind: 'prepared', repositoryPath: '/workspaces/example-review', branch: 'pr-17', created: false,
                         pullRequest: { number: 17 }, currentness: { kind: 'currentAtObservedHead' } };
                 },

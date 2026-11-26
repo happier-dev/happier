@@ -10,6 +10,7 @@ import {
     defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolString,
+    defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 
 import {
@@ -398,6 +399,103 @@ describe('admitted targeted-operation execution', () => {
             }),
         });
         expect(invokeContributedAction).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['transient', 'retained'] as const)('consumes an explicitly native %s setup through the real provider parser without substituting an Account', async (mode) => {
+        const nativeService = { pluginId: 'acme.accounts', localId: 'github' };
+        const input = { repository: 'hapier-qa/reviews-fixture-1125', credential: { source: 'native' as const, service: nativeService } };
+        const nativeServiceSchema = defineProtocolObject({ pluginId: defineProtocolString(), localId: defineProtocolString() }, { policy: 'closed' });
+        const schema = defineProtocolObject({ repository: defineProtocolString(), credential: defineProtocolUnion([defineProtocolObject({
+            source: defineProtocolLiteral('native'), service: nativeServiceSchema,
+        }, { policy: 'closed' }), defineProtocolObject({ source: defineProtocolLiteral('connectedAccount'),
+            account: QualifiedConnectedAccountRefSchema }, { policy: 'closed' })]) }, { policy: 'closed' });
+        let effects = 0;
+        const protocol = defineContributionProtocol({ id: 'native-source', version: 1, operations: { prepare: { required: true,
+            input: { kind: 'contributorDefined' }, resultSchema: defineProtocolJsonValue(),
+            action: { surfaces: ['plugin'], dangerLevel: 'safe' } } } });
+        const target = definePlugin({ id: 'acme.target', version: '1.0.0', contributionPoints: { sources: protocol.point() } });
+        const provider = definePlugin({ id: 'acme.native-provider', version: '1.0.0',
+            runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.js' }, actions: {
+                setup: { title: 'Prepare native workspace', surfaces: ['plugin'], dangerLevel: 'safe', inputSchema: schema,
+                    connectedAccountPurposeBindings: [
+                        { path: 'credential.account', nativeServicePath: 'credential.service', purpose: 'github' },
+                    ],
+                    resultSchema: defineProtocolObject({ repository: defineProtocolString(), service: defineProtocolString() }, { policy: 'closed' }),
+                    run: async value => { effects += 1; return { repository: value.repository, service: value.credential.source === 'native' ? value.credential.service.localId : 'account' }; },
+                },
+            }, contributesTo: { [target.manifest.id]: { sources: { github: protocol.contribute({
+                operations: { prepare: protocol.operations.prepare.bind('setup') } }) } } } });
+        const host = await createPluginTestkit({ manifest: provider.manifest, module: provider });
+        const targetCustody = createManagedPluginSourceCustody('native-target-a');
+        const providerCustody = createManagedPluginSourceCustody('native-provider-a');
+        const operation = { point: { pointId: 'sources', protocol: { id: protocol.id, version: protocol.version } },
+            contributor: { pluginId: provider.manifest.id, contributionId: 'github', occurrenceId: 'provider-a', sourceCustody: providerCustody },
+            role: 'prepare', action: { pluginId: provider.manifest.id, localId: 'setup' } };
+        const carrier = { operation, result: { kind: 'submitted' as const, action: operation.action, input,
+            selection: { target: { pluginId: 'acme.target', sourceCustody: targetCustody }, point: operation.point,
+                contributor: { pluginId: provider.manifest.id, contributionId: 'github', sourceCustody: providerCustody } },
+            connectedAccount: { kind: 'none' as const }, presentation: { connectedAccountLabel: null, machineDisplayName: null } } };
+        const caller = createPluginActionCallerMaterializationFixture('acme.target');
+        const createService = (settlement: NonNullable<Parameters<typeof createPluginInvocationActionsService>[0]['seed']['selectedActionInputCarrier']> = carrier) => createPluginInvocationActionsService({ seed: {
+            plugin: { id: 'acme.target', version: '1.0.0' }, occurrenceId: 'target-a', sourceCustody: targetCustody,
+            contribution: { id: 'start', qualifiedId: 'acme.target/actions/start' }, surface: 'plugin',
+            resolveCurrentPluginMaterializationRef: caller.resolveCurrentPluginMaterializationRef,
+            ...(mode === 'transient' ? { selectedActionInputCarrier: settlement } : {}), isMountedCallerCurrent: async () => true,
+            signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        }, actionExecutor: { execute: vi.fn() },
+            // Cross-host transport only; the SDK executes the registered Action and strict provider input parser.
+            invokeContributedAction: async request => {
+                if (request.input === undefined) throw new Error('Admitted setup input is required');
+                return { status: 'executed', value: await host.invokeAction('setup', request.input, { surface: 'plugin' }) };
+            },
+        });
+        const service = createService();
+        const declarations = [target, provider].map((plugin, index) => ({ manifest: normalizePluginManifestV2(plugin.manifest),
+            occurrenceId: index === 0 ? 'target-a' : 'provider-a', sourceCustody: index === 0 ? targetCustody : providerCustody }));
+        const observation = createManifestTargetedContributionsService({ readCurrentDeclarations: () => ({ declarations }),
+            subscribeToCatalogChanges: () => () => {} }).bind({ pluginId: target.manifest.id,
+            signal: new AbortController().signal, isCurrent: () => true }).observeForSelf(target.contributionPoints.sources, { onInvalidated() {} });
+        const admitted = (await observation.readCurrent()).contributions[0]!.operations.prepare;
+        try {
+            const account = { service: nativeService, accountId: 'unselected-account' };
+            if (mode === 'retained') {
+                await expect(service.executeAdmittedTargetedOperation(admitted, { repository: input.repository, credential: { source: 'connectedAccount' } },
+                    { expectedSelectedConnectedAccountRef: account })).resolves.toEqual({ repository: input.repository, service: 'account' });
+                expect(effects).toBe(1);
+            }
+            const admittedEffects = effects;
+            await expect(service.executeAdmittedTargetedOperation(admitted, input, { expectedSelectedConnectedAccountRef: account }))
+                .rejects.toMatchObject(mode === 'transient'
+                    ? { code: 'plugin_selected_action_input_invalid', actionHandlerInvocation: 'notStarted' }
+                    : { code: 'plugin_action_input_schema_invalid' });
+            if (mode === 'transient') await expect(service.executeAdmittedTargetedOperation(admitted, { ...input, repository: 'another/repository' }, { expectedSelectedConnectedAccountRef: null }))
+                .rejects.toMatchObject({ code: 'plugin_selected_action_input_invalid', actionHandlerInvocation: 'notStarted' });
+            if (mode === 'transient') {
+                const connectedInput = { ...input, credential: { source: 'connectedAccount', account } };
+                const substituted = createService({ ...carrier, result: { ...carrier.result, input: connectedInput } });
+                await expect(substituted.executeAdmittedTargetedOperation(admitted, connectedInput, { expectedSelectedConnectedAccountRef: null }))
+                    .rejects.toMatchObject({ code: 'plugin_selected_action_input_invalid', actionHandlerInvocation: 'notStarted' });
+            }
+            expect(effects).toBe(admittedEffects);
+            await expect(service.executeAdmittedTargetedOperation(admitted, input, { expectedSelectedConnectedAccountRef: null }))
+                .resolves.toEqual({ repository: input.repository, service: 'github' });
+            expect(effects).toBe(admittedEffects + 1);
+            if (mode === 'transient') await expect(service.executeAdmittedTargetedOperation(admitted, input, { expectedSelectedConnectedAccountRef: null }))
+                .rejects.toMatchObject({ code: 'plugin_selected_action_input_invalid', actionHandlerInvocation: 'notStarted' });
+            if (mode === 'retained') {
+                const malformed: Parameters<typeof service.executeAdmittedTargetedOperation>[1][] = [
+                    { ...input, credential: { source: 'native' } },
+                    { ...input, credential: { source: 'connectedAccount' } },
+                ];
+                for (const value of malformed) {
+                    await expect(service.executeAdmittedTargetedOperation(admitted, value, { expectedSelectedConnectedAccountRef: null }))
+                        .rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
+                }
+                await expect(service.executeAdmittedTargetedOperation(admitted, { ...input, credential: { ...input.credential, account } }, { expectedSelectedConnectedAccountRef: null }))
+                    .rejects.toMatchObject({ code: 'plugin_selected_action_input_invalid', actionHandlerInvocation: 'notStarted' });
+            }
+            expect(effects).toBe(admittedEffects + 1);
+        } finally { observation.dispose(); await host.dispose(); }
     });
 
     it.each([

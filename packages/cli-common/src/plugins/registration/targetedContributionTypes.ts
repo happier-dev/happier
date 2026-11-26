@@ -15,7 +15,7 @@ export type AdmittedTargetedContributionContributor<TOccurrence extends string =
  */
 export type AdmittedTargetedContributionActionInputSelection = Readonly<
     | { kind: 'none' }
-    | { kind: 'connectedAccount'; fieldPath: string }
+    | { kind: 'connectedAccount'; fieldPath: string; nativeServicePath?: string }
     | { kind: 'unavailable' }
 >;
 

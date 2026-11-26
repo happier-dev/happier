@@ -66,9 +66,12 @@ export async function resolveAdmittedTargetedOperationInput(params: Readonly<{
         }
         if (expectedRef === null) {
             // An explicit native credential is not an omitted/default Account.
-            // Preserve only null at the exact declared binding path; schema and
-            // purpose admission still own whether that native mode is usable.
-            if (readInputPath(params.input, selected.fieldPath) !== null) throw selectedActionInputInvalid();
+            // A declared native-service arm can omit its Account operand. The
+            // provider parser and purpose admission still own native validity.
+            const account = readInputPath(params.input, selected.fieldPath);
+            if (account !== null && (account !== undefined || selected.nativeServicePath === undefined)) {
+                throw selectedActionInputInvalid();
+            }
             return params.input;
         }
         const reconstructed = reconstructPluginUiSelectedActionInput({
@@ -149,12 +152,15 @@ export async function resolveAdmittedTargetedOperationInput(params: Readonly<{
 
     const expectedRef = params.expectedSelectedConnectedAccountRef;
     const selected = params.binding.selectedActionInput;
-    if (selected.kind === 'none') {
-        if (expectedRef !== null || carrier.result.connectedAccount.kind !== 'none') {
+    if (expectedRef === null) {
+        const account = selected.kind === 'connectedAccount' ? readInputPath(params.input, selected.fieldPath) : undefined;
+        if (carrier.result.connectedAccount.kind !== 'none'
+            || (selected.kind === 'connectedAccount'
+                && (selected.nativeServicePath === undefined || (account !== undefined && account !== null)))) {
             throw selectedActionInputInvalid();
         }
     } else if (
-        expectedRef === null
+        selected.kind === 'none'
         || carrier.result.connectedAccount.kind !== 'selected'
         || carrier.result.connectedAccount.fieldPath !== selected.fieldPath
         || !sameQualifiedConnectedAccountRef(expectedRef, carrier.result.connectedAccount.ref)

@@ -47,6 +47,7 @@ function freezeSelectedActionInput(
     return Object.freeze({
         kind: 'connectedAccount' as const,
         fieldPath: selectedActionInput.fieldPath,
+        ...(selectedActionInput.nativeServicePath === undefined ? {} : { nativeServicePath: selectedActionInput.nativeServicePath }),
     });
 }
 
