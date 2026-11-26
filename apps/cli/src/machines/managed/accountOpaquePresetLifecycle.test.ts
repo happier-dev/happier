@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import fastify from 'fastify';
+import { signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -44,7 +45,10 @@ describe('Account opaque preset lifecycle entries', () => {
                 return schema.parse({ machine, presetContent: { content, recipients: [] }, requestId });
             } })).resolves.toEqual({ machine });
     });
-    it.each([['inspect', true], ['inspect', false], ['delete', true], ['delete', false], ['resize', true]] as const)('opens %s context at the Account owner and seals its native report (reviewed %s)', async (operation, reviewed) => {
+    it.each([
+        ['inspect', true, 'opaque'], ['inspect', false, 'opaque'], ['delete', true, 'opaque'], ['delete', false, 'opaque'],
+        ['resize', true, 'opaque'], ['delete', true, 'full'],
+    ] as const)('settles %s through the Account owner (reviewed %s, %s row)', async (operation, reviewed, layout) => {
         const native = fixture();
         const manifest = native.manifest;
         const provisioner = manifest.contributes.machineProvisioners[0]!;
@@ -88,8 +92,9 @@ describe('Account opaque preset lifecycle entries', () => {
         }));
         await app.ready();
         cleanup.push(installAxiosFastifyAdapter({ app, origin: serverUrl }));
-        let machine = ManagedOpaquePresetMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
-            ...(operation === 'delete' ? { enrolledMachineId: retiredGrant.machineId, ...(reviewed ? {} : { enrollmentAccountId: 'member' }) } : {}),
+        const structural = ManagedOpaquePresetMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+            ...(operation === 'delete' && layout === 'opaque'
+                ? { enrolledMachineId: retiredGrant.machineId, ...(reviewed ? {} : { enrollmentAccountId: 'member' }) } : {}),
             preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' }, allocation: 'bound', creationState: 'active',
             desired: operation === 'delete' ? 'delete' : 'stop', desiredWhen: 'now', intentRevision: 1,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
@@ -98,13 +103,14 @@ describe('Account opaque preset lifecycle entries', () => {
                 retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } } : {}),
             nativeResult: { kind: 'bound', resource }, observation }) };
         // Released raw rows can carry preset metadata while retaining full native fields.
-        const legacy = ManagedMachineFullV1Schema.parse({ ...machine, launch, resource, reviewedFacts: content.v.reviewedFacts });
+        const legacy = ManagedMachineFullV1Schema.parse({ ...structural, launch, resource, reviewedFacts: content.v.reviewedFacts });
+        let machine: typeof structural | typeof legacy = layout === 'full' ? legacy : structural;
         const reports: unknown[] = [];
         const roles: string[] = [];
         const post: Parameters<typeof executeCliManagedAccountInspect>[0]['post'] = async (path, body, schema) => {
             if (path === 'context') return schema.parse({ machine, presetContent: { content, recipients: [] }, requestId });
             if (path === 'admit-control') return schema.parse(operation === 'resize' ? { machine: legacy, replayed: false }
-                : { machine, presetContent: { content, recipients: [] }, replayed: false });
+                : { machine, ...(layout === 'opaque' ? { presetContent: { content, recipients: [] } } : {}), replayed: false });
             if (path === 'report-resize') { reports.push(body); return schema.parse({ machine: legacy }); }
             if (path === 'submit-intent') {
                 machine = { ...machine, submittedNativeEffect: { intent: 'delete', requestId, intentRevision: machine.intentRevision } };
@@ -115,7 +121,21 @@ describe('Account opaque preset lifecycle entries', () => {
                 events.push('report');
                 expect(body).not.toHaveProperty('resource');
                 expect(body).not.toHaveProperty('launch');
-                expect(body).toHaveProperty('presetContent');
+                if (layout === 'opaque') {
+                    expect(body).toHaveProperty('presetContent');
+                } else {
+                    // The signed CLI request validates the body before JSON transport.
+                    signExternalActionMachineRequestV1({
+                        authorizationToken: 'fixture-authorization', effectActionId: 'machines.managed.delete',
+                        target: { kind: 'machine', machineId: 'account-host' }, installationId: 'installation',
+                        requestId, method: 'POST', path: '/v1/machines/managed/controller/report-intent', body,
+                        privateKey: new Uint8Array(64),
+                    });
+                    expect(body).toMatchObject({
+                        requestId, expectedIntentRevision: machine.intentRevision, result: { kind: 'confirmed' },
+                        observation: { availability: 'absent' },
+                    });
+                }
                 const { submittedNativeEffect: _settled, ...current } = machine;
                 machine = { ...current, allocation: operation === 'delete' ? 'confirmed-absent' : 'bound',
                     observation: operation === 'delete' ? { observedAt: 11, availability: 'absent' } : observation };
@@ -154,8 +174,9 @@ describe('Account opaque preset lifecycle entries', () => {
         expect(JSON.stringify(result)).not.toContain('private-machine');
         expect(JSON.stringify(result)).not.toContain('private-native');
         expect(reports).toHaveLength(1);
-        expect(events).toEqual(operation === 'delete' && reviewed ? ['report', 'catalog'] : operation === 'resize' ? [] : ['report']);
-        expect(catalogWrites).toEqual(operation === 'delete' && reviewed ? [expect.objectContaining({
+        const retiresProviderGrant = operation === 'delete' && reviewed && layout === 'opaque';
+        expect(events).toEqual(retiresProviderGrant ? ['report', 'catalog'] : operation === 'resize' ? [] : ['report']);
+        expect(catalogWrites).toEqual(retiresProviderGrant ? [expect.objectContaining({
             expectedRevision: 4, content: { t: 'plain', v: { ...catalog, machineGrants: [standingGrant] } },
         })] : []);
         expect(roles).toEqual(operation === 'resize' ? [provisioner.actions.resize, provisioner.actions.inspect]

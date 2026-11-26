@@ -284,6 +284,20 @@ function withManagedBootstrapObservation(machine: ManagedMachineFullV1, observat
         ...(retained?.carrierFailure ? { carrierFailure: retained.carrierFailure } : {}) };
 }
 
+/** The report retains the submitted controller, and omits it for an Account-owned submission. */
+export function buildSubmittedManagedIntentCorrelation(
+    machine: Pick<ManagedMachineFullV1, 'homeId' | 'id'>,
+    submitted: NonNullable<ManagedMachineFullV1['submittedNativeEffect']>,
+): ManagedControllerCurrentnessV1 {
+    return {
+        homeId: machine.homeId,
+        managedId: machine.id,
+        expectedIntentRevision: submitted.intentRevision,
+        requestId: submitted.requestId,
+        ...(submitted.controller === undefined ? {} : { controller: submitted.controller }),
+    };
+}
+
 /** Observe a bound submission and report against its original admitted intent. */
 export async function reconcileManagedBoundNativeIntent(input: Readonly<{
     machine: ManagedMachineFullV1;
@@ -294,8 +308,7 @@ export async function reconcileManagedBoundNativeIntent(input: Readonly<{
     invoke: ManagedNativeInvocation;
 }>): Promise<ManagedMachineFullV1> {
     const { machine, resource, outstanding } = input;
-    const correlation = { homeId: machine.homeId, managedId: machine.id,
-        expectedIntentRevision: outstanding.intentRevision, requestId: outstanding.requestId, controller: outstanding.controller };
+    const correlation = buildSubmittedManagedIntentCorrelation(machine, outstanding);
     if (outstanding.intent === 'rebuild' && input.provisioner?.reconciliation) {
         const value = resource.value;
         // Preserve the original rebuild review while observing uncertain delivery.

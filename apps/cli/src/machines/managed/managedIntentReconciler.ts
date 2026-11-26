@@ -14,7 +14,7 @@ import { createManagedGuestActivityTransport } from './managedActivityTransport'
 import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
 import { canPrepareManagedRetentionPolicy, hasEndedBoundSessionDeletion, hasSubmittedManagedRetentionEffect } from './managedRetentionPolicy';
 import { assertManagedDeleteNativeResult, canObserveAcceptedManagedDelete, observeAcceptedManagedDelete } from './deleteObservation';
-import { createManagedNativeObservationWait, executeManagedMachinePowerIntent, executeManagedMachineDeleteIntent, prepareManagedMachineDeleteIntent, reconcileManagedBoundNativeIntent, settleManagedNativeIntent } from '@happier-dev/cli-common/machines/managed';
+import { buildSubmittedManagedIntentCorrelation, createManagedNativeObservationWait, executeManagedMachinePowerIntent, executeManagedMachineDeleteIntent, prepareManagedMachineDeleteIntent, reconcileManagedBoundNativeIntent, settleManagedNativeIntent } from '@happier-dev/cli-common/machines/managed';
 import type { MachineProvisionerRenewResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -314,9 +314,9 @@ async function runManagedIntent(params: ManagedIntentReconciliation): Promise<Ma
             // native IO or the report; current owns exact-request correlation.
             let current: ManagedMachineFullV1;
             try {
-                current = await client.row('current', { homeId: machine.homeId, managedId: machine.id,
-                    expectedIntentRevision: outstanding.intentRevision, requestId: outstanding.requestId,
-                    controller: outstanding.controller, nativeRole: 'inspect' }, null);
+                current = await client.row('current', {
+                    ...buildSubmittedManagedIntentCorrelation(machine, outstanding), nativeRole: 'inspect',
+                }, null);
             } catch { throw error; }
             if (publishSettledManagedNativeOperation(undefined, machine, current, outstanding) !== true) throw error;
             return current;
@@ -354,8 +354,7 @@ async function runManagedIntent(params: ManagedIntentReconciliation): Promise<Ma
                 || retained.schemaVersion !== machine.launch.schemaVersion) throw new ManagedMachineControllerError('resource_mismatch');
         }
         const reconcileOutstanding = async (outstanding: NonNullable<ManagedMachineFullV1['submittedNativeEffect']>) => {
-            const correlation = { homeId: machine.homeId, managedId: machine.id,
-                expectedIntentRevision: outstanding.intentRevision, requestId: outstanding.requestId, controller: outstanding.controller };
+            const correlation = buildSubmittedManagedIntentCorrelation(machine, outstanding);
             // A bound resource's retained operation is deletion custody. An
             // unbound allocation still carries its acquisition/cleanup identity.
             if (params.action === 'machines.managed.delete' && outstanding.intent === 'delete' && machine.resource && machine.nativeOperationRef) {
@@ -470,10 +469,8 @@ async function runManagedIntent(params: ManagedIntentReconciliation): Promise<Ma
                 machine = submission.machine;
                 client.assertConnection(machine);
                 const outstanding = machine.submittedNativeEffect;
-                const correlation = outstanding ? {
-                    homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: outstanding.intentRevision,
-                    requestId: outstanding.requestId, controller: outstanding.controller,
-                } : client.correlation(admittedMachine);
+                const correlation = outstanding ? buildSubmittedManagedIntentCorrelation(machine, outstanding)
+                    : client.correlation(admittedMachine);
                 if (!submission.submitted) {
                     // Home retains settlement on this exact rebuild admission;
                     // retrying it cannot replace the already bound child again.

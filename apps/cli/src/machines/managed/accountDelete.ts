@@ -1,4 +1,4 @@
-import { prepareManagedMachineDeleteIntent, settleManagedMachineDeleteIntent, ManagedMachineControllerError,
+import { buildSubmittedManagedIntentCorrelation, prepareManagedMachineDeleteIntent, settleManagedMachineDeleteIntent, ManagedMachineControllerError,
     type ManagedNativeInvocation } from '@happier-dev/cli-common/machines/managed';
 import { ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerCurrentnessV1Schema,
     ManagedControllerMachineOutputV1Schema, ManagedControllerSubmitOutputV1Schema,
@@ -62,8 +62,7 @@ export async function executeCliManagedAccountDelete(input: Omit<Parameters<type
     machine = hydrator.normalize(submitted.machine);
     const outstanding = machine.submittedNativeEffect;
     if (!submitted.submitted && outstanding?.intent !== 'delete') throw new ManagedMachineControllerError('native_intent_unconfirmed');
-    const retainedCorrelation = outstanding ? { ...correlation(), requestId: outstanding.requestId,
-        expectedIntentRevision: outstanding.intentRevision, controller: outstanding.controller } : correlation();
+    const retainedCorrelation = outstanding ? buildSubmittedManagedIntentCorrelation(machine, outstanding) : correlation();
     const warning = submitted.submitted && machine.enrolledMachineId
         ? await readManagedDeleteTailnetWarning(machine.enrolledMachineId, input) : undefined;
     machine = await settleManagedMachineDeleteIntent({ machine, invoke, io: { signal: input.signal },
