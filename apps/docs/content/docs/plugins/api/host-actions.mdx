@@ -38,8 +38,8 @@ Bundled and externally installed plugins reach these Actions through the same `a
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
-- Request admission: `human_approval` — host Agent, MCP and plugin callers default to Ask, which the user can waive; API-token callers receive `present_user_required`.
-- Decision/effect authority: `present_user` — API tokens never run or approve it; host automation defaults to Ask, which the user can waive.
+- Request admission: `human_approval` — host plugin callers follow this Action’s approval policy; API-token callers receive `present_user_required`.
+- Decision/effect authority: `present_user` — API tokens never run or approve it.
 - Also surfaced on: `ui`, `cli`.
 
 ### Input guidance
@@ -153,8 +153,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Request admission: `human_approval` — host Agent, MCP and plugin callers default to Ask, which the user can waive; API-token callers receive `present_user_required`.
-- Decision/effect authority: `present_user` — API tokens never run or approve it; host automation defaults to Ask, which the user can waive.
+- Request admission: `human_approval` — host plugin callers follow this Action’s approval policy; API-token callers receive `present_user_required`.
+- Decision/effect authority: `present_user` — API tokens never run or approve it.
 - Also surfaced on: `ui`.
 
 ### Input guidance
@@ -546,8 +546,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
-- Request admission: `human_approval` — host Agent, MCP and plugin callers default to Ask, which the user can waive; API-token callers receive `present_user_required`.
-- Decision/effect authority: `present_user` — API tokens never run or approve it; host automation defaults to Ask, which the user can waive.
+- Request admission: `human_approval` — host plugin callers follow this Action’s approval policy; API-token callers receive `present_user_required`.
+- Decision/effect authority: `present_user` — API tokens never run or approve it.
 - Also surfaced on: `ui`.
 
 ### Input guidance

@@ -8,6 +8,15 @@ import { canRequestPresentUserApprovalForActionInputV1, DECISION_ACTION_IDS,
 const GENERATED_REFERENCE_NOTE =
   'Generated from the canonical ActionSpec registry. Do not hand-edit.';
 
+function renderAutomationCallers(spec: ActionSpec): string {
+  const callers = [
+    ...(spec.surfaces.agent ? ['Agent'] : []),
+    ...(spec.surfaces.mcp ? ['MCP'] : []),
+    'plugin',
+  ];
+  return new Intl.ListFormat('en-GB').format(callers);
+}
+
 function compareCodePoints(left: string, right: string): number {
   if (left < right) return -1;
   if (left > right) return 1;
@@ -41,7 +50,10 @@ function renderRequestAdmission(spec: ActionSpec): string {
     return '`conversational_input` — host invocations retain normal Action admission and policy; API-token answers follow the Send grant without requiring `approve` scope';
   }
   if (canRequestPresentUserApprovalForActionInputV1(spec)) {
-    return '`human_approval` — host Agent, MCP and plugin callers default to Ask, which the user can waive; API-token callers receive `present_user_required`';
+    const policy = spec.surfaces.agent && spec.surfaces.mcp
+      ? 'default to Ask, which the user can waive'
+      : 'follow this Action’s approval policy';
+    return `\`human_approval\` — host ${renderAutomationCallers(spec)} callers ${policy}; API-token callers receive \`present_user_required\``;
   }
   const admission = resolveCredentialActionAdmissionV1({
     spec, authority: 'account_automation', grant: null, surface: 'plugin',
@@ -58,9 +70,13 @@ function renderDecisionEffectAuthority(spec: ActionSpec): string {
   if ((TOKEN_CONVERSATIONAL_INPUT_ACTION_IDS as readonly string[]).includes(spec.id)) {
     return '`conversational_input` — answers are conversational input; API-token answers use the Send grant, and do not confer security approval authority';
   }
-  return spec.requiredAuthority === 'present_user'
-    ? '`present_user` — API tokens never run or approve it; host automation defaults to Ask, which the user can waive'
-    : '`account_automation` — subject to applicable approval and target decision authority';
+  if (spec.requiredAuthority === 'present_user') {
+    const hostPolicy = spec.surfaces.agent && spec.surfaces.mcp
+      ? '; host automation defaults to Ask, which the user can waive'
+      : '';
+    return `\`present_user\` — API tokens never run or approve it${hostPolicy}`;
+  }
+  return '`account_automation` — subject to applicable approval and target decision authority';
 }
 
 function renderHostSurfaces(spec: ActionSpec): string {

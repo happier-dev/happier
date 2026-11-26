@@ -13,6 +13,10 @@ const PLAN_REVERSIBLE_SESSION_ACTION_IDS: ReadonlySet<string> = new Set([
   'session.goal.clear',
 ]);
 
+function hasHappierActionEffectCeiling(permissionMode: PermissionMode): boolean {
+  return permissionMode === 'read-only' || permissionMode === 'plan';
+}
+
 /** Action effects enforce the ceiling; ordinary confirmation stays with the Action executor. */
 export type HappierActionPermissionResult =
   | Readonly<{ decision: 'approved' }>
@@ -24,7 +28,7 @@ export function resolveHappierActionPermission(params: Readonly<{
 }>): HappierActionPermissionResult {
   const planModeSelfControl = params.permissionMode === 'plan'
     && PLAN_REVERSIBLE_SESSION_ACTION_IDS.has(params.spec.id);
-  return (params.permissionMode === 'read-only' || params.permissionMode === 'plan')
+  return hasHappierActionEffectCeiling(params.permissionMode)
     && !planModeSelfControl
     && params.spec.sideEffectClass !== 'none'
     && params.spec.sideEffectClass !== 'read'
@@ -65,8 +69,7 @@ export function createHappierActionIngressExecutor(params: Readonly<{
     async execute(actionId: ActionId, input: unknown, context?: ActionExecutorContext, definition?: ActionDefinitionV1): Promise<ActionExecuteResult> {
       const { mode, witness } = params.readPermission();
       const permissionMode = resolveHappierActionIngressMode(mode, witness);
-      // Legacy Plan behavior at execution remains with the incumbent native path.
-      if (permissionMode === 'read-only') {
+      if (hasHappierActionEffectCeiling(permissionMode)) {
         let spec = definition ?? findActionSpec(actionId);
         if (!spec && parseQualifiedPluginActionId(actionId)) {
           const discovery = await params.executor.execute('action.spec.get', { id: actionId }, context);

@@ -1110,7 +1110,7 @@ describe('createHappierMcpServer real host admission', () => {
     } finally { await daemon.close(); }
   });
 
-  it('refuses wrapped and direct Workflow draft creation at the Session MCP ingress for Codex and Pi', async () => {
+  it.each(['read-only', 'plan'] as const)('refuses wrapped and direct Workflow draft creation at the %s Session MCP ingress for Codex and Pi', async permissionMode => {
     const sessionId = 'c666666666666666666668125';
     const actionId = 'workflow.definition.create';
     const toolName = getActionSpec(actionId).bindings?.mcpToolName;
@@ -1118,12 +1118,12 @@ describe('createHappierMcpServer real host admission', () => {
     const daemon = await installAccountCatalogDaemonTransport({ sessionId, readMetadata: () => createTestMetadata(),
       features: { features: { workflows: { enabled: true } }, capabilities: {} } });
     const runtime = createHappierMcpServer(hostClient(sessionId, {
-      getPermissionMode: () => 'read-only',
+      getPermissionMode: () => permissionMode,
       getServerFeaturesSnapshot: () => daemon.serverFeaturesSnapshot,
     }), { sessionCredentials: daemon.credentials, requiredDirectActionIds: [actionId] });
     const input = {
       definitionId: '912ae652-cab1-4ad9-a027-3aee5a679125',
-      metadata: { title: 'Read-only draft' },
+      metadata: { title: 'Workflow draft' },
       definition: { version: 1, inputs: [], defaults: {}, blocks: [{ id: 'wait', kind: 'wait',
         document: { text: 'Continue', references: [], attachments: [] } }] },
     };
@@ -1133,7 +1133,7 @@ describe('createHappierMcpServer real host admission', () => {
         expect(tools).toEqual(expect.arrayContaining(['action_execute', toolName]));
         const codex = buildCodexAppServerConfigOverrides({ happier: { command: 'bridge' } });
         expect(codex.mcpOverrides).toContain('mcp_servers.happier.tools.action_execute.approval_mode="approve"');
-        const pi = buildPiRpcArgs({ permissionMode: 'read-only', happierToolsExtension: {
+        const pi = buildPiRpcArgs({ permissionMode, happierToolsExtension: {
           extensionPath: '/fixture/extension.mjs', configPath: '/fixture/config.json', toolNames: tools,
         } });
         expect(pi[pi.indexOf('--tools') + 1]?.split(',')).toEqual(expect.arrayContaining(['action_execute', toolName]));
@@ -1152,7 +1152,7 @@ describe('createHappierMcpServer real host admission', () => {
           const content = reply.content[0];
           expect.soft(reply.isError, label).toBe(true);
           expect.soft(content.type === 'text' ? JSON.parse(content.text) : null, label).toMatchObject({
-            errorCode: 'permission_exceeds_ceiling', error: expect.stringContaining('read-only'),
+            errorCode: 'permission_exceeds_ceiling', error: expect.stringContaining(permissionMode),
           });
         }
       });
@@ -2302,9 +2302,9 @@ describe('createHappierMcpServer', () => {
     expect(toolNames).toContain('session_list');
   });
 
-  it('enforces the Session MCP ceiling before account Action settings and admits reads and later writes', async () => {
+  it.each(['read-only', 'plan'] as const)('enforces the %s Session MCP ceiling before account Action settings and admits reads and later writes', async permissionMode => {
     let settings = accountSettingsParse({});
-    let mode: import('@/api/types').PermissionMode = 'read-only';
+    let mode: import('@/api/types').PermissionMode = permissionMode;
     await withTitleHost('c111111111111111111111112', () => settings, async fixture => withMcpClient(fixture.runtime, async client => {
       const wrapped = { name: 'action_execute', arguments: { actionId: 'session.title.set', input: { title: 'Denied' } } };
       for (const request of [wrapped, { name: 'change_title', arguments: { title: 'Denied' } }]) {
@@ -2312,7 +2312,7 @@ describe('createHappierMcpServer', () => {
         const content = reply.content[0];
         expect(reply.isError).toBe(true);
         expect(content.type === 'text' ? JSON.parse(content.text) : null).toMatchObject({
-          errorCode: 'permission_exceeds_ceiling', error: expect.stringContaining('read-only'),
+          errorCode: 'permission_exceeds_ceiling', error: expect.stringContaining(permissionMode),
         });
       }
       expect(fixture.persistedWrites()).toBe(0);
