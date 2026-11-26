@@ -10,6 +10,22 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { handleToolsCommand } from './tools';
+import { dispatchCli } from '@/cli/dispatch';
+import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
+import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';
+import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionSchemaReader } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
+import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
+import { executeAppliedDaemonPluginActionWithController } from '@/plugins/daemon/controlRoutes';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { UiContributedActionExecuteRequestV1Schema } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
+import { currentUiContextReadClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-sources/runtime';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
 import { findCompiledActionCliCommand, listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
@@ -88,7 +104,7 @@ async function createDeploymentAdmissionFixture() {
 
 // Real Unix HTTP + MCP SDK server is the CLI's network boundary. It deliberately
 // binds one owner independently of the untrusted CLI --session-id argument.
-async function openSessionMcpBoundary(useHappierOwner = false, actionExecutor?: ReturnType<typeof createActionExecutor>) {
+async function openSessionMcpBoundary(useHappierOwner = false, actionExecutor?: Pick<ReturnType<typeof createActionExecutor>, 'execute'>) {
   const root = await mkdtemp(join(tmpdir(), 'happier-agent-tools-'));
   const socketPath = join(root, 'mcp.sock');
   const bearer = 's'.repeat(43);
@@ -172,6 +188,80 @@ async function openSessionMcpBoundary(useHappierOwner = false, actionExecutor?: 
 }
 
 describe('Agent tools Session MCP authority', () => {
+  it.runIf(supportsSessionMcpLocalTransport())('dispatches Pi native current-context read before selecting the returned mount', async () => {
+    const mountId = '_r_16_';
+    const action = { pluginId: PLUGIN_MANIFEST.id, localId: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 };
+    const viewId = 'c6027590-2b4c-42ea-8528-0d16be2a4d98';
+    const selectedViews: string[] = [];
+    const mountedAction = { action, mountId };
+    const bundled = loadCurrentBundledPluginLocatorResult();
+    const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({ loadResult: {
+      loadedPlugins: bundled.loadedPlugins.filter(plugin => plugin.pluginId === action.pluginId)
+        .map(plugin => ({ ...plugin, manifest: normalizePluginManifestV2(PLUGIN_MANIFEST) })),
+      diagnosticsByPluginId: {},
+    }, provenance: 'first_party' }));
+    const executeClientAction = createClientActionMachineRpcExecutor(() => ({
+      callConnectedClientRpc: async (_method, raw, options) => {
+        const request = UiContributedActionExecuteRequestV1Schema.parse(JSON.parse(JSON.stringify(raw)));
+        expect(request).toMatchObject({ action, input: { mountId, operation: { kind: 'selectSavedView', viewId } } });
+        options.onIssued();
+        selectedViews.push(viewId);
+        return { ok: true, result: { ok: true, result: { status: 'applied' } } };
+      },
+    }));
+    const fixture = await createAdmittedPluginRuntimeFixture({
+      runtimeOptions: { contributes, pluginIds: [action.pluginId], executeClientAction },
+    });
+    const listDefinitions = createCommittedContributedActionDefinitionLister({
+      tryAcquireRuntimeRegistryLease: () => fixture.controller.tryAcquireRuntimeRegistry(),
+    });
+    const base = createActionExecutor({
+      clientActionExecute: createClientActionReverseDispatcher(() => ({
+        hasConnectedClientRpcHandler: () => true,
+        callConnectedClientRpc: async (method, input, options) => {
+          expect(method).toBe(currentUiContextReadClientRpcMethod());
+          expect(input).toMatchObject({ actionId: 'ui.current_context.read', input: {} });
+          options.onIssued();
+          return { ok: true, result: { v: 1, execution: { ok: true, result: {
+            navigation: { area: 'triage', screen: 'prs-and-issues' }, detail: { mountedAction }, commands: [],
+          } } } };
+        },
+      })),
+      listContributedActionDefinitions: listDefinitions,
+      readContributedActionSchemas: createCommittedContributedActionSchemaReader(listDefinitions),
+    });
+    const executor = createDaemonPluginActionExecutor({
+      base,
+      requestPluginActionExecution: async (request, options, invocation) => request.actionId === 'action.spec.get'
+        ? { matched: true, result: await base.execute('action.spec.get', request.input, invocation?.context) }
+        : await executeAppliedDaemonPluginActionWithController(request, fixture.controller, undefined, options?.signal, 'owner'),
+    });
+    const boundary = await openSessionMcpBoundary(false, executor);
+    const previousExitCode = process.exitCode;
+    const call = async (actionId: string, input: unknown) => {
+      const output = captureStdoutJsonOutput();
+      const args = ['tools', 'call', '--source', 'happier', '--agent-bridge', '--session-id', actionSessionId,
+        '--directory', process.cwd(), '--tool', 'action_execute', '--args-json', JSON.stringify({ actionId, input }),
+        '--tool-call-id', 'pi-native-tool-call', '--json'];
+      try {
+        await dispatchCli({ args, rawArgv: ['happier', ...args], terminalRuntime: null });
+        return output.json();
+      } finally { output.restore(); }
+    };
+    try {
+      // The direct request controls for the Session transport independently of command selection.
+      expect(await executeSessionMcpAction('ui.current_context.read', {}))
+        .toMatchObject({ ok: true, result: { detail: { mountedAction } } });
+      const context = await call('ui.current_context.read', {});
+      expect(context, JSON.stringify(context)).toMatchObject({ ok: true, data: { output: { detail: { mountedAction } } } });
+      const current = context.data.output.detail.mountedAction;
+      const receipt = await call(formatQualifiedPluginActionId(current.action), {
+        mountId: current.mountId, operation: { kind: 'selectSavedView', viewId },
+      });
+      expect(receipt, JSON.stringify(receipt)).toMatchObject({ ok: true, data: { output: { status: 'applied' } } });
+      expect(selectedViews).toEqual([viewId]);
+    } finally { process.exitCode = previousExitCode; await boundary.close(); await fixture.dispose(); }
+  });
   it('retains canonical failure identity through the Action options bridge', async () => {
     const executor = createActionExecutor({});
     const bridge = createActionToolExecutorBridge({ executor: {

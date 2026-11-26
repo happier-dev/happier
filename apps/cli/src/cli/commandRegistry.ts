@@ -33,6 +33,8 @@ import type { CompiledActionCliCommand } from '@/cli/actions/compiledCommands';
 import { resolveCommandPathCompletionCandidates } from './commandCompletionPaths';
 import { findActionCliCommandPattern, resolveActionCliCommandPathCompletionCandidates } from './actions/commandPatterns';
 import { isDeploymentCiStepCommand } from './actions/discoveryRouting';
+import { resolveShellBridgeActionSurfaceV1 } from './actions/shellBridgeActionSurface';
+import { argvBeforeOptionTerminator } from './commands/shared/argvFlags';
 import { findPluginCommandCompletionCommand } from './pluginCommandMetadata';
 import type { PluginCommandActionInputRegistry } from './pluginCommandFields';
 import type { EphemeralResolvedServerSelection } from '@/server/serverSelection';
@@ -325,6 +327,9 @@ export async function resolveAdmittedActionCliCommand(
   args: readonly string[],
 ): Promise<CompiledActionCliCommand | null> {
   if (isDeploymentCiStepCommand(args)) return null;
+  // The generated native bridge calls the Session tool by name through the dedicated command.
+  if (args[0] === 'tools' && args[1] === 'call'
+    && resolveShellBridgeActionSurfaceV1(argvBeforeOptionTerminator(args)) === 'agent') return null;
   const words = readLeadingCommandWords(args);
   if (words.length === 0) return null;
   if (!findActionCliCommandPattern(words, BUNDLED_ACTION_CLI_COMMAND_PATHS)) return null;
