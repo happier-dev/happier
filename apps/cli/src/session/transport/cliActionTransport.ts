@@ -10,6 +10,7 @@ import { RoleActionRefusalV1 } from '@happier-dev/protocol/prompts/roles/account
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
+import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import type { getPreferredHostName } from '@/daemon/machine/metadata';
 import { createCliBoundSessionMetadataReader } from '../actions/resolveCliActionCallerSession';
 import { prepareInstalledWorkflowActionAuthorization } from '@/api/installedWorkflowActionAuthorization';
@@ -134,6 +135,7 @@ export function createCliSessionActionTransport(
       credentials,
       idOrPrefix: normalized,
       ...(exactSessionAddress ? { expectedSessionAddress: exactSessionAddress } : {}),
+      ...(caller?.context.actionRequestId ? { actionRequestId: caller.context.actionRequestId } : {}),
       ...(signal ? { signal } : {}),
       ...(caller ? { resolveAuthorizationHeaders: request => resolveServerRequestHeaders(caller.context,
         // Reference/manager reads prepare the admitted root. A preview's
@@ -146,7 +148,8 @@ export function createCliSessionActionTransport(
       resolved = await (caller ? withProjectHome(read) : read());
     } catch (error) {
       signal?.throwIfAborted();
-      if (!isAuthenticationError(error)) throw error;
+      // Home's typed refusal of the signed read reaches the caller unchanged.
+      if (!isAuthenticationError(error) || error instanceof SignedHomeAuthorizationHttpError) throw error;
       return { ok: false, code: 'not_authenticated' };
     }
     if (!resolved.ok) {

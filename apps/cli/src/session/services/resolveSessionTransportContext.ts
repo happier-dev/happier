@@ -8,6 +8,7 @@ import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { readAccountEncryptionCurrentnessForRead } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
+import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import type {
     SessionEncryptionContext,
     SessionStoredContentEncryptionMode,
@@ -125,6 +126,11 @@ export async function resolveSessionTransportContext(params: Readonly<{
             ...(params.signal ? { signal: params.signal } : {}),
         })).catch(error => {
         if (params.signal?.aborted) throw error;
+        // Home's typed refusal of this signed request is its own result; only
+        // the admitted request id is added so the caller can correlate it.
+        if (error instanceof SignedHomeAuthorizationHttpError) {
+            throw params.actionRequestId ? Object.assign(error, { requestId: params.actionRequestId }) : error;
+        }
         // The reader retains the transport cause. Translate it once at this
         // shared adapter so CLI, signed Actions and direct Session operations
         // expose the established control codes before generic normalization.

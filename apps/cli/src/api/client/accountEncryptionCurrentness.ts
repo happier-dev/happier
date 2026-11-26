@@ -9,6 +9,7 @@ import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readStoredCredentials, type AccountE2eeCustodyHolder } from '@/persistence';
 import { resolveConnectedServicesServerApiTimeoutMs } from './connectedServicesServerApiTimeout';
 import { createHttpStatusError } from './httpStatusError';
+import { SignedHomeAuthorizationHttpError } from './homeAuthorizationHttpFailure';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 import { classifyServerEndpointError } from './classifyServerEndpointError';
 import { admitCliReportedAccountMode } from './accountModeAdmission';
@@ -74,7 +75,8 @@ export async function fetchAccountEncryptionCurrentnessFromServer(params: Accoun
   try {
     response = await readCurrentness();
   } catch (error) {
-    if (error instanceof CredentialRequestRedirectError) throw error;
+    // Home's typed refusal of a signed read is its result, not unavailability.
+    if (error instanceof CredentialRequestRedirectError || error instanceof SignedHomeAuthorizationHttpError) throw error;
     if (params.signal?.aborted) throw error;
     throw new AccountEncryptionCurrentnessUnavailableError(undefined, undefined, { cause: error });
   }

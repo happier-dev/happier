@@ -107,6 +107,42 @@ describe('fresh Session transport HTTP resolution', () => {
     }
   });
 
+  it('passes Home\'s typed signed currentness refusal through with the admitted request id', async () => {
+    const requestId = 'signed-session-effect-family';
+    const server = createServer((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/v1/account/encryption/currentness') {
+        response.writeHead(401).end(JSON.stringify({ error: 'invalid_token', authorizationRefusal: 'effect_family' }));
+      } else if (request.url === `/v2/sessions/${sessionId}`) {
+        response.end(JSON.stringify(V2SessionByIdResponseSchema.parse({ session: createSessionRecordFixture({
+          id: sessionId, encryptionMode: 'plain', metadata: '{}',
+        }) })));
+      } else {
+        response.writeHead(404).end('{}');
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Loopback HTTP address unavailable');
+    try {
+      const pending = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => resolveSessionTransportContext({
+        reason: 'session-control',
+        credentials: { token: 'must-not-be-used', encryption: null }, idOrPrefix: sessionId,
+        actionRequestId: requestId,
+        resolveAuthorizationHeaders: () => ({ Authorization: 'Bearer signed-root', 'x-happier-action-execution-authorization': 'signed-proof' }),
+        serverFeaturesSnapshot: { status: 'unsupported', reason: 'endpoint_missing' },
+      }));
+      const failure = { errorCode: 'action_forbidden', error: 'action_forbidden (home_signed_authorization_rejected:effect_family)',
+        requestId, failureCause: { phase: 'home.authorization.effect_family', httpStatus: 401 } };
+      await expect(pending).rejects.toMatchObject(failure);
+      const output = await pending.catch(error => projectCliActionFailure(normalizeCliActionThrownError(error).failure));
+      expect(output).toMatchObject({ code: 'action_forbidden', requestId, failureCause: failure.failureCause });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it.each(['current', 'unavailable'] as const)('overlaps exact detail with a held fresh Account witness and fails closed when %s', async witness => {
     const reason = witness === 'current' ? 'session-control' : 'session-query';
     const detailPurposes: Array<string | string[] | undefined> = [];
