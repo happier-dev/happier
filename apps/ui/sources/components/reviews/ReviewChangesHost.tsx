@@ -4,7 +4,7 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ReviewCommentCreateResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
-import type { ReviewRoundComparisonCaptureV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { resolveReviewSourceSessionIdV1, type ReviewRoundComparisonCaptureV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
@@ -237,7 +237,7 @@ type ReviewChangesWalkthroughProps = Readonly<{
 }>;
 
 function ReviewChangesWalkthrough(props: ReviewChangesWalkthroughProps) {
-    const sessionId = props.capture.input.sessionId;
+    const sessionId = resolveReviewSourceSessionIdV1(props.capture);
     return sessionId ? <SessionReviewChangesWalkthrough {...props} sessionId={sessionId} />
         : <WorkspaceReviewChangesWalkthrough {...props} />;
 }
@@ -257,5 +257,5 @@ function WorkspaceReviewChangesWalkthrough(props: ReviewChangesWalkthroughProps)
 
 function ReviewChangesWalkthroughView(props: ReviewChangesWalkthroughProps & Readonly<{ bound: ReturnType<typeof useScmDiffSummaryBinding> }>) {
     return <ScmWalkthroughView {...props.context} bound={props.bound} comparison={props.comparison} scopeLabel={props.scopeLabel}
-        sessionId={props.capture.input.sessionId} displayMachineId={props.machine.machineId} serverId={props.serverId} onOpenFile={props.onOpenFile} />;
+        sessionId={resolveReviewSourceSessionIdV1(props.capture)} displayMachineId={props.machine.machineId} serverId={props.serverId} onOpenFile={props.onOpenFile} />;
 }

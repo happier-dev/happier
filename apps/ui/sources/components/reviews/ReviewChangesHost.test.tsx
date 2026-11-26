@@ -19,7 +19,11 @@ await prepareSessionFilesViewTestkit();
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
-it.each([undefined, 's1'])('starts a Walkthrough against the retained comparison in its captured host %s', async sessionId => {
+it.each([
+    { sessionId: undefined, sourceSession: false },
+    { sessionId: 's1', sourceSession: false },
+    { sessionId: 'source-session', sourceSession: true },
+])('starts a Walkthrough against the retained comparison in its captured host $sessionId/$sourceSession', async ({ sessionId, sourceSession }) => {
     const comparisonId = 'c'.repeat(64);
     const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
     const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
@@ -54,7 +58,8 @@ it.each([undefined, 's1'])('starts a Walkthrough against the retained comparison
     const { ReviewChangesHost } = await import('./ReviewChangesHost');
     const { getScmDiffSummaryState } = await import('@/sync/ops/scmDiffSummary/generate');
     const capture = { target: { kind: 'machine', machineId: 'm1' }, input: {
-        cwd: '/repo', comparisonId, source: { kind: 'workingTree' }, ...(sessionId ? { sessionId } : {}),
+        cwd: '/repo', comparisonId, source: sourceSession ? { kind: 'session', sessionId: sessionId! } : { kind: 'workingTree' },
+        ...(!sourceSession && sessionId ? { sessionId } : {}),
     } } satisfies ReviewRoundComparisonCaptureV1;
     // A real SCM destination on this same Home/Machine must reach generation before the Review host is tested.
     const { SessionWalkthroughView } = await import('@/components/sessions/files/walkthrough/SessionWalkthroughView');
@@ -82,7 +87,7 @@ it.each([undefined, 's1'])('starts a Walkthrough against the retained comparison
     await vi.waitFor(() => expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE)).toHaveLength(2));
     const generated = fixture.requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE)[1]!;
     expect(generated.targetId).toBe('m1');
-    expect(generated.payload).toMatchObject({ cwd: '/repo', comparisonId, source: { kind: 'workingTree' }, outputs: ['walkthrough'] });
+    expect(generated.payload).toMatchObject({ cwd: '/repo', comparisonId, source: capture.input.source, outputs: ['walkthrough'] });
     if (sessionId) expect(generated.payload).toMatchObject({ sessionId });
     else expect(generated.payload).not.toHaveProperty('sessionId');
     await vi.waitFor(() => expect(Object.values(getScmDiffSummaryState().entriesByKey)
