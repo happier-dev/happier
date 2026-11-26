@@ -105,7 +105,7 @@ describe('runMachineItemUpdate — a remote CLI update is started, then observed
         expect(runs.readUnseenUpdateCompletions(scope).get(parallel.id)).toBe('done');
         expect(runs.readUnseenUpdateCompletions(other).size).toBe(0);
         expect(runs.observeMachineUpdateRun(runs.readMachineUpdateRuns(scope.serverId), agent.id)).toMatchObject({
-            running: false, errorMessage: 'agentInstallJob.failedBody',
+            running: false, errorMessage: 'agentInstallJob.failedBody machineAgents.failedKept',
         });
         await switched.unmount();
         await original.unmount();
@@ -327,7 +327,7 @@ describe('runMachineItemUpdate — a remote CLI update is started, then observed
         await runs.runMachineItemUpdate(codex, { scope });
         expect(runs.observeMachineUpdateRun(runs.readMachineUpdateRuns(serverA), codex.id)).toMatchObject({
             running: false,
-            errorMessage: 'agentInstallJob.archiveExpandedByteLimitBody',
+            errorMessage: 'agentInstallJob.archiveExpandedByteLimitBody machineAgents.failedKept',
         });
         expect(runs.readUnseenUpdateCompletions(scope).has(codex.id)).toBe(false);
     });
@@ -342,7 +342,7 @@ describe('runMachineItemUpdate — a remote CLI update is started, then observed
         await runs.runMachineItemUpdate(codex, { scope: { serverId: serverA, accountId: 'account-a' } });
         expect(runs.observeMachineUpdateRun(runs.readMachineUpdateRuns(serverA), codex.id)).toMatchObject({
             running: false,
-            errorMessage: 'agentInstallJob.failedBody',
+            errorMessage: 'agentInstallJob.failedBody machineAgents.failedKept',
         });
     });
 
@@ -378,7 +378,7 @@ describe('runMachineItemUpdate — a remote CLI update is started, then observed
         }));
         expect(runs.observeMachineUpdateRun(runs.readMachineUpdateRuns(serverA), codex.id)).toMatchObject({
             running: false,
-            errorMessage: 'agentInstallJob.verificationBody',
+            errorMessage: 'agentInstallJob.verificationBody machineAgents.failedKept',
         });
     });
 
