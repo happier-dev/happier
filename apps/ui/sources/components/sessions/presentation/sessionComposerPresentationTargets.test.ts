@@ -304,6 +304,47 @@ function createDocumentTarget(
 describe('composer presentation targets', () => {
     const cleanups: Array<() => void | Promise<void>> = [];
 
+    it('carries the mounted composer refusal through Session input handoff and leaves the draft intact', async () => {
+        const scope = { serverId: 'compose-home', accountId: 'compose-account' };
+        activeScopeState.value = scope;
+        const ref = { kind: 'session', sessionId: 'compose-session' } as const;
+        const session = { serverId: scope.serverId, sessionId: ref.sessionId };
+        const entry = createAttachmentProjectionEntry({ pluginId: 'happier.app-context', localId: 'descriptive-evidence', typeLabel: 'Evidence' });
+        const document = createDocumentTarget(createSnapshot({ ref, text: 'My draft' }));
+        cleanups.push(registerSessionComposerPresentationTarget(session, {
+            ...document,
+            readScope: () => scope,
+            readAttachmentComposition: () => ({ composerAttachmentsById: { [entry.id]: entry } }),
+            createAttachmentInstanceId: undefined,
+        }));
+        const executor = createActionExecutor({ sessionInputHandoffCompose: composeSessionInputHandoff } as ActionExecutorDeps);
+
+        const result = await executor.execute('session.input.handoff', {
+            v: 1,
+            sessionChoice: { kind: 'existing', session: session.sessionId },
+            delivery: 'compose',
+            input: {
+                text: 'Explain the failure',
+                forgeEvidence: { v: 1, items: [{
+                    source: { kind: 'hostedCi', label: 'CI failure' },
+                    author: { kind: 'process' },
+                    text: 'A build step failed',
+                }] },
+            },
+            idempotencyKey: 'missing-composer-attachment-allocator',
+        }, { surface: 'ui', serverId: scope.serverId, runtimeAccountId: scope.accountId });
+
+        expect(result).toMatchObject({
+            ok: true,
+            result: { kind: 'failed', phase: 'compose', failure: {
+                ok: false,
+                errorCode: 'attachment_instance_id_unavailable',
+                details: { status: 'invalidOperation', operationIndex: 1, reason: 'attachment_instance_id_unavailable' },
+            } },
+        });
+        expect(document.readCurrent()).toMatchObject({ text: 'My draft', attachments: [] });
+    });
+
     it('composes handoff evidence into the declared native attachment and retains it through ordinary text edits', async () => {
         const scope = { serverId: 'compose-home', accountId: 'compose-account' };
         activeScopeState.value = scope;
@@ -320,7 +361,11 @@ describe('composer presentation targets', () => {
             ...document, readScope: () => scope,
             readAttachmentComposition: () => ({ composerAttachmentsById: available ? { [entry.id]: entry } : {} }),
         }));
-        expect(await composeSessionInputHandoff({ session, input, context })).toBe('composerUnavailable');
+        expect(await composeSessionInputHandoff({ session, input, context })).toMatchObject({
+            ok: false,
+            errorCode: 'attachment_authority_mismatch',
+            details: { status: 'invalidOperation', operationIndex: 1, reason: 'attachment_authority_mismatch' },
+        });
         expect(document.readCurrent()).toMatchObject({ text: 'My draft', attachments: [] });
         available = true;
         expect(await composeSessionInputHandoff({ session, input, context })).toBe('composed');

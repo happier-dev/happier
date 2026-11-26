@@ -56,8 +56,9 @@ export async function executeSessionInputHandoffV1(args: Readonly<{
       ...(content.attachments?.length ? { attachments: content.attachments } : {}),
       ...(content.forgeEvidence ? { forgeEvidence: content.forgeEvidence } : {}),
     } }),
-    ...(compose ? { compose: async (session, content) => ({ ok: true as const,
-      result: await compose({ session, input: content, context }),
-    }) } : {}),
+    ...(compose ? { compose: async (session, content) => {
+      const result = await compose({ session, input: content, context });
+      return typeof result === 'string' ? { ok: true as const, result } : result;
+    } } : {}),
   }, { ...(resolvedSession ? { resolvedSession } : {}), ...(context.signal ? { signal: context.signal } : {}) }));
 }

@@ -10930,10 +10930,12 @@ Native Session input authors may supply typed `forgeEvidence` in the same
 converts it into the declared `happier.app-context/descriptive-evidence`
 attachment. Ordinary edits, badge removal and Send retain the Composer lifecycle;
 preparation and dispatch return typed evidence metadata, never trusted prompt
-context. Existing-Session `session.input.handoff` compose uses the same mounted
-attachment transaction and returns `composerUnavailable` if that target or
-declaration is unavailable. Generic plugin-authored attachments still need their
-own caller identity; this native compose binding refuses them without mutation.
+context. In 0.3 development, existing-Session `session.input.handoff` compose
+uses the mounted attachment transaction. An absent mounted target returns
+`unavailable` with reason `composerUnavailable`. A transaction refusal returns
+`failed` for the compose phase and carries the original transaction result in
+`failure.details`. Generic plugin-authored attachments still need their own
+caller identity. The native compose binding refuses them before editing.
 
 `VoiceClientToolDefinition` describes the sanitized,
 attempt-bound host tools supplied to providers; it is not an author registration

@@ -1950,7 +1950,7 @@ export type ActionExecutorDeps = Readonly<{
     session: import('../sessionAddressV1.js').ActionSessionAddressV1;
     input: import('../../sessions/messages/sessionInputHandoffV1.js').SessionInputHandoffContentV1;
     context: ActionExecutorContext;
-  }>) => Promise<'composed' | 'composerUnavailable'>;
+  }>) => Promise<'composed' | 'composerUnavailable' | ActionExecuteFailure>;
   /** Host front door for ordinary children whose mounted parent may already have returned. */
   executeOrdinaryChildAction?: (args: Readonly<{
     actionId: ActionId;

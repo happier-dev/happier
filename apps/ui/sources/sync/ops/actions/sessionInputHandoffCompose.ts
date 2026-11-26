@@ -36,5 +36,7 @@ export const composeSessionInputHandoff: NonNullable<ActionExecutorDeps['session
         ...(context.signal ? { signal: context.signal } : {}),
         ...(input.forgeEvidence ? { attachmentContributor: SESSION_INPUT_FORGE_EVIDENCE_ATTACHMENT_IDENTITY_V1 } : {}),
     });
-    return result.status === 'applied' ? 'composed' : 'composerUnavailable';
+    if (result.status === 'applied') return 'composed';
+    const code = result.status === 'invalidOperation' ? result.reason : result.status;
+    return { ok: false, errorCode: code, error: code, details: result };
 };
