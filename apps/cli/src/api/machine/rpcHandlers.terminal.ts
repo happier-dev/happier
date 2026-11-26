@@ -714,7 +714,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       ? context.machineAdmission?.machineId : undefined;
     const material: AgentLaunchOperationMaterialization = Object.freeze({
       materializationKey: JSON.stringify(['terminal', sessionId ?? null, request.terminalKey]),
-      environment: Object.freeze(machineId ? { [TERMINAL_SESSION_MACHINE_ID_ENV_KEY]: machineId } : {}),
+      environment: Object.freeze<Record<string, string>>(machineId ? { [TERMINAL_SESSION_MACHINE_ID_ENV_KEY]: machineId } : {}),
       selectedMaterials: Object.freeze([]),
     });
     try {
