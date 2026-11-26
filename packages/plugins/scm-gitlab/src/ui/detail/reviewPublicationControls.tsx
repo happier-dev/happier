@@ -388,13 +388,28 @@ export function GitlabMergeRequestPublicationControls({
     () => proposals.proposals.map((proposal) => ({ id: proposal.id, title: reviewPublicationFindingTitle(proposal) })),
     [proposals.proposals],
   );
+  const draftSelection = React.useMemo(
+    () => ({ findings: draftFindings, selectedIds, setSelectedIds }),
+    [draftFindings, selectedIds, setSelectedIds],
+  );
   const walkthroughOffered = verdict !== 'none' && (walkthrough?.length ?? 0) > 0;
   const draftWalkthrough = React.useMemo(
     () => walkthroughOffered ? { included: includeWalkthrough, setIncluded: setIncludeWalkthrough } : null,
     [includeWalkthrough, walkthroughOffered],
   );
-  // The checklist and the switch edit the draft through the same change its mounted commands make.
-  const draft = useTriageReviewPublicationDraftV1({ findings: draftFindings, selectedIds, setSelectedIds, walkthrough: draftWalkthrough });
+  const verdictOptions = React.useMemo(() => GITLAB_VERDICT_CHOICES.map((value) => ({
+    value,
+    label: value === 'none'
+      ? text('plugins.gitlab.ui.publication.verdict.none', 'No verdict')
+      : value === 'approve'
+        ? text('plugins.gitlab.ui.publication.verdict.approve', 'Approve')
+        : value === 'requestChanges'
+          ? text('plugins.gitlab.ui.publication.verdict.requestChanges', 'Request changes')
+          : text('plugins.gitlab.ui.publication.verdict.comment', 'Comment'),
+  })), [text]);
+  const draft = useTriageReviewPublicationDraftV1({
+    open, selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary,
+  });
   const selected = proposals.proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const summaryBody = summary.trim();
   const headRevision = input.observation.snapshot.reviewRevision?.headSha;
@@ -485,21 +500,9 @@ export function GitlabMergeRequestPublicationControls({
         blocked={blocked}
         onCancel={() => onOpenChange(false)}
         verdict={{
-          options: GITLAB_VERDICT_CHOICES.map((value) => ({
-            value,
-            label: value === 'none'
-              ? text('plugins.gitlab.ui.publication.verdict.none', 'No verdict')
-              : value === 'approve'
-                ? text('plugins.gitlab.ui.publication.verdict.approve', 'Approve')
-                : value === 'requestChanges'
-                  ? text('plugins.gitlab.ui.publication.verdict.requestChanges', 'Request changes')
-                  : text('plugins.gitlab.ui.publication.verdict.comment', 'Comment'),
-          })),
+          options: verdictOptions,
           value: verdict,
-          onChange: (value) => {
-            const next = GITLAB_VERDICT_CHOICES.find((candidate) => candidate === value);
-            if (next !== undefined) setVerdict(next);
-          },
+          onChange: draft.setVerdict,
         }}
         summary={<MarkdownEditor
           accessibilityLabel={text('plugins.gitlab.ui.publication.summary', 'Summary')}

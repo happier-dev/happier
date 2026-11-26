@@ -1694,6 +1694,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       case 'setSourceOrdering':
       case 'setPublicationFindingIncluded':
       case 'setPublicationWalkthroughIncluded':
+      case 'setPublicationVerdict':
+      case 'setPublicationSummary':
       case 'revealSourceUser': return { status: 'unavailable' }; // Dispatched to the bound source before this callback.
       case 'focusRow':
       case 'peekRow': {

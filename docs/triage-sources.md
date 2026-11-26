@@ -1799,6 +1799,12 @@ them uses `ui/reveal-source-user-v1`; adding the selected evidence uses
 default, per-surface Ask-first setting and explicit waiver. Sensitive operations
 cannot be submitted through the ordinary `ui/mounted-v1` input.
 
+The active review publication draft supports `setPublicationVerdict` with a
+`verdict` from the forge's displayed choices. Unsupported verdicts return
+`rejected`. `setPublicationSummary` replaces the draft's `summary` string and
+accepts an empty string to clear it. Both operations edit the controls visible
+in GitHub, GitLab, Bitbucket and Azure DevOps. Publishing is a separate action.
+
 The detail's `selectLinkedSession` operand names a currently loaded linked
 Session and selects it in the same inline Session panel as the UI picker.
 `loadMore` with `section: 'linkedSessions'` advances that detail's existing

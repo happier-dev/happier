@@ -202,12 +202,25 @@ export function PullRequestReviewPublicationWrite({
     () => proposals.map((proposal) => ({ id: proposal.id, title: reviewPublicationFindingTitle(proposal) })),
     [proposals],
   );
+  const draftSelection = React.useMemo(
+    () => ({ findings: draftFindings, selectedIds, setSelectedIds }),
+    [draftFindings, selectedIds, setSelectedIds],
+  );
   const draftWalkthrough = React.useMemo(
     () => walkthrough?.length ? { included: includeWalkthrough, setIncluded: setIncludeWalkthrough } : null,
     [includeWalkthrough, walkthrough?.length],
   );
-  // The checklist and the switch edit the draft through the same change its mounted commands make.
-  const draft = useTriageReviewPublicationDraftV1({ findings: draftFindings, selectedIds, setSelectedIds, walkthrough: draftWalkthrough });
+  const verdictOptions = React.useMemo(() => GITHUB_REVIEW_VERDICTS_V1.map((value) => ({
+    value,
+    label: value === 'requestChanges'
+      ? text('plugins.github.ui.mutations.review.verdict.requestChanges', 'Request changes')
+      : value === 'approve'
+        ? text('plugins.github.ui.mutations.review.verdict.approve', 'Approve')
+        : text('plugins.github.ui.mutations.review.verdict.comment', 'Comment'),
+  })), [text]);
+  const draft = useTriageReviewPublicationDraftV1({
+    open, selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary: setVerdictBody,
+  });
   const selected = React.useMemo(
     () => proposals.filter(proposal => selectedIds.includes(proposal.id)),
     [proposals, selectedIds],
@@ -303,19 +316,9 @@ export function PullRequestReviewPublicationWrite({
       blocked={blocked}
       onCancel={() => onOpenChange(false)}
       verdict={{
-        options: GITHUB_REVIEW_VERDICTS_V1.map((value) => ({
-          value,
-          label: value === 'requestChanges'
-            ? text('plugins.github.ui.mutations.review.verdict.requestChanges', 'Request changes')
-            : value === 'approve'
-              ? text('plugins.github.ui.mutations.review.verdict.approve', 'Approve')
-              : text('plugins.github.ui.mutations.review.verdict.comment', 'Comment'),
-        })),
+        options: verdictOptions,
         value: verdict,
-        onChange: (value) => {
-          const next = GITHUB_REVIEW_VERDICTS_V1.find((candidate) => candidate === value);
-          if (next !== undefined) setVerdict(next);
-        },
+        onChange: draft.setVerdict,
       }}
       summary={<MarkdownEditor
         accessibilityLabel={text('plugins.github.ui.mutations.review.summary', 'Summary')}

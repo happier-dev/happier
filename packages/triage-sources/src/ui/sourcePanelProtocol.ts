@@ -24,11 +24,13 @@ export const TriageSourcePanelSelectionV1Schema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('selectSourceOccurrence'), occurrenceId: defineProtocolString({ minLength: 1 }) }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('setSourceOrdering'), order: defineProtocolUnion([defineProtocolLiteral('provider'), defineProtocolLiteral('spread')]) }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('revealSourceUser'), occurrenceId: defineProtocolString({ minLength: 1 }), revealed: defineProtocolLiteral(false) }, closed),
-  // The open Publish sheet's draft: post or leave out one proposed finding, and fold the walkthrough in or not.
+  // Edits to the open Publish draft. The mounted forge owns the available verdict choices.
   defineProtocolObject({ kind: defineProtocolLiteral('setPublicationFindingIncluded'), proposalId: defineProtocolString({ minLength: 1 }),
     included: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('setPublicationWalkthroughIncluded'),
     included: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('setPublicationVerdict'), verdict: defineProtocolString() }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('setPublicationSummary'), summary: defineProtocolString() }, closed),
 ]);
 export const TriageSourcePanelRevealV1Schema = defineProtocolObject({
   kind: defineProtocolLiteral('revealSourceUser'), occurrenceId: defineProtocolString({ minLength: 1 }), revealed: defineProtocolLiteral(true),

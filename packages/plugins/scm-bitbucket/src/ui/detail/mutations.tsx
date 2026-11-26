@@ -31,6 +31,7 @@ import {
 import {
   completeTriagePostMutationIfNeeded,
   useTriagePostMutationCompletion,
+  useTriageReviewPublicationDraftV1,
   useTriageDetailRequest,
 } from '@happier-dev/triage-sources/ui';
 
@@ -418,6 +419,12 @@ function BitbucketReviewPublicationControls({
   const [verdict, setVerdict] = React.useState<'comment' | 'approve' | 'requestChanges'>('comment');
   const [summary, setSummary] = React.useState('');
   const { quality } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
+  const verdictOptions = React.useMemo(() => [
+    { value: 'comment', label: text('plugins.bitbucket.ui.mutations.review.comment', 'Comment') },
+    { value: 'approve', label: text('plugins.bitbucket.ui.mutations.review.approve', 'Approve') },
+    { value: 'requestChanges', label: text('plugins.bitbucket.ui.mutations.review.requestChanges', 'Request changes') },
+  ] as const, [text]);
+  const draft = useTriageReviewPublicationDraftV1({ verdictOptions, setVerdict, setSummary });
 
   const selected = proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const revision = input.observation.snapshot.reviewRevision;
@@ -476,15 +483,9 @@ function BitbucketReviewPublicationControls({
       <Form.Select
         label={text('plugins.bitbucket.ui.mutations.review.verdict', 'Review verdict')}
         value={verdict}
-        options={[
-          { value: 'comment', label: text('plugins.bitbucket.ui.mutations.review.comment', 'Comment') },
-          { value: 'approve', label: text('plugins.bitbucket.ui.mutations.review.approve', 'Approve') },
-          { value: 'requestChanges', label: text('plugins.bitbucket.ui.mutations.review.requestChanges', 'Request changes') },
-        ]}
+        options={verdictOptions}
         onChange={(value) => {
-          if (value === 'comment' || value === 'approve' || value === 'requestChanges') {
-            setVerdict(value);
-          }
+          if (typeof value === 'string') draft.setVerdict(value);
         }}
       />
       <Form.TextField label={text('plugins.bitbucket.ui.mutations.review.summary', 'Review summary')} value={summary} onChange={setSummary} />

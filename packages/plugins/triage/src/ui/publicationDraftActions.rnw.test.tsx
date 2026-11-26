@@ -21,6 +21,10 @@ import {
   type TriageSourcePanelCommandV1,
   type TriageSourcePanelOperationV1,
 } from '@happier-dev/triage-sources/ui';
+import { AzureReviewPublicationControls } from '../../../scm-azure-devops/src/ui/detail/reviewPublication.js';
+import { projectBitbucketDetailOverview } from '../../../scm-bitbucket/src/triage/source/detail.js';
+import { BitbucketMutationControls } from '../../../scm-bitbucket/src/ui/detail/mutations.js';
+import { PullRequestReviewPublicationWrite } from '../../../scm-github/src/ui/detail/reviewPublicationControls.js';
 import { GitlabMergeRequestPublicationControls } from '../../../scm-gitlab/src/ui/detail/reviewPublicationControls.js';
 import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
 import { bindTriageMountedUiActions } from './mountedActions.js';
@@ -41,23 +45,6 @@ afterEach(async () => {
 
 const base = createTriageSourceV1Fixture().detailInput;
 const revision = base.observation.snapshot.reviewRevision!;
-const source = {
-  pluginId: 'happier.scm.forge.gitlab',
-  localId: 'gitlab-forge',
-};
-const input = TriageDetailSurfaceInputV1Schema.parse({
-  ...base,
-  panel: 'reviews',
-  admittedReview: { reviewId: 'admitted-review', roundOrdinal: 1 },
-  instance: {
-    ...base.instance,
-    instance: { ...base.instance.instance, source },
-  },
-  observation: {
-    ...base.observation,
-    entryRef: { ...base.observation.entryRef, source, kindId: 'merge-request' },
-  },
-});
 
 function proposal(id: string, severity: 'blocker' | 'nit', title: string) {
   return {
@@ -109,7 +96,18 @@ const PROPOSALS = {
 };
 
 /** The Publish sheet in the Triage detail's Reviews panel, with the real panel registry and mounted Action. */
-async function mountPublishSheet() {
+async function mountPublishSheet(forge: 'gitlab' | 'github' | 'bitbucket' | 'azure-devops' = 'gitlab') {
+  const source = { pluginId: `happier.scm.forge.${forge}`, localId: `${forge}-forge` };
+  const input = TriageDetailSurfaceInputV1Schema.parse({
+    ...base,
+    panel: 'reviews',
+    admittedReview: { reviewId: 'admitted-review', roundOrdinal: 1 },
+    instance: { ...base.instance, instance: { ...base.instance.instance, source } },
+    observation: {
+      ...base.observation,
+      entryRef: { ...base.observation.entryRef, source, kindId: forge === 'gitlab' ? 'merge-request' : 'pull-request' },
+    },
+  });
   const scope = createTriageEphemeralSharedScopeFixture();
   let commands: readonly TriageSourcePanelCommandV1[] = [];
   let page!: PluginUiTestkit;
@@ -130,6 +128,7 @@ async function mountPublishSheet() {
       },
     );
   function Surface() {
+    const [open, setOpen] = React.useState(true);
     const hostApi = usePluginHostApi();
     const panelActions = useTriageSourcePanelActionsV1(
       scope,
@@ -161,10 +160,16 @@ async function mountPublishSheet() {
             ariaLabel="Merge request"
           >
             <Tabs.Item value="reviews" title="Reviews">
-              <GitlabMergeRequestPublicationControls
-                input={input}
-                proposals={PROPOSALS}
-              />
+              {forge === 'gitlab' ? <GitlabMergeRequestPublicationControls
+                input={input} proposals={PROPOSALS} open={open} onOpenChange={setOpen}
+              /> : forge === 'github' ? <PullRequestReviewPublicationWrite
+                input={input} publicationProposals={PROPOSALS} open={open} onOpenChange={setOpen}
+                WriteControl={() => null} onObserved={() => {}} capabilities={{ kind: 'loading' }}
+              /> : forge === 'bitbucket' ? <BitbucketMutationControls
+                input={input} overview={{
+                  ...projectBitbucketDetailOverview(input), state: { presentation: 'active', nativeLabel: null },
+                }}
+              /> : <AzureReviewPublicationControls input={input} />}
             </Tabs.Item>
           </Tabs>
         </TriagePostMutationCompletionProvider>
@@ -248,12 +253,60 @@ describe('the Publish sheet draft as agent Actions', () => {
     expect(finding('c2')?.operation).toMatchObject({ included: false });
 
     // Once a verdict carries a summary, the walkthrough fold has its command too, through the same Action.
-    await act(async () => { await sheet.page.press(await sheet.page.getByRole('radio', { name: 'Comment' })); });
+    await changeVerdictAndSummary(sheet, 'Summary');
     const walkthrough = () => sheet.commands().find((row) => row.operation.kind === 'setPublicationWalkthroughIncluded');
     await vi.waitFor(() => expect(walkthrough()?.operation).toMatchObject({ included: false }));
     await act(async () => { expect(await sheet.invoke(walkthrough()!.operation)).toEqual({ status: 'applied' }); });
     await expect(sheet.page.getByRole('switch', { name: 'Include the walkthrough' }))
       .resolves.toMatchObject({ state: { checked: false } });
     expect(walkthrough()?.operation).toMatchObject({ included: true });
+    await act(async () => { await sheet.page.press(await sheet.page.getByRole('button', { name: 'Cancel' })); });
+    expect(sheet.commands()).toEqual([]);
+    await expect(sheet.invoke({ kind: 'setPublicationSummary', summary: 'After closing' }))
+      .resolves.toEqual({ status: 'unavailable' });
+  });
+
+  it.each([
+    ['github', 'Summary', false],
+    ['bitbucket', 'Review summary', false],
+    ['azure-devops', 'Review summary', true],
+  ] as const)('edits the visible verdict and summary on %s', async (forge, summaryLabel, offersNoVerdict) => {
+    const sheet = await mountPublishSheet(forge);
+    await changeVerdictAndSummary(sheet, summaryLabel);
+    await act(async () => {
+      expect(await sheet.invoke({ kind: 'setPublicationVerdict', verdict: 'requestChanges' })).toEqual({ status: 'applied' });
+      expect(await sheet.invoke({ kind: 'setPublicationVerdict', verdict: 'none' }))
+        .toEqual({ status: offersNoVerdict ? 'applied' : 'rejected' });
+    });
+    await expect(sheet.page.getByRole('radio', { name: offersNoVerdict ? 'No verdict' : 'Request changes' }))
+      .resolves.toMatchObject({ state: { checked: true } });
   });
 });
+
+async function changeVerdictAndSummary(sheet: Awaited<ReturnType<typeof mountPublishSheet>>, summaryLabel: string) {
+  const operation = { kind: 'setPublicationVerdict', verdict: 'approve' } as const;
+  expect(sheet.commands().map((row) => row.operation)).toContainEqual(operation);
+  await act(async () => {
+    expect(await sheet.invoke(operation)).toEqual({ status: 'applied' });
+  });
+  await expect(sheet.page.getByRole('radio', { name: 'Approve' }))
+    .resolves.toMatchObject({ state: { checked: true } });
+
+  const summary = summaryLabel === 'Summary'
+    ? '**Retry ownership**\n\nThe scheduler now owns retries.'
+    : '**Retry ownership** belongs to the scheduler.';
+  await act(async () => {
+    expect(await sheet.invoke({ kind: 'setPublicationSummary', summary: 'Draft to replace' })).toEqual({ status: 'applied' });
+    expect(await sheet.invoke({ kind: 'setPublicationSummary', summary })).toEqual({ status: 'applied' });
+  });
+  await expect(sheet.page.getByRole('textbox', { name: summaryLabel })).resolves.toMatchObject({ value: summary });
+  const clear = { kind: 'setPublicationSummary', summary: '' } as const;
+  expect(sheet.commands().map((row) => row.operation)).toContainEqual(clear);
+  await act(async () => {
+    expect(await sheet.invoke(clear)).toEqual({ status: 'applied' });
+    expect(await sheet.invoke({ kind: 'setPublicationVerdict', verdict: 'comment' })).toEqual({ status: 'applied' });
+  });
+  await expect(sheet.page.getByRole('textbox', { name: summaryLabel })).resolves.toMatchObject({ value: '' });
+  await expect(sheet.page.getByRole('radio', { name: 'Comment' }))
+    .resolves.toMatchObject({ state: { checked: true } });
+}

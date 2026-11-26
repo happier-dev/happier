@@ -30,6 +30,7 @@ import {
 import {
   completeTriagePostMutationIfNeeded,
   useTriagePostMutationCompletion,
+  useTriageReviewPublicationDraftV1,
 } from '@happier-dev/triage-sources/ui';
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
@@ -284,6 +285,14 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
   const [verdict, setVerdict] = React.useState<VerdictChoice>('none');
   const [summary, setSummary] = React.useState('');
   const { quality } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
+  const verdictOptions = React.useMemo(() => VERDICTS.map((value) => ({
+    value,
+    label: value === 'none' ? text('plugins.azureDevops.ui.publication.verdict.none', 'No verdict')
+      : value === 'requestChanges' ? text('plugins.azureDevops.ui.publication.verdict.requestChanges', 'Request changes')
+        : value === 'approve' ? text('plugins.azureDevops.ui.publication.verdict.approve', 'Approve')
+          : text('plugins.azureDevops.ui.publication.verdict.comment', 'Comment'),
+  })), [text]);
+  const draft = useTriageReviewPublicationDraftV1({ verdictOptions, setVerdict, setSummary });
   const selected = proposals.proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const body = summary.trim();
   const headRevision = input.observation.snapshot.reviewRevision?.headSha;
@@ -348,17 +357,10 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
       )}
       <Form.Select
         label={text('plugins.azureDevops.ui.publication.verdict', 'Review verdict')}
-        options={VERDICTS.map((value) => ({
-          value,
-          label: value === 'none' ? text('plugins.azureDevops.ui.publication.verdict.none', 'No verdict')
-            : value === 'requestChanges' ? text('plugins.azureDevops.ui.publication.verdict.requestChanges', 'Request changes')
-              : value === 'approve' ? text('plugins.azureDevops.ui.publication.verdict.approve', 'Approve')
-                : text('plugins.azureDevops.ui.publication.verdict.comment', 'Comment'),
-        }))}
+        options={verdictOptions}
         value={verdict}
         onChange={(value) => {
-          const next = VERDICTS.find((candidate) => candidate === value);
-          if (next !== undefined) setVerdict(next);
+          if (typeof value === 'string') draft.setVerdict(value);
         }}
       />
       <Form.TextField label={text('plugins.azureDevops.ui.publication.summary', 'Review summary')} value={summary} onChange={setSummary} />
