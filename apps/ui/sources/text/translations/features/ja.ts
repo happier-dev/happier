@@ -750,6 +750,7 @@ const deploymentSettingsTranslations = {
     setupNeedsDestination: "先にバックアップ先を入力してください。",
     setupNeedsCredential: ({ credential }) => `${credential}: 先に保存済みシークレットを選んでください。`,
     setupInitializeAndSave: "リポジトリを作成して保存",
+    setupCreatingRepository: "リポジトリを作成中…",
     setupAnotherMachine: "別のマシン",
     setupReceiverMachine: "保存先のマシン",
     setupLocalWarning: "このマシンに保存 · オフサイトのコピーではありません",

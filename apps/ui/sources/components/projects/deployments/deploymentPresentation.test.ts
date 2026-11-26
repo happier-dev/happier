@@ -4,7 +4,7 @@ import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protoco
 import { DeploymentReceiptMetadataV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { t } from '@/text';
-import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentHealthFact, deploymentSettledStateLabel } from './deploymentPresentation';
+import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentHealthFact, deploymentSettledStateLabel } from './deploymentPresentation';
 
 it('presents the recorded interruption reason on the receipt and its history row', () => {
     const receipt = createDeploymentReceiptHeaderV1({ state: 'outcome_unknown' });
@@ -133,6 +133,14 @@ describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest pr
         expect(deploymentEnvironmentAttention({ ...calm, latest: failed })).toEqual({ kind: 'latestFailed', deploymentId: 'd-failed' });
         expect(deploymentEnvironmentAttention({ ...calm, latest: { id: 'd-run', state: 'queued' }, health: { status: 'down' } }))
             .toEqual({ kind: 'deploying', deploymentId: 'd-run' });
+    });
+
+    it('R18-D2: a latest deploy whose outcome is unknown speaks on the Overview, as the rail does, and names its receipt', () => {
+        expect(deploymentEnvironmentAttention({ ...calm, latest: { id: 'd-unknown', state: 'outcome_unknown' }, health: { status: 'up' } }))
+            .toEqual({ kind: 'latestUnknown', deploymentId: 'd-unknown' });
+        // A failure still outranks it; a deploy at work is said as such.
+        expect(DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER.indexOf('latestFailed'))
+            .toBeLessThan(DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER.indexOf('latestUnknown'));
     });
 
     it('R15-D6: a press that ran and left a failed receipt is that failure, said the same way before and after a reload', () => {

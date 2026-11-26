@@ -744,6 +744,7 @@ const deploymentSettingsTranslations = {
     setupNeedsDestination: "請先填寫備份位置。",
     setupNeedsCredential: ({ credential }) => `${credential}：請先選擇已儲存的密鑰。`,
     setupInitializeAndSave: "建立儲存庫並儲存",
+    setupCreatingRepository: "正在建立儲存庫…",
     setupAnotherMachine: "另一台機器",
     setupReceiverMachine: "目標機器",
     setupLocalWarning: "儲存在此機器上 · 不是異地副本",

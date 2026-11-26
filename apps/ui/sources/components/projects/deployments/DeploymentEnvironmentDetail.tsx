@@ -1032,6 +1032,20 @@ export const DeploymentEnvironmentDetail = React.memo(
               machine={runtime?.source.kind === 'plugin' ? null : machineLabel}
               machineId={runtime?.source.kind === 'plugin' || machineIds.length !== 1 ? null : machineIds[0]} />
           ) : null;
+        case 'latestUnknown': {
+          // The rail says "Unconfirmed"; the Overview says the same once, with what to check and the receipt (R18-D2).
+          const unknownId = attention.deploymentId;
+          return (
+            <AttentionBanner
+              testID="project-deployments.environment.attention.latestUnknown"
+              tone="warning"
+              title={latest ? deploymentReceiptTitle(latest, latest.source ? deploymentRevisionLabel(latest.source) : null)
+                : deploymentStateLabel('outcome_unknown')}
+              description={deploymentStateNotice('outcome_unknown', latest?.failure ?? null)?.text}
+              action={{ label: t('projects.deployments.overviewStatus.openReceipt'), onPress: () => props.onOpenReceipt(unknownId) }}
+            />
+          );
+        }
         case 'latestFailed': {
           // One failure, one banner (R15-D6): right after the press and after a reload it reads the same, with the
           // cause's own fix when the receipt names one, else the receipt.

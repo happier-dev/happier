@@ -753,6 +753,7 @@ const deploymentSettingsTranslations = {
     setupNeedsDestination: "Сначала укажите, куда сохранять копии.",
     setupNeedsCredential: ({ credential }) => `${credential}: сначала выберите сохранённый секрет.`,
     setupInitializeAndSave: "Создать репозиторий и сохранить",
+    setupCreatingRepository: "Создание репозитория…",
     setupAnotherMachine: "Другая машина",
     setupReceiverMachine: "Машина назначения",
     setupLocalWarning: "На этой машине · не внешняя копия",

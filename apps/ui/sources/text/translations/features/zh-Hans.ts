@@ -743,6 +743,7 @@ const deploymentSettingsTranslations = {
     setupNeedsDestination: "请先填写备份位置。",
     setupNeedsCredential: ({ credential }) => `${credential}：请先选择已保存的密钥。`,
     setupInitializeAndSave: "创建仓库并保存",
+    setupCreatingRepository: "正在创建仓库…",
     setupAnotherMachine: "另一台机器",
     setupReceiverMachine: "目标机器",
     setupLocalWarning: "保存在此机器上 · 不是异地副本",

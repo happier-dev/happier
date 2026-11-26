@@ -750,6 +750,7 @@ const deploymentSettingsTranslations = {
     setupNeedsDestination: "Najpierw podaj, gdzie trafiają kopie.",
     setupNeedsCredential: ({ credential }) => `${credential}: najpierw wybierz zapisany sekret.`,
     setupInitializeAndSave: "Utwórz repozytorium i zapisz",
+    setupCreatingRepository: "Tworzenie repozytorium…",
     setupAnotherMachine: "Inna maszyna",
     setupReceiverMachine: "Maszyna docelowa",
     setupLocalWarning: "Na tej maszynie · bez kopii poza nią",

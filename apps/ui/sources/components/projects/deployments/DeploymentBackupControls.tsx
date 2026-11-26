@@ -705,9 +705,11 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
       disabled={!complete || locked} onPress={() => submit('test')} />}
     {/* Creating a repository is offered only once Test found none there, so a mistyped place is never initialized. */}
     {/* When Test found no repository there, creating one and saving is the sheet's one way forward (R15-D3). */}
+    {/* While it works, the button says so in words rather than turning into dots (R18 Backups). */}
     {!intent && repositoryMissing ? <RoundButton testID={`${id}.initialize`} size="normal"
-      title={t('projects.deployments.settingsSections.setupInitializeAndSave')}
-      disabled={!complete || locked} loading={busy} onPress={() => submit('initializeAndSave')} />
+      title={t(busy ? 'projects.deployments.settingsSections.setupCreatingRepository'
+        : 'projects.deployments.settingsSections.setupInitializeAndSave')}
+      disabled={!complete || locked} onPress={() => submit('initializeAndSave')} />
       : <RoundButton testID={`${id}.save`} size="normal" title={t('projects.deployments.settingsSections.setupSave')}
         disabled={!complete || locked} loading={busy} onPress={intent ? saveIntent : () => submit('save')} />}
   </ModalCardFooterActions>, [onClose, id, busy, locked, complete, submit, intent, saveIntent, repositoryMissing, incompleteReason]);

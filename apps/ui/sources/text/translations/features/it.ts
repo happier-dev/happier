@@ -755,6 +755,7 @@ const deploymentSettingsTranslations = {
     setupNeedsDestination: "Indica prima dove vanno i backup.",
     setupNeedsCredential: ({ credential }) => `${credential}: scegli prima un segreto salvato.`,
     setupInitializeAndSave: "Crea il repository e salva",
+    setupCreatingRepository: "Creazione del repository…",
     setupAnotherMachine: "Un’altra macchina",
     setupReceiverMachine: "Macchina di destinazione",
     setupLocalWarning: "Su questa macchina · nessuna copia esterna",

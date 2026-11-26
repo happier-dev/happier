@@ -758,6 +758,7 @@ const deploymentSettingsTranslations = {
     setupNeedsDestination: "Indiquez d’abord où vont les sauvegardes.",
     setupNeedsCredential: ({ credential }) => `${credential} : choisissez d’abord un secret enregistré.`,
     setupInitializeAndSave: "Créer le dépôt et enregistrer",
+    setupCreatingRepository: "Création du dépôt…",
     setupAnotherMachine: "Une autre machine",
     setupReceiverMachine: "Machine de destination",
     setupLocalWarning: "Sur cette machine · sans copie hors site",

@@ -478,13 +478,13 @@ export function deploymentHealthFact(
  * fact lands; nothing else orders deployment notices.
  */
 export const DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER = [
-  'machineOffline', 'machineReinstalled', 'noTarget', 'controllerPaused', 'actionRefused', 'latestFailed', 'approvalWaiting', 'deploying',
+  'machineOffline', 'machineReinstalled', 'noTarget', 'controllerPaused', 'actionRefused', 'latestFailed', 'latestUnknown', 'approvalWaiting', 'deploying',
   'unhealthy', 'secretWithdrawn', 'runningUnverified', 'catalogUpdate',
 ] as const;
 export type DeploymentEnvironmentAttentionKind = (typeof DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER)[number];
 export type DeploymentEnvironmentAttention =
-  | Readonly<{ kind: 'latestFailed' | 'deploying'; deploymentId: string }>
-  | Readonly<{ kind: Exclude<DeploymentEnvironmentAttentionKind, 'latestFailed' | 'deploying' | 'secretWithdrawn'> }>;
+  | Readonly<{ kind: 'latestFailed' | 'latestUnknown' | 'deploying'; deploymentId: string }>
+  | Readonly<{ kind: Exclude<DeploymentEnvironmentAttentionKind, 'latestFailed' | 'latestUnknown' | 'deploying' | 'secretWithdrawn'> }>;
 
 /** The facts the Overview already holds; each comes from its own owner (presence, receipts, health, the press). */
 export type DeploymentEnvironmentAttentionFacts = Readonly<{
@@ -518,6 +518,8 @@ export function deploymentEnvironmentAttention(facts: DeploymentEnvironmentAtten
   const refusalIsLatestFailure = facts.latest?.state === 'failed' && facts.refusedDeploymentId === facts.latest.id;
   if (facts.refused && !refusalIsLatestFailure) return { kind: 'actionRefused' };
   if (facts.latest?.state === 'failed') return { kind: 'latestFailed', deploymentId: facts.latest.id };
+  // A deploy Happier could not confirm is said here once, as the rail says "Unconfirmed" (R18-D2).
+  if (facts.latest?.state === 'outcome_unknown') return { kind: 'latestUnknown', deploymentId: facts.latest.id };
   if (facts.reviewPending) return { kind: 'approvalWaiting' };
   if (facts.latest?.state === 'queued' || facts.latest?.state === 'running') return { kind: 'deploying', deploymentId: facts.latest.id };
   const health = deploymentEnvironmentHealthKind(facts.health);

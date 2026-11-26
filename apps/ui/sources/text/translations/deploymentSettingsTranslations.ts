@@ -261,6 +261,7 @@ export type DeploymentSettingsTranslations = Readonly<{
   setupSheetLead: (params: { machine: string }) => string;
   setupSheetNext: string;
   setupInitializeAndSave: string;
+  setupCreatingRepository: string;
   setupAnotherMachine: string;
   setupReceiverMachine: string;
   setupLocalWarning: string;
@@ -458,6 +459,7 @@ export const deploymentSettingsTranslations = {
     setupNeedsDestination: "Fill in where backups go first.",
     setupNeedsCredential: ({ credential }: { credential: string }) => `${credential}: choose a saved secret first.`,
     setupInitializeAndSave: "Create repository and save",
+    setupCreatingRepository: "Creating the repository…",
     setupAnotherMachine: "Another Machine",
     setupReceiverMachine: "Destination Machine",
     setupLocalWarning: "On this Machine · not an off-site copy",

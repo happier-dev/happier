@@ -757,6 +757,7 @@ const deploymentSettingsTranslations = {
     setupNeedsDestination: "Primer indica on van les còpies.",
     setupNeedsCredential: ({ credential }) => `${credential}: primer tria un secret desat.`,
     setupInitializeAndSave: "Crea el repositori i desa",
+    setupCreatingRepository: "Creant el repositori…",
     setupAnotherMachine: "Una altra màquina",
     setupReceiverMachine: "Màquina de destinació",
     setupLocalWarning: "En aquesta màquina · sense còpia externa",
