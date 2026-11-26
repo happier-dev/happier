@@ -1078,7 +1078,8 @@ it('only arms metered expiry and moves a used-up count to a retained row at its 
     const spent = quotaRead('spent', start, [{ meterId: 'weekly', label: 'Weekly', usedPct: 100,
       resetAtMs: start + DAY, windowDurationMs: 7 * DAY }], {}, { staleAfterMs: 5 * 60_000 });
     const empty = quotaRead('empty', start, [], {}, { staleAfterMs: 60_000 });
-    const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium' }}>
+    const screen = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
+      footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' } }}>
       <UsageProjectionsWidget {...bodyProps([empty, spent])} id="usage_projections" testID="proj" />
     </WidgetPresentationProvider>));
     expect(screen.findByTestId('proj.usedUp')).toBeTruthy();
