@@ -3031,6 +3031,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             let heldStep: WorkflowRunSummaryV1['heldStep'] = args.input.attention === 'required' ? null : undefined;
             try {
               const census = WorkflowRunRecipientCensusResponseV1Schema.parse(keyCensusByRunId[run.id]);
+              // Control access is admitted by the Home even before the Machine seals the snapshot.
+              callerAccessByRunId[run.id] = projectRunCallerAccess(census);
               if (!readEncryption) throw workflowError('content_unavailable');
               const resolved = resolveWorkflowRunDataKeyV1({ encryption: readEncryption, census });
               if (resolved.kind !== 'available') throw workflowError(resolved.reason);
@@ -3071,7 +3073,6 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
                 return program = opened.content;
               };
               origin = projectAcceptedOrigin(accepted.origin, run.origin) ?? run.origin;
-              callerAccessByRunId[run.id] = projectRunCallerAccess(census);
               supportsAnotherRoundByRunId[run.id] = supportsWorkflowAnotherRoundV1(accepted.authoredDefinition);
               assertRunResourceRestriction(args.context, { machineId: accepted.machineId,
                 project: accepted.workspaceTarget.project }, deps.normalizeAbsolutePath);

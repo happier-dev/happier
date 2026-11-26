@@ -1925,6 +1925,23 @@ describe('shared Account workflow run owner', () => {
     } })).rejects.toMatchObject({ code: 'target_unavailable' });
   });
 
+  it('keeps Stop authority on an unclaimed occurrence whose Machine has not published content', async () => {
+    const snapshot = runSnapshot();
+    const run = WorkflowRunSummaryV1Schema.parse({ ...snapshot.run, origin: { kind: 'automation', automationId: 'automation-1',
+      cause: { kind: 'manual', invokedAt: Date.parse(snapshot.run.createdAt) } } });
+    let access: 'owner' | 'view' = 'owner';
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation !== 'list') throw new Error('unexpected_storage_operation');
+      return { runs: [run], acceptedEnvelopesByRunId: { [run.id]: null },
+        keyCensusByRunId: { [run.id]: { ...snapshot.keyCensus, access } }, rootProgressByRunId: {} };
+    } }));
+    const list = () => owner.execute({ actionId: 'workflow.run.list', input: { runIds: [run.id] }, context: {} });
+    await expect(list()).resolves.toMatchObject({ runs: [{ id: run.id, state: 'queued', availability: { cancel: true } }],
+      callerAccessByRunId: { [run.id]: { canEdit: true } } });
+    access = 'view';
+    await expect(list()).resolves.toMatchObject({ callerAccessByRunId: { [run.id]: { canEdit: false } } });
+  });
+
   it.each([401, 403])('preserves an untyped HTTP %s history refusal as access denied during Another round', async status => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
     const rounds = { ...definition, inputs: [{ name: 'previousRoundContext', valueType: 'json' as const, required: false }] };
