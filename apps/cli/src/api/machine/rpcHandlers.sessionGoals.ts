@@ -152,6 +152,8 @@ async function resolveActionDeps(params: Readonly<{
     sessionId: transport.sessionId,
     rawSession: transport.rawSession,
     initialSessionGoalTransport: transport,
+    getCurrentSessionMetadata: () => tryDecryptSessionOwnerMetadataView({ credentials,
+      accountEncryptionMode: transport.accountEncryptionCurrentness.mode, rawSession: transport.rawSession }),
     ...(params.deps?.machineActionDirectTargetTransport ? { machineActionDirectTargetTransport: params.deps.machineActionDirectTargetTransport } : {}),
     ...(stageDaemonWorkStateMutation
       ? { stageWorkStateMutation: (mutation: DaemonWorkStateFieldMutation, options?: Readonly<{ signal?: AbortSignal }>) =>

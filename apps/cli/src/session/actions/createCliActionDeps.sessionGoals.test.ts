@@ -10,8 +10,26 @@ import { buildTestCodexRuntimeDescriptorV1 } from '@/testkit/runtimeDescriptorFi
 import { registerMachineSessionGoalRpcHandlers } from '@/api/machine/rpcHandlers.sessionGoals';
 import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createCliActionDeps } from './createCliActionDeps';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 
-afterEach(() => vi.restoreAllMocks());
+// Repository build preparation is a process boundary. The admitted runtime,
+// contribution activation and native launch-owner refusal remain real.
+vi.mock('@/subprocess/sourceDevSharedDepsPreflight', async importOriginal => ({
+    ...await importOriginal<typeof import('@/subprocess/sourceDevSharedDepsPreflight')>(),
+    prepareSourceDevSharedDepsForBundledPluginRuntimeLoad: async () => ({
+        type: 'ready' as const, checked: false, reason: 'not-source-dev' as const,
+    }),
+}));
+
+let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+afterEach(async () => {
+    await runtime?.dispose();
+    runtime = undefined;
+    vi.restoreAllMocks();
+});
 
 describe('CLI inactive goal transport', () => {
     it.each([false, true])('FIX75 routes configured ACP Goal Set/Get/complete through daemon custody (bound=%s)', async bound => {
@@ -64,12 +82,18 @@ describe('CLI inactive goal transport', () => {
         }
     });
 
-    it('refuses an authenticated daemon wake without its Goal owner and still checks caller authority', async () => {
+    it('refuses an authenticated daemon wake without its native launch owner and still checks caller authority', async () => {
+        runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.agent.codex'],
+                scopedActionRuntime: { credentials: null, actionsSettingsProvider: createActionSettingsProvider() } } });
         const sessionId = 'c123456789012345678901234';
         const credentials = { token: 'goal-token', encryption: null };
-        const rawSession = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: false, seq: 19,
-            machineId: 'target-machine', metadata: JSON.stringify({ machineId: 'target-machine', path: '/repo',
-                agentRuntimeDescriptorV1: buildTestCodexRuntimeDescriptorV1({ backendMode: 'appServer', providerSessionId: 'thread-1' }) }) });
+        const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
+            metadata: { machineId: 'target-machine', path: '/repo',
+                agentRuntimeDescriptorV1: buildTestCodexRuntimeDescriptorV1({ backendMode: 'appServer', providerSessionId: 'thread-1' }) }, agentState: null });
+        const rawSession = createSessionRecordFixture({ id: sessionId, share: null, encryptionMode: 'plain', active: false, seq: 19,
+            machineId: 'target-machine', metadataVersion: 0, metadataLayoutVersion: fields.metadataLayoutVersion,
+            metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata, displayProjectionV1: fields.displayProjectionV1 });
         // Only persisted credentials/settings and the HTTP/process transport are replaced.
         vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
         await updateMachineRegistration(() => ({ machineId: 'target-machine' }));
@@ -82,6 +106,10 @@ describe('CLI inactive goal transport', () => {
             if (String(url).includes(`/v2/sessions/${sessionId}`)) {
                 transportReads.push('session');
                 return { status: 200, data: { session: rawSession } };
+            }
+            if (String(url).includes('/v2/sessions/unrelated-session')) {
+                transportReads.push('caller-session');
+                return { status: 200, data: { session: { ...rawSession, id: 'unrelated-session' } } };
             }
             throw new Error(`Unexpected HTTP boundary: ${url}`);
         });
@@ -104,7 +132,7 @@ describe('CLI inactive goal transport', () => {
         const context: RpcHandlerContext = { signal, callerAuthority: 'account_automation' };
         await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_GOAL_SET_V2)?.({ sessionId, objective: 'Finish',
             resumeInactiveWithInitialGoal: true, tokenBudget: null }, context)).resolves.toMatchObject({
-                ok: false, errorCode: 'inactive_agent_runtime_unavailable',
+                ok: false, errorCode: 'inactive_agent_launch_scope_unavailable',
             });
         expect(requests).toEqual([]);
         // Daemon admission and the nested Goal Action share this request's
@@ -112,17 +140,21 @@ describe('CLI inactive goal transport', () => {
         expect(transportReads).toEqual(['currentness', 'session']);
         requests.length = 0;
         await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_GOAL_SET_V2)?.({ sessionId, objective: 'Finish',
-            resumeInactiveWithInitialGoal: true }, { signal, localActionContext: {
+            resumeInactiveWithInitialGoal: true }, { signal, sessionActionOrigin: { v: 1,
+                caller: { kind: 'session', sessionId: 'unrelated-session', starterDepth: 0, turnDepth: 0 },
+                sourceTurnId: 'turn-1', requestId: 'goal-1', callerPermissionMode: 'default',
+            }, localActionContext: {
                 surface: 'agent', authority: 'account_automation', callerPermissionMode: 'default',
                 agentStartContext: {
                     caller: { kind: 'session', sessionId: 'unrelated-session', starterDepth: 0, turnDepth: 0 },
                     baseline: { machineId: 'target-machine', directory: '/repo' },
                     roles: {}, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default',
                 },
-            } })).resolves.toMatchObject({ ok: false, errorCode: 'subtree_denied' });
+            } })).resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action', details: { cause: 'action_scope_restricted' } });
         expect(requests).toEqual([]);
-        // A different invocation still obtains fresh Account/Session facts.
-        expect(transportReads).toEqual(['currentness', 'session', 'currentness', 'session']);
+        // A different invocation obtains fresh target facts and resolves the
+        // authenticated caller's distinct Session before denying its scope.
+        expect(transportReads).toEqual(['currentness', 'session', 'currentness', 'session', 'currentness', 'caller-session']);
     });
 
     it.each(['account_automation', undefined] as const)('retains automation authority and cancellation at the direct target daemon boundary (%s)', async authority => {
