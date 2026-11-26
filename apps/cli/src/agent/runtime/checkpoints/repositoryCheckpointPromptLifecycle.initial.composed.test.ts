@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from 'node:child_process';
+import * as childProcess from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,7 +10,9 @@ import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/
 
 import { ApiSessionClient } from '@/api/session/sessionClient';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
-import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createDeferred } from '@/testkit/async/deferred';
+import { createHostScmCommandRunner } from '@/scm/runtime';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { readRepositoryCheckpointInitialEvidence } from '@/scm/checkpoints/sessionEvidence';
 import { createRepositoryCheckpointPromptLifecycle } from './repositoryCheckpointPromptLifecycle';
@@ -17,11 +20,72 @@ import { createRepositoryCheckpointPromptLifecycle } from './repositoryCheckpoin
 // Only Home's HTTP and Socket.IO boundaries are substituted. The Session's
 // mode-aware transcript reader and Git checkpoint producer run together.
 vi.mock('socket.io-client', () => ({ io: () => createApiSessionSocketStub() }));
+vi.mock('node:child_process', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 const execFile = promisify(execFileCallback);
 
 describe('initial checkpoint of an attached Session', () => {
     afterEach(() => vi.restoreAllMocks());
+
+    it.each([true, false])('joins idle Git discovery before Session end releases the workspace (repository=%s)', async repository => {
+        await withTempDir('happier-checkpoint-end-', async repoRoot => {
+            if (repository) await execFile('git', ['init'], { cwd: repoRoot });
+            const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+            const closed = createDeferred();
+            let releaseClose: (() => void) | undefined;
+            let exitCode: unknown;
+            // Delay only the OS child's close notification; Git and all checkpoint
+            // and Exec owners run normally beneath this external boundary.
+            const boundary = vi.spyOn(childProcess, 'spawn').mockImplementation((command, args, options) => {
+                const child = actual.spawn(command, args, options);
+                const emit = child.emit.bind(child);
+                const notifications = vi.spyOn(child, 'emit').mockImplementation((event, ...eventArgs) => {
+                    if (event === 'close') {
+                        exitCode = eventArgs[0];
+                        releaseClose = () => {
+                            releaseClose = undefined;
+                            notifications.mockRestore();
+                            emit(event, ...eventArgs);
+                        };
+                        closed.resolve();
+                        return true;
+                    }
+                    return emit(event, ...eventArgs);
+                });
+                return child;
+            });
+            const lifecycle = createRepositoryCheckpointPromptLifecycle({
+                session: createMutableApiSessionClientFixture({ sessionId: 'ending-session' }),
+                runtimeDirectory: repoRoot, provider: 'codex',
+                source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true,
+                    agentIsolation: { read: () => ({ enabled: false, status: {
+                        kind: 'effective', platform: 'linux', agentUser: 'happier-agent',
+                    }, workspaceRoots: [] }) },
+                }),
+            });
+            let ended: Promise<unknown> | undefined;
+            try {
+                await closed.promise;
+                expect(exitCode).toBe(repository ? 0 : 128);
+                let settled = false;
+                ended = Promise.resolve(lifecycle.onSessionEnd?.()).then(() => { settled = true; });
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(settled).toBe(false);
+                releaseClose?.();
+                await ended;
+                expect(settled).toBe(true);
+            } finally {
+                releaseClose?.();
+                await ended;
+                boundary.mockRestore();
+            }
+        });
+    });
 
     it.each(['first', 'plugin-input-v1:SypCNfDzbNO_myZIqQ-M7kJK6VmcoEMhfSXzr-hGsRA', 'historical-first', null])('uses canonical earliest prompt evidence (%s)', async earliestLocalId => {
         await withTempDir('happier-attached-initial-', async repoRoot => {

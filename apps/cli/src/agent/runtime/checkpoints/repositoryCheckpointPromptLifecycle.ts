@@ -533,8 +533,13 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
         },
         async onSessionEnd() {
             sessionEnded = true;
+            const pendingDiscovery = preparedContext;
             preparedContext = null;
-            await checkpointPreparation;
+            try {
+                await checkpointPreparation;
+            } finally {
+                await pendingDiscovery?.catch(() => undefined);
+            }
             for (const binding of bindingsByMessageId.values()) {
                 endAttributionInterval(binding);
             }
