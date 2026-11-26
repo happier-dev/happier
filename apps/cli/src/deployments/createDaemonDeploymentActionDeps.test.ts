@@ -1594,7 +1594,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown with reviewed assigned Domain', 'provider teardown with assigned Domain attached after review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain assigned add', 'provider Domain assigned verify', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable Vercel telemetry off', 'variable Vercel telemetry acknowledged', 'variable Vercel telemetry provider refused', 'variable Worker destination off', 'variable Worker destination activate', 'variable Worker destination activation refused', 'variable Worker destination CAS refused', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown with reviewed assigned Domain', 'provider teardown with assigned Domain attached after review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain assigned add', 'provider Domain assigned verify', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable Vercel telemetry off', 'variable Vercel telemetry acknowledged', 'variable Vercel telemetry provider refused', 'variable Worker destination off', 'variable Worker destination activate', 'variable Worker destination activation refused', 'variable Worker destination CAS refused', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt Home unavailable', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const receiptId = `platform-receipt-${scenario.replaceAll(' ', '-')}`;
@@ -3121,6 +3121,9 @@ describe('installed deployment storage and target composition', () => {
                         deploymentId: receipt.id, revision: 7, deploymentRevision: receipt.revision, state: receipt.state }) };
                 }
                 if (request.method === 'GET' && path.endsWith(`/receipts/${receipt.id}`)) {
+                    if (scenario === 'receipt Home unavailable') return {
+                        status: 503, data: { error: 'database_connection_unavailable', statusCode: 503 },
+                    };
                     if (scenario === 'requester revoked') requesterCurrent = false;
                     return { status: 200, data: DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment: receipt }) };
                 }
@@ -3302,7 +3305,7 @@ describe('installed deployment storage and target composition', () => {
                 expect(transitionWrites).toBe(0);
                 return;
             }
-            if (!sdkBackgroundObservation && (controllerBuildOutput || backgroundObservation || rootSource || scenario === 'requester revoked' || scenario === 'reviewed child' || scenario === 'upload source' || scenario === 'retained receipt observe' || roleFails || settlementPointerChanged)) {
+            if (!sdkBackgroundObservation && (controllerBuildOutput || backgroundObservation || rootSource || scenario === 'requester revoked' || scenario === 'receipt Home unavailable' || scenario === 'reviewed child' || scenario === 'upload source' || scenario === 'retained receipt observe' || roleFails || settlementPointerChanged)) {
                 const target = { kind: 'machine' as const, machineId: 'machine-a' };
                 const rootActionId = backgroundObservation ? 'deployments.receipts.observe' as const : 'deployments.deploy' as const;
                 const rootInput = candidate.input;
@@ -3631,6 +3634,19 @@ describe('installed deployment storage and target composition', () => {
             const logWarnings = controllerLogWriteFailure ? vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {}) : undefined;
             stageLogWriteBoundary.diskFull = controllerLogWriteFailure;
             const result = await invokeRoot();
+            if (scenario === 'receipt Home unavailable') {
+                expect(reserved).toBe(true);
+                expect(result).toMatchObject({
+                    ok: false, errorCode: 'database_connection_unavailable',
+                    failureCause: { phase: 'home.database.transaction', errorClass: 'HttpStatusError',
+                        errorCode: 'database_connection_unavailable', httpStatus: 503 },
+                });
+                // The owner knows the reservation was made but no provider Action ran.
+                expect(result).toMatchObject({ effectAttempted: false });
+                expect(childInvocations).toBe(0);
+                expect(transitionWrites).toBe(0);
+                return;
+            }
             stageLogWriteBoundary.diskFull = false;
             expect(reserved, JSON.stringify(result)).toBe(!requiresChildApproval);
             if (controllerBuildOutput) {

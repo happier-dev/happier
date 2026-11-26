@@ -8,6 +8,7 @@ import { projectUnsignedHomeAuthorizationHttpFailure, SignedHomeAuthorizationHtt
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { projectDeploymentException } from './deploymentFailure';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import { DEPLOYMENT_STOP_ACCEPTED_HEADER_V1, DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type DeploymentCancelInputV1, DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -74,6 +75,14 @@ export type CliDeploymentEnvironmentAccessRead = (input: Omit<DeploymentEnvironm
 const normalizeProviderVariables = (value: NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']>, persisted: boolean) => ({ ...value, persisted });
 const failure = (errorCode: string): ActionExecuteFailure => errorCode === 'invalid_action_output'
   ? deploymentOutputValidationFailure('deployments.home', undefined) : ({ ok: false, errorCode, error: errorCode });
+// Home's storage refusals use its HTTP error envelope, outside each Deployment output.
+function readHomeStorageRefusal(response: Readonly<{ status: number; data: unknown }>): ActionExecuteFailure | null {
+  if (response.status !== 503) return null;
+  const fallback = failure('action_failed');
+  const projected = projectConfirmedActionHttpRefusal(fallback, response.status, response.data);
+  return projected === fallback ? null : projected;
+}
+
 const domainOperationUnavailable = (requiredFact: 'operationAcceptance' | 'requestId'): ActionExecuteFailure => {
   const phase = requiredFact === 'operationAcceptance'
     ? 'deployment.domain.operation_acceptance_missing' : 'deployment.domain.request_id_missing';
@@ -189,6 +198,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       const changed = await params.admitAccount(input.serverId, context);
       if (changed) return changed;
       context.signal?.throwIfAborted();
+      const storageRefusal = readHomeStorageRefusal(response);
+      if (storageRefusal) return storageRefusal;
       const parsed = DeploymentEnvironmentAccessResultV1Schema.safeParse(response.data);
       if (!parsed.success && (response.status === 401 || response.status === 403)) return projectUnsignedHomeAuthorizationHttpFailure(response.status);
       if (!parsed.success) return failure(response.status === 404 || response.status === 405 || response.status === 501
@@ -395,6 +406,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         details: { ...rollback.details, requiredFact: 'transaction_commit',
           remedy: 'Retry the action; the Home rolled back its database transaction.' },
         failureCause: projectActionFailureCauseV1({ code: rollback.code, status: response.status }, 'home.database.transaction') });
+      const storageRefusal = readHomeStorageRefusal(response);
+      if (storageRefusal) return withProviderEffect(storageRefusal);
       const parsed = (approvalMetadata ? DeploymentApprovalEnvironmentResultV1Schema : actionId === 'deployments.environments.create'
         ? DeploymentEnvironmentCreateResultV1Schema : DeploymentActionOutputSchemasV1[actionId]).safeParse(response.data);
       if (!parsed.success && providerVariables) return withProviderEffect(failure('outcome_unknown'));
@@ -443,6 +456,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           const acknowledged = await axios.request<unknown>({ url: `${params.serverHttpBaseUrl}${path}`,
             method, headers: activationHeaders, data: activationBody, signal: context.signal,
             validateStatus: () => true }).catch(homeTransportFailure);
+          const activationRefusal = readHomeStorageRefusal(acknowledged);
+          if (activationRefusal) return withProviderEffect(activationRefusal);
           const settled = DeploymentActionOutputSchemasV1['deployments.bindings.set'].safeParse(acknowledged.data);
           if (!settled.success) return withProviderEffect(acknowledged.status === 401 || acknowledged.status === 403
             ? projectUnsignedHomeAuthorizationHttpFailure(acknowledged.status) : failure('outcome_unknown'));
