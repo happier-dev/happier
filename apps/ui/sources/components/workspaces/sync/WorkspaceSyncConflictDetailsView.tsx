@@ -1,3 +1,4 @@
+import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
@@ -541,15 +542,56 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
     const selectedKeepAlternatives = currentInspection && sourceId
         ? buildReviewedWorkspaceSyncResolution({ inspection: currentInspection, sourceWorkspaceRefId: sourceId,
             selectedTargetWorkspaceRefIds: targetIds, relationshipIds, strategy: 'keep_both' }) : null;
+    const backToConflicts = () => {
+        returnToRowRef.current = true;
+        returnedPathRef.current = selectedPath;
+        rowFocusRef.current = null;
+        setSelectedPath(null);
+    };
+    const chooseSource = (id: string) => {
+        setSourceWorkspaceRefId(id);
+        setSelectedTargetWorkspaceRefIds((previous) => previous?.filter((targetId) => targetId !== id) ?? null);
+    };
+    const toggleTarget = (workspaceRefId: string) => {
+        setSelectedTargetWorkspaceRefIds((previous) => {
+            const current = previous ?? targetIds;
+            return current.includes(workspaceRefId) ? current.filter((id) => id !== workspaceRefId) : [...current, workspaceRefId];
+        });
+    };
+    const canAskAgent = Boolean(accountBinding?.isCurrent() && sourceId && endpointFor(sourceId)?.workspaceRef?.rootPath);
+    const draftCommands: CurrentUiContextLocalCommand[] = [];
+    if (selectedPath) {
+        if (!props.approvedRequest) draftCommands.push({ key: 'back', title: t('common.back'), invoke: backToConflicts });
+        if (currentInspection) {
+            for (const version of currentInspection.versions) {
+                const id = sourceId && version.endpointWorkspaceRefIds.includes(sourceId) ? sourceId : version.endpointWorkspaceRefIds[0]!;
+                if (!props.approvedRequest) draftCommands.push({ key: `source:${id}`,
+                    title: `${t('workspaceSync.review.versions')}: ${version.endpointWorkspaceRefIds.map(endpointLabel).join(' · ')}`,
+                    invoke: () => chooseSource(id) });
+            }
+            for (const version of currentInspection.versions) {
+                const id = version.endpointWorkspaceRefIds[0]!;
+                if (currentInspection.versions.length > 2 && !version.endpointWorkspaceRefIds.includes(sourceId ?? '')) {
+                    draftCommands.push({ key: `compare:${id}`, title: t('workspaceSync.review.compareNamedVersion', { name: endpointLabel(id) }),
+                        invoke: () => setCompareWorkspaceRefId(id) });
+                }
+            }
+            if (!props.approvedRequest && currentInspection.endpoints.length > 2) {
+                for (const endpoint of currentInspection.endpoints.filter((endpoint) => endpoint.workspaceRefId !== sourceId)) {
+                    if (eligibleTargetIds.includes(endpoint.workspaceRefId) || targetIds.includes(endpoint.workspaceRefId)) {
+                        draftCommands.push({ key: `target:${endpoint.workspaceRefId}`, title: `${t('workspaceSync.review.chooseTargets')}: ${endpointLabel(endpoint.workspaceRefId)}`,
+                            invoke: () => toggleTarget(endpoint.workspaceRefId) });
+                    }
+                }
+            }
+            if (!props.approvedRequest && sourceId && canAskAgent) draftCommands.push({ key: 'ask-agent', title: t('workspaceSync.review.askAgent'), invoke: askAgent });
+        }
+    }
+    useCurrentUiContextLocalCommands(draftCommands, { contextKey: JSON.stringify([inspectionScopeKey, selectedPath]) });
     const selectedDetail = selectedPath ? (
             <View style={props.embedded ? undefined : { flex: 1 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, padding: theme.space.s12 }}>
-                    {!props.approvedRequest ? <IconButton iconName="arrow-left" accessibilityLabel={t('common.back')} onPress={() => {
-                        returnToRowRef.current = true;
-                        returnedPathRef.current = selectedPath;
-                        rowFocusRef.current = null;
-                        setSelectedPath(null);
-                    }} /> : null}
+                    {!props.approvedRequest ? <IconButton iconName="arrow-left" accessibilityLabel={t('common.back')} onPress={backToConflicts} /> : null}
                     <Text numberOfLines={2} style={{ flex: 1 }}>{selectedPath}</Text>
                     <IconButton iconName="arrow-clockwise" accessibilityLabel={t('workspaceSync.actions.refresh')} onPress={refresh} />
                 </View>
@@ -603,10 +645,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                                             accessibilityRole={props.approvedRequest ? undefined : 'radio'}
                                             accessibilityChecked={props.approvedRequest ? undefined : id === sourceId}
                                             mode={props.approvedRequest ? 'info' : undefined}
-                                            onPress={props.approvedRequest ? undefined : () => {
-                                                setSourceWorkspaceRefId(id);
-                                                setSelectedTargetWorkspaceRefIds((previous) => previous?.filter((targetId) => targetId !== id) ?? null);
-                                            }}
+                                            onPress={props.approvedRequest ? undefined : () => chooseSource(id)}
                                         />
                                         {currentInspection.versions.length > 2 && !version.endpointWorkspaceRefIds.includes(sourceId ?? '') ? (
                                             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s8 }}>
@@ -630,12 +669,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                                         accessibilityRole={editable ? 'checkbox' : undefined}
                                         accessibilityChecked={editable ? selected : undefined}
                                         mode={editable ? 'interactive' : 'info'}
-                                        onPress={editable ? () => setSelectedTargetWorkspaceRefIds((previous) => {
-                                            const current = previous ?? targetIds;
-                                            return current.includes(endpoint.workspaceRefId)
-                                                ? current.filter((id) => id !== endpoint.workspaceRefId)
-                                                : [...current, endpoint.workspaceRefId];
-                                        }) : undefined} />;
+                                        onPress={editable ? () => toggleTarget(endpoint.workspaceRefId) : undefined} />;
                                 })}
                             </ItemGroup> : null}
                             {!props.approvedRequest && currentInspection.endpoints.filter((endpoint) => endpoint.outcome !== 'observed').length > 0 ? <ItemGroup title={t('workspaceSync.review.notReviewed')}>
@@ -755,7 +789,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                             title={t('workspaceSync.review.keepAlternatives')}
                             disabled={!canResolve || resolving}
                             onPress={() => { void resolve(sourceId, 'keep_both'); }} /> : null}
-                        {accountBinding?.isCurrent() && endpointFor(sourceId)?.workspaceRef?.rootPath
+                        {canAskAgent
                             ? <RoundButton size="normal" display="inverted" title={t('workspaceSync.review.askAgent')}
                                 onPress={askAgent} /> : null}
                     </View>

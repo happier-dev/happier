@@ -1,3 +1,4 @@
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import * as React from 'react';
 
 import type { CustomModalInjectedProps } from '@/modal';
@@ -18,6 +19,7 @@ type WorkspaceSyncRelationshipDetailsModalProps = CustomModalInjectedProps & Rea
 }>;
 
 function WorkspaceSyncRelationshipDetailsModal(props: WorkspaceSyncRelationshipDetailsModalProps) {
+    useCurrentUiContextLocalCommands([{ key: 'close', title: t('common.close'), invoke: props.onClose }]);
     return <WorkspaceSyncConflictDetailsView resource={props.resource} />;
 }
 

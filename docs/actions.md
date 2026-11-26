@@ -11775,6 +11775,11 @@ In unreleased 0.3 source, each presented Workspace sync relationship row also
 publishes a Details command through that inventory. It opens the same details
 view as pressing the row and retires when the row leaves the presented surface.
 
+The mounted Sync conflict view also publishes Back, comparison choices, local source
+and target choices, and Ask Agent through that inventory. Ask Agent opens the
+same authored Session draft as the button. Resolution still uses its existing
+semantic Actions and review controls.
+
 Add machine publishes its visible folder and ignored-content drafts and Cancel.
 Linking still uses its existing semantic Actions and review controls.
 

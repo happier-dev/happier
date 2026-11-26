@@ -33,6 +33,7 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: { confirm: confirmResolution } }).module;
 });
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@legendapp/list/react-native', async importOriginal => ({
     ...await importOriginal<typeof import('@legendapp/list/react-native')>(), ...capturedLegendList,
 }));
@@ -516,4 +517,161 @@ describe('workspace conflict comparison', () => {
         expect(screen.getTextContent()).not.toContain('common.requestFailed');
         await screen.unmount();
     });
+    // The first lifecycle case installs the app-lifetime document watch before any mounted context.
+    it('publishes modal close through the mounted owner using the shell close handler', async () => {
+        const { Modal } = await import('@/modal');
+        const { openWorkspaceSyncConflictDetails } = await import('./openWorkspaceSyncRelationshipDetails');
+        const { publishAppliedActiveServerSnapshot, getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const previousApplied = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot({ serverId: workspace.serverId, serverUrl: 'https://workspace-sync.test', generation: 0 });
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+        function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+        openWorkspaceSyncConflictDetails({ kind: 'workspaceSyncConflicts', hubWorkspaceRefId: 'missing',
+            workspaceRefId: 'missing', controllerMachineId: 'machine-a', serverId: workspace.serverId });
+        const config = vi.mocked(Modal.show).mock.lastCall![0];
+        const onClose = vi.fn();
+        const screen = await renderMountedCurrentUiContext(<><Observe />{React.createElement(config.component, { ...config.props, onClose })}</>);
+        const current = reader!;
+        try {
+            expect(current.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['common.close']);
+            const row = current.readCurrentUiContext()!.commands[0]!;
+            const resolved = current.resolveCurrentUiCommand(row.id)!;
+            if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
+            await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+            expect(onClose).toHaveBeenCalledTimes(1);
+            await screen.update(<Observe />);
+            expect(current.resolveCurrentUiCommand(row.id)).toBeNull();
+        } finally { await screen.unmount(); publishAppliedActiveServerSnapshot(previousApplied, previousAvailable); }
+    });
+
+    it('publishes the complete conflict draft inventory and withdraws detail commands on back', async () => {
+        await workspace.seedProject({ includeThirdEndpoint: true });
+        machineRpc.mockImplementation(async (input: { method: string; payload: { path?: string; relationshipId?: string; preview?: { workspaceRefId: string } } }) => {
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) return {
+                status: 'page', relationshipId: input.payload.relationshipId ?? 'link-1', totalCount: 1, nextCursor: null, conflicts: [conflict('first.txt')],
+            };
+            if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT) {
+                const pair = inspection(input.payload.path ?? 'first.txt', input.payload.preview?.workspaceRefId);
+                const third = { ...alpha, digest: 'c'.repeat(40) };
+                return { ...pair, endpoints: [...pair.endpoints, { workspaceRefId: 'third', outcome: 'observed', observation: third, selections: [] }],
+                    versions: [...pair.versions, { endpointWorkspaceRefIds: ['third'], entry: third }] };
+            }
+            throw new Error(`Unexpected RPC ${input.method}`);
+        });
+        const { publishAppliedActiveServerSnapshot, getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const previousApplied = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot({ serverId: workspace.serverId, serverUrl: 'https://workspace-sync.test', generation: 0 });
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+        function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+        const { createCommittedFiberRenderCounter, readTestRendererRoot } = await import('@/dev/testkit/performance/committedFiberCounts');
+        const counter = createCommittedFiberRenderCounter();
+        let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
+        const resource = { kind: 'workspaceSyncConflicts' as const, hubWorkspaceRefId: 'hub', workspaceRefId: 'spoke',
+            controllerMachineId: 'machine-a', serverId: workspace.serverId, initialPath: 'first.txt' };
+        const tree = (unrelated: string) => <React.Profiler id="conflicts" onRender={() => { if (readRoot) counter.onCommitRoot(readRoot()); }}>
+            <Observe /><span>{unrelated}</span><WorkspaceSyncConflictDetailsView resource={resource} /></React.Profiler>;
+        const { Item } = await import('@/components/ui/lists/Item');
+        const baseline = await renderScreen(tree('without publication'));
+        readRoot = readTestRendererRoot(baseline.tree.root);
+        try {
+            await vi.waitFor(() => expect(baseline.getTextContent()).toContain('workspaceSync.review.comparison'));
+            counter.start();
+            await baseline.update(tree('unrelated without publication'));
+            counter.stop();
+            expect(counter.read().rendersFor(Item)).toBe(0);
+            console.info('Conflict choice-row baseline unrelated-update renders:', counter.read().rendersFor(Item));
+        } finally { await baseline.unmount(); }
+        readRoot = undefined;
+        const screen = await renderMountedCurrentUiContext(tree('before'));
+        readRoot = readTestRendererRoot(screen.tree.root);
+        try {
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('workspaceSync.review.comparison'));
+            counter.start();
+            await screen.update(tree('after'));
+            counter.stop();
+            expect(counter.read().rendersFor(WorkspaceSyncConflictDetailsView)).toBe(0);
+            expect(counter.read().rendersFor(Item)).toBe(0);
+            console.info('Conflict choice-row published unrelated-update renders:', counter.read().rendersFor(Item));
+            const current = reader!;
+            expect(current.readCurrentUiContext()!.commands.map(command => command.title)).toEqual([
+                'common.back', 'workspaceSync.review.versions: machine-a · /hub', 'workspaceSync.review.versions: machine-b · /spoke', 'workspaceSync.review.versions: machine-c · /third',
+                'workspaceSync.review.compareNamedVersion', 'workspaceSync.review.compareNamedVersion',
+                'workspaceSync.review.chooseTargets: machine-b · /spoke', 'workspaceSync.review.chooseTargets: machine-c · /third',
+                'workspaceSync.review.askAgent',
+            ]);
+            const invoke = async (title: string, match = 0) => {
+                const row = current.readCurrentUiContext()!.commands.filter(command => command.title === title)[match]!;
+                const command = current.resolveCurrentUiCommand(row.id)!;
+                if (command.command.kind !== 'hostLocal') throw new Error('expected_local');
+                await act(async () => { await command.command.invoke({ signal: command.retirementSignal, context: { surface: 'agent' } }); });
+            };
+            const radios = () => screen.findAll(node => typeof node.type === 'string' && node.props.role === 'radio');
+            await invoke('workspaceSync.review.versions: machine-b · /spoke');
+            expect(radios().map(row => row.props['aria-checked'])).toEqual([false, true, false]);
+            await pressTestInstanceAsync(radios()[0]!);
+            expect(radios().map(row => row.props['aria-checked'])).toEqual([true, false, false]);
+            await invoke('workspaceSync.review.compareNamedVersion', 1);
+            expect(screen.findAll(node => node.props?.title === 'machine-c · /third' && node.props.mode === 'info').length).toBeGreaterThan(0);
+            await pressTestInstanceAsync(screen.findAll(node => node.props?.title === 'workspaceSync.review.compareNamedVersion' && typeof node.props.onPress === 'function')[0]!);
+            expect(screen.findAll(node => node.props?.title === 'machine-c · /third' && node.props.mode === 'info')).toHaveLength(0);
+            const checkboxes = () => screen.findAll(node => typeof node.type === 'string' && node.props.role === 'checkbox');
+            const selected = checkboxes()[0]!.props['aria-checked'];
+            await invoke('workspaceSync.review.chooseTargets: machine-b · /spoke');
+            expect(checkboxes()[0]!.props['aria-checked']).toBe(!selected);
+            await pressTestInstanceAsync(checkboxes()[0]!);
+            expect(checkboxes()[0]!.props['aria-checked']).toBe(selected);
+            const { router } = await import('expo-router');
+            const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+            const { createNewSessionComposerDocumentOwner } = await import('@/components/sessions/composer/newSessionComposerDocumentOwner');
+            vi.mocked(router.push).mockClear();
+            // Browser startup prepares durable drafts before an authoring control can open one.
+            const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+            await prepareSessionDraftPersistenceStorage();
+            await invoke('workspaceSync.review.askAgent');
+            await vi.waitFor(() => expect(router.push).toHaveBeenCalledOnce(), { timeout: 10_000 });
+            const opened = vi.mocked(router.push).mock.lastCall![0];
+            if (typeof opened !== 'object' || !opened.params || typeof opened.params.draftId !== 'string') throw new Error('expected_authored_draft');
+            expect(opened.pathname).toBe('/new');
+            const scope = { serverId: workspace.serverId, accountId: workspace.accountId };
+            expect(readNewSessionDraftFromRepository({ scope, draftId: opened.params.draftId })).toMatchObject({
+                selectedMachineId: 'machine-a', selectedPath: '/hub',
+            });
+            expect(createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: opened.params.draftId } }).read().document.text)
+                .toBe('workspaceSync.review.askAgentPrompt');
+            await pressTestInstanceAsync(screen.findAll(node => node.props?.title === 'workspaceSync.review.askAgent' && typeof node.props.onPress === 'function')[0]!);
+            await vi.waitFor(() => expect(router.push).toHaveBeenCalledTimes(2));
+            const pressed = vi.mocked(router.push).mock.lastCall![0];
+            if (typeof pressed !== 'object' || !pressed.params || typeof pressed.params.draftId !== 'string') throw new Error('expected_pressed_draft');
+            expect(readNewSessionDraftFromRepository({ scope, draftId: pressed.params.draftId })).toMatchObject({
+                selectedMachineId: 'machine-a', selectedPath: '/hub',
+            });
+            expect(createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: pressed.params.draftId } }).read().document.text)
+                .toBe('workspaceSync.review.askAgentPrompt');
+            expect(machineRpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE)).toHaveLength(0);
+            const address = current.readCurrentUiContext()!.commands[0]!.id;
+            const resolved = current.resolveCurrentUiCommand(address)!;
+            if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
+            await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+            expect(current.readCurrentUiContext()!.commands).toEqual([]);
+            expect(current.resolveCurrentUiCommand(address)).toBeNull();
+            await pressTestInstanceAsync(screen.find(node => node.props?.title === 'first.txt' && typeof node.props.onPress === 'function'));
+            await vi.waitFor(() => expect(current.readCurrentUiContext()!.commands.length).toBeGreaterThan(0));
+            await pressTestInstanceAsync(screen.find(node => node.props?.accessibilityLabel === 'common.back' && typeof node.props.onPress === 'function'));
+            expect(current.readCurrentUiContext()!.commands).toEqual([]);
+            await pressTestInstanceAsync(screen.find(node => node.props?.title === 'first.txt' && typeof node.props.onPress === 'function'));
+            await vi.waitFor(() => expect(current.readCurrentUiContext()!.commands.length).toBeGreaterThan(0));
+            const retiredAddresses = current.readCurrentUiContext()!.commands.map(command => command.id);
+            await screen.update(<Observe />);
+            expect(current.readCurrentUiContext()!.commands).toEqual([]);
+            for (const retiredAddress of retiredAddresses) expect(current.resolveCurrentUiCommand(retiredAddress)).toBeNull();
+        } finally { await screen.unmount(); publishAppliedActiveServerSnapshot(previousApplied, previousAvailable); }
+    });
+
 });
