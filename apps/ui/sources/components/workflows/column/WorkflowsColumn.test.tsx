@@ -1449,6 +1449,13 @@ describe('WorkflowsColumn', () => {
             const ranAt = new Date(scheduledAt).toISOString();
             const answer = executeMock.getMockImplementation()!;
             executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => {
+                if (actionId === 'workflow.run.list' && typeof input.triggerId === 'string') {
+                    const workflow = workflows.find(candidate => `${candidate.id}-once` === input.triggerId);
+                    const run = workflow?.lastRun ? createWorkflowRunSummaryFixture({ id: `run-${workflow.id}`,
+                        ownerAccountId: 'account-a', origin: { kind: 'automation', automationId: workflow.id },
+                        state: workflow.lastRun, createdAt: ranAt, updatedAt: ranAt, finishedAt: ranAt }) : null;
+                    return Promise.resolve({ ok: true, result: { runs: run ? [run] : [], metadataByRunId: {} } });
+                }
                 if (actionId === 'workflow.run.summaries' && Array.isArray(input.automationIds)) return Promise.resolve({ ok: true, result: {
                     remainingAutomationIds: [], automationSummaries: (input.automationIds as string[]).map(automationId => {
                         const state = workflows.find(workflow => workflow.id === automationId)?.lastRun ?? null;
@@ -1462,13 +1469,14 @@ describe('WorkflowsColumn', () => {
         const subtitleOf = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) => screen.findAll(node =>
             node.props?.testID === `workflows-column:library:account-trigger:${id}` && 'subtitle' in node.props)[0]?.props.subtitle as string | undefined;
 
-        it('reads Succeeded or Missed from the occurrence Run\'s own state, and a pending one by its due time', async () => {
+        it('reads a spent occurrence in the past tense from its Run and a pending one by its due time', async () => {
             await serveOnceWorkflows([{ id: 'ran', remaining: 0, lastRun: 'succeeded' }, { id: 'missed', remaining: 0, lastRun: 'missed' },
                 { id: 'due', remaining: 1, lastRun: null }]);
             const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
-            await vi.waitFor(() => expect(subtitleOf(screen, 'missed')).toMatch(/^workflows\.runState\.missed · /u));
-            expect(subtitleOf(screen, 'ran')).toMatch(/^workflows\.runState\.succeeded · workflows\.triggers\.once\.at\(/u);
-            expect(subtitleOf(screen, 'missed')).toContain('workflows.triggers.once.at(');
+            await vi.waitFor(() => expect(subtitleOf(screen, 'missed')).toMatch(/^workflows\.triggers\.once\.missedOn\(/u));
+            expect(subtitleOf(screen, 'ran')).toMatch(/^workflows\.triggers\.once\.ranOn\(/u);
+            const { formatOnceScheduleInstant } = await import('../triggers/triggerSchedule');
+            expect(subtitleOf(screen, 'missed')).toContain(formatOnceScheduleInstant(scheduledAt));
             expect(subtitleOf(screen, 'due')).toMatch(/^workflows\.triggers\.once\.at\(/u);
         });
 
@@ -1482,9 +1490,10 @@ describe('WorkflowsColumn', () => {
             await screen.pressByTestIdAsync('workflows-column-trigger-popover-history');
             // History is the settings' pushed page, where the person already is, not a group appended under the whole Library.
             await vi.waitFor(() => expect(screen.findByTestId('session-work-trigger-history:ran')).not.toBeNull());
+            await vi.waitFor(() => expect(screen.findByTestId('session-work-trigger-history-row:run-ran')).not.toBeNull());
             // The spent schedule's History says how it ended before its Run rows.
             expect(screen.findAll(node => node.props?.testID === 'session-work-trigger-history:ran-once' && 'title' in node.props)[0]
-                ?.props.title).toBe('workflows.runState.succeeded');
+                ?.props.title).toMatch(/^workflows\.triggers\.once\.ranOn\(/u);
             const back = screen.findByTestId('workflows-column-trigger-popover-back');
             expect(back).not.toBeNull();
             await screen.pressByTestIdAsync('workflows-column-trigger-popover-back');
