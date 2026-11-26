@@ -2,6 +2,7 @@ import type {
     AcpBackendDefinitionV1} from '@happier-dev/protocol/acp/catalog/settingsV1';
 import type {
     PluginAgentCliMetadata} from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
+import type { PluginAgentCapabilitiesV2 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type {
     PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
@@ -69,6 +70,8 @@ export type ResolvedAgentCatalogEntry = Readonly<{
     authPlugin: AgentLocalAuthPlugin | null;
     /** Exact public CLI declaration; bundled facts do not grant execution. */
     cli?: PluginAgentCliMetadata | null;
+    /** Declared lifecycle facts for presentation; bundled fallback never grants execution. */
+    capabilities?: PluginAgentCapabilitiesV2 | null;
     sessionModeDescriptor?: AgentSessionModeDescriptor | null;
     /** Exact data-only registry identities; no executable selection authority. */
     acpRegistryIds?: readonly string[];
@@ -485,6 +488,9 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
         behavior: behaviorProjection?.behavior ?? null,
         authPlugin: resolveAgentLocalAuthPlugin(normalizedProviderId, behaviorProviderId, mergedProviderProjection, isBuiltIn),
         cli: mergedProviderProjection?.cli ?? declaration?.cli ?? null,
+        capabilities: mergedProviderProjection
+            ? mergedProviderProjection.capabilities ?? null
+            : declaration?.capabilities ?? null,
         sessionModeDescriptor: mergedProviderProjection
             ? mergedProviderProjection.sessionModeDescriptor ?? null
             : getAgentSessionModeDescriptor(normalizedProviderId),

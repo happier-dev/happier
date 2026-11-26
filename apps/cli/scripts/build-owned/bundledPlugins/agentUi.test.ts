@@ -136,6 +136,25 @@ describe('bundled Agent exclusion projections', () => {
         expect(emittedMapKeys(ui, 'BUNDLED_CANONICAL_AGENTS_UI')).toEqual(expectedOrder);
     });
 
+    it('keeps admitted lifecycle declarations in cold Agent display projections', () => {
+        for (const pluginId of ['happier.agent.claude', 'happier.review.coderabbit']) {
+            const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(entry => entry.pluginId === pluginId);
+            const parsed = ingestPluginManifestV2(locator ? readBundledPluginManifest(locator) : undefined);
+            if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+            const agent = parsed.manifest.contributes.agents?.[0];
+            if (!agent) throw new Error(`Missing Agent in ${pluginId}`);
+            const source = [renderBundledAgentDeclarationTypeTs(), renderBundledAgentDeclarationsTs([{
+                pluginPackageId: agent.id, pluginId, packageName: locator!.packageName,
+                packageVersion: '0.0.0', agentId: agent.id, manifest: parsed.manifest,
+            }])].join('\n');
+            const exports: Record<string, unknown> = {};
+            runInNewContext(transpileModule(source, { compilerOptions: { module: ModuleKind.CommonJS } }).outputText, { exports });
+            // The VM is the emitted module boundary; its declarations must retain the admitted manifest's exact facts.
+            const declarations = exports.BUNDLED_CANONICAL_AGENT_DECLARATIONS as Record<string, { capabilities: unknown }>;
+            expect(declarations[agent.id]?.capabilities).toEqual(agent.capabilities);
+        }
+    });
+
     it('preserves the declared Claude organization usage requirement in the bundled account fallback', () => {
         const parsed = ingestPluginManifestV2(CLAUDE_MANIFEST);
         if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));

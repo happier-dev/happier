@@ -175,10 +175,11 @@ function resolveLegacyCompatAgentRouteRedirect(params: Readonly<{
 function describeAgentDetail(params: Readonly<{
     enabled: boolean | null;
     channelLabel: string | null;
+    capabilities: ResolvedAgentCatalogEntry['capabilities'];
 }>): string {
     return [
-        t('settingsAgents.detailPage.kindCodingAgent'),
-        params.enabled ? t('settingsAgents.detailPage.usedByNewSessions') : null,
+        params.capabilities?.sessions ? t('settingsAgents.detailPage.kindCodingAgent') : null,
+        params.enabled && params.capabilities?.sessions ? t('settingsAgents.detailPage.usedByNewSessions') : null,
         params.channelLabel,
     ].filter(Boolean).join(' · ');
 }
@@ -600,6 +601,7 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
                 projection={props.projection}
                 description={describeAgentDetail({
                     enabled: backendEnabled,
+                    capabilities: props.projection.capabilities,
                     channelLabel: props.projection.channel === 'stable'
                         ? null
                         : t(resolveAgentChannelLabelKey(props.projection.channel)),
@@ -630,7 +632,7 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
                     targetSelection={props.targetSelection}
                 />
             ) : null}
-            <AgentSessionDefaultsSection
+            {props.projection.capabilities?.sessions ? <AgentSessionDefaultsSection
                 projection={props.projection}
                 compatibilityTargetKeys={props.compatibilityTargetKeys}
                 accountSettingsAvailable={props.accountSettingsAvailable}
@@ -645,7 +647,7 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
                         runtimeAgentId: resolveBundledAgentIdFromContributionIdentity(props.projection.identity) ?? '',
                     },
                 } as never) : null}
-            />
+            /> : null}
             {/*
               * External Sessions reachability belongs to the Agent, not to
               * whether it also carries a bundled runtime or a login screen:
@@ -761,6 +763,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
     const capabilityServerId = executionTarget?.serverId ?? null;
     const headerDescription = describeAgentDetail({
         enabled: backendEnabled,
+        capabilities: projection.capabilities,
         channelLabel: projection.channel === 'stable' ? null : t(resolveAgentChannelLabelKey(projection.channel)),
     });
 
@@ -837,7 +840,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                 />
             ) : null}
 
-            <AgentSessionDefaultsSection
+            {projection.capabilities?.sessions ? <AgentSessionDefaultsSection
                 projection={projection}
                 compatibilityTargetKeys={compatibilityTargetKeys}
                 accountSettingsAvailable={accountSettingsAvailable}
@@ -854,7 +857,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                         runtimeAgentId: '',
                     },
                 } as never) : null}
-            />
+            /> : null}
 
 
             <AgentDetailExternalSessionsSection

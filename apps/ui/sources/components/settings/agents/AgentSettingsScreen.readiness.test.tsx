@@ -43,6 +43,35 @@ const { useConnectedAccountPurposeDefaults } = await import('@/hooks/server/conn
 
 afterEach(async () => { standardCleanup(); navigation.params = {}; navigation.pathname = '/settings/agents'; navigation.push.mockClear(); navigation.replace.mockClear(); daemon.reset(); await account.reset(); vi.unstubAllGlobals(); });
 
+it.each([
+    ['codex', true], ['coderabbit', true], ['codex', false], ['coderabbit', false],
+] as const)('shows Session identity and defaults only for the declared Session Agent: %s (Machine: %s)', async (agentId, withMachine) => {
+    const declaration = BUNDLED_CANONICAL_AGENT_DECLARATIONS[agentId];
+    if (!declaration) throw new Error(`Missing bundled declaration ${agentId}`);
+    const sessionAgent = agentId === 'codex';
+    daemon.intercept(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async () =>
+        DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
+            v: 2, generation: 1, agentsById: { [agentId]: {
+                id: agentId, title: agentId, identity: declaration.identity, cli: declaration.cli,
+                capabilities: sessionAgent
+                    ? { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } }
+                    : { executionRuns: { open: ['create'], checkpoint: false, stop: true, workspaceWrites: 'deny' } },
+            } },
+        } }));
+    const { serverId } = await account.restore({ serverIdentityId: 'srv_agent_primary', machines: withMachine ? [
+        createMachineFixture({ id: 'primary-machine', activeAt: Date.now() }),
+    ] : [] });
+    if (withMachine) await account.selectMachine(serverId, 'primary-machine', MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents);
+    navigation.params = { agentId, pluginId: declaration.identity.pluginId };
+    const screen = await renderScreen(<AppPaneProvider><AgentSettingsScreen /></AppPaneProvider>);
+    if (withMachine) await vi.waitFor(() => expect(screen.findByType(AgentDetailHeader).props.identityCurrent).toBe(true));
+    const description = screen.findByType(AgentDetailHeader).props.description;
+    expect(description.includes('settingsAgents.detailPage.kindCodingAgent')).toBe(sessionAgent);
+    expect(description.includes('settingsAgents.detailPage.usedByNewSessions')).toBe(sessionAgent);
+    expect(screen.findAll(node => node.props.title === 'settingsAgents.detailPage.sessionDefaultsTitle').length > 0).toBe(sessionAgent);
+    expect(screen.findHostByTestId('settings.agents.detail.machines')).not.toBeNull();
+});
+
 it.each(['none', 'offline'] as const)('keeps the Agents root reachable with %s Machine availability and returns there from an explicit detail', async availability => {
     await account.restore({ serverIdentityId: 'srv_agent_home', machines: availability === 'offline'
         ? [createMachineFixture({ id: 'offline-agent-home', active: false, activeAt: 0 })] : [] });
