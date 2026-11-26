@@ -32,7 +32,7 @@ import type { WorkflowAuthoredResultReference } from '../../workflows/workflowRe
 import { workflowStoredContentReadErrorCodeV1, openWorkflowAcceptedSnapshotListingStoredEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, openWorkflowRunDisplaySummaryStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowRunAcceptedEnvelopesV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
 import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocumentV1.js';
-import { ActionIdSchema, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
+import { ActionIdSchema, WORKFLOW_RUN_CANCEL_ACTION_ID_V1, type ActionId, type WorkflowActionIdV1 } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
@@ -2953,7 +2953,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       && args.actionId !== 'workflow.run.resume'
       && args.actionId !== 'workflow.run.invocations.retry') {
       if (target.kind !== 'machine') throw workflowError('target_unavailable');
-      if (target.project) {
+      if (args.actionId === WORKFLOW_RUN_CANCEL_ACTION_ID_V1 && args.input.machineId !== undefined) {
+        assertRunResourceRestriction(args.context, { machineId: args.input.machineId }, deps.normalizeAbsolutePath);
+      } else if (target.project) {
         const opened = await openAccepted(restrictedRunId, args.context.signal);
         assertRunResourceRestriction(args.context, { machineId: opened.accepted.machineId, project: opened.accepted.workspaceTarget.project }, deps.normalizeAbsolutePath);
       } else {
@@ -2978,7 +2980,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         || (args.input.machineId !== undefined && args.input.machineId !== target.machineId))) {
         throw workflowError('target_unavailable');
       }
-      if (args.input.projection === 'membership') {
+      if (args.input.projection !== undefined) {
         WorkflowRunListRequestV1Schema.parse(args.input);
         if (target?.kind === 'machine' && target.project) throw workflowError('target_unavailable');
       }
@@ -2990,6 +2992,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         const projectPage = async (raw: unknown) => {
           const storagePage = record(raw);
           if (storagePage.projection !== args.input.projection) throw workflowError('content_unavailable');
+          if (args.input.projection === 'machine_control') return WorkflowRunListResultV1Schema.parse(storagePage);
           const page = {
             runs: WorkflowRunListResultV1Schema.shape.runs.parse(storagePage.runs),
             nextCursor: WorkflowRunListResultV1Schema.shape.nextCursor.parse(storagePage.nextCursor),

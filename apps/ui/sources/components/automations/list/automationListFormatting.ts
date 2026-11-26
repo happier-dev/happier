@@ -11,6 +11,7 @@ import { formatActionTriggerClause, formatTriggerSummary, type TriggerSummaryCon
 import { formatOnceScheduleStateLabel, readOnceScheduleState } from '@/components/workflows/triggers/triggerSchedule';
 import type { AutomationV3RunListItem } from '@happier-dev/protocol/automations/automationApiV3';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 export function formatAutomationScheduleLabel(automation: {
     schedule: { kind: 'once'; scheduledAt: number }
@@ -141,9 +142,12 @@ const AUTOMATION_RUN_STATE_TRANSLATION_KEYS = {
     outcome_uncertain: 'automations.detail.runMeta.state.outcome_uncertain',
 } as const satisfies Record<AutomationRunStateV3, TranslationKey>;
 
-export function formatAutomationRunStateLabel(run: Pick<AutomationV3RunListItem, 'state' | 'workflowRunState'>): string {
+export function formatAutomationRunStateLabel(run: Pick<AutomationV3RunListItem, 'state' | 'workflowRunState'> & Partial<Pick<AutomationV3RunListItem, 'errorCode'>>): string {
     if (run.workflowRunState !== undefined) return describeWorkflowRunState(run.workflowRunState).label;
-    return t(AUTOMATION_RUN_STATE_TRANSLATION_KEYS[run.state]);
+    const state = t(AUTOMATION_RUN_STATE_TRANSLATION_KEYS[run.state]);
+    if (run.errorCode !== WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1) return state;
+    const cause = t('workflows.run.stoppedByMachineOwner');
+    return run.state === 'cancelled' ? cause : `${state} · ${cause}`;
 }
 
 export function formatAutomationNextRun(nextRunAt: number | null): string {

@@ -9254,6 +9254,17 @@ Its capture is released before result materialization and exact byte paging;
 returned Run members undergo fresh admission before disclosure. Neither shape
 imposes a row-count cap. Remaining ids preserve input order and are unanswered,
 not null results.
+
+In development 0.3, a Machine owner can pass `projection: 'machine_control'`
+and the exact `machineId` to `workflow.run.list`. Each foreign Run that can
+still be stopped contributes only `id`, `ownerAccountId`, `createdAt`, and
+`state` in `machineRuns`. An Automation Run becomes eligible after it claims
+that Machine. Ordinary lists use their existing visibility and response.
+`workflow.run.cancel` with the same `machineId`, the row's `id` as `runId` and
+`expectedRevision: 0` targets the assigned Run and returns just the Stop intent.
+The starter's normal Run read exposes
+`stopped_by_machine_owner` as the cause. Both forms use the same Stop lifecycle.
+
 The development attention list accepts an explicit `projection: 'membership'`
 for consumers such as the closed Inbox badge that need admitted membership but
 not private display facts. Omission keeps the full list projection. Membership

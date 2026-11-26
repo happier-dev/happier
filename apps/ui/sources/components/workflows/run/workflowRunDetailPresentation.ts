@@ -16,7 +16,7 @@ import type { TranslationKeyNoParams } from '@/text/i18n';
 import { t } from '@/text';
 import { formatAutomationRunCauseLabel } from '@/components/automations/list/automationListFormatting';
 import { describeWorkflowOperationProblem, describeWorkflowTargetUnavailableProblem, formatWorkflowConversationProblem } from '@/components/workflows/presentation/workflowProblemPresentation';
-import { WORKFLOW_STEP_PREPARATION_FAILED } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1, WORKFLOW_STEP_PREPARATION_FAILED } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import type { WorkflowInvocationStructureEntry } from './workflowInvocationStructure';
 import { findWorkflowBlock, findWorkflowBlockListRef, getWorkflowBlockList } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
@@ -758,6 +758,9 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     setup?: WorkflowSetupOutcome | null;
 }>): string {
     const { run, coverage } = params;
+    if (run.state === 'cancelled' && run.errorCode === WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1) {
+        return t('workflows.run.stoppedByMachineOwner');
+    }
     if (isWorkflowRunStopPending({ ...run, cancelRequested: params.cancelRequested })) {
         return describeWorkflowRunState(run.state, { workflowCustodyState: run.workflowCustodyState,
             cancelRequested: params.cancelRequested, machineReachable: params.machine?.reachable,

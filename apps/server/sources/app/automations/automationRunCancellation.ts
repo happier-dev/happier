@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1, AUTOMATION_RUN_CANCELLED_WHILE_RUNNING_CAUSE_V1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
+import { WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { Tx } from "@/storage/inTx";
 import { retireAutomationPendingInputInTx } from "@/app/session/pending/pendingMessageService";
 import { automationRunCauseSelect } from "./automationPersistenceSelect";
@@ -29,6 +30,7 @@ export async function cancelAutomationRunRowTx(params: Readonly<{
     accountEncryptionMode: "plain" | "e2ee";
     /** Explicit per-Run Stop, rather than permanent target loss. */
     presentUserCancellation: boolean;
+    stoppedByMachineOwner?: boolean;
 }>) {
     const { previousRun } = params;
     if (previousRun.state !== "queued" && previousRun.state !== "claimed" && previousRun.state !== "running") return null;
@@ -52,6 +54,7 @@ export async function cancelAutomationRunRowTx(params: Readonly<{
                 executionDispatchDueAt: null,
                 errorCode: dispatchPermitted ? "execution_run_cancelled_outcome_unknown" : "execution_run_outcome_unknown",
             } : {}),
+            ...(params.stoppedByMachineOwner ? { errorCode: WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 } : {}),
             finishedAt: now, revision: { increment: 1 }, updatedAt: now,
         },
     });

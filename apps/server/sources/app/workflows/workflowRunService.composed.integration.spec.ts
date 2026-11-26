@@ -7,6 +7,7 @@ import type { Socket } from 'socket.io';
 import type { ClientConnection, UpdatePayload } from '@/app/events/eventRouter';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import { buildAutomationRunSummaryChangeEntityIdV1 } from "@happier-dev/protocol/changes";
+import { UpdateContainerSchema } from "@happier-dev/protocol/updates";
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     encodePlainMachineStoredContent,
@@ -71,7 +72,8 @@ import { AUTOMATION_RUN_TERMINAL_STATES } from "@/app/automations/automationType
 import { createAutomation, deleteAutomation, updateAutomation } from "@/app/automations/automationCrudService";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { WorkflowRunWaitResultV1Schema, WorkflowRunSummariesResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowRunCancelResultV1Schema, WorkflowRunListResultV1Schema, WorkflowRunWaitResultV1Schema, WorkflowRunSummariesResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { createMaterializedEphemeralRunnerFixture } from "@/app/ephemeralRunner/materializedRunner.testkit";
 import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInstallation as createTrustedMachineInstallationOwner } from "@/testkit/pluginInstallationPublisherTestkit";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
@@ -716,7 +718,7 @@ describe("workflowRunService (integration)", () => {
         } finally { await requester.app.close(); await host.app.close(); }
     });
 
-    it("keeps shared Machine Run execution guest-owned and bound to its admitted installation after grant revocation", async () => {
+    it.each(["starter", "custodian"] as const)("keeps shared Machine Run execution guest-owned after grant revocation and accepts Stop from the %s", async (stopActor) => {
         const guest = await seed();
         const custodian = await seed();
         const otherHost = await seed();
@@ -822,11 +824,125 @@ describe("workflowRunService (integration)", () => {
             const ownerUi = observeWorkflowMachineWake(custodian.accountId);
             try {
                 const current = await getWorkflowRun({ accountId: guest.accountId, runId });
-                await cancelWorkflowRun({ accountId: guest.accountId, runId, expectedRevision: current.run.revision });
+                const stopBody = { operation: "cancel", runId, expectedRevision: current.run.revision };
+                if (stopActor === "starter") {
+                    const stopped = await app.inject({ method: "POST", url: path, payload: stopBody, headers });
+                    expect(stopped.statusCode).toBe(200);
+                    expect(stopped.json()).toMatchObject({ intent: "cancel_requested", run: { id: runId } });
+                    expect(stopped.json().run).not.toHaveProperty("errorCode");
+                } else {
+                    // Machine-control rows disclose no revision. Stop accepts a minimum revision.
+                    const machineStop = { ...stopBody, expectedRevision: 0, machineId: custodian.machineId };
+                    const otherGuest = await seed();
+                    const teamMember = await seed();
+                    const team = await db.team.create({ data: { name: "Machine-only access" } });
+                    await db.teamMembership.createMany({ data: [custodian.accountId, teamMember.accountId]
+                        .map(accountId => ({ teamId: team.id, accountId, role: "member" })) });
+                    await makeShareEligibleForTest(custodian.accountId, otherGuest.accountId);
+                    await inTx(async tx => {
+                        for (const principal of [{ kind: "account", accountId: otherGuest.accountId }, { kind: "team", teamId: team.id }] as const) {
+                            expect(await setMachineAccessGrantInTx(tx, { actorAccountId: custodian.accountId, machineId: custodian.machineId,
+                                principal, level: "admin" })).toMatchObject({ kind: "saved" });
+                        }
+                    });
+                    const occurrenceId = randomUUID();
+                    await db.automationRun.create({ data: {
+                        id: occurrenceId, accountId: guest.accountId, automationId: automation.id,
+                        causeKind: "manual", causeOccurredAt: new Date(), scheduledAt: new Date(), dueAt: new Date(), state: "queued",
+                    } });
+                    const readers = await Promise.all([otherGuest, teamMember, otherHost, custodian]
+                        .map(actor => createReviewStorageApp(actor.accountId)));
+                    const [guestReader, teamReader, foreignReader, ownerReader] = readers;
+                    const request = (reader: typeof ownerReader, payload: object) =>
+                        reader.app.inject({ method: "POST", url: path, payload, headers: reader.headers });
+                    try {
+                        const listBody = { operation: "list", request: { machineId: custodian.machineId }, pageByteLimit: 64_000 };
+                        let ordinaryMachineReads = 0;
+                        const stopObserving = observeSqliteRequests({ before(query) {
+                            if (query.model === "Machine" || query.model === "AutomationRunAssignment") ordinaryMachineReads++;
+                        } });
+                        const ordinaryList = await request(ownerReader, listBody).finally(stopObserving);
+                        expect(ordinaryList.statusCode).toBe(200);
+                        expect(ordinaryList.json().runs.map((run: { id: string }) => run.id)).toEqual([privateRunId]);
+                        expect(ordinaryMachineReads).toBe(0);
+                        const ownerList = await request(ownerReader, { ...listBody, request: { ...listBody.request, projection: "machine_control" } });
+                        const deniedList = await request(guestReader, { ...listBody, request: { ...listBody.request, projection: "machine_control" } });
+
+                        const actionOwner = createWorkflowAccountRunActionOwner({
+                            resolveAccountId: async () => custodian.accountId,
+                            storage: { execute: async operation => {
+                                const response = await request(ownerReader, operation);
+                                expect(response.statusCode).toBe(200);
+                                return response.json();
+                            } },
+                            definitions: { get: async () => { throw new Error("unexpected_workflow_definition_read"); } },
+                            resolveEncryption: async () => { throw new Error("unexpected_guest_content_key_read"); },
+                            normalizeAbsolutePath: directory => directory,
+                            randomBytes: () => { throw new Error("unexpected_key_generation"); },
+                        });
+                        const stopped = await actionOwner.execute({ actionId: "workflow.run.cancel",
+                            input: { runId, expectedRevision: 0, machineId: custodian.machineId },
+                            context: { surface: "agent", externalActionTarget: { kind: "machine", machineId: custodian.machineId } },
+                        });
+                        expect(WorkflowRunCancelResultV1Schema.parse(stopped)).toEqual({ intent: "cancel_requested" });
+                        for (const [reader, machineId] of [[guestReader, custodian.machineId], [teamReader, custodian.machineId],
+                            [foreignReader, otherHost.machineId]] as const) {
+                            const denied = await request(reader, { ...machineStop, machineId });
+                            expect(denied.statusCode).toBe(404);
+                            expect(denied.json()).toEqual({ error: "run_not_found" });
+                        }
+                        const noMachine = await request(ownerReader, { ...machineStop, runId: occurrenceId, expectedRevision: 0 });
+                        expect(noMachine.statusCode).toBe(404);
+                        expect(noMachine.json()).toEqual({ error: "run_not_found" });
+                        expect(ownerList.statusCode).toBe(200);
+                        expect(WorkflowRunListResultV1Schema.parse(ownerList.json())).toMatchObject({ projection: "machine_control", runs: [], machineRuns: [{
+                            id: runId, ownerAccountId: guest.accountId, createdAt: current.run.createdAt, state: current.run.state,
+                        }] });
+                        expect(ownerList.json().machineRuns[0]).toEqual({
+                            id: runId, ownerAccountId: guest.accountId, createdAt: current.run.createdAt, state: current.run.state,
+                        });
+                        expect(deniedList.json()).toMatchObject({ projection: "machine_control", runs: [], machineRuns: [] });
+                    } finally {
+                        await Promise.all(readers.map(reader => reader.app.close()));
+                    }
+                }
                 expect(executor.updates.map(update => update.body)).toEqual([expect.objectContaining({
                     runId, workflowControl: 'cancel_requested', requesterScope: { kind: 'workflow_trigger', id: runId },
                 })]);
                 expect(ownerUi.updates).toEqual([]);
+                const [{ invalidateActiveAutomationRun }, { createWorkflowRunRecoveryReader }] = await Promise.all([
+                    import("../../../../cli/src/daemon/automation/automationRunInvalidation"),
+                    import("../../../../cli/src/daemon/workflows/recovery"),
+                ]);
+                const machineId = custodian.machineId;
+                const controller = new AbortController();
+                expect(invalidateActiveAutomationRun({ machineId, update: UpdateContainerSchema.parse(executor.updates[0]),
+                    active: { runId, attempt: claimed.run!.attempt, controller },
+                })).toBe("authoritative-cancellation");
+                expect(controller.signal.aborted).toBe(true);
+                const witness = await accountCurrentness(guest.accountId);
+                if (witness.mode !== "plain") throw new Error("Fixture must be plain");
+                const recover = createWorkflowRunRecoveryReader({
+                    accountId: guest.accountId, machineId, resolveAccountEncryption: async () => ({ kind: "available", witness }),
+                    reconcileInvocation: async () => { throw new Error("No child execution was admitted"); },
+                    storage: { execute: async operation => {
+                        const body = { ...operation, publisherMachineId: machineId };
+                        const response = await app.inject({ method: "POST", url: path, payload: body, headers: {
+                            ...headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                                keyPair, machineId, installationId, path, body }) } });
+                        expect(response.statusCode).toBe(200);
+                        return response.json();
+                    } },
+                });
+                await recover("control", undefined, runId);
+                const observed = await app.inject({ method: "POST", url: path, payload: { operation: "get", runId }, headers });
+                expect(observed.statusCode).toBe(200);
+                expect(observed.json().run).toMatchObject({ state: "cancelled", workflowCustodyState: "settled" });
+                if (stopActor === "custodian") {
+                    expect(observed.json().run.errorCode).toBe("stopped_by_machine_owner");
+                } else {
+                    expect(observed.json().run).not.toHaveProperty("errorCode");
+                }
             } finally { executor.close(); ownerUi.close(); }
         } finally { await app.close(); }
     });

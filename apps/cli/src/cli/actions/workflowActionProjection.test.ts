@@ -27,7 +27,7 @@ it('keeps project routing outside Action input across Workflow commands', () => 
       '--workspace-ref-id', 'workspace-1', '--input-json', '{}'];
     expect(parseActionCliCommandInput(command, stripTransportTokens(command, argv)))
       .toMatchObject({ ok: true, canonicalBase: {}, callerOverlay: {} });
-    if (command.actionId === 'workflow.run.list' || command.actionId === 'workflow.events.list') {
+    if (command.actionId === 'workflow.run.list' || command.actionId === 'workflow.events.list' || command.actionId === 'workflow.run.cancel') {
       expect(parseActionCliCommandInput(command, stripTransportTokens(command, [...argv, '--action-machine-id', 'filter-machine'])))
         .toMatchObject({ ok: true, callerOverlay: { machineId: 'filter-machine' } });
     }

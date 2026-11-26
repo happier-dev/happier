@@ -657,7 +657,7 @@ export function createUiWorkflowAction(params: Readonly<{
         }
         if (args.actionId === 'workflow.run.cancel') {
             const control = WorkflowActionOutputSchemasV1['workflow.run.cancel'].safeParse(result);
-            if (control.success) publishCancelledRun(account, control.data.run);
+            if (control.success && 'run' in control.data) publishCancelledRun(account, control.data.run);
         }
         return result as Awaited<ReturnType<WorkflowActionExecute>>;
     };

@@ -342,7 +342,7 @@ export type WorkflowsActionInputById = {
     readonly "workflow.run.list": {
         cursor?: string | undefined;
         limit?: number | undefined;
-        projection?: 'membership' | undefined;
+        projection?: 'machine_control' | 'membership' | undefined;
         runId?: string | undefined;
         runIds?: string[] | undefined;
         invocationProvenance?: undefined | {
@@ -533,6 +533,7 @@ export type WorkflowsActionInputById = {
     readonly "workflow.run.cancel": {
         runId: string;
         expectedRevision: number;
+        machineId?: string | undefined;
     };
     readonly "workflow.run.invocations.list": {
         runId: string;
@@ -8059,7 +8060,13 @@ export type WorkflowsActionResultById = {
                 kind: 'unavailable';
                 reason: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
             }>;
-            projection?: 'membership' | undefined;
+            projection?: 'machine_control' | 'membership' | undefined;
+            machineRuns?: undefined | {
+                id: string;
+                createdAt: string;
+                ownerAccountId: string;
+                state: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review';
+            }[];
             supportsAnotherRoundByRunId?: Record<string, boolean> | undefined;
             callerAccessByRunId?: Record<string, {
                 canEdit: boolean;
@@ -8630,7 +8637,13 @@ export type WorkflowsActionResultById = {
             kind: 'unavailable';
             reason: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
         }>;
-        projection?: 'membership' | undefined;
+        projection?: 'machine_control' | 'membership' | undefined;
+        machineRuns?: undefined | {
+            id: string;
+            createdAt: string;
+            ownerAccountId: string;
+            state: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review';
+        }[];
         supportsAnotherRoundByRunId?: Record<string, boolean> | undefined;
         callerAccessByRunId?: Record<string, {
             canEdit: boolean;
@@ -17102,6 +17115,8 @@ export type WorkflowsActionResultById = {
         intent: 'cancel_requested' | 'cancelled' | 'pause_requested' | 'paused' | 'recovery_required' | 'resumed' | 'unavailable';
     };
     readonly "workflow.run.cancel": {
+        intent: 'cancel_requested' | 'cancelled';
+    } | {
         run: {
             attentionRequired: boolean;
             failureUnseen: boolean;

@@ -13,7 +13,7 @@ import { WorkflowRunListRequestV1Schema, WorkflowRunAutomationSummariesRequestV1
     type WorkflowRunSourceSummariesResultV1, type WorkflowRunAutomationSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { Prisma } from "@prisma/client";
 import { WorkflowDirectRunAdmissionIdV1Schema, WorkflowInvocationRecordIdSchema } from '@happier-dev/protocol/workflows/workflowIdsV1';
-import { isWorkflowDraftPublicationLifecycleV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { isWorkflowDraftPublicationLifecycleV1, WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { type WorkflowRunRecipientKeyEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { type WorkflowRunWaitConditionV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { resolveWorkflowRunAdmissionVisibilityInTx, storeWorkflowRunInitialKeyEnvelopesInTx, resolveWorkflowRunRecipientAccountIdsInTx, assertWorkflowDiscussionAdmissionInTx, workflowInvocationObservationRunWhere, workflowRunConsentSourceSelect, readWorkflowRunConsentFor } from "./workflowRunAccess";
@@ -22,7 +22,7 @@ import type { SessionAccessAuthentication } from '@/app/session/access/sessionAc
 import { SessionManagedCreationV1Schema, type SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { applyManagedCreationScopeEndInTx, bindManagedCreationScopeRetentionInTx, validateManagedCreationBirthInTx } from '@/app/machines/managed/managedCreationBirth';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
+import { buildMachineAdmissionFactsSelect, isMachineOwnedByAccountInTx, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
 import { publishWorkflowRunMachineWakeInTx } from './workflowRunMachineRouting';
 import { readWorkflowRunFrontierContinuationsInTx } from './workflowRunFrontierContinuation';
 
@@ -1178,6 +1178,56 @@ export function appendBoundedPage<T>(params: Readonly<{
         bytes += rowBytes;
     }
     return { rows: kept, bytes, shortened: false };
+}
+
+/** Direct Runs have one frozen Machine. An Automation's candidates become a placement on claim. */
+function workflowRunPlacementWhere(machineId: string): Prisma.AutomationRunWhereInput {
+    return {
+        assignments: { some: { machineId } },
+        OR: [{ originKind: "direct" }, { claimedByMachineId: machineId }],
+    };
+}
+
+/** List only active foreign Runs placed on the exact Machine this Account owns. */
+export async function listMachineControlWorkflowRuns(params: PageOptions & Readonly<{ accountId: string; machineId?: string }>) {
+    const { accountId, machineId } = params;
+    if (!machineId) throw new WorkflowRunServiceError("invalid_input");
+    const queryKey = JSON.stringify({ projection: "machine_control", accountId, machineId });
+    const decoded = params.cursor ? decodeKeysetCursorV1(params.cursor, queryKey) : null;
+    const afterDate = decoded?.status === "ok" ? readKeysetCursorTextV1(decoded.parts[0]) : null;
+    const afterId = decoded?.status === "ok" ? readKeysetCursorIdV1(decoded.parts[1]) : null;
+    if (params.cursor && (!afterDate || !afterId)) throw new WorkflowRunServiceError("invalid_input");
+    const empty = { projection: "machine_control" as const, runs: [], metadataByRunId: {}, machineRuns: [] };
+    return inReadSnapshot(async tx => {
+        if (!await isMachineOwnedByAccountInTx(tx, { actorAccountId: accountId, machineId })) return empty;
+        const limit = Math.min(params.limit ?? WORKFLOW_PAGE_DATABASE_BATCH_ROWS, WORKFLOW_PAGE_DATABASE_BATCH_ROWS);
+        const rows = await tx.automationRun.findMany({
+            where: {
+                ...workflowRunPlacementWhere(machineId),
+                accountId: { not: accountId },
+                state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
+                ...(afterDate && afterId ? { AND: [{ OR: [
+                    { createdAt: { lt: new Date(afterDate) } },
+                    { createdAt: new Date(afterDate), id: { lt: afterId } },
+                ] }] } : {}),
+            },
+            select: { id: true, accountId: true, createdAt: true, state: true },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            take: limit + 1,
+        });
+        const cursorFor = (row: typeof rows[number]) =>
+            encodeKeysetCursorV1({ queryKey, parts: [row.createdAt.toISOString(), row.id] });
+        const project = (row: typeof rows[number]) =>
+            ({ id: row.id, ownerAccountId: row.accountId, createdAt: row.createdAt.toISOString(), state: row.state });
+        const page = appendBoundedPage({
+            existing: [], existingBytes: 2, candidates: rows.slice(0, limit), byteLimit: params.pageByteLimit,
+            serializeMembers: row => [JSON.stringify(project(row))], emptyPage: nextCursor => ({ ...empty, nextCursor }),
+            nextCursorFor: cursorFor, hasMoreAfter: index => index + 1 < rows.length,
+        });
+        const last = page.rows.at(-1);
+        return { ...empty, machineRuns: page.rows.map(project),
+            ...(last && page.rows.length < rows.length ? { nextCursor: cursorFor(last) } : {}) };
+    }, { transactionClass: "workflow-list-runs" });
 }
 
 /** Every collection filter narrows the same owner-or-live-Team audience. */
@@ -2583,13 +2633,15 @@ export async function cancelWorkflowRunTx(
         runId: string;
         expectedRevision: number;
         accountEncryptionMode: "plain" | "e2ee";
-        cause?: "permanent_target_loss";
+        cause?: "permanent_target_loss" | typeof WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1;
+        machineId?: string;
     }>,
 ) {
     const current = await tx.automationRun.findFirst({
         where: {
             id: params.runId,
             accountId: params.accountId,
+            ...(params.machineId ? workflowRunPlacementWhere(params.machineId) : {}),
             // Stop targets the same Run across claim/progress writes. Unlike
             // replacement/recovery, it does not depend on the viewed content.
             revision: { gte: params.expectedRevision },
@@ -2608,6 +2660,7 @@ export async function cancelWorkflowRunTx(
             tx, accountId: params.accountId, previousRun: current,
             accountEncryptionMode: params.accountEncryptionMode,
             presentUserCancellation: params.cause !== "permanent_target_loss",
+            stoppedByMachineOwner: params.cause === WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1,
         });
         if (!cancelled) throw new WorkflowRunServiceError("currentness_conflict");
         return { run: await projectRunInTx(tx, { ...current, ...cancelled }),
@@ -2649,6 +2702,7 @@ export async function cancelWorkflowRunTx(
         },
         data: {
             state: settlesNow ? terminalState : current.state,
+            ...(params.cause === WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 ? { errorCode: params.cause } : {}),
             revision: { increment: 1 },
             workflowResumeRequestedRevision: null,
             ...(settlesNow ? {
@@ -2706,8 +2760,28 @@ export async function cancelWorkflowRunTx(
     };
 }
 
-export async function cancelWorkflowRun(params: Readonly<{ accountId: string; runId: string; expectedRevision: number }>) {
+type CancelWorkflowRunInput = Readonly<{ accountId: string; runId: string; expectedRevision: number }>;
+type CancelWorkflowRunResult = Awaited<ReturnType<typeof cancelWorkflowRunTx>>;
+
+/** Ordinary Run edit and Machine custody both enter the same cancellation transition. */
+export function cancelWorkflowRun(params: CancelWorkflowRunInput & { machineId: string }): Promise<Pick<CancelWorkflowRunResult, "intent">>;
+export function cancelWorkflowRun(params: CancelWorkflowRunInput & { machineId?: never }): Promise<CancelWorkflowRunResult>;
+export async function cancelWorkflowRun(params: CancelWorkflowRunInput & { machineId?: string }) {
     return await inTx(async (tx) => {
+        if (params.machineId) {
+            if (!await isMachineOwnedByAccountInTx(tx, { actorAccountId: params.accountId, machineId: params.machineId })) {
+                throw new WorkflowRunServiceError("run_not_found");
+            }
+            const run = await tx.automationRun.findFirst({
+                where: { id: params.runId, ...workflowRunPlacementWhere(params.machineId), accountId: { not: params.accountId } },
+                select: { accountId: true },
+            });
+            if (!run) throw new WorkflowRunServiceError("run_not_found");
+            const accountEncryptionMode = await loadAccountModeTx(tx, run.accountId, params.runId);
+            const { intent } = await cancelWorkflowRunTx(tx, { ...params, accountId: run.accountId, accountEncryptionMode,
+                cause: WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 });
+            return { intent };
+        }
         const access = await resolveEditableWorkflowRunAccessTx(tx, { actorAccountId: params.accountId, runId: params.runId });
         const accountEncryptionMode = await loadAccountModeTx(tx, access.ownerAccountId, params.runId);
         return await cancelWorkflowRunTx(tx, { ...params, accountId: access.ownerAccountId, accountEncryptionMode });

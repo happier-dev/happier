@@ -220,8 +220,8 @@ export function parseWorkflowRunStartActionResultReferenceV1(
 export const WorkflowRunAttentionFilterV1Schema = lazyZodSchema(() => z.literal('required'));
 export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject({
   cursor: zMini.optional(CursorSchema), limit: z.optional(PositivePagePreferenceSchema),
-  /** Public membership only; private facts are opened when a surface demands them. */
-  projection: z.optional(z.literal('membership')),
+  /** Membership or the content-free control list for an owned Machine. */
+  projection: z.optional(z.enum(['membership', 'machine_control'])),
   /**
    * Exact-Run selection for background refresh and transcript initial
    * materialization. The page stays the lean list projection — Run summaries
@@ -251,6 +251,12 @@ export const WorkflowRunListRequestV1Schema = lazyZodSchema(() => z.strictObject
   triggerId: zMini.optional(AutomationTriggerIdSchema),
   machineId: zMini.optional(WorkflowMachineIdV1Schema),
 }).check(z.superRefine((value, context) => {
+  if (value.projection === 'machine_control') {
+    if (!value.machineId || Object.keys(value).some(key => key !== 'machineId' && key !== 'projection' && key !== 'cursor' && key !== 'limit')) {
+      context.addIssue({ code: 'custom', message: 'Machine control requires an exact Machine and accepts only paging options' });
+    }
+    return;
+  }
   if (value.projection !== 'membership') return;
   for (const key of ['originDiscussionId', 'targetSessionId', 'underSessionId', 'invocationProvenance'] as const) {
     if (value[key] !== undefined) context.addIssue({ code: 'custom', path: [key], message: 'Membership cannot select private facts' });
@@ -283,10 +289,14 @@ export function projectWorkflowRunMembershipV1(run: WorkflowRunSummaryV1): Omit<
   return membership;
 }
 
+const WorkflowMachineControlRunV1Schema = lazyZodSchema(() => z.strictObject(
+  z.pick(WorkflowRunSummaryV1Schema, { id: true, ownerAccountId: true, createdAt: true, state: true }).shape,
+));
 export const WorkflowRunListResultV1Schema = lazyZodSchema(() => z.strictObject({
   runs: z.array(WorkflowRunSummaryV1Schema),
   /** Absent means the existing complete private list projection, including readable untitled Runs. */
-  projection: z.optional(z.literal('membership')),
+  projection: z.optional(z.enum(['membership', 'machine_control'])),
+  machineRuns: z.optional(z.array(WorkflowMachineControlRunV1Schema)),
   /** Private authored support opened with the page; this grants no start/control authority. */
   supportsAnotherRoundByRunId: z.optional(z.record(z.string(), z.boolean())),
   callerAccessByRunId: z.optional(z.record(z.string(), WorkflowRunCallerAccessV1Schema)),
@@ -299,6 +309,14 @@ export const WorkflowRunListResultV1Schema = lazyZodSchema(() => z.strictObject(
   }))),
   nextCursor: zMini.optional(CursorSchema),
 }).check(z.superRefine((value, context) => {
+  if (value.projection === 'machine_control') {
+    if (!value.machineRuns || value.runs.length > 0 || Object.keys(value.metadataByRunId).length > 0
+      || value.supportsAnotherRoundByRunId || value.callerAccessByRunId || value.invocationProvenance) {
+      context.addIssue({ code: 'custom', message: 'Machine control carries only Machine control rows' });
+    }
+  } else if (value.machineRuns !== undefined) {
+    context.addIssue({ code: 'custom', message: 'Machine control rows require their own projection' });
+  }
   if (value.projection === 'membership') {
     if (Object.keys(value.metadataByRunId).length > 0 || Object.keys(value.supportsAnotherRoundByRunId ?? {}).length > 0
       || Object.keys(value.callerAccessByRunId ?? {}).length > 0 || (value.invocationProvenance?.length ?? 0) > 0) {
@@ -496,11 +514,19 @@ export const WorkflowRunWaitResultV1Schema = lazyZodSchema(() => z.discriminated
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WorkflowRunWaitResultBaseV1Schema, { observation: z.literal('not_matched_terminal') })),
 ]));
 export const WorkflowRunPauseRequestV1Schema = lazyZodSchema(() => z.strictObject({ runId: WorkflowRunIdV1Schema, expectedRevision: RevisionSchema }));
-export const WorkflowRunCancelRequestV1Schema = WorkflowRunPauseRequestV1Schema;
+export const WorkflowRunCancelRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  ...WorkflowRunPauseRequestV1Schema.shape,
+  /** Select Stop as the owner of this exact Machine. The receipt is content-free. */
+  machineId: zMini.optional(WorkflowMachineIdV1Schema),
+}));
 export const WorkflowRunControlResultV1Schema = lazyZodSchema(() => z.strictObject({
   run: WorkflowRunSummaryV1Schema,
   intent: z.enum(['pause_requested', 'paused', 'resumed', 'recovery_required', 'unavailable', 'cancel_requested', 'cancelled']),
 }));
+export const WorkflowRunCancelResultV1Schema = lazyZodSchema(() => z.union([
+  WorkflowRunControlResultV1Schema,
+  z.strictObject({ intent: z.enum(['cancel_requested', 'cancelled']) }),
+]));
 
 export const WorkflowInvocationListRequestV1Schema = lazyZodSchema(() => z.strictObject({
   runId: WorkflowRunIdV1Schema, cursor: zMini.optional(CursorSchema), limit: z.optional(PositivePagePreferenceSchema),
@@ -712,7 +738,7 @@ export const WorkflowActionOutputSchemasV1: {
   readonly 'workflow.run.wait': typeof WorkflowRunWaitResultV1Schema;
   readonly 'workflow.run.pause': typeof WorkflowRunControlResultV1Schema;
   readonly 'workflow.run.resume': typeof WorkflowRunControlResultV1Schema;
-  readonly 'workflow.run.cancel': typeof WorkflowRunControlResultV1Schema;
+  readonly 'workflow.run.cancel': typeof WorkflowRunCancelResultV1Schema;
   readonly 'workflow.run.invocations.list': typeof WorkflowInvocationListResultV1Schema;
   readonly 'workflow.run.invocations.get': typeof WorkflowInvocationGetResultV1Schema;
   readonly 'workflow.run.invocations.retry': typeof WorkflowInvocationRetryResultV1Schema;
@@ -745,7 +771,7 @@ export const WorkflowActionOutputSchemasV1: {
   'workflow.run.wait': WorkflowRunWaitResultV1Schema,
   'workflow.run.pause': WorkflowRunControlResultV1Schema,
   'workflow.run.resume': WorkflowRunControlResultV1Schema,
-  'workflow.run.cancel': WorkflowRunControlResultV1Schema,
+  'workflow.run.cancel': WorkflowRunCancelResultV1Schema,
   'workflow.run.invocations.list': WorkflowInvocationListResultV1Schema,
   'workflow.run.invocations.get': WorkflowInvocationGetResultV1Schema,
   'workflow.run.invocations.retry': WorkflowInvocationRetryResultV1Schema,

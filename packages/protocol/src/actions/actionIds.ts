@@ -298,6 +298,7 @@ export const WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 = 'workflow.activity.list';
 
 export const WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1 = 'workflow.subjects.list';
 export const WORKFLOW_VALIDATE_ACTION_ID_V1 = 'workflow.validate' as const;
+export const WORKFLOW_RUN_CANCEL_ACTION_ID_V1 = 'workflow.run.cancel' as const;
 export const WORKFLOW_ACTION_IDS_V1 = [
   WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1,
   WORKFLOW_VALIDATE_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', WORKFLOW_RUN_GET_ACTION_ID_V1, 'workflow.run.wait',

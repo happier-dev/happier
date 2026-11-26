@@ -216,6 +216,7 @@ export const WorkflowRunStepProgressCurrentnessV1Schema = lazyZodSchema(() => z.
 export type WorkflowRunStepProgressCurrentnessV1 = z.infer<typeof WorkflowRunStepProgressCurrentnessV1Schema>;
 
 export const WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1 = 'machine_start_capacity';
+export const WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 = 'stopped_by_machine_owner';
 
 export const WorkflowRunSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   /** Display-only attribution from this occurrence's opened, frozen accepted source. */

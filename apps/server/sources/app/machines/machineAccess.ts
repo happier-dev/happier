@@ -108,6 +108,12 @@ export async function resolveEffectiveMachineRoleInTx(tx: Tx, input: MachineActo
     return roles.get(input.machineId)?.get(input.actorAccountId) ?? null;
 }
 
+/** Ownership is the persisted Machine Account, independent of grants and content keys. */
+export async function isMachineOwnedByAccountInTx(tx: Tx, input: MachineActor): Promise<boolean> {
+    const machine = await tx.machine.findUnique({ where: { id: input.machineId }, select: { accountId: true } });
+    return machine?.accountId === input.actorAccountId;
+}
+
 async function machineRolesInTx(tx: Tx, rows: readonly Parameters<typeof readMachineRoleGraphInTx>[1][number][], accountIds: readonly string[]) {
     return projectMachineRoles(await readMachineRoleGraphInTx(tx, rows, accountIds), accountIds);
 }

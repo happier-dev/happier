@@ -122,7 +122,7 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazy
     ...(actionId === WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 ? {
       requesterAccountContentDemandForInput: () => false,
     } : actionId === 'workflow.run.list' ? {
-      requesterAccountContentDemandForInput: (input: unknown) => readRecord(input).projection !== 'membership',
+      requesterAccountContentDemandForInput: (input: unknown) => readRecord(input).projection === undefined,
     } : actionId === 'workflow.run.resume' ? {
       requesterAccountContentDemandForInput: (input: unknown, context: ActionExecutorContext) =>
         readRecord(input).mode === 'recover' || context.authority !== 'present_user'

@@ -6,7 +6,7 @@ import { AutomationAccountCurrentnessWitnessV1Schema } from '@happier-dev/protoc
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { isWorkflowRunExecutorStorageOperationV1, WORKFLOW_RUN_STORAGE_HTTP_PATH as PATH } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import { WorkflowInvocationLifecycleV1Schema, WorkflowRunDirectOriginV1Schema, WorkflowRunStateV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { WorkflowInvocationListRequestV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunSummariesRequestV1Schema, WorkflowRunWaitConditionsV1Schema, WorkflowRunReadStateSetRequestV1Schema, WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowInvocationListRequestV1Schema, WorkflowRunCancelRequestV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunSummariesRequestV1Schema, WorkflowRunWaitConditionsV1Schema, WorkflowRunReadStateSetRequestV1Schema, WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowDefinitionIdV1Schema, WorkflowInvocationRecordIdSchema } from '@happier-dev/protocol/workflows/workflowIdsV1';
 import { WorkflowRunAdmissionPreparationInputV1Schema, WorkflowRunRecipientCensusInputV1Schema, WorkflowRunRecipientKeyEnvelopeCommitInputV1Schema, WorkflowRunRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { WorkflowRunOnCompleteV1Schema } from '@happier-dev/protocol/workflows/workflowDestinationsV1';
@@ -30,6 +30,7 @@ import {
     listWorkflowRunInvocations,
     listWorkflowRunsForRecovery,
     listWorkflowRuns,
+    listMachineControlWorkflowRuns,
     summarizeWorkflowRuns,
     pauseWorkflowRun,
     resumeWorkflowRunBoundary,
@@ -93,7 +94,8 @@ const OperationSchema = lazyZodSchema(() => z.discriminatedUnion("operation", [
     z.strictObject({ operation: z.literal("accepted-snapshot.resolve"), publisherMachineId: z.string().check(z.minLength(1)), runId: z.string().check(z.minLength(1)), automationId: z.string().check(z.minLength(1)), originSessionId: z.optional(z.string().check(z.minLength(1))), resultDelivery: z.optional(z.strictObject({ kind: z.literal("originating_session") })), sourceArtifactId: z.optional(z.nullable(WorkflowDefinitionIdV1Schema)), visibleTeamId: z.optional(z.nullable(z.string().check(z.minLength(1)))), recipientKeyEnvelopes: z.optional(WorkflowRunRecipientKeyEnvelopesV1Schema), expectedAttempt: z.number().check(z.int(), z.nonnegative()), expectedRevision: z.number().check(z.int(), z.nonnegative()), accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema, definitionEnvelope: z.string().check(z.minLength(1)), acceptedEnvelope: z.string().check(z.minLength(1)), displayEnvelope: z.optional(z.string().check(z.minLength(1))) }),
     z.strictObject({ operation: z.literal("get"), publisherMachineId: z.optional(z.string().check(z.minLength(1))), runId: z.string().check(z.minLength(1)), projection: z.optional(z.enum(['control', 'revision'])), prepareAdmission: z.optional(WorkflowRunAdmissionPreparationInputV1Schema) }),
     z.strictObject({ operation: z.literal("wait"), publisherMachineId: z.optional(z.string().check(z.minLength(1))), runId: z.string().check(z.minLength(1)), conditions: z.optional(WorkflowRunWaitConditionsV1Schema), timeoutSeconds: z.optional(z.literal(0)), afterRevision: z.optional(z.number().check(z.int(), z.nonnegative(), z.int())) }),
-    z.strictObject({ operation: z.enum(["pause", "resume", "cancel"]), publisherMachineId: z.optional(z.string().check(z.minLength(1))), runId: z.string().check(z.minLength(1)), expectedRevision: z.number().check(z.int(), z.nonnegative()) }),
+    z.strictObject({ operation: z.enum(["pause", "resume"]), publisherMachineId: z.optional(z.string().check(z.minLength(1))), runId: z.string().check(z.minLength(1)), expectedRevision: z.number().check(z.int(), z.nonnegative()) }),
+    extend(WorkflowRunCancelRequestV1Schema, { operation: z.literal("cancel"), publisherMachineId: z.optional(z.string().check(z.minLength(1))) }),
     z.strictObject({ operation: z.literal("list"), publisherMachineId: z.optional(z.string().check(z.minLength(1))), request: WorkflowRunListRequestV1Schema, pageByteLimit: PageByteLimitSchema }),
     z.strictObject({ operation: z.literal("summaries"), publisherMachineId: z.optional(z.string().check(z.minLength(1))), request: WorkflowRunSummariesRequestV1Schema, pageByteLimit: PageByteLimitSchema }),
     z.strictObject({ operation: z.literal("delivery.pull"), publisherMachineId: z.optional(z.string().check(z.minLength(1))), originSessionId: z.string().check(z.minLength(1)), cursor: z.optional(z.string()), limit: z.optional(z.number().check(z.int(), z.positive(), z.int())), pageByteLimit: PageByteLimitSchema }),
@@ -207,8 +209,15 @@ export function registerWorkflowRunStorageRoutes(
                 }
                 case "pause": return await pauseWorkflowRun({ accountId: request.userId, runId: body.runId, expectedRevision: body.expectedRevision });
                 case "resume": return await resumeWorkflowRunBoundary({ accountId: request.userId, runId: body.runId, expectedRevision: body.expectedRevision });
-                case "cancel": return await cancelWorkflowRun({ accountId: request.userId, runId: body.runId, expectedRevision: body.expectedRevision });
-                case "list": return await listWorkflowRuns({ accountId: request.userId, ...body.request, pageByteLimit: body.pageByteLimit });
+                case "cancel": {
+                    const input = { accountId: request.userId, runId: body.runId, expectedRevision: body.expectedRevision };
+                    return body.machineId ? await cancelWorkflowRun({ ...input, machineId: body.machineId }) : await cancelWorkflowRun(input);
+                }
+                case "list": {
+                    const input = { accountId: request.userId, ...body.request, pageByteLimit: body.pageByteLimit };
+                    if (body.request.projection === "machine_control") return await listMachineControlWorkflowRuns(input);
+                    return await listWorkflowRuns({ ...input, projection: body.request.projection });
+                }
                 case "summaries": return await summarizeWorkflowRuns({ accountId: request.userId, ...body.request, pageByteLimit: body.pageByteLimit });
                 case "delivery.pull": return await pullWorkflowRunOriginDelivery({ accountId: request.userId, originSessionId: body.originSessionId, ...(body.cursor ? { cursor: body.cursor } : {}), ...(body.limit ? { limit: body.limit } : {}), pageByteLimit: body.pageByteLimit });
                 case "delivery.ack": return await ackWorkflowRunOriginDelivery({ accountId: request.userId, runId: body.runId, revision: body.revision });

@@ -21539,6 +21539,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
         stopWhenMachineReconnects: ({ machine }) => `Si ferma quando ${machine} si riconnette`,
         waitsForMachineOnline: ({ machine }) => `Attende che ${machine} sia online`,
         waitsForMachineStartSlot: ({ machine }) => `Attende uno slot di avvio libero su ${machine}`,
+        stoppedByMachineOwner: 'Interrotta dal proprietario della macchina',
         stopWhenMachineReconnectsUnknown: 'Si ferma quando la macchina si riconnette',
         stopRequested: ({ machine }) => `Arresto richiesto. In attesa della conferma di ${machine}.`,
         occurrenceItem: ({ number }) => `Elemento ${number}`,
