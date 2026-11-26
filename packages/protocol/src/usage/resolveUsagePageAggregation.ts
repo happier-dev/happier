@@ -12,6 +12,7 @@ import type { ScmBranchWorkEvidence } from '../scm/branches.js';
 import { resolveUsageHowYouWork, UsageHowYouWorkSchema, type UsageHowYouWorkDetailInput, type UsageSessionEvidenceCoverage } from './resolveUsageHowYouWork.js';
 import type { UsageWorkIntervalsInput } from './usageWorkIntervals.js';
 import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetResultV1 } from '../connect/providerAccountUsageHistorySchemasV1.js';
+import { wasConnectedServiceQuotaObserved } from '../connect/quotaObservationTime.js';
 import { evaluateUsageCoach } from './coach/evaluateUsageCoach.js';
 import { createUsageCoachDigestSuggestion } from './coach/coachDigestSuggestion.js';
 import { UsageCoachEvaluationSchema } from './coach/coachFinding.js';
@@ -727,6 +728,32 @@ export type UsageQuotaSourceSnapshot = Readonly<Omit<UsageQuerySourceState, 'sou
   value?: readonly ConnectedServiceQuotaGetResultV1[];
   sources?: readonly UsageQuerySourceState[];
 }>;
+
+export type UsageQuotaCoverageRead = Readonly<{
+    value: ConnectedServiceQuotaGetResultV1 | null;
+    state?: UsageQuerySourceState;
+    pending?: boolean;
+    unavailable?: boolean;
+}>;
+
+/** Project the same aggregate from opened, progressing or retained qualified reads. */
+export function projectUsageQuotaCoverage(reads: readonly UsageQuotaCoverageRead[],
+    emptyStatus: UsageQuotaSourceSnapshot['status'], requestedHistoryPending = false): UsageQuotaSourceSnapshot {
+    const value = reads.flatMap(read => read.value ? [read.value] : []);
+    const sources = reads.flatMap(read => read.state ? [read.state] : []);
+    const pending = reads.some(read => read.pending || read.state?.status === 'pending');
+    const failure = sources.find(state => state.errorCode);
+    if (!value.length) return { status: pending || requestedHistoryPending ? 'pending' : failure ? 'error' : emptyStatus, sources,
+        ...(failure ? { errorCode: failure.errorCode } : {}) };
+    // Complete retained readings remain usable during replacement. A failed
+    // reply cannot settle the batch while another requested history is held.
+    const partial = pending || (requestedHistoryPending && failure !== undefined)
+        || reads.some(({ state, value, unavailable }) => !value || unavailable
+        || (state?.status !== 'available' && state?.status !== 'stale'));
+    const clocks = value.flatMap(read => read.current && wasConnectedServiceQuotaObserved(read.current) ? [read.current.fetchedAtMs] : []);
+    return { status: partial ? 'partial' : sources.some(state => state.status === 'stale') ? 'stale' : 'available',
+        value, sources, ...(clocks.length ? { asOfMs: Math.min(...clocks) } : {}) };
+}
 
 export type UsagePageAggregationInput = Readonly<{
   queries: readonly UsageQuery[];

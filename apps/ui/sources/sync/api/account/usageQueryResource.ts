@@ -13,7 +13,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources, readUsageWorkSessionTurns } from '@happier-dev/protocol/usage/usageWorkSources';
 import { hasSameUsageQueryWorkEvidenceMembership } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
@@ -151,32 +151,6 @@ export function mergeRetainedUsageAllowance(
     return { quota: [...quotaBySource.values()], sources: [...sourceByKey.values()] };
 }
 
-type ReconciledQuotaRead = Readonly<{
-    value: ConnectedServiceQuotaGetResultV1 | null;
-    state?: UsageQuerySourceState;
-    pending?: boolean;
-    unavailable?: boolean;
-}>;
-
-/** Project the same aggregate from opened, progressing or retained qualified reads. */
-function projectUsageQuotaCoverage(reads: readonly ReconciledQuotaRead[],
-    emptyStatus: UsageQuotaSourceSnapshot['status'], requestedHistoryPending = false): UsageQuotaSourceSnapshot {
-    const value = reads.flatMap(read => read.value ? [read.value] : []);
-    const sources = reads.flatMap(read => read.state ? [read.state] : []);
-    const pending = reads.some(read => read.pending || read.state?.status === 'pending');
-    const failure = sources.find(state => state.errorCode);
-    if (!value.length) return { status: pending || requestedHistoryPending ? 'pending' : failure ? 'error' : emptyStatus, sources,
-        ...(failure ? { errorCode: failure.errorCode } : {}) };
-    // Complete retained readings remain usable during replacement. A failed
-    // reply cannot settle the batch while another requested history is held.
-    const partial = pending || (requestedHistoryPending && failure !== undefined)
-        || reads.some(({ state, value, unavailable }) => !value || unavailable
-        || (state?.status !== 'available' && state?.status !== 'stale'));
-    const clocks = value.flatMap(read => read.current && wasConnectedServiceQuotaObserved(read.current) ? [read.current.fetchedAtMs] : []);
-    return { status: partial ? 'partial' : sources.some(state => state.status === 'stale') ? 'stale' : 'available',
-        value, sources, ...(clocks.length ? { asOfMs: Math.min(...clocks) } : {}) };
-}
-
 /** Reconcile B once, whether its revision came from cache, read progress or a sibling. */
 function reconcileQuotaRead(input: Readonly<{
     admitted: Pick<QualifiedQuotaSnapshotStoreEntry, 'supported' | 'usageRecordId' | 'loading' | 'error'>;
@@ -187,7 +161,7 @@ function reconcileQuotaRead(input: Readonly<{
         targets: Parameters<typeof projectProviderAccountUsageQuotaReadV1>[0]['targets'] }>
         | Readonly<{ kind: 'progress'; value: ConnectedServiceQuotaGetResultV1 | null; settled: boolean; errorCode?: string }>
         | Readonly<{ kind: 'sibling'; state: UsageQuerySourceState }>;
-}>): ReconciledQuotaRead {
+}>): UsageQuotaCoverageRead {
     const { admitted, source: quotaSource, previousState, revision } = input;
     const source = `quota:${createCanonicalJsonSigningInput(quotaSource)}`;
     // Progress already carries the admission made at this finite read's entry.

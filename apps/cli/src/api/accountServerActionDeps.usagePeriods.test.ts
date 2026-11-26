@@ -15,7 +15,10 @@ import { createAccountServerActionDeps } from './accountServerActionDeps';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
-it('keeps each quota period and its continuation independent in a mixed Usage batch', async () => {
+it.each([
+  { now: 1_000, headStatus: 'available' },
+  { now: 1_500, headStatus: 'stale' },
+])('keeps each quota period and its continuation independent with a $headStatus head', async ({ now, headStatus }) => {
   const app = fastify();
   const source = { bindingKind: 'account' as const,
     ref: { service: { pluginId: 'example.usage', localId: 'quota' }, accountId: 'work' } };
@@ -45,7 +48,7 @@ it('keeps each quota period and its continuation independent in a mixed Usage ba
     historyRanges.push(query.history.range);
     const entries = [150, 250, 350].filter(at => at >= query.history.range.startAtMs && at < query.history.range.endAtMs)
       .map(at => ({ id: `history-${at}`, observedAtMs: at, record: record(at) }));
-    return { entries, nextCursor: entries.length ? { id: entries.at(-1)!.id, observedAtMs: entries.at(-1)!.observedAtMs } : null };
+    return { entries, nextCursor: entries.length && query.history.range.startAtMs !== 300 ? { id: entries.at(-1)!.id, observedAtMs: entries.at(-1)!.observedAtMs } : null };
   });
   app.get('/v4/connect/qualified/provider-account-usage/day-summaries', async () => ({ summaries: [], missingDays: [] }));
   app.post('/v2/pending/reset-starts/read', async () => ({ entries: [] }));
@@ -60,9 +63,11 @@ it('keeps each quota period and its continuation independent in a mixed Usage ba
   const first = query(100, 200);
   const second = query(200, 400);
   const samePeriod = normalizeUsageQuery({ ...second, metric: 'cost' });
+  const complete = query(300, 400);
   const head = normalizeUsageQuery({ ...first, includeQuotaHistory: false });
   try {
-    const result = await executor.execute('usage.query', { queries: [first, second, samePeriod, head] }, { surface: 'cli', serverId: 'home' });
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const result = await executor.execute('usage.query', { queries: [first, second, samePeriod, head, complete] }, { surface: 'cli', serverId: 'home' });
     expect(result.ok, JSON.stringify(result)).toBe(true);
     const slices = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results;
     const read = (selected: typeof first) => slices.find(slice => slice.key === getUsageQueryKey(selected))!.quota![0]!;
@@ -72,7 +77,13 @@ it('keeps each quota period and its continuation independent in a mixed Usage ba
     expect(read(second).history!.entries).toHaveLength(2);
     expect(read(samePeriod)).toEqual(read(second));
     expect(read(head).history).toBeUndefined();
-    expect(historyRanges).toEqual(expect.arrayContaining([{ startAtMs: 100, endAtMs: 200 }, { startAtMs: 200, endAtMs: 400 }]));
-    expect(historyRanges).toHaveLength(2);
+    expect(read(complete).history).toMatchObject({ entries: [{ observedAtMs: 350 }], nextCursor: null });
+    const quota = (selected: typeof first) => slices.find(slice => slice.key === getUsageQueryKey(selected))?.sources.find(source => source.source === 'quota');
+    expect(quota(head)).toMatchObject({ status: headStatus, asOfMs: 350 });
+    expect(quota(complete)).toMatchObject({ status: headStatus, asOfMs: 350 });
+    expect(quota(first)).toMatchObject({ status: 'partial', asOfMs: 350 });
+    expect(historyRanges).toEqual(expect.arrayContaining([{ startAtMs: 100, endAtMs: 200 }, { startAtMs: 200, endAtMs: 400 },
+      { startAtMs: 300, endAtMs: 400 }]));
+    expect(historyRanges).toHaveLength(3);
   } finally { cleanup(); await app.close(); }
 });

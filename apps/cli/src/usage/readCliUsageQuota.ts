@@ -1,8 +1,8 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { getUsageQueryKey, resolveUsageQueryPeriod, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
-import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
-import type { UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { isConnectedServiceQuotaObservationFresh, wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { projectUsageQuotaCoverage, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 type ReadQuota = NonNullable<NonNullable<ActionExecutorDeps['usageActions']>['readQuota']>;
 
@@ -27,28 +27,21 @@ export async function readCliUsageQuota(input: Readonly<{
     else groups.set(key, { history, queries: [query] });
   }
   const snapshots = await Promise.all([...groups.values()].map(async group => {
-    const rows = await Promise.all(input.sources.map(async source => {
+    const rows = await Promise.all(input.sources.map(async (source): Promise<UsageQuotaCoverageRead> => {
       const result = await input.readQuota({ source, ...(group.history ? { history: group.history } : {}) }, input.context);
-      const asOfMs = !('ok' in result) && result.current && wasConnectedServiceQuotaObserved(result.current)
-        ? result.current.fetchedAtMs : undefined;
-      return { source, result, asOfMs };
+      const settledAtMs = Date.now();
+      const sourceKey = `quota:${createCanonicalJsonSigningInput(source)}`;
+      if ('ok' in result) return { value: null, state: { source: sourceKey,
+        status: result.errorCode === 'unsupported' ? 'unsupported' : 'error',
+        errorCode: result.errorCode ?? 'usage_quota_read_failed',
+      } };
+      const current = result.current && wasConnectedServiceQuotaObserved(result.current) ? result.current : undefined;
+      const status = result.history?.nextCursor != null || !current ? 'partial'
+        : isConnectedServiceQuotaObservationFresh({ observedAtMs: current.observedAtMs,
+          nowMs: settledAtMs, maxAgeMs: current.staleAfterMs }) ? 'available' : 'stale';
+      return { value: result, state: { source: sourceKey, status, ...(current ? { asOfMs: current.fetchedAtMs } : {}) } };
     }));
-    const values = rows.flatMap(({ result }) => 'ok' in result ? [] : [result]);
-    const failures = rows.flatMap(({ result }) => 'ok' in result ? [result] : []);
-    const times = rows.flatMap(row => row.asOfMs === undefined ? [] : [row.asOfMs]);
-    const snapshot: UsageQuotaSourceSnapshot = {
-      status: failures.length ? values.length ? 'partial' : 'unknown'
-        : values.some(row => row.history?.nextCursor != null) ? 'partial' : 'available',
-      ...(failures.length ? { errorCode: failures[0]!.errorCode ?? 'usage_quota_read_failed' } : {}),
-      ...(values.length || failures.length === 0 ? { value: values } : {}),
-      ...(times.length ? { asOfMs: Math.min(...times) } : {}),
-      sources: rows.map(({ source, result, asOfMs }) => ({ source: `quota:${createCanonicalJsonSigningInput(source)}`,
-        ...('ok' in result ? { status: result.errorCode === 'unsupported' ? 'unsupported' as const : 'error' as const,
-          errorCode: result.errorCode ?? 'usage_quota_read_failed' }
-          : { status: result.history?.nextCursor != null ? 'partial' as const : 'available' as const,
-            ...(asOfMs === undefined ? {} : { asOfMs }) }),
-      })),
-    };
+    const snapshot = projectUsageQuotaCoverage(rows, 'available');
     return group.queries.map(query => [getUsageQueryKey(query), snapshot] as const);
   }));
   return new Map(snapshots.flat());

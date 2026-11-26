@@ -120,7 +120,16 @@ it.each(['cli', 'mcp'] as const)('uses Account night hours for the %s recorded a
   await app.close();
 });
 
-it.each([true, false])('uses one relative read range through the CLI HTTP boundary with accounting demand=%s', async includeAccounting => {
+it.each([
+  { scenario: 'published while Accounting is outstanding', includeAccounting: true, observedOffset: 1_999, accountingOffset: 2_000,
+    historyOffset: 2_000, quotaStatus: 'available' },
+  { scenario: 'expires while the quota read is outstanding', includeAccounting: true, observedOffset: -1, accountingOffset: 100,
+    historyOffset: 2_000, quotaStatus: 'stale' },
+  { scenario: 'without Accounting demand', includeAccounting: false, observedOffset: -1, accountingOffset: 0,
+    historyOffset: 0, quotaStatus: 'available' },
+])('pins the relative range and ages quota at settlement: $scenario', async ({
+  includeAccounting, observedOffset, accountingOffset, historyOffset, quotaStatus,
+}) => {
   const nowMs = Date.UTC(2026, 9, 12, 12);
   let readClockMs = nowMs;
   vi.spyOn(Date, 'now').mockImplementation(() => readClockMs);
@@ -128,18 +137,25 @@ it.each([true, false])('uses one relative read range through the CLI HTTP bounda
   const period = resolveUsageQueryPeriod(query, nowMs);
   const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'quota' }, accountId: 'work' } };
   const key = { providerId: 'test', accountSubjectId: 'subject', subjectKind: 'account' as const, quotaScope: 'account' as const };
-  const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(key), recordKey: key,
-    providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'subject' }, observedAtMs: nowMs - 1, fetchedAtMs: nowMs - 1,
-    staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [] });
-  const record = { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: nowMs - 1, staleAfterMs: 1000, status: 'ok' }, sources: [source] };
+  const recordId = buildProviderAccountUsageRecordId(key);
+  const record = (observedAtMs: number) => ({ content: { t: 'plain', v: ProviderAccountUsageSnapshotV1Schema.parse({
+    v: 1, recordId, recordKey: key, providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'subject' },
+    observedAtMs, fetchedAtMs: observedAtMs, staleAfterMs: 1_000, source: 'providerHttp',
+    confidence: 'confirmed', state: 'loaded_data', meters: [],
+  }) }, metadata: { fetchedAt: observedAtMs, staleAfterMs: 1_000, status: 'ok' }, sources: [source] });
+  // The pre-query observation belongs to the pinned history, even when Home
+  // publishes a new head after the query start.
+  const initialObservedAt = nowMs - 1;
+  let headObservedAt = initialObservedAt;
   const requests: ReturnType<typeof UsageAnalyticsQueryRequestSchema.parse>[] = [];
   const historyRanges: unknown[] = [];
   const app = fastify();
   app.post('/v2/usage/query-batch', async request => {
     const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
     requests.push(...queries);
-    // Downstream private/history reads must not resolve relative intent again.
-    readClockMs = nowMs + 60_000;
+    // Move the clock and publish any new head before Accounting is answered.
+    readClockMs = nowMs + accountingOffset;
+    headObservedAt = nowMs + observedOffset;
     return { v: 1, results: queries.map(query => ({ query, value: {
       v: 1, totals: { eventCount: 0,
         tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
@@ -154,14 +170,16 @@ it.each([true, false])('uses one relative read range through the CLI HTTP bounda
   app.get('/v1/account/profile', async () => ({ id: 'account', connectedAccountsV4: [{ ref: source.ref, status: 'connected',
     authenticationModeId: null, revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
     configurationReady: true, configurationRevision: '1', scopes: [] }], connectedAccountGroupsV4: [] }));
-  app.get('/v4/connect/qualified/provider-account-usage/sources/resolve', async () => ({ source, recordId: snapshot.recordId,
-    providerAccountId: 'subject', fetchedAt: nowMs - 1, staleAfterMs: 1000 }));
-  app.get('/v4/connect/qualified/provider-account-usage/record', async () => record);
+  app.get('/v4/connect/qualified/provider-account-usage/sources/resolve', async () => ({ source, recordId,
+    providerAccountId: 'subject', fetchedAt: headObservedAt, staleAfterMs: 1_000 }));
+  app.get('/v4/connect/qualified/provider-account-usage/record', async () => record(headObservedAt));
   app.get('/v4/connect/qualified/provider-account-usage/history', async request => {
     const encoded = z.object({ query: z.string() }).parse(request.query);
     const historyRequest = z.looseObject({ history: z.looseObject({ range: z.object({ startAtMs: z.number(), endAtMs: z.number() }) }) }).parse(JSON.parse(encoded.query));
     historyRanges.push(historyRequest.history.range);
-    return { entries: [{ id: 'history', observedAtMs: nowMs - 1, record }], nextCursor: null };
+    // The older head crosses its TTL only while the quota answer is in flight.
+    readClockMs = nowMs + historyOffset;
+    return { entries: [{ id: 'history', observedAtMs: initialObservedAt, record: record(initialObservedAt) }], nextCursor: null };
   });
   app.post('/v2/pending/reset-starts/read', async () => ({ entries: [] }));
   cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-relative.test' });
@@ -178,6 +196,11 @@ it.each([true, false])('uses one relative read range through the CLI HTTP bounda
   expect(slice.requestedQuery.period).toEqual({ relative: '7days' });
   expect(slice.shownQuery.period).toEqual({ relative: '7days' });
   expect(slice.quota?.[0]?.history?.entries).toHaveLength(1);
+  expect(slice.quota?.[0]?.current?.observedAtMs).toBe(nowMs + observedOffset);
+  for (const coverage of [slice.sources.find(state => state.source === 'quota'),
+    slice.sources.find(state => state.source.startsWith('quota:'))]) {
+    expect(coverage).toMatchObject({ status: quotaStatus, asOfMs: nowMs + observedOffset });
+  }
   if (includeAccounting) expect(slice.comparison?.query.period).toEqual(requests[1]!.dateRange);
   else expect(slice).not.toHaveProperty('comparison');
 });
