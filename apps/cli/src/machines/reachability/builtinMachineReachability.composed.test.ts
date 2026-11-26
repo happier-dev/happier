@@ -71,7 +71,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     expect(f.hostNative.firewallStages).toEqual([]);
   });
 
-  it('preserves the native cause when a reviewed leave loses confirmation after applying', async () => {
+  it('publishes observed membership after the one reconnect when reviewed leave loses confirmation', async () => {
     const selected = builtin(false);
     const f = await journey('external', [], {
       authoredProvider: createDockerNetworkAuthoredProvider(false, true), providerSelection: selected, builtinTailscale: true,
@@ -83,20 +83,33 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       serverId: 'generic-home', machineId, change: { kind: 'privateNetwork', intent: 'leave', selection: selected },
     }, f.dependencies(f.context())));
     const runNative = f.hostNative.runNative;
+    let connected = true;
     vi.spyOn(f.hostNative, 'runNative').mockImplementation(async command => {
       const result = await runNative(command);
-      if (command.executable.endsWith('tailscale') && command.args[0] === 'down') {
+      if (command.executable.endsWith('tailscale') && command.args[0] === 'logout') {
+        connected = false;
         throw Object.assign(new Error('Synthetic loss of native confirmation'), { code: 'EIO' });
       }
       return result;
     });
+    const deps = f.dependencies({ ...f.context(), signal: new AbortController().signal, operationAcceptance: {
+      operationId: 'builtin-leave-lost-confirmation', actionId: 'machines.reachability.configure', accept() {},
+    } });
     const configured = MachineReachabilityConfigureResultV1Schema.parse(await executeMachineReachabilityTransition(
-      f.configureInput(review), f.dependencies({ ...f.context(), operationAcceptance: {
-        operationId: 'builtin-leave-lost-confirmation', actionId: 'machines.reachability.configure', accept() {},
-      } }),
+      f.configureInput(review), { ...deps,
+        admitTailnetMembershipReconnect: async () => ({
+          currentPort: async () => { connected = true; return f.metadata.port; },
+          dispose() {},
+        }),
+        publish: async observation => {
+          if (!connected) throw new Error('Synthetic disconnected Home transport');
+          return deps.publish(observation);
+        },
+      },
     ));
-    expect(f.hostNative.tailscaleMutations).toEqual([['down']]);
-    expect(configured).toMatchObject({ status: 'outcome_unknown', errorCode: 'native_effect_failed' });
+    expect(f.hostNative.tailscaleMutations).toEqual([['logout']]);
+    expect(configured).toMatchObject({ status: 'outcome_unknown', errorCode: 'native_effect_failed',
+      observation: { privateNetworks: [{ provider: selected.provider, state: 'needsAuth', networkIdentity: null }] } });
   });
 
   it('observes native Tailscale membership without a saved selection and leaves through the reviewed Action', async () => {
@@ -124,7 +137,7 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
         operationId: 'native-membership-leave', actionId: 'machines.reachability.configure', accept() {},
       } }));
     expect(configured).toMatchObject({ status: 'applied', observation: { privateNetworks: [] } });
-    expect(f.hostNative.tailscaleMutations).toEqual([['down']]);
+    expect(f.hostNative.tailscaleMutations).toEqual([['logout']]);
     expect(f.metadata.read()).toMatchObject({ metadata: { accessProviderSelections: [] }, metadataVersion: metadataVersion + 1 });
   });
 

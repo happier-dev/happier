@@ -3734,8 +3734,14 @@ request through one transport disconnect when the direct Home IPv4 endpoint is i
 daemon's connection supervisor supplies the reconnect result. The Machine content
 key must match before the owner can publish confirmed native results through the
 refreshed metadata port and its existing revision check. Caller Stop and the
-operation deadline still apply. Network displays observed native membership and
-offers reviewed Leave even for membership established outside Happier.
+operation deadline still apply. If the admitted result remains unconfirmed,
+the operation settles with a typed unknown and a warning. Network displays
+the native membership it can observe, and a further change requires review.
+The retained operation never reruns the native command. Network offers reviewed
+Leave even for membership established outside Happier. Leave runs
+`tailscale logout` and confirms the machine needs to authenticate again before
+joining. A reviewed switch still disconnects the previous login with
+`tailscale down`.
 
 Bound-target Setup reports use the existing managed resource identity and controller
 installation, without an enrolled guest Machine. The existing Setup report owner

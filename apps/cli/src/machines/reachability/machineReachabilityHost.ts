@@ -465,6 +465,14 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     let roleMayHaveChangedMembership = false;
     let cleanupConfirmed = true;
     let tailnetReconnect: Awaited<ReturnType<ApiMachineClient['admitTailnetMembershipReconnect']>>;
+    const settleTailnetReconnect = async () => {
+      if (!tailnetReconnect || !deps.context.signal) return undefined;
+      try { return await tailnetReconnect.currentPort(deps.context.signal); }
+      finally {
+        tailnetReconnect.dispose();
+        tailnetReconnect = undefined;
+      }
+    };
     const restorePriorSelection = async () => {
       if (!selectionRecordWritten) return true;
       try {
@@ -527,8 +535,8 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
         // membership must be the descriptor-owned P20 program, never a second
         // privileged plugin dispatcher or a daemon-readable secret copy.
         if (!membershipEntry) return refuse('access_provider_target_unsupported');
-        const canRetainTailnetDispatch = accessProviderRefsEqualV1(change.selection.provider, builtinTailscaleMembershipSelection.provider);
-        const tailnetDispatch = canRetainTailnetDispatch ? { onTailnetMembershipDispatch: async () => {
+        const isBuiltinTailscale = accessProviderRefsEqualV1(change.selection.provider, builtinTailscaleMembershipSelection.provider);
+        const tailnetDispatch = isBuiltinTailscale ? { onTailnetMembershipDispatch: async () => {
           tailnetReconnect = await deps.admitTailnetMembershipReconnect?.();
         } } : {};
         const inspectSelectedProfile = async () => {
@@ -703,13 +711,12 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
             return refuseMembershipElevation(left);
           }
         }
-        if (tailnetReconnect && deps.context.signal) {
-          metadataPort = await tailnetReconnect.currentPort(deps.context.signal) ?? metadataPort;
-        }
+        metadataPort = await settleTailnetReconnect() ?? metadataPort;
         const observed = await observeMachineReachability({ state: currentState, providers,
           additionalSelection: change.selection, isCurrent: current });
         const network = observed.privateNetworks.find(network => accessProviderRefsEqualV1(network.provider, change.selection.provider));
-        if (!network || network.state !== (change.intent === 'join' ? 'ready' : 'stopped')) return refuse('outcome_unknown');
+        const expectedMembership = change.intent === 'join' ? 'ready' : isBuiltinTailscale ? 'needsAuth' : 'stopped';
+        if (network?.state !== expectedMembership) return refuse('outcome_unknown');
         if (change.intent === 'leave' && prepared.removeSavedSelection) await write(change);
       }
     } catch (error) {
@@ -726,6 +733,9 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
       } else {
         status = 'outcome_unknown';
         if (!cleanupConfirmed || selectionRecordWritten && !anyNativeEffectPossible || metadataOutcomeUnknown) failureCode = 'recoveryRequired';
+        // Loss of native confirmation can precede Home's one reconnect. Preserve
+        // the native cause and give the observation a chance to reach Home.
+        await settleTailnetReconnect().catch(() => undefined);
       }
     } finally { tailnetReconnect?.dispose(); }
     const observed = await observeMachineReachability({ state: currentState, providers,

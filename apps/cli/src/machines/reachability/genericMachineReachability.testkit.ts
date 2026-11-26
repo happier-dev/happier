@@ -1152,17 +1152,19 @@ export function createGenericHostNativeBoundary(params: Readonly<{
         'ExecStart={ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd -D ; ignore_errors=no ; pid=0 ; code=(null) ; status=0/0 }\n');
     }
     if (command.executable.replace(/\\/gu, '/').split('/').at(-1) === 'tailscale') {
-      if (args[0] === 'status') return ok(JSON.stringify({ BackendState: tailscaleState, HaveNodeKey: true, TUN: true,
-        TailscaleIPs: ['100.92.0.7'], Self: { DNSName: 'host.example.ts.net.', Online: tailscaleState === 'Running' },
-        CurrentTailnet: { Name: 'example.ts.net', MagicDNSEnabled: true } }));
+      if (args[0] === 'status') return ok(JSON.stringify({ BackendState: tailscaleState, TUN: true,
+        ...(tailscaleState === 'NeedsLogin' ? {} : { HaveNodeKey: true, TailscaleIPs: ['100.92.0.7'],
+          Self: { DNSName: 'host.example.ts.net.', Online: tailscaleState === 'Running' },
+          CurrentTailnet: { Name: 'example.ts.net', MagicDNSEnabled: true } }) }));
       if (args[0] === 'switch') {
         expect(args).toEqual(['switch', '--list', '--json']);
-        return ok(JSON.stringify([{ id: tailscaleProfileId, selected: true, nickname: 'Observed profile',
-          tailnet: 'example.ts.net', account: 'fixture@example.test' }]));
+        return ok(JSON.stringify(tailscaleState === 'NeedsLogin' ? [] : [{ id: tailscaleProfileId,
+          selected: true, nickname: 'Observed profile', tailnet: 'example.ts.net', account: 'fixture@example.test' }]));
       }
       if (args[0] === 'debug') return ok(JSON.stringify({ OperatorUser: tailscaleOperator, WantRunning: tailscaleState === 'Running' }));
       tailscaleMutations.push([...args]); networkMutations++;
       if (args[0] === 'down') tailscaleState = 'Stopped';
+      else if (args[0] === 'logout') tailscaleState = 'NeedsLogin';
       else if (args[0] === 'up') {
         const file = args.find(arg => arg.startsWith('--auth-key=file:'));
         if (file) {

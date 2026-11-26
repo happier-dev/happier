@@ -9,11 +9,20 @@ const connected = { op: 'and' as const, all: [
     { op: 'eq' as const, path: 'Self.Online', value: true },
 ] };
 
-// `down` sets WantRunning=false. A node without a saved login can remain
-// NeedsLogin, so BackendState=Stopped is not its completion condition.
-const disconnected = {
+// Switching networks disconnects the previous profile while retaining its login.
+const stopped = {
     executable: 'tailscale', args: ['debug', 'prefs'], unsatisfiedExitCodes: [],
     stdoutJson: { op: 'eq', path: 'WantRunning', value: false },
+} satisfies Extract<MachineRecipeV1['steps'][number], { kind: 'command' }>['check'];
+
+export const tailscaleLogoutCommand = { executable: 'tailscale', args: ['logout'] } as const;
+
+const loggedOut = {
+    executable: 'tailscale', args: ['status', '--json'], unsatisfiedExitCodes: [],
+    stdoutJson: { op: 'and', all: [
+        { op: 'eq', path: 'BackendState', value: 'NeedsLogin' },
+        { op: 'not', predicate: { op: 'truthy', path: 'HaveNodeKey' } },
+    ] },
 } satisfies Extract<MachineRecipeV1['steps'][number], { kind: 'command' }>['check'];
 
 /** A selected key is a reviewed finite intent, not a persistent desired network.
@@ -33,7 +42,7 @@ export function createTailscaleJoinSteps(binding: Readonly<{
                 when: [{ input: binding.membershipFlagsPath
                     ? { op: 'includes', path: binding.membershipFlagsPath, value: 'switch-network' }
                     : { op: 'truthy', path: binding.switchNetworkInputPath ?? 'switchNetwork' } }],
-                check: disconnected },
+                check: stopped },
             { id: 'tailscale-join', kind: 'command', executable: 'tailscale',
                 args: ['up', '--force-reauth', { kind: 'template', value: '--auth-key=file:{file}',
                     variables: { file: binding.credentialFile } }],
@@ -66,9 +75,10 @@ export const tailscaleMembershipPrograms: Readonly<{ join: MachineRecipeV1; leav
         }),
     },
     leave: {
-        id: 'tailscale-leave', revision: '1', title: 'Leave Tailscale', inputSchema: roles.leaveInput.jsonSchema,
-        steps: [{ id: 'tailscale-leave', kind: 'command', executable: 'tailscale', args: ['down'],
-            review: { title: 'Disconnect Tailscale', description: 'Stop this Machine’s current Tailscale connection without deleting its saved login.' },
-            check: disconnected }],
+        id: 'tailscale-leave', revision: '2', title: 'Leave Tailscale', inputSchema: roles.leaveInput.jsonSchema,
+        steps: [{ id: 'tailscale-leave', kind: 'command',
+            executable: tailscaleLogoutCommand.executable, args: [...tailscaleLogoutCommand.args],
+            review: { title: 'Log out of Tailscale', description: 'Leave the current tailnet. This Machine will need to authenticate to join again.' },
+            check: loggedOut }],
     },
 };

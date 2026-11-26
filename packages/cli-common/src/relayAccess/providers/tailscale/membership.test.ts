@@ -15,10 +15,12 @@ function machine(initialOnline = true, initialState = 'Running', initialWantRunn
     const nativeEffects: string[][] = [];
     const backend = createMachineSetupNativeBackend({ run: async command => {
         commands.push(command);
-        if (command.args[0] === 'status') return { code: 0, stdout: JSON.stringify({ BackendState: state, Self: { Online: online } }), stderr: '' };
+        if (command.args[0] === 'status') return { code: 0, stdout: JSON.stringify({ BackendState: state,
+            ...(state === 'NeedsLogin' ? {} : { HaveNodeKey: true }), Self: { Online: online } }), stderr: '' };
         if (command.args[0] === 'debug') return { code: 0, stdout: JSON.stringify({ OperatorUser: operator, WantRunning: wantRunning }), stderr: '' };
         nativeEffects.push([...command.args]);
         if (command.args[0] === 'down') { wantRunning = false; if (state !== 'NeedsLogin') state = 'Stopped'; }
+        else if (command.args[0] === 'logout') { state = 'NeedsLogin'; online = false; wantRunning = false; }
         else if (command.args[0] === 'up') { state = 'Running'; online = true; wantRunning = true; }
         else if (command.args[0] === 'set') operator = command.args[1]!.slice('--operator='.length);
         return { code: 0, stdout: '', stderr: '' };
@@ -48,14 +50,14 @@ describe('reviewed builtin Tailscale membership through the native interpreter',
         expect(f.state()).toBe('Running');
     });
 
-    it.each([false, true])('disconnects a NeedsLogin node with WantRunning=%s without requiring a saved login', async wantRunning => {
-        const f = machine(false, 'NeedsLogin', wantRunning);
+    it.each(['Running', 'Stopped', 'NeedsLogin'])('leaves the active profile from %s and requires a new login', async state => {
+        const f = machine(state === 'Running', state, state !== 'Stopped');
         const reviewed = await checkMachineSetupEffectPlan({
             basis: { kind: 'setup', machineId: 'machine', desiredRevision: 1 },
             steps: tailscaleMembershipPrograms.leave.steps.map(step => resolveMachineRecipeStepInputsV1(step, {})), backend: f.backend,
         });
         expect(await applyMachineSetupEffectPlan({ plan: reviewed, backend: f.backend })).toMatchObject({ status: 'applied' });
-        expect(f.nativeEffects).toEqual(wantRunning ? [['down']] : []);
+        expect(f.nativeEffects).toEqual(state === 'NeedsLogin' ? [] : [['logout']]);
         expect(f.state()).toBe('NeedsLogin');
     });
 
