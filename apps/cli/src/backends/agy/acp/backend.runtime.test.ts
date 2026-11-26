@@ -1,4 +1,4 @@
-import { chmod, readFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -19,13 +19,20 @@ async function writeAgyFixture(dir: string, version: string): Promise<string> {
     fs.appendFileSync(${JSON.stringify(join(dir, 'launches.jsonl'))}, JSON.stringify({
       args: process.argv.slice(2), fileTokenStorage: process.env.${FILE_TOKEN_STORAGE} ?? null,
     }) + '\\n');
+    const profile = process.argv.includes('--gemini-dir') ? process.argv[process.argv.indexOf('--gemini-dir') + 1] : null;
+    const listStore = () => {
+      try {
+        return fs.readdirSync(require('node:path').join(profile, 'antigravity-cli', 'conversations'))
+          .filter(name => name.endsWith('.db')).map(name => ({ sessionId: name.slice(0, -3), cwd: ${JSON.stringify(dir)} }));
+      } catch { return []; }
+    };
     require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
       const request = JSON.parse(line);
       if (request.method !== 'initialize') fs.appendFileSync(${JSON.stringify(join(dir, 'requests.jsonl'))}, JSON.stringify(request.method) + '\\n');
       const result = request.method === 'initialize'
         ? { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} },
             agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } } }
-        : request.method === 'session/list' ? { sessions: [{ sessionId: 'cli-conversation', cwd: ${JSON.stringify(dir)} }] }
+        : request.method === 'session/list' ? { sessions: [{ sessionId: 'cli-conversation', cwd: ${JSON.stringify(dir)} }, ...listStore()] }
         : request.method === 'session/new' ? { sessionId: 'new-session' } : {};
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
     });
@@ -96,6 +103,57 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
       try {
         await expect(backend.startSession()).rejects.toThrow(/profile/i);
         await expect(readFile(join(dir, 'launches.jsonl'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally { await backend.dispose(); }
+    });
+  });
+
+  it.each([
+    { account: 'machine login', connected: false },
+    { account: 'connected account', connected: true },
+  ])('continues a conversation the retired server created for the $account under the same id', async ({ connected }) => {
+    await withTempDir('agy-launch-', async dir => {
+      const agy = await writeAgyFixture(dir, '1.5.18');
+      const profile = join(dir, 'profile');
+      const id = 'legacy-conversation';
+      const legacyFiles = [
+        [`conversations/${id}.db`, 'legacy database'],
+        [`conversations/${id}.db-wal`, 'legacy wal'],
+        [`conversations/${id}.meta`, '{"cwd":"/work"}'],
+        [`brain/${id}/task.md`, 'legacy artifact'],
+      ] as const;
+      for (const [path, contents] of legacyFiles) {
+        await mkdir(join(profile, 'antigravity-acp', path, '..'), { recursive: true });
+        await writeFile(join(profile, 'antigravity-acp', path), contents);
+      }
+      await writeFile(join(profile, 'antigravity-acp', 'conversations', 'other.db'), 'another conversation');
+      const backend = await createAgyAcpBackend({ cwd: dir, env: {
+        HAPPIER_AGY_PATH: agy, GEMINI_HOME: profile,
+        ...(connected ? { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: CONNECTED_ACCOUNT_SELECTIONS } : {}),
+      } });
+      try {
+        await expect(backend.loadSession!(id)).resolves.toMatchObject({ sessionId: id });
+        expect(await readFile(join(dir, 'requests.jsonl'), 'utf8')).toContain('session/load');
+        for (const [path, contents] of legacyFiles) {
+          expect(await readFile(join(profile, 'antigravity-cli', path), 'utf8')).toBe(contents);
+          expect(await readFile(join(profile, 'antigravity-acp', path), 'utf8')).toBe(contents);
+        }
+        await expect(readFile(join(profile, 'antigravity-cli', 'conversations', 'other.db'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally { await backend.dispose(); }
+    });
+  });
+
+  it('never replaces a conversation the CLI already continued', async () => {
+    await withTempDir('agy-launch-', async dir => {
+      const agy = await writeAgyFixture(dir, '1.5.18');
+      const profile = join(dir, 'profile');
+      for (const [store, contents] of [['antigravity-acp', 'legacy database'], ['antigravity-cli', 'continued database']]) {
+        await mkdir(join(profile, store, 'conversations'), { recursive: true });
+        await writeFile(join(profile, store, 'conversations', 'shared.db'), contents);
+      }
+      const backend = await createAgyAcpBackend({ cwd: dir, env: { HAPPIER_AGY_PATH: agy, GEMINI_HOME: profile } });
+      try {
+        await backend.loadSession!('shared');
+        expect(await readFile(join(profile, 'antigravity-cli', 'conversations', 'shared.db'), 'utf8')).toBe('continued database');
       } finally { await backend.dispose(); }
     });
   });
