@@ -1193,7 +1193,23 @@ it('spends the same contributed requester custody through CLI and native HTTP po
       // A wire-only contribution never reaches a bearer; it keeps the signed-carrier target refusal.
       const { authentication: _authentication, ...wireBinding } = root.binding;
       expect(sessionPlaced({ ...root, binding: wireBinding })).toEqual({ ok: false, reason: 'target_missing', requestId: 'health-preview' });
-      const native = await projected.requesterHttpProjection.createRequestHeaders(request);
+      // Live cut 52 (Triage #149/#170): that SCM child's Session lookup
+      // (cliActionTransport resolveTransportForSession) prepares the admitted
+      // root, so its effect is action.invoke itself, still without a target.
+      const sessionLookup = (authorization: typeof root, externalActionTarget?: typeof root.binding.target) =>
+        resolveExternalActionServerRequestHeaders({ effectActionId: 'action.invoke', method: 'GET', path: '/v2/sessions/session-1',
+          context: { surface: 'plugin', authority: 'account_automation', externalActionExecutionAuthorization: authorization,
+            ...(externalActionTarget ? { externalActionTarget } : {}) },
+          daemonToken: 'different-installed-account', serverIdentityId: homeIdentityId,
+          installationId: root.binding.installationId, privateKey });
+      expect(sessionLookup(projected)).toMatchObject({ ok: true, headers: { Authorization: `Bearer ${credentials.token}` } });
+      expect(sessionLookup(root)).toEqual({ ok: false, reason: 'requester_account_custody_mismatch', requestId: 'health-preview' });
+      expect(sessionLookup({ ...root, binding: wireBinding })).toEqual({ ok: false, reason: 'target_missing', requestId: 'health-preview' });
+      // With its admitted target the root's own purpose keeps the signed carrier, never the bearer.
+      const targetedRoot = sessionLookup(projected, root.binding.target);
+      expect(targetedRoot.ok).toBe(true);
+      expect(targetedRoot.ok && targetedRoot.headers.Authorization).not.toBe(`Bearer ${credentials.token}`);
+      const native =await projected.requesterHttpProjection.createRequestHeaders(request);
       expect(native).toEqual({ Authorization: `Bearer ${credentials.token}`,
         [requesterAccountEncryptionMode]: 'plain',
         [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });

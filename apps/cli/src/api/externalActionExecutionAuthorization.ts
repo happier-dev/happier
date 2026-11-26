@@ -1966,9 +1966,11 @@ function resolveContributedActionRequesterHttpHeaders(input: Readonly<{
   effectActionId: string;
   authority: ActionExecutorContext['authority'];
   reviewedChild?: ReviewedActionChildHttpProofV1;
+  /** A Session-placed child cleared its inherited target, so no signed carrier can prove the root's own purpose. */
+  targetless?: true;
 }>): Readonly<{ ok: true; headers: Readonly<Record<string, string>> }> | ExternalActionHeaderRefusal | null {
   const binding = input.authorization.binding;
-  if (binding.actionId !== ACTION_INVOKE_ACTION_ID_V1 || input.effectActionId === binding.actionId
+  if (binding.actionId !== ACTION_INVOKE_ACTION_ID_V1 || (input.effectActionId === binding.actionId && !input.targetless)
     || !('authentication' in binding) || binding.telemetryCollectorCodec) return null;
   // A database read setup's reviewed bindings child spends the signed root with its review proof:
   // Home admits that exact purpose and its opaque-content writer needs the root binding.
@@ -2580,9 +2582,11 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
   if (authorization.binding.serverIdentityId !== input.serverIdentityId) return refuse('dependency_home_identity_mismatch');
   const binding = authorization.binding;
   // The requester bearer is not target-bound: a Session-placed SCM child runs
-  // with its inherited Machine target cleared and still spends this custody.
+  // with its inherited Machine target cleared and still spends this custody,
+  // including its Session lookup that prepares the admitted root's own purpose.
   const contributed = resolveContributedActionRequesterHttpHeaders({ authorization,
-    effectActionId: input.effectActionId, authority: input.context?.authority });
+    effectActionId: input.effectActionId, authority: input.context?.authority,
+    ...(input.context?.externalActionTarget ? {} : { targetless: true as const }) });
   if (contributed) return contributed;
   if (!input.context?.externalActionTarget) return refuse('target_missing');
   if (binding.actionId === 'approval.request.create' && binding.actionId !== input.effectActionId
