@@ -2859,6 +2859,12 @@ separately observed availability never merge into one field. `availability` is
 either `{ state: 'known', connectedCount, enabledCount }` or `{ state: 'unknown' }`
 when the Home could not observe its Machine sockets.
 
+For a Team-filtered list, a current member who loses Team sign-in qualification
+still receives their own Pools in that scope. The same response carries
+`teamUnavailable: 'team_authentication_required' | 'team_authentication_unavailable'`.
+The Team Pool count uses the same relation as the list. The field is absent for
+qualified members and for callers without Team membership access.
+
 An authorized delete review includes the number of Team credential broker assignments
 that deletion will clear and the Team names visible to the custodian. The approved
 delete uses the existing `pool_changed` result if the reviewed assignments change.

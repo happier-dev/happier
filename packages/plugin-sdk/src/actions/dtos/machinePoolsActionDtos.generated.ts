@@ -190,6 +190,7 @@ export type MachinePoolsActionResultById = {
             machineId: string;
             eligible: true;
         })[] | undefined;
+        teamUnavailable?: 'team_authentication_required' | 'team_authentication_unavailable' | undefined;
     };
     readonly "machines.pools.get": {
         pool: {

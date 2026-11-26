@@ -32,21 +32,25 @@ export async function resolveMachinePoolAccessInTx(tx: Tx, actor: MachinePoolAct
 }
 
 export async function canReadMachinePoolTeamInTx(tx: Tx, actor: MachinePoolActor, teamId: string): Promise<boolean> {
+    return (await readMachinePoolTeamQualificationInTx(tx, actor, teamId))?.ok === true;
+}
+
+async function readMachinePoolTeamQualificationInTx(tx: Tx, actor: MachinePoolActor, teamId: string) {
     const context = actor.admittedTeamActor ?? await resolveTeamActorContextInTx(tx, { teamId, actorAccountId: actor.accountId });
-    return Boolean(context && context.team.archivedAt === null && context.teamCapabilities.viewTeam
-        && (await qualifyTeamOperationAuthenticationInTx(tx, { ...actor.authentication, context })).ok);
+    if (!context || context.team.archivedAt !== null || !context.teamCapabilities.viewTeam) return null;
+    return await qualifyTeamOperationAuthenticationInTx(tx, { ...actor.authentication, context });
 }
 
 /** Count and list share custody and current Team access before reading pool content. */
-export async function scopedMachinePoolWhereInTx(tx: Tx, actor: MachinePoolActor,
-    teamId: string): Promise<Prisma.MachinePoolWhereInput> {
-    const canReadTeam = await canReadMachinePoolTeamInTx(tx, actor, teamId);
-    return { teamId, OR: [
+export async function readScopedMachinePoolRelationInTx(tx: Tx, actor: MachinePoolActor, teamId: string) {
+    const qualification = await readMachinePoolTeamQualificationInTx(tx, actor, teamId);
+    const where: Prisma.MachinePoolWhereInput = { teamId, OR: [
         { accountId: actor.accountId },
-        ...(canReadTeam ? [{ account: { teamMemberships: { some: {
+        ...(qualification?.ok ? [{ account: { teamMemberships: { some: {
             ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, teamId,
         } } } }] : []),
     ] };
+    return { where, ...(qualification?.ok === false ? { teamUnavailable: qualification.error } : {}) };
 }
 
 /** Resolve a whole list's Team witnesses once, without one membership query per pool. */

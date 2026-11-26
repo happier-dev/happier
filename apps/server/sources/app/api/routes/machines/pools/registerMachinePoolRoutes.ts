@@ -41,14 +41,14 @@ export function registerMachinePoolRoutes(
         schema: { body: MachinePoolListInputV1Schema, response: { 200: MachinePoolListOutputV1Schema, ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
-        const [pools, memberEligibility] = await Promise.all([
+        const [listed, memberEligibility] = await Promise.all([
             listMachinePools({ accountId: request.userId, io: deps.io, authentication: readTeamOperationAuthenticationFromRequest(request),
                 ...(request.body.sharedWithTeamId ? { sharedWithTeamId: request.body.sharedWithTeamId } : {}) }),
             request.body.memberMachineIds === undefined ? undefined : getMachinePoolMemberEligibility({
                 accountId: request.userId, machineIds: request.body.memberMachineIds,
             }),
         ]);
-        return await reply.send({ pools: [...pools], ...(memberEligibility === undefined ? {} : { memberEligibility: [...memberEligibility] }) });
+        return await reply.send({ ...listed, ...(memberEligibility === undefined ? {} : { memberEligibility: [...memberEligibility] }) });
     });
 
     app.post(machinePoolActionEndpointPathV1("machines.pools.get"), {

@@ -307,7 +307,7 @@ describe("machinePoolService (SQLite integration)", () => {
             members: { create: { machineId: 'm-fast', priorityTier: 0, enabled: true } },
         } });
         const legacy = (await listMachinePools({ accountId: ownerId, io: io(['m-fast']) }))
-            .find((view) => view.pool.id === legacyPoolId);
+            .pools.find((view) => view.pool.id === legacyPoolId);
         expect(legacy).toMatchObject({ pool: { name: { kind: 'available', label: { content: { t: 'plain', v: 'Untyped retained label' }, recipientEnvelope: null, legacyPlaintext: true } }, description: null } });
         expect((await db.machinePool.findUniqueOrThrow({ where: { id: legacyPoolId } })).name).toBe('Untyped retained label');
         await expect(resolveMachinePool({
@@ -830,10 +830,10 @@ describe("machinePoolService (SQLite integration)", () => {
             ],
         });
 
-        await expect(listMachinePools({ accountId: ownerId, io: io() })).resolves.toMatchObject([
+        await expect(listMachinePools({ accountId: ownerId, io: io() })).resolves.toMatchObject({ pools: [
             { pool: { id: "00000000-0000-4000-8000-000000000000" } },
             { pool: { id: "ffffffff-ffff-4fff-8fff-ffffffffffff" } },
-        ]);
+        ] });
     });
 
     it("atomically saves an aggregate beyond SQLite's historical bind boundary", async () => {

@@ -22,8 +22,8 @@ import { acquireTeamCredentialBrokerPoolAdmissionInTx, clearTeamCredentialBroker
 import { acquireMachinePoolMutationFenceInTx } from "./machinePoolMutationFence";
 import { validateMachinePoolMembersInTx } from './machinePoolMemberAdmission';
 import { canReadMachinePoolTeamInTx, canSetMachinePoolAudienceInTx, CUSTODIAN_POOL_ACCESS, TEAM_POOL_ACCESS, machinePoolAudience, readableMachinePoolTeamsInTx,
-    readMachinePoolPublicationAudienceInTx, resolveMachinePoolAccessInTx, scopedMachinePoolWhereInTx, type MachinePoolActor } from './machinePoolAccess';
-import type { MachinePoolAccessV1, MachinePoolAudienceV1 } from '@happier-dev/protocol/machines/pools/v1';
+    readMachinePoolPublicationAudienceInTx, resolveMachinePoolAccessInTx, readScopedMachinePoolRelationInTx, type MachinePoolActor } from './machinePoolAccess';
+import type { MachinePoolAccessV1, MachinePoolAudienceV1, MachinePoolListOutputV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { prepareMachinePoolPrivateLabelsForWriteInTx, projectMachinePoolPrivateLabelForRecipient } from './privateLabels';
 
 const poolAggregate = {
@@ -176,12 +176,15 @@ export async function listMachinePools(params: Readonly<{
     sharedWithTeamId?: string;
     authentication?: MachinePoolActor['authentication'];
     io: MachineDaemonPresenceSocketServer;
-}>): Promise<readonly MachinePoolPrivateViewV1[]> {
-    const stored = await inReadSnapshot(async tx => {
-        if (params.sharedWithTeamId) return tx.machinePool.findMany({
-            where: await scopedMachinePoolWhereInTx(tx, params, params.sharedWithTeamId),
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], ...poolAggregate,
-        });
+}>): Promise<MachinePoolListOutputV1> {
+    const { stored, teamUnavailable } = await inReadSnapshot(async tx => {
+        if (params.sharedWithTeamId) {
+            const scope = await readScopedMachinePoolRelationInTx(tx, params, params.sharedWithTeamId);
+            const stored = await tx.machinePool.findMany({
+                where: scope.where, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], ...poolAggregate,
+            });
+            return { stored, teamUnavailable: scope.teamUnavailable };
+        }
         const teamIds = await readableMachinePoolTeamsInTx(tx, params);
         const owned = await tx.machinePool.findMany({
             where: { accountId: params.accountId },
@@ -196,7 +199,7 @@ export async function listMachinePools(params: Readonly<{
         const activeCustodians = await readActiveTeamMembershipsInTx(tx, { memberships: shared.flatMap(pool => pool.teamId
             ? [{ teamId: pool.teamId, accountId: pool.accountId }] : []) });
         const available = shared.filter(pool => pool.teamId && activeCustodians.get(pool.teamId)?.has(pool.accountId));
-        return [...owned, ...available].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
+        return { stored: [...owned, ...available].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)) };
     });
     // Presence belongs to each custodian, even when the viewer may see only aggregate availability.
     const poolsByCustodian = new Map<string, StoredPool[]>();
@@ -207,10 +210,11 @@ export async function listMachinePools(params: Readonly<{
     }
     const inventories = new Map(await Promise.all([...poolsByCustodian].map(async ([accountId, pools]) =>
         [accountId, await inventoryFor(accountId, params.io, pools)] as const)));
-    return stored.map(pool => ({ ...projectPool(pool, inventories.get(pool.accountId)!, pool.accountId === params.accountId
+    const pools = stored.map(pool => ({ ...projectPool(pool, inventories.get(pool.accountId)!, pool.accountId === params.accountId
         ? CUSTODIAN_POOL_ACCESS : TEAM_POOL_ACCESS, params.accountId),
         ...(params.sharedWithTeamId ? { sharedWithTeamScope: 'team' as const } : {}),
     }));
+    return { pools, ...(teamUnavailable ? { teamUnavailable } : {}) };
 }
 
 /** Team overview reads the same pool relation without members, labels or presence. */
@@ -222,7 +226,7 @@ export async function countScopedTeamMachinePoolsInTx(tx: Tx, params: Readonly<{
     if (!await isServerFeatureEnabledForHome('machines.pools', { tx, env: params.authentication?.env })) {
         return { ok: false, error: 'not_found' };
     }
-    const where = await scopedMachinePoolWhereInTx(tx, { accountId: params.actorAccountId,
+    const { where } = await readScopedMachinePoolRelationInTx(tx, { accountId: params.actorAccountId,
         authentication: params.authentication, admittedTeamActor: params.admittedTeamActor }, params.sharedWithTeamId);
     return { ok: true, count: await tx.machinePool.count({ where }) };
 }

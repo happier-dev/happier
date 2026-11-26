@@ -271,9 +271,14 @@ export const MachinePoolListInputV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type MachinePoolListInputV1 = z.infer<typeof MachinePoolListInputV1Schema>;
 
+/** A current member's Team authentication refusal can accompany their own Pool rows. */
+const machinePoolTeamUnavailableCodes = [
+  'team_authentication_required', 'team_authentication_unavailable',
+] as const satisfies ReadonlyArray<TeamErrorCodeV1>;
 export const MachinePoolListOutputV1Schema = lazyZodSchema(() => z.strictObject({
   pools: z.array(MachinePoolPrivateViewV1Schema),
   memberEligibility: z.optional(z.array(MachinePoolMemberEligibilityV1Schema)),
+  teamUnavailable: z.optional(z.enum(machinePoolTeamUnavailableCodes)),
 }));
 export type MachinePoolListOutputV1 = z.infer<typeof MachinePoolListOutputV1Schema>;
 

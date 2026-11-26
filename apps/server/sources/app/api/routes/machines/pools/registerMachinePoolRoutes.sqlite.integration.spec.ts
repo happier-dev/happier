@@ -1,6 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
+import { inReadSnapshot } from "@/storage/inTx";
+import { countScopedTeamMachinePoolsInTx } from "@/app/machines/pools/machinePoolService";
+import { databaseQueryDurationHistogram } from "@/app/monitoring/metrics/databaseDriverMetrics";
+import { MachinePoolListOutputV1Schema } from "@happier-dev/protocol/machines/pools/v1";
 import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 
 const readLabel = (value: string) => ({ kind: "available", label: { content: { t: "plain", v: value }, recipientEnvelope: null } });
@@ -71,7 +75,8 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
     let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-machine-pool-http-", initAuth: false });
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-machine-pool-http-", initAuth: false,
+            env: { METRICS_ENABLED: '1' } });
     }, 120_000);
 
     afterAll(async () => await harness.close());
@@ -144,6 +149,70 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers, payload: {} })).json())
                 .toEqual(ownerBefore.json());
             expect(await db.machinePool.count()).toBe(3);
+        });
+    });
+
+    it.each([
+        { policy: { v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }] },
+            reason: 'team_authentication_required' },
+        { policy: { v: 99, mode: 'restricted', accepted: [] }, reason: 'team_authentication_unavailable' },
+    ])('retains custodial rows and exposes $reason only to the current Team member', async ({ policy, reason }) => {
+        await seedAccounts();
+        const team = await db.team.create({ data: { name: 'Selected Team' } });
+        await db.teamMembership.createMany({ data: [accountId, otherAccountId].map(id => ({
+            teamId: team.id, accountId: id, role: 'admin',
+        })) });
+        const ownedPoolId = 'fe09f4cd-3b5f-43db-a981-963c8bdbe542';
+        await withPoolRoutes(async app => {
+            for (const [id, actorHeaders] of [[poolId, headers], [ownedPoolId, otherHeaders]] as const) {
+                const created = await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers: actorHeaders,
+                    payload: { poolId: id, name: plainPrivateLabel(id), audience: { kind: 'team', teamId: team.id }, members: [] } });
+                expect(created.statusCode, created.body).toBe(200);
+            }
+            const statementCount = async () => {
+                const metric = await databaseQueryDurationHistogram.get();
+                return metric.values.find(sample => sample.metricName === `${metric.name}_count`)?.value ?? 0;
+            };
+            const list = async () => {
+                const before = await statementCount();
+                const response = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders,
+                    payload: { sharedWithTeamId: team.id } });
+                expect(response.statusCode, response.body).toBe(200);
+                return { body: MachinePoolListOutputV1Schema.parse(response.json()), statements: (await statementCount()) - before };
+            };
+            const count = () => inReadSnapshot(tx => countScopedTeamMachinePoolsInTx(tx, {
+                actorAccountId: otherAccountId, sharedWithTeamId: team.id,
+            }));
+            const { body: qualified, statements: qualifiedStatements } = await list();
+            expect(qualified.pools.map(view => view.pool.id)).toEqual([poolId, ownedPoolId]);
+            expect(qualified).not.toHaveProperty('teamUnavailable');
+            expect(await count()).toEqual({ ok: true, count: qualified.pools.length });
+
+            const own = qualified.pools.filter(view => view.pool.id === ownedPoolId);
+            await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: policy } });
+            const { body: unqualified, statements: unqualifiedStatements } = await list();
+            expect(unqualified.pools).toEqual(own);
+            expect(await count()).toMatchObject({ ok: true, count: unqualified.pools.length });
+
+            await db.account.update({ where: { id: otherAccountId }, data: { status: 'suspended' } });
+            expect((await list()).body).toEqual({ pools: own });
+            expect(await count()).toEqual({ ok: true, count: own.length });
+            await db.account.update({ where: { id: otherAccountId }, data: { status: 'active' } });
+            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: team.id, accountId: otherAccountId } } });
+            expect((await list()).body).toEqual({ pools: own });
+            expect(await count()).toEqual({ ok: true, count: own.length });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: otherAccountId, role: 'admin' } });
+            await db.machinePool.createMany({ data: Array.from({ length: 40 }, () => ({
+                id: crypto.randomUUID(), accountId: otherAccountId, teamId: team.id, name: storedPlainPrivateLabel('Builders'),
+            })) });
+            const bigger = await list();
+            expect(bigger.body.pools).toHaveLength(41);
+            expect(await count()).toMatchObject({ ok: true, count: bigger.body.pools.length });
+            expect(unqualifiedStatements).toBeGreaterThan(0);
+            expect(bigger.statements).toBe(unqualifiedStatements);
+            console.info('Pool list SQL statements', { reason, qualified: qualifiedStatements, unqualified: unqualifiedStatements,
+                unqualifiedWith41Pools: bigger.statements });
+            expect(unqualified).toHaveProperty('teamUnavailable', reason);
         });
     });
 
