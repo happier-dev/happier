@@ -4,9 +4,9 @@ description: Every HAPPIER_FEATURE_* variable the server reads, generated from t
 ---
 
 This is the complete list of environment variables the server reads to decide
-what it advertises and how much of it a client may use. There are **168**, of
-which **67** are on/off switches and the rest are limits, timeouts,
-policies and header names. **168** of them can also be set by a Home owner
+what it advertises and how much of it a client may use. There are **169**, of
+which **68** are on/off switches and the rest are limits, timeouts,
+policies and header names. **169** of them can also be set by a Home owner
 in Home Administration; an explicit env value still wins there and is shown as fixed.
 
 - **Switches** (`…__ENABLED`) turn a capability on or off. When the capability
@@ -272,6 +272,7 @@ Grouped by feature family.
 | --- | --- | --- | --- | --- | --- | --- |
 | `HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Continue one Session in place with another coding Agent, and create configurable Sessions from a typed source-context recipe. |
 | `HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Shared Session Board: durable Session surface items, their organization into Board views, and the Board Actions that author them. |
+| `HAPPIER_FEATURE_SESSIONS_CODE_MODE__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Code Mode script execution and on-demand MCP tool loading. |
 | `HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Human conversations inside a shared Session: discussions, authored messages, mentions and private read cursors. |
 | `HAPPIER_FEATURE_SESSIONS_DRAFTS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Cross-device composer and new-session draft synchronization. |
 | `HAPPIER_FEATURE_SESSIONS_EPHEMERAL_RUNNER__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Creator-authorized temporary-computer Session activation. |
