@@ -11,9 +11,8 @@
  * allocation at all.
  *
  * Lists stay supported for the callers that genuinely hold one (a server-scoped machine list, an
- * RPC input). Those scan instead of indexing: the walk is bounded at
- * `MAX_REPLACEMENT_CHAIN_LENGTH`, so a scan costs no more than the index build it replaced and
- * allocates nothing.
+ * RPC input). Direct resolution scans once. Following a replacement link uses
+ * one index for the remaining walk.
  */
 export {
     findMachineInCollection,

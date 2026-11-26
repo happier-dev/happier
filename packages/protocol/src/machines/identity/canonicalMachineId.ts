@@ -15,17 +15,14 @@
  * need it and neither owns the other.
  */
 
-const MAX_REPLACEMENT_CHAIN_LENGTH = 16;
-
 export type MachineIdentityRecord = Readonly<{ id?: string | null }>;
 
 /**
  * Resolution only ever needs **lookup by machine id**. Callers that already hold
  * an id-keyed record must not have to destroy that index with `Object.values`,
  * and callers that genuinely hold a list (a server-scoped machine list, an RPC
- * response) must not have to build one. Both shapes are accepted; the walk is
- * bounded, so the list branch's scan costs no more than the index build it
- * replaces and allocates nothing.
+ * response) can pass it directly. A list is indexed only when following a link,
+ * so a long chain never scans the inventory at every hop.
  */
 export type MachineCollection<TMachine extends MachineIdentityRecord> =
   | ReadonlyArray<TMachine>
@@ -102,16 +99,20 @@ export function resolveCanonicalMachineId(
   if (machineId.startsWith('host:')) return null;
 
   const chain: string[] = [];
+  // Registration and replacement write exact ids. Older or nonstandard ids
+  // containing spaces can collapse into a cycle when link targets are trimmed.
   const visited = new Set<string>();
   let currentMachineId = machineId;
+  let machine = findMachineInCollection(machines, currentMachineId);
+  let lookup = machines;
 
-  for (let depth = 0; depth < MAX_REPLACEMENT_CHAIN_LENGTH; depth += 1) {
+  while (true) {
     if (visited.has(currentMachineId)) return null;
     visited.add(currentMachineId);
     chain.push(currentMachineId);
 
-    const machine = findMachineInCollection(machines, currentMachineId);
-    if (!machine || !isMachineReplaced(machine)) {
+    const replacementMachineId = normalizeMachineIdentityString(machine?.replacedByMachineId);
+    if (!replacementMachineId) {
       return {
         machineId: currentMachineId,
         reason: currentMachineId === machineId ? 'direct' : 'replacement',
@@ -119,9 +120,15 @@ export function resolveCanonicalMachineId(
       };
     }
 
-    const replacementMachineId = normalizeMachineIdentityString(machine.replacedByMachineId);
-    if (!replacementMachineId || replacementMachineId === currentMachineId) return null;
-    if (!findMachineInCollection(machines, replacementMachineId)) {
+    if (Array.isArray(lookup)) {
+      const index = new Map<string, MachineReplacementRecord>();
+      for (const row of lookup as ReadonlyArray<MachineReplacementRecord>) {
+        if (typeof row?.id === 'string') index.set(row.id, row);
+      }
+      lookup = index;
+    }
+    machine = findMachineInCollection(lookup, replacementMachineId);
+    if (!machine) {
       return {
         machineId: currentMachineId,
         reason: 'missingReplacementTarget',
@@ -130,6 +137,4 @@ export function resolveCanonicalMachineId(
     }
     currentMachineId = replacementMachineId;
   }
-
-  return null;
 }
