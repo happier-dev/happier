@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
+import { ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
 
 import {
   localVoiceAgentRpc,
@@ -23,6 +24,7 @@ import {
   registerLocalVoiceEngineHarnessHooks,
   speechRecStart,
   speechRecStop,
+  sessionRpcWithServerScope,
   setLocalVoiceHttpResponder,
   waitForLocalVoiceBoundaryEvent,
 } from './localVoiceEngine.testHarness';
@@ -32,6 +34,92 @@ afterAll(() => restoreHarnessModuleLoader());
 
 describe('local voice engine stop', () => {
   registerLocalVoiceEngineHarnessHooks();
+
+  it('completes public Start, a captured Agent turn and End, releasing the Run and microphone', async () => {
+    const storage = await getStorage();
+    const voice = storage.getState().settings.voice;
+    const local = readLocalConversationVoiceSettings(voice);
+    storage.__setState({ settings: { ...storage.getState().settings, voice: {
+      ...voice, providerId: 'local_conversation', welcome: { ...voice.welcome, enabled: false },
+      providers: { ...voice.providers, local_conversation: { schemaVersion: 1, config: {
+        ...local, conversationMode: 'agent', handsFree: { ...local.handsFree, enabled: false },
+        agent: { ...local.agent, prewarmOnConnect: false,
+          transcript: { ...local.agent.transcript, persistenceMode: 'persistent' } },
+        stt: { ...local.stt, provider: 'device' },
+        tts: { ...local.tts, provider: 'device', autoSpeakReplies: true },
+      } } },
+    } } });
+    speechRecStart.mockImplementation(() => { emitSpeechRecEvent('start'); emitSpeechRecEvent('audiostart'); });
+    speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
+    await loadLocalVoiceEngineWithCompatState();
+    const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+    const { acknowledgeVoiceSessionRuntimeReady, setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+    const { getVoiceSessionPresentedAttemptId, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
+    const { localVoiceHomeId } = await import('./localVoiceEngine.testHarness');
+    const { voiceAgentSessions } = await import('@/voice/agent/voiceAgentSessions');
+    const { voiceCaptureAdmissionController } = await import('@/voice/runtime/input/VoiceCaptureAdmissionController');
+    const { readStoredSessionMessages } = await import('@happier-dev/session-core/messages');
+    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+    localVoicePendingEnqueue.mockImplementationOnce(async request => {
+      await publishLocalVoiceSubmittedUserMessage(request);
+      return acknowledgeLocalVoicePendingEnqueue(request);
+    });
+    const respond = sessionRpcWithServerScope.getMockImplementation();
+    if (!respond) throw new Error('Missing external daemon Socket responder');
+    let replyPublished = false;
+    // The external daemon publishes its reply through Home's Socket/HTTP
+    // boundary; Sync, projection and rendered message state stay real.
+    sessionRpcWithServerScope.mockImplementation(async request => {
+      const result = await respond(request);
+      if (!replyPublished && request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+        const done = ExecutionRunTurnStreamReadResponseSchema.parse(result).events.find(event => event.t === 'done');
+        if (done?.t === 'done') {
+          replyPublished = true;
+          await publishLocalVoiceAssistantMessage({ sessionId: request.sessionId, id: 'native-voice-answer', text: done.assistantText });
+        }
+      }
+      return result;
+    });
+    const lifecycle = createVoiceSessionLifecycleController();
+    setVoiceSessionLifecycleController(lifecycle);
+    acknowledgeVoiceSessionRuntimeReady(true);
+    const unsubscribe = lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
+    lifecycle.setConfiguredProviderId('local_conversation');
+    const target = { serverId: localVoiceHomeId, sessionId: 's1' };
+    try {
+      expect(await executeVoiceConversationAction('ui.voice_global.start', {
+        target: { kind: 'session', sessionAddress: target }, expectedAttempt: null,
+      }, { navigate() {} })).toMatchObject({ status: 'completed' });
+      expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
+      emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'Read the project instructions.', confidence: 0.9 }] });
+      expect(await executeVoiceConversationAction('ui.voice_global.turn_control', {
+        expectedAttempt: getVoiceSessionPresentedAttemptId(), control: 'commit_input',
+      }, { navigate() {} })).toMatchObject({ status: 'completed' });
+      expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Daemon reply']);
+      expect(localVoiceAgentRpc.readRetainedRun()).toMatchObject({ status: 'running', intent: 'voice_agent' });
+      const binding = voiceSessionBindingStore.getState().list().find(item => item.controlSessionId === VOICE_AGENT_GLOBAL_SESSION_ID);
+      if (!binding) throw new Error('Start did not publish the conversation binding');
+      const messages = readStoredSessionMessages(storage.getState(), binding.conversationSessionId);
+      expect(messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'user-text', text: 'Read the project instructions.' }),
+        expect.objectContaining({ kind: 'agent-text', text: 'Daemon reply' }),
+      ]));
+      expect(await executeVoiceConversationAction('ui.voice_global.end', {
+        expectedAttempt: getVoiceSessionPresentedAttemptId(),
+      }, { navigate() {} })).toMatchObject({ status: 'completed' });
+      expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
+      expect(lifecycle.getSnapshot().errorMessage).toBeUndefined();
+      expect(voiceAgentSessions.isActive(VOICE_AGENT_GLOBAL_SESSION_ID)).toBe(false);
+      expect(localVoiceAgentRpc.readRetainedRun()).toBeNull();
+      const dictation = voiceCaptureAdmissionController.acquire('dictation');
+      expect(dictation.status).toBe('acquired');
+      if (dictation.status === 'acquired') dictation.lease.release();
+    } finally {
+      await lifecycle.dispose();
+      unsubscribe();
+    }
+  });
 
   it('refuses a second public commit while Thinking and Cancel reply keeps the conversation connected', async () => {
     const storage = await getStorage();
