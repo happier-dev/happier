@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { ActionExecuteFailureSchema, ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, ActionOperationAcceptedResultSchema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveEffectiveMachineRoleInTx, resolveCurrentMachineRecipientAccountIdsInTx, resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { auth } from '@/app/auth/auth';
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
@@ -38,7 +38,7 @@ import { readManagedWakeSessionsInTx, readPendingManagedWakeTargetsInTx, readPen
 type FiniteWakePreparation = Readonly<{ kind: 'not-needed' | 'ready'; isCurrent(): Promise<boolean> }>
     | Readonly<{ kind: 'unavailable'; reason?: Extract<ReturnType<typeof resolveManagedWakeAvailabilityV1>, { kind: 'unavailable' }>['reason'];
         /** The installed controller's own refusal code, so the Action result names why it could not wake. */
-        controllerErrorCode?: string }>
+        controllerErrorCode?: string; failureCause?: ActionFailureCauseV1 }>
     | Readonly<{ kind: 'submitted-unknown' }>;
 
 /** One original finite root may disclose custody only to its current installed controller. */
@@ -176,7 +176,8 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
         if (!result.ok) return { kind: unknown ? 'submitted-unknown' : 'unavailable' };
         const failure = ActionExecuteFailureSchema.safeParse(result.result);
         if (failure.success) return ['outcome_uncertain', 'native_intent_unconfirmed'].includes(failure.data.errorCode)
-            ? { kind: 'submitted-unknown' } : { kind: 'unavailable', controllerErrorCode: failure.data.errorCode };
+            ? { kind: 'submitted-unknown' } : { kind: 'unavailable', controllerErrorCode: failure.data.errorCode,
+                ...(failure.data.failureCause ? { failureCause: failure.data.failureCause } : {}) };
         const output = result.result && typeof result.result === 'object' && 'ok' in result.result && result.result.ok === true
             && 'result' in result.result ? ManagedIntentResultSchema.safeParse(result.result.result) : null;
         if (!output?.success || output.data.kind !== 'accepted' || output.data.managedId !== wakeTarget.managedId) return { kind: 'submitted-unknown' };

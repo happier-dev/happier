@@ -1248,6 +1248,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         guestStartup: { transport: provisioner.bootstrapTransport,
                             channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
                         waitForObservation: createManagedNativeObservationWait(options.signal),
+                        onReportFailure: () => { logger.warn('[managed] Could not report the native resize result'); },
                         report: async body => {
                             const { report, output } = await hydrator.prepareResizeReport(body, options.signal);
                             await client.post('/v1/machines/managed/controller/report-resize', report, ManagedControllerMachineOutputV1Schema, null);

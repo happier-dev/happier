@@ -883,7 +883,13 @@ it('settles Stop through the original Action receipt when the controller next ob
         expect(stillRunning()).toMatchObject({ state: 'running' });
         state = 'running';
         await refreshControllerObservation();
-        expect(stillRunning()).toMatchObject({ state: 'failed', error: { errorCode: 'native_intent_unconfirmed' } });
+        expect(stillRunning()).toMatchObject({
+            state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' },
+        });
+        expect(stopRequests).toBe(3);
+        state = 'archived';
+        await refreshControllerObservation();
+        expect(stillRunning()).toMatchObject({ state: 'succeeded' });
         expect(stopRequests).toBe(3);
 
         state = 'running';

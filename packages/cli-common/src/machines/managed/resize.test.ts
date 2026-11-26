@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { executeManagedMachineResize } from './resize.js';
+import { executeManagedMachineResize, settleManagedMachineResize } from './resize.js';
+import { ManagedMachineControllerError } from './controllerErrors.js';
 import type { ManagedNativeInvocation } from './reconcile.js';
 
 const machine = ManagedMachineFullV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
@@ -44,6 +45,33 @@ describe('admitted managed resize', () => {
             { role: 'power', body: { resource: { id: 'native' }, intent: 'start' } },
         ]);
     });
+    it('reports the unconfirmed restart and surfaces the original typed guest failure', async () => {
+        const failureCause = { phase: 'machines.managed.power.set', errorClass: 'ManagedMachineControllerError',
+            errorCode: 'native_boot_unconfirmed', httpStatus: null, nativeErrorCode: 'guest_start_refused' } as const;
+        const failure = new ManagedMachineControllerError('native_boot_unconfirmed', undefined, undefined, failureCause);
+        const reports: unknown[] = [];
+        let power = 'running';
+        await expect(settleManagedMachineResize({
+            machine: { ...machine, enrolledMachineId: 'guest' }, requestId: 'resize',
+            size: { cpuCores: 4 }, provisioner: restartingProvisioner,
+            guestStartup: { transport: { kind: 'native', exec: 'exec', putFile: 'put-file' }, channel: 'dev' },
+            invoke: async (role, body): ReturnType<ManagedNativeInvocation> => {
+                if (role === 'inspect') return { observedAt: 1, availability: 'present', power };
+                if (role === 'resize') return { kind: 'confirmed' };
+                if (role === 'power') { power = (body as { intent: string }).intent === 'stop' ? 'stopped' : 'running'; return { kind: 'confirmed' }; }
+                if (role === 'bootstrap') throw failure;
+                throw new Error(role);
+            },
+            report: async body => {
+                reports.push(body);
+                return { result: body.result, observation: body.observation };
+            },
+        })).rejects.toBe(failure);
+        expect(reports).toEqual([{ homeId: machine.homeId, managedId: machine.id, requestId: 'resize',
+            result: { kind: 'unknown', code: 'native_boot_unconfirmed' },
+            observation: { observedAt: 1, availability: 'present', power: 'running' } }]);
+    });
+
     it('does not claim success from a native acknowledgement without observed size', async () => {
         const value = await executeManagedMachineResize({ machine, size: { cpuCores: 4 }, provisioner,
             invoke: async (role): ReturnType<ManagedNativeInvocation> => role === 'inspect' ? { observedAt: 1, availability: 'present', power: 'running', size: { cpuCores: 2 } } : { kind: 'confirmed' } });

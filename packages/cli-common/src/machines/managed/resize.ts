@@ -8,6 +8,7 @@ import { executeManagedMachinePowerIntent } from './power.js';
 
 type ResizeOutput = ReturnType<typeof ManagedResizeOutputV1Schema.parse>;
 type NativeResizeOutput = Exclude<ResizeOutput, { presetContent: unknown }>;
+type NativeResizeExecution = NativeResizeOutput & Pick<Awaited<ReturnType<typeof executeManagedMachinePowerIntent>>, 'guestStartupError'>;
 
 /** Finite admitted resize: the approved size is immutable and native observation settles it. */
 export async function executeManagedMachineResize(input: Readonly<{
@@ -15,7 +16,7 @@ export async function executeManagedMachineResize(input: Readonly<{
     io?: ManagedNativeInvocationIO;
     guestStartup?: Parameters<typeof executeManagedMachinePowerIntent>[0]['guestStartup'];
     waitForObservation?(): Promise<unknown>;
-}>): Promise<NativeResizeOutput> {
+}>): Promise<NativeResizeExecution> {
     const { machine, invoke, io } = input;
     if (!input.provisioner.actions.resize) {
         const dimension = MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1.find(key => input.size[key] !== undefined)!;
@@ -30,10 +31,12 @@ export async function executeManagedMachineResize(input: Readonly<{
         const effect = await executeManagedMachinePowerIntent({ machine: { ...machine, desired: intent }, invoke, io,
             guestStartup: input.guestStartup, waitForObservation: input.waitForObservation });
         observation = effect.observation;
-        if (effect.guestStartupError) return { kind: 'unknown' as const, code: effect.guestStartupError.code };
-        return effect.result.kind !== 'confirmed' ? effect.result
+        const { guestStartupError } = effect;
+        if (guestStartupError) return { result: { kind: 'unknown' as const, code: guestStartupError.code }, guestStartupError };
+        const result = effect.result.kind !== 'confirmed' ? effect.result
             : effect.observation?.availability !== 'present' || effect.observation.power !== (intent === 'start' ? 'running' : intent === 'stop' ? 'stopped' : 'suspended')
                 ? { kind: 'unknown' as const, code: 'native_intent_unconfirmed' } : effect.result;
+        return { result };
     };
     const before = managedMachineResizeRequiresRestartV1(input.provisioner, input.size) ? await inspect() : undefined;
     if (before && (before.availability !== 'present' || before.storage === 'lost'
@@ -41,7 +44,7 @@ export async function executeManagedMachineResize(input: Readonly<{
         return { result: { kind: 'refused', code: 'provider_unavailable' }, observation: before };
     }
     if (before && before.power !== 'stopped') {
-        const stopped = await power('stop');
+        const { result: stopped } = await power('stop');
         if (stopped.kind !== 'confirmed') return { result: stopped, ...(observation ? { observation } : {}) };
     }
     io?.signal?.throwIfAborted();
@@ -60,12 +63,12 @@ export async function executeManagedMachineResize(input: Readonly<{
     // Restore only a guest this operation stopped; stopped guests stay stopped.
     if (before && (before.power === 'running' || before.power === 'suspended')) {
         try {
-            const started = await power('start');
+            const { result: started, guestStartupError } = await power('start');
             if (result.kind !== 'refused' && result.kind !== 'unsupported' && started.kind !== 'confirmed') {
-                return { result: started, ...(observation ? { observation } : {}) };
+                return { result: started, ...(observation ? { observation } : {}), ...(guestStartupError ? { guestStartupError } : {}) };
             }
             if (started.kind === 'confirmed' && before.power === 'suspended') {
-                const restored = await power('suspend');
+                const { result: restored } = await power('suspend');
                 if (result.kind !== 'refused' && result.kind !== 'unsupported' && restored.kind !== 'confirmed') {
                     return { result: restored, ...(observation ? { observation } : {}) };
                 }
@@ -89,14 +92,16 @@ export async function settleManagedMachineResize(input: Parameters<typeof execut
     onReportFailure?(error: unknown): void;
 }>): Promise<ResizeOutput> {
     const { machine } = input;
-    const outcome = await executeManagedMachineResize(input);
+    const { guestStartupError, ...outcome } = await executeManagedMachineResize(input);
     let reported: ResizeOutput;
     try {
         reported = await input.report({ homeId: machine.homeId, managedId: machine.id, requestId: input.requestId, ...outcome });
     } catch (error) {
-        if (outcome.result.kind !== 'unsupported') throw error;
+        if (!guestStartupError && outcome.result.kind !== 'unsupported') throw error;
         input.onReportFailure?.(error);
+        if (guestStartupError) throw guestStartupError;
         return outcome;
     }
+    if (guestStartupError) throw guestStartupError;
     return ManagedResizeOutputV1Schema.parse(reported);
 }
