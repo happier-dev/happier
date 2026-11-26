@@ -443,6 +443,18 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.then.message', value: 'Retain this reminder' })).not.toBeNull();
     });
 
+    it('hangs as a designed panel that stays inside the window, so its title and Done stay reachable (R13)', async () => {
+        const { Popover } = await import('@/components/ui/popover');
+        const screen = await renderScreen(<TriggerPopover testID="in-window" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule']} sessionId={null} showThen={false}
+            initial={{ when: { kind: 'schedule', expression: '0 9 * * *', timezone: null,
+                schedule: { repeat: 'daily', hour: 9, minute: 0, day: 1 } }, enabled: true,
+                then: { kind: 'runWorkflow', ref: null, inputs: {} } }} workflowOptions={[]} onSubmit={vi.fn<ExistingTriggerSubmit>(async () => {})} />);
+        // The shared `shift` fit keeps a panel hung above its row from starting above the window even while its
+        // size is out of date (Popover.shiftFit.test.tsx); the trigger popover is that kind of panel, wherever it opens.
+        expect(screen.findAllByType(Popover).map(node => node.props.fit)).toEqual(['shift']);
+        await screen.unmount();
+    });
     it('edits an hourly schedule as Every hour at a minute, never as its cron, and writes the minute back', async () => {
         const onSubmit = vi.fn<ExistingTriggerSubmit>(async () => {});
         const screen = await renderScreen(<TriggerPopover testID="hourly" anchorRef={React.createRef()}

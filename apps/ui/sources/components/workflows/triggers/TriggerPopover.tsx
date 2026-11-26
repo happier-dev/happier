@@ -215,6 +215,9 @@ export function TriggerAnchoredPopoverShell(props: TriggerPopoverShellProps): Re
             // page at its own width (hanging from the row's start edge when its end edge leaves no room)
             // rather than being squeezed into the scope's width, which clipped "Runs on" and the Session.
             boundaryRef={null}
+            // A designed panel keeps its size and stays inside the window (the shared `shift` fit): hung
+            // above its row it never starts above the window's top, so its title and Done stay reachable (R13).
+            fit="shift"
         >
             {({ maxHeight, placement, presentation }) => props.children({
                 maxHeight,
