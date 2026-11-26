@@ -1726,7 +1726,8 @@ export class ApiMachineClient {
                 if (!await isCurrent()) return;
                 await runSessionDataKeyPreparationDetached(JSON.stringify([machineRuntimeServerId, accountId, 'machine-data-key-envelopes', machineId]),
                     () => prepareMachineAccessKeyEnvelopes({ credentials: credential, serverId: machineRuntimeServerId,
-                        serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(), machineId, signal, isCredentialCurrent: isCurrent }));
+                        serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(), machineId, signal,
+                        isCredentialCurrent: isCurrent, settleOnEmptyFirstPage: true }));
             }
         };
         this.prepareSessionRecipientEnvelopes = async (sessionIds, signal) => {

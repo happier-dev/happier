@@ -39,6 +39,8 @@ export async function prepareMachineDataKeyEnvelopesV1(params: Readonly<{
   machineId: string;
   transport: MachineDataKeyEnvelopeTransportV1;
   ownerPreparation?: MachineDataKeyOwnerPreparationV1;
+  /** Automatic delivery receives another Account wake when an empty worklist gains recipients. */
+  settleOnEmptyFirstPage?: true;
   resolveTransferableDataKey: (page: MachineAccessRecipientCensusResponseV1) => Promise<Uint8Array | null>;
   decodeStoredContent: (key: Uint8Array, content: string) => Promise<unknown>;
   isScopeCurrent: () => boolean;
@@ -87,6 +89,7 @@ export async function prepareMachineDataKeyEnvelopesV1(params: Readonly<{
     let incompatible = false;
     let invalidBinding = false;
     const result = await runSessionDataKeyPreparationPass<Recipient, MachineRecipientKeyEnvelopeInputV1>({
+      settleOnEmptyFirstPage: params.settleOnEmptyFirstPage,
       fetchPage: async cursor => {
         const page = initial ? basis : await params.transport.fetchPage(cursor);
         initial = false;

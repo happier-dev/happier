@@ -203,7 +203,7 @@ describe('ApiMachineClient updates', () => {
     } finally { await client.shutdown(); }
   });
 
-  it.each(['machine', 'machineRecipientAccess'] as const)('repairs a later Team member from the actual %s change page using another online Manage holder', async (changeKind) => {
+  it.each(['machine', 'machineRecipientAccess'] as const)('reads empty recipient work once and repairs the later %s change through the Manage holder', async (changeKind) => {
     // afterEach resets the module graph; bind the filesystem boundary used by
     // this case's actual ApiMachine, not a retired top-level module instance.
     const persistence = await import('@/persistence');
@@ -230,11 +230,17 @@ describe('ApiMachineClient updates', () => {
       features: {}, capabilities: { serverIdentity: { serverIdentityId: 'fixture-home' } },
     })));
     vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue(credential);
-    vi.spyOn(persistence, 'readAccountChangesCursor').mockResolvedValue(0);
-    let acknowledgeFeed!: () => void;
-    const feedCommitted = new Promise<void>(resolve => { acknowledgeFeed = resolve; });
+    let savedCursor = 0;
+    vi.spyOn(persistence, 'readAccountChangesCursor').mockImplementation(async () => savedCursor);
+    let acknowledgeInitial!: () => void;
+    let acknowledgeJoin!: () => void;
+    const initialCommitted = new Promise<void>(resolve => { acknowledgeInitial = resolve; });
+    const joinCommitted = new Promise<void>(resolve => { acknowledgeJoin = resolve; });
     vi.spyOn(persistence, 'writeAccountChangesCursor').mockImplementation(async (accountId, cursor) => {
-      if (accountId === 'bob' && cursor === 1) acknowledgeFeed();
+      if (accountId !== 'bob') return;
+      savedCursor = cursor;
+      if (cursor === 1) acknowledgeInitial();
+      if (cursor === 2) acknowledgeJoin();
     });
     const publishedContent = {
       metadata: encodeBase64(encrypt(key, 'dataKey', { host: 'alice', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier' })),
@@ -246,9 +252,11 @@ describe('ApiMachineClient updates', () => {
         mode: 'e2ee', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       if (url.includes('/v2/changes?')) {
         // The Home selects by exact kind, so an unsubscribed producer never reaches this page.
-        const subscribed = new URL(url).searchParams.get('kinds')?.split(',').includes(changeKind);
-        return { status: 200, data: { changes: teamJoined && subscribed
-          ? [{ cursor: 1, kind: changeKind, entityId: 'alice-machine', changedAt: 1 }] : [], nextCursor: teamJoined ? 1 : 0 } };
+        const query = new URL(url).searchParams;
+        const subscribed = query.get('kinds')?.split(',').includes(changeKind);
+        const cursor = teamJoined ? 2 : 1;
+        return { status: 200, data: { changes: subscribed && Number(query.get('after')) < cursor
+          ? [{ cursor, kind: changeKind, entityId: 'alice-machine', changedAt: cursor }] : [], nextCursor: cursor } };
       }
       if (url.endsWith('/v1/machines/alice-machine')) return { status: 200, data: { machine: {
         id: 'alice-machine', ...publishedContent, dataEncryptionKey: caller,
@@ -258,7 +266,7 @@ describe('ApiMachineClient updates', () => {
         machineId: 'alice-machine', custodianAccountId: 'offline-alice', encryptionMode: 'e2ee',
         machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(decodeBase64(caller)), callerDataEncryptionKey: caller, nextCursor: null,
         content: publishedContent,
-        recipients: delivered ? [] : [{ recipientAccountId: 'later-team-member', contentKey: { status: 'available',
+        recipients: !teamJoined || delivered ? [] : [{ recipientAccountId: 'later-team-member', contentKey: { status: 'available',
           accountSigningPublicKey: Buffer.from(signing.publicKey).toString('hex'), contentPublicKey: encodeBase64(recipient.publicKey),
           contentPublicKeySignature: encodeBase64(signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey, contentPublicKey: recipient.publicKey })) },
           contentPublicKeyFingerprint: fingerprint, encryptedDataKey: null, recipientContentPublicKeyFingerprint: null }],
@@ -280,25 +288,42 @@ describe('ApiMachineClient updates', () => {
     }));
     client.onConnectedServicesProjection(async () => {});
     await seedActiveAccountSnapshot(token);
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
-      // This fixture owns the live socket/feed boundary, not daemon startup's connected-service
-      // reconciler. Deliver the Home wake from the public connected callback; the incumbent
-      // scheduler coalesces it into live catch-up without a fake startup-domain consumer.
-      runWithServerHttpBaseUrl('https://holder-home.test', () => client.connect({ onConnect: () => {
-        expect(delivered).toBeNull();
-        teamJoined = true;
-        socket.trigger('update', { id: 'team-member-joined', seq: 1, createdAt: 1, body: { t: 'account-change' } });
-      } }));
-      // Observe the owning feed commit after preparation, rather than imposing
-      // vi.waitFor's unrelated one-second polling budget on cold crypto work.
-      await feedCommitted;
-      expect(axios.get).toHaveBeenCalledWith(
-        'https://holder-home.test/v1/machines/alice-machine/data-key-envelopes?state=action_required',
-        expect.anything(),
-      );
+      const worklistReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) =>
+        url === 'https://holder-home.test/v1/machines/alice-machine/data-key-envelopes?state=action_required',
+      ).length;
+      const home = 'https://holder-home.test';
+      runWithServerHttpBaseUrl(home, () => client.connect());
+      await initialCommitted;
+      expect(worklistReads()).toBe(1);
+      expect(delivered).toBeNull();
+      expect(axios.patch).not.toHaveBeenCalled();
+
+      const snapshotReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) =>
+        /^\/v1\/machines\/[^/]+$/.test(new URL(url).pathname),
+      ).length;
+      const snapshots = snapshotReads();
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(worklistReads()).toBe(1);
+      expect(snapshotReads()).toBe(snapshots);
+      expect(socket.emit.mock.calls.filter(([event]) => event === 'machine-alive')).toHaveLength(10);
+
+      teamJoined = true;
+      runWithServerHttpBaseUrl(home, () => socket.trigger('update', {
+        id: 'team-member-joined', seq: 2, createdAt: 2, body: { t: 'account-change',
+          rows: { v: 1, after: 1, page: {
+            changes: [{ cursor: 2, kind: changeKind, entityId: 'alice-machine', changedAt: 2 }], nextCursor: 2,
+          } } },
+      }));
+      await joinCommitted;
+      expect(worklistReads()).toBe(3); // The new grant uses one page and one confirmation after its write.
+      expect(axios.patch).toHaveBeenCalledTimes(1);
       expect(delivered).toEqual(key);
-      expect(persistence.writeAccountChangesCursor).toHaveBeenCalledWith('bob', 1);
-    } finally { await client.shutdown(); }
+    } finally {
+      await client.shutdown();
+      vi.useRealTimers();
+    }
   });
 
   it('retries a failed Account feed for 600 seconds without rereading the Machine until a change arrives', async () => {

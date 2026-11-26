@@ -20,6 +20,7 @@ export type PrepareMachineAccessKeyEnvelopesParams = Readonly<{
   serverIdentityId?: string;
   signal?: AbortSignal;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
+  settleOnEmptyFirstPage?: true;
   requestHeaders?: (request: Readonly<{ method: 'GET' | 'POST' | 'PATCH'; path: string; body?: unknown }>) => Readonly<Record<string, string>> | Promise<Readonly<Record<string, string>>>;
   /** The canonical Machine lifecycle supplies proven transferable material; never an Action input. */
   resolveTransferableMachineDataKey?: (page: MachineAccessRecipientCensusResponseV1) => Promise<Uint8Array | null>;
@@ -57,6 +58,7 @@ export async function prepareMachineAccessKeyEnvelopes(
   };
   return prepareMachineDataKeyEnvelopesV1({
     machineId: params.machineId,
+    settleOnEmptyFirstPage: params.settleOnEmptyFirstPage,
     ...(!params.resolveTransferableMachineDataKey && credentials?.encryption && accountId ? {
       ownerPreparation: {
         accountId,
