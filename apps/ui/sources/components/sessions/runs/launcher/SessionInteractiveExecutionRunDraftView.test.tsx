@@ -1204,7 +1204,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         });
     });
 
-    it.each([false, true])('A2: shares restricted Who and fixed Machine Where, retaining the rich question (detached=%s)', async detached => {
+    it.each([false, true])('A2: shares intent-appropriate Who and retains the rich question (detached=%s)', async detached => {
         const otherMachine = createMachineFixture({ id: 'other_machine', activeAt: Date.now(), storageMode: 'plain' });
         getStorage().setState(state => ({ machineListByServerId: { ...state.machineListByServerId,
             [serverId]: [...(state.machineListByServerId[serverId] ?? []), otherMachine] },
@@ -1218,13 +1218,18 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             && node.props.testID.startsWith('contextual-start-agent:')).map(node => node.props.testID))];
         expect(agentRows.some(id => id.includes('claude'))).toBe(true);
         expect(agentRows.some(id => id.includes('codex'))).toBe(true);
-        expect(screen.root.findAll(node => typeof node.props.testID === 'string'
-            && /discussion-invite-(session|model)|share-principal/.test(node.props.testID))).toEqual([]);
-        // A detached start chooses its folder on New Session's folder chip; its Machine is fixed (owner 2026-11-12).
-        expect(screen.findByTestId(detached ? 'agent-input-machine-chip' : 'run-start-machine')).not.toBeNull();
+        const participantRows = screen.root.findAll(node => typeof node.props.testID === 'string'
+            && /discussion-invite-(session|model)|share-principal/.test(node.props.testID));
+        // Reviews use the mixed roster (approved Reviews plan 04, Start anatomy); generic Runs choose a new Agent.
+        if (detached) expect(participantRows).toEqual([]);
+        else expect(participantRows.length).toBeGreaterThan(0);
         expect(screen.findByTestId('run-start-machine-selector')).toBeNull();
         expect(screen.findAllByType(MachineSelector)).toHaveLength(0);
-        expect(screen.findByTestId(detached ? 'agent-input-path-chip' : 'run-start-project-directory-readonly')).not.toBeNull();
+        if (detached) {
+            // A detached Run chooses its folder on New Session's chip; its Machine stays fixed (owner 2026-11-12).
+            expect(screen.findByTestId('agent-input-machine-chip')).not.toBeNull();
+            expect(screen.findByTestId('agent-input-path-chip')).not.toBeNull();
+        } else expect(composer().sessionId).toBe('session_1');
         expect(screen.findByTestId('second-opinion.question')).toBeNull();
         expect(composer().engine).toBeUndefined();
         expect(composer().extraActionChips?.some(chip => chip.key.startsWith('execution-run-start-reviewer'))).toBe(false);
@@ -1269,15 +1274,23 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     });
 
     it('A2: retains comparison-bound placement on a detached Start', async () => {
+        let footer: React.ReactNode = null;
         await mount({ sessionId: null, workspace: { machineId: 'machine_1', cwd: '/captured-folder' }, intent: 'review',
+            sheet: { onFooterChange: next => { footer = next; }, onCancel: vi.fn() },
             comparisonReview: { cwd: '/captured-folder', comparison: { kind: 'workingTree' }, comparisonId: 'captured-a2',
                 scopeLabel: 'Pending changes', defaultWalkthrough: false, preselectedEngineIds: ['claude'] } });
         await waitFor(() => expect(screen.findByTestId('contextual-start-who')).not.toBeNull());
+        const footerScreen = await renderScreen(<>{footer}</>);
         expect(screen.findByTestId('agent-input-path-chip')).toBeNull();
-        expect(screen.findByTestId('run-start-project-directory-readonly')).not.toBeNull();
+        // Fixed placement is the sheet footer's one chip (fa432215cd4, refined by 452765270c8).
+        const placement = footerScreen.findByTestId('run-start-where-chip');
+        expect(placement).not.toBeNull();
+        expect(placement?.props.accessibilityState.disabled).toBe(true);
+        expect(footerScreen.getTextContent()).toContain('/captured-folder');
         expect(composer().workspace).toEqual({ machineId: 'machine_1', cwd: '/captured-folder' });
         expect(screen.findAllByType(MachineSelector)).toHaveLength(0);
         expect(emittedStarts).toEqual([]);
+        await footerScreen.unmount();
     });
 
     it('A2: shared Who consumes existing Run choices without a second inventory or admission', async () => {
