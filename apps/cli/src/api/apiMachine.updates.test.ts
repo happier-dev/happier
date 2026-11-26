@@ -26,7 +26,7 @@ vi.mock('socket.io-client', () => ({
 }));
 
 // Cold source transformation belongs to collection, not a held-operation deadline.
-await import('./api');
+await Promise.all([import('./api'), import('./apiMachine')]);
 
 /** The Account feed consumes the active settings snapshot; this suite resets modules per case. */
 async function seedActiveAccountSnapshot(token: string): Promise<void> {
@@ -289,6 +289,36 @@ describe('ApiMachineClient updates', () => {
       expect(delivered).toEqual(key);
       expect(persistence.writeAccountChangesCursor).toHaveBeenCalledWith('bob', 1);
     } finally { await client.shutdown(); }
+  });
+
+  it('skips the recipient worklist when the daemon holds no encryption material', async () => {
+    const persistence = await import('@/persistence');
+    const { runWithServerHttpBaseUrl } = await import('./client/serverHttpBaseUrl');
+    const { ApiMachineClient } = await import('./apiMachine');
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'plain-holder' })).toString('base64url')}.signature`;
+    vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue({ token, encryption: null });
+    const keyReads: string[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const { pathname } = new URL(url);
+      if (!pathname.endsWith('/data-key-envelopes')) return { status: 404, data: {} };
+      keyReads.push(pathname);
+      return { status: 200, data: {
+        machineId: pathname.split('/')[3], custodianAccountId: 'plain-holder', encryptionMode: 'plain',
+        machineOwnerEnvelopeFingerprint: null, callerDataEncryptionKey: null, nextCursor: null, recipients: [],
+        content: { metadata: '{}', metadataVersion: 1, daemonState: null, daemonStateVersion: 0 },
+      } };
+    });
+    const client = runWithServerHttpBaseUrl('https://plain-home.test', () => new ApiMachineClient(token, {
+      id: 'plain-executor', encryptionMode: 'plain', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    }));
+    try {
+      await (client as unknown as {
+        prepareMachineRecipientEnvelopes(machineIds: readonly string[], signal: AbortSignal): Promise<void>;
+      }).prepareMachineRecipientEnvelopes(['plain-executor', 'shared-machine'], new AbortController().signal);
+      expect(keyReads).toEqual([]);
+    } finally {
+      await client.shutdown();
+    }
   });
 
   it('prepares no recipient envelopes for its own Machine row when that row is its own held content write', async () => {

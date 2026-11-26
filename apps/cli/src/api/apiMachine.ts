@@ -1715,7 +1715,8 @@ export class ApiMachineClient {
         this.prepareMachineRecipientEnvelopes = async (machineIds, signal) => {
             if (machineIds.length === 0) return;
             const authority = await captureRecipientPreparationAuthority(signal);
-            if (!authority) return;
+            // Without encryption material this daemon cannot deliver a recipient key.
+            if (!authority?.credential.encryption) return;
             const { credential, accountId, isCurrent } = authority;
             const [{ prepareMachineAccessKeyEnvelopes }, { runSessionDataKeyPreparationDetached }] = await Promise.all([
                 import('./machineAccessGrantEnvelopeHost'),
