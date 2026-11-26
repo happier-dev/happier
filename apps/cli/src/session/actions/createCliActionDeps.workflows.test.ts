@@ -1,5 +1,6 @@
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -796,11 +797,23 @@ describe('createCliActionDeps workflow boundary', () => {
     const connectedServices = { v: 2 as const, bindingsByServiceId: {
       'happier.agent.codex/openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'origin-account' },
     } };
+    const approvalHome = Fastify();
+    registerAccountHomeHttp(approvalHome, { accountId: 'account-1', serverId: 'srv_panel_home' });
+    const approvalArtifacts = registerPlainArtifactRoutes(approvalHome, 'account-1');
+    onTestFinished(() => approvalHome.close());
+    const approvalHttp = async (method: 'GET' | 'POST', url: string, payload?: unknown) => {
+      const path = new URL(url);
+      const response = await approvalHome.inject({ method, url: path.pathname + path.search,
+        ...(payload === undefined ? {} : { payload: JSON.stringify(payload), headers: { 'content-type': 'application/json' } }) });
+      return { status: response.statusCode, data: response.json() };
+    };
     const baseGet = http.get.getMockImplementation()!;
     http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption') || new URL(url).pathname.startsWith('/v1/artifacts')) {
+        return approvalHttp('GET', url);
+      }
       if (url.endsWith('/v2/account/settings')) return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
       if (url.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
-      if (url.includes('/v1/artifacts?')) return readEmptyPlainArtifactListFixture(url, 'account-1');
       if (url.endsWith(PROMPT_LIBRARY_ROWS_ROUTE_V1)) return { status: 200, data: PromptLibraryRowsListResponseV1Schema.parse({
         status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
           content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })),
@@ -811,6 +824,9 @@ describe('createCliActionDeps workflow boundary', () => {
       }) } };
       return baseGet(url);
     });
+    const basePost = http.post.getMockImplementation()!;
+    http.post.mockImplementation(async (url: string, body: Readonly<Record<string, unknown>>) =>
+      new URL(url).pathname.startsWith('/v1/artifacts') ? approvalHttp('POST', url, body) : basePost(url, body));
     // Roster discovery uses the direct read; credentialed capability detection
     // crosses authenticated Machine RPC. Both boundaries observe the same Machine.
     const observeMachine = async (method: string) => {
@@ -891,14 +907,15 @@ describe('createCliActionDeps workflow boundary', () => {
     });
     if (!originless) return;
     const pluginWaiver = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.run.start': ['plugin'] } });
-    const pluginActions = (boundSession?: string, actionsSettings = pluginWaiver) => createPluginInvocationActionsService({
+    const pluginActions = (boundSession?: string, actionsSettings = pluginWaiver,
+      signal = new AbortController().signal) => createPluginInvocationActionsService({
       seed: {
         plugin: { id: 'qa.coord-live4-public', version: '0.0.1' },
         contribution: { id: 'invoke', qualifiedId: 'qa.coord-live4-public/invoke' },
         occurrenceId: 'public-driver', sourceCustody: { kind: 'development', registeredRootId: 'public-driver' },
         surface: 'cli', approvalContext: context,
         ...(boundSession ? { session: { id: boundSession } } : {}),
-        signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        signal, isOccurrenceCurrent: () => true,
       },
       actionExecutor: createActionExecutor({ ...deps, readActionsSettings: () => actionsSettings }),
       invokeContributedAction: async () => { throw new Error('unexpected_contributed_action'); },
@@ -924,12 +941,27 @@ describe('createCliActionDeps workflow boundary', () => {
     expect(http.post.mock.calls.some(([, body]) => body.operation === 'admit' && body.runId === boundRunId)).toBe(false);
     // The person's Require for plugin Starts still applies to an originless plugin Start before admission.
     const unwaivedRunId = '77777777-7777-4777-8777-777777777781';
-    // This fixture has no approval origin, so the required Ask settles as a typed refusal instead of running.
-    await expect(pluginActions(undefined, ActionsSettingsV1Schema.parse({ v: 1,
-      actions: { 'workflow.run.start': { approvalRequiredSurfaces: ['plugin'] } } }))
-      .execute('workflow.run.start', { ...input, runId: unwaivedRunId }))
-      .rejects.toMatchObject({ code: 'approval_origin_unavailable' });
-    expect(http.post.mock.calls.some(([, body]) => body.operation === 'admit' && body.runId === unwaivedRunId)).toBe(false);
+    // A Session-less plugin still has its Home route and Machine origin for the person's required Ask.
+    const requiredSignal = new AbortController();
+    const unwaived = pluginActions(undefined, ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { 'workflow.run.start': { approvalRequiredSurfaces: ['plugin'] } } }), requiredSignal.signal)
+      .execute('workflow.run.start', { ...input, runId: unwaivedRunId }).then(result => result, error => error);
+    try {
+      await vi.waitFor(() => expect(http.post.mock.calls.some(([url]) => new URL(url).pathname === '/v1/artifacts')).toBe(true));
+      const creation = http.post.mock.calls.find(([url]) => new URL(url).pathname === '/v1/artifacts')![1];
+      if (typeof creation.id !== 'string') throw new Error('approval_artifact_id_required');
+      const request = ApprovalRequestV2Schema.parse(await deps.approvalsGet!({ artifactId: creation.id }));
+      expect(approvalArtifacts.read(creation.id)).toMatchObject({ ownerAccountId: 'account-1', encryptionMode: 'plain', access: 'owner' });
+      expect(request).toMatchObject({ status: 'open', actionId: 'workflow.run.start', requestedSurface: 'plugin',
+        actionArgs: { runId: unwaivedRunId }, executionOriginV1: {
+          serverId: 'profile', machineId: 'machine-1', surface: 'plugin', authority: 'account_automation',
+          caller: { kind: 'plugin', pluginId: 'qa.coord-live4-public', contributionLocalId: 'invoke' },
+        } });
+      expect(http.post.mock.calls.some(([, body]) => body.operation === 'admit' && body.runId === unwaivedRunId)).toBe(false);
+    } finally {
+      requiredSignal.abort();
+      await unwaived;
+    }
     expect(accepted.content.origin).toEqual({ kind: 'direct', actionPolicy: { surface, authority } });
     expect(synthesis.selection).toMatchObject({
       agentTarget: plannerTargets[1],
