@@ -10,7 +10,8 @@ import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScop
 import { parseToken } from '@/utils/auth/parseToken';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { trackLogout } from '@/track';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerHomeCarrier, getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
+import { exchangeLegacyHomeCredentialOnce } from '@/auth/flows/legacyHomeCredentialExchange';
 import {
     areServerProfileIdentifiersEquivalent,
     listServerProfiles,
@@ -185,6 +186,16 @@ export function AuthProvider({ children, initialCredentials }: { children: React
 
     const refreshFromActiveServer = React.useCallback(async () => {
         const nextCredentials = await switchConnectionToActiveServer();
+        if (nextCredentials) {
+            // A released 0.2 bearer is upgraded once; its stored write re-enters this refresh.
+            const active = getActiveServerSnapshot();
+            const homeCarrier = getActiveServerHomeCarrier();
+            fireAndForget(exchangeLegacyHomeCredentialOnce({
+                serverUrl: active.serverUrl, serverId: active.serverId,
+                ...(active.runtimeOrigin ? { runtimeOrigin: active.runtimeOrigin } : {}),
+                ...(homeCarrier ? { homeCarrier } : {}),
+            }, nextCredentials), { tag: 'AuthContext.refreshFromActiveServer.legacyCredentialExchange' });
+        }
         if (!nextCredentials) {
             const activeServerKey = resolveActiveServerKey(getActiveServerSnapshot());
             if (isLoginSyncInFlightRef.current && activeServerKey === loginSyncServerKeyRef.current) return;

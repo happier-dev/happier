@@ -616,6 +616,15 @@ still valid at the Home they answer `403` with the family's denial error
 credential only on `401`, so a person upgrading from 0.2 stays signed in.
 The Team refusal carries `details: { reason: "legacy_home_credential" }`, so a
 client can say that this sign-in, not the person's Team role, is the cause.
+The app replaces such a credential once, quietly, when it stores the Account
+key with it (`{ token, secret }`): after connecting to that Home it signs in
+again through the ordinary key challenge (v2, `requireExistingAccount`, the
+token's Account as `expectedAccountId`) and stores the new token only while the
+Home still holds the credential it started from
+(`apps/ui/sources/auth/flows/legacyHomeCredentialExchange.ts`). A Home without
+key-challenge v2, a refusal, or an unreachable Home leaves the 0.2 credential
+in place; the app tries again on its next launch. Credentials without the
+Account key, terminal credentials and API Tokens are never exchanged.
 String-valued `provenance` emitted as opaque library metadata by released
 `privacy-kit@0.0.25` tokens remains part of that pre-marker shape; only the
 strict structured V1/V2 union carries current provenance or authentication

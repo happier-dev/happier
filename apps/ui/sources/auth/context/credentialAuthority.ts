@@ -15,3 +15,17 @@ export function readCredentialAuthorityKind(token: string | null | undefined): C
         return 'none';
     }
 }
+
+/**
+ * A released 0.2 pre-marker Account bearer. Homes still admit it on ordinary routes but
+ * refuse it on route families that require signed provenance (Teams).
+ */
+export function isLegacyHomeAccountToken(token: string): boolean {
+    if (parseAccountApiTokenBearerV1(token)) return false;
+    try {
+        const read = readAuthTokenProvenance(parseTokenPayload(token), { allowLegacyHome: true });
+        return read?.legacy === true && read.provenance.kind === 'account';
+    } catch {
+        return false;
+    }
+}
