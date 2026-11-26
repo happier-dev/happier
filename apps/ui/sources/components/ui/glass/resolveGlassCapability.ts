@@ -4,7 +4,7 @@
  * `liquidGlass` → real iOS 26 Liquid Glass (`expo-glass-effect`).
  * `blur`        → translucent native fallback (`expo-blur`) for platforms/builds without Liquid Glass.
  * `webBlur`     → web CSS `backdrop-filter` blur over a translucent tint.
- * `tint`        → native translucent coat without blur (in-flow Elements, or Blur Off on a translucent material).
+ * `tint`        → coat without blur: in-flow Elements on every platform (opaque on web), or native Blur Off on a translucent material.
  * `solid`       → opaque surface; also the accessibility-safe fallback.
  *
  * Reduce Transparency disables every translucency effect, so it forces `solid`
@@ -21,6 +21,8 @@ export type ResolveGlassCapabilityInput = GlassMaterialEnvironment & Readonly<{
     reduceTransparency: boolean;
     settings?: GlassMaterialSettings;
     surfaceGroup?: GlassSurfaceGroup;
+    /** An Element that floats over content changing beneath it (the composer over its transcript). */
+    floatsOverContent?: boolean;
 }>;
 
 export function resolveGlassCapability(input: ResolveGlassCapabilityInput): GlassCapability {
@@ -28,9 +30,12 @@ export function resolveGlassCapability(input: ResolveGlassCapabilityInput): Glas
     if (input.reduceTransparency || material?.opacity === 1) {
         return 'solid';
     }
-    // In-flow Elements may be numerous. Native uses their coat without mounting an SDK view per card.
+    // In-flow Elements (cards, tiles, in-page controls) are the content layer: no platform blurs them per element,
+    // they paint their coat (owner 2026-11-26: a control's frost took the colour of the dark button beside it; glass
+    // belongs to the floating layer). Only an Element floating over changing content, the composer, frosts on web.
     if (input.surfaceGroup === 'card') {
-        return input.webBlurAvailable === true ? material?.blur === 'off' ? 'solid' : 'webBlur' : 'tint';
+        if (input.webBlurAvailable !== true) return 'tint';
+        return material?.blur === 'off' ? 'solid' : input.floatsOverContent === true ? 'webBlur' : 'tint';
     }
     // Blur Off keeps an authored translucent coat: native draws it as a tint, web paints it unblurred.
     if (material?.blur === 'off') return input.webBlurAvailable === true ? 'solid' : 'tint';

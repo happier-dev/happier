@@ -4,12 +4,15 @@ import { resolveGlassCapability } from './resolveGlassCapability';
 import { glassPresetMaterials } from './glassMaterial';
 
 describe('resolveGlassCapability', () => {
-    it('uses tint for native Elements even with both SDK materials available, while web Elements can blur', () => {
+    it('paints in-flow Elements as an unblurred tint on every platform, and frosts only an Element floating over content', () => {
         const input = { liquidGlassAvailable: true, blurAvailable: true, reduceTransparency: false,
             atmosphereBehind: 'wallpaper' as const, surfaceGroup: 'card' as const,
             settings: { glassSurfaceMaterials: glassPresetMaterials('auto') } };
         expect(resolveGlassCapability(input)).toBe('tint');
-        expect(resolveGlassCapability({ ...input, webBlurAvailable: true })).toBe('webBlur');
+        expect(resolveGlassCapability({ ...input, webBlurAvailable: true })).toBe('tint');
+        // The composer floats over a transcript that scrolls beneath it: web frosts it; native keeps its coat.
+        expect(resolveGlassCapability({ ...input, webBlurAvailable: true, floatsOverContent: true })).toBe('webBlur');
+        expect(resolveGlassCapability({ ...input, floatsOverContent: true })).toBe('tint');
         expect(resolveGlassCapability({ ...input, reduceTransparency: true })).toBe('solid');
         expect(resolveGlassCapability({ ...input, atmosphereBehind: 'none' })).toBe('solid');
     });

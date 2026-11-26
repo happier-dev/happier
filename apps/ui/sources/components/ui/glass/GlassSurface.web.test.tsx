@@ -276,7 +276,7 @@ describe('web glass material', () => {
         expect(coats).toHaveLength(1);
         expect(screen.findAll(node => typeof node.type === 'string' && typeof flattenTestStyle(node.props.style)?.backgroundImage === 'string')).toHaveLength(1);
     });
-    it('gives Elements their own backing-dependent coat and no second blur or finish inside another card', async () => {
+    it('gives Elements their own opaque coat over a picture, with no blur and no second coat or finish inside another card', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
         const { glassPresetMaterials } = await import('./glassMaterial');
@@ -291,9 +291,9 @@ describe('web glass material', () => {
             </GlassRuntimeEnvironmentProvider>
         </GlassMaterialSettingsProvider>;
         const screen = await renderScreen(scene('wallpaper'));
-        expect(screen.findAll(hasBackdrop)).toHaveLength(1);
-        const cardPaint = screen.findAll(hasBackdrop)[0]!;
-        expect(flattenTestStyle(cardPaint.props.style).backgroundColor).toContain('color-mix(in srgb,');
+        // In-flow Elements are the content layer: their coat, never a per-element blur (owner 2026-11-26).
+        expect(screen.findAll(hasBackdrop)).toHaveLength(0);
+        expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === '#221c1c')).toHaveLength(1);
         expect(screen.findAll(node => typeof node.type === 'string' && typeof flattenTestStyle(node.props.style)?.backgroundImage === 'string')).toHaveLength(1);
         await act(async () => { screen.changeTextByTestId('draft', 'keep the web card draft'); });
         await screen.update(scene('none'));
@@ -302,8 +302,9 @@ describe('web glass material', () => {
         expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === '#221c1c')).toHaveLength(1);
     });
     // Owner 2026-11-20: the signed-out column's Elements stand on the welcome planet drawn inside the shell, not behind
-    // the window. They are glass there, with their own blur and coat, while the window's material stays as it was.
-    it('frosts Elements over an atmosphere scoped to a subtree, with their own group values, and keeps them solid under Reduce Transparency', async () => {
+    // the window; they take their own group values there. Owner 2026-11-26: as the content layer they paint their coat
+    // without a blur, so the planet's dots and a dark button beside them never bleed into their edges.
+    it('coats Elements over an atmosphere scoped to a subtree with their own group values, unblurred, and keeps them solid under Reduce Transparency', async () => {
         const { GlassRuntimeEnvironmentProvider, GlassAtmosphereScope } = await import('./glassRuntimeEnvironment');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
         const { glassPresetMaterials } = await import('./glassMaterial');
@@ -314,77 +315,85 @@ describe('web glass material', () => {
             </GlassRuntimeEnvironmentProvider>
         </GlassMaterialSettingsProvider>;
         const screen = await renderScreen(scene(true));
-        expect(screen.findAll(hasBackdrop)).toHaveLength(1);
+        expect(screen.findAll(hasBackdrop)).toHaveLength(0);
         const root = flattenTestStyle(screen.findHostByTestId('card')!.props.style) as Record<string, unknown>;
-        expect(root['--happier-glass-card-blur']).toBe('24px');
         expect(Number.parseFloat(String(root['--happier-glass-card-opacity']))).toBeLessThan(100);
+        expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === '#fafafa')).toHaveLength(1);
         await screen.update(scene(false));
         expect(screen.findAll(hasBackdrop)).toHaveLength(0);
         await screen.update(scene(true, true));
         expect(screen.findAll(hasBackdrop)).toHaveLength(0);
         expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === '#fafafa')).toHaveLength(1);
     });
-    // Owner 2026-11-16 (desktop app, light): frosted cards and the composer showed ink ramps along their edges,
-    // while menus, whose frosted layer is shaped by a clip, stayed clean. Every frosted layer takes that clip.
-    it('shapes a frosted Element\'s material by its own rounded clip, as floating glass is shaped', async () => {
-        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
-        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
-        const { glassPresetMaterials } = await import('./glassMaterial');
-        const scene = (atmosphereBehind: 'wallpaper' | 'none') => <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
-            <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind }}>
-                <GlassSurface plane surfaceGroup="content" finishRole={null}>
-                    <GlassSurface testID="card" surfaceGroup="card" nested finishRole="card" style={{ borderRadius: 14, borderWidth: 1 }}>{null}</GlassSurface>
-                </GlassSurface>
-            </GlassRuntimeEnvironmentProvider>
-        </GlassMaterialSettingsProvider>;
-        const screen = await renderScreen(scene('wallpaper'));
-        const frosted = screen.findAll(hasBackdrop);
-        expect(frosted).toHaveLength(1);
-        // The clip follows the padding box's inner radius, cut back from the layer's reach (below).
-        expect(String((flattenTestStyle(frosted[0]!.props.style) as Record<string, unknown>).clipPath)).toMatch(/ round 13px 13px 13px 13px\)$/);
-    });
-    // Owner 2026-11-26 (desktop app, light): the Home-choice cards still showed grey ramps inside their left and right
-    // edges, gone under Solid. WebKit's blur samples past its layer's own box as empty, so a frosted layer reaches one
-    // blur radius past every edge and clips back to the surface; the visible frost then samples only the real backdrop.
-    it('reaches a frosted layer one blur radius past every edge and clips it back to the surface', async () => {
+    // Owner 2026-11-16 (desktop app, light): the frosted composer showed ink ramps along its edges, while menus,
+    // whose frosted layer is shaped by a clip, stayed clean. Every frosted layer takes that clip.
+    it('shapes a frosted composer\'s material by its own rounded clip, as floating glass is shaped', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
         const { glassPresetMaterials } = await import('./glassMaterial');
         const screen = await renderScreen(<GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
             <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'wallpaper' }}>
                 <GlassSurface plane surfaceGroup="content" finishRole={null}>
-                    <GlassSurface testID="card" surfaceGroup="card" nested finishRole="card" style={{ borderRadius: 14, borderWidth: 1 }}>{null}</GlassSurface>
-                    <GlassSurface testID="solid" surfaceGroup="card" nested finishRole="card" noCoat style={{ borderRadius: 14 }}>{null}</GlassSurface>
+                    <GlassSurface testID="composer" surfaceGroup="card" nested finishRole="composer" style={{ borderRadius: 14, borderWidth: 1 }}>{null}</GlassSurface>
                 </GlassSurface>
-                <GlassSurface testID="popover" surfaceGroup="floating" style={{ borderRadius: 12 }}>{null}</GlassSurface>
             </GlassRuntimeEnvironmentProvider>
         </GlassMaterialSettingsProvider>);
-        const layer = (id: string) => (flattenTestStyle(screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!
-            .findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!.props.style) ?? {}) as Record<string, unknown>;
-        // The reach is the radius the layer's own filter blurs by, so it follows the live blur setting.
-        const radiusOf = (style: Record<string, unknown>) => /^blur\((var\([^)]*\))\)/.exec(String(style.backdropFilter))?.[1];
-        const card = layer('card');
-        const cardRadius = radiusOf(card);
-        expect(cardRadius).toMatch(/^var\(--happier-glass-card-blur, \d+px\)$/);
-        for (const side of ['left', 'top', 'right', 'bottom']) expect(card[side]).toBe(`calc(-1 * ${cardRadius})`);
-        expect(card.clipPath).toBe(`inset(${cardRadius} ${cardRadius} ${cardRadius} ${cardRadius} round 13px 13px 13px 13px)`);
-        expect(card.pointerEvents).toBe('none');
-        // The reach is clipped by its own box, so it adds no scrollable overflow; the content beside it is never clipped.
-        const cardRoot = screen.findAll(node => typeof node.type === 'string' && node.props.testID === 'card')[0]!;
-        const cardLayer = cardRoot.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!;
-        const reachClip = cardRoot.findAll(node => typeof node.type === 'string' && node.children.includes(cardLayer))[0]!;
-        expect(flattenTestStyle(reachClip.props.style)?.overflow).toBe('clip');
-        expect(flattenTestStyle(cardRoot.props.style)?.overflow).toBeUndefined();
-        // Floating glass keeps the larger software-compositor reach on its right and bottom.
-        const popover = layer('popover');
-        const floatingRadius = radiusOf(popover);
-        const far = `max(${floatingRadius}, 96px)`;
-        expect([popover.left, popover.top, popover.right, popover.bottom]).toEqual([`calc(-1 * ${floatingRadius})`, `calc(-1 * ${floatingRadius})`, `calc(-1 * ${far})`, `calc(-1 * ${far})`]);
-        expect(popover.clipPath).toBe(`inset(${floatingRadius} ${far} ${far} ${floatingRadius} round 12px 12px 12px 12px)`);
-        // An unfrosted layer is the surface's own rounded box.
-        const solid = layer('solid');
-        expect([solid.left, solid.top, solid.right, solid.bottom, solid.clipPath].filter(value => value !== undefined && value !== 0)).toEqual([]);
-        expect(solid.borderRadius).toBe(14);
+        const frosted = screen.findAll(hasBackdrop);
+        expect(frosted).toHaveLength(1);
+        // The layer fills the padding box, so its clip follows the inner radius; nothing reaches past an in-flow surface.
+        const style = flattenTestStyle(frosted[0]!.props.style) as Record<string, unknown>;
+        expect(String(style.clipPath)).toBe('inset(0px 0px 0px 0px round 13px 13px 13px 13px)');
+        expect([style.left ?? 0, style.top ?? 0, style.right ?? 0, style.bottom ?? 0]).toEqual([0, 0, 0, 0]);
+    });
+    // Owner 2026-11-26 (desktop app): small in-page controls beside a dark button took that button's colour at their
+    // edges, because their frost sampled it. In-flow Elements are the content layer (Apple HIG: glass belongs to the
+    // floating controls layer, never glass on glass): they paint their coat without a backdrop blur, opaque, so over
+    // the plain page they show exactly the paint their frost landed on. Floating glass keeps its blur and only its
+    // software-compositor reach; nothing reaches past every edge.
+    it('paints in-flow Elements without a backdrop blur and keeps floating glass frosted, reaching only its right and bottom', async () => {
+        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const { glassElementsCoatColor } = await import('./glassSurfacePaint');
+        const { lightTheme, darkTheme } = await import('@/theme');
+        for (const dark of [false, true]) for (const atmosphereBehind of ['none', 'wallpaper'] as const) {
+            themeMode.dark = dark;
+            const theme = dark ? darkTheme : lightTheme;
+            const screen = await renderScreen(<GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
+                <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind }}>
+                    <GlassSurface plane surfaceGroup="content" finishRole={null}>
+                        <GlassSurface testID="card" surfaceGroup="card" nested finishRole="card" solidColor={theme.colors.surface.sectionTint} style={{ borderRadius: 14, borderWidth: 1 }}>{null}</GlassSurface>
+                        <GlassSurface testID="control" surfaceGroup="card" controlEdge style={{ borderRadius: 22 }}>{null}</GlassSurface>
+                    </GlassSurface>
+                    <GlassSurface testID="popover" surfaceGroup="floating" style={{ borderRadius: 12 }}>{null}</GlassSurface>
+                </GlassRuntimeEnvironmentProvider>
+            </GlassMaterialSettingsProvider>);
+            try {
+                const root = (id: string) => screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!;
+                const paintOf = (id: string) => root(id).findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!;
+                const layer = (id: string) => (flattenTestStyle(paintOf(id).props.style) ?? {}) as Record<string, unknown>;
+                for (const id of ['card', 'control']) {
+                    expect(hasBackdrop(paintOf(id))).toBe(false);
+                    const style = layer(id);
+                    expect([style.left, style.top, style.right, style.bottom, style.clipPath].filter(value => value !== undefined && value !== 0)).toEqual([]);
+                    expect(style.pointerEvents).toBe('none');
+                }
+                // The card shows the paint its frost landed on over the plain page: its sheet tint over the page. Over the
+                // picture that paint is opaque, so the dots behind it never show through.
+                const card = Color(resolveBrowserMaterialPaint(layer('card').backgroundColor as string, flattenTestStyle(root('card').props.style) as Record<string, string>));
+                if (atmosphereBehind === 'wallpaper') expect(card.alpha()).toBe(1);
+                const seen = Color(theme.colors.surface.base).mix(card.alpha(1), card.alpha()).rgb().array();
+                const ground = Color(glassElementsCoatColor(theme.colors.surface.sectionTint, theme.colors.surface.base)).rgb().array();
+                seen.forEach((value, channel) => expect(Math.abs(value - ground[channel]!)).toBeLessThanOrEqual(1));
+                // Floating glass keeps its frost, reaching past its right and bottom edges only, clipped back to its box.
+                const popover = layer('popover');
+                expect(hasBackdrop(paintOf('popover'))).toBe(true);
+                expect([popover.left ?? 0, popover.top ?? 0]).toEqual([0, 0]);
+                expect(-Number(popover.right)).toBeGreaterThanOrEqual(96);
+                expect(popover.bottom).toBe(popover.right);
+                expect(popover.clipPath).toBe(`inset(0px ${-Number(popover.right)}px ${-Number(popover.bottom)}px 0px round 12px 12px 12px 12px)`);
+            } finally { await screen.unmount(); }
+        }
     });
     it('frosts Auto reading surfaces over a shown background and retains drafts through opaque overrides', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
@@ -430,7 +439,7 @@ describe('web glass material', () => {
         }
     });
 
-    it('backs sidebar Elements with the sidebar plane: solid unless that plane is glass over a wallpaper', async () => {
+    it('never blurs sidebar or page Elements, whatever backs them, and keeps their drafts across backings', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
         const { glassPresetMaterials } = await import('./glassMaterial');
@@ -447,18 +456,16 @@ describe('web glass material', () => {
         const cardBackdrops = (screen: Awaited<ReturnType<typeof renderScreen>>) => ['sidebar-group', 'home-card']
             .flatMap(testID => screen.findHostByTestId(testID)!.findAll(hasBackdrop));
         const screen = await renderScreen(scene('band'));
-        // The Home card has the band behind it; the sidebar group sits on the sidebar plane, which the band never reaches.
-        expect(cardBackdrops(screen)).toHaveLength(1);
+        // The Home card has the band behind it, the sidebar group the sidebar plane: neither blurs (owner 2026-11-26).
+        expect(cardBackdrops(screen)).toHaveLength(0);
         expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === '#ffffff')).toHaveLength(1);
         await act(async () => { screen.changeTextByTestId('draft', 'keep the sidebar draft'); });
         await screen.update(scene('wallpaper'));
-        expect(cardBackdrops(screen)).toHaveLength(2);
+        expect(cardBackdrops(screen)).toHaveLength(0);
         expect(screen.findHostByTestId('draft')?.props.value).toBe('keep the sidebar draft');
-        // Auto: a shown wallpaper is backing for the browser sidebar too (owner ruling 2026-10-23), so it backs both groups.
         await screen.update(scene('wallpaper', 'auto'));
-        expect(cardBackdrops(screen)).toHaveLength(2);
+        expect(cardBackdrops(screen)).toHaveLength(0);
         expect(screen.findHostByTestId('draft')?.props.value).toBe('keep the sidebar draft');
-        // Solid keeps the sidebar and its Elements opaque, so the wallpaper backs nothing in it.
         await screen.update(scene('wallpaper', 'solid'));
         expect(cardBackdrops(screen)).toHaveLength(0);
         expect(screen.findHostByTestId('draft')?.props.value).toBe('keep the sidebar draft');
@@ -482,7 +489,8 @@ describe('web glass material', () => {
         // A card on the page keeps its card fill.
         expect(paints).toContain(darkTheme.colors.edge.cardFill);
     });
-    it('resolves backed Elements and floating glass over the plain page to their solid paint, and compresses a bright picture', async () => {
+    // The composer is the one Element that still frosts (it floats over its transcript): it carries the Elements solve.
+    it('resolves the backed composer and floating glass over the plain page to their solid paint, and compresses a bright picture', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
         const { glassPresetMaterials, resolveGlassSurfaceMaterial } = await import('./glassMaterial');
@@ -498,7 +506,7 @@ describe('web glass material', () => {
                 const settings = { glassSurfaceMaterials: glassPresetMaterials('auto'), glassTintIntensity: 50 };
                 const screen = await renderScreen(<GlassMaterialSettingsProvider value={settings}>
                     <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind }}>
-                        <GlassSurface surfaceGroup={group} finishRole={null} solidColor={solid}><DraftInput /></GlassSurface>
+                        <GlassSurface surfaceGroup={group} finishRole={group === 'card' ? 'composer' : null} solidColor={solid}><DraftInput /></GlassSurface>
                     </GlassRuntimeEnvironmentProvider>
                 </GlassMaterialSettingsProvider>);
                 const style = flattenTestStyle(screen.findAll(hasBackdrop)[0]!.props.style) as Record<string, string>;
@@ -537,7 +545,7 @@ describe('web glass material', () => {
         ] as const) {
             const screen = await renderScreen(<GlassMaterialSettingsProvider value={settings}>
                 <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind }}>
-                    <GlassSurface testID="glass" surfaceGroup={group} finishRole={null}><DraftInput /></GlassSurface>
+                    <GlassSurface testID="glass" surfaceGroup={group} finishRole={group === 'card' ? 'composer' : null}><DraftInput /></GlassSurface>
                 </GlassRuntimeEnvironmentProvider>
             </GlassMaterialSettingsProvider>);
             const override = secondaryOverride(screen.findHostByTestId('glass'));
@@ -658,7 +666,7 @@ describe('web glass material', () => {
             const paintOver = async (settings: Record<string, unknown>, tone: ReturnType<typeof toneOf> | undefined, group: 'card' | 'floating') => {
                 const screen = await renderScreen(<GlassMaterialSettingsProvider value={settings}>
                     <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'wallpaper', atmosphereTone: tone }}>
-                        <GlassSurface surfaceGroup={group} finishRole={null} solidColor={group === 'card' ? theme.colors.edge.cardFill : theme.colors.edge.floatingFill}><DraftInput /></GlassSurface>
+                        <GlassSurface surfaceGroup={group} finishRole={group === 'card' ? 'composer' : null} solidColor={group === 'card' ? theme.colors.edge.cardFill : theme.colors.edge.floatingFill}><DraftInput /></GlassSurface>
                     </GlassRuntimeEnvironmentProvider>
                 </GlassMaterialSettingsProvider>);
                 const style = flattenTestStyle(screen.findAll(hasBackdrop)[0]!.props.style) as Record<string, string>;
@@ -704,7 +712,7 @@ describe('web glass material', () => {
         const l = Color.rgb(backdrop).luminosity();
         const screen = await renderScreen(<GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
             <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'wallpaper', atmosphereTone: { dark: l, light: l, focus: l } }}>
-                <GlassSurface surfaceGroup="card" finishRole={null} solidColor={darkTheme.colors.edge.cardFill}><DraftInput /></GlassSurface>
+                <GlassSurface surfaceGroup="card" finishRole="composer" solidColor={darkTheme.colors.edge.cardFill}><DraftInput /></GlassSurface>
             </GlassRuntimeEnvironmentProvider>
         </GlassMaterialSettingsProvider>);
         const style = flattenTestStyle(screen.findAll(hasBackdrop)[0]!.props.style) as Record<string, string>;
@@ -978,14 +986,14 @@ describe('web glass material', () => {
         for (const group of ['card', 'floating'] as const) {
             const screen = await renderScreen(<GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
                 <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'band' }}>
-                    <GlassSurface surfaceGroup={group} finishRole={null} solidColor="var(--colors-edge-card-fill)"><DraftInput /></GlassSurface>
+                    <GlassSurface surfaceGroup={group} finishRole={group === 'card' ? 'composer' : null} solidColor="var(--colors-edge-card-fill)"><DraftInput /></GlassSurface>
                 </GlassRuntimeEnvironmentProvider>
             </GlassMaterialSettingsProvider>);
             expect(screen.findAll(hasBackdrop)).toHaveLength(1);
             standardCleanup();
         }
     });
-    it('coats a page sheet over a backdrop with the page it stands for, not its whisper of tint', async () => {
+    it('paints a page sheet over a backdrop as the page it stands for, not its whisper of tint', async () => {
         themeMode.dark = true;
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
@@ -997,12 +1005,13 @@ describe('web glass material', () => {
             </GlassRuntimeEnvironmentProvider>
         </GlassMaterialSettingsProvider>;
         const screen = await renderScreen(scene('wallpaper'));
-        const paint = flattenTestStyle(screen.findAll(hasBackdrop)[0]!.props.style).backgroundColor as string;
-        // The sheet stands for its tint over the dark page (#1B1919): over that page the glass resolves to it.
-        const coat = /color-mix\(in srgb, (rgba?\([^)]*\)|#[0-9a-f]+) /i.exec(paint)?.[1];
-        const over = renderGlassOver({ filter: flattenTestStyle(screen.findAll(hasBackdrop)[0]!.props.style).backdropFilter as string,
-            coat: Color(coat!).rgb().array().slice(0, 3) as unknown as [number, number, number], opacity: glassPresetMaterials('auto').card.opacity, backdrop: [27, 25, 25] });
-        over.forEach((value, channel) => expect(Math.abs(value - [30, 28, 28][channel]!)).toBeLessThanOrEqual(1));
+        expect(screen.findAll(hasBackdrop)).toHaveLength(0);
+        const layer = screen.findHostByTestId('page-sheet')!.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!;
+        const paint = flattenTestStyle(layer.props.style).backgroundColor as string;
+        // The sheet stands for its tint over the dark page (#1B1919), and paints exactly that, opaque, over the picture.
+        const painted = Color(paint);
+        expect(painted.alpha()).toBe(1);
+        painted.rgb().array().forEach((value, channel) => expect(Math.abs(value - [30, 28, 28][channel]!)).toBeLessThanOrEqual(1));
         expect(paint).not.toContain(sectionTint);
         await act(async () => { screen.changeTextByTestId('draft', 'keep the sheet draft'); });
         await screen.update(scene('none'));
@@ -1245,13 +1254,14 @@ describe('web glass material', () => {
         const layer = (id: string) => flattenTestStyle(screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!
             .findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!.props.style) ?? {};
         const popover = layer('popover');
-        // The far edges reach at least the shortfall past the box, and the clip cuts that same reach back off.
-        expect(popover.right).toMatch(/^calc\(-1 \* max\(var\(--happier-glass-floating-blur, \d+px\), 96px\)\)$/);
-        expect(popover.bottom).toBe(popover.right);
-        const far = String(popover.right).slice('calc(-1 * '.length, -1);
-        expect(String((popover as Record<string, unknown>).clipPath).split(` ${far} ${far} `)).toHaveLength(2);
-        // An in-flow card reaches only its blur radius, never the shortfall.
-        expect(String(layer('card').right)).not.toContain('96px');
+        const reachRight = -Number(popover.right);
+        const reachBottom = -Number(popover.bottom);
+        expect(reachRight).toBeGreaterThanOrEqual(96);
+        expect(reachBottom).toBeGreaterThanOrEqual(96);
+        // The extension is clipped back to the surface's own rounded box, so nothing frosts outside it.
+        expect(String((popover as Record<string, unknown>).clipPath)).toBe(`inset(0px ${reachRight}px ${reachBottom}px 0px round 12px 12px 12px 12px)`);
+        // An in-flow card is not frosted, so it reaches nowhere.
+        expect(Number(layer('card').right ?? 0)).toBe(0);
     });
 
     it('keeps a clipping floating surface from scrolling its frost reach into view (round 10: dialog header cut off on focus)', async () => {

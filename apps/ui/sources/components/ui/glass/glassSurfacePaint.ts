@@ -120,13 +120,16 @@ export function resolveGlassSurfaceSolidPaint(solid: ThemePaint, page: ThemePain
 
 type GlassSurfaceCoatInput = Readonly<{
     solid: ThemePaint; page: ThemePaint; ink: ThemePaint; controlFill: ThemePaint; dark: boolean;
-    context: Pick<GlassSurfaceCompositionContext, 'settings' | 'group' | 'environment' | 'panel' | 'web' | 'noCoat'>;
+    context: Pick<GlassSurfaceCompositionContext, 'settings' | 'group' | 'environment' | 'panel' | 'web' | 'noCoat' | 'tintsWithoutBlur'>;
 }>;
 
 export function resolveGlassSurfaceCoatPaint(input: GlassSurfaceCoatInput): Readonly<{ tint: ThemePaint; backdropTone: string; coatOpacity?: number }> {
     const { context } = input;
     if (context.noCoat) return { tint: fixedThemePaint('transparent'), backdropTone: '' };
     const ground = context.group === 'card' ? glassElementsCoatPaint(input.solid, input.page) : input.solid;
+    // Unblurred web glass (in-flow Elements) has no filter to solve against: it paints the ground its frost would
+    // land on over the plain page, opaque, so the dots and buttons behind it never show through.
+    if (context.web && context.tintsWithoutBlur) return { tint: ground, backdropTone: '' };
     const map = resolveGlassBackdropMapPaint(context.settings, context.group, input.dark, context.environment, {
         page: input.page, solid: ground, ink: input.ink, controlFill: input.controlFill,
     }, context.panel);
@@ -159,6 +162,7 @@ export function resolveGlassSurfacePaintLayers(input: Readonly<{
         ? glassSurfaceBackgroundPaint(solid, c.group, true, c.nested, true, c.atmosphereCoat ? c.material.opacity : undefined)
         : c.inheritsTranslucentMaterial ? fixedThemePaint('transparent')
         : c.capability === 'webBlur' ? glassSurfaceBackgroundPaint(tint, c.group, true, c.group === 'card' ? false : c.nested, false, input.coatOpacity)
+        : c.tintsWithoutBlur ? tint
         : !c.enabled || (c.group === 'card' && c.material.opacity === 1) ? solid
         : glassSurfaceBackgroundPaint(c.group === 'card' ? tint : solid, c.group, true, c.group === 'card' ? false : c.nested, false);
     return { background };
