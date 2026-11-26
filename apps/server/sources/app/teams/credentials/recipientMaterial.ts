@@ -602,18 +602,21 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     if (resource.custodianAccountId !== resourceIdentity?.custodianAccountId) {
         throw new TransactionReplayRequiredError("transaction-account-audience-changed");
     }
-    if (!resource.enabled) return { ok: false as const, outcome: "unavailable" as const, reason: "disabled" as const };
     const actor = await resolveTeamActorContextInTx(tx, {
         teamId: resource.teamId,
         actorAccountId: input.recipientAccountId,
     });
-    if (!actor) return { ok: false as const, outcome: "unavailable" as const, reason: "access_removed" as const };
+    // Only a current Team member can be entitled; nobody else learns resource state.
+    if (!actor?.teamCapabilities.viewTeam) {
+        return { ok: false as const, outcome: "unavailable" as const, reason: "access_removed" as const };
+    }
     // Qualify the Team operation before evaluating Session-derived access. A
     // restricted Team credential that is otherwise Session-visible must return
     // the canonical authentication result, rather than collapsing missing
     // credential evidence into a generic access-removal projection.
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
     if (!qualification.ok) return { ok: false as const, outcome: "operation_error" as const, error: qualification.error };
+    if (!resource.enabled) return { ok: false as const, outcome: "unavailable" as const, reason: "disabled" as const };
     // A Session reads through its accepted witness; an Execution Run through
     // its own Run-attested direct use, in its parent Session's context when
     // attached — never through the parent's selection.

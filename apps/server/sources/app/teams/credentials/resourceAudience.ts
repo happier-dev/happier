@@ -175,8 +175,6 @@ export async function setTeamCredentialAudienceInTx(
     await recheckAdmission();
     const resource = await tx.teamCredentialResource.findUnique({ where: { id: input.resourceId } });
     if (!resource) return { ok: false, error: "resource_not_found" };
-    const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
-    if (displayName === null) return { ok: false, error: 'resource_corrupt' };
     if (resource.custodianAccountId !== resourceIdentity.custodianAccountId) {
         throw new TransactionReplayRequiredError("transaction-account-audience-changed");
     }
@@ -194,7 +192,10 @@ export async function setTeamCredentialAudienceInTx(
         : { ok: false as const, error: "team_authentication_required" as const };
     if (!isActiveCustodian && !qualification.ok) return qualification;
     const canManage = canManageStructurally && qualification.ok;
+    // Stored-row state is disclosed only to the authorized, qualified actor.
     if (resource.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
+    const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
+    if (displayName === null) return { ok: false, error: 'resource_corrupt' };
     const ceiling = readTeamCredentialDeliveryConfiguration(resource.disclosureCeiling);
     if (!ceiling.success) return { ok: false, error: "resource_corrupt" };
     const modes = [

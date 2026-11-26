@@ -60,20 +60,6 @@ async function applyResourceReplacementInTx(
     }>,
 ): Promise<UpdateTeamCredentialResourceResult> {
     const resource = input.resource;
-    if (resource.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
-
-    const storedSource = readTeamCredentialSourceBinding(resource.sourceBindingJson);
-    const storedPolicy = parseJson(resource.requestPolicyJson);
-    const storedDelivery = readTeamCredentialDeliveryConfiguration(resource.disclosureCeiling);
-    const storedSessionPolicy = TeamCredentialSessionUsePolicyV1Schema.safeParse(resource.sessionUsePolicy);
-    const storedRequestPolicy = z.nullable(TeamCredentialRequestPolicyV1Schema).safeParse(storedPolicy);
-    const storedPlacement = readTeamCredentialBrokerPlacement(resource);
-    const storedDisplayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
-    if (!storedSource.success || !storedDelivery.success || !storedSessionPolicy.success
-        || !storedRequestPolicy.success || !storedPlacement.ok || storedDisplayName === null) {
-        return { ok: false, error: "resource_corrupt" };
-    }
-
     const actor = await resolveTeamActorContextInTx(tx, {
         teamId: resource.teamId,
         actorAccountId: input.actorAccountId,
@@ -92,6 +78,36 @@ async function applyResourceReplacementInTx(
         && capabilities?.offerOwnCredential === true;
     if (!canManageStructurally && !canActAsCustodian) {
         return { ok: false, error: "resource_forbidden" };
+    }
+    type QualificationResult = Awaited<ReturnType<typeof qualifyTeamCredentialOperationInTx>>
+        | Readonly<{ ok: false; error: "resource_forbidden" }>;
+    let qualification: QualificationResult | undefined;
+    const qualify = async (): Promise<QualificationResult> => {
+        if (qualification !== undefined) return qualification;
+        qualification = actor === null
+            ? { ok: false as const, error: "resource_forbidden" as const }
+            : await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
+        return qualification;
+    };
+    // An actor admitted only as a manager may change only manager-owned
+    // fields, so it qualifies before any stored-row state is disclosed. The
+    // active custodian may read its own resource's state.
+    if (!canActAsCustodian) {
+        const managerQualification = await qualify();
+        if (!managerQualification.ok) return managerQualification;
+    }
+    if (resource.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
+
+    const storedSource = readTeamCredentialSourceBinding(resource.sourceBindingJson);
+    const storedPolicy = parseJson(resource.requestPolicyJson);
+    const storedDelivery = readTeamCredentialDeliveryConfiguration(resource.disclosureCeiling);
+    const storedSessionPolicy = TeamCredentialSessionUsePolicyV1Schema.safeParse(resource.sessionUsePolicy);
+    const storedRequestPolicy = z.nullable(TeamCredentialRequestPolicyV1Schema).safeParse(storedPolicy);
+    const storedPlacement = readTeamCredentialBrokerPlacement(resource);
+    const storedDisplayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
+    if (!storedSource.success || !storedDelivery.success || !storedSessionPolicy.success
+        || !storedRequestPolicy.success || !storedPlacement.ok || storedDisplayName === null) {
+        return { ok: false, error: "resource_corrupt" };
     }
 
     const [currentGroups, currentMembers, currentLimits] = await Promise.all([
@@ -144,16 +160,6 @@ async function applyResourceReplacementInTx(
         || replacement.usageLimitDelta.deleteIds.length > 0;
     const requestPolicyChanged = !isDeepStrictEqual(storedRequestPolicy.data, replacement.requestPolicy);
 
-    type QualificationResult = Awaited<ReturnType<typeof qualifyTeamCredentialOperationInTx>>
-        | Readonly<{ ok: false; error: "resource_forbidden" }>;
-    let qualification: QualificationResult | undefined;
-    const qualify = async (): Promise<QualificationResult> => {
-        if (qualification !== undefined) return qualification;
-        qualification = actor === null
-            ? { ok: false as const, error: "resource_forbidden" as const }
-            : await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
-        return qualification;
-    };
     if (managerOwnedChanged) {
         if (!canManageStructurally) return { ok: false, error: "resource_forbidden" };
         const managerQualification = await qualify();

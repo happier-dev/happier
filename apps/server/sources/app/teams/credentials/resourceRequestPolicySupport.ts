@@ -125,16 +125,17 @@ export async function prepareTeamCredentialRequestPolicySupportInTx(
     tx: Tx,
     input: SupportInput,
 ): Promise<TeamCredentialRequestPolicySupportPreparation> {
+    type SourceTopology = Readonly<{ source: TeamCredentialSourceBindingV1; brokerPlacement: TeamCredentialBrokerPlacementV1 | null }>;
     let teamId: string;
     let custodianAccountId: string;
-    let source: TeamCredentialSourceBindingV1;
-    let brokerPlacement: TeamCredentialBrokerPlacementV1 | null;
+    // Stored-row state is read only after the actor is authorized and qualified.
+    let readSourceTopology: () => SourceTopology | null;
 
     if (input.scope === "source_draft") {
         teamId = input.teamId;
         custodianAccountId = input.actorAccountId;
-        source = input.source;
-        brokerPlacement = input.brokerPlacement;
+        const draftTopology = { source: input.source, brokerPlacement: input.brokerPlacement };
+        readSourceTopology = () => draftTopology;
     } else {
         const resource = await tx.teamCredentialResource.findUnique({
             where: { id: input.resourceId },
@@ -147,15 +148,15 @@ export async function prepareTeamCredentialRequestPolicySupportInTx(
             },
         });
         if (!resource) return { ok: false, error: "resource_not_found" };
-        const parsedSource = readTeamCredentialSourceBinding(resource.sourceBindingJson);
-        const parsedPlacement = readTeamCredentialBrokerPlacement(resource);
-        if (!parsedSource.success || !parsedPlacement.ok) {
-            return { ok: false, error: "resource_corrupt" };
-        }
         teamId = resource.teamId;
         custodianAccountId = resource.custodianAccountId;
-        source = parsedSource.data;
-        brokerPlacement = parsedPlacement.placement;
+        const custodianTopology = input.custodian;
+        readSourceTopology = () => {
+            const parsedSource = readTeamCredentialSourceBinding(resource.sourceBindingJson);
+            const parsedPlacement = readTeamCredentialBrokerPlacement(resource);
+            if (!parsedSource.success || !parsedPlacement.ok) return null;
+            return custodianTopology ?? { source: parsedSource.data, brokerPlacement: parsedPlacement.placement };
+        };
     }
 
     const actor = await resolveTeamActorContextInTx(tx, {
@@ -178,10 +179,9 @@ export async function prepareTeamCredentialRequestPolicySupportInTx(
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
     if (!qualification.ok) return qualification;
 
-    if (input.scope === "resource" && input.custodian !== undefined) {
-        source = input.custodian.source;
-        brokerPlacement = input.custodian.brokerPlacement;
-    }
+    const topology = readSourceTopology();
+    if (topology === null) return { ok: false, error: "resource_corrupt" };
+    const { source, brokerPlacement } = topology;
     const currentSource = await resolveTeamCredentialResourceSourceInTx(tx, {
         custodianAccountId,
         source,

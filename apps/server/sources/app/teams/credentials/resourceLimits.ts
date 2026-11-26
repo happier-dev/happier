@@ -42,15 +42,17 @@ async function resolveManagerResourceInTx(
 ) {
     const resource = await tx.teamCredentialResource.findUnique({ where: { id: resourceId } });
     if (!resource) return { ok: false as const, error: 'not_found_or_not_visible' as const };
-    const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
-    if (displayName === null) return { ok: false as const, error: 'resource_corrupt' as const };
     const actor = await resolveTeamActorContextInTx(tx, { teamId: resource.teamId, actorAccountId });
-    if (!actor) return { ok: false as const, error: 'not_found_or_not_visible' as const };
+    // A non-member cannot tell this resource from a missing one.
+    if (!actor?.membership) return { ok: false as const, error: 'not_found_or_not_visible' as const };
     if (actor.accountStatus !== AccountStatus.active) return { ok: false as const, error: 'forbidden' as const };
     const caps = resolveTeamCredentialCapabilities({ ...actor, teamArchivedAt: actor.team.archivedAt });
     if (!caps.manageCredentials) return { ok: false as const, error: 'forbidden' as const };
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, authentication);
     if (!qualification.ok) return qualification;
+    // Stored-row state is disclosed only to the authorized, qualified manager.
+    const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
+    if (displayName === null) return { ok: false as const, error: 'resource_corrupt' as const };
     return { ok: true as const, resource, displayName };
 }
 

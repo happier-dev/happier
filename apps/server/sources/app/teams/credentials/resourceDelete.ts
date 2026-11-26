@@ -23,8 +23,6 @@ export async function deleteTeamCredentialResourceInTx(
     const resource = await admitTeamCredentialWithdrawalInTx(tx, { ...input,
         additionalPublicationAccountIds: await readNativeCredentialPolicyPublicationAccountIdsInTx(tx, { resourceIds: [input.resourceId] }) });
     if (!resource) return { ok: false, error: "not_found_or_not_visible" };
-    const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
-    if (displayName === null) return { ok: false, error: 'resource_corrupt' };
     const isCustodian = resource.custodianAccountId === input.actorAccountId;
     const account = await tx.account.findUnique({ where: { id: input.actorAccountId }, select: { status: true } });
     if (account?.status !== AccountStatus.active) return { ok: false, error: "forbidden" };
@@ -36,6 +34,9 @@ export async function deleteTeamCredentialResourceInTx(
         const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
         if (!qualification.ok) return qualification;
     }
+    // Stored-row state is disclosed only to the authorized, qualified actor.
+    const displayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
+    if (displayName === null) return { ok: false, error: 'resource_corrupt' };
     // Serialize with the FK key-share held by accepted-binding insertion.
     // A Team lifecycle lock alone cannot protect this resource's child census.
     const provider = getDbProviderFromEnv(process.env, "postgres");
