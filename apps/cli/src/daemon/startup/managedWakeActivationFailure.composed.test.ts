@@ -852,7 +852,6 @@ it('settles Stop through the original Action receipt when the controller next ob
             state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' },
         }));
         const uncertain = delayed()!;
-        state = 'archived';
         const refreshControllerObservation = async () => {
             const errors: unknown[] = [];
             const runtime = createDaemonManagedMachinePolicyRuntime({
@@ -865,9 +864,27 @@ it('settles Stop through the original Action receipt when the controller next ob
             expect(errors).toEqual([]);
         };
         await refreshControllerObservation();
+        expect(delayed()).toMatchObject({
+            operationId: uncertain.operationId, state: 'running',
+            observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' },
+        });
+        state = 'archived';
+        await refreshControllerObservation();
         expect(delayed()).toMatchObject({ operationId: uncertain.operationId, state: 'succeeded' });
         expect(delayed()!.revision).toBeGreaterThan(uncertain.revision);
         expect(stopRequests).toBe(2);
+
+        state = 'running';
+        const stillRunning = await stop((await row()).id);
+        await vi.waitFor(() => expect(stillRunning()).toMatchObject({
+            state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' },
+        }));
+        await refreshControllerObservation();
+        expect(stillRunning()).toMatchObject({ state: 'running' });
+        state = 'running';
+        await refreshControllerObservation();
+        expect(stillRunning()).toMatchObject({ state: 'failed', error: { errorCode: 'native_intent_unconfirmed' } });
+        expect(stopRequests).toBe(3);
 
         state = 'running';
         stopBehavior = 'refused';
@@ -877,5 +894,5 @@ it('settles Stop through the original Action receipt when the controller next ob
         state = 'archived';
         await refreshControllerObservation();
         expect(failed()).toEqual(refusal);
-        expect(stopRequests).toBe(3);
+        expect(stopRequests).toBe(4);
     }));
