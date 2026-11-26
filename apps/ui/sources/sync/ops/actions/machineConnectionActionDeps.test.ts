@@ -8,6 +8,7 @@ import { computeHomeQrBindingProofV2} from '@happier-dev/protocol/crypto/qrProvi
 import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { MACHINE_PAIRING_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { encodeBase64 } from '@/encryption/base64';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -748,7 +749,7 @@ describe('UI machine connection Actions', () => {
         expect(result.result.command).not.toContain('--password');
         expect(boundary.rpc).not.toHaveBeenCalled();
     });
-    it('retires the trusted pairing lifecycle after returning its link when the Home Account changes', async () => {
+    it.each(['Account retirement', 'Agent cancellation'] as const)('ends the trusted pairing lifecycle through %s', async ending => {
         await loadSyncSingletonForTests();
         const identity = 'srv_pairing-home';
         const serverUrl = 'https://pairing.example';
@@ -757,6 +758,7 @@ describe('UI machine connection Actions', () => {
             endpoints: [{ kind: 'https' as const, url: serverUrl }] };
         const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
         await adoptHomeProfile({ descriptor, source: 'manual' });
+        if (ending === 'Agent cancellation') await activateSshAccount(serverId, 'alice');
         const features = { ...createRootLayoutFeaturesResponse({
             capabilities: { serverIdentity: { serverIdentityId: identity } },
             features: { auth: { pairing: { boundQrV2: { enabled: true }, desktopQrMobileScan: { enabled: false } } } } }), homeConnectionDescriptor: descriptor };
@@ -775,16 +777,32 @@ describe('UI machine connection Actions', () => {
             requestedPublicKey: encodeBase64(requesterPublicKey), requestedDeviceLabel: 'Computer', homeServerIdentityId: identity,
             bindingProof: computeHomeQrBindingProofV2({ direction: 'trusted_home_displays', qrSecret: new Uint8Array(32).fill(7),
                 pairId: 'pair', homeServerIdentityId: identity, requesterPublicKey, expiresAtMs }) } });
-        harness.answer(serverId, '/v1/auth/pairing/consume', { body: {} });
+        harness.answer(serverId, '/v1/auth/pairing/consume', { body: { success: true } });
         try {
-            const result = await makeExecutor().execute('machines.pairing.create', { serverId }, {
+            const executor = makeExecutor();
+            const result = await executor.execute('machines.pairing.create', { serverId }, {
                 surface: 'ui', authority: 'present_user', serverId,
                 presentUserConfirmation: { actionId: 'machines.pairing.create' },
             });
             if (!result.ok) throw new Error(JSON.stringify(result));
             expect(result).toMatchObject({ ok: true, result: { pairId: 'pair', expiresAtMs } });
             await vi.waitFor(() => expect(harness.requestsFor(statusPath)).toHaveLength(1));
-            await harness.switchAccount(serverId, 'bob');
+            if (ending === 'Account retirement') {
+                await harness.switchAccount(serverId, 'bob');
+            } else {
+                const cancelId = MACHINE_PAIRING_CANCEL_ACTION_ID_V1;
+                const input = { serverId, pairId: 'pair' };
+                const agent = { surface: 'agent', authority: 'account_automation', serverId } as const;
+                expect(await executor.execute(cancelId, input, agent)).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+                const allowed = { ...agent, actionsSettings: normalizeActionsSettingsV1({
+                    v: 1, approvalWaivedSurfaces: { [cancelId]: ['agent'] },
+                }) };
+                expect(await executor.execute(cancelId, input, { ...allowed, expectedAccountId: 'bob' }))
+                    .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+                expect(harness.requestsFor('/v1/auth/pairing/consume')).toHaveLength(0);
+                expect(await executor.execute(cancelId, input, { ...allowed, expectedAccountId: 'alice' }))
+                    .toEqual({ ok: true, result: { pairId: 'pair', outcome: 'cancelled' } });
+            }
             await vi.waitFor(() => expect(harness.requestsFor('/v1/auth/pairing/consume')).toHaveLength(1));
             expect(harness.requestsFor('/v1/auth/pairing/consume')[0]?.input).toEqual({ pairId: 'pair', intent: 'cancel' });
             releaseStatus();

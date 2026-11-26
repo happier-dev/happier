@@ -148,6 +148,7 @@ export function usePairingSession(params: Readonly<{
                 else if (outcome.kind === 'expired') { resetPresentation(true); setCompletionState('expired'); }
                 else if (outcome.kind === 'invalid_request') { resetPresentation(false); setFailureCause('home_refused'); setCompletionState('invalid_request'); }
                 else if (outcome.kind === 'failed') { resetPresentation(false); setFailureCause('home_refused'); setCompletionState('completion_failed'); }
+                else if (outcome.kind === 'cancelled') { resetPresentation(false); setCompletionState('idle'); }
             });
             return { ok: true };
         } catch (error) {

@@ -395,6 +395,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.managed.retire",
   "machines.managed.setup.skip",
   "machines.metadata.update",
+  "machines.pairing.cancel",
   "machines.pairing.create",
   "machines.pools.create",
   "machines.pools.delete",
@@ -2204,6 +2205,7 @@ export type GeneratedActions = Readonly<{
       readonly update: (input: PublicActionInputById["machines.metadata.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.metadata.update">>;
     }> ;
     readonly pairing: Readonly<{
+      readonly cancel: (input: PublicActionInputById["machines.pairing.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.pairing.cancel">>;
       readonly create: (input: PublicActionInputById["machines.pairing.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.pairing.create">>;
     }> ;
     readonly pools: Readonly<{
@@ -5275,6 +5277,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         update: (input: PublicActionInputById["machines.metadata.update"], options?: ActionExecutionOptions) => execute("machines.metadata.update", input, options),
       },
       pairing: {
+        cancel: (input: PublicActionInputById["machines.pairing.cancel"], options?: ActionExecutionOptions) => execute("machines.pairing.cancel", input, options),
         create: (input: PublicActionInputById["machines.pairing.create"], options?: ActionExecutionOptions) => execute("machines.pairing.create", input, options),
       },
       pools: {

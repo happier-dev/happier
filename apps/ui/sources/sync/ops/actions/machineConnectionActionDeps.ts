@@ -3,7 +3,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { MACHINE_CAPABILITIES_DETECT_ACTION_ID, MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
-import { startPairingForHome, type StartPairingForHomeResult } from '@/auth/pairing/startPairingForHome';
+import { startPairingForHome, type StartedHomePairing, type StartPairingForHomeResult } from '@/auth/pairing/startPairingForHome';
 import { buildMachineAddCommand, resolveWebDesktopSetupHandoffTarget } from '@/components/machines/add/machineAddCommand';
 import { readMachineAddHomeTargetForServerId } from '@/components/machines/add/machineAddHomeTarget';
 import { createDefaultSshCredentialsDraft } from '@/components/ssh/sshCredentialsDraft';
@@ -51,9 +51,14 @@ export type UiHomeAddressDelivery = Pick<ConnectHomeAtAddressInput, 'confirmInse
     onResult: (result: ConnectHomeAtAddressResult) => void;
 }>;
 
+// Address the issuing client's existing live lifecycle without retaining its link or QR secret here.
+const livePairingCancels = new Map<string, Readonly<{
+    accountId: string; serverId: string; cancel: StartedHomePairing['cancel'];
+}>>();
+
 export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext;
     homePairingDelivery?: UiHomePairingDelivery; homeAddressDelivery?: UiHomeAddressDelivery;
-    personalHomeSshDraftSecrets?: PersonalHomeSshDraftSecrets }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'personalHomeCreate' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction' | 'machineManagedInstallationRespond'> {
+    personalHomeSshDraftSecrets?: PersonalHomeSshDraftSecrets }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'personalHomeCreate' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machinePairingCancel' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction' | 'machineManagedInstallationRespond'> {
     return {
         ...(options.account ? { personalHomeCreate: createPersonalHomeCreateAction(options.account, options.runner, options.personalHomeSshDraftSecrets) } : {}),
         machinePageAction: async ({ actionId, input, context }) => {
@@ -196,9 +201,15 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                 if (started.kind === 'started' && !account.accountLifetime.isCurrent()) await started.cancel();
                 account.assertCurrent();
                 if (started.kind === 'started') {
-                    const retirement = account.accountLifetime.onRetire(() => { void started.cancel(); });
+                    const { pairId } = started.invite;
+                    const binding = { accountId: account.accountId, serverId: account.serverId, cancel: started.cancel };
+                    livePairingCancels.set(pairId, binding);
+                    const remove = () => {
+                        if (livePairingCancels.get(pairId) === binding) livePairingCancels.delete(pairId);
+                    };
+                    const retirement = account.accountLifetime.onRetire(() => { remove(); void binding.cancel(); });
                     lifecycleOwnsAccount = true;
-                    const release = () => { retirement.dispose(); account.dispose(); };
+                    const release = () => { remove(); retirement.dispose(); account.dispose(); };
                     void started.completion.then(release, release);
                     delivery?.onResult(started);
                     return { pairId: started.invite.pairId, link: started.link, expiresAtMs: started.invite.expiresAtMs };
@@ -207,6 +218,20 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                 const errorCode = started.kind === 'failed' ? started.cause : started.kind;
                 return { ok: false, errorCode, error: errorCode };
             } finally { if (!lifecycleOwnsAccount) account.dispose(); }
+        },
+        machinePairingCancel: async ({ serverId, pairId }, context) => {
+            const unavailable = { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            if (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, serverId)) return unavailable;
+            const scope = getActiveServerAccountScope();
+            const live = livePairingCancels.get(pairId);
+            if (!scope || !live || scope.accountId !== live.accountId
+                || !areServerProfileIdentifiersEquivalent(scope.serverId, live.serverId)
+                || !areServerProfileIdentifiersEquivalent(serverId, live.serverId)
+                || context.expectedAccountId && context.expectedAccountId !== live.accountId
+                || context.runtimeAccountId && context.runtimeAccountId !== live.accountId) return unavailable;
+            const result = await live.cancel();
+            return result.ok ? { pairId, outcome: result.outcome }
+                : { ok: false, errorCode: 'action_failed', error: 'Pairing cancellation could not be confirmed.' };
         },
         machineTerminalAction: async ({ actionId, input, context, signal }) => {
             if (options.account && !context.externalActionCredential && !context.externalActionExecutionAuthorization

@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './machineConnectionActionIdsV1.js';
+import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_PAIRING_CANCEL_ACTION_ID_V1, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './machineConnectionActionIdsV1.js';
 export { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './machineConnectionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
@@ -140,6 +140,8 @@ export const MachineAddLocalStartInputSchema = lazyZodSchema(() => z.union([
   z.strictObject({ serverId: id, purpose: z.literal('relay_repair') }),
 ]));
 export const MachinePairingCreateOutputSchema = lazyZodSchema(() => z.strictObject({ pairId: id, link: id, expiresAtMs: z.number().check(z.int(), z.nonnegative()) }));
+export const MachinePairingCancelInputSchema = lazyZodSchema(() => z.strictObject({ serverId: id, pairId: id }));
+export const MachinePairingCancelOutputSchema = lazyZodSchema(() => z.strictObject({ pairId: id, outcome: z.enum(['cancelled', 'completion_won']) }));
 export type MachineAddSshActionId = typeof MACHINE_ADD_SSH_ACTION_IDS[number];
 export const MachineAddSshStartInputSchema = lazyZodSchema(() => z.union([z.strictObject({ serverId: id, host: id, username: z._default(z.string(), ''),
   port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))), authMode: z._default(RemoteHostAuthModeV1Schema, 'agent'),
@@ -394,10 +396,21 @@ function createMachineConnectionActionSpecs() {
     // only to the deciding person's app; the requester and approval history get the redacted projection.
     safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
     bindings: { mcpToolName: 'machines_pairing_create' }, inputSchema: MachinePairingCreateInputSchema, outputSchema: MachinePairingCreateOutputSchema,
-    projectObservationOutput: () => ({ redacted: true }),
+    projectObservationOutput: value => {
+      const pairId = id.safeParse(value !== null && typeof value === 'object' && 'pairId' in value ? value.pairId : undefined);
+      return pairId.success ? { redacted: true, pairId: pairId.data } : { redacted: true };
+    },
     approvalResultCustody: 'live_only',
     inputHints: { description: 'Make a link that adds another computer to a Home. It works for a short time; keep this device open until the computer has joined.',
       fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true }] },
+  },
+  {
+    id: MACHINE_PAIRING_CANCEL_ACTION_ID_V1, approval: { result: 'required' }, approvalPolicy: { agentDefault: 'authority' },
+    title: 'Cancel pairing link', description: 'Cancel a live pairing link on the app that issued it, using its pairing reference.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
+    bindings: { mcpToolName: 'machines_pairing_cancel' }, inputSchema: MachinePairingCancelInputSchema, outputSchema: MachinePairingCancelOutputSchema,
+    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true },
+      { path: 'pairId', title: 'Pairing reference', widget: 'text', required: true }] },
   },
   {
     id: 'machines.managed.bootstrap.respond', approval: { result: 'required' }, title: 'Answer managed machine installation prompt',

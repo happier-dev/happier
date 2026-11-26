@@ -215,6 +215,7 @@ export const autoApprovedNames: readonly string[] = Object.freeze([
   "machines_managed_list",
   "machines_managed_references_get",
   "machines_metadata_update",
+  "machines_pairing_cancel",
   "machines_pools_create",
   "machines_pools_get",
   "machines_pools_list",

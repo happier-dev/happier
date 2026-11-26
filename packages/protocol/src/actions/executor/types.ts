@@ -102,7 +102,7 @@ import type { MachineAccessHttpActionId } from '../specs/machine/access.js';
 import type { MachineVitalsActionId, MachineVitalsActionInput } from '../specs/machineVitals.js';
 import type { MachineTerminalActionId, MachineTerminalActionInput } from '../specs/machineTerminal.js';
 import type { PersonalHomeCreateInputSchema, PersonalHomeCreateOutputSchema } from '../specs/machineConnection.js';
-import type { HomeConnectInputSchema, HomeConnectOutputSchema, HomeReconnectInputSchema, HomeReconnectOutputSchema, MachineAddCommandInputSchema, MachineAddCommandOutputSchema, MachinePairingCreateInputSchema, MachinePairingCreateOutputSchema, MachineTerminalOpenInputSchema, MachineTerminalListInputSchema } from '../specs/machineConnection.js';
+import type { HomeConnectInputSchema, HomeConnectOutputSchema, HomeReconnectInputSchema, HomeReconnectOutputSchema, MachineAddCommandInputSchema, MachineAddCommandOutputSchema, MachinePairingCancelInputSchema, MachinePairingCancelOutputSchema, MachinePairingCreateInputSchema, MachinePairingCreateOutputSchema, MachineTerminalOpenInputSchema, MachineTerminalListInputSchema } from '../specs/machineConnection.js';
 import type {
   DaemonAgentInstallStartRequest, DaemonAgentInstallStartResponse,
   DaemonAgentInstallReadRequest, DaemonAgentInstallReadResponse,
@@ -2513,6 +2513,7 @@ export type ActionExecutorDeps = Readonly<{
   machineAddLocalCancel?: (input: z.infer<typeof import('../specs/machineConnection.js').MachineAddSshCancelInputSchema>, context: ActionExecutorContext) => Promise<unknown>;
   localDaemonServiceAction?: (actionId: LocalDaemonServiceActionId, input: unknown, context: ActionExecutorContext) => Promise<unknown>;
   machinePairingCreate?: (input: z.infer<typeof MachinePairingCreateInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof MachinePairingCreateOutputSchema> | ActionExecuteFailure>;
+  machinePairingCancel?: (input: z.infer<typeof MachinePairingCancelInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof MachinePairingCancelOutputSchema> | ActionExecuteFailure>;
   machinePageAction?: (request: Readonly<{ actionId: MachinePageActionId; input: MachinePageActionInput; context: ActionExecutorContext }>) => Promise<unknown>;
   machineTerminalAction?: (request: Readonly<{ actionId: MachineTerminalActionId; input: MachineTerminalActionInput; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   serversList?: (args: Readonly<{ limit?: number }>) => Promise<unknown>;

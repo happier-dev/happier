@@ -384,6 +384,12 @@ export type MachineConnectionActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "machines.pairing.cancel": {
+        serverId: string;
+        pairId: string;
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "machines.managed.bootstrap.respond": ({
         purpose: 'approve';
         prompt: {
@@ -964,6 +970,10 @@ export type MachineConnectionActionResultById = {
         pairId: string;
         link: string;
         expiresAtMs: number;
+    };
+    readonly "machines.pairing.cancel": {
+        pairId: string;
+        outcome: 'cancelled' | 'completion_won';
     };
     readonly "machines.managed.bootstrap.respond": {
         taskId: string;

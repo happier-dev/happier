@@ -257,6 +257,8 @@ describe('machine and Home connection Action parity', () => {
     // The requesting model reads the settled request and never receives the bearer.
     const collected = await createActionExecutor(boundary as ActionExecutorDeps).execute('approval.request.get',
       { artifactId: 'pairing-ask' }, origin);
+    expect(stored).toMatchObject({ execution: { ok: true, result: { redacted: true, pairId: 'pair' } } });
+    expect(JSON.stringify(collected)).toContain('"pairId":"pair"');
     expect(JSON.stringify(requested) + JSON.stringify(collected) + JSON.stringify(stored)).not.toContain('private-bearer');
   });
 });
