@@ -87,5 +87,5 @@ it('keeps an unresolved event starter distinct from a scheduled workflow', async
   );
   const clientId = incomplete.pending[0]!.clientId;
   expect(screen.findAllByTestId(`example-trigger:new:${clientId}-starts.trigger`).map(node => node.props.accessibilityLabel))
-    .toContain(`${t('workflows.triggers.card.when')}: ${t('automations.form.trigger.chooseEvent')}`);
+    .toContain(`${t('workflows.triggers.card.when')}: Pull request checks failed`);
 });

@@ -8,12 +8,17 @@ import {
   readEligibleEventPluginName,
   readEligibleEventPresentation,
 } from '@/components/automations/editor/pluginEventAutomationEventPresentation';
+import { readMissingPluginEventCatalogFailure } from '@/components/automations/editor/pluginEventAutomationObservationBinding';
+import { arePluginContributionIdentitiesEqual } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
+import { HappyError } from '@/utils/errors/errors';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import type { WorkflowTriggerEventOption } from './workflowTriggerStarts';
+
+type EventCatalogFailure = Readonly<{ code: string; reason: string; details?: unknown }>;
 
 const NO_EVENTS: readonly WorkflowTriggerEventOption[] = Object.freeze([]);
 
@@ -32,6 +37,10 @@ export function useWorkflowTriggerEventOptions(
 ): Readonly<{
   status: 'idle' | 'loading' | 'ready' | 'unavailable';
   events: readonly WorkflowTriggerEventOption[];
+  readSelectedEvent(eventRef: WorkflowTriggerEventOption['eventRef']): Readonly<{
+    option: WorkflowTriggerEventOption | null;
+    failure: EventCatalogFailure | null;
+  }>;
   retry(): void;
 }> {
   const [refreshKey, setRefreshKey] = React.useState(0);
@@ -55,6 +64,7 @@ export function useWorkflowTriggerEventOptions(
     target: typeof target;
     status: 'ready' | 'unavailable';
     events: WorkflowEventsListOutputV1['events'];
+    failure?: EventCatalogFailure;
   }> | null>(null);
   React.useEffect(() => {
     if (target?.kind !== 'ready' || !params.machineId) return;
@@ -62,8 +72,16 @@ export function useWorkflowTriggerEventOptions(
     let mounted = true;
     void read.promise.then(events => {
       if (mounted) setCatalog({ target, status: 'ready', events });
-    }, () => {
-      if (mounted) setCatalog({ target, status: 'unavailable', events: [] });
+    }, (error: unknown) => {
+      if (!mounted) return;
+      const cause = error instanceof HappyError ? error.failureCause : undefined;
+      const code = error instanceof HappyError ? error.code : undefined;
+      const failure = code ? {
+        code,
+        reason: (cause && 'nativeErrorReason' in cause ? cause.nativeErrorReason : undefined) ?? cause?.errorCode ?? code,
+        details: error instanceof HappyError ? error.details : undefined,
+      } : undefined;
+      setCatalog({ target, status: 'unavailable', events: [], failure });
     });
     return () => { mounted = false; read.release(); };
   }, [target, params.machineId, refreshKey]);
@@ -101,5 +119,14 @@ export function useWorkflowTriggerEventOptions(
         : projection.phase === 'loading' || projection.phase === 'idle'
           ? 'loading'
           : 'unavailable';
-  return { status, events, retry };
+  const readSelectedEvent = (eventRef: WorkflowTriggerEventOption['eventRef']) => {
+    const option = events.find(event => arePluginContributionIdentitiesEqual(event.eventRef, eventRef)) ?? null;
+    if (status === 'ready' && option === null) {
+      return { option, failure: readMissingPluginEventCatalogFailure(ready?.pluginProjectionById[eventRef.pluginId]) };
+    }
+    const reason = projection.failureReason;
+    const failure = status === 'unavailable' ? admitted?.failure ?? (reason ? { code: reason, reason } : null) : null;
+    return { option, failure };
+  };
+  return { status, events, readSelectedEvent, retry };
 }

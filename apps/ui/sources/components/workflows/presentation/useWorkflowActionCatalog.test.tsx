@@ -7,7 +7,10 @@ import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentence
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { WORKFLOW_EFFECT_ACTION_IDS_V1 } from '@happier-dev/protocol/workflows';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { t } from '@/text';
 import { buildDeferredDaemonProjectionSections, demandedDaemonProjectionSections,
     DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -45,6 +48,7 @@ const { WorkflowTriggerBlock } = await import('../triggers/WorkflowTriggerBlock'
 const { TriggerPluginEventRows } = await import('../triggers/TriggerPluginEventRows');
 const { PluginEventAutomationEditor } = await import('../../automations/editor/PluginEventAutomationEditor');
 const { EMPTY_WORKFLOW_TRIGGER_DRAFT } = await import('../triggers/workflowTriggerDraft');
+const { createWorkflowTriggerIncompleteSeed } = await import('../triggers/workflowTriggerStarts');
 import type { WorkflowTriggerIncomplete } from '../triggers/workflowTriggerStarts';
 
 afterAll(async () => { await network.dispose(); });
@@ -59,14 +63,17 @@ const projection = {
     familiesById: {},
 };
 
-function releaseEventProjection(nativePresence = false) {
-    const pluginId = 'acme.deploy';
+function releaseEventProjection(nativePresence = false, deploymentFailure = false) {
+    const { pluginId, localId } = deploymentFailure ? DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed : { pluginId: 'acme.deploy', localId: 'released' };
     const declared = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
         protocolVersion: 1, projection, projectionDigest: 'c'.repeat(64), automationEligibleEvents: [{
-            event: { id: `${pluginId}/released`, identity: { pluginId, localId: 'released' }, occurrenceId: 'occurrence-a',
-                sourceCustody: { kind: 'development', registeredRootId: 'catalog-root' }, title: 'A release ships', description: null,
+            event: { id: `${pluginId}/${localId}`, identity: { pluginId, localId }, occurrenceId: 'occurrence-a',
+                sourceCustody: { kind: 'development', registeredRootId: 'catalog-root' },
+                title: deploymentFailure ? 'Deployment failed (catalog title)' : 'A release ships', description: null,
                 ...(nativePresence ? { payloadSchema: { type: 'object', properties: { machineId: { type: 'string' } } } } : {}),
-                automation: { v: 1, eligible: true, subjectKinds: ['environment'], source: { sourceContractVersion: 1,
+                automation: { v: 1, eligible: true, subjectKinds: ['environment'],
+                    ...(deploymentFailure ? { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], completionOutcome: 'failed' } : {}),
+                    source: { sourceContractVersion: 1,
                     ...(nativePresence ? { nativeActivity: { kind: 'machinePresence', transition: 'offline' } } : {}),
                     supportedObservationTransports: ['checkpointedPull'], sourceConfigSchema: { type: 'object' },
                     setupActionRef: { pluginId, localId: 'setup' } } } },
@@ -373,6 +380,49 @@ describe('useWorkflowActionCatalog', () => {
                 && request.payload !== null && typeof request.payload === 'object' && !('sectionRead' in request.payload))).toHaveLength(1);
         } finally { await hook.unmount(); }
     });
+
+    it.each(['declared', 'different event', 'empty'] as const)(
+        'keeps the seeded deployment event while its Machine catalog loads and settles (%s)', async (answer) => {
+            if (answer === 'declared') deferred = releaseEventProjection(false, true);
+            if (answer === 'different event') deferred = releaseEventProjection();
+            if (answer === 'empty') deferred = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+                protocolVersion: 1, projection, projectionDigest: 'b'.repeat(64), automationEligibleEvents: [],
+            }));
+            storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settingsParse({}), 2);
+            const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected the fixture Home lifetime');
+            const gate = Promise.withResolvers<void>();
+            holdProjection = () => gate.promise;
+            const incomplete = createWorkflowTriggerIncompleteSeed({ eventSeed: {
+                eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed, monitoringMachineId: 'machine-1',
+                setupInput: { v: 1, serverId, environmentId: 'production' },
+            } })!;
+            const screen = await renderScreen(<WorkflowTriggerSection
+                accountLifetime={lifetime} presentation="sentence" testIDPrefix="seed" set={null} draft={EMPTY_WORKFLOW_TRIGGER_DRAFT}
+                onChangeDraft={vi.fn()} status="ready" onRetry={vi.fn()} stepsUnsaved whereSummary={null}
+                whereTarget={{ machineId: 'machine-1', directory: '~' }} inputs={[]}
+                incomplete={{ state: incomplete, onChange: vi.fn() }} />);
+            const clientId = incomplete.pending[0]!.clientId;
+            const title = () => screen.findAll(node => node.props.testID === `seed-sentence-trigger:new:${clientId}-start`
+                && typeof node.props.label === 'string')[0]?.props.label;
+            const reason = () => screen.findByTestId('seed-triggers-pending-reason')?.props.children;
+            try {
+                expect.soft(title()).toBe('deployment failed');
+                expect(reason()).toBe(t('workflows.triggers.card.pluginTriggersLoading', { machine: 'tester.local' }));
+                await act(async () => gate.resolve());
+                await vi.waitFor(() => {
+                    expect(title()).toBe(answer === 'declared' ? 'deployment failed (catalog title)' : 'deployment failed');
+                    expect(reason()).toBe(answer === 'declared' ? undefined : t('automations.form.trigger.sourceUnavailable'));
+                });
+                expect(network.requests.some(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+                    && request.targetId === 'machine-1')).toBe(true);
+            } finally {
+                gate.resolve();
+                await screen.unmount();
+            }
+        },
+    );
 
     it('recovers unreadable resource starts on retry while another reader retains the refused Account catalog', async () => {
         const { useResourceAutomationsSection } = await import('../triggers/useResourceAutomationsSection');

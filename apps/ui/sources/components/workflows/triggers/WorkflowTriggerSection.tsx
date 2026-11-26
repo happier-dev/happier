@@ -5,6 +5,7 @@ import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { readOfflineAutomationEventName } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 
@@ -25,7 +26,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { formatWorkflowInputValue, parseWorkflowInputText } from '@/sync/domains/workflows/workflowInputText';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
+import { resolvePluginEventSourceFailureCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { Modal } from '@/modal';
 import { useActiveMachineFacts, useMachineListForServer } from '@/sync/domains/state/storage';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
@@ -231,7 +233,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const reachesOthers = rows.some((row) => row.trigger.kind === 'action' && 'phase' in row.trigger && row.trigger.phase === 'before')
         && rows.every((row) => row.trigger.kind !== 'action' || !('phase' in row.trigger) || row.trigger.phase !== 'before'
             || ('reachesOthers' in row.trigger && row.trigger.reachesOthers === true));
-    const catalog = useWorkflowTriggerEventOptions({ ...placement, enabled: catalogDemanded || showsEvent });
+    const catalog = useWorkflowTriggerEventOptions({ ...placement, accountLifetime: props.accountLifetime, enabled: catalogDemanded || showsEvent });
     const startOptions = React.useMemo(() => buildWorkflowTriggerStartOptions(catalog.events, undefined, props.startContext),
         [catalog.events, props.startContext]);
     // The menu's foot says where plugin triggers come from: the trigger set's Machine.
@@ -304,10 +306,19 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             : current.filter(item => item.clientId !== clientId));
         if (next !== null) change(next);
     };
-    const startTitle = (when: TriggerWhenValue) => {
-        const id = readWorkflowTriggerStartId(when);
-        return startOptions.find((option) => option.id === id)?.title ?? '';
+    const readSelectedPluginStart = (when: TriggerWhenValue) => {
+        if (when.kind !== 'pluginEvent') return null;
+        const eventRef = when.value?.eventRef ?? when.eventRef;
+        if (!eventRef) return null;
+        // The menu groups equivalent starts. A selected event keeps its exact declaration.
+        const { option, failure } = catalog.readSelectedEvent(eventRef);
+        return {
+            title: option?.title ?? readOfflineAutomationEventName(eventRef, getPreferredLanguage()) ?? eventRef.localId,
+            failure,
+        };
     };
+    const startTitle = (when: TriggerWhenValue) => readSelectedPluginStart(when)?.title
+        ?? startOptions.find((option) => option.id === readWorkflowTriggerStartId(when))?.title ?? '';
     // What the trigger set's Machine says about its plugin triggers; null once it has some to list.
     const catalogReason = catalogMachineName === null ? null
         : catalog.status === 'ready'
@@ -318,17 +329,20 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         const native = item.nativeEvent;
         const machine = native === undefined ? null : machines.find(candidate => candidate.id === native.machineId) ?? null;
         const name = getSettledMachineDisplayName(machine, machines);
-        return { item,
+        const selected = readSelectedPluginStart(item.when);
+        const reason = native !== undefined ? native.machineId === placement.machineId && name === null ? catalogReason : null
+            : item.when.kind !== 'pluginEvent' ? null
+                : selected?.failure ? resolvePluginEventSourceFailureCopy(selected.failure) ?? t('automations.form.trigger.sourceUnavailable')
+                    : catalog.status === 'ready' && selected !== null ? null : catalogReason;
+        return { item, reason,
             title: native !== undefined ? formatWorkflowMachineEventTitle(native, name)
                 : startTitle(item.when) || (item.when.kind === 'pluginEvent' ? t('automations.form.trigger.chooseEvent') : ''),
             nativeSourceName: native === undefined ? undefined : name ?? t('workflows.events.someMachine'),
             incomplete: native === undefined || name === null,
         };
     });
-    // Catalog readiness is relevant to incomplete choices; a named native occurrence already supplies its source.
-    const pendingReason = pendingRows.some(({ item, incomplete }) => incomplete && item.when.kind === 'pluginEvent'
-        && (item.nativeEvent === undefined ? startTitle(item.when) === '' : item.nativeEvent.machineId === placement.machineId))
-        ? catalogReason : null;
+    // The shared status line reads each distinct reason once.
+    const pendingReason = [...new Set(pendingRows.flatMap(({ reason }) => reason === null ? [] : [reason]))].join('\n');
     // The When select's choice; a session event keeps its Session, and choosing the same start keeps the rows as they are.
     const selectStart = (when: TriggerWhenValue | null, id: string, apply: (next: TriggerWhenValue) => void) => {
         if (when !== null && readWorkflowTriggerStartId(when) === id) return;
@@ -395,7 +409,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         }),
         ...pendingRows.map(({ item, title, nativeSourceName, incomplete }) => (
             <WorkflowTriggerBlock key={`new:${item.clientId}`} testID={`${props.testIDPrefix}-trigger:new:${item.clientId}`}
-                title={title} when={item.when} enabled={item.enabled ?? true} incomplete={incomplete} startOptions={startOptions}
+                title={title} when={item.when} enabled={item.enabled ?? true} incomplete={incomplete}
+                startOptions={buildWorkflowTriggerStartOptions(catalog.events, { when: item.when, title }, props.startContext)}
                 initialEventSeed={item.eventSeed} nativeSourceName={nativeSourceName}
                 {...(incomplete ? {} : { onToggleEnabled: () => setPending(current => current.map(candidate =>
                     candidate.clientId === item.clientId ? { ...candidate, enabled: !(candidate.enabled ?? true) } : candidate)) })}
@@ -451,7 +466,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         return (
             <WorkflowTriggerSentenceLines testIDPrefix={props.testIDPrefix} lines={lines} startOptions={startOptions}
                 onAdd={addStart} onStartsOpenChange={demandCatalog} addFooter={addFooter}
-                status={props.status === 'failed' ? readState : pendingReason === null ? null : (
+                status={props.status === 'failed' ? readState : !pendingReason ? null : (
                     <Text testID={`${props.testIDPrefix}-triggers-pending-reason`} style={styles.pendingReason}>{pendingReason}</Text>
                 )} editable />
         );

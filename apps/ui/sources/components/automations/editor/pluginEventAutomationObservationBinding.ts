@@ -49,6 +49,23 @@ function watcherFailure(reason: PluginEventAutomationWatcherFailure['reason']): 
 
 export const EVENT_OBSERVER_BINDING_UNAVAILABLE = Object.freeze(watcherFailure('observer_binding_unavailable'));
 
+/** Why a selected Event is absent from a settled catalog. */
+export function readMissingPluginEventCatalogFailure(
+    plugin?: Pick<PluginProjectionEntry, 'enabled' | 'diagnostics'>,
+): PluginEventAutomationSetupFailure {
+    // A disabled plugin's reported cause explains its absent Event.
+    const diagnostic = plugin?.enabled === false
+        ? plugin.diagnostics.find(row => row.severity === 'error' && !row.contribution)
+        : undefined;
+    if (diagnostic) {
+        const details = diagnostic.details;
+        const reason = details !== null && typeof details === 'object'
+            && 'reason' in details && typeof details.reason === 'string' ? details.reason : diagnostic.code;
+        return { code: diagnostic.code, reason, retryable: false };
+    }
+    return { code: 'event_contribution_not_current', reason: 'event_contribution_not_current', retryable: false };
+}
+
 /** A seed-bound observer must settle when its owners have finished discovery. */
 export function readSeededPluginEventAutomationSetupFailure(params: Readonly<{
     catalogReady: boolean;
@@ -63,20 +80,7 @@ export function readSeededPluginEventAutomationSetupFailure(params: Readonly<{
         return { code: params.catalogFailure, reason: params.catalogFailure, retryable: true, remediation: { kind: 'retry' } };
     }
     if (!params.catalogReady) return null;
-    if (!params.event) {
-        // The catalog owns admission. A disabled plugin's reported cause explains
-        // its absent Event; do not misreport that as a missing declaration.
-        const diagnostic = params.plugin?.enabled === false
-            ? params.plugin.diagnostics.find(row => row.severity === 'error' && !row.contribution)
-            : undefined;
-        if (diagnostic) {
-            const details = diagnostic.details;
-            const reason = details !== null && typeof details === 'object'
-                && 'reason' in details && typeof details.reason === 'string' ? details.reason : diagnostic.code;
-            return { code: diagnostic.code, reason, retryable: false };
-        }
-        return { code: 'event_contribution_not_current', reason: 'event_contribution_not_current', retryable: false };
-    }
+    if (!params.event) return readMissingPluginEventCatalogFailure(params.plugin);
     if (params.discoveryPending || params.selectableWatchers.length > 0) return null;
     return params.watcherFailures[0] ?? EVENT_OBSERVER_BINDING_UNAVAILABLE;
 }
