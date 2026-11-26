@@ -1,9 +1,10 @@
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import type { UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { USAGE_COACH_PREFERENCES_READ_SOURCE, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 type CoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode'>;
 
 export function usagePageReadFamily(source: string): string {
+    if (source === USAGE_COACH_PREFERENCES_READ_SOURCE) return 'how_you_work';
     return source.startsWith('quota:') ? 'quota' : source;
 }
 

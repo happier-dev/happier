@@ -24,6 +24,14 @@ export type UsageCoachSuppressionPort = Readonly<{
     edit(request: UsageCoachSuppressionEdit): Promise<void>;
 }>;
 
+export class UsageCoachSuppressionInvalidResponse extends Error {
+    readonly code = 'invalid_response';
+    constructor() {
+        super('Invalid Coach suppression record');
+        this.name = 'UsageCoachSuppressionInvalidResponse';
+    }
+}
+
 /** Reuse Account JSON KV's mode-aware CAS transport; the Coach owns suppression edits. */
 export function createUsageCoachSuppressionPort(input: Readonly<{
     transport: {
@@ -35,8 +43,9 @@ export function createUsageCoachSuppressionPort(input: Readonly<{
 }>): UsageCoachSuppressionPort {
     const read = async () => {
         const row = await input.transport.read();
-        return { version: row.version,
-            state: UsageCoachSuppressionStateV1Schema.parse(row.value ?? { v: 1, suppressions: [] }) };
+        const state = UsageCoachSuppressionStateV1Schema.safeParse(row.value ?? { v: 1, suppressions: [] });
+        if (!state.success) throw new UsageCoachSuppressionInvalidResponse();
+        return { version: row.version, state: state.data };
     };
     const write = async (state: UsageCoachSuppressionStateV1, version: number) => {
         const result = await input.transport.compareAndSet(state, version);

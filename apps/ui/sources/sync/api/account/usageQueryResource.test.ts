@@ -4123,6 +4123,270 @@ describe('usage query captured Resource adapter', () => {
       } finally { stopReturning(); }
     } finally { slowAccounting.resolve(); slowHistory.resolve(); stopSlow(); stopFast(); }
   });
+  it.each(['session refusal', 'session failure', 'catalog failure', 'suppression failure',
+    'fresh suppression failure with retained Activity', 'recovered suppression with retained Activity',
+    'cold malformed suppression', 'cold unopenable suppression', 'same held suppression failure', 'suppression 503 with Activity replacement held'] as const)(
+    'replays readable Coach evidence beside a %s', async scenario => {
+    const unopenableSuppression = scenario === 'cold unopenable suppression';
+    const secret = new Uint8Array(32).fill(7);
+    const credentials = { token: createServedHomeAccountToken('account-a'), secret: Buffer.from(secret).toString('base64url') };
+    const primary = 'coach-session';
+    const secondary = 'coach-sibling';
+    let changed = false;
+    let suppressionUnavailable = false;
+    let activityUnavailable = false;
+    let holdSuppression = false;
+    let holdActivity = false;
+    const suppressionEntered = createDeferred<void>();
+    const activityEntered = createDeferred<void>();
+    const finishSuppression = createDeferred<void>();
+    const finishActivity = createDeferred<void>();
+    const state = createAccountKvHttpFixture();
+    const composition = { v: 1, evidenceId: 'composition', sessionId: primary, turnId: 'turn', inputId: 'input',
+      observedAtMs: 300, boundary: 'host_pre_dispatch', deliveryKind: 'newTurn', coverage: 'host_only',
+      components: ['a', 'c'].map(source => ({ sourceId: source.repeat(64), digest: 'b'.repeat(64),
+        kind: 'instructions', location: 'user', byteLength: 200, tokenCount: null, tokenizerId: null,
+        cacheClass: 'unknown', overlap: 'none' })), nativePrefix: null, contextWindowTokens: null };
+    const usage = UsageMcpBindingUsageSchema.parse({ v: 2, evidenceId: 'mcp-window', sessionId: primary, turnId: 'turn',
+      observedAtMs: 500, window: { startMs: 400, endMs: 500 }, coverage: 'complete', bindings: [{ serverId: 'server',
+        bindingId: 'rule', serverRevision: 10, bindingRevision: 20, catalogRevision: 40, toolCallCount: 0, schemaBytes: null }] });
+    const encrypted = unopenableSuppression ? await (async () => {
+      const [{ Encryption }, { sealEncryptedDataKeyEnvelopeV1 }] = await Promise.all([
+        import('@/sync/encryption/encryption'), import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1'),
+      ]);
+      const sessionKey = new Uint8Array(32).fill(9);
+      const encryption = await Encryption.create(secret);
+      await encryption.initializeSessions(new Map([primary, secondary].map(id => [id, sessionKey])));
+      const dataEncryptionKey = Buffer.from(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey,
+        recipientPublicKey: encryption.contentDataKey, randomBytes: length => new Uint8Array(length).fill(3) })).toString('base64');
+      return { encryption, dataEncryptionKey };
+    })() : undefined;
+    const captured = await context(async request => {
+      if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: [primary, secondary]
+        .map(id => ({ ...workContribution, id: 'cost-' + id, sessionId: id })) });
+      const detail = /^\/v2\/sessions\/(coach-session|coach-sibling)$/.exec(request.path)?.[1];
+      if (detail) {
+        if (detail === secondary && holdActivity) {
+          activityEntered.resolve();
+          await finishActivity.promise;
+          return Response.json({ error: 'forbidden' }, { status: 403 });
+        }
+        if (detail === secondary && changed && scenario === 'session refusal') return Response.json({ error: 'forbidden' }, { status: 403 });
+        if (detail === secondary && (activityUnavailable || changed && scenario === 'session failure')) return Response.json({ error: 'unavailable' }, { status: 503 });
+        const metadata = { name: 'Coach', path: '/workspace/project', host: 'host',
+          runtimeDescriptorV1: { v: 1 as const, agentId: 'claude' as const, agent: {} } };
+        const plain = createPlainSessionCurrentProjectionRecordFixture({ id: detail, createdAt: 1, updatedAt: 900,
+          seq: 1, active: false, activeAt: 900, metadataVersion: 1, metadata, agentStateVersion: 1 });
+        if (!encrypted) return Response.json({ session: plain });
+        const { ownerMetadata: _owner, displayProjectionV1: _display, ...record } = plain;
+        return Response.json({ session: { ...record, encryptionMode: 'e2ee', metadataLayoutVersion: 0, agentState: null,
+          dataEncryptionKey: encrypted.dataEncryptionKey, metadata: await encrypted.encryption.getSessionEncryption(detail)!.encryptMetadata(metadata) } });
+      }
+      const turns = /^\/v1\/sessions\/(coach-session|coach-sibling)\/turns$/.exec(request.path)?.[1];
+      if (turns) return Response.json({ v: 1, sessionId: turns, updatedAt: 900, turns: unopenableSuppression
+        ? [{ turnId: 'turn', agentId: 'claude', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 }] : [] });
+      if (unopenableSuppression && /^\/v1\/sessions\/(coach-session|coach-sibling)\/messages$/.test(request.path)) {
+        return Response.json({ messages: [], hasMore: false });
+      }
+      if (request.path === '/v1/sessions/coach-session/messages') return Response.json({ messages: [
+        { id: 'composition-row', seq: 1, localId: null, createdAt: 300,
+          content: { t: 'plain', v: { role: 'agent', content: { type: 'event', id: 'composition-event',
+            data: { type: 'prompt-composition', composition } } } } },
+        { id: 'mcp-row', seq: 2, localId: null, createdAt: 500,
+          content: { t: 'plain', v: { role: 'agent', content: { type: 'event', id: 'mcp-window',
+            data: { type: 'mcp-binding-usage', usage } } } } },
+      ], hasMore: false });
+      if (request.path === '/v1/sessions/coach-sibling/messages') return Response.json({ messages: [], hasMore: false });
+      if (request.method === 'PUT' && /^\/v2\/sessions\/(coach-session|coach-sibling)\/system-records$/.test(request.path)) {
+        return successfulUsageFactWrite(request.body);
+      }
+      if (unopenableSuppression && request.path === '/v1/account/encryption/currentness') {
+        return Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(credentials));
+      }
+      if (request.path === '/v1/account/entity-rows/mcp') {
+        if (unopenableSuppression) return Response.json({ status: 'absent' });
+        if (changed && scenario === 'catalog failure') return Response.json({ error: 'unavailable' }, { status: 503 });
+        return Response.json({ status: 'present', revision: 41, content: { t: 'plain', v: { v: 1,
+          servers: [{ id: 'server', name: 'docs', transport: 'stdio', stdio: { command: 'docs', args: [] }, env: {}, createdAt: 1, updatedAt: 10 }],
+          bindings: [{ id: 'rule', serverId: 'server', target: { t: 'allMachines' }, enabled: true, createdAt: 1, updatedAt: 20 }],
+        } } });
+      }
+      if (request.path === '/v1/kv/bulk'
+        && Array.isArray((request.body as { keys?: unknown } | undefined)?.keys)
+        && (request.body as { keys: string[] }).keys.includes(USAGE_COACH_SUPPRESSIONS_KV_KEY)) {
+        if (scenario === 'cold malformed suppression' || unopenableSuppression) {
+          const envelope = unopenableSuppression
+            ? { t: 'encrypted', c: Buffer.alloc(64).toString('base64') }
+            : { t: 'plain', v: { v: 1, suppressions: 'not an array' } };
+          const value = Buffer.from(JSON.stringify(envelope)).toString('base64');
+          return Response.json({ values: [{ key: USAGE_COACH_SUPPRESSIONS_KV_KEY, value, version: 0 }] });
+        }
+        if (holdSuppression) {
+          suppressionEntered.resolve();
+          await finishSuppression.promise;
+        }
+        if (suppressionUnavailable || changed && scenario === 'suppression failure') {
+          return Response.json({ error: 'unavailable' }, { status: 503 });
+        }
+      }
+      return await state.handleFetch(request.url, { method: request.method,
+        ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }) ?? undefined;
+    }, undefined, undefined, unopenableSuppression ? { accountMode: 'e2ee', credentials,
+      encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) } : undefined);
+    const membership = [primary, secondary];
+    storage.setState({ sessions: Object.fromEntries(membership.map(id => [id, createSessionFixture({ id, seq: 1,
+      serverId: captured.accountLifetime.scope.serverId, encryptionMode: unopenableSuppression ? 'e2ee' : 'plain' })])) });
+    const query = normalizeUsageQuery({ session: membership, period: { startMs: 0, endMs: 1000 },
+      includeQuota: false, includeComparison: false, includeWorkEvidence: false });
+    const store = getUsageQueryResourceStore(captured);
+    const entryFor = (queries: (typeof query)[]) => store.getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries }) });
+    const exact = entryFor([query]);
+    const sibling = entryFor([query, normalizeUsageQuery({ ...query, metric: 'cost', includeCoach: false })]);
+    const current = (entry: typeof exact) => {
+      const snapshot = entry.getSnapshot();
+      if (!snapshot.value) throw snapshot.error ?? new Error('Expected admitted Resource content');
+      return decodeUsageQueryResource(snapshot.value).results.find(slice => slice.key === getUsageQueryKey(query))!;
+    };
+    const release = exact.subscribe(() => {}, false);
+    let releaseSibling: (() => void) | undefined;
+    try {
+      const acquired = await exact.refresh();
+      const suppressionPhase = (slice: ReturnType<typeof current>) =>
+        slice.sources.filter(source => source.source === 'how_you_work:coach');
+      const suppressionFailure = [{ source: 'how_you_work:coach', status: 'error', errorCode: 'http_error' }];
+      if (scenario === 'cold malformed suppression' || unopenableSuppression) {
+        expect(acquired.error).toBeUndefined();
+        const slice = current(exact);
+        expect(slice.accounting?.totals.tokens.total).toBe(15);
+        expect(slice.howYouWork?.sessionCoverage).toMatchObject({ selected: 2, admitted: 2 });
+        expect(slice.coach?.findings ?? []).toEqual([]);
+        expect(suppressionPhase(slice)).toEqual([{ source: 'how_you_work:coach', status: 'error', errorCode: unopenableSuppression ? 'account_kv_content_unreadable' : 'invalid_response' }]);
+        expect(slice.sources.filter(source => source.status === 'error')).toEqual(suppressionPhase(slice));
+        return;
+      }
+      const baseline = current(exact).coach?.findings ?? [];
+      const binding = baseline.find(row => row.remedy?.kind === 'mcp_binding');
+      const dismissed = baseline.find(row => row.detectorId === 'duplicated_instructions');
+      expect(binding?.remedy).toMatchObject({ kind: 'mcp_binding', bindingId: 'rule', expectedRevision: 41 });
+      expect(dismissed).toBeDefined();
+      if (!binding || !dismissed) throw new Error('Expected both witnessed Coach findings');
+      await createUiCoachSuppressionPort(captured).edit({ evidenceKey: dismissed.evidenceKey, dismissed: true });
+      changed = true;
+      if (scenario === 'same held suppression failure') {
+        suppressionUnavailable = true;
+        await exact.refresh();
+        expect(suppressionPhase(current(exact))).toEqual(suppressionFailure);
+        holdSuppression = true;
+        activityUnavailable = true;
+        const notices: unknown[] = [];
+        const stopObserving = exact.subscribe(() => {
+          if (exact.getSnapshot().value) notices.push(suppressionPhase(current(exact)));
+        }, false);
+        try {
+          publishHomeAccountChange(captured.accountLifetime.scope.serverId, [secondary], { changeKinds: ['session'], usageQueryAffects: true });
+          const retry = exact.refresh({ failedOnly: true });
+          await suppressionEntered.promise;
+          await vi.waitFor(() => expect(current(exact).sources).toContainEqual(expect.objectContaining({
+            source: 'how_you_work', status: 'stale', errorCode: 'http_error',
+          })));
+          expect(suppressionPhase(current(exact))).toEqual(suppressionFailure);
+          finishSuppression.resolve();
+          expect((await retry).error).toBeUndefined();
+          expect(notices.length).toBeGreaterThan(0);
+          expect(notices.every(phase => JSON.stringify(phase) === JSON.stringify(suppressionFailure))).toBe(true);
+        } finally { stopObserving(); }
+        return;
+      }
+      if (scenario === 'suppression 503 with Activity replacement held') {
+        holdActivity = true;
+        suppressionUnavailable = true;
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, [secondary], { changeKinds: ['session'], usageQueryAffects: true });
+        const replacement = exact.refresh();
+        await activityEntered.promise;
+        await vi.waitFor(() => expect(suppressionPhase(current(exact))).toEqual(suppressionFailure));
+        const pending = current(exact);
+        expect(pending.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'pending' }));
+        expect(pending.accounting?.totals.tokens.total).toBe(15);
+        expect(exact.getSnapshot().error).toBeUndefined();
+        finishActivity.resolve();
+        expect((await replacement).error).toBeUndefined();
+        const settled = current(exact);
+        expect(settled.howYouWork?.sessionCoverage).toMatchObject({ selected: 2, admitted: 1 });
+        expect(settled.sources.find(source => source.source === 'how_you_work:sessions')?.errorCode).toBe('forbidden');
+        expect(suppressionPhase(settled)).toEqual(suppressionFailure);
+        return;
+      }
+      if (scenario === 'fresh suppression failure with retained Activity' || scenario === 'recovered suppression with retained Activity') {
+        const { readUsagePageFailure } = await import('@/components/settings/usage/widgets/usageBodyKit');
+        suppressionUnavailable = true;
+        const recoveredSuppression = scenario === 'recovered suppression with retained Activity';
+        const retriedEntry = recoveredSuppression ? sibling : exact;
+        if (recoveredSuppression) {
+          releaseSibling = sibling.subscribe(() => {}, false);
+          await sibling.refresh({ supersede: false });
+          const refusedPreferences = current(sibling);
+          expect(refusedPreferences.howYouWork?.sessionCoverage).toMatchObject({ admitted: 2 });
+          expect(suppressionPhase(refusedPreferences)).toEqual(suppressionFailure);
+          expect(refusedPreferences.coach?.findings.find(row => row.evidenceKey === dismissed.evidenceKey)?.state.dismissed).toBe(true);
+          suppressionUnavailable = false;
+          // The remote preference has changed without publishing into this tab.
+          state.reset();
+        }
+        activityUnavailable = true;
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, [secondary], { changeKinds: ['session'], usageQueryAffects: true });
+        const retry = await retriedEntry.refresh({ failedOnly: true });
+        expect(retry.error).toBeUndefined();
+        const retained = current(retriedEntry);
+        expect(retained.howYouWork?.sessionCoverage).toMatchObject({ selected: 2, admitted: 2 });
+        expect(retained.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'stale', errorCode: 'http_error' }));
+        if (suppressionUnavailable) {
+          expect(suppressionPhase(retained)).toEqual(suppressionFailure);
+          expect(readUsagePageFailure([retained])).toMatchObject({ retryable: true, quiet: false });
+        } else expect(suppressionPhase(retained)).toEqual([]);
+        expect(retained.coach?.findings.find(row => row.evidenceKey === dismissed.evidenceKey)?.state.dismissed)
+          .toBe(suppressionUnavailable);
+        return;
+      }
+      if (scenario === 'session refusal' || scenario === 'session failure') {
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, [secondary], { changeKinds: ['session'], usageQueryAffects: true });
+      }
+      releaseSibling = sibling.subscribe(() => {}, false);
+      const result = await sibling.refresh({ supersede: false });
+      expect(result.error).toBeUndefined();
+      const slice = current(sibling);
+      expect(slice.pending).toBe(false);
+      expect(slice.accounting?.totals.tokens.total).toBe(15);
+      const finding = slice.coach?.findings.find(row => row.detectorId === binding.detectorId);
+      expect(finding?.state.dismissed).toBe(false);
+      expect(slice.coach?.findings.find(row => row.evidenceKey === dismissed.evidenceKey)?.state.dismissed).toBe(true);
+      if (scenario === 'catalog failure' || scenario === 'session failure') expect(finding?.remedy).toBeNull();
+      if (scenario === 'suppression failure') {
+        expect(slice.sources.filter(source => source.errorCode === 'http_error'))
+          .toEqual([{ source: 'how_you_work:coach', status: 'error', errorCode: 'http_error' }]);
+        const { readUsagePageFailure } = await import('@/components/settings/usage/widgets/usageBodyKit');
+        expect(readUsagePageFailure([slice])).toMatchObject({ retryable: true, quiet: false });
+      }
+      if (scenario === 'session refusal' || scenario === 'suppression failure') {
+        expect(finding?.remedy).toMatchObject({ kind: 'mcp_binding', bindingId: 'rule', expectedRevision: 41 });
+      }
+      if (scenario === 'session refusal') {
+        expect(slice.howYouWork?.sessionCoverage).toMatchObject({ selected: 2, admitted: 1 });
+        expect(slice.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'partial' }));
+        expect(slice.sources.find(source => source.source === 'how_you_work:sessions')?.errorCode).toBe('forbidden');
+      }
+      if (scenario === 'session failure') {
+        expect(slice.howYouWork?.sessionCoverage).toMatchObject({ selected: 2, admitted: 2 });
+        expect(slice.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'stale', errorCode: 'http_error' }));
+      }
+    } finally {
+      finishSuppression.resolve();
+      finishActivity.resolve();
+      releaseSibling?.();
+      release();
+    }
+  });
+
   it('waits for current Coach evidence and its binding catalog before completing a coach-ready query', async () => {
     const privateSession = createDeferred<Response>();
     const catalogRead = createDeferred<Response>();

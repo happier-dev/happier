@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
+import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 
 //
@@ -171,7 +172,7 @@ export async function kvBulkGet(
                 }
                 throw new HappyError(message, false);
             }
-            throw new Error(`Failed to bulk get KV values: ${response.status}`);
+            throw new RetryableServerResponseError(response.status, `Failed to bulk get KV values: ${response.status}`);
         }
 
         const data = await response.json() as KvBulkGetResponse;

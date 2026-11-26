@@ -686,6 +686,8 @@ export function isUsageQuerySourceOutstanding(query: UsageQuery, source: UsageQu
       : source.source === 'how_you_work' ? query.includeSessionEvidence === true : true);
 }
 
+export const USAGE_COACH_PREFERENCES_READ_SOURCE = 'how_you_work:coach';
+
 function isUsageDetailPhase(source: UsageQuerySourceState): boolean {
   return source.source.startsWith('how_you_work:');
 }
@@ -1171,11 +1173,16 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         ...(detailUpdateRequired === undefined ? {} : { updateRequired: detailUpdateRequired }),
         ...(detailAsOfMs === undefined ? {} : { asOfMs: detailAsOfMs }),
       } : initialDetailSource && { ...priorDetailSource, ...initialDetailSource };
-    // The base source reports replacement progress or a new failure. The
-    // qualified phases must describe the same admission as the private detail.
+    const currentDetailPhases = query.includeSessionEvidence
+      ? detailProgress?.sources ?? sourceStates.filter(isUsageDetailPhase) : [];
+    // Retained Activity carries its own phases. Coach preferences report the
+    // current acquisition, independently of whether Activity could be read.
     const detailPhases = !query.includeSessionEvidence ? [] : retainedPrivateDetail
-      ? retainedPrivateDetail.sources.filter(isUsageDetailPhase)
-      : detailProgress?.sources ?? sourceStates.filter(isUsageDetailPhase);
+      ? [
+        ...retainedPrivateDetail.sources.filter(source => isUsageDetailPhase(source) && source.source !== USAGE_COACH_PREFERENCES_READ_SOURCE),
+        ...currentDetailPhases.filter(source => source.source === USAGE_COACH_PREFERENCES_READ_SOURCE),
+      ]
+      : currentDetailPhases;
     const sources: UsageQuerySourceState[] = [
       projectUsageAccountingReadState('accounting', snapshot, priorAccountingSource),
       ...projectUsageAccountingSourceStates(snapshot?.value),

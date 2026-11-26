@@ -13,7 +13,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources, readUsageWorkSessionTurns } from '@happier-dev/protocol/usage/usageWorkSources';
 import { hasSameUsageQueryWorkEvidenceMembership } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { USAGE_COACH_PREFERENCES_READ_SOURCE, readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
@@ -86,6 +86,7 @@ import { createUsageQuerySessionInputs, getUsageQuerySessionInputDemand, usageSe
 import { UsageQueryEvidencePhase } from './usageQueryEvidencePhase';
 import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
+import { UsageCoachSuppressionInvalidResponse } from '@happier-dev/protocol/usage/coach/coachActions';
 import { createUiCoachSuppressionPort } from './usageCoachSuppressions';
 import type { UsageHistoryReadState } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { UsageHistoryEntry, readUsageHistoryFailure } from './usageHistoryReadState';
@@ -1675,6 +1676,21 @@ export async function readUiUsageQueryBatch(
     let quota: OpenedQuotaRead = quotaQueries.length ? readOpenedQuota(context, quotaQueries, previous) : { status: 'not_loaded' };
     let pools: readonly UsagePoolSourceSnapshot[] = quotaQueries.length ? readOpenedUsagePools(context, quotaQueries) : [];
     const priorSlices = new Map(previous?.results.map(slice => [slice.key, slice]));
+    const coachQueryKeys = evidenceQueries.filter(query => query.includeCoach !== false).map(getUsageQueryKey);
+    const priorCoachPhases = new Map(coachQueryKeys.flatMap(key => {
+        const prior = priorSlices.get(key)?.sources.find(source => source.source === USAGE_COACH_PREFERENCES_READ_SOURCE);
+        return prior ? [[key, prior] as const] : [];
+    }));
+    let coachSuppression: UsageQuerySourceState | null | undefined;
+    const projectCurrentDetailPhases = () => {
+        if (coachSuppression === null || !coachSuppression && priorCoachPhases.size === 0) return howYouWorkSourcesByQuery;
+        const phases = new Map(howYouWorkSourcesByQuery);
+        for (const key of coachQueryKeys) {
+            const coach = coachSuppression ?? priorCoachPhases.get(key);
+            if (coach) phases.set(key, [...(phases.get(key) ?? []), coach]);
+        }
+        return phases;
+    };
     let admittedPrevious = previous;
     let projectionNowMs = accountingNowMs;
     // All effects share this read's lifetime; snapshots are published directly
@@ -1691,7 +1707,7 @@ export async function readUiUsageQueryBatch(
                 if (answer) answer.prepared = prepared;
                 return prepared;
             },
-            work, howYouWork, howYouWorkSourcesByQuery, settledHowYouWorkQueries, evidenceQueries, quota, pools, priorSlices, mcpCatalog,
+            work, howYouWork, howYouWorkSourcesByQuery: projectCurrentDetailPhases(), settledHowYouWorkQueries, evidenceQueries, quota, pools, priorSlices, mcpCatalog,
             coachSuppressions: accountOwner.coachSuppressions,
             sourceLocations: Object.values(readOpenedQuotaScope(context)?.state.machines ?? {}).flatMap(machine => {
                 const displayLocation = readMachineName(machine);
@@ -1812,14 +1828,27 @@ export async function readUiUsageQueryBatch(
         }));
         await Promise.all([
         (async () => {
-            if (!evidenceQueries.some(query => query.includeCoach !== false)) return;
-            await accountOwner.readCoachSuppressions(async () => {
-                const state = await createUiCoachSuppressionPort(context, signal,
-                    async () => (await readSessionCurrentness()).read()).read();
+            if (coachQueryKeys.length === 0) return;
+            const priorSuppressions = accountOwner.coachSuppressions;
+            let errorCode: string | undefined;
+            try {
+                await accountOwner.readCoachSuppressions(async () => {
+                    const state = await createUiCoachSuppressionPort(context, signal,
+                        async () => (await readSessionCurrentness()).read()).read();
+                    requireCurrent(context, signal);
+                    return state;
+                });
+            } catch (error) {
                 requireCurrent(context, signal);
-                return state;
-            });
-            publish();
+                const failure = readUsageHistoryFailure(error);
+                if (failure.errorCode !== 'account_kv_content_unreadable'
+                    && !(error instanceof UsageCoachSuppressionInvalidResponse) && !isTransientConnectivityError(error)) throw error;
+                errorCode = failure.errorCode;
+            }
+            coachSuppression = errorCode === undefined ? null
+                : { source: USAGE_COACH_PREFERENCES_READ_SOURCE, status: 'error', errorCode };
+            if (coachQueryKeys.some(key => priorCoachPhases.get(key)?.errorCode !== errorCode)
+                || !sameStrictJsonValue(priorSuppressions, accountOwner.coachSuppressions)) publish();
         })(),
         ...accountingTasks.values(),
         ...queries.map(async (query, index) => {
