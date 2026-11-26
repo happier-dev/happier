@@ -1822,6 +1822,12 @@ slot. The Neon transport still reads its password there. Create adds the closed
 development Home, controller, and Workbench declarations need to load together for setup.
 Providers that omit the endpoint continue using their own read transport.
 
+When an approved Create read-only login Action saves the login and binding
+then fails, its recorded failure exposes the Saved Secret reference and
+resource revision for recovery. The Workbench uses those fields to preselect
+the login in Attach. The closed details shape shares Attach's selection
+validators and carries only those two fields.
+
 Workbench target descriptors optionally carry `endpointLabel`, projected by the connection
 owner from hostname and explicit port only. Credentials and URL options stay private.
 Descriptors without this fact remain unknown; Machine names come from the existing

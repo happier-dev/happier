@@ -3,7 +3,7 @@ import tweetnacl from 'tweetnacl';
 import { StoredTargetActionApprovalRequestV1Schema, TargetActionApprovalRequestV1Schema } from './targetActionApprovalRequestV1';
 import { ActionOperationCredentialUseV1Schema } from '../actions/actionExecutionResult';
 import { buildApprovalRequesterConfirmationV1 } from './approvalRequestV1';
-import { buildApprovalExecutionOriginV1 } from '../actions/actionExecutor';
+import { buildActionExecuteResultFromRecordedApprovalExecution, buildApprovalExecutionOriginV1 } from '../actions/actionExecutor';
 import type { ActionExecutorContext } from '../actions/executor/types';
 import { ExternalActionExecutionAuthorizationV1Schema } from '../actions/externalActionApi';
 import {
@@ -14,6 +14,38 @@ import {
 import { SessionActionRpcOriginV1Schema } from '../rpc/socket';
 import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority';
 import { admitTargetActionApprovalTransition, settleTargetActionApprovalReplayInputs } from './targetActionApprovalRequestTransition';
+import { DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1 } from '../actions/actionIdsDatabaseV1';
+import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1';
+
+it('reads only the Saved Secret selection from an approved database Apply binding failure', () => {
+  const details = { savedSecretRef: formatSharedSavedSecretRefV1('railway-reader'), resourceRevision: 3 };
+  const errorCode = 'database_read_role_binding_failed';
+  const request = {
+    v: 1, kind: 'plugin_target_action', status: 'failed', createdAtMs: 1, updatedAtMs: 3,
+    createdBy: { surface: 'system' }, requestedSurface: 'api', qualifiedActionId: DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
+    input: null, approvalInputCustody: 'live_only', sourceCustody: {
+      kind: 'bundled_first_party', packagedRuntime: { kind: 'source_declaration', packageName: '@happier-dev/plugins-database-workbench' },
+    },
+    replayPlacement: { serverId: 'home', machineId: 'controller' },
+    executionOriginV1: {
+      v: 1, authority: 'account_automation', surface: 'api', caller: { kind: 'host' },
+      serverId: 'home', machineId: 'controller', accountId: 'owner', principalId: 'principal',
+      credentialId: 'credential', actionId: 'action.invoke', requestId: 'read-access-apply',
+    },
+    policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64), summary: 'Create read-only login',
+    decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' },
+    execution: { executedAtMs: 3, ok: false, errorCode, error: errorCode, effectAttempted: true,
+      details: { ...details, role: 'railway_reader', unexpected: 'discard-me' } },
+  };
+  const read = (value: unknown) => buildActionExecuteResultFromRecordedApprovalExecution(
+    TargetActionApprovalRequestV1Schema.parse(value),
+  );
+  const failure = { ok: false, errorCode, error: errorCode, effectAttempted: true };
+  expect(read(request)).toEqual({ ...failure, details });
+  expect(read({ ...request, qualifiedActionId: 'acme.unrelated/actions/run' })).toEqual(failure);
+  expect(read({ ...request, execution: { ...request.execution, details: { ...details, resourceRevision: 0 } } }))
+    .toEqual(failure);
+});
 
 describe('TargetActionApprovalRequestV1Schema', () => {
   it('settles live-only operands after subject admission and accepts an idempotent terminal retry', () => {

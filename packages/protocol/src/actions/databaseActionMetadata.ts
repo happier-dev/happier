@@ -1,6 +1,18 @@
 import * as database from './actionIdsDatabaseV1.js';
 import type { PluginActionContributionV2 } from '../plugins/actions/v2.js';
 import { pluginActionDeclarationIsReadOnlyForInput } from '../plugins/actions/readOnly.js';
+import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
+import * as z from '../zodRuntimePolicy.js';
+
+/** The Create Action discloses the saved login's selection when binding fails after Save. */
+export const databaseReadAccessCreateApprovalFailure = {
+    actionId: database.DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
+    errorCode: 'database_read_role_binding_failed',
+    detailsSchema: z.strictObject({
+        savedSecretRef: SharedSavedSecretReferenceSelectionV1Schema.shape.ref,
+        resourceRevision: SharedSavedSecretReferenceSelectionV1Schema.shape.resourceRevision,
+    }),
+} as const;
 
 type Metadata = Pick<PluginActionContributionV2,
     'title' | 'dangerLevel' | 'readOnly' | 'placementBindings' | 'confirmation' | 'confirmationWhen'

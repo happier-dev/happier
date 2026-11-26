@@ -23,6 +23,13 @@ import { databaseActionLocalIdV1, type PluginClientActionHandler } from '@happie
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
+import { buildActionExecuteResultFromRecordedApprovalExecution } from '@happier-dev/protocol/actions/actionExecutor';
+import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
+import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
+import { PluginUiActionControlExecutionV1Schema } from '@happier-dev/protocol/plugins/ui/actionControl';
+import { decryptWithDataKeyResult, encryptWithDataKey } from '../../../../../../apps/cli/src/api/encryption';
+import { settleTargetActionExecution } from '../../../../../../apps/cli/src/session/actions/approvals/targetActionSettlement';
 import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import { computeSha256HexDigest, createCanonicalJsonSigningInput, PluginError } from '@happier-dev/plugin-sdk';
 import {
@@ -592,12 +599,14 @@ describe('Database workbench surfaces', () => {
   });
 
   it.each([
-    ['postgresql', 'PostgreSQL', 'applied'],
-    ['mysql', 'MySQL', 'applied'],
-    ['postgresql', 'PostgreSQL', 'recoverable binding failure'],
-    ['postgresql', 'PostgreSQL', 'binding failure without a secret'],
-  ] as const)('identifies Railway %s (%s) through setup, review and %s settlement',
-    async (engine, engineName, outcome) => {
+    ['postgresql', 'PostgreSQL', 'applied', 'direct'],
+    ['mysql', 'MySQL', 'applied', 'direct'],
+    ['postgresql', 'PostgreSQL', 'recoverable binding failure', 'direct'],
+    ['postgresql', 'PostgreSQL', 'binding failure without a secret', 'direct'],
+    ['postgresql', 'PostgreSQL', 'recoverable binding failure', 'browser approval'],
+    ['mysql', 'MySQL', 'binding failure without a secret', 'browser approval'],
+  ] as const)('identifies Railway %s (%s) through setup, review and %s settlement (%s)',
+    async (engine, engineName, outcome, approval) => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
         targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway-data', contributionId: engine },
         platformProjectId: 'project', branchId: 'branch', database: 'railway' } as const;
@@ -622,6 +631,7 @@ describe('Database workbench surfaces', () => {
       ? 'The database login and its Saved Secret were created, but binding it did not complete. Use the existing read-only login to finish.'
       : 'The database login was created, but its Saved Secret was not saved.';
     let configured = false;
+    let approvedFailureRecorded = false;
     const daemon = daemonAnswers([connected]);
     const execute = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async ({ action, input }) => {
       if (action === attach) {
@@ -635,11 +645,57 @@ describe('Database workbench surfaces', () => {
       }
       expect(input).toEqual({ target, mode: 'apply', role: 'happier_read', statements });
       if (outcome !== 'applied') {
-        return { ok: false, errorCode: 'database_read_role_binding_failed', error: bindingFailureMessage,
+        const failure = { ok: false as const, errorCode: 'database_read_role_binding_failed', error: bindingFailureMessage,
           effectAttempted: true, details: { role: 'happier_read',
             ...(outcome === 'recoverable binding failure' ? { savedSecretRef, resourceRevision } : {}) },
-          failureCause: { phase: 'deployment.bindings.prepare.destination', errorClass: 'Error',
+          failureCause: { phase: 'deployment.bindings.prepare.destination', errorClass: 'Error' as const,
             errorCode: 'deployment_conflict', httpStatus: null } };
+        if (approval === 'direct') return failure;
+        // In-memory required-E2EE Artifact storage and a remote database refusal.
+        // Consent, encryption, settlement and recorded-result reading use production owners.
+        const dataKey = new Uint8Array(32).fill(23);
+        let ciphertext = encryptWithDataKey(TargetActionApprovalRequestV1Schema.parse({
+          v: 1, kind: 'plugin_target_action', status: 'open', createdAtMs: 1, updatedAtMs: 1,
+          createdBy: { surface: 'system' }, requestedSurface: 'api', qualifiedActionId: DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
+          input, secretInputPaths: [], replayPlacement: { serverId, machineId },
+          executionOriginV1: {
+            v: 1, authority: 'account_automation', surface: 'api', caller: { kind: 'host' },
+            serverId, machineId, accountId: 'owner', principalId: 'principal',
+            credentialId: 'credential', actionId: 'action.invoke', requestId: 'database-apply',
+          },
+          sourceCustody: { kind: 'bundled_first_party', packagedRuntime: {
+            kind: 'source_declaration', packageName: '@happier-dev/plugins-database-workbench',
+          } },
+          policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64), summary: 'Create read-only login',
+        }), dataKey);
+        const read = async () => {
+          const opened = decryptWithDataKeyResult(ciphertext, dataKey);
+          if (opened.status !== 'authenticated') throw new Error('Could not open the approval Artifact');
+          return TargetActionApprovalRequestV1Schema.parse(opened.value);
+        };
+        const decide = createTargetActionApprovalDecision({
+          now: () => 2,
+          read,
+          update: async ({ request }) => {
+            const admitted = admitTargetActionApprovalTransition(await read(), request);
+            if (admitted.ok) ciphertext = encryptWithDataKey(request, dataKey);
+            return admitted;
+          },
+          executeApproved: async ({ request, persist, nextTimestamp }) => {
+            const executing = { ...request, status: 'executing' as const, updatedAtMs: nextTimestamp(request) };
+            expect(await persist(executing)).toBeNull();
+            return settleTargetActionExecution({ request: executing, result: failure, persist,
+              operationCredentialUses: [], executedAtMs: nextTimestamp(executing) });
+          },
+        });
+        expect(await decide({ artifactId: 'database-apply', decision: 'approve',
+          context: { surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner' },
+        })).toMatchObject({ ok: false, errorCode: failure.errorCode });
+        const receipt = await read();
+        approvedFailureRecorded = receipt.status === 'failed' && receipt.decision?.authority === 'present_user';
+        const recorded = buildActionExecuteResultFromRecordedApprovalExecution(receipt);
+        if (!recorded || recorded.ok) throw new Error('Expected an approved database Apply failure receipt');
+        return PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(recorded));
       }
       configured = true;
       return { ok: true, result: { ok: true, status: 'configured' } };
@@ -701,9 +757,14 @@ describe('Database workbench surfaces', () => {
       if (outcome !== 'applied') {
         expect(configured).toBe(false);
         expect(execute.mock.calls.map(([{ action }]) => action)).toEqual([create, create]);
+        if (approval === 'browser approval') {
+          await execute.mock.results[1]?.value;
+          expect(approvedFailureRecorded).toBe(true);
+        }
         if (outcome === 'binding failure without a secret') {
-          expect(await fixture.getByText(bindingFailureMessage)).toBeTruthy();
+          if (approval === 'direct') expect(await fixture.getByText(bindingFailureMessage)).toBeTruthy();
           expect(await fixture.queryByRole('button', { name: attachTitle })).toBeUndefined();
+          expect(await fixture.queryByRole('button', { name: 'Create read-only login' })).toBeTruthy();
           return;
         }
         // The login exists and is saved: using it is the one way forward, and a second login is not offered.
