@@ -193,6 +193,66 @@ it.each(['plain', 'e2ee'] as const)('keeps public %s Review list pages bodyless 
     expect(measurements.every(row => row.candidateRows > 0 && row.artifactQueries > 0)).toBe(true);
 });
 
+it('filters public Review pages by the shared Updated bounds before every grant-arm LIMIT', async () => {
+    const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const team = await db.team.create({ data: { name: 'Updated Review readers' } });
+    const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: 'member' } });
+    await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+    const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Updated Review group' } });
+    await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
+        teamMembershipId: membership.id, nativeContribution: true } });
+    const projectSourceId = randomUUID();
+    const make = (atMs: number, arm: number) => ({ id: randomUUID(), accountId: arm === 0 ? reader.id : owner.id,
+        header: randomBytes(32), body: randomBytes(64), dataEncryptionKey: randomBytes(32), updatedAt: new Date(atMs) });
+    const wanted = [make(999, 0), make(1000, 0), make(1000, 1), make(2000, 2), make(2000, 3), make(2001, 1)];
+    const noise = Array.from({ length: 1000 }, (_, index) => make(10_000 + index, index % 4));
+    const rows = [...wanted, ...noise];
+    for (let offset = 0; offset < rows.length; offset += 500) {
+        const chunk = rows.slice(offset, offset + 500);
+        await db.artifact.createMany({ data: chunk });
+        await db.reviewMetadata.createMany({ data: chunk.map(row => ({ artifactId: row.id, projectSourceId,
+            subjectKind: 'comparison', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
+            // Updated means the Artifact list timestamp, not round start/finish metadata.
+            startedAt: new Date(99_999), finishedAt: new Date(100_000) })) });
+        await db.artifactGrant.createMany({ data: chunk.flatMap((row, index) => row.accountId === reader.id ? [] : [{
+            artifactId: row.id, createdByAccountId: owner.id, accessLevel: 'view',
+            ...((offset + index) % 3 === 0 ? { principalKind: 'account', accountId: reader.id }
+                : (offset + index) % 3 === 1 ? { principalKind: 'team', teamId: team.id }
+                    : { principalKind: 'group', teamGroupId: group.id }),
+        }]) });
+    }
+    const token = await auth.createToken(reader.id, undefined, { kind: 'account', authority: 'present_user' });
+    const executor = createActionExecutor(createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }));
+    const context = { surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true } as const;
+    const base = { limit: 2, projectSourceId };
+    const read = async (input: unknown) => {
+        const result = await executor.execute('reviews.list', input, context);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        if (!result.ok) throw new Error('Expected authorized Updated Review page');
+        return ReviewListResponseV1Schema.parse(result.result);
+    };
+    const sort = (items: typeof wanted) => [...items].sort((left, right) =>
+        right.updatedAt.getTime() - left.updatedAt.getTime() || right.id.localeCompare(left.id));
+    expect((await read(base)).items.map(row => row.reviewId)).toEqual(sort(noise).slice(0, 2).map(row => row.id));
+    const range = { ...base, updated: { op: 'between', fromMs: 1000, toMs: 2000 } };
+    const expected = sort(wanted.filter(row => row.updatedAt.getTime() >= 1000 && row.updatedAt.getTime() <= 2000));
+    const first = await read(range);
+    expect(first.items.map(row => row.reviewId)).toEqual(expected.slice(0, 2).map(row => row.id));
+    expect(first.cursor).toEqual(expect.any(String));
+    const second = await read({ ...range, cursor: first.cursor });
+    expect(second.items.map(row => row.reviewId)).toEqual(expected.slice(2).map(row => row.id));
+    expect(second.cursor).toBeNull();
+    expect([...first.items, ...second.items].map(row => row.counts)).toEqual(Array.from({ length: 4 }, () => ({ total: 0, needsDecision: 0 })));
+    expect((await read({ ...base, updated: { op: 'before', atMs: 1000 } })).items.map(row => row.reviewId)).toEqual([wanted[0]!.id]);
+    expect((await read({ ...base, reviewIds: wanted.map(row => row.id), updated: { op: 'after', atMs: 2000 } }))
+        .items.map(row => row.reviewId)).toEqual([wanted[5]!.id]);
+    expect(await executor.execute('reviews.list', { ...range, updated: { ...range.updated, fromMs: 1001 }, cursor: first.cursor }, context))
+        .toMatchObject({ ok: false, errorCode: 'review_comment_invalid_filter' });
+    expect(await executor.execute('reviews.list', { ...range, updated: { op: 'between', fromMs: 2000, toMs: 1000 } }, context))
+        .toMatchObject({ ok: false });
+});
+
 it('keeps list and Inbox reads bodyless and proportional to current rounds while detail preserves verdict history', async () => {
     const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
     const reviewId = randomUUID();

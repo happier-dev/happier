@@ -52,8 +52,11 @@ export async function listReviewsInTx(tx: Tx, input: ReviewListRequestV1 & { act
     const { actorAccountId, ...request } = input;
     const parsed = ReviewListRequestV1Schema.parse(request);
     const { needsDecision: _needsDecision, sharedWithTeamId: _team, cursor: _cursor,
-        limit: _limit, spaceId: _space, spaceMembershipMode: _mode, reviewIds, ...metadata } = parsed;
+        limit: _limit, spaceId: _space, spaceMembershipMode: _mode, reviewIds, updated, ...metadata } = parsed;
     const smart: Prisma.ArtifactWhereInput = { reviewMetadata: { is: metadata },
+        ...(updated === undefined ? {} : { updatedAt: updated.op === 'between'
+            ? { gte: new Date(updated.fromMs), lte: new Date(updated.toMs) }
+            : updated.op === 'before' ? { lt: new Date(updated.atMs) } : { gt: new Date(updated.atMs) } }),
         ...(parsed.needsDecision === undefined ? {} : { reviewComments: {
             [parsed.needsDecision ? 'some' : 'none']: reviewNeedsDecisionWhere(),
         } }),

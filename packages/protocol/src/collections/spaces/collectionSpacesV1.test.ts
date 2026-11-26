@@ -4,6 +4,7 @@ import { CollectionSpacesStoredReadV1Schema, CollectionSpacesV1Schema, createDef
     reduceCollectionSpacesV1, resolveCollectionSpacesV1, resolveCollectionSpaceSelectionV1, selectCollectionSpaceV1,
     type CollectionSpaceOperationV1, type CollectionSpacesV1 } from './collectionSpacesV1.js';
 import { matchSessionListFilterV1 } from '../../sessions/listFilter/sessionListFilterV1.js';
+import { compileReviewListFilterV1 } from '../../reviews/reviewListFilterV1.js';
 
 function invoke(catalog: CollectionSpacesV1, input: CollectionSpaceOperationV1): CollectionSpacesV1 {
     const admitted = SettingsDeclarationActionInputSchemasV1['settings.invoke'].parse({ anchor: 'session.list.spaces', input });
@@ -16,6 +17,19 @@ const empty: CollectionSpacesV1 = { v: 1, spaces: [] };
 const custom = (id: string) => ({ ...createDefaultCollectionSpaceV1('sessionWork'), id, name: id });
 
 describe('collection spaces', () => {
+    it('retains a Review Updated range through settings and evaluates record timestamps with shared time semantics', () => {
+        const space = { ...createDefaultCollectionSpaceV1('review'), id: 'updated-reviews', name: 'Updated reviews',
+            filter: { updated: { op: 'between' as const, fromMs: 1000, toMs: 2000 } } };
+        const saved = invoke(empty, { kind: 'collection_space', entityKind: 'review', mutation: { op: 'create', space } });
+        const reopened = CollectionSpacesStoredReadV1Schema.parse(saved).spaces.find(candidate => candidate.id === space.id);
+        if (reopened?.entityKind !== 'review') throw new Error('Expected the saved Review space');
+        expect(reopened.filter).toEqual(space.filter);
+        const match = compileReviewListFilterV1(reopened.filter);
+        expect([999, 1000, 2000, 2001].map(updatedAt => match({ updatedAt }))).toEqual(['miss', 'match', 'match', 'miss']);
+        expect(match({})).toBe('unavailable');
+        expect(compileReviewListFilterV1({ updated: { op: 'before', atMs: 1000 } })({ updatedAt: 1000 })).toBe('miss');
+        expect(compileReviewListFilterV1({ updated: { op: 'after', atMs: 2000 } })({ updatedAt: 2000 })).toBe('miss');
+    });
     it('persists Review space selection mode without storing a member inventory or Session tags', () => {
         const catalog = CollectionSpacesV1Schema.parse({ v: 1, spaces: [{ entityKind: 'review', id: 'manual-reviews',
             name: 'Manual reviews', icon: { kind: 'icon', name: 'list' }, filter: {}, includeNeedsYouEverywhere: false,

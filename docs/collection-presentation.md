@@ -439,7 +439,14 @@ placement from filter clauses or consult a later sidebar selection.
 
 In unreleased 0.3 source, Review spaces use the same collection definition owner,
 with Review metadata filters and a `manual_only` or `filter_or_manual` membership
-mode. Their actual members live in the organization owner's
+mode. Review `updated` uses the shared `UpdatedSelectionV1` absolute bounds on
+the Artifact's `updatedAt`, matching list order: Before and After are strict,
+Between includes both endpoints. The public Action, saved-space definition and
+server list share that filter schema. Each authorized candidate query applies
+the range before its page limit, and continuation is bound to the full filter.
+This is an unreleased 0.3 input addition; matching Protocol and server consumers
+are required, and older strict request readers reject the new operand.
+Their actual members live in the organization owner's
 `ResourceSpaceMembership` relation, scoped by the organizing Account, space and
 Artifact id. They are never stored as a settings inventory, Session tags or
 Review header fields. The organization mutation admits Artifact View access once;
