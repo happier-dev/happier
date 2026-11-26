@@ -1,3 +1,5 @@
+import { createPluginSurfaceHostReadStore } from '@/components/plugins/surfaces/pluginSurfaceHostReadStore';
+import { UsageRecapComposeResultSchema } from '@happier-dev/protocol/usage/usageRecap';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
@@ -9,7 +11,7 @@ import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttp
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { USAGE_HISTORY_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { UsageHistoryReadStateSchema, type UsageHistoryReadInput } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import * as usageSessionEvidence from '@happier-dev/protocol/usage/usageSessionEvidence';
 import type { UsageWorkEvidence } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
@@ -8667,6 +8669,519 @@ describe('usage query captured Resource adapter', () => {
     } finally { transcript.resolve(Response.json({ messages: [], hasMore: false })); await summaryRead; releaseDetail?.(); release(); }
   });
 
+  it.each(['two exact views', 'retained census', 'census replacement 503', 'ordinary 503'] as const)(
+    'replaces published private Activity on a Session refusal edge (%s)', async scenario => {
+    const retiredId = 'previously-shared';
+    const otherId = 'viewer-owned';
+    const reads = new Map<number, number>();
+    const transcripts = new Map<number, number>();
+    let deny = false;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
+      const start = 'startMs' in demand.query.period ? demand.query.period.startMs ?? 0 : 0;
+      const phase = demand.query.includeTranscriptEvidence ? transcripts : reads;
+      const count = (phase.get(start) ?? 0) + 1;
+      phase.set(start, count);
+      if (deny && (scenario === 'ordinary 503' && start === 30
+        || scenario === 'census replacement 503' && start === 20)) return new Response(null, { status: 503 });
+      if (count > 4) throw new Error('Unexpected repeating Session acquisition');
+      const ids = demand.sessionIds ?? (demand.query.session === null
+        ? (deny ? [otherId] : [retiredId, otherId])
+        : typeof demand.query.session === 'string' ? [demand.query.session] : demand.query.session);
+      return Response.json({ requests: [{ query: demand.query, sessionIds: ids }], results: ids.map(id => {
+        if (deny && id === retiredId) return { sessionId: id, detail: { status: 403, body: { error: 'forbidden' } } };
+        const startedAt = id === retiredId ? 100 : 500;
+        return { sessionId: id,
+          detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id,
+            createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900,
+            metadata: { name: id, machineId: 'shared-fixture-machine', path: '/fixture', host: 'test' } }) } },
+          turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900, turns: [
+            { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt, terminalAt: startedAt + 300, updatedAt: 900 },
+          ] } },
+          ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
+        };
+      }) });
+    });
+    const store = getUsageQueryResourceStore(captured);
+    const entryFor = (startMs: number, session: string[] | null) => store.getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [normalizeUsageQuery({
+        session, period: { startMs, endMs: 1000 }, includeQuota: false, includeComparison: false,
+        includeSessionEvidence: true, includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false,
+      })] }) });
+    const slice = (entry: ReturnType<typeof entryFor>) => {
+      const value = entry.getSnapshot().value;
+      return value && decodeUsageQueryResource(value).results[0];
+    };
+    const time = (entry: ReturnType<typeof entryFor>) => slice(entry)?.howYouWork?.intervals?.agentTimeMs;
+    const cause = (entry: ReturnType<typeof entryFor>) =>
+      slice(entry)?.sources.find(source => source.source === 'how_you_work:sessions')?.errorCode;
+    const first = entryFor(10, [retiredId, otherId]);
+    const census = scenario === 'retained census' || scenario === 'census replacement 503';
+    const second = entryFor(20, census ? null : [retiredId]);
+    const settled = (entry: ReturnType<typeof entryFor>, expected: number | undefined) => {
+      expect(entry.getSnapshot().pending).toBe('idle');
+      expect(time(entry)).toBe(expected);
+    };
+    const pending = [false, false];
+    const stops = [first, second].map((entry, index) => entry.subscribe(() => {
+      if (deny && entry.getSnapshot().pending === 'refresh') pending[index] = true;
+    }, true));
+    try {
+      await vi.waitFor(() => {
+        settled(first, 600);
+        settled(second, census ? 600 : 300);
+      });
+      const aged = scenario === 'two exact views' ? entryFor(19, [retiredId]) : undefined;
+      await aged?.refresh({ supersede: false });
+      if (aged) settled(aged, 300);
+      const agedReads = reads.get(19);
+      const counts = [reads.get(10)!, reads.get(20)!];
+      const ownTranscriptReads = transcripts.get(10);
+      deny = true;
+      const refusing = entryFor(30, [retiredId]);
+      await refusing.refresh({ supersede: false });
+      if (scenario === 'ordinary 503') {
+        expect(cause(refusing)).toBe('http_error');
+        settled(first, 600);
+        settled(second, 300);
+        expect([reads.get(10), reads.get(20)]).toEqual(counts);
+        expect(pending).toEqual([false, false]);
+        return;
+      }
+      const expectReplacement = () => {
+        expect([reads.get(10), reads.get(20)], 'one Home acquisition per affected settled entry')
+          .toEqual(counts.map(count => count + 1));
+        expect(pending).toEqual([true, true]);
+        expect(transcripts.get(10), 'unaffected converted evidence is retained').toBe(ownTranscriptReads);
+        settled(first, 300);
+        expect(cause(first)).toBe('forbidden');
+        settled(second, census ? 300 : undefined);
+        expect(cause(second)).toBe(scenario === 'retained census' ? undefined : 'forbidden');
+      };
+      await vi.waitFor(expectReplacement);
+      if (aged) {
+        expect(reads.get(19)).toBe(agedReads);
+        const stopAged = aged.subscribe(() => {}, true);
+        try {
+          await vi.waitFor(() => { settled(aged, undefined); expect(cause(aged)).toBe('forbidden'); });
+          expect(reads.get(19)).toBe(agedReads! + 1);
+        } finally { stopAged(); }
+      }
+      await entryFor(31, [retiredId]).refresh({ supersede: false });
+      expectReplacement();
+      deny = false;
+      const recovered = entryFor(32, [retiredId]);
+      const stopRecovery = recovered.subscribe(() => {}, true);
+      try {
+        await vi.waitFor(() => { settled(recovered, 300); expect(cause(recovered)).toBeUndefined(); });
+        const before = reads.get(32)!;
+        deny = true;
+        await entryFor(33, [retiredId]).refresh({ supersede: false });
+        await vi.waitFor(() => { settled(recovered, undefined); expect(cause(recovered)).toBe('forbidden'); });
+        expect(reads.get(32)).toBe(before + 1);
+        expectReplacement();
+      } finally { stopRecovery(); }
+    } finally { for (const stop of stops) stop(); }
+  });
+
+  const fallbackWindows = ['fixed', 'rolling same day', 'rolling next day'] as const;
+  const fallbackFailures = ['Session evidence 503', 'thrown batch', 'census 503'] as const;
+  it.each([
+    ...fallbackWindows.flatMap(window => fallbackFailures.flatMap(failure =>
+      [true, false].map(refused => ({ window, failure, refused, advancingAccounting: false })))),
+    { window: 'fixed', failure: 'thrown batch', refused: true, advancingAccounting: true } as const,
+  ])(
+    'retains the admitted Activity window after a failed replacement ($window; $failure; refusal=$refused; advancing Accounting=$advancingAccounting)',
+    async ({ window, failure, refused, advancingAccounting }) => {
+      const retiredId = 'revoked-activity';
+      const otherId = 'remaining-activity';
+      const beforeMidnight = Date.UTC(2026, 10, 25, 23, 59);
+      const afterMidnight = beforeMidnight + 120_000;
+      const turnDay = advancingAccounting ? Date.UTC(2026, 10, 18) : beforeMidnight - 60_000;
+      const period = advancingAccounting ? { startMs: Date.UTC(2026, 10, 16), endMs: Date.UTC(2026, 10, 23) }
+        : window === 'fixed' ? { startMs: turnDay - 1000, endMs: afterMidnight + 1000 }
+          : { relative: '7days' as const };
+      const exact = failure === 'Session evidence 503';
+      const enclosing = failure === 'thrown batch';
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(beforeMidnight);
+      const kv = createAccountKvHttpFixture();
+      const replacementEntered = createDeferred<void>();
+      const releaseActivity = createDeferred<void>();
+      const releaseSiblingFailure = createDeferred<void>();
+      let failing = false;
+      let replacements = 0;
+      const captured = await context(async request => {
+        if (request.path === '/v2/usage/query') {
+          if (!advancingAccounting) return Response.json(value);
+          const eventCount = failing ? 2 : 1;
+          return Response.json({ ...value, totals: { ...value.totals, eventCount },
+            activity: { calendarDays: [{ date: '2026-11-18', eventCount }] } });
+        }
+        if (request.path === '/v1/kv/bulk' && failing && failure === 'thrown batch') {
+          await releaseSiblingFailure.promise;
+          throw new Error('Unexpected independent read failure');
+        }
+        if (request.path === '/v1/kv/bulk') return await kv.handleFetch(request.url, { method: request.method,
+          body: JSON.stringify(request.body) }) ?? undefined;
+        if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+        const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
+        const ids = demand.sessionIds ?? (demand.query.session === null ? [retiredId, otherId]
+          : typeof demand.query.session === 'string' ? [demand.query.session] : demand.query.session);
+        const sibling = demand.query.session !== null && ids.length === 1 && ids[0] === retiredId;
+        if (failing && !sibling) {
+          replacements++;
+          replacementEntered.resolve();
+          if (enclosing) await releaseActivity.promise;
+          return new Response(null, { status: 503 });
+        }
+        return Response.json({ requests: [{ query: demand.query, sessionIds: ids }], results: ids.map(id => {
+          if (failing && refused && id === retiredId) return { sessionId: id, detail: { status: 403, body: { error: 'forbidden' } } };
+          const startedAt = turnDay + (id === retiredId ? 100 : 500);
+          return { sessionId: id, detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({
+            id, createdAt: turnDay, updatedAt: turnDay + 900, seq: 1, active: true, activeAt: turnDay + 900,
+            metadata: { name: id, machineId: 'shared-fixture-machine', path: '/fixture', host: 'test' },
+          }) } }, turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: turnDay + 900, turns: [
+            { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt, terminalAt: startedAt + 300, updatedAt: turnDay + 900 },
+          ] } } };
+        }) });
+      });
+      const store = getUsageQueryResourceStore(captured);
+      const view = (selectedPeriod: typeof period, session: string[] | null, includeCoach: boolean) => store.getEntry({
+        hostRead: 'usage.query',
+        input: projectNativeJsonValueForTransport({ queries: [normalizeUsageQuery({ session, period: selectedPeriod,
+          timeZoneOffsetMinutes: 0, includeQuota: false, includeComparison: false, includeSessionEvidence: true,
+          includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach, includeActivity: advancingAccounting })] }),
+      });
+      const affected = view(period, exact ? [retiredId, otherId] : null, enclosing);
+      const show = () => decodeUsageQueryResource(affected.getSnapshot().value!).results[0]!;
+      const activityDate = () => show().sources.find(source => source.source === 'how_you_work')?.asOfMs;
+      let stop = affected.subscribe(() => {}, true);
+      try {
+        await vi.waitFor(() => {
+          expect(affected.getSnapshot().pending).toBe('idle');
+          expect(affected.getSnapshot().error).toBeUndefined();
+          expect(show().howYouWork?.intervals?.agentTimeMs).toBe(600);
+        });
+        expect(activityDate()).toBe(beforeMidnight);
+        const prior = affected.getSnapshot().value!;
+        clock.mockReturnValue(window === 'rolling next day' ? afterMidnight : beforeMidnight + 20_000);
+        failing = true;
+        if (advancingAccounting) {
+          // Age the recorded week while this view is closed so reopening
+          // acquires both the new Accounting and the refusal replacement once.
+          stop();
+          invalidateUsageQueryResources(captured.accountLifetime);
+        }
+        if (refused) await view({ startMs: turnDay - 500, endMs: afterMidnight + 1000 }, [retiredId], false)
+          .refresh({ supersede: false });
+        else if (enclosing) {
+          // Keep the summary acquisition itself held. A reused summary can
+          // settle Activity while the separate conversion request is outstanding.
+          publishHomeAccountChange(captured.accountLifetime.scope.serverId, [retiredId, otherId],
+            { changeKinds: ['session'], usageQueryAffects: true });
+        } else invalidateUsageQueryResources(captured.accountLifetime);
+        if (advancingAccounting) stop = affected.subscribe(() => {}, true);
+        await expect.poll(() => replacements).toBe(1);
+        await replacementEntered.promise;
+        if (enclosing) {
+          await vi.waitFor(() => {
+            expect(show().sources.find(source => source.source === 'how_you_work')?.status).toBe('pending');
+            if (advancingAccounting) {
+              expect(show().accounting?.totals.eventCount).toBe(2);
+              expect(show().planInsights?.recordedWeek).toMatchObject({ status: 'available', recordedEvents: 2 });
+            }
+          });
+          releaseSiblingFailure.resolve();
+        }
+        await vi.waitFor(() => expect(affected.getSnapshot().pending).toBe('idle'));
+        const decoder = new TextDecoder();
+        const publication = JSON.parse(decoder.decode(affected.getSnapshot().value!.bytes));
+        const transported = UsageQueryBatchResultSchema.parse(publication);
+        if (advancingAccounting) {
+          expect(transported.results[0]?.accounting?.totals.eventCount).toBe(2);
+          expect(transported.results[0]?.planInsights?.recordedWeek).toMatchObject({
+            status: 'available', recordedEvents: 2, observedBusyMs: 300,
+          });
+        } else {
+          const previous = UsageQueryBatchResultSchema.parse(JSON.parse(decoder.decode(prior.bytes)));
+          expect(transported.results[0]?.accounting).toEqual(previous.results[0]?.accounting);
+        }
+        if (refused) {
+          expect.soft(show().howYouWork?.intervals?.agentTimeMs).toBe(300);
+          expect.soft(show().sources.find(source => source.source === 'how_you_work:sessions')).toMatchObject({
+            status: 'partial', errorCode: 'forbidden',
+          });
+          expect.soft(activityDate()).toBe(beforeMidnight);
+        } else {
+          const previous = JSON.parse(decoder.decode(prior.bytes));
+          expect.soft(JSON.stringify(publication.results[0]?.howYouWork)).toBe(JSON.stringify(previous.results[0]?.howYouWork));
+          expect.soft(activityDate()).toBe(beforeMidnight);
+        }
+        releaseActivity.resolve();
+        await vi.waitFor(() => expect(affected.getSnapshot().pending).toBe('idle'));
+        expect(replacements).toBe(1);
+      } finally {
+        releaseSiblingFailure.resolve();
+        releaseActivity.resolve();
+        stop();
+        clock.mockRestore();
+      }
+    },
+  );
+
+  const settledBeforeFailure = ['fresh Activity', 'Session-detail refusal', 'Accounting refusal'] as const;
+  it.each(fallbackWindows.flatMap(window => settledBeforeFailure.map(state => ({ window, state }))))(
+    'keeps the last settled Activity publication after an independent failure ($window; $state)',
+    async ({ window, state }) => {
+      const subject = 'activity-subject';
+      const unrelated = 'activity-independent';
+      const original = Date.UTC(2026, 10, 25, 23, 59);
+      const updated = original + (window === 'rolling next day' ? 120_000 : 20_000);
+      const started = original - 60_000;
+      const period = window === 'fixed' ? { startMs: started - 1000, endMs: updated + 1000 }
+        : { relative: '7days' as const };
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(original);
+      const siblingEntered = createDeferred<void>();
+      const failSibling = createDeferred<void>();
+      let replacing = false;
+      let requests = 0;
+      const captured = await context(async request => {
+        if (request.path === '/v2/usage/query') {
+          const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
+          if (replacing && query.filters?.sessionIds?.includes(subject)) {
+            requests++;
+            if (state === 'Accounting refusal') return new Response(null, { status: 404 });
+            return Response.json({ ...value, totals: { ...value.totals, eventCount: 2 } });
+          }
+          return Response.json(value);
+        }
+        if (request.path === '/v1/kv/bulk' && replacing && request.body && typeof request.body === 'object'
+          && 'keys' in request.body && Array.isArray(request.body.keys) && request.body.keys.includes(USAGE_COACH_SUPPRESSIONS_KV_KEY)) {
+          siblingEntered.resolve();
+          await failSibling.promise;
+          throw new Error('Independent acquisition failed');
+        }
+        if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+        const { requests: demands } = UsageSessionEvidenceRequestSchema.parse(request.body);
+        const selected = demands.map(demand => {
+          const session = demand.query.session;
+          return { query: demand.query, sessionIds: demand.sessionIds ?? (typeof session === 'string' ? [session] : session ?? []) };
+        });
+        return Response.json({ requests: selected, results: [...new Set(selected.flatMap(demand => demand.sessionIds))].map(id => {
+          if (replacing && id === subject && state === 'Session-detail refusal') {
+            return { sessionId: id, detail: { status: 403, body: { error: 'forbidden' } } };
+          }
+          return { sessionId: id, detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({
+            id, createdAt: started, updatedAt: replacing ? updated : original, seq: replacing ? 2 : 1,
+          }) } }, turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: replacing ? updated : original, turns: [
+            { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: started,
+              terminalAt: started + (replacing ? 700 : 300), updatedAt: replacing ? updated : original },
+          ] } } };
+        }) });
+      });
+      const query = (session: string, includeCoach: boolean) => normalizeUsageQuery({ session, period, includeCoach,
+        timeZoneOffsetMinutes: 0, includeQuota: false, includeComparison: false, includeSessionEvidence: true,
+        includeTranscriptEvidence: false, includeWorkEvidence: false });
+      const primary = query(subject, false);
+      const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+        input: projectNativeJsonValueForTransport({ queries: [primary, query(unrelated, true)] }) });
+      const shown = () => decodeUsageQueryResource(entry.getSnapshot().value!).results.find(slice => slice.key === getUsageQueryKey(primary))!;
+      const phase = (source: string) => shown().sources.find(item => item.source === source);
+      const unsubscribe = entry.subscribe(() => {}, false);
+      try {
+        await entry.refresh();
+        expect(shown().howYouWork?.intervals?.agentTimeMs).toBe(300);
+        expect(phase('how_you_work')?.asOfMs).toBe(original);
+        replacing = true;
+        clock.mockReturnValue(updated);
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, [subject], { changeKinds: ['session'], usageQueryAffects: true });
+        const renewal = entry.refresh({ supersede: false });
+        await siblingEntered.promise;
+        await vi.waitFor(() => {
+          if (state === 'fresh Activity') {
+            expect(shown().howYouWork?.intervals?.agentTimeMs).toBe(700);
+            expect(phase('how_you_work')?.asOfMs).toBe(updated);
+          } else if (state === 'Session-detail refusal') {
+            expect(phase('how_you_work:sessions')?.errorCode).toBe('forbidden');
+            expect(shown().howYouWork?.intervals?.agentTimeMs).toBeUndefined();
+          } else {
+            expect(phase('accounting')).toMatchObject({ status: 'error', errorCode: 'denied' });
+            expect(shown().howYouWork).toBeUndefined();
+          }
+          expect(shown().pending).toBe(false);
+        });
+        const settled = shown();
+        failSibling.resolve();
+        await renewal;
+        expect(entry.getSnapshot().pending).toBe('idle');
+        expect(entry.getSnapshot().error).toBeDefined();
+        expect(shown()).toEqual(settled);
+        expect(requests).toBe(1);
+      } finally {
+        failSibling.resolve();
+        unsubscribe();
+        clock.mockRestore();
+      }
+    },
+  );
+
+  it.each(['stable refusal', 'unwatch and revisit', 'replacement 503'] as const)(
+    'publishes admitted Activity and schedules one terminal replacement (%s)', async scenario => {
+    const id = 'previously-shared';
+    const entered = createDeferred<void>();
+    const held = createDeferred<void>();
+    const replacementEntered = createDeferred<void>();
+    const replacement = createDeferred<void>();
+    let warmingWatch = true;
+    let deny = false;
+    let exactRequests = 0;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json({
+        ...value, coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], sources: [],
+          range: { startMs: 0, endMs: 1000, complete: true } },
+      });
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      const exact = input.requests[0]?.query.period.relative === 'all';
+      if (exact && warmingWatch) return new Response(null, { status: 503 });
+      const response = Response.json({
+        requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })),
+        results: deny ? [{ sessionId: id, detail: { status: 403, body: { error: 'forbidden' } } }] : [{
+          sessionId: id,
+          detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id,
+            createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900,
+            metadata: { name: 'Restricted fixture title', machineId: 'shared-fixture-machine', path: '/fixture', host: 'test' } }) } },
+          turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900, turns: [
+            { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 },
+          ] } },
+        }],
+      });
+      if (!exact) return response;
+      exactRequests++;
+      if (exactRequests === 1) {
+        entered.resolve();
+        return held.promise.then(() => response);
+      }
+      if (exactRequests === 2) {
+        replacementEntered.resolve();
+        return replacement.promise.then(() => scenario === 'replacement 503' ? new Response(null, { status: 503 }) : response);
+      }
+      if (scenario === 'unwatch and revisit' && exactRequests === 3) return response;
+      throw new Error('Unexpected repeating Session acquisition');
+    });
+    const query = normalizeUsageQuery({ session: [id], period: { relative: 'all' },
+      includeQuota: false, includeQuotaHistory: scenario !== 'replacement 503', includeComparison: false,
+      includeSessionEvidence: true, includeTranscriptEvidence: scenario === 'replacement 503',
+      includeWorkEvidence: false, includeCoach: false,
+      ...(scenario === 'replacement 503' ? {
+        breakdown: [], workProjection: 'detail', includeSeries: false, includeContributions: false,
+        includeInsights: false, includeActivity: false, includeLeaders: false, includeModelTimeline: false, includeMessageStats: false,
+      } : {}) });
+    const store = getUsageQueryResourceStore(captured);
+    const referenceFor = (operand: typeof query) => ({ hostRead: 'usage.query' as const,
+      input: projectNativeJsonValueForTransport({ queries: [operand] }) });
+    const reference = referenceFor(query);
+    const original = store.getEntry(reference);
+    const known = (startMs: number) => store.getEntry(referenceFor(normalizeUsageQuery({ ...query, period: { startMs, endMs: 999 } })));
+    const activity = (item: unknown) => UsageQueryBatchResultSchema.parse(item).results[0]!;
+    const shown = (entry: typeof original) => {
+      const value = entry.getSnapshot().value;
+      return value ? activity(decodeUsageQueryResource(value)) : undefined;
+    };
+    const published: number[] = [];
+    const observe = () => {
+      const duration = shown(original)?.howYouWork?.intervals?.agentTimeMs;
+      if (duration !== undefined) published.push(duration);
+    };
+    const account = await captureLazyActionAccountContext(captured.accountLifetime.scope.serverId);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+    const readForRecap = () => executor.execute(USAGE_PRIVATE_RECAP_ACTION_IDS.compose, {
+      query, selectedFields: ['tokens', 'parallel'],
+    }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    let stop = original.subscribe(observe, true);
+    let stopLate: (() => void) | undefined;
+    let stopPlugin: (() => void) | undefined;
+    let heldRead: Promise<unknown> | undefined;
+    let outward: ReturnType<typeof readForRecap> | undefined;
+    const admissionLifetime = new AbortController();
+    const host = createPluginSurfaceHostReadStore({
+      admit: async next => store.getEntry(next),
+      lifetimeSignal: admissionLifetime.signal, isCurrent: captured.accountLifetime.isCurrent,
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(original.getSnapshot().subscription).toBe('live');
+        expect(original.getSnapshot().pending).toBe('idle');
+        expect(original.getSnapshot().value !== undefined || original.getSnapshot().error !== undefined).toBe(true);
+      });
+      await known(1).refresh({ supersede: false });
+      expect(shown(known(1))?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+      warmingWatch = false;
+      heldRead = original.refresh({ supersede: false });
+      await entered.promise;
+      deny = true;
+      await known(2).refresh({ supersede: false });
+      held.resolve();
+      await vi.waitFor(() => expect(published).toContain(300));
+      await vi.waitFor(() => expect(exactRequests, 'the held completion needs exactly one replacement').toBe(2));
+      await replacementEntered.promise;
+      if (scenario === 'unwatch and revisit') {
+        stop();
+        stop = () => {};
+        replacement.resolve();
+        await heldRead;
+        expect(exactRequests).toBe(2);
+        stop = original.subscribe(observe, true);
+      }
+      if (scenario === 'stable refusal') {
+        stopLate = original.subscribe(() => {}, true);
+        const selected = host.getEntry(reference).select({ decode: decodeUsageQueryResource }, snapshot =>
+          snapshot.value?.results[0]?.howYouWork?.intervals?.agentTimeMs);
+        stopPlugin = selected.subscribe(() => {}, true);
+        await vi.waitFor(() => expect(selected.getSnapshot()).toBe(300));
+        expect(exactRequests).toBe(2);
+      }
+      if (scenario === 'replacement 503') {
+        let completed = false;
+        outward = readForRecap().finally(() => { completed = true; });
+        await flushHookEffects();
+        expect(completed, 'a new outward invocation cannot read the pending display').toBe(false);
+        stop();
+        stop = () => {};
+      }
+      replacement.resolve();
+      if (outward) {
+        const answer = await outward;
+        if (!answer.ok) throw new Error(answer.errorCode);
+        expect(UsageRecapComposeResultSchema.parse(answer.result)).toMatchObject({
+          kind: 'composed', unavailableFields: ['parallel'],
+        });
+      }
+      await vi.waitFor(() => {
+        if (!outward) expect(original.getSnapshot().pending).toBe('idle');
+        expect(shown(original)?.pending).toBe(false);
+        expect(shown(original)?.howYouWork?.intervals?.agentTimeMs).toBeUndefined();
+        expect(shown(original)?.sources.find(source => source.source === 'how_you_work:sessions')?.errorCode).toBe('forbidden');
+        expect(exactRequests).toBe(scenario === 'unwatch and revisit' ? 3 : 2);
+      });
+      await flushHookEffects();
+      expect(exactRequests).toBe(scenario === 'unwatch and revisit' ? 3 : 2);
+    } finally {
+      held.resolve();
+      replacement.resolve();
+      await Promise.allSettled([heldRead, outward]);
+      stopPlugin?.();
+      admissionLifetime.abort();
+      host.dispose();
+      stopLate?.();
+      stop();
+      account.dispose();
+    }
+  });
+
   it('publishes admitted intervals while shared transcript detail is held, and keeps the readable subset partial on refusal', async () => {
     const secondAdmission = createDeferred<void>();
     const transcript = createDeferred<Response>();
@@ -10258,13 +10773,83 @@ describe('usage query captured Resource adapter', () => {
 });
 
 describe('usage query Work composition', () => {
+  it('publishes admitted Work before one replacement even when the replacement cannot run', async () => {
+    const machineId = 'work-machine';
+    const contribution = { ...workContribution, machineId };
+    const captured = await context(request => request.path === '/v2/usage/query'
+      ? Response.json({ ...value, contributions: [contribution] }) : undefined);
+    const scope = captured.accountLifetime.scope;
+    storage.getState().applySessions([createSessionFixture({ id: contribution.sessionId, serverId: scope.serverId,
+      metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
+    await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+      id: machineId, accountId: 'account-a', machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 },
+    })]);
+    const checkpoint = { sessionId: contribution.sessionId, turnId: contribution.turnId, repositoryKey: 'repo',
+      checkpointRef: 'checkpoint/turn', checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+      attributionScope: 'no_happier_checkpoint_overlap_observed' as const };
+    const ready = createDeferred<void>();
+    const releaseHeld = createDeferred<void>();
+    const releaseUnavailable = createDeferred<void>();
+    const linked = (request: { payload: ScmWorkEvidenceReadRequest }) => workBatch(request, {
+      status: 'partial', evidence: [], pullRequestsRead: true,
+      branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/work', headSha: checkpoint.commitSha } }],
+    });
+    scmTransport.mockImplementationOnce(async request => linked(request));
+    scmTransport.mockImplementationOnce(async request => {
+      ready.resolve();
+      await releaseHeld.promise;
+      return linked(request);
+    });
+    scmTransport.mockImplementationOnce(async () => {
+      throw createRpcCallError({ error: 'Work refused', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    });
+    scmTransport.mockImplementation(async () => {
+      await releaseUnavailable.promise;
+      throw new RetryableServerResponseError(503, 'Unavailable');
+    });
+    const store = getUsageQueryResourceStore(captured);
+    const entryAt = (startMs: number) => store.getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [normalizeUsageQuery({
+        session: [contribution.sessionId], period: { startMs, endMs: 1000 },
+        includeQuota: false, includeQuotaHistory: false, includeComparison: false, includeSessionEvidence: false,
+        includeTranscriptEvidence: false, includeWorkEvidence: true, includeCoach: false, workProjection: 'detail',
+      })] }) });
+    const first = entryAt(0);
+    const held = entryAt(1);
+    const refused = entryAt(2);
+    const read = (entry: typeof held) => {
+      const value = entry.getSnapshot().value;
+      return value && decodeUsageQueryResource(value).results[0];
+    };
+    await first.refresh({ supersede: false });
+    const publishes: number[] = [];
+    const stop = held.subscribe(() => publishes.push(read(held)?.work?.branches.length ?? 0), false);
+    try {
+      await ready.promise;
+      await refused.refresh({ supersede: false });
+      releaseHeld.resolve();
+      await expect.poll(() => scmTransport.mock.calls.length).toBe(4);
+      expect(publishes).toContain(1);
+      releaseUnavailable.resolve();
+      await expect.poll(() => held.getSnapshot().pending).toBe('idle');
+      expect(read(held)?.work?.branches ?? []).toEqual([]);
+      expect(read(held)?.sources.find(state => state.source === 'work')).toMatchObject({
+        status: 'error', unreadSessions: { not_entitled: 1 },
+      });
+      expect(scmTransport).toHaveBeenCalledTimes(4);
+    } finally {
+      releaseHeld.resolve();
+      releaseUnavailable.resolve();
+      stop();
+    }
+  });
+
   it.each(['refused', 'failed', 'recovered on Action', 'recovered on wake'] as const)(
     'handles a %s batch Work read in the exact-query entry', async state => {
     const machineId = 'work-machine';
     const contribution = { ...workContribution, machineId };
-    let eventCount = value.totals.eventCount;
     const captured = await context(request => request.path === '/v2/usage/query'
-      ? Response.json({ ...value, totals: { ...value.totals, eventCount }, contributions: [contribution] }) : undefined);
+      ? Response.json({ ...value, contributions: [contribution] }) : undefined);
     const scope = captured.accountLifetime.scope;
     storage.getState().applySessions([createSessionFixture({ id: contribution.sessionId, serverId: scope.serverId,
       metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
@@ -10312,14 +10897,21 @@ describe('usage query Work composition', () => {
       expect(firstReadAt).toEqual(expect.any(Number));
       assertRetained(prior, firstReadAt);
       expect(scmTransport).toHaveBeenCalledTimes(1);
-      scmTransport.mockImplementation(async () => {
-        if (state !== 'failed') throw createRpcCallError({ error: 'Work refused', errorCode: RPC_ERROR_CODES.FORBIDDEN });
-        throw new RetryableServerResponseError(503, 'Unavailable');
-      });
+      const ownReplacement = createDeferred<void>();
+      const refused = async () => { throw createRpcCallError({ error: 'Work refused', errorCode: RPC_ERROR_CODES.FORBIDDEN }); };
+      if (state === 'failed') {
+        scmTransport.mockImplementation(async () => { throw new RetryableServerResponseError(503, 'Unavailable'); });
+      } else {
+        scmTransport.mockImplementationOnce(refused);
+        scmTransport.mockImplementation(state === 'recovered on Action' ? async request => {
+          await ownReplacement.promise;
+          return readLinkedWork(request);
+        } : refused);
+      }
       const stopBatch = batch.subscribe(() => {}, false);
       try {
         await expect.poll(() => batch.getSnapshot().pending).toBe('idle');
-        expect(scmTransport).toHaveBeenCalledTimes(2);
+        await expect.poll(() => scmTransport.mock.calls.length).toBe(state === 'failed' ? 2 : 3);
         expect(workSource(read(batch))?.unreadSessions).toEqual(state === 'failed' ? { failed: 1 } : { not_entitled: 1 });
         expect(read(batch).accounting?.totals).toEqual(prior.accounting?.totals);
         expect(read(single).accounting?.totals).toEqual(prior.accounting?.totals);
@@ -10330,27 +10922,37 @@ describe('usage query Work composition', () => {
           expect(workSource(slice)?.unreadSessions).toEqual({ not_entitled: 1 });
         };
         if (state === 'failed') assertRetained(read(single), firstReadAt);
-        else assertWithdrawn(read(single));
+        else if (state === 'recovered on Action') {
+          expect(single.getSnapshot().pending).toBe('refresh');
+          expect(read(single).work?.outcomes ?? []).toEqual([]);
+        } else {
+          await expect.poll(() => single.getSnapshot().pending).toBe('idle');
+          assertWithdrawn(read(single));
+        }
 
         const recovered = state === 'recovered on Action' || state === 'recovered on wake';
-        if (recovered) scmTransport.mockImplementation(readLinkedWork);
         if (state === 'recovered on wake') {
-          eventCount++;
-          publishHomeAccountChange(scope.serverId, [contribution.sessionId], { changeKinds: ['account'],
-            usageAccountingChange: { sessionId: contribution.sessionId },
-            sessionReadinessChanges: { sessionIds: [], machineIds: [] } });
-          await expect.poll(() => read(single).accounting?.totals.eventCount).toBe(eventCount);
+          scmTransport.mockImplementation(readLinkedWork);
+          // A resolved checkout change genuinely reopens Work admission.
+          storage.getState().applySessions([createSessionFixture({ id: contribution.sessionId, serverId: scope.serverId,
+            seq: 2, metadata: { machineId, path: '/repo-next', host: 'test', homeDir: '/home/test' } })]);
+          publishHomeAccountChange(scope.serverId, [contribution.sessionId], {
+            changeKinds: ['session'], usageAccountingAffects: false,
+            sessionReadinessChanges: { sessionIds: [contribution.sessionId], machineIds: [] },
+          });
+          await expect.poll(() => read(single).work?.outcomes).toHaveLength(1);
           await expect.poll(() => single.getSnapshot().pending).toBe('idle');
-          expect(scmTransport).toHaveBeenCalledTimes(3);
-          expect(read(single).work?.outcomes).toHaveLength(1);
+          expect(scmTransport).toHaveBeenCalledTimes(4);
         }
         const account = await captureLazyActionAccountContext(scope.serverId);
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
-        const response = await executor.execute('usage.query', exact, { surface: 'ui', authority: 'present_user',
-          actionCaller: { kind: 'host' } });
+        const pendingAction = executor.execute('usage.query', exact, { surface: 'ui', authority: 'present_user',
+          actionCaller: { kind: 'host' }, usageQueryReadiness: 'public_profile' });
+        ownReplacement.resolve();
+        const response = await pendingAction;
         if (!response.ok) throw new Error(response.errorCode);
         const action = UsageQueryBatchResultSchema.parse(response.result).results[0]!;
-        expect(action.accounting?.totals).toMatchObject({ ...value.totals, eventCount });
+        expect(action.accounting?.totals).toMatchObject(value.totals);
         if (state === 'refused') {
           assertWithdrawn(action);
         } else if (recovered) {
@@ -10361,8 +10963,8 @@ describe('usage query Work composition', () => {
         } else {
           assertRetained(action, firstReadAt);
         }
-        expect(scmTransport).toHaveBeenCalledTimes(state === 'failed' ? 2 : 3);
-      } finally { stopBatch(); }
+        expect(scmTransport).toHaveBeenCalledTimes(state === 'failed' ? 2 : state === 'recovered on Action' ? 3 : 4);
+      } finally { ownReplacement.resolve(); stopBatch(); }
     } finally { stop(); }
   });
 

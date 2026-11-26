@@ -359,7 +359,7 @@ export function createPluginUiResourceStore(input: Readonly<{
   onDemandEnd?: (resource: PluginUiResourceReference) => void;
 }>): PluginUiResourceStore & Readonly<{
   /** Withdraw or replace retained content on a host-owned authority change. */
-  replaceRetainedValues(replace: (value: ResourceContent) => ResourceContent): void;
+  replaceRetainedValues(replace: (value: ResourceContent, refreshIfDemanded: () => void, key: string) => ResourceContent): void;
 }> {
   const accountLifetime = input.accountLifetime ?? null;
   const pluginId = input.pluginId ?? null;
@@ -1123,17 +1123,23 @@ export function createPluginUiResourceStore(input: Readonly<{
       });
       return facade;
     },
-    replaceRetainedValues(replace: (value: ResourceContent) => ResourceContent): void {
+    replaceRetainedValues(replace): void {
       if (!isStoreCurrent()) return;
       const listeners = new Set<() => void>();
+      const replacements: MutableEntry[] = [];
       for (const entry of entries.values()) {
         const current = entry.snapshot.value;
         if (!isEntryCurrent(entry) || current === undefined) continue;
-        const value = replace(current);
+        const value = replace(current, () => {
+          if (entry.subscriberCount > 0 || entry.refreshWaiters.size > 0 || entry.queuedRefreshWaiters.size > 0) {
+            replacements.push(entry);
+          }
+        }, entry.key);
         if (value !== current) publish(entry, { ...entry.snapshot, value,
           digest: input.client.delivery === 'pages' ? value.digest : undefined, freshness: 'stale' }, listeners);
       }
       for (const listener of listeners) listener();
+      for (const entry of replacements) void store.getEntry(entry.resource).refresh({ supersede: false });
     },
     dispose(): void {
       if (disposed) return;

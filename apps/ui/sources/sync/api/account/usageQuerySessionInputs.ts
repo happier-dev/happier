@@ -63,9 +63,13 @@ type SelectionProjectionInput = Pick<Parameters<typeof projectUsageQueryWorkEvid
     'query' | 'scope' | 'currentScope' | 'isCurrent' | 'contributions' | 'admittedTurns' | 'sessionMembership'> & Readonly<{
     nowMs: number; admitted: boolean; selected: ReadonlyMap<string, SessionInputEvidence | null>; selectedIds: readonly string[];
 }>;
+export type OpenedUsageSessionSelection = Readonly<Pick<SelectionProjectionInput, 'nowMs' | 'selected'>>;
 export type SessionInputSelectionProjector = (input: SelectionProjectionInput) => Readonly<{
+    opened: OpenedUsageSessionSelection;
     sessions: readonly UsageSessionInput[]; detail: ReturnType<typeof projectUsageQueryWorkEvidence>;
 }>;
+
+export type UsageSessionEvidenceKind = 'detail' | 'work';
 
 type SharedRead = { abort: AbortController; waiters: number; settled: boolean };
 
@@ -103,8 +107,16 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     lifetime: ServerAccountScopeLifetime;
     signal: AbortSignal;
     assertCurrent(): void;
+    onRefusal?(sessionId: string, kind: UsageSessionEvidenceKind, origin?: string): void;
 }>): Readonly<{
     read: SessionInputReader;
+    beginDetailAdmission(origin?: string): (sessionId: string, outcome: true | SessionPartsHttpError) => void;
+    beginWorkAdmission(origin?: string): Readonly<{
+        observe(sessionId: string, outcome: boolean): void;
+        detailRefusedDuringRead(sessionId: string): boolean;
+    }>;
+    detailRefusal(sessionId: string): SessionPartsHttpError | undefined;
+    workRefused(sessionId: string): boolean;
     readSelection: SessionInputSelectionReader;
     projectSelection: SessionInputSelectionProjector;
     retryFailures(sourceReferenceKeys: ReadonlySet<string>): void;
@@ -137,7 +149,8 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         // A first refusal publishes the admitted subset before selection ends.
         // Keep that phase from replacing the complete selection's aggregate
         // while sibling widget queries consume the same opened inputs.
-        const key = JSON.stringify([getUsageQuerySessionInputDemand({ ...value.query, includeTranscriptEvidence: false }, value.nowMs).key, value.admitted]);
+        const key = JSON.stringify([getUsageQuerySessionInputDemand({ ...value.query, includeTranscriptEvidence: false },
+            value.nowMs).key, value.admitted]);
         const previous = projections.get(key);
         if (value.isCurrent && areServerAccountScopesEqual(value.scope, value.currentScope)
             && previous
@@ -163,7 +176,8 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         const sessions = candidates.filter(session => eligible.has(session.id));
         const selected = new Map(value.selectedIds.map(id => [id, value.selected.get(id) ?? null] as const));
         const sessionEvidence = new Map([...selected].flatMap(([id, entry]) => entry ? [[id, entry.detail] as const] : []));
-        const result = { sessions, detail: projectUsageQueryWorkEvidence({ ...value, sessions, sessionEvidence }) };
+        const result = { sessions, opened: { nowMs: value.nowMs, selected },
+            detail: projectUsageQueryWorkEvidence({ ...value, sessions, sessionEvidence }) };
         if (value.isCurrent && areServerAccountScopesEqual(value.scope, value.currentScope)) {
             projections.set(key, { input: { ...value, selected }, value: result });
         }
@@ -184,6 +198,35 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             else for (const id of sessionIds) if (!admitted.has(id)) selection.candidates.add(id);
         }
     };
+    // These are separate admissions. A Machine Work refusal has no bearing
+    // on Home's admission of the Session's Activity.
+    type Refusal = Readonly<{ error: SessionPartsHttpError | false; at: number }>;
+    const admission = { detail: new Map<string, true | Refusal>(), work: new Map<string, true | Refusal>() };
+    let refusalRevision = 0;
+    function beginAdmission(kind: UsageSessionEvidenceKind, origin?: string) {
+        const started = refusalRevision;
+        const subjects = admission[kind];
+        return (sessionId: string, outcome: true | SessionPartsHttpError | false) => {
+            const previous = subjects.get(sessionId);
+            if (outcome === true) {
+                // Old admitted work can publish its value, but only a successful
+                // request admitted after the refusal can establish recovery.
+                if (previous === undefined || previous === true || previous.at <= started) subjects.set(sessionId, true);
+                return;
+            }
+            if (previous && previous !== true) return;
+            subjects.set(sessionId, { error: outcome, at: ++refusalRevision });
+            if (previous !== true) return;
+            if (kind === 'detail') {
+                // Demand after a refusal asks Home. Borrowers of old reads may
+                // still complete through their existing admitted promises.
+                for (const entry of entriesForSessions([sessionId])) entry.needsAdmission = true;
+                invalidateSelectionsFor([sessionId], true);
+            }
+            input.onRefusal?.(sessionId, kind, origin);
+        };
+    }
+
     function* entriesForSessions(sessionIds: Iterable<string>) {
         for (const id of new Set(sessionIds)) yield* entries.get(id)?.values() ?? [];
     }
@@ -344,6 +387,12 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                     // summary published before a private page was refused.
                     entry.failure = error;
                     entry.value = undefined;
+                    if (error instanceof SessionPartsHttpError && (error.httpStatus === 403 || error.httpStatus === 404)
+                        && areSnapshotProjectionsEquivalent(readBasis(sessionId), basis.storage)) {
+                        // A direct denial already settles this admission. Only
+                        // prior readable inputs need the replacement.
+                        entry.needsAdmission = false;
+                    }
                 } else group.delete(key);
             }
             throw error;
@@ -425,6 +474,22 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         read,
         readSelection,
         projectSelection,
+        beginDetailAdmission(origin) { return beginAdmission('detail', origin); },
+        beginWorkAdmission(origin) {
+            const started = refusalRevision;
+            return { observe: beginAdmission('work', origin), detailRefusedDuringRead(sessionId) {
+                const refusal = admission.detail.get(sessionId);
+                return refusal !== undefined && refusal !== true && refusal.at > started;
+            } };
+        },
+        detailRefusal(sessionId) {
+            const value = admission.detail.get(sessionId);
+            return value && value !== true && value.error !== false ? value.error : undefined;
+        },
+        workRefused(sessionId) {
+            const value = admission.work.get(sessionId);
+            return value !== undefined && value !== true;
+        },
         retryFailures(sourceReferenceKeys) {
             for (const group of entries.values()) for (const [key, entry] of group) if (entry.failure && readUsageHistoryFailure(entry.failure).retryable
                 && [...entry.sourceReferenceKeys].some(reference => sourceReferenceKeys.has(reference))) group.delete(key);
@@ -499,6 +564,10 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             }
             return changed;
         },
-        dispose() { entries.clear(); selections.clear(); projections.clear(); currentness.dispose(); },
+        dispose() {
+            entries.clear(); selections.clear(); projections.clear();
+            admission.detail.clear(); admission.work.clear();
+            currentness.dispose();
+        },
     };
 }

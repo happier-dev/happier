@@ -96,6 +96,8 @@ export async function collectUsageWorkSources(input: Readonly<{
     sessionReads?: Map<string, Promise<SessionWorkSourceResult>>;
     resolveSession: (sessionId: string) => Promise<Readonly<{ machineId: string; cwd: string } | { errorCode: string }> | null>;
     readMachine: (machineId: string, request: ScmWorkEvidenceReadRequest) => Promise<unknown>;
+    onSessionAdmission?(sessionId: string, readable: boolean): void;
+    previouslyRefused?(sessionId: string): boolean;
     assertCurrent: () => void | Promise<void>;
     now: () => number;
 }>): Promise<readonly UsageWorkSourceSnapshot[]> {
@@ -184,6 +186,10 @@ export async function collectUsageWorkSources(input: Readonly<{
                 for (const session of sessions) results.set(session.sessionId, result);
             }
         }));
+        if (input.onSessionAdmission) for (const [id, source] of results) {
+            if (source.unreadReason === 'not_entitled') input.onSessionAdmission(id, false);
+            else if (source.status === 'partial' || source.pullRequestsRead) input.onSessionAdmission(id, true);
+        }
         return results;
     };
     // Install promises before awaiting targets, so concurrent slices share an
@@ -193,6 +199,13 @@ export async function collectUsageWorkSources(input: Readonly<{
         for (const sessionId of missing) sessionReads.set(readKeys.get(sessionId)!, acquisition.then(results => results.get(sessionId)!));
     }
     const sessions = new Map(await Promise.all([...sessionIds].map(async sessionId => [sessionId, await sessionReads.get(readKeys.get(sessionId)!)!] as const)));
+    // A failed attempt cannot replace a Session's known refusal. The caller
+    // supplies the admission it was replacing, scoped to this read.
+    for (const [id, source] of sessions) {
+        if (source.unreadReason !== undefined && source.unreadReason !== 'not_entitled' && input.previouslyRefused?.(id)) {
+            sessions.set(id, unreadSession(RPC_ERROR_CODES.FORBIDDEN));
+        }
+    }
     const asOfMs = now();
     return queries.map((query): UsageWorkSourceSnapshot => {
         const key = getUsageQueryKey(query);

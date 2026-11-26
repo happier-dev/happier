@@ -1,5 +1,6 @@
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
-import { getUsageQueryKey, usageQueryNeedsContributionRows, usageQueryToAnalyticsRequest, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { projectUsagePlanInsights } from '@happier-dev/protocol/usage/usagePlanInsights';
+import { getUsageQueryKey, resolveUsageQueryPeriod, usageQueryNeedsContributionRows, usageQueryToAnalyticsRequest, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { createUsagePricingReuseResolver, resolveUsagePageAggregation, resolveUsageQuotaPageAggregation, resolveUsageQuotaSourceSnapshot, resolveUsageComparisonQuery, retainUsageQueryResultReferences, retainAccountingReferences, projectUsageAccountingSnapshotPrices,
     projectUsageAccountingSnapshotCalendar, type UsageAccountingSourceSnapshot, type UsageWorkSourceSnapshot,
     type UsageHowYouWorkSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryBatchResult,
@@ -24,7 +25,7 @@ import type { SessionInputEvidence } from './usageQuerySessionInputs';
 import { projectUsageQueryProfileEvidence } from './usageQueryProfileEvidence';
 
 export type HowYouWorkEvidenceSnapshot = Readonly<{
-    query: UsageQuery; asOfMs: number;
+    query: UsageQuery; asOfMs?: number;
     sessions: readonly SessionInputEvidence['session'][];
     sessionCoverage: NonNullable<UsageHowYouWorkSourceSnapshot['sessionCoverage']>;
     detail: ReturnType<typeof projectUsageQueryWorkEvidence>;
@@ -343,6 +344,52 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
                 ? { ...source, asOfMs: prior.asOfMs } : source;
         }) };
     }) };
+}
+
+/** A failed Activity replacement retains its old window, independently of Accounting. */
+export function settleUsageActivityFailure(
+    context: UsageQueryProjectionInput['context'], slice: UsageQueryResultSlice, prior: UsageQueryResultSlice,
+    failureCode: string, replacement?: Readonly<{ snapshot: HowYouWorkReadSnapshot;
+        phases: readonly UsageQuerySourceState[]; nowMs: number; suppressions: UsageCoachSuppressionStateV1 | undefined;
+        work: UsageWorkSourceSnapshot | undefined }>,
+): UsageQueryResultSlice {
+    let answer = prior;
+    if (replacement) {
+        const { snapshot, phases, nowMs, suppressions, work } = replacement;
+        const query = prior.requestedQuery;
+        const state = readRegisteredStorageState();
+        const scope = context.accountLifetime.scope;
+        const accountSettings = readAccountSettingsForScope({ scope, focusedScope: state?.settingsScope,
+            focusedSettings: state?.settings ?? settingsDefaults });
+        const accounting = slice.sources.find(source => source.source === 'accounting');
+        const quota = slice.sources.find(source => source.source === 'quota');
+        const batch = resolveUsagePageAggregation({
+            queries: [query], nowMs, accountSettings,
+            coachPreferences: suppressions ? accountSettings.usageCoachPreferencesV1 : null,
+            accounting: [{ ...accounting, query, status: accounting?.status ?? 'unknown', value: slice.accounting,
+                period: prior.howYouWork?.intervals?.period ?? resolveUsageQueryPeriod(prior.shownQuery, nowMs) }],
+            quota: slice.quota && quota ? { ...quota, value: slice.quota } : undefined,
+            work: work && [work], howYouWork: [snapshot],
+            howYouWorkProgress: new Map([[prior.key, { pending: false, sources: phases }]]),
+        }, bundledUsageModelPriceCatalog);
+        answer = applyCoachPreferences(batch, [snapshot], scope, undefined, suppressions, undefined).results[0]!;
+    }
+    const isActivity = (source: UsageQuerySourceState) => source.source === 'how_you_work'
+        || source.source === 'how_you_work:sessions' || source.source === 'how_you_work:transcripts';
+    const sources = answer.sources.filter(isActivity).map(source => source.source === 'how_you_work'
+        && answer.howYouWork?.detailStatus !== undefined && answer.howYouWork.detailStatus !== 'unknown'
+        ? { ...source, status: 'stale' as const, errorCode: failureCode } : source);
+    const recordedWeek = slice.planInsights?.recordedWeek;
+    const planInsights = replacement && slice.planInsights && recordedWeek?.status === 'available'
+        ? { ...slice.planInsights, recordedWeek: projectUsagePlanInsights({
+            query: { ...slice.shownQuery, period: { startMs: recordedWeek.startMs, endMs: recordedWeek.endMs } },
+            nowMs: Date.now(), accounting: slice.accounting, accountingAsOfMs: recordedWeek.asOfMs ?? undefined,
+            howYouWork: answer.howYouWork,
+        }).recordedWeek } : slice.planInsights;
+    const result = { ...slice, howYouWork: answer.howYouWork,
+        ...(replacement ? { coach: answer.coach, planInsights } : {}),
+        sources: [...slice.sources.filter(source => !isActivity(source)), ...sources] };
+    return projectUsageQueryProfileEvidence(result);
 }
 
 function applyCoachPreferences(batch: UsageQueryBatchResult, howYouWork: readonly HowYouWorkReadSnapshot[],
