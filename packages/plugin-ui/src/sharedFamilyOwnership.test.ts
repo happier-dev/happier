@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, posix, resolve } from 'node:path';
+import { dirname, join, posix, resolve } from 'node:path';
 
 import * as ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
@@ -46,7 +46,7 @@ const APPROVED_CATALOG_VOCABULARY = [
   'Markdown', 'CodeBlock', 'ContentPreview', 'SceneArt', 'CodeEditor',
   'ShareConnectedPeoplePrompt', 'ShareGrantRow', 'ShareHelp', 'ShareLevelControl',
   'SharePrincipalVisual', 'ShareRowAction', 'ShareSheet',
-  'Spinner', 'Status', 'ReviewSeverity', 'HappierReviewFinding', 'HappierReviewFindingBody', 'HappierReviewSummaryHost', 'ReviewPublicationSummaryPreview', 'ReviewPublicationSheet',
+  'Spinner', 'Status', 'ReviewSeverity', 'HappierReviewFinding', 'HappierReviewFindingBody', 'HappierReviewSummaryHost', 'ReviewPublicationSummaryPreview', 'ReviewPublicationSheet', 'ReviewPublicationEntry', 'ReviewRunnerPicker', 'ConnectedAccountPurposeTargetChooser',
   'ApprovalPrompt', 'ApprovalFields', 'ApprovalPendingNotice', 'Timeline', 'LogLine',
   'State', 'LoadingState', 'EmptyState', 'ErrorState',
   'Button', 'IconButton',
@@ -496,6 +496,22 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     devMountSymbols: [],
     positiveConsumer: { kind: 'plugin-surface', pathFromRepoRoot: 'packages/plugins/scm-github/src/ui/detail/reviewPublicationControls.tsx' },
     declarative: { kind: 'not-applicable', reason: 'The forge publication controls own the selection and the plan the sheet draws.' },
+  },
+  {
+    publicName: 'ReviewPublicationEntry',
+    propTypeName: 'ComponentProps<typeof ReviewPublicationEntry>',
+    family: 'Review publication entry',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/ReviewPublicationSheet.tsx',
+    sharedSymbol: 'ReviewPublicationEntry',
+    pluginOwner: { module: 'components/ReviewPublicationSheet.tsx', symbol: 'ReviewPublicationEntry' },
+    coreConsumers: [],
+    devMountSymbols: [],
+    positiveConsumer: { kind: 'plugin-surface', pathFromRepoRoot: 'packages/plugins/scm-github/src/ui/detail/reviewPublicationControls.tsx' },
+    declarative: { kind: 'not-applicable', reason: 'The forge publication controls open their mounted Publish step from this entry.' },
   },
   {
     publicName: 'State',
@@ -2644,6 +2660,8 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
   })),
   // Named exports are catalogued too. These record source ownership, not loaded-platform graduation.
   ...[
+    { publicName: 'ReviewRunnerPicker', module: 'components/ReviewRunnerPicker.tsx', sharedModule: 'components/ReviewRunnerPicker.tsx', sharedSymbol: 'ReviewRunnerPicker' },
+    { publicName: 'ConnectedAccountPurposeTargetChooser', module: 'components/ConnectedAccountPurposeTargetChooser.tsx', sharedModule: 'components/ConnectedAccountPurposeTargetChooser.tsx', sharedSymbol: 'ConnectedAccountPurposeTargetChooser' },
     { publicName: 'DetailPage', module: 'components/DetailsPane.tsx', sharedModule: 'components/DetailsPane.tsx', sharedSymbol: 'DetailPage' },
     { publicName: 'DetailsPane', module: 'components/DetailsPane.tsx', sharedModule: 'components/DetailsPane.tsx', sharedSymbol: 'DetailsPane' },
     { publicName: 'DetailsPaneFooter', module: 'components/DetailsPane.tsx', sharedModule: 'components/DetailsPane.tsx', sharedSymbol: 'DetailsPaneFooter' },
@@ -4138,6 +4156,20 @@ function publicPresentationExportPaths(): readonly string[] {
     const source = read(modulePath);
     const roots = [...source.matchAll(/^export\s+(?:const|function)\s+([A-Za-z][A-Za-z0-9_]*)\b/gmu)]
       .map((match) => match[1]);
+    const sourceFile = ts.createSourceFile(modulePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const namedReexports = sourceFile.statements.flatMap((statement) => {
+      if (!ts.isExportDeclaration(statement) || statement.isTypeOnly
+        || !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)
+        || !statement.moduleSpecifier.text.startsWith('./')
+        || !statement.exportClause || !ts.isNamedExports(statement.exportClause)) return [];
+      const targetBase = join(dirname(modulePath), statement.moduleSpecifier.text.replace(/\.js$/u, ''));
+      const targetPath = [`${targetBase}.tsx`, `${targetBase}.ts`].find((candidate) => existsSync(candidate));
+      if (!targetPath) throw new Error(`Expected public re-export module ${statement.moduleSpecifier.text} to exist`);
+      const targetSource = read(targetPath);
+      return statement.exportClause.elements.filter((entry) => !entry.isTypeOnly
+        && new RegExp(`export\\s+(?:const|function)\\s+${entry.propertyName?.text ?? entry.name.text}\\b`, 'u').test(targetSource))
+        .map((entry) => entry.name.text);
+    });
     const namespaceRoots = new Set(
       [...source.matchAll(/export\s+const\s+([A-Za-z][A-Za-z0-9_]*)\s*=\s*Object\.freeze\(/gu)]
         .map((match) => match[1]),
@@ -4150,7 +4182,7 @@ function publicPresentationExportPaths(): readonly string[] {
     ));
 
     return [
-      ...roots.filter((root) => !namespaceRoots.has(root) && !root.startsWith('use') && (names === null || names.has(root))),
+      ...[...roots, ...namedReexports].filter((root) => !namespaceRoots.has(root) && !root.startsWith('use') && (names === null || names.has(root))),
       ...compoundMembers.filter((member) => names === null || names.has(member.split('.')[0]!)),
     ];
   });
@@ -4404,6 +4436,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'HappierReviewSummaryHost',
       'ReviewPublicationSummaryPreview',
       'ReviewPublicationSheet',
+      'ReviewPublicationEntry',
       'Action.Control',
       'Action.Failure',
       'ItemAddRow',
@@ -4488,6 +4521,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'NavigationList.Group',
       'NavigationList.Row',
       'DragSource', 'DropTarget',
+      'ReviewRunnerPicker', 'ConnectedAccountPurposeTargetChooser',
       'DetailPage', 'DetailsPane', 'DetailsPaneFooter', 'PaneHeaderContent', 'Avatar', 'AgentCursor', 'PresenceCapsule', 'StatusCapsule',
       'DetailsPaneOpenAsPageButton',
       'SetupSteps', 'LocalDateTimeField', 'WidgetGlanceRow', 'DiffStat', 'InlineCode', 'ComposerStatusBadge', 'ThreadMessage', 'ReplyQuote',
