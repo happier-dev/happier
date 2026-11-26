@@ -2111,6 +2111,7 @@ export async function startDaemonSessionControlRuntime(
       serverScope: configuration.activeServerDir,
       accountScope: 'active-account',
       now: () => Date.now(),
+      resolveDaySummaryMaintenance: () => params.getConnectedServiceQuotasCoordinator()?.usageDaySummaryAdmission?.maintain,
     });
   const qualifiedConnectedAccountAuthGroupSwitchLeases =
     new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<QualifiedConnectedAccountServiceRef>();

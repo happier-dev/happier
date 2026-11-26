@@ -130,6 +130,7 @@ import { PluginConnectedAccountDescriptorContributionV2Schema, type PluginConnec
 import { canonicalizeAgentAccountUsageSnapshot } from '@/agent/runtime/registry/engineRegistry/nativeAgentAccountUsage';
 import { recordProviderAccountUsageSnapshotForSession } from '../accountUsage/recordProviderAccountUsageSnapshotForSession';
 import { normalizeAcquiredProviderAccountUsageSnapshot } from '../accountUsage/acquiredSnapshot';
+import { createProviderAccountUsagePersistenceScheduler } from '../accountUsage/persistence';
 import { startConnectedServiceQuotasLoop } from './startConnectedServiceQuotasLoop';
 import { resolveRuntimeAuthRecoveryResultDisposition } from '../runtimeAuth/resolveRuntimeAuthRecoveryResultDisposition';
 import { PLUGIN_MANIFEST as CLAUDE_USAGE_MANIFEST } from '../../../../../../packages/plugins/claude/src/manifest';
@@ -2684,8 +2685,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
-  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_clockless', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_timeout_reconciliation', 'manual_reconcile_redeemed', 'manual_reconcile_absent', 'manual_reconcile_refresh_absent', 'manual_reconcile_refresh_late_unknown', 'manual_reconcile_refresh_available', 'manual_reconcile_refresh_expired', 'manual_configured_late_acknowledgement', 'manual_configured_checked_late_acknowledgement', 'manual_configured_terminal_read_acknowledgement', 'automatic_configured_late_after_inventory', 'manual_late_acknowledgement', 'manual_lost_loopback_acknowledgement', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
-    let now = 1_000_000;
+  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_summary_conflict_winner', 'deadline_no_quota_summary_conflict_pending', 'deadline_no_quota_summary_conflict_refresh', 'deadline_no_quota_summary_conflict_refusal', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_clockless', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_timeout_reconciliation', 'manual_reconcile_redeemed', 'manual_reconcile_absent', 'manual_reconcile_refresh_absent', 'manual_reconcile_refresh_late_unknown', 'manual_reconcile_refresh_available', 'manual_reconcile_refresh_expired', 'manual_configured_late_acknowledgement', 'manual_configured_checked_late_acknowledgement', 'manual_configured_terminal_read_acknowledgement', 'automatic_configured_late_after_inventory', 'manual_late_acknowledgement', 'manual_lost_loopback_acknowledgement', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+    const closedDay = Date.UTC(2026, 10, 25);
+    const summaryConflict = recoveryMode.startsWith('deadline_no_quota_summary_conflict_');
+    const summaryRefusal = recoveryMode === 'deadline_no_quota_summary_conflict_refusal';
+    let now = (summaryConflict ? closedDay : 0) + 1_000_000;
     const service = recoveryMode === 'manual_codex_alias'
       ? { pluginId: 'happier.agent.codex', localId: 'openai-codex' }
       : recoveryMode === 'manual_claude_alias'
@@ -2893,7 +2897,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             return { status: 'consumed' };
           }
         },
-        ${recoveryMode === 'settlement_init_no_quota' || recoveryMode === 'completion_observation_no_quota' || (recoveryMode.startsWith('deadline_no_quota') && recoveryMode !== 'deadline_no_quota_needs_reauth') ? '' : `async quota(context, options) {
+        ${recoveryMode === 'settlement_init_no_quota' || recoveryMode === 'completion_observation_no_quota' || (recoveryMode.startsWith('deadline_no_quota') && recoveryMode !== 'deadline_no_quota_needs_reauth' && !summaryRefusal) ? '' : `async quota(context, options) {
           ${inventoryRegistration ? `await (await import('node:fs/promises')).writeFile(${JSON.stringify(quotaInvocationMarker)}, 'invoked');` : ''}
           ${settlementInitialization ? `await (await import('node:fs/promises')).writeFile(${JSON.stringify(quotaInvocationMarker)}, 'invoked');
           throw new Error('Connection settlement must not invoke provider quota');` : ''}
@@ -2922,7 +2926,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           ${backgroundFreshnessCase ? "if (++quotaReadCount >= 7) throw Object.assign(new Error('Provider read failed'), { quotaFetchErrorCode: 'network' });" : ''}
           return {
             ${recoveryMode === 'discovery_no_facet' || recoveryMode === 'discovery_unavailable' ? "recoveryCredits: { availableCount: 99, credits: [] }, recoveryCreditDetails: { injected: { remainingCount: 99, appliesToProviderLimitIds: [] } }," : ''}
-            observedAtMs: ${inventoryRegistration ? 0 : recoveryMode === 'usage_notice_requester' ? '++quotaReadCount === 1 ? 500000 : 600000' : backgroundFreshnessCase ? `${now} + (quotaReadCount - 1) * ${pollIntervalMs}` : refreshReconcilesDebit ? `${now} + (await (await import('node:fs/promises')).readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') === 'refresh' ? ${recoveryMode === 'manual_reconcile_refresh_expired' ? 1_500 : 500} : 0)` : now},
+            observedAtMs: ${inventoryRegistration ? 0 : recoveryMode === 'usage_notice_requester' ? '++quotaReadCount === 1 ? 500000 : 600000' : backgroundFreshnessCase ? `${now} + (quotaReadCount - 1) * ${pollIntervalMs}` : refreshReconcilesDebit ? `${now} + (await (await import('node:fs/promises')).readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') === 'refresh' ? ${recoveryMode === 'manual_reconcile_refresh_expired' ? 1_500 : 500} : 0)` : summaryRefusal ? closedDay + 86_400_000 + 60_000 : now},
             ${accountMode === 'e2ee' ? `subscription: ${JSON.stringify(failedSubscription)},` : ''}
             limits: [{
               ${recoveryMode === 'quota_all_unavailable' ? "status: 'unavailable'," : ''}
@@ -3113,7 +3117,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       || recoveryMode.startsWith('quota_error_deferred_request')
       || recoveryMode === 'quota_error_native'
       || recoveryMode === 'manual_reset_after_quota_error';
-    const readQuota = vi.fn(async () => {
+    const readQuota = vi.fn(async ({ ref } = { ref: profile.ref }) => {
       if (recoveryMode === 'deadline_no_quota_recovery') {
         if (readQuota.mock.calls.length === 1) throw new Error('Quota source transport unavailable');
         return null;
@@ -3128,9 +3132,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       }
       const sealed = committed?.sealedPayload ?? previousSealed;
       return inventoryRegistration && !committed || recoveryMode === 'quota_error_cold' || settlementInitialization && recoveryMode !== 'settlement_init_existing' ? null : ({
-      ref: profile.ref,
+      ref,
       sourceResolution: {
-        source: { ref: profile.ref, bindingKind: 'account' as const },
+        source: { ref, bindingKind: 'account' as const },
         recordId: snapshot.recordId, providerAccountId: recordKey.accountSubjectId,
         fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs,
       },
@@ -3141,7 +3145,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       } : {
         t: 'plain' as const,
         v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({
-          snapshot, ref: profile.ref,
+          snapshot, ref,
         }),
       },
       metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' as const,
@@ -3193,8 +3197,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       establishedRuntimeOwner: terminalErrorDuringCheck || heldReconciliation || reconcileActivePool || lateUnknownBeforeInventory
         ? { ...establishedRuntimeOwner, invokeWithReceipt: observeRuntimeInvocation } : establishedRuntimeOwner,
       listScheduledAccounts,
-      ...(inventoryRegistration ? { resolveOperationTransport: (input: { operation: string }) => {
-        if (input.operation === 'quota_poll' && !quotaPollingAdmitted) throw new Error('Provider acquisition is not admitted');
+      ...(inventoryRegistration || summaryRefusal ? { resolveOperationTransport: (input: { operation: string }) => {
+        if (input.operation === 'quota_poll' && (!quotaPollingAdmitted || summaryRefusal)) throw new Error('Provider acquisition is not admitted');
         return { kind: 'v4' as const };
       } } : {}),
       listAccounts: async () => [profile],
@@ -3257,7 +3261,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const coordinator = createCoordinator();
 
     try {
-      if (!['usage_notice_requester', 'deadline_no_quota', 'deadline_no_quota_needs_reauth'].includes(recoveryMode)) {
+      if (!summaryConflict && !['usage_notice_requester', 'deadline_no_quota', 'deadline_no_quota_needs_reauth'].includes(recoveryMode)) {
         // These cases control quota and usage I/O independently. Their V4 summary
         // coverage is settled unless a case supplies its own repair fixture.
         const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -3549,6 +3553,168 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             event: 'quota_work_suppressed',
             reason: 'quota_fetch_timeout',
           }));
+        }
+        return;
+      }
+      if (summaryConflict) {
+        const dayEnd = closedDay + 86_400_000;
+        now = dayEnd + 10_000;
+        const history = Array.from({ length: 201 }, (_, index) => {
+          const at = previous.fetchedAtMs + index;
+          return { id: `saved-${index}`, observedAtMs: at, record: {
+            content: { t: 'plain' as const, v: { ...previous, observedAtMs: at, fetchedAtMs: at } },
+            metadata: { fetchedAt: at, staleAfterMs: previous.staleAfterMs, status: 'ok' }, sources: [],
+          } };
+        });
+        const coverage = { observationCount: 200, frontier: { id: history[199]!.id, observedAtMs: history[199]!.observedAtMs } };
+        const latest = history[200]!;
+        const currentCoverage = { observationCount: history.length, frontier: { id: latest.id, observedAtMs: latest.observedAtMs } };
+        const currentDay = { dayStartAtMs: closedDay, coverage: currentCoverage };
+        const body = buildProviderAccountUsageDaySummaryV1({ recordId: previous.recordId, dayStartAtMs: closedDay,
+          snapshots: history.map(entry => entry.record.content.v), completeDayHistory: true });
+        const winner = { dayStartAtMs: closedDay, payload: { v: 1, coverage: currentCoverage, clockBoundsVersion: 1,
+          content: { t: 'plain', v: body } } };
+        const hasWinner = recoveryMode === 'deadline_no_quota_summary_conflict_winner';
+        const refused = summaryRefusal;
+        const code = refused ? 'provider_account_usage_storage_mode_mismatch' : 'provider_account_usage_day_summary_conflict';
+        const reads: string[] = [];
+        let conflicted = false;
+        let admitted = false;
+        let repair = false;
+        const alias = { ...profile, ref: { ...profile.ref, accountId: 'second-alias' },
+          credentialRevision: 'csr_qwertyuiopasdfghjklzxcvbnm' };
+        if (refused) listScheduledAccounts.mockImplementation(async () => [profile, alias]);
+        const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const get = vi.spyOn(credentialAxios, 'get').mockImplementation(async url => {
+          const path = new URL(String(url));
+          const query = JSON.parse(path.searchParams.get('query')!);
+          if (path.pathname.endsWith('/day-summaries')) {
+            if (query.includeMissingDays) {
+              reads.push('index');
+              return { status: 200, data: { summaries: [],
+                missingDays: !conflicted ? [{ dayStartAtMs: closedDay, coverage }] : hasWinner || admitted ? [] : [currentDay] } };
+            }
+            reads.push('readback');
+            expect(query).toMatchObject({ recordId: previous.recordId, includeCoverage: true,
+              range: { startAtMs: closedDay, endAtMs: dayEnd } });
+            return { status: 200, data: hasWinner
+              ? { summaries: [winner], missingDays: [] } : { summaries: [], missingDays: [currentDay] } };
+          }
+          expect(path.pathname).toMatch(/\/history$/);
+          expect(query.history.range).toEqual({ startAtMs: closedDay, endAtMs: dayEnd });
+          reads.push('history');
+          const offset = query.history.cursor
+            ? history.findIndex(entry => entry.id === query.history.cursor.id) + 1 : 0;
+          const entries = history.slice(offset, offset + query.history.pageSize);
+          const last = entries.at(-1)!;
+          return { status: 200, data: { entries, nextCursor: offset + entries.length < history.length
+            ? { id: last.id, observedAtMs: last.observedAtMs } : null } };
+        });
+        const put = vi.spyOn(credentialAxios, 'put').mockImplementation(async (_url, payload) => {
+          if (conflicted && (recoveryMode === 'deadline_no_quota_summary_conflict_pending' || repair)) {
+            expect(ProviderAccountUsageDaySummaryWriteV1Schema.parse(payload).payload.coverage).toEqual(currentCoverage);
+            admitted = true;
+            return { status: 200, data: { success: true } };
+          }
+          conflicted = true;
+          return { status: 409, data: { error: code } };
+        });
+        onTestFinished(() => { get.mockRestore(); put.mockRestore(); warning.mockRestore(); });
+        const schedule = await coordinator.tickOnce();
+        for (let index = 0; index < 3; index++) { now += 60_000; await coordinator.tickOnce(); }
+        expect.soft(put).toHaveBeenCalledTimes(1);
+        const firstAttempt = ['index', 'history', 'history', 'history'];
+        expect.soft(reads).toEqual(refused ? firstAttempt : [...firstAttempt, 'readback']);
+        expect.soft(warning).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ operation: 'put', errorCode: code }));
+        expect.soft(schedule).toEqual({ nextAutomaticRunAfterMs: null });
+        expect(writeProviderAccountUsage).not.toHaveBeenCalled();
+        if (!hasWinner) {
+          // The ordinary quota wake discovers a newer head for the same
+          // source. Its clocks are not a new summary-write authority.
+          previous.fetchedAtMs += 1;
+          previous.observedAtMs += 1;
+          const beforeWake = readQuota.mock.calls.length;
+          coordinator.invalidateInventory({ resetQuotaSchedule: true });
+          await coordinator.tickOnce();
+          expect(readQuota).toHaveBeenCalledTimes(beforeWake + (refused ? 2 : 1));
+          expect(put).toHaveBeenCalledTimes(1);
+          expect(reads).toEqual(refused ? firstAttempt : [...firstAttempt, 'readback']);
+        }
+        if (recoveryMode === 'deadline_no_quota_summary_conflict_refresh') {
+          // Passage of time does not reopen the day. The addressed Refresh wake does.
+          now = dayEnd + 2 * 86_400_000;
+          expect.soft(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+          expect.soft(put).toHaveBeenCalledTimes(1);
+          repair = true;
+          coordinator.invalidateInventory({ quotaRefreshRecordIds: [previous.recordId] });
+          expect.soft(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+          expect.soft(admitted).toBe(true);
+          expect.soft(put).toHaveBeenCalledTimes(2);
+          await coordinator.tickOnce();
+          expect.soft(reads).toEqual([...firstAttempt, 'readback', ...firstAttempt]);
+        }
+        if (refused) {
+          const publication = createProviderAccountUsagePersistenceScheduler({
+            api, credentials, now: () => now, writeQualifiedProviderAccountUsage: writeProviderAccountUsage,
+            resolveDaySummaryMaintenance: () => coordinator.usageDaySummaryAdmission.maintain,
+          });
+          onTestFinished(() => publication.dispose());
+          const published = normalizeAcquiredProviderAccountUsageSnapshot({
+            ...previous, observedAtMs: now, fetchedAtMs: now,
+          }, { kind: 'acquired', acquiredAtMs: now });
+          await expect(publication.recordInBandSnapshot(published, { targets: [{
+            source: { bindingKind: 'account', ref: alias.ref },
+            expectedCredentialRevision: alias.credentialRevision,
+            expectedConfigurationRevision: alias.configurationRevision,
+          }] })).resolves.toMatchObject({ status: 'enqueued' });
+          await publication.flush(5_000);
+          expect.soft(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
+          expect.soft(put).toHaveBeenCalledTimes(1);
+          expect.soft(reads).toEqual(firstAttempt);
+
+          // The fixture's recovery leaf produces a fresh record without going through scheduled staging.
+          await expect(coordinator.consumeRecoveryCreditForProfile({
+            serviceId: ingressServiceId, profileId: profile.ref.accountId, idempotencyKey: 'fixture-recovery-summary',
+          })).resolves.toMatchObject({ ok: true, receipt: { status: 'consumed' } });
+          expect.soft(writeProviderAccountUsage).toHaveBeenCalledTimes(2);
+          expect.soft(put).toHaveBeenCalledTimes(1);
+          expect.soft(reads).toEqual(firstAttempt);
+          profile.credentialRevision = 'csr_zyxwvutsrqponmlkjihgfe';
+          const at = ++now;
+          const revisionB = normalizeAcquiredProviderAccountUsageSnapshot({
+            ...previous, observedAtMs: at, fetchedAtMs: at,
+          }, { kind: 'acquired', acquiredAtMs: at });
+          await expect(publication.recordInBandSnapshot(revisionB, { targets: [{
+            source: { bindingKind: 'account', ref: profile.ref },
+            expectedCredentialRevision: profile.credentialRevision,
+            expectedConfigurationRevision: profile.configurationRevision,
+          }] })).resolves.toMatchObject({ status: 'enqueued' });
+          await publication.flush(5_000);
+          expect(writeProviderAccountUsage).toHaveBeenCalledTimes(3);
+          expect(put).toHaveBeenCalledTimes(2);
+          expect(reads).toEqual([...firstAttempt, ...firstAttempt]);
+
+          // The scheduler still knows revision A when the Account feed delivers B.
+          coordinator.invalidateInventory({ resetQuotaSchedule: true });
+          expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+          expect(put).toHaveBeenCalledTimes(2);
+          expect(reads).toEqual([...firstAttempt, ...firstAttempt]);
+
+          profile.credentialRevision = 'csr_mnbvcxzlkjhgfdsapoiuyt';
+          coordinator.invalidateInventory({ resetQuotaSchedule: true });
+          expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+          expect(put).toHaveBeenCalledTimes(3);
+          expect(reads).toEqual([...firstAttempt, ...firstAttempt, ...firstAttempt]);
+        }
+        if (recoveryMode === 'deadline_no_quota_summary_conflict_pending') {
+          // A fresh daemon admits the durable pending day with the new coverage
+          // proof. No quota leaf or new observed head is needed to repair it.
+          const restarted = createCoordinator();
+          expect(await restarted.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+          expect(admitted).toBe(true);
+          expect(put).toHaveBeenCalledTimes(2);
+          expect(reads.slice(-4)).toEqual(firstAttempt);
+          expect(writeProviderAccountUsage).not.toHaveBeenCalled();
         }
         return;
       }

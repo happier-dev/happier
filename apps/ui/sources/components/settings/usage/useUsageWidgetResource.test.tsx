@@ -83,6 +83,72 @@ function BodyProbe(props: Readonly<{ resource: UsageWidgetResource; instanceId: 
 }
 
 describe('Usage widget shared Resource selection', () => {
+    it.each(['available', 'stale'] as const)('keeps routine partial daily coverage independent of an %s quota head', async status => {
+        const { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } = await import('@happier-dev/protocol/connect/account-usage-primitives');
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { usageCoverageSummary, usagePartialHistoryLabel } = await import('./widgets/usageBodyKit');
+        const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'daily-pending' };
+        const source = { bindingKind: 'account', ref };
+        const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+        const now = Date.now();
+        const observed = status === 'stale' ? now - 120_000 : now;
+        const dayMs = 86_400_000;
+        const closedDay = (Math.floor(now / dayMs) - 1) * dayMs;
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
+        const current = ProviderAccountUsageSnapshotV1Schema.parse({
+            v: 1, recordId, recordKey, providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId },
+            observedAtMs: observed, fetchedAtMs: observed, staleAfterMs: 60_000,
+            source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [],
+        });
+        const credentials = await mountHome(request => {
+            if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
+                features: { connectedServices: { enabled: true, quotas: { enabled: true } } },
+            }));
+            if (request.path.endsWith('/sources/resolve')) return Response.json({
+                source, recordId, providerAccountId: ref.accountId, fetchedAt: observed, staleAfterMs: 60_000,
+            });
+            if (request.path.endsWith('/record')) return Response.json({ content: { t: 'plain', v: current },
+                metadata: { fetchedAt: observed, staleAfterMs: 60_000, status: 'ok' }, sources: [source] });
+            if (request.path.endsWith('/day-summaries')) return Response.json({ summaries: [],
+                missingDays: [{ dayStartAtMs: closedDay, coverage: { observationCount: 1,
+                    frontier: { id: 'prior-reading', observedAtMs: closedDay + 1 } } }] });
+            if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+            return undefined;
+        });
+        storage.setState({ profile: AccountProfileSchema.parse({ ...storage.getState().profile, connectedAccountsV4: [{ ref,
+            status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] }) });
+        await getServerFeaturesSnapshot({ serverId: home!.homes.a!.id, force: true });
+        const queryPlan = plan(normalizeUsageQuery({ period: { relative: 'year' },
+            includeAccounting: false, includeQuota: true, includeQuotaHistory: true, includeQuotaExactHistory: false,
+            includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+        }));
+        const hook = await renderHook(() => useUsageWidgetBodyModel(useUsageWidgetResource({ credentials, enabled: true, plan: queryPlan }), 'first'));
+        try {
+            const head = { source: expect.stringMatching(/^quota:/), status, asOfMs: observed };
+            await expect.poll(() => hook.getCurrent().slice?.sources).toContainEqual(head);
+            const model = hook.getCurrent();
+            expect(model.slice?.quota?.[0]).toMatchObject({ current, pageFacts: { historyStatus: 'partial' } });
+            expect(model.error).toBeNull();
+            expect(model.freshness).toBe(status === 'stale' ? 'stale' : 'fresh');
+            expect(usageCoverageSummary(model.slice!, ['quota'])).toBe(usagePartialHistoryLabel());
+            await act(async () => {
+                expect(await model.refresh()).toMatchObject({ ok: true, result: { status: 'refreshed' } });
+            });
+            expect(hook.getCurrent().slice?.sources).toContainEqual(head);
+            expect(home!.requests.filter(request => request.path.endsWith('/history'))).toHaveLength(0);
+            const response = await createDefaultActionExecutor().execute('usage.query', queryPlan.input!,
+                { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+            expect(response).toMatchObject({ ok: true, result: { results: [{
+                quota: [{ pageFacts: { historyStatus: 'partial', historyCoverageCause: 'provider_account_usage_day_summary_pending' } }],
+                sources: expect.arrayContaining([head]),
+            }] } });
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('shows last-known data immediately on a stale remount while one replacement read settles or fails', async () => {
         let hold = false;
         let fail = false;

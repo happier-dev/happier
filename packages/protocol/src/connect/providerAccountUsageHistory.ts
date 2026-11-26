@@ -52,6 +52,8 @@ export function projectProviderAccountUsageQuotaReadV1(input: Readonly<{ input: 
   const selectionUnavailable = input.recentHistorySelection?.status === 'unavailable';
   const paceNotLoaded = selectionUnavailable || input.recentHistorySelection !== undefined && !input.recentHistory;
   const partial = paceNotLoaded || history?.nextCursor != null || exactHistory?.nextCursor != null || (input.missingDays?.length ?? 0) > 0;
+  const missingDailySummary = recentRead && input.missingDays?.some(({ dayStartAtMs }) =>
+    !range || dayStartAtMs < range.endAtMs && dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS > range.startAtMs);
   const exactRange = input.exactHistoryRange ?? input.pageProjection?.range ?? input.input.history?.range;
   const unusedSnapshots = recentRead ? history && mergeRetainedUsageSnapshots(requestedSnapshots,
     exactRange ? retainedSnapshots?.filter(snapshot => snapshot.fetchedAtMs >= exactRange.startAtMs && snapshot.fetchedAtMs < exactRange.endAtMs) : undefined) : snapshots;
@@ -71,6 +73,7 @@ export function projectProviderAccountUsageQuotaReadV1(input: Readonly<{ input: 
       history: recentRead ? exactHistory ?? { entries: [], nextCursor: null } : history }, operands, input.daySummaries, range);
     if (result.pageFacts) {
       result.pageFacts = { ...result.pageFacts, historyStatus: partial ? 'partial' : 'complete',
+        ...(missingDailySummary ? { historyCoverageCause: 'provider_account_usage_day_summary_pending' as const } : {}),
         ...(recentRead ? {
           // Earlier curves consume only the separately requested exact history.
           earlierCurves: (input.current?.meters ?? []).map(meter => ({ meterId: meter.meterId,

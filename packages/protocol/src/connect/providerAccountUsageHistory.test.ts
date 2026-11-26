@@ -58,7 +58,11 @@ describe('opened accepted provider history', () => {
     expect(projected.pageProjection).toBeUndefined();
     expect(ConnectedServiceQuotaGetResultV1Schema.safeParse(projected).success).toBe(true);
     const partial = projectProviderAccountUsageQuotaReadV1({ ...input, missingDays: [{ dayStartAtMs: 0 }] });
-    expect(partial.pageFacts?.historyStatus).toBe('partial');
+    expect(ConnectedServiceQuotaGetResultV1Schema.parse(partial).pageFacts).toMatchObject({
+      historyStatus: 'partial', historyCoverageCause: 'provider_account_usage_day_summary_pending',
+    });
+    const outsideRange = projectProviderAccountUsageQuotaReadV1({ ...input, missingDays: [{ dayStartAtMs: 86_400_000 }] });
+    expect(outsideRange.pageFacts?.historyCoverageCause).toBeUndefined();
     expect(partial.unusedCapacity?.historyStatus).toBe('not_loaded');
     expect(partial.pace).toEqual(expected.pace);
     const incompatibleSummary = { ...summary, windows: summary.windows.map(window => ({ ...window,
@@ -72,6 +76,7 @@ describe('opened accepted provider history', () => {
       recentHistorySelection: { status: 'unavailable' as const, reason: 'unproven_clock_bounds' as const } });
     expect(unproven.pace[0]!.value).toEqual({ status: 'unavailable', reason: 'not_loaded' });
     expect(unproven.pageFacts?.historyStatus).toBe('partial');
+    expect(unproven.pageFacts?.historyCoverageCause).toBeUndefined();
     const unknown = { ...current, meters: [{ ...current.meters[0]!, windowDurationMs: undefined }] };
     expect(projectProviderAccountUsageQuotaReadV1({ ...input, current: unknown }).pace[0]!.value)
       .toEqual({ status: 'unavailable', reason: 'unknown_window' });

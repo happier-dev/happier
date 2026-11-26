@@ -173,12 +173,17 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     coordinatorInventoryIsObserved: () => releaseConnectedAccountObservation !== undefined
       && bootstrap.hasCurrentConnectedAccountChangesObserver(),
   });
+  let coordinators: Awaited<ReturnType<typeof startDaemonConnectedServiceRuntime>> | null = null;
   const providerAccountUsageStore = input.providerAccountUsageStore;
   const providerAccountUsagePersistence = createProviderAccountUsagePersistenceScheduler({
     api: { getAccountEncryptionMode: async options => {
       return await withHome(() => api.getAccountEncryptionMode(options));
     } }, credentials: bootstrap.credentials, now: () => Date.now(), randomBytes,
     serverScope: bootstrap.attribution.serverId, accountScope: bootstrap.attribution.accountId,
+    resolveDaySummaryMaintenance: () => {
+      const maintain = coordinators?.connectedServiceQuotasCoordinator?.usageDaySummaryAdmission?.maintain;
+      return maintain ? input => withHome(() => maintain(input)) : undefined;
+    },
     writeQualifiedProviderAccountUsage: async request => {
       return await withHome(() => writeQualifiedProviderAccountUsageV4(request));
     },
@@ -188,7 +193,6 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   const { activeServerDir, connectedServicesMaterializationBaseDir } = resolveRequesterSessionRuntimeDirectories({
     activeServerDir: input.activeServerDir, connectedServicesMaterializationBaseDir: input.connectedServicesMaterializationBaseDir,
     attribution: bootstrap.attribution });
-  let coordinators: Awaited<ReturnType<typeof startDaemonConnectedServiceRuntime>> | null = null;
   let retirement: Promise<void> | undefined;
   const dispose = () => retirement ??= (async () => {
     disposed = true;

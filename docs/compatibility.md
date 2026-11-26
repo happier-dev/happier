@@ -11154,6 +11154,13 @@ Earlier strict development readers reject the added field. Matching UI, CLI and
 Action readers use the shared Protocol schema under the development direct cut.
 This changes no SCM RPC envelope, persisted data, or wire epoch.
 
+Unreleased 0.3 daily quota results in `usage.query` can carry
+`quota[].pageFacts.historyCoverageCause` when a requested day has detail but its
+summary is missing. This fact is independent of head freshness, and the write
+diagnostic remains the source of the summary PUT's typed result. The field is
+optional for current readers. Strict development readers load with matching
+Protocol sources. The Home response and persisted summary shapes stay as they are.
+
 Unreleased 0.3 Workflow Event references may select a declared structured payload
 field for an Action JSON binding. Conditions and text retain scalar-only
 operands. The existing accepted-snapshot JSON value slot and Workflow content

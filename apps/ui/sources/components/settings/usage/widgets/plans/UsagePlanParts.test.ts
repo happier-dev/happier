@@ -98,6 +98,14 @@ describe('readPlanAccountsStatement', () => {
     expect(readPlanAccountsStatement([account('a', 'available', true), account('b', 'partial', true)], nameOf)).toBeNull();
   });
 
+  it.each(['available', 'stale'] as const)('states partial history beside an %s head', (status) => {
+    const entry = account('a', status, true, now - 2000);
+    const partial = { ...entry, read: { ...entry.read!, pageFacts: { historyStatus: 'partial' } } } as UsagePlanAccount;
+    expect(readPlanAccountsStatement([partial], nameOf)).toMatchObject({
+      kind: 'partial', asOf: now - 2000, accounts: 1, reason: 'Partial history',
+    });
+  });
+
   it('counts outstanding accounts, clears settled reads and never calls an unissued read pending', () => {
     const accounts = [account('a', 'pending', true), account('b', 'pending', true), account('c', 'available', true)];
     expect(readPlanAccountsStatement(accounts, nameOf)).toMatchObject({ kind: 'pending', accounts: 2 });

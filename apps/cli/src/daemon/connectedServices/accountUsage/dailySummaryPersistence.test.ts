@@ -3,7 +3,7 @@ import axios from '@/api/client/credentialAxios';
 import { buildProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { maintainProviderAccountUsageDaySummaries } from './dailySummaryPersistence';
 import { buildProviderAccountUsageDaySummaryV1, openProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1, ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
-import { persistProviderAccountUsageWithDaySummaries } from './persistence';
+import { createProviderAccountUsageDaySummaryAdmission, persistProviderAccountUsageWithDaySummaries } from './persistence';
 import { logger } from '@/ui/logger';
 
 function openPlainWrite(value: unknown) {
@@ -177,21 +177,32 @@ describe('key-holding quota summary maintenance', () => {
       } finally { get.mockRestore(); put.mockRestore(); }
     });
 
-    it('publishes clock proof with the discovered coverage and reports a concurrent coverage conflict', async () => {
+    it.each([
+      { code: 'provider_account_usage_day_summary_conflict', reason: 'coverage_pending', reads: 3 },
+      { code: 'provider_account_usage_day_summary_conflict', reason: 'readback_failed', reads: 3 },
+      { code: 'provider_account_usage_storage_mode_mismatch', reason: undefined, reads: 2 },
+    ])('reports $code ($reason) with the submitted clock proof', async ({ code, reason, reads }) => {
       const snapshot = sample(100, 9100);
       const coverage = { observationCount: 1, frontier: { id: '100', observedAtMs: 100 } };
-      const get = vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: String(url).includes('/day-summaries')
-        ? { summaries: [], missingDays: [{ dayStartAtMs: 0, coverage }] }
-        : { entries: [{ id: '100', observedAtMs: 100, record: { content: { t: 'plain', v: snapshot },
-          metadata: { fetchedAt: 100, staleAfterMs: 1000, status: 'ok' }, sources: [] } }], nextCursor: null } }));
-      const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 409, data: { error: 'provider_account_usage_projection_conflict' } });
+      const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const path = new URL(String(url));
+        const query = JSON.parse(path.searchParams.get('query')!);
+        if (query.includeCoverage && reason === 'readback_failed') throw { response: { status: 503 } };
+        return { status: 200, data: path.pathname.endsWith('/day-summaries')
+          ? { summaries: [], missingDays: [{ dayStartAtMs: 0, coverage }] }
+          : { entries: [{ id: '100', observedAtMs: 100, record: { content: { t: 'plain', v: snapshot },
+            metadata: { fetchedAt: 100, staleAfterMs: 1000, status: 'ok' }, sources: [] } }], nextCursor: null } };
+      });
+      const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 409, data: { error: code } });
       try {
-        expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 200 })).toEqual({ status: 'conflict', days: 0 });
+        expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: 200 }))
+          .toEqual(reason ? { status: 'conflict', days: 0, errorCode: code } : { status: 'refused', days: 0, operation: 'put', errorCode: code });
         expect(put.mock.calls[0]?.[1]).toMatchObject({ payload: { coverage, clockBoundsVersion: 1 } });
+        expect(get).toHaveBeenCalledTimes(reads);
       } finally { get.mockRestore(); put.mockRestore(); }
     });
   });
-  it('uses the just-updated preceding day when discovery also captured its stale body', async () => {
+  it.each(['written', 'covered_after_conflict'] as const)('uses the current preceding day after %s even when discovery held its stale body', async outcome => {
     const day = 86_400_000;
     const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
     const recordId = buildProviderAccountUsageRecordId(recordKey);
@@ -204,19 +215,31 @@ describe('key-holding quota summary maintenance', () => {
     const current = sample(day + 100, 5, day + 1000);
     const previous = { dayStartAtMs: 0, payload: { v: 1, coverage: { observationCount: 0, frontier: null },
       content: { t: 'plain', v: buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, snapshots: [stale] }) } } };
+    const updatedCoverage = { observationCount: 2, frontier: { id: 'updated', observedAtMs: updated.fetchedAtMs } };
     const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const query = JSON.parse(new URL(String(url)).searchParams.get('query')!);
+      if (query.includeCoverage) {
+        expect(query.range).toEqual({ startAtMs: 0, endAtMs: day });
+        return { status: 200, data: { summaries: [{ dayStartAtMs: 0, payload: { v: 1, coverage: updatedCoverage,
+          content: { t: 'plain', v: buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: 0, snapshots: [stale, updated] }) },
+        } }], missingDays: [] } };
+      }
       if (String(url).includes('/day-summaries')) return { status: 200, data: { summaries: [previous], missingDays: [
-        { dayStartAtMs: 0, coverage: { observationCount: 2, frontier: { id: 'updated', observedAtMs: updated.fetchedAtMs } } },
+        { dayStartAtMs: 0, coverage: outcome === 'written' ? updatedCoverage
+          : { observationCount: 1, frontier: { id: 'stale', observedAtMs: stale.fetchedAtMs } } },
         { dayStartAtMs: day, coverage: { observationCount: 1, frontier: { id: 'current', observedAtMs: current.fetchedAtMs } }, precedingSummary: previous },
       ] } };
-      const query = JSON.parse(new URL(String(url)).searchParams.get('query')!) as { history: { range: { startAtMs: number } } };
       const snapshot = query.history.range.startAtMs < day ? updated : current;
       return { status: 200, data: { entries: [{ id: snapshot === updated ? 'updated' : 'current', observedAtMs: snapshot.fetchedAtMs,
         record: { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: 1000, status: 'ok' }, sources: [] } }], nextCursor: null } };
     });
     const put = vi.spyOn(axios, 'put').mockResolvedValue({ status: 200, data: { success: true } });
+    if (outcome === 'covered_after_conflict') {
+      put.mockResolvedValueOnce({ status: 409, data: { error: 'provider_account_usage_day_summary_conflict' } });
+    }
     try {
-      expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: day + 200 })).toEqual({ status: 'written', days: 2 });
+      expect(await maintainProviderAccountUsageDaySummaries({ token: 'token', recordId, accountMode: 'plain', nowMs: day + 200 }))
+        .toEqual({ status: 'written', days: outcome === 'written' ? 2 : 1 });
       const { ProviderAccountUsageDaySummaryWriteV1Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
       const write = ProviderAccountUsageDaySummaryWriteV1Schema.parse(put.mock.calls[1]?.[1]);
       expect(openProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, accountMode: 'plain', content: write.payload.content }).windows.flatMap(window => window.resets))
@@ -273,7 +296,8 @@ describe('key-holding quota summary maintenance', () => {
     const get = vi.spyOn(axios, 'get').mockRejectedValue({ response: { status: 403, data: { error: 'denied' } } });
     const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     try {
-      const result = await persistProviderAccountUsageWithDaySummaries({ token: 'secret-token', nowMs: 200, write: {
+      const result = await persistProviderAccountUsageWithDaySummaries({ token: 'secret-token', nowMs: 200,
+        daySummaryMaintenance: createProviderAccountUsageDaySummaryAdmission().maintain, write: {
         source: { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' },
         expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', expectedConfigurationRevision: 'cfg-current',
         recordId, recordKey, payloadMode: 'plain_json_v1', snapshot, fetchedAt: 100, staleAfterMs: 1000, status: 'ok',

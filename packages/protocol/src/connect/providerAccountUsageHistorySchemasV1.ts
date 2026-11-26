@@ -60,6 +60,8 @@ export const ConnectedServiceQuotaGetResultV1Schema = lazyZodSchema(() => z.stri
   pageFacts: z.optional(z.strictObject({
     dayQuotaHistory: z.optional(z.array(ProviderAccountUsageDaySummaryV1Schema)),
     historyStatus: z.enum(['complete', 'partial']),
+    /** A requested daily summary is missing, independent of quota head freshness. */
+    historyCoverageCause: z.optional(z.literal('provider_account_usage_day_summary_pending')),
     earlierCurves: z.array(z.strictObject({ meterId: z.string().check(z.minLength(1)), value: ProviderAccountUsageEarlierWindowCurvesV1Schema })),
     resetWitness: z.nullable(OpenedProviderAccountUsageHistoryPageV1Schema.shape.entries._zod.def.element),
     witnessedResets: z.array(ProviderAccountUsagePaceWindowV1Schema),

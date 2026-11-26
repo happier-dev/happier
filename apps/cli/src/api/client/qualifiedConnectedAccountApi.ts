@@ -1169,13 +1169,14 @@ export async function writeQualifiedProviderAccountUsageDaySummaryV4(params: Rea
     const response = await axios.put(`${resolveServerHttpBaseUrl()}/v4/connect/qualified/provider-account-usage/day-summaries`, write,
         { headers: requestHeaders(params.token), timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: status => status === 200 || status === 404 || status === 409, ...(params.signal ? { signal: params.signal } : {}) });
-    if (response.status === 404) return 'unsupported' as const;
+    if (response.status === 404) return { status: 'unsupported' } as const;
     if (response.status === 409) {
-        if (response.data?.error === 'provider_account_usage_projection_conflict') return 'conflict' as const;
+        const coverageConflict = 'provider_account_usage_day_summary_conflict';
+        if (response.data?.error === coverageConflict) return { status: 'conflict', errorCode: coverageConflict } as const;
         throwQualifiedProviderAccountUsageReadConflict(response.data);
     }
     if (response.status !== 200) throw new Error(`Qualified provider-account usage summary write returned ${response.status}`);
-    return 'written' as const;
+    return { status: 'written' } as const;
 }
 
 export async function requestQualifiedProviderAccountUsageRefreshV4(

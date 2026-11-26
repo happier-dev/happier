@@ -2,7 +2,8 @@ import { normalizeAcquiredProviderAccountUsageSnapshot, type AcquiredProviderAcc
 import { createHash } from 'node:crypto';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../accountUsage/qualifiedAccountIdentity';
-import { isProviderAccountUsageOwnershipRefusalCode, isProviderAccountUsageSourceLinkFailureCode, maintainProviderAccountUsageDaySummariesForRecord, persistProviderAccountUsageWithDaySummaries } from '../accountUsage/persistence';
+import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { isProviderAccountUsageOwnershipRefusalCode, isProviderAccountUsageSourceLinkFailureCode, createProviderAccountUsageDaySummaryAdmission, persistProviderAccountUsageWithDaySummaries } from '../accountUsage/persistence';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ProviderAccountUsageUsageIdentityResolver } from '../accountUsage/hydration';
@@ -284,11 +285,7 @@ function scalarQualifiedGroupAccountUsageView(
 function qualifiedAccountQuotaKey(
   account: QualifiedConnectedAccountRef,
 ): string {
-  return JSON.stringify([
-    account.service.pluginId,
-    account.service.localId,
-    account.accountId,
-  ]);
+  return buildQualifiedConnectedAccountLocalSubjectId(account);
 }
 
 function sameGroupSwitchTarget(
@@ -889,6 +886,7 @@ export class ConnectedServiceQuotasCoordinator {
     & Partial<Pick<ConnectedServiceRefreshCoordinator, 'refreshQualifiedConnectedAccountCredentialForRequestAuth'>> | null;
   private readonly runtimeAccountIdentities: RuntimeAccountIdentityIndex;
   private readonly failureStateByBindingKey = new Map<string, FailureState>();
+  readonly usageDaySummaryAdmission = createProviderAccountUsageDaySummaryAdmission();
   private readonly qualifiedQuotaScheduleByKey = new Map<string, Readonly<{
     basis: string; at: number | null; recordId: string | null;
     summaryMaintenance?: Readonly<{ basis: string; retryAt: number | null }>;
@@ -910,10 +908,12 @@ export class ConnectedServiceQuotasCoordinator {
 
   public invalidateInventory(event?: RequesterConnectedAccountObservation): void {
     this.lastDiscoveryAt = 0;
+    const reopened = event?.quotaRefreshRecordIds?.filter(recordId => this.usageDaySummaryAdmission.refresh(recordId));
     for (const [key, schedule] of this.qualifiedQuotaScheduleByKey) {
       if (event?.resetQuotaSchedule || (event?.quotaRefreshRecordIds?.length
         && (schedule.recordId === null || event.quotaRefreshRecordIds.includes(schedule.recordId)))) {
-        this.qualifiedQuotaScheduleByKey.set(key, { ...schedule, at: -Infinity });
+        this.qualifiedQuotaScheduleByKey.set(key, { ...schedule, at: -Infinity,
+          summaryMaintenance: schedule.recordId && reopened?.includes(schedule.recordId) ? undefined : schedule.summaryMaintenance });
       }
     }
   }
@@ -3513,6 +3513,7 @@ export class ConnectedServiceQuotasCoordinator {
           ?? writeQualifiedProviderAccountUsageV4;
         await persistProviderAccountUsageWithDaySummaries({
           writer: writeProviderAccountUsage,
+          daySummaryMaintenance: this.usageDaySummaryAdmission.maintain,
           nowMs: this.now(), randomBytes: this.randomBytes,
           token: this.credentials.token,
           write: payload,
@@ -3901,6 +3902,7 @@ export class ConnectedServiceQuotasCoordinator {
         }
         await persistProviderAccountUsageWithDaySummaries({
           writer: writeProviderAccountUsage,
+          daySummaryMaintenance: this.usageDaySummaryAdmission.maintain,
           stageDaySummaries: input.stageDaySummaries,
           nowMs: this.now(), randomBytes: this.randomBytes,
           signal: input.signal,
@@ -4564,22 +4566,26 @@ export class ConnectedServiceQuotasCoordinator {
     };
     const poolSessionRunning = input.qualifiedGroupTargets.length > 0;
     const currentKeys = new Set(profiles.map(profile => `qualified:${qualifiedAccountQuotaKey(profile.ref)}`));
-    for (const key of this.qualifiedQuotaScheduleByKey.keys()) {
-      if (!currentKeys.has(key)) this.qualifiedQuotaScheduleByKey.delete(key);
+    for (const [key, schedule] of this.qualifiedQuotaScheduleByKey) {
+      if (!currentKeys.has(key)) {
+        this.qualifiedQuotaScheduleByKey.delete(key);
+        if (schedule.recordId) this.usageDaySummaryAdmission.authorityChanged(schedule.recordId);
+      }
     }
     // Summary reads depend on the retained detail from every due profile.
     // Several credentials can resolve to the same provider usage record.
     const summaryWorkByRecord = new Map<string, {
       throughMs: number;
+      target: Parameters<typeof this.usageDaySummaryAdmission.maintain>[0]['target'];
       settle: Array<(retryAt: number | null) => void>;
     }>();
-    const stageDaySummaries = (recordId: string, throughMs: number) => {
+    const stageDaySummaries = (recordId: string, throughMs: number, target: Parameters<typeof this.usageDaySummaryAdmission.maintain>[0]['target']) => {
       const work = summaryWorkByRecord.get(recordId);
       if (work) {
         work.throughMs = Math.max(work.throughMs, throughMs);
         return work;
       }
-      const pending: NonNullable<ReturnType<typeof summaryWorkByRecord.get>> = { throughMs, settle: [] };
+      const pending: NonNullable<ReturnType<typeof summaryWorkByRecord.get>> = { throughMs, target, settle: [] };
       summaryWorkByRecord.set(recordId, pending);
       return pending;
     };
@@ -4621,9 +4627,13 @@ export class ConnectedServiceQuotasCoordinator {
         if (schedule && (schedule.credentialRevision !== identity.credentialRevision
           || schedule.configurationRevision !== identity.configurationRevision
           || schedule.providerAccountId !== identity.providerAccountId
-          || schedule.providerOrganizationId !== identity.providerOrganizationId)
-          && !this.failureStateByBindingKey.get(key)?.providerDirected) {
-          this.failureStateByBindingKey.delete(key);
+          || schedule.providerOrganizationId !== identity.providerOrganizationId)) {
+          if (schedule.recordId) this.usageDaySummaryAdmission.authorityChanged(schedule.recordId, {
+            accountMode: input.accountMode,
+            target: { source: { bindingKind: 'account', ref: profile.ref },
+              expectedCredentialRevision: identity.credentialRevision, expectedConfigurationRevision: identity.configurationRevision },
+          });
+          if (!this.failureStateByBindingKey.get(key)?.providerDirected) this.failureStateByBindingKey.delete(key);
         }
         schedule = { basis, ...identity, at: -Infinity, recordId: null,
           summaryMaintenance: schedule?.summaryMaintenance };
@@ -4648,7 +4658,15 @@ export class ConnectedServiceQuotasCoordinator {
       let recordId = schedule.recordId;
       let initializedRecordId: string | undefined;
       let summaryMaintenance = schedule.summaryMaintenance;
-      let savedSummary: { work: ReturnType<typeof stageDaySummaries>; basis: string } | undefined;
+      let savedSummary: { work: ReturnType<typeof stageDaySummaries>; basis?: string } | undefined;
+      const stageProfileDaySummaries = (id: string, throughMs: number, basis?: string) => {
+        const work = stageDaySummaries(id, throughMs, {
+          source: { bindingKind: 'account', ref: profile.ref },
+          expectedCredentialRevision: profile.credentialRevision,
+          expectedConfigurationRevision: profile.configurationRevision,
+        });
+        savedSummary = { work, basis: basis ?? (savedSummary?.work === work ? savedSummary.basis : undefined) };
+      };
       let observationIncomplete = false;
       try {
         const usageIdentity = await this.qualifiedConnectedAccountRuntime?.resolveUsageIdentity?.(profile.ref.service, input.signal);
@@ -4670,13 +4688,11 @@ export class ConnectedServiceQuotasCoordinator {
         // plugin has no quota acquisition capability. Account keys own history;
         // provider credential health only gates acquiring another observation.
         if (existing && existingSnapshot) {
-          const summaryBasis = JSON.stringify([existing.sourceResolution.recordId, input.accountMode,
-            profile.credentialRevision, profile.configurationRevision, existing.metadata.fetchedAt,
-            existing.metadata.staleAfterMs, existing.metadata.status]);
+          const summaryBasis = JSON.stringify([existing.sourceResolution.recordId, input.accountMode, profile.credentialRevision,
+            profile.configurationRevision, existing.metadata.fetchedAt, existing.metadata.staleAfterMs, existing.metadata.status]);
           if (summaryMaintenance?.basis !== summaryBasis
             || summaryMaintenance.retryAt !== null && summaryMaintenance.retryAt <= input.now) {
-            savedSummary = { basis: summaryBasis, work: stageDaySummaries(
-              existing.sourceResolution.recordId, Math.max(input.now, existing.metadata.fetchedAt)) };
+            stageProfileDaySummaries(existing.sourceResolution.recordId, Math.max(input.now, existing.metadata.fetchedAt), summaryBasis);
           }
         } else {
           summaryMaintenance = undefined;
@@ -4686,7 +4702,7 @@ export class ConnectedServiceQuotasCoordinator {
         // Register saved Accounts as well as newly settled ones. Home Refresh is
         // source-addressed, so this must not depend on provider acquisition succeeding.
         const initializedSource = !existingSnapshot
-          ? await this.initializeQualifiedAccountQuotaSourceForProfile({ profile, accountMode: input.accountMode, signal: input.signal, stageDaySummaries })
+          ? await this.initializeQualifiedAccountQuotaSourceForProfile({ profile, accountMode: input.accountMode, signal: input.signal, stageDaySummaries: stageProfileDaySummaries })
           : null;
         initializedRecordId = initializedSource?.recordId;
         const refreshRequestedAt = existing?.metadata.refreshRequestedAt;
@@ -4766,7 +4782,7 @@ export class ConnectedServiceQuotasCoordinator {
             cancellationSignal: input.signal,
             fetchTimeoutMs: this.fetchTimeoutMs,
             backgroundObservation: !pendingRefresh,
-            profile, accountMode: input.accountMode, stageDaySummaries,
+            profile, accountMode: input.accountMode, stageDaySummaries: stageProfileDaySummaries,
             ...(pendingRefresh ? { refreshRequestedAt } : {}),
             ...(health?.due ? { scheduledHealth: { work: health, dispatched: () => { healthDispatched = true; } } } : {}),
             previousSnapshot: existingSnapshot ? buildProviderAccountUsageSnapshotFromQualifiedQuotaRow({
@@ -4811,7 +4827,7 @@ export class ConnectedServiceQuotasCoordinator {
           profile,
           snapshot,
           basis: invocation.basis,
-          stageDaySummaries,
+          stageDaySummaries: stageProfileDaySummaries,
           trace,
         });
         if (!written) continue;
@@ -4865,7 +4881,7 @@ export class ConnectedServiceQuotasCoordinator {
         if (savedSummary) {
           const { work, basis } = savedSummary;
           work.settle.push(retryAt => {
-            summaryMaintenance = { basis, retryAt };
+            if (basis !== undefined || retryAt !== null) summaryMaintenance = { basis: basis ?? '', retryAt };
             settleSchedule();
           });
         } else {
@@ -4876,12 +4892,13 @@ export class ConnectedServiceQuotasCoordinator {
 
     for (const [recordId, work] of summaryWorkByRecord) {
       input.signal?.throwIfAborted();
-      const result = await maintainProviderAccountUsageDaySummariesForRecord({
-        token: this.credentials.token, recordId, accountMode: input.accountMode, nowMs: work.throughMs,
+      const result = await this.usageDaySummaryAdmission.maintain({
+        token: this.credentials.token, recordId, target: work.target, accountMode: input.accountMode, nowMs: work.throughMs,
         randomBytes: this.randomBytes, signal: input.signal,
         ...(input.accountMode === 'e2ee' ? { material: requireQuotaCredentialOpenMaterial(this.resolveCredentialOpenMaterial()) } : {}),
       });
-      const retryAt = result.status === 'written' || result.status === 'unsupported' ? null : this.now() + this.probeIntervalMs;
+      const retryAt = result.status === 'written' || result.status === 'unsupported'
+        || result.status === 'conflict' || result.status === 'refused' ? null : this.now() + this.probeIntervalMs;
       for (const settle of work.settle) settle(retryAt);
     }
 

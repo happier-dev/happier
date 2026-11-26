@@ -20,6 +20,7 @@ import { createConnectedServiceQuotaPersistenceScheduler } from '../quotas/creat
 import { createQuotaPersistenceBackoff } from '../quotas/createQuotaPersistenceBackoff';
 import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS } from '../quotas/resolveConnectedServiceQuotasDaemonOptions';
 import { maintainProviderAccountUsageDaySummaries } from './dailySummaryPersistence';
+import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { logger } from '@/ui/logger';
 import {
@@ -64,6 +65,7 @@ export async function persistProviderAccountUsageWithDaySummaries(input: Readonl
   material?: AccountScopedCryptoMaterial; signal?: AbortSignal; nowMs: number;
   randomBytes?: (length: number) => Uint8Array;
   writer?: typeof writeQualifiedProviderAccountUsageV4;
+  daySummaryMaintenance: UsageDaySummaryMaintenance;
   stageDaySummaries?: (recordId: string, throughMs: number) => void;
 }>) {
   const result = await (input.writer ?? writeQualifiedProviderAccountUsageV4)({ token: input.token, write: input.write,
@@ -78,21 +80,21 @@ export async function persistProviderAccountUsageWithDaySummaries(input: Readonl
     input.stageDaySummaries(write.recordId, nowMs);
     return { ...result, dailySummary: null };
   }
-  const dailySummary = await maintainProviderAccountUsageDaySummariesForRecord({ ...input, recordId: write.recordId,
-    accountMode: write.payloadMode === 'plain_json_v1' ? 'plain' : 'e2ee', nowMs });
+  const dailySummary = await input.daySummaryMaintenance({ ...input, target: write,
+    recordId: write.recordId, accountMode: write.payloadMode === 'plain_json_v1' ? 'plain' : 'e2ee', nowMs });
   return { ...result, dailySummary };
 }
 
 /** Saved-account passes and new observations share optional maintenance and its diagnostics. */
-export async function maintainProviderAccountUsageDaySummariesForRecord(
+async function maintainProviderAccountUsageDaySummariesForRecord(
   input: Parameters<typeof maintainProviderAccountUsageDaySummaries>[0],
 ) {
   try {
     const dailySummary = await maintainProviderAccountUsageDaySummaries(input);
     if (dailySummary.status === 'partial') logger.warnLocalFile('Provider account usage daily summary maintenance unavailable',
       { phase: 'daily_summary', reason: 'content_unavailable', writtenDays: dailySummary.days, unavailableDays: dailySummary.unavailableDays.length });
-    else if (dailySummary.status === 'conflict') logger.warnLocalFile('Provider account usage daily summary maintenance unavailable',
-      { phase: 'daily_summary', reason: 'coverage_changed', writtenDays: dailySummary.days });
+    else if (dailySummary.status === 'refused') logger.warnLocalFile('Provider account usage daily summary maintenance refused',
+      { phase: 'daily_summary', operation: dailySummary.operation, errorCode: dailySummary.errorCode, writtenDays: dailySummary.days });
     else if (dailySummary.status === 'unavailable') logger.warnLocalFile('Provider account usage daily summary maintenance unavailable',
       { phase: 'daily_summary', reason: dailySummary.reason, writtenDays: dailySummary.days });
     return dailySummary;
@@ -102,6 +104,68 @@ export async function maintainProviderAccountUsageDaySummariesForRecord(
     logger.warnLocalFile('Provider account usage daily summary maintenance unavailable', { phase: 'daily_summary', reason, writtenDays: 0 });
     return { status: 'unavailable' as const, reason };
   }
+}
+
+type DaySummaryMaintenanceInput = Parameters<typeof maintainProviderAccountUsageDaySummaries>[0]
+  & Readonly<{ target: Omit<QualifiedProviderAccountUsagePersistenceTarget, 'expectedCredentialRevision'>
+    & Readonly<{ expectedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null }> }>;
+type DaySummaryMaintenanceResult = Awaited<ReturnType<typeof maintainProviderAccountUsageDaySummariesForRecord>>;
+export type UsageDaySummaryMaintenance = (input: DaySummaryMaintenanceInput) => Promise<DaySummaryMaintenanceResult>;
+
+/** All quota writers in this Account runtime maintain the same Home record. */
+export function createProviderAccountUsageDaySummaryAdmission() {
+  type Attempt = {
+    accountMode: DaySummaryMaintenanceInput['accountMode'];
+    revisions: Map<string, string>;
+    result: Promise<DaySummaryMaintenanceResult>;
+    parked?: 'conflict' | 'refused';
+  };
+  const attempts = new Map<string, Attempt>();
+  const readAuthority = ({ source, expectedCredentialRevision, expectedConfigurationRevision }: DaySummaryMaintenanceInput['target']) => ({
+    sourceKey: buildQualifiedConnectedAccountLocalSubjectId(source.ref),
+    revision: JSON.stringify([expectedCredentialRevision, expectedConfigurationRevision]),
+  });
+  const maintain: UsageDaySummaryMaintenance = async input => {
+    input.signal?.throwIfAborted();
+    const { recordId, accountMode } = input;
+    const { sourceKey, revision } = readAuthority(input.target);
+    const previous = attempts.get(recordId);
+    const lastRevision = previous?.revisions.get(sourceKey);
+    if (previous && (!previous.parked || (previous.accountMode === accountMode
+      && (lastRevision === undefined || lastRevision === revision)))) {
+      if (lastRevision === undefined) previous.revisions.set(sourceKey, revision);
+      return await previous.result;
+    }
+
+    const attempt: Attempt = {
+      accountMode, revisions: new Map([[sourceKey, revision]]),
+      result: maintainProviderAccountUsageDaySummariesForRecord(input),
+    };
+    attempts.set(recordId, attempt);
+    try {
+      const result = await attempt.result;
+      if (result.status === 'conflict' || result.status === 'refused') attempt.parked = result.status;
+      return result;
+    } finally {
+      if (!attempt.parked) attempts.delete(recordId);
+    }
+  };
+  return {
+    maintain,
+    authorityChanged(recordId: string, current?: Pick<DaySummaryMaintenanceInput, 'target' | 'accountMode'>) {
+      const previous = attempts.get(recordId);
+      if (!previous?.parked) return;
+      if (current && current.accountMode === previous.accountMode) {
+        const { sourceKey, revision } = readAuthority(current.target);
+        // A direct write may already have attempted this revision before its feed arrived.
+        if (previous.revisions.get(sourceKey) === revision) return;
+      }
+      attempts.delete(recordId);
+    },
+    refresh(recordId: string) {
+      return attempts.get(recordId)?.parked === 'conflict' && attempts.delete(recordId);
+    },
+  };
 }
 
 /**
@@ -280,6 +344,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
   accountScope?: string;
   minFreshnessMs?: number;
   writeQualifiedProviderAccountUsage?: typeof writeQualifiedProviderAccountUsageV4;
+  resolveDaySummaryMaintenance?: () => UsageDaySummaryMaintenance | undefined;
 }>): ProviderAccountUsagePersistenceScheduler {
   const fingerprintKey = resolveFingerprintKey(params);
   const minFreshnessMs = Math.max(
@@ -294,6 +359,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     params.writeQualifiedProviderAccountUsage
     ?? writeQualifiedProviderAccountUsageV4;
 
+  let standaloneMaintenance: ReturnType<typeof createProviderAccountUsageDaySummaryAdmission> | undefined;
   async function persistPayload(
     persistenceKey: string,
     payload: ProviderAccountUsagePersistencePayload,
@@ -349,6 +415,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
       metadata: { materialFingerprint: payload.materialFingerprint },
     };
     await persistProviderAccountUsageWithDaySummaries({ token: params.credentials.token, write, writer: writeProviderAccountUsage,
+      daySummaryMaintenance: params.resolveDaySummaryMaintenance?.() ?? (standaloneMaintenance ??= createProviderAccountUsageDaySummaryAdmission()).maintain,
       nowMs: params.now(), randomBytes: params.randomBytes,
       ...(accountMode === 'e2ee' ? { material: requireAccountEncryptionCredentials(params.credentials).encryption } : {}) });
     stateByPersistenceKey.set(persistenceKey, { ...payload.materialState, ...(payload.snapshot.subscription ? { subscription: payload.snapshot.subscription } : {}) });

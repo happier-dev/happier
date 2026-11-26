@@ -15,6 +15,7 @@ import { createDaemonServerWorkBudget, createDaemonServerWorkScheduler } from '@
 import { QualifiedProviderAccountUsageWriteV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import {
+    createProviderAccountUsageDaySummaryAdmission,
     createProviderAccountUsagePersistenceScheduler,
     persistProviderAccountUsageWithDaySummaries,
     type QualifiedProviderAccountUsagePersistenceTarget,
@@ -104,7 +105,8 @@ describe('provider account usage persistence scheduler', () => {
             payload: write, payloadBytes: Buffer.byteLength(JSON.stringify(write)),
             run: async (payload) => {
                 try {
-                    await persistProviderAccountUsageWithDaySummaries({ token: 'token', nowMs: 1_500, write: payload });
+                    await persistProviderAccountUsageWithDaySummaries({ token: 'token', nowMs: 1_500, write: payload,
+                        daySummaryMaintenance: createProviderAccountUsageDaySummaryAdmission().maintain });
                 } catch (error) {
                     sourceFailure = error;
                     throw error;

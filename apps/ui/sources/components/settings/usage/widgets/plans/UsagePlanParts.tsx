@@ -50,11 +50,16 @@ function isOwnershipUnproven(account: UsagePlanAccount): boolean {
   return isUsageQuotaOwnershipUnproven(account.state);
 }
 
+function hasPartialQuotaHistory(account: UsagePlanAccount): boolean {
+  return account.read?.pageFacts?.historyStatus === 'partial';
+}
+
 /** One account's read; a current, complete read says nothing. */
 function planAccountReadKind(account: UsagePlanAccount): PlanAccountReadKind | null {
   const status = account.state.status;
   if (isUsageCoverageFailure(account.state)) return 'failed';
   if (status === 'pending') return 'pending';
+  if (hasPartialQuotaHistory(account)) return 'partial';
   if (account.read?.current && account.observedAtMs !== null && status !== 'stale') return null;
   return 'partial';
 }
@@ -96,9 +101,8 @@ export function readPlanAccountsStatement(
       : affected.length === accounts.length && accounts.length > 1
       ? usageSourceTitle('quota')
       : affected.map((entry) => nameOf(entry.account).title).join(', ');
-    // An older reading is said by its time (the line's "As of"), not as partial history: only an account with no
-    // current reading makes the history partial (acceptance 11-22 #24).
-    const partialHistory = affected.some((entry) => !entry.account.read?.current);
+    // The head's time still describes its freshness. Retained coverage is a separate fact.
+    const partialHistory = affected.some(({ account }) => !account.read?.current || hasPartialQuotaHistory(account));
     if (kind !== 'partial') otherReasons.push(t(kind === 'failed' ? 'usage.board.page.coverageFailed' : 'usage.board.page.coveragePending', { sources }));
     else if (partialHistory) otherReasons.push(usagePartialHistoryLabel());
   }
