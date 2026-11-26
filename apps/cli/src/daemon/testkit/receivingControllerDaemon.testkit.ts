@@ -5,7 +5,7 @@ import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/m
 import { ApiMachineClient } from '@/api/apiMachine';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { RpcRequest } from '@/api/rpc/types';
-import type { StoredCredentials } from '@/persistence';
+import { writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
 import { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runtimeRegistry/registry';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { createOnHappySessionWebhook } from '@/daemon/sessions/onHappySessionWebhook';
@@ -32,9 +32,9 @@ type DaemonParams = Parameters<typeof startDaemonSessionControlRuntime>[0];
  * admission and signature checks are not re-run here. Below the socket the
  * owner's Machine RPC registration, ingress owner and Action executor are real.
  *
- * One process holds one Installation identity and one stored-credential
- * profile per server, so the receiving controller shares both with the source
- * fixture: give its Machine row the fixture's Installation id.
+ * The receiver shares the fixture's process Installation identity. Give its
+ * Machine row that Installation id and use a separate local profile for its
+ * own stored sign-in to the same Home.
  */
 export async function createReceivingControllerDaemon(
   input: Readonly<{
@@ -52,6 +52,7 @@ export async function createReceivingControllerDaemon(
     managedProviderOperationAuthority?: DaemonParams['managedProviderOperationAuthority'];
   }>,
 ) {
+  await writeStoredCredentialsForServerId(input.serverId, input.credentials);
   const machine = new ApiMachineClient(
     input.credentials.token,
     {

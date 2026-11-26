@@ -124,6 +124,7 @@ vi.mock('@/session/transport/rpc/sessionRpc', async (importOriginal) => {
 
 const homeId = 'srv_member_acquire_agent_start';
 const homeUrl = 'https://member-home.test';
+const controllerServerId = 'controller-session-home';
 const OWNER_MACHINE_ID = 'owner-machine';
 
 function accountToken(sub: string) {
@@ -500,7 +501,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
   const atDelivery: { homeRequests: number; artifacts: number }[] = [];
   if (acquire.controller === 'owner machine') {
     const receiver: Awaited<ReturnType<typeof createReceivingControllerDaemon>> = await createReceivingControllerDaemon({ machineId: OWNER_MACHINE_ID, custodianAccountId: 'owner',
-      credentials: ownerCredentials, serverId: 'session-home', serverBaseUrl: 'https://session-home.test',
+      credentials: ownerCredentials, serverId: controllerServerId, serverBaseUrl: 'https://session-home.test',
       homeServerIdentityId: homeId, installationId: controller.installationId, happyHomeDir: h.f.directory,
       pluginRuntimeController: h.plugin.controller,
       resolveServerFeaturesSnapshot: () => ({ status: 'ready',
@@ -594,14 +595,14 @@ async function runMemberAcquire(acquire: AcquireCase) {
     } });
     const isCurrent = async () => !h.signal.aborted;
     const projected = await projectExternalActionRequesterHttpAuthorization({
-      authorization, target, serverId: 'session-home', serverIdentityId: homeId,
+      authorization, target, serverId: controllerServerId, serverIdentityId: homeId,
       serverHttpBaseUrl: 'https://session-home.test', installationId: installation.installationId,
       privateKey: installation.privateKey, rootAdmitted: true, isCurrent,
     });
     if (!projected) throw new Error('The fixture did not admit the retry');
     const adapter = createDaemonManagedMachineActionAdapter({
       credentials: ownerCredentials, machineId: OWNER_MACHINE_ID,
-      serverId: 'session-home', serverBaseUrl: 'https://session-home.test', installationIdentity: installation,
+      serverId: controllerServerId, serverBaseUrl: 'https://session-home.test', installationIdentity: installation,
       resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: OWNER_MACHINE_ID, serverIdentityId: homeId }),
       acquireRuntimeRegistryLease: () => h.plugin.controller.acquireRuntimeRegistry(),
       managedProviderOperationAuthority: createControllerProviderAuthority(),
