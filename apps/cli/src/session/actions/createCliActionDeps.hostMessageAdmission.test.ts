@@ -3,6 +3,8 @@ import { ApprovalRequestV2Schema, ExternalActionExecutionAuthorizationV1Schema, 
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -26,7 +28,7 @@ vi.mock('@/api/session/sockets', async importOriginal => {
 });
 
 describe('CLI host Message admission', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => vi.resetAllMocks());
   it.each([false, true])('admits Workflow Message input with its retained source authority (mediated=%s)', async mediated => {
     const accountId = 'workflow-owner';
     const sessionId = 'cmv3workflowmessageaaaaaa';
@@ -255,17 +257,34 @@ describe('CLI host Message admission', () => {
     }) }) } })]);
   });
   it('does not turn a Voice approval waiver into human return authority', async () => {
+    const sessionId = 'cmv3voicewaiveraaaaaaaaaa';
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: {
+        session: createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain',
+          machineId: 'voice-machine', metadata: JSON.stringify({ machineId: 'voice-machine' }) }),
+      } };
+      if (url.endsWith('/v1/machines/voice-machine')) return { status: 200, data: {
+        machine: { ...ExternalActionMachineBootstrapV1Schema.parse({ id: 'voice-machine', kind: 'persistent',
+          active: true, managedMachineRef: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+          revokedAt: null, replacedByMachineId: null }), presenceProtocolVersion: 1 },
+      } };
+      throw new Error(`Unexpected Voice waiver HTTP read: ${url}`);
+    });
     const approvals: ApprovalRequest[] = [];
     const executor = createActionExecutor({
       ...createCliActionDeps({ token: 'test-account-token', sessionId: 'daemon-global', mode: 'plain', ctx: null,
         credentials: { token: 'test-account-token', encryption: null } }),
       approvalsCreate: async ({ request }) => { approvals.push(request); return { artifactId: 'must-not-be-created' }; },
     });
-    expect(await executor.execute('session.message.send', { sessionId: 'worker', message: 'Return it.',
-      reply: 'return', returnToSessionId: 'bound-voice-session' }, { surface: 'voice', authority: 'account_automation',
+    const input = { sessionId, message: 'Return it.', reply: 'return', returnToSessionId: 'bound-voice-session' };
+    const result = await executor.execute('session.message.send', input, { surface: 'voice', authority: 'account_automation',
       actionCaller: { kind: 'host' }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
-        approvalWaivedSurfaces: { 'session.message.send': ['voice'] } }) }))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+        approvalWaivedSurfaces: { 'session.message.send': ['voice'] } }) });
+    expect(result).toEqual({ ok: true,
+      result: { status: 'rejected', code: 'session_input_untrusted_assertion' },
+      automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
+    });
     expect(approvals).toEqual([]);
     expect(http.post).not.toHaveBeenCalled();
   });
