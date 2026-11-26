@@ -193,46 +193,61 @@ export async function readStorageInventoryInTx(tx: Tx, accountId: string, select
         JOIN ${name("DiscussionAttachment")} att ON att.${name("messageId")} = m.${name("id")}
         WHERE ${discussionId ? sql.sql`d.${name("id")} = ${discussionId}`
             : sql.sql`d.${name("ownerAccountId")} = ${accountId}`} AND att.${name("removedByAccountId")} IS NULL ${readable}`;
-    const accountRows = sql.sql`
-        WITH artifactUsage AS (
+    const inventoryColumns = sql.join([
+        'kind', 'itemId', 'parentKey', 'parentItemId', 'storedSizeBytes', 'createdAt',
+        'authorAccountId', 'discussionOwnerAccountId', 'artifactStoredKind', 'artifactDeletedAt',
+    ].map(name));
+    const inventoryRows = (kinds?: readonly StorageInventoryKindV1[]) => {
+        const includes = (kind: StorageInventoryKindV1) => kinds === undefined || kinds.includes(kind);
+        const arms: Sql[] = [];
+        if (includes('discussionAttachments')) arms.push(discussionRows);
+        const artifacts = !discussionId && includes('artifacts');
+        const pluginArtifacts = !discussionId && includes('pluginArtifacts');
+        const oldVersions = !discussionId && includes('artifactOldVersions');
+        const artifactUsage = artifacts || pluginArtifacts || oldVersions ? sql.sql`artifactUsage AS (
             SELECT ${name("artifactId")}, SUM(${name("contentBytes")}) AS total,
                 SUM(CASE WHEN history = 1 THEN ${name("contentBytes")} ELSE 0 END) AS old
             FROM (${artifactByteRows(sql.sql`a.${name("accountId")} = ${accountId}`, true)}) content
             GROUP BY ${name("artifactId")}
-        ), inventory AS (
-            ${discussionRows}
-            UNION ALL
+        ),` : sql.empty;
+        if (artifacts || pluginArtifacts) arms.push(sql.sql`
             SELECT CASE WHEN ${ordinary} THEN 'artifacts' ELSE 'pluginArtifacts' END,
                 a.${name("id")}, '', NULL, CASE WHEN ${ordinary} THEN t.total - t.old ELSE t.total END, a.${name("updatedAt")},
                 NULL, NULL, a.${name("kind")}, a.${name("deletedAt")}
             FROM artifactUsage t JOIN ${name("Artifact")} a ON a.${name("id")} = t.${name("artifactId")}
-            UNION ALL
+            ${artifacts && pluginArtifacts ? sql.empty
+                : sql.sql`WHERE ${artifacts ? ordinary : sql.sql`NOT (${ordinary})`}`}`);
+        if (oldVersions) arms.push(sql.sql`
             SELECT 'artifactOldVersions', a.${name("id")}, '', NULL, t.old, a.${name("updatedAt")},
                 NULL, NULL, a.${name("kind")}, a.${name("deletedAt")}
             FROM artifactUsage t JOIN ${name("Artifact")} a ON a.${name("id")} = t.${name("artifactId")}
-            WHERE t.old > 0 AND ${ordinary}
-            UNION ALL
+            WHERE t.old > 0 AND ${ordinary}`);
+        if (!discussionId) {
+            if (includes('accountPets')) arms.push(sql.sql`
             SELECT 'accountPets', ${name("id")}, '', NULL, ${name("sizeBytes")}, ${name("createdAt")}, NULL, NULL, NULL, NULL
-            FROM ${name("AccountPetPackage")} WHERE ${name("accountId")} = ${accountId} AND ${name("deletedAt")} IS NULL
-            UNION ALL
-            SELECT 'pluginCollections', ${name("collectionId")}, ${name("pluginId")}, NULL, ${name("encodedBytes")}, NULL, NULL, NULL, NULL, NULL
-            FROM ${name("PluginCollectionUsage")} WHERE ${name("accountId")} = ${accountId}
-            UNION ALL
+            FROM ${name("AccountPetPackage")} WHERE ${name("accountId")} = ${accountId} AND ${name("deletedAt")} IS NULL`);
+            if (includes('profilePictures')) arms.push(sql.sql`
             SELECT 'profilePictures', ${name("id")}, '', NULL, ${name("storedSizeBytes")}, ${name("createdAt")}, NULL, NULL, NULL, NULL
             FROM ${name("UploadedFile")} WHERE ${name("accountId")} = ${accountId}
             AND ${name("reuseKey")} IN (${sql.join([publicProfilePictureAppliedReuseKey,
-                publicProfilePictureRejectedReuseKey, publicProfilePictureWritingReuseKey])})
-            UNION ALL
+                publicProfilePictureRejectedReuseKey, publicProfilePictureWritingReuseKey])})`);
+            if (includes('avatars')) arms.push(sql.sql`
             SELECT 'avatars', ${name("id")}, '', NULL, ${name("storedSizeBytes")}, ${name("createdAt")}, NULL, NULL, NULL, NULL
             FROM ${name("UploadedFile")} WHERE ${name("accountId")} = ${accountId}
-            AND ${name("reuseKey")} LIKE ${uploadedPublicImageUrlReuseKeyPrefix + '%'}
-            UNION ALL
+            AND ${name("reuseKey")} LIKE ${uploadedPublicImageUrlReuseKeyPrefix + '%'}`);
+            // Put typed createdAt columns before NULL-only arms for PostgreSQL's pairwise UNION typing.
+            if (includes('pluginCollections')) arms.push(sql.sql`
+            SELECT 'pluginCollections', ${name("collectionId")}, ${name("pluginId")}, NULL, ${name("encodedBytes")}, NULL, NULL, NULL, NULL, NULL
+            FROM ${name("PluginCollectionUsage")} WHERE ${name("accountId")} = ${accountId}`);
+            if (includes('teamLogos')) arms.push(sql.sql`
             SELECT 'teamLogos', t.${name("id")}, '', NULL, t.${name("logoStoredSizeBytes")}, NULL, NULL, NULL, NULL, NULL
             FROM ${name("TeamMembership")} tm JOIN ${name("Team")} t ON t.${name("id")} = tm.${name("teamId")}
             WHERE tm.${name("accountId")} = ${accountId} AND tm.${name("status")} = 'active'
-            AND tm.${name("role")} = 'owner' AND t.${name("logo")} IS NOT NULL
-        )`;
-    const inventory = discussionId ? sql.sql`WITH inventory AS (${discussionRows})` : accountRows;
+            AND tm.${name("role")} = 'owner' AND t.${name("logo")} IS NOT NULL`);
+        }
+        return sql.sql`WITH ${artifactUsage} inventory (${inventoryColumns}) AS (${sql.join(arms, ' UNION ALL ')})`;
+    };
+    const inventory = inventoryRows();
     const rows = await tx.$queryRaw<Array<{
         kind: StorageInventoryKindV1;
         measuredBytes: ByteCount;
@@ -275,18 +290,17 @@ export async function readStorageInventoryInTx(tx: Tx, accountId: string, select
         try { after = inventoryCursor.parse(JSON.parse(Buffer.from(selection.cursor, 'base64url').toString('utf8'))); }
         catch { throw new InvalidStorageInventoryCursorError(); }
     }
-    if (selection.kinds?.length === 0) return { ...summary, kinds, page: { items: [] } };
+    if (selection.kinds?.length === 0 || (discussionId && selection.kinds && !selection.kinds.includes('discussionAttachments'))) {
+        return { ...summary, kinds, page: { items: [] } };
+    }
 
     const size = sql.sql`COALESCE(${name("storedSizeBytes")}, -1)`;
     const position = sql.sql`kind, ${name("parentKey")}, ${name("itemId")}`;
-    const kindFilter = selection.kinds
-        ? sql.sql`AND kind IN (${sql.join([...selection.kinds])})`
-        : sql.empty;
-    const seek = after ? sql.sql`AND (${size} < ${after[0]} OR (${size} = ${after[0]}
+    const seek = after ? sql.sql`WHERE (${size} < ${after[0]} OR (${size} = ${after[0]}
         AND (${position}) > (${after[1]}, ${after[2]}, ${after[3]})))` : sql.empty;
     const found = await tx.$queryRaw<InventoryItemRow[]>(sql.sql`
-        ${inventory}
-        SELECT * FROM inventory WHERE 1 = 1 ${kindFilter} ${seek}
+        ${discussionId || selection.kinds === undefined ? inventory : inventoryRows(selection.kinds)}
+        SELECT * FROM inventory ${seek}
         ORDER BY ${size} DESC, ${position} LIMIT ${inventoryPageSize + 1}`);
     const visible = found.slice(0, inventoryPageSize);
     const last = visible.at(-1);

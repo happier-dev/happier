@@ -8,7 +8,9 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import { ArtifactStorageUsageV1Schema, StorageInventoryV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { deriveArtifactStoredKindV1, encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
-import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
+import { db, initDbMysql, initDbPostgres, shutdownDbClient } from '@/storage/db';
+import { inReadSnapshot } from '@/storage/inTx';
+import { readStorageInventoryInTx } from './artifactStorageService';
 import { createLightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -19,16 +21,18 @@ import { initFilesLocalFromEnv, loadFiles, readPrivateFile, writePrivateFile } f
 
 describe('Account storage and admitted Artifact page', () => {
     it('measures only the authenticated Account while including admitted shared rows in the page', async () => {
-        const testDatabaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
+        const postgresUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
+        const mysqlUrl = process.env.HAPPIER_TEST_MYSQL_DATABASE_URL;
+        const testDatabaseUrl = postgresUrl ?? mysqlUrl;
         if (testDatabaseUrl && process.env.DATABASE_URL !== testDatabaseUrl) {
-            throw new Error('The inventory contract requires the disposable PostgreSQL test database');
+            throw new Error('The inventory contract requires a disposable provider test database');
         }
-        const postgres = testDatabaseUrl !== undefined;
-        const harness = postgres ? { close: shutdownDbClient } : await createLightSqliteHarness({
+        const harness = testDatabaseUrl ? { close: shutdownDbClient } : await createLightSqliteHarness({
             tempDirPrefix: 'artifact-storage-inventory-', initAuth: false, initFiles: true,
         });
-        const filesDir = postgres ? await mkdtemp(join(tmpdir(), 'artifact-storage-inventory-pg-')) : undefined;
-        if (postgres) initDbPostgres();
+        const filesDir = testDatabaseUrl ? await mkdtemp(join(tmpdir(), 'artifact-storage-inventory-pg-')) : undefined;
+        if (postgresUrl) initDbPostgres();
+        else if (mysqlUrl) await initDbMysql();
         vi.stubEnv('HANDY_MASTER_SECRET', 'test-storage-inventory-secret');
         vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', undefined);
         const app = createAuthenticatedTestApp({ authentication: 'real' });
@@ -161,6 +165,27 @@ describe('Account storage and admitted Artifact page', () => {
                 data: { role: 'member' } });
             expect((await app.inject({ url: inventoryPath, headers })).json())
                 .toMatchObject({ unmeasuredKinds: ['profilePictures', 'avatars'] });
+            const allKinds = await inReadSnapshot(tx => readStorageInventoryInTx(tx, owner.id, {}));
+            const { page, ...summary } = allKinds;
+            const tablesPerStatement: string[][] = [];
+            const stopItems = observePrismaRequests(db, { before: ({ action, args }) => {
+                if (action !== 'queryRaw' || !args || typeof args !== 'object' || !('query' in args)
+                    || typeof args.query !== 'string') return;
+                tablesPerStatement.push([...new Set(Array.from(
+                    args.query.matchAll(/\b(?:FROM|JOIN) ["`](\w+)["`]/gi), match => match[1]!,
+                ))]);
+            } });
+            try {
+                const pets = await inReadSnapshot(tx => readStorageInventoryInTx(tx, owner.id, { kinds: ['accountPets'] }));
+                expect(pets).toEqual({
+                    ...summary,
+                    page: { items: page?.items.filter(item => item.kind === 'accountPets') },
+                });
+                expect(pets.page?.items).toMatchObject([{ kind: 'accountPets', storedSizeBytes: 29 }]);
+                expect(tablesPerStatement).toHaveLength(2);
+                expect(tablesPerStatement[0]).toEqual(expect.arrayContaining(['ArtifactBlob', 'AccountPetPackage']));
+                expect(tablesPerStatement[1]).toEqual(['AccountPetPackage']);
+            } finally { stopItems(); }
             const crossed = await app.inject({ url: `${inventoryPath}&accountId=${foreign.id}`, headers });
             expect(crossed.statusCode).toBe(400);
             const pagedPath = `${inventoryPath}&paged=true&kinds=accountPets`;
