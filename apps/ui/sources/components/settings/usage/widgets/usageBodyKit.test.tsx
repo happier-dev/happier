@@ -230,7 +230,7 @@ describe('shared Usage identity and dependent coverage', () => {
         expect(accounting.insights!.activeDays).toBe(calendar.filter(cell => (cell.value ?? 0) > 0).length);
     });
     it('leaves the period\'s unread end off the flow, but keeps a read zero day (USAGE-ACCEPT #18)', async () => {
-        const { trimUsageFlowUnreadTail } = await import('./UsageFlowWidget');
+        const { trimUsageFlowUnreadTail } = await import('./usageChartModels');
         const at = (...ys: (number | null)[]) => ({ points: ys.map(y => ({ y })) });
         const trimmed = trimUsageFlowUnreadTail([at(5, 3, 0), at(2, 4, null)]);
         expect(trimmed.map(entry => entry.points.map(point => point.y))).toEqual([[5, 3], [2, 4]]);

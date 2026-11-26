@@ -3,7 +3,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { normalizeUsageQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { aggregateUsageContributionCosts } from '@happier-dev/protocol/usage/usageAggregation';
@@ -11,7 +11,7 @@ import { serializeUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFa
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
 import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
-import { WidgetFrameBodyIdentityContext, type WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { WidgetFrameBodyCaptionContext, WidgetFrameBodyIdentityContext, type WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -36,10 +36,10 @@ async function renderControls(children: React.ReactNode) {
 const day = 86_400_000;
 // Friday midnight in UTC+14, so weekend classification cannot use the UTC weekday.
 const start = Date.UTC(2026, 9, 8, 10);
-function fixture(values: readonly (number | null)[], endMs: number, byAgent = true, granularity: 'day' | 'week' = 'day',
-  members = ['codex'], byModel = false) {
-  const query = normalizeUsageQuery({ period: { startMs: start, endMs }, timeZoneOffsetMinutes: 840, granularity, metric: 'tokens', ...(byModel ? { breakdown: ['model'] } : {}) });
-  const step = granularity === 'week' ? 7 * day : day;
+function fixture(values: readonly (number | null)[], endMs: number, byAgent = true, granularity: 'hour' | 'day' | 'week' = 'day',
+  members = ['codex'], byModel = false, period: UsageQuery['period'] = { startMs: start, endMs }) {
+  const query = normalizeUsageQuery({ period, timeZoneOffsetMinutes: 840, granularity, metric: 'tokens', ...(byModel ? { breakdown: ['model'] } : {}) });
+  const step = granularity === 'week' ? 7 * day : granularity === 'hour' ? 3_600_000 : day;
   const bucket = (index: number) => resolveUsageBucketBounds(granularity, start + index * step, query.timeZoneOffsetMinutes);
   const tokens = (value: number) => ({ input: value, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: value });
   const cost = { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' };
@@ -81,6 +81,88 @@ describe('Daily period chart', () => {
     const amounts = [...row.props.accessibilityLabel.matchAll(/: (\d+)(?= · |, |$)/g)].map(match => Number(match[1]));
     expect(amounts.reduce((sum, value) => sum + value, 0)).toBe(75);
   });
+  it('keeps the running bucket in the spoken chart and Exact values after the area ends', async () => {
+    const end = start + 6 * day + 3_600_000;
+    const props = fixture([10, 10, 10, 10, 10, 10, 17], end, true, 'day', undefined, false, { relative: '7days' });
+    vi.spyOn(Date, 'now').mockReturnValue(end + 1);
+    const screen = await renderControls(<UsageFlowWidget {...props} id="usage_flow" testID="flow" />);
+    expect(screen.findByType(StackedSeriesChart).props.series[0].points.map((point: { y: number }) => point.y))
+      .toEqual([10, 10, 10, 10, 10, 10]);
+    const qualifier = t('transcriptNavigation.soFar');
+    expect(screen.findHostByTestId('flow.chart')?.props.accessibilityLabel).toContain(`${qualifier}: Codex 17`);
+    await screen.pressByTestIdAsync('flow.chart-values-toggle');
+    const finalRow = screen.findHostByTestId('flow.chart-values-row-6');
+    expect(finalRow?.props.accessibilityLabel).toContain(`${qualifier}: Codex: 17`);
+    const displayedAmounts = Array.from({ length: 7 }, (_, index) => (
+      Number(screen.findHostByTestId(`flow.chart-values-row-${index}`)?.props.accessibilityLabel.match(/Codex: (\d+)/u)?.[1])
+    ));
+    expect(displayedAmounts.reduce((sum, amount) => sum + amount, 0)).toBe(props.slice.accounting?.totals.tokens.total);
+  });
+  it('keeps the qualified running reading and Exact values when the observed run is too short to plot', async () => {
+    const end = start + 6 * day + 3_600_000;
+    const props = fixture([null, null, null, null, null, 12, 17], end, true, 'day', undefined, false, { relative: '7days' });
+    vi.spyOn(Date, 'now').mockReturnValue(end + 1);
+    const caption = vi.fn();
+    const screen = await renderControls(
+      <WidgetFrameBodyCaptionContext.Provider value={caption}>
+        <UsageFlowWidget {...props} id="usage_flow" testID="flow" />
+      </WidgetFrameBodyCaptionContext.Provider>,
+    );
+    const qualifier = t('transcriptNavigation.soFar');
+    expect(screen.findHostByTestId('flow.empty')).toBeTruthy();
+    expect(screen.findHostByTestId('flow.chart-scale-0')).toBeFalsy();
+    expect(caption).toHaveBeenLastCalledWith(expect.stringContaining(qualifier));
+    expect(screen.getTextContent()).toContain(`17 · ${qualifier}`);
+    expect(screen.findHostByTestId('flow.chart')?.props.accessibilityLabel).toContain(`${qualifier}: Codex 17`);
+    await screen.pressByTestIdAsync('flow.chart-values-toggle');
+    // The existing Flow trim leaves out the five leading unread buckets.
+    const rows = Array.from({ length: 2 }, (_, index) =>
+      screen.findHostByTestId(`flow.chart-values-row-${index}`)?.props.accessibilityLabel ?? '');
+    expect(rows.at(-1)).toContain(`${qualifier}: Codex: 17`);
+    const values = rows.flatMap(row => [...row.matchAll(/Codex: (\d+)/gu)].map(match => Number(match[1])));
+    expect(values).toEqual([12, 17]);
+    expect(values.reduce((sum, amount) => sum + amount, 0)).toBe(props.slice.accounting?.totals.tokens.total);
+  });
+  it.each([
+    { period: { relative: 'today' }, granularity: 'hour' },
+    { period: { relative: '7days' }, granularity: 'day' },
+  ] as const)('draws the first $granularity and names its partial total once', async ({ period, granularity }) => {
+    const end = start + 30 * 60_000;
+    vi.spyOn(Date, 'now').mockReturnValue(end + 1);
+    const props = fixture([17], end, true, granularity, undefined, false, period);
+    const caption = vi.fn();
+    const screen = await renderControls(
+      <WidgetFrameBodyCaptionContext.Provider value={caption}>
+        <UsageFlowWidget {...props} id="usage_flow" testID="flow" />
+      </WidgetFrameBodyCaptionContext.Provider>,
+    );
+    const qualifier = t('transcriptNavigation.soFar');
+    const chart = screen.findByType(StackedSeriesChart);
+    expect(chart.props.series[0].points.map((point: { y: number }) => point.y)).toEqual([17]);
+    expect(caption).toHaveBeenLastCalledWith(expect.stringContaining(qualifier));
+    expect(screen.findHostByTestId('flow.chart')?.props.accessibilityLabel).toContain(qualifier);
+    await screen.pressByTestIdAsync('flow.chart-values-toggle');
+    const amount = props.slice.accounting!.totals.tokens.total;
+    expect(screen.findHostByTestId('flow.chart-values-row-0')?.props.accessibilityLabel)
+      .toContain(`${qualifier}: Codex: ${amount}`);
+    expect(screen.findHostByTestId('flow.chart-values-row-1')).toBeFalsy();
+  });
+
+  it('draws the last mark of a custom range that finished during this day', async () => {
+    const end = start + 4 * day + 30 * 60_000;
+    vi.spyOn(Date, 'now').mockReturnValue(end + 1);
+    const props = fixture([10, 10, 10, 10, 17], end);
+    const screen = await renderControls(<UsageFlowWidget {...props} id="usage_flow" testID="flow" />);
+    expect(screen.findByType(StackedSeriesChart).props.series[0].points.map((point: { y: number }) => point.y))
+      .toEqual([10, 10, 10, 10, 17]);
+    await screen.pressByTestIdAsync('flow.chart-values-toggle');
+    const rows = Array.from({ length: 5 }, (_, index) =>
+      screen.findHostByTestId(`flow.chart-values-row-${index}`)?.props.accessibilityLabel);
+    expect(rows[4]).not.toContain(t('transcriptNavigation.soFar'));
+    expect(rows.reduce((sum, row) => sum + Number(row?.match(/Codex: (\d+)/u)?.[1]), 0))
+      .toBe(props.slice.accounting?.totals.tokens.total);
+  });
+
   it('conserves admitted weekly amounts and calls out both clipped weeks', async () => {
     const props = fixture([10, 30, 20], start + 14 * day, true, 'week');
     const screen = await renderScreen(<UsageDailyWidget {...props} />);

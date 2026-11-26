@@ -6,6 +6,7 @@ import {
   projectUsageConstellationModel,
   projectUsageDaylight,
   projectUsageDayModel,
+  projectUsageFlowModel,
   projectUsagePortraitModel,
   projectUsageScoreModel,
   projectUsageRiverModel,
@@ -25,6 +26,57 @@ const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
 const START = Date.UTC(2026, 8, 7); // Monday 7 Sep 2026, UTC calendar
+describe('Usage flow running bucket', () => {
+  it.each([
+    { period: '7days', granularity: 'day', count: 7, step: DAY, timeUnitMs: 1 },
+    { period: '30days', granularity: 'day', count: 30, step: DAY, timeUnitMs: 1 },
+    { period: 'today', granularity: 'hour', count: 5, step: HOUR, timeUnitMs: 1_000 },
+  ] as const)('keeps the $period running bucket in exact values and outside the drawing', ({ period, granularity, count, step, timeUnitMs }) => {
+    const endMs = START + (count - 1) * step + MINUTE;
+    const range = { startMs: START, endMs, granularity, timeZoneOffsetMinutes: 0 };
+    const points = Array.from({ length: count }, (_, index) => ({
+      id: String(index), x: (START + index * step) / timeUnitMs, y: index + 1,
+    }));
+    const series = [{ id: 'agent', label: 'Agent', points }];
+    const model = projectUsageFlowModel(series, range, endMs + MINUTE, timeUnitMs, { relative: period });
+    expect(model.drawn[0]?.points).toEqual(points.slice(0, -1));
+    expect(model.trailingReading?.[0]?.points).toEqual([{ ...points.at(-1), partial: true }]);
+    const exactPoints = [...model.drawn[0]!.points, ...model.trailingReading![0]!.points];
+    expect(exactPoints.reduce((total, point) => total + (point.y ?? 0), 0)).toBe(count * (count + 1) / 2);
+  });
+
+  it.each(['hour', 'day'] as const)('draws the only admitted %s as partial', granularity => {
+    const endMs = START + MINUTE;
+    const range = { startMs: START, endMs, granularity, timeZoneOffsetMinutes: 0 };
+    const period = { relative: granularity === 'hour' ? 'today' : '7days' } as const;
+    const point = { id: 'first', x: START, y: 17 };
+    const series = [{ id: 'agent', label: 'Agent', points: [point] }];
+    const result = projectUsageFlowModel(series, range, endMs + MINUTE, 1, period);
+    expect(result.drawn[0]?.points).toEqual([{ ...point, partial: true }]);
+    expect(result.trailingReading).toBeNull();
+  });
+
+  it('keeps a finished custom range whose last mark shares the current bucket', () => {
+    const endMs = START + 4 * DAY + MINUTE;
+    const period = { startMs: START, endMs };
+    const range = { ...period, granularity: 'day', timeZoneOffsetMinutes: 0 } as const;
+    const series = [{ id: 'agent', label: 'Agent', points: Array.from({ length: 5 }, (_, index) => ({
+      id: String(index), x: START + index * DAY, y: index + 1,
+    })) }];
+    expect(projectUsageFlowModel(series, range, endMs + MINUTE, 1, period))
+      .toEqual({ drawn: series, trailingReading: null });
+  });
+
+  it('leaves a closed range intact including a measured zero at its end', () => {
+    const endMs = START + 2 * DAY;
+    const range = { startMs: START, endMs, granularity: 'day', timeZoneOffsetMinutes: 0 } as const;
+    const series = [{ id: 'agent', label: 'Agent', points: [
+      { id: 'first', x: START, y: 50 }, { id: 'last', x: START + DAY, y: 0 },
+    ] }];
+    expect(projectUsageFlowModel(series, range, endMs + DAY, 1, { startMs: START, endMs })).toEqual({ drawn: series, trailingReading: null });
+  });
+});
+
 type Metrics = UsageAgentCalendar['days'][number]['totals'];
 const metrics = (values: Partial<Metrics>): Metrics => ({
   tokens: null,
@@ -780,16 +832,16 @@ describe('Usage chart models', () => {
   // so the model (and the caption that reads it) says intensity too.
   it('colours Sky of days by intensity when no day has a known leader', () => {
     const days = [bucket(0, { tokens: 900, eventCount: 3 }), bucket(1, { tokens: 10, eventCount: 2 })];
-    expect(projectUsageSkyModel(calendar({ days }), 'tokens', 'leadingAgent', START + 2 * DAY).colourBy).toBe('intensity');
+    expect(projectUsageSkyModel(calendar({ days }), 'tokens', 'leadingAgent', START + 2 * DAY, { relative: '7days' }).colourBy).toBe('intensity');
     const led = [bucket(0, { tokens: 900, eventCount: 3 }, [], { tokens: { status: 'leading', agentIds: ['codex'], includesUnknown: false } })];
-    expect(projectUsageSkyModel(calendar({ days: led }), 'tokens', 'leadingAgent', START + 2 * DAY).colourBy).toBe('leadingAgent');
+    expect(projectUsageSkyModel(calendar({ days: led }), 'tokens', 'leadingAgent', START + 2 * DAY, { relative: '7days' }).colourBy).toBe('leadingAgent');
   });
   // r227 #76: at 11 AM the running day is a small amount, never a finished day the line dives to.
   it('marks only the day still running as partial on Sky of days', () => {
     const days = [bucket(3, { tokens: 900, eventCount: 3 }), bucket(4, { tokens: 10, eventCount: 1 })];
-    const running = projectUsageSkyModel(calendar({ days }), 'tokens', 'intensity', START + 4 * DAY + 11 * HOUR);
+    const running = projectUsageSkyModel(calendar({ days }), 'tokens', 'intensity', START + 4 * DAY + 11 * HOUR, { relative: '7days' });
     expect(running.days.map(day => day.partial === true)).toEqual([false, false, false, false, true]);
-    const ended = projectUsageSkyModel(calendar({ days }), 'tokens', 'intensity', START + 5 * DAY + HOUR);
+    const ended = projectUsageSkyModel(calendar({ days }), 'tokens', 'intensity', START + 5 * DAY + HOUR, { relative: '7days' });
     expect(ended.days.some(day => day.partial)).toBe(false);
   });
   // J-B55: a "Last 7 days" read ends at its read clock; the render comes later. Today stays partial on that calendar.
@@ -798,11 +850,14 @@ describe('Usage chart models', () => {
     const period = resolveUsageQueryPeriod(normalizeUsageQuery({ period: { relative: '7days' }, timeZoneOffsetMinutes: 0 }), readAt);
     const days = [bucket(5, { tokens: 900, eventCount: 3 }), bucket(6, { tokens: 10, eventCount: 1 })];
     const model = projectUsageSkyModel(calendar({ period: { startMs: period.startMs!, endMs: period.endMs }, days }), 'tokens', 'intensity',
-      readAt + 4 * MINUTE);
+      readAt + 4 * MINUTE, { relative: '7days' });
+    const fixed = projectUsageSkyModel(calendar({ period: { startMs: period.startMs!, endMs: period.endMs }, days }), 'tokens', 'intensity',
+      readAt + 4 * MINUTE, period);
+    expect(fixed.days.some(day => day.partial)).toBe(false);
     expect(model.days.map(day => day.partial === true)).toEqual([false, false, false, false, false, false, true]);
     // A closed day stays closed, even when its read and render fall on a later day.
     const ended = projectUsageSkyModel(calendar({ period: { startMs: START, endMs: START + 5 * DAY }, days }), 'tokens', 'intensity',
-      START + 5 * DAY + HOUR);
+      START + 5 * DAY + HOUR, { relative: '7days' });
     expect(ended.days.some(day => day.partial)).toBe(false);
   });
   it('does not turn an absent day of partial evidence into measured inactivity', () => {
@@ -811,6 +866,7 @@ describe('Usage chart models', () => {
       'busy',
       'intensity',
       START + DAY,
+      { relative: '7days' },
     );
     expect(model.days.every((day) => day.state === 'unknown')).toBe(true);
   });
@@ -845,6 +901,7 @@ describe('Usage chart models', () => {
       'steering',
       'leadingAgent',
       START + 4 * DAY,
+      { relative: '7days' },
     );
     expect(
       model.days.map((day) => [

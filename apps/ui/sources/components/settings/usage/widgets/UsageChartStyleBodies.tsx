@@ -98,7 +98,9 @@ export function UsageSkyStyleBody(props: UsageChartStyleBodyProps) {
   const calendar = useCalendar(props);
   const metric = resolveUsageChartMetric(props.query.metric, 'busy');
   const colourBy = props.presentation?.colourBy === 'leadingAgent' ? 'leadingAgent' : 'intensity';
-  const model = React.useMemo(() => calendar ? projectUsageSkyModel(calendar, metric, colourBy, Date.now()) : null, [calendar, metric, colourBy]);
+  const period = props.query.period;
+  const model = React.useMemo(() => calendar ? projectUsageSkyModel(calendar, metric, colourBy, Date.now(), period) : null,
+    [calendar, metric, colourBy, period]);
   const agents = React.useMemo(() => {
     const ids = new Set<string>();
     for (const day of model?.days ?? []) {
