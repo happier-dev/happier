@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { sealAutomationRunFailureDetailStoredEnvelopeV1 } from '../../automations/automationRunFailureDetailStoredContent.js';
+import { invokeHostAdmittedSignedReviewedChildV1 } from './deploymentRoleChild.js';
+import { deriveBackupReceiverSetupRunIdV1 } from '../../workflows/workflowInvocationIdentityV1.js';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '../../machines/managed/actionIdsV1.js';
+import { projectDeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { normalizeWorkflowActionTextBindingV1 } from '../../workflows/workflowActionTextV1.js';
 import { createSessionMembershipReadFixture } from '../../sessions/read/sessionReadBatchV1.testkit.js';
@@ -41,7 +45,7 @@ import { createActionExecutor } from '../actionExecutor.js';
 import { resolveWorkflowAcceptedStepSelectionV1 } from '../../workflows/workflowStepSelectionV1.js';
 import { ActionsSettingsV1Schema } from '../actionSettings.js';
 import { createProjectAccountRowCipherV1 } from '../../projects/projectAccountRowCipherV1.js';
-import type { ExternalActionExecutionAuthorizationV1 } from '../externalActionApi.js';
+import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '../externalActionApi.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { readWorkflowRunDisplayMetadataV1, readWorkflowRunSourceSavedByV1 } from '../../workflows/workflowRunDisplayMetadataV1.js';
 import { captureWorkflowDefinitionV1 } from './workflowDefinitionCapture.js';
@@ -1022,6 +1026,116 @@ describe('shared Account workflow run owner', () => {
       expect(opened.content.execution).toBeUndefined();
       expect(rows.size).toBe(3);
       expect(rows.get(recordId)?.index.lifecycle).toBe('superseded');
+    });
+
+  it.each(['receiver', 'root', 'no child', 'wrong action', 'wrong role', 'wrong receiver', 'wrong installation',
+    'wrong Environment', 'missing Environment', 'wrong input', 'third Machine', 'other Project', 'different Run'] as const)(
+    'binds combined Backup Setup placement and observation to the admitted receiver (%s)', async scenario => {
+      const receiver = { machineId: 'receiver', installationId: 'receiver-installation', orchestrationDirectory: '/receiver-home' };
+      const sourceMachine = scenario === 'root' ? receiver.machineId : 'source';
+      const backupAction = 'deployments.backups.configure';
+      const backupInput = { serverId: 'home', environmentId: 'production', expectedRevision: 1, intent: 'test',
+        destinationSetup: { kind: 'anotherMachine', machineId: receiver.machineId, expectedInstallationId: receiver.installationId,
+          receiverInputs: {}, senderIdentity: { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h',
+            sshPrivateKey: { kind: 'secret', ref: 'happier:shared-secret:v1:sender-key', resourceRevision: 1 } } },
+        configuration: { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'sftp' },
+          occurrenceId: 'reviewed', config: {}, credentialBindings: [],
+          ownership: { environmentId: 'production', prefix: 'owned' },
+          sources: [{ kind: 'dump', sourceId: 'data', service: 'database', consistency: 'logical' }] } };
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'backup-root-fixture',
+        binding: { serverIdentityId: 'home', accountId: 'account-1', custodianAccountId: 'account-1',
+        authentication: { kind: 'account' as const, tokenEpoch: 0 }, machineId: sourceMachine, installationId: 'source-installation',
+        requestId: 'backup-request', requestEnvelopeDigest: 'd'.repeat(43), accountEncryptionMode: 'plain',
+        target: { kind: 'machine', machineId: sourceMachine }, admittedMachineRole: 'manage',
+        ...(scenario === 'root' ? { actionId: BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.action } : {
+          actionId: backupAction, environmentId: backupInput.environmentId,
+          deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(backupAction, backupInput),
+        }),
+      } });
+      const { binding } = authorization;
+      const setup = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+      const machineId = scenario === 'third Machine' ? 'third-machine' : receiver.machineId;
+      const directory = scenario === 'other Project' ? '/another-project' : receiver.orchestrationDirectory;
+      const parent = { actionId: setup.action, input: { homeId: 'home', machineId, targets: [
+        { homeId: 'home', machineId, desiredRevision: 0, recipePlans: [], sources: [{ kind: 'direct' as const, setup: {} }] },
+      ] } };
+      const child = { actionId: scenario === 'wrong action' ? BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan.action : setup.action,
+        role: scenario === 'wrong role' ? BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan.role : setup.role,
+        input: scenario === 'wrong input' ? { ...parent.input, homeId: 'another-home' } : parent.input,
+        ...(scenario === 'missing Environment' ? {} : { environmentId: scenario === 'wrong Environment' ? 'preview' : 'production' }),
+        inputDigest: computeActionInputApprovalDigestV1(setup.action, parent.input) };
+      const startRunId = scenario === 'different Run' || scenario === 'root' ? runId
+        : deriveBackupReceiverSetupRunIdV1(binding, { ...child, actionId: setup.action, role: setup.role, environmentId: 'production' });
+      if (!startRunId) throw new Error('Missing Backup Setup Run identity in the fixture');
+      const start = WorkflowRunStartRequestV1Schema.parse({ runId: startRunId, source: { kind: 'inline', definition: {
+        version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'action', id: 'setup', actionId: parent.actionId,
+          input: Object.fromEntries(Object.entries(parent.input).map(([key, value]) => [key, { kind: 'literal', value }])) }],
+      } } });
+      const rootContext: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+        actionRequestId: binding.requestId, callerPermissionMode: 'default', approvedActionReplay: { artifactId: 'setup-approval' },
+        presentUserApproval: { artifactId: 'setup-approval', actionId: parent.actionId, requestId: binding.requestId,
+          inputDigest: computeActionInputApprovalDigestV1(parent.actionId, parent.input), decidingAccountId: binding.accountId },
+        externalActionTarget: binding.target, externalActionExecutionAuthorization: authorization };
+      const snapshot = runSnapshot();
+      const run = { ...snapshot.run, id: startRunId, machineId, state: 'succeeded', workflowCustodyState: 'settled' };
+      const admissions: unknown[] = [];
+      let acceptedEnvelope: unknown;
+      const storage = vi.fn<WorkflowAccountRunActionDeps['storage']['execute']>(async operation => {
+        if (operation.operation === 'get' && acceptedEnvelope && operation.runId === startRunId) {
+          return { ...snapshot, run, acceptedEnvelope, keyCensus: { ...snapshot.keyCensus, runId: startRunId } };
+        }
+        if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+        if (operation.operation === 'wait') return { observation: 'terminal', matchedCondition: 'terminal', run };
+        if (operation.operation === 'invocations.list') return { invocations: [], parentRevision: run.revision };
+        if (operation.operation !== 'admit') throw new Error(`unexpected_storage_operation:${operation.operation}`);
+        admissions.push(operation);
+        acceptedEnvelope = operation.acceptedEnvelope;
+        return { kind: 'created', run };
+      });
+      const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: storage }), readCombinedRunHost: async () => receiver,
+        prepareWorkspace: async ({ projectTarget }) => ({ ok: true, workspaceTarget: { project: {
+          machineId: projectTarget.machineId, directory: projectTarget.directory, checkoutRootPath: projectTarget.directory } } }),
+        resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+          readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } }),
+      });
+      const execute = async (context: ActionExecutorContext) => {
+        const request: WorkflowCombinedRunStartV1 = { parent, start, context, orchestrationTarget: { machineId, directory } };
+        const read = { actionId: 'workflow.run.invocations.list' as const, input: { runId: startRunId, includeContent: true }, context };
+        const mismatch = { code: 'target_unavailable', details: { reason: 'target_binding_mismatch' } };
+        if (scenario !== 'receiver' && scenario !== 'root') {
+          await expect(owner.startCombined(request)).rejects.toMatchObject(mismatch);
+          if (scenario !== 'no child') {
+            await expect(owner.waitCombined(request)).rejects.toMatchObject(mismatch);
+            await expect(owner.readCombinedInvocations(request, read)).rejects.toMatchObject(mismatch);
+          }
+          expect(admissions).toEqual([]);
+          return;
+        }
+        expect(await owner.startCombined(request)).toMatchObject({ admission: 'created', run: { id: startRunId, machineId } });
+        expect(admissions).toEqual([expect.objectContaining({ runId: startRunId, machineId })]);
+        const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, purpose: 'accepted_snapshot', accountId: binding.accountId, runId: startRunId },
+          envelope: parseWorkflowStoredContentEnvelopeV1(String(acceptedEnvelope)) });
+        expect(accepted).toMatchObject({ kind: 'available', content: { workspaceTarget: { project: { machineId, directory } } } });
+        expect(await owner.waitCombined(request)).toMatchObject({ run: { id: startRunId, state: 'succeeded' } });
+        expect(await owner.readCombinedInvocations(request, read)).toMatchObject({ invocationDetails: [] });
+        if (scenario === 'receiver') {
+          storage.mockClear();
+          await expect(owner.readCombinedInvocations(request, { ...read, input: { ...read.input, runId } })).rejects.toMatchObject(mismatch);
+          await expect(owner.waitCombined({ ...request, start: { ...start, runId } })).rejects.toMatchObject(mismatch);
+          expect(storage).not.toHaveBeenCalled();
+          await expect(owner.execute(read)).rejects.toMatchObject(mismatch);
+          await expect(owner.waitCombined({ ...request, context: rootContext })).rejects.toMatchObject(mismatch);
+          await expect(owner.readCombinedInvocations({ ...request, context: rootContext }, { ...read, context: rootContext }))
+            .rejects.toMatchObject(mismatch);
+        }
+      };
+      if (scenario === 'root' || scenario === 'no child') await execute(rootContext);
+      else await invokeHostAdmittedSignedReviewedChildV1({ context: rootContext, child,
+        receivingAdmission: { actorAccountId: binding.accountId, custodianAccountId: 'receiver-owner',
+          machineId: scenario === 'wrong receiver' ? 'another-receiver' : receiver.machineId,
+          installationId: scenario === 'wrong installation' ? 'other-installation' : receiver.installationId,
+          role: 'manage', encryptionMode: 'plain' }, execute: (_input, context) => execute(context) });
     });
 
   it('retains the original Account grant only through the reviewed combined Run entry', async () => {

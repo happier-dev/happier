@@ -7,14 +7,16 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
 import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
-import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import type { ReadCombinedRunHostV1, WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 
 
 export type CliWorkflowRequestHeaders = (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
 export type CliWorkflowCurrentSessionValue = (key: 'path' | 'host' | 'machineId', signal?: AbortSignal) => Promise<string | null>;
 export type CliWorkflowRunStorageFactory = (caller?: Readonly<{ actionId: string; context: ActionExecutorContext }>
-  | Pick<WorkflowCombinedRunStartV1, 'parent' | 'context'>, retainedRequesterContext?: ActionExecutorContext) => WorkflowAccountRunActionDeps['storage'];
+  | Pick<WorkflowCombinedRunStartV1, 'parent' | 'context'> | WorkflowCombinedRunStartV1,
+  retainedRequesterContext?: ActionExecutorContext, readHost?: ReadCombinedRunHostV1) => WorkflowAccountRunActionDeps['storage'];
 export type CliWorkflowRunStorage = Readonly<{
   workflowRunServerHttpBaseUrl: string;
   createWorkflowRunStorage: CliWorkflowRunStorageFactory;
@@ -28,12 +30,17 @@ export function createCliWorkflowRunStorage(
 ): CliWorkflowRunStorage {
 
   const workflowRunServerHttpBaseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
-  const createWorkflowRunStorage: CliWorkflowRunStorageFactory = (caller, retainedRequesterContext) => {
+  const createWorkflowRunStorage: CliWorkflowRunStorageFactory = (caller, retainedRequesterContext, readHost) => {
     // Automatic checks retain the admitted parent's private Account/Home;
     // the internal Workflow child cannot spend the parent as a new effect.
     // Private Account custody retains ordinary Run access. HTTP-only callers
     // spend their admitted signed parent rather than the installed Account.
     const combined = caller && 'parent' in caller ? caller : undefined;
+    const readCombinedPlacement = combined && 'start' in combined
+      ? async () => (await import('@happier-dev/protocol/actions/executor/workflowRunActions')).resolveWorkflowCombinedRunPlacementV1(
+        combined, combined.start.runId, readHost, directory => resolveCanonicalAbsolutePath(directory)?.path ?? null)
+      : undefined;
+    let combinedPlacement: ReturnType<NonNullable<typeof readCombinedPlacement>> | undefined;
     const requester = retainedRequesterContext
       ? readRequesterAccountActionTransportContext(retainedRequesterContext.externalActionExecutionAuthorization)
       : combined ? readRequesterAccountActionContext(combined.context.externalActionExecutionAuthorization) : null;
@@ -78,7 +85,13 @@ export function createCliWorkflowRunStorage(
     execute: async (operation, options) => {
       assertRetainedRequester();
       let machineId: string | undefined;
-      const authorizationMachineId = caller?.context.externalActionExecutionAuthorization?.binding.machineId;
+      const placement = readCombinedPlacement && await (combinedPlacement ??= readCombinedPlacement());
+      if (placement?.receiverRunId && placement.receiverRunId !== operation.runId) {
+        throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable',
+          details: { code: 'target_unavailable', reason: 'target_binding_mismatch' } });
+      }
+      const authorizationMachineId = placement?.receiverRunId ? placement.project.machineId
+        : caller?.context.externalActionExecutionAuthorization?.binding.machineId;
       if (isWorkflowRunExecutorStorageOperationV1(operation.operation) || authorizationMachineId) {
         const publisherMachineId = normalizeStringValue(options?.publisherMachineId);
         const operationMachineId = publisherMachineId ?? (typeof operation.machineId === 'string' && operation.machineId.trim()

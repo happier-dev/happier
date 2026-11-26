@@ -38,7 +38,8 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { createSessionRunReportPolicyReader } from '@/api/sessionFollowCreationPreferences';
 import type { createWorkflowActionExecutor, normalizeWorkflowActionThrownError } from './workflowActionExecutor';
 import type { createWorkflowRunActionOwner } from './workflowRunActions';
-import type { WorkflowAccountRunActionDeps, WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import type { ReadCombinedRunHostV1, WorkflowAccountRunActionDeps, WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 import type { CombinedMachineSetupInvocationRead } from '@/machines/setup/composeMachineSetup';
 import { createWorkflowActorConsentPortV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
@@ -443,8 +444,14 @@ export function createCliWorkflowFamily(
       // the internal workflow.run.start/wait effect under that parent's proof.
       const encryptionCaller = { actionId: retainedRequesterContext?.externalActionExecutionAuthorization?.binding.actionId
         ?? combined?.parent.actionId ?? args.actionId, context: retainedRequesterContext ?? args.context };
-      const workflowRunStorage = createWorkflowRunStorage(combined
-        ? { parent: combined.parent, context: args.context } : args, retainedRequesterContext);
+      const combinedRun = args.actionId === 'workflow.run.start' || args.actionId === 'workflow.run.wait'
+        || args.actionId === 'workflow.run.invocations.list' ? combined : undefined;
+      let combinedRunHost: ReturnType<ReadCombinedRunHostV1> | undefined;
+      const readCombinedRunHost: ReadCombinedRunHostV1 = () => combinedRunHost ??= readCurrentMachineInstallation().then(installed =>
+        installed && { machineId: installed.machineId, installationId: installed.identity.installationId,
+          orchestrationDirectory: configuration.happyHomeDir });
+      const workflowRunStorage = createWorkflowRunStorage(combinedRun ? { ...combinedRun, context: args.context }
+        : combined ? { parent: combined.parent, context: args.context } : args, retainedRequesterContext, readCombinedRunHost);
       const [{ createWorkflowActionExecutor }, { logger }, { createWorkflowRunActionOwner }, { createCommittedInputTypeDeps }, { doesWorkflowImmediateEligibleStepTargetSession }] = await Promise.all([import("./workflowActionExecutor"), import("@/ui/logger"), import("./workflowRunActions"), import("@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps"), import("@/daemon/workflows/coordinator")]);
       const admitProject = async ({ projectTarget, executionTargetKind, accountId, signal }:
         Parameters<NonNullable<WorkflowAccountRunActionDeps['admitProjectWorkspace']>>[0]): ReturnType<typeof admitWorkflowProjectWorkspace> => {
@@ -526,6 +533,7 @@ export function createCliWorkflowFamily(
         ...(workflowTriggers ? { triggers: workflowTriggers } : {}),
         runs: (() => {
           const owner = createWorkflowRunActionOwner({
+          ...(combinedRun ? { readCombinedRunHost } : {}),
           ...(host.nativeAccount ? { nativeAccount: host.nativeAccount } : {}),
           ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
           ...(params.runtimeActionMachineId && params.externalActionMachineInstallationId ? { hostExecutionTarget: {
@@ -749,11 +757,17 @@ export function createCliWorkflowFamily(
             ? { isAcceptedAuthorizationCurrent: params.workflowAcceptedAuthorizationCurrentness }
             : {}),
           });
-          return combined ? { execute: (request, ingress) => request.actionId === 'workflow.run.start'
-            ? owner.startCombined({ ...combined, start: request.input, context: request.context }, ingress)
-            : owner.execute(request, ingress),
-            waitCombinedAction: (request, ingress) => owner.waitCombined({ ...combined,
-              start: { ...combined.start, runId: request.input.runId }, context: request.context }, ingress),
+          return combinedRun ? { execute: (request, ingress) => {
+            if (request.actionId === 'workflow.run.start') {
+              return owner.startCombined({ ...combinedRun, start: request.input, context: request.context }, ingress);
+            }
+            if (request.actionId === 'workflow.run.invocations.list') {
+              return owner.readCombinedInvocations({ ...combinedRun, context: request.context }, request, ingress);
+            }
+            return owner.execute(request, ingress);
+          },
+            waitCombinedAction: (request, ingress) => owner.waitCombined({ ...combinedRun,
+              context: request.context }, ingress, request.input.runId),
           } satisfies Parameters<typeof createWorkflowActionExecutor>[0]['runs'] : owner;
         })(),
       });

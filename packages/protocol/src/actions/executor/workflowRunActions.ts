@@ -11,7 +11,7 @@ export { DeploymentShaApprovalInputV1Schema, WorkflowApprovedOperationStepV1Sche
 export { projectWorkflowTriggerConsentSteps } from './workflowTriggerConsent.js';
 export { resolveInitialDeploymentApprovalV1 } from '../../deployments/deploymentApprovalScopeV1.js';
 export { prepareApiTokenDeploymentAuthoring, type ApiTokenDeploymentAuthoringHost } from './apiTokenDeploymentAuthoring.js';
-import { deriveWorkflowReplacementId } from '../../workflows/workflowInvocationIdentityV1.js';
+import { deriveBackupReceiverSetupRunIdV1, deriveWorkflowReplacementId } from '../../workflows/workflowInvocationIdentityV1.js';
 import { readAuthenticatedActionRequesterAccountIdV1 } from '../actionRequestAttributionV1.js';
 import { readWorkflowRunDisplayMetadataV1, readWorkflowRunSourceSavedByV1 } from '../../workflows/workflowRunDisplayMetadataV1.js';
 import { z as zodMiniCore0 } from '../../zodRuntimePolicy.js';
@@ -36,11 +36,13 @@ import { ActionIdSchema, type ActionId, type WorkflowActionIdV1 } from '../actio
 import { getActionSpec } from '../actionSpecs.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
-import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildHttpProofV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1 } from './deploymentRoleChild.js';
+import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildHttpProofV1, readHostAdmittedReviewedChildV1,
+  readHostReviewedChildOperationV1, readHostReviewedChildReceivingAdmissionV1, readHostReviewedChildRootV1 } from './deploymentRoleChild.js';
 import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
 import { workflowInputToFieldHint, type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
 import type { WorkflowAcceptedWorkspaceTargetPreparation, WorkflowWorkspaceProgressV1, WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
 import type { MachineSetupApplyInputV1, MachineSetupUpdatesRolloutInputV1 } from '../../machines/managed/actionsV1.js';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '../../machines/managed/actionIdsV1.js';
 import { formatWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
 import { WorkflowRunAdmissionPreparationResultV1Schema, WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopeCommitResponseV1Schema, type WorkflowRunRecipientCensusResponseV1 } from '../../workflows/workflowRunKeyV1.js';
@@ -399,7 +401,7 @@ function projectAcceptedContext(accepted: ReturnType<typeof WorkflowAcceptedSnap
 }
 
 function assertRunResourceRestriction(
-  context: RunArgs['context'],
+  context: Pick<RunArgs['context'], 'externalActionTarget'>,
   resource: Readonly<{ machineId: string; project?: NonNullable<WorkflowMachineTarget['project']> }>,
   normalizeAbsolutePath: WorkflowAccountRunActionDeps['normalizeAbsolutePath'],
 ): void {
@@ -513,6 +515,7 @@ function translateStorageError(error: unknown, options: Readonly<{ unconfirmedWr
 }
 
 export type WorkflowAccountRunActionDeps = Readonly<{
+  readCombinedRunHost?: ReadCombinedRunHostV1;
   /** Private authenticated local ingress; never derived from Action input or Run ownership. */
   resolveLocalAuthenticatedStarter?: (context: ActionExecutorContext) => Promise<NonNullable<
     NonNullable<WorkflowAcceptedSnapshotV1['origin']>['authenticatedStarterV1']> | undefined>;
@@ -802,6 +805,45 @@ export type WorkflowCombinedRunStartV1 = Readonly<{
   orchestrationTarget: WorkflowProjectTargetV1;
 }>;
 
+export type ReadCombinedRunHostV1 = () => Promise<Readonly<{
+  machineId: string;
+  installationId: string;
+  orchestrationDirectory: string;
+}> | null>;
+
+function combinedRunPlacementMismatch() {
+  return workflowError('target_unavailable', { code: 'target_unavailable', reason: 'target_binding_mismatch' });
+}
+
+/** Resolve placement from the exact admitted Setup child or the ordinary root scope. */
+export async function resolveWorkflowCombinedRunPlacementV1(
+  request: WorkflowCombinedRunStartV1,
+  runId: string | undefined,
+  readHost: ReadCombinedRunHostV1 | undefined,
+  normalizeAbsolutePath: WorkflowAccountRunActionDeps['normalizeAbsolutePath'],
+): Promise<Readonly<{ project: WorkflowProjectTargetV1; receiverRunId?: string }>> {
+  const { parent, context, orchestrationTarget } = request;
+  const child = readHostAdmittedReviewedChildV1(context);
+  const receiving = readHostReviewedChildReceivingAdmissionV1(context);
+  if (!child && !receiving) return { project: orchestrationTarget };
+  const setup = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  if (!child || !receiving || parent.actionId !== setup.action || child.actionId !== setup.action || child.role !== setup.role
+    || !binding?.environmentId || child.environmentId !== binding.environmentId
+    || !sameStrictJsonValue(child.input, parent.input) || parent.input.machineId !== receiving.machineId) {
+    throw combinedRunPlacementMismatch();
+  }
+  const receiverRunId = deriveBackupReceiverSetupRunIdV1(binding, child);
+  if (!receiverRunId || runId !== receiverRunId || request.start.runId !== receiverRunId) throw combinedRunPlacementMismatch();
+  const host = await readHost?.();
+  if (!host || receiving.machineId !== host.machineId || receiving.installationId !== host.installationId
+    || orchestrationTarget.machineId !== host.machineId || orchestrationTarget.workspaceRefId !== undefined
+    || orchestrationTarget.sessionPlacement !== undefined) throw combinedRunPlacementMismatch();
+  const directory = normalizeAbsolutePath(host.orchestrationDirectory);
+  if (!directory || directory !== normalizeAbsolutePath(orchestrationTarget.directory)) throw combinedRunPlacementMismatch();
+  return { project: { machineId: host.machineId, directory }, receiverRunId };
+}
+
 /** Nested definitions own their local block ids. Branch scope preserves the authored lane. */
 function authoredStepContext(
   { definition: root, frozenChildren }: WorkflowAcceptedSnapshotV1,
@@ -883,7 +925,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
   prepareStartApproval: (args: WorkflowActionExecuteArgs<'workflow.run.start'>, presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>,
     ingressContext?: WorkflowIngressContextV1) => Promise<HostReviewedChildrenPreparationV1>;
   startCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
-  waitCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1) => Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>>;
+  waitCombined: (request: WorkflowCombinedRunStartV1, ingressContext?: WorkflowIngressContextV1,
+    runId?: string) => Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>>;
+  readCombinedInvocations: (request: WorkflowCombinedRunStartV1, args: WorkflowActionExecuteArgs<'workflow.run.invocations.list'>,
+    ingressContext?: WorkflowIngressContextV1) => ReturnType<WorkflowRunActionOwner['execute']>;
 }> {
   const isSameHome = (context: RunArgs['context'], serverId: string) =>
     areServerProfileIdentifiersEquivalent(context.serverId, serverId, identifier =>
@@ -1200,12 +1245,14 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const { agentStartWorkDepth: _parentStartDepth, agentStartWorkspaceWrites: _parentWorkspaceWrites,
       reviewReviewerLaunchInputs: _parentReviewLaunchInputs, workflowStartProject: _workflowStartProject,
       workflowStartSessionScope, ...caller } = args.context;
-    const requestedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
+    const combinedPlacement = combined && await resolveWorkflowCombinedRunPlacementV1(
+      combined, args.input.runId, deps.readCombinedRunHost, deps.normalizeAbsolutePath);
+    const requestedTarget = combinedPlacement?.project ?? workflowProjectTarget(args.context);
     args = { ...args, context: caller };
-    if (combined) {
-      const reviewedHost = combined.parent.input.machineId;
-      if (reviewedHost !== requestedTarget?.machineId) throw workflowError('target_unavailable');
-      assertRunResourceRestriction(args.context, { machineId: requestedTarget.machineId, project: requestedTarget }, deps.normalizeAbsolutePath);
+    if (combined && combinedPlacement && !combinedPlacement.receiverRunId) {
+      const project = combinedPlacement.project;
+      if (combined.parent.input.machineId !== project.machineId) throw workflowError('target_unavailable');
+      assertRunResourceRestriction(args.context, { machineId: project.machineId, project }, deps.normalizeAbsolutePath);
     }
     const input = args.input;
     // The controller opens private preset content after the signed authored Run.
@@ -1536,6 +1583,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       ...actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details,
       errorCode: preparedWorkspace.code,
     });
+    if (combinedPlacement?.receiverRunId) {
+      const { project, sessionPlacement } = preparedWorkspace.workspaceTarget;
+      if (sessionPlacement) throw combinedRunPlacementMismatch();
+      assertRunResourceRestriction({ externalActionTarget: { kind: 'machine', machineId: combinedPlacement.project.machineId,
+        project: combinedPlacement.project } }, { machineId: project.machineId, project }, deps.normalizeAbsolutePath);
+    }
     const { projectFiles } = readSessionPlacementProjectFilesV1(preparedWorkspace.workspaceTarget.sessionPlacement,
       preparedWorkspace.workspaceTarget.projectFiles ?? input.managedProjectFiles);
     const controller = currentControllerAuthorization(args, combined !== undefined);
@@ -2867,6 +2920,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     ingressContext?: WorkflowIngressContextV1): ReturnType<WorkflowRunActionOwner['execute']>;
   function execute(args: WorkflowActionExecuteArgs<'workflow.run.wait'>,
     ingressContext: WorkflowIngressContextV1 | undefined, combined: WorkflowCombinedRunStartV1): Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse>>;
+  function execute(args: WorkflowActionExecuteArgs<'workflow.run.invocations.list'>,
+    ingressContext: WorkflowIngressContextV1 | undefined, combined: WorkflowCombinedRunStartV1): ReturnType<WorkflowRunActionOwner['execute']>;
   function execute(args: WorkflowActionExecuteArgs<'workflow.run.wait'>,
     ingressContext: undefined, combined: undefined, automaticCheck: Parameters<ActionAutomationWaitV1>[0]['run']): Promise<ActionAutomationRunObservationV1>;
   function execute(args: WorkflowActionExecuteArgs<'workflow.run.cancel'>,
@@ -2880,7 +2935,19 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     // before scoped reads or durable intents; unqualified controls stay key-free.
     const target = args.context.externalActionTarget;
     const restrictedRunId = 'runId' in args.input ? args.input.runId : undefined;
-    if (!automaticCheck && target !== undefined && typeof restrictedRunId === 'string'
+    const combinedPlacement = combined && await resolveWorkflowCombinedRunPlacementV1(
+      combined, restrictedRunId, deps.readCombinedRunHost, deps.normalizeAbsolutePath);
+    if (combinedPlacement?.receiverRunId) {
+      const { accepted, enc, snapshot } = await readAccepted(combinedPlacement.receiverRunId, args.context.signal);
+      const { project } = combinedPlacement;
+      if (!sameStrictJsonValue(accepted.approvedOperation?.parent, combined?.parent)
+        || accepted.workspaceTarget.sessionPlacement || snapshot.run.machineId !== project.machineId) throw combinedRunPlacementMismatch();
+      assertRunResourceRestriction({ externalActionTarget: { kind: 'machine', machineId: project.machineId, project } },
+        { machineId: accepted.machineId, project: accepted.workspaceTarget.project }, deps.normalizeAbsolutePath);
+      if (args.actionId === 'workflow.run.wait') {
+        await prepareRunRecipients(combinedPlacement.receiverRunId, enc, snapshot.keyCensus, args.context.signal);
+      }
+    } else if (!automaticCheck && target !== undefined && typeof restrictedRunId === 'string'
       && args.actionId !== 'workflow.run.list'
       && args.actionId !== 'workflow.run.get'
       && args.actionId !== 'workflow.run.resume'
@@ -3189,7 +3256,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     if (args.actionId === 'workflow.run.wait') {
       const waitArgs = args;
-      if (combined) {
+      if (combined && !combinedPlacement?.receiverRunId) {
         const { accepted } = await openAccepted(args.input.runId, args.context.signal);
         if (!sameStrictJsonValue(accepted.approvedOperation?.parent, combined.parent)) throw workflowError('run_access_denied');
       }
@@ -3435,11 +3502,18 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     } finally {
       deps.assertCurrent?.();
     }
-  }, waitCombined: async (request, ingressContext) => {
+  }, waitCombined: async (request, ingressContext, runId = request.start.runId) => {
     deps.assertCurrent?.();
     try {
-      return await execute({ actionId: 'workflow.run.wait', input: { runId: request.start.runId, conditions: ['terminal', 'attention'] },
+      return await execute({ actionId: 'workflow.run.wait', input: { runId, conditions: ['terminal', 'attention'] },
         context: request.context }, ingressContext, request);
+    } finally {
+      deps.assertCurrent?.();
+    }
+  }, readCombinedInvocations: async (request, args, ingressContext) => {
+    deps.assertCurrent?.();
+    try {
+      return await execute(args, ingressContext, request);
     } finally {
       deps.assertCurrent?.();
     }

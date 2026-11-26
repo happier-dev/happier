@@ -8,6 +8,12 @@ import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGran
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
   projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { invokeHostAdmittedSignedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { deriveBackupReceiverSetupRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { PluginInstallationManifestPublisherHeaderV1Schema, PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
@@ -100,6 +106,87 @@ async function admittedContext(isCurrent = async () => true, root = authorizatio
 }
 
 describe('combined parent Run storage authority', () => {
+  it.each(['receiver', 'root', 'no child', 'wrong action', 'wrong role', 'wrong receiver', 'wrong installation',
+    'wrong Environment', 'wrong input', 'third Machine', 'other Project', 'wrong publisher', 'different Run'] as const)(
+    'uses exact admitted Backup Setup placement for the storage publisher (%s)', async scenario => {
+      const setup = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+      const configuredHost = { machineId, installationId: 'installation', orchestrationDirectory: '/receiver-home' };
+      const { deploymentPreparationAdmission: _setupPreparation, ...root } = authorization.binding;
+      const backupAction = 'deployments.backups.configure';
+      const backupInput = { serverId: 'srv_home', environmentId: 'production', expectedRevision: 1, intent: 'test',
+        destinationSetup: { kind: 'anotherMachine', machineId, expectedInstallationId: 'installation', receiverInputs: {},
+          senderIdentity: { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h',
+            sshPrivateKey: { kind: 'secret', ref: 'happier:shared-secret:v1:sender-key', resourceRevision: 1 } } },
+        configuration: { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'sftp' },
+          occurrenceId: 'reviewed', config: {}, credentialBindings: [],
+          ownership: { environmentId: 'production', prefix: 'owned' },
+          sources: [{ kind: 'dump', sourceId: 'data', service: 'database', consistency: 'logical' }] } };
+      const binding = scenario === 'root' ? authorization.binding : ExternalActionExecutionAuthorizationV1Schema.parse({
+        ...authorization, binding: { ...root, machineId: 'source', target: { kind: 'machine', machineId: 'source' },
+          actionId: backupAction, environmentId: 'production', admittedMachineRole: 'manage',
+          deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(backupAction, backupInput) },
+      }).binding;
+      // This publisher test receives the existing HTTP projection as a boundary fixture.
+      // The receiving RPC and Home suites cover the production proof transport.
+      const context: ActionExecutorContext = scenario === 'root' ? await admittedContext() : {
+        surface: 'cli', externalActionExecutionAuthorization: { ...authorization, binding, requesterHttpProjection: {
+          accountId: binding.accountId, serverId: 'home-profile', serverIdentityId: binding.serverIdentityId,
+          serverHttpBaseUrl: home, isCurrent: async () => true,
+          createRequestHeaders: async () => ({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token }),
+        } },
+      };
+      const child = { actionId: scenario === 'wrong action' ? BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan.action : setup.action,
+        role: scenario === 'wrong role' ? BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan.role : setup.role,
+        input: scenario === 'wrong input' ? { ...parent.input, homeId: 'another-home' } : parent.input,
+        environmentId: scenario === 'wrong Environment' ? 'preview' : binding.environmentId,
+        inputDigest: computeActionInputApprovalDigestV1(setup.action, parent.input) };
+      const runId = scenario === 'root' ? '11111111-1111-4111-8111-111111111111'
+        : deriveBackupReceiverSetupRunIdV1(binding, { ...child, actionId: setup.action, role: setup.role, environmentId: 'production' });
+      if (!runId) throw new Error('Missing Backup Setup Run identity in the fixture');
+      const post = vi.spyOn(axios, 'post').mockResolvedValue({ data: { accepted: true } });
+      const execute = async (admitted: ActionExecutorContext) => {
+        const requestedMachine = scenario === 'third Machine' ? 'third-machine' : machineId;
+        const storage = factory().createWorkflowRunStorage({ parent, context: admitted,
+          orchestrationTarget: { machineId: requestedMachine,
+            directory: scenario === 'other Project' ? '/another-project' : configuredHost.orchestrationDirectory },
+          start: WorkflowRunStartRequestV1Schema.parse({ runId, source: {
+            kind: 'saved', definitionId: 'unused', revision: { headerVersion: 1, bodyVersion: 1 } } }),
+        }, undefined, async () => configuredHost);
+        if (scenario === 'receiver' || scenario === 'root') {
+          const operations = ['get', 'admit', 'wait', 'invocations.list', 'run-key.census', 'run-key.commit'] as const;
+          for (const operation of operations) {
+            await expect(storage.execute({ operation, runId, ...(operation === 'admit' ? { machineId } : {}) }))
+              .resolves.toEqual({ accepted: true });
+          }
+          for (const [index, [url, body, options]] of post.mock.calls.entries()) {
+            expect(url).toBe(`${home}/v3/automations/runs/workflow-storage`);
+            expect(body).toMatchObject({ operation: operations[index], runId, publisherMachineId: machineId });
+            const publisher = PluginInstallationManifestPublisherHeaderV1Schema.parse(JSON.parse(Buffer.from(
+              String(options?.headers?.[PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]), 'base64url').toString('utf8')));
+            expect(publisher.proof).toMatchObject({ machineId, installationId: configuredHost.installationId });
+            if (scenario === 'root') expect(options?.headers).toHaveProperty('Authorization', 'Bearer requester-account');
+            else expect(options?.headers).toHaveProperty(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, authorization.token);
+          }
+          expect(post).toHaveBeenCalledTimes(operations.length);
+          return;
+        }
+        await expect(storage.execute({ operation: 'admit', runId: scenario === 'different Run' ? 'another-run' : runId,
+          machineId }, { publisherMachineId: scenario === 'wrong publisher' ? 'third-machine' : machineId }))
+          .rejects.toMatchObject({ code: 'target_unavailable', details: { reason: 'target_binding_mismatch' } });
+        expect(post).not.toHaveBeenCalled();
+      };
+      const originalContext = { ...context, externalActionTarget: binding.target };
+      if (scenario === 'root' || scenario === 'no child') await execute(originalContext);
+      else await invokeHostAdmittedSignedReviewedChildV1({
+        context: originalContext, child,
+        receivingAdmission: { actorAccountId: binding.accountId, custodianAccountId: 'receiver-owner',
+          machineId: scenario === 'wrong receiver' ? 'another-receiver' : machineId,
+          installationId: scenario === 'wrong installation' ? 'other-installation' : configuredHost.installationId,
+          role: 'manage', encryptionMode: 'plain' },
+        execute: (_input, admitted) => execute(admitted),
+      });
+    });
+
   it('uses the verified signed combined parent for Run HTTP while retaining installed Account wake observation', async () => {
     const setupParent = { actionId: 'machines.setup.apply' as const, input: MachineSetupApplyInputV1Schema.parse({
       homeId: 'srv_home', machineId, targets: [{ homeId: 'srv_home', machineId,
