@@ -1998,6 +1998,22 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
     rpc.registerHandler('demo.forwardedFailure', async () => {
       throw Object.assign(new Error('setup failed token=PRIVATE_TOKEN'), { failureCause: producerCause });
     });
+    rpc.registerHandler('demo.activityFailure', async () => {
+      throw Object.assign(new RpcError('setup failed token=PRIVATE_TOKEN', 'activity_unavailable', producerCause), {
+        requestId: 'retained-activity-request', effectAttempted: false,
+        details: { reason: 'PRIVATE_PLUGIN_DETAILS' },
+      });
+    });
+    rpc.registerHandler('demo.attemptedFailure', async () => {
+      throw Object.assign(new RpcError('activity failed', 'activity_unavailable', producerCause), {
+        requestId: 'retained-attempted-request', effectAttempted: true,
+      });
+    });
+    rpc.registerHandler('demo.invalidFailureMetadata', async () => {
+      throw Object.assign(new RpcError('activity failed', 'activity_unavailable', producerCause), {
+        requestId: { secret: 'PRIVATE_PLUGIN_DETAILS' }, effectAttempted: 'true',
+      });
+    });
     const invoke = async (name: string) => {
       const method = `sess_1:${name}`;
       const callId = '0123456789abcdef0123456789abcdef';
@@ -2029,9 +2045,16 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
       failureCause: { phase: 'rpc.handler', errorCode: 'EACCES', httpStatus: null } });
     expect(native).not.toHaveProperty('errorCode');
     expect(JSON.stringify(native)).not.toContain('PRIVATE_TOKEN');
-    const forwarded = await invoke('demo.forwardedFailure');
-    expect(forwarded).toEqual({ error: expect.stringContaining('setup failed'), failureCause: producerCause });
+    await expect(invoke('demo.forwardedFailure')).resolves.toEqual({ error: expect.stringContaining('setup failed'), failureCause: producerCause });
+    const forwarded = await invoke('demo.activityFailure');
+    expect(forwarded).toEqual({ error: expect.stringContaining('setup failed'), errorCode: 'activity_unavailable',
+      requestId: 'retained-activity-request', effectAttempted: false, failureCause: producerCause });
     expect(JSON.stringify(forwarded)).not.toContain('PRIVATE_TOKEN');
+    expect(JSON.stringify(forwarded)).not.toContain('PRIVATE_PLUGIN_DETAILS');
+    await expect(invoke('demo.attemptedFailure')).resolves.toEqual({ error: 'activity failed', errorCode: 'activity_unavailable',
+      requestId: 'retained-attempted-request', effectAttempted: true, failureCause: producerCause });
+    await expect(invoke('demo.invalidFailureMetadata')).resolves.toEqual({ error: 'activity failed', errorCode: 'activity_unavailable',
+      failureCause: producerCause });
   });
 
   it.each(['plain', 'e2ee'] as const)('refuses an unavailable private continuation without disclosing its operand in %s replies or logs', async mode => {

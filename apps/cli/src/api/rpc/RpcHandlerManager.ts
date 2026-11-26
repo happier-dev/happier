@@ -1455,6 +1455,10 @@ export class RpcHandlerManager {
                 error: redactBugReportSensitiveText(capabilityDetails ? readOutcomeCode(error, true)
                     : error instanceof Error ? error.message : 'Unknown error'),
                 ...(rpcErrorCode ? { errorCode: rpcErrorCode } : {}),
+                ...(error && typeof error === 'object' && 'requestId' in error && typeof error.requestId === 'string'
+                    ? { requestId: error.requestId } : {}),
+                ...(error && typeof error === 'object' && 'effectAttempted' in error && typeof error.effectAttempted === 'boolean'
+                    ? { effectAttempted: error.effectAttempted } : {}),
                 ...(capabilityDetails || finiteDetails ? { details: capabilityDetails ?? finiteDetails } : {}),
                 failureCause: forwardedCause.success ? forwardedCause.data : projectActionFailureCauseV1(error, 'rpc.handler'),
             };
