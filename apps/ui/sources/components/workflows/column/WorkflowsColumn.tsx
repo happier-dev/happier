@@ -14,6 +14,9 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
+import { LIST_EXTENSION_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
@@ -121,6 +124,10 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     // With no navigation chrome above it (a phone browser, an installed web app) the page's name leads and clears the
     // device's top edge itself, the switch under it; under a native header the switch only needs the page's own breathing room.
     const safeAreaTop = useChromeSafeAreaInsets().top;
+    const rowExtensionsScope = useActiveServerAccountScopeLifetime(access.kind === 'workflows' && view !== 'events')?.scope;
+    const rowExtensions = rowExtensionsScope
+        ? <PluginSurfaceProjectionDemand accountScope={rowExtensionsScope} sections={LIST_EXTENSION_PROJECTION_SECTIONS} />
+        : null;
     const viewTabs = <View style={[styles.views, styles.viewsOnPage, headsPage ? styles.viewsUnderPageTitle : { paddingTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx + (titleChrome ? 0 : safeAreaTop) }]}>
             <View style={styles.viewTabs}>
                 <SegmentedTabBar<WorkflowsColumnView>
@@ -156,6 +163,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
         return <WorkflowsColumnCreationRefContext.Provider value={creationRef}>
             <WorkflowsColumnOwnsCreationContext.Provider value={ownsCreation}>
                 <WorkflowsColumnHeadsPageContext.Provider value={headsPage}>
+                    {rowExtensions}
                     <WorkflowsPhonePage view={view} onSelectView={selectViewFromControl} ownsCreation={ownsCreation}
                         phone={headsPage && phone}
                         definitionsContent={props.definitionsContent} pageHeader={pageHeader}
@@ -170,6 +178,7 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     const headerAction = access.kind === 'workflows' ? <WorkflowsColumnActions canCreate /> : null;
     if (access.kind === 'workflows') {
         return <View testID="workflows-column" style={styles.column}>
+            {rowExtensions}
             <WorkflowsColumnList surface={props.surface ?? 'plane'} view={view} onSelectView={selectViewFromControl} headerAction={headerAction} pathname={pathname} />
         </View>;
     }

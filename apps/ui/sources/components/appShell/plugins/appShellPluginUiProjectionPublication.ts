@@ -122,14 +122,16 @@ const NO_SETTINGS_PAGES: readonly PluginUiProjectionModel['settingsPagesById'][s
  * Unread families keep their retained value.
  */
 const partialPresentationByRead = new WeakMap<PluginUiProjectionModel, Readonly<{
-    retained: PluginUiProjectionModel; registrySources: boolean; skills: boolean; themes: boolean; model: PluginUiProjectionModel;
+    retained: PluginUiProjectionModel; registrySources: boolean; skills: boolean; themes: boolean;
+    listExtensions: boolean; model: PluginUiProjectionModel;
 }>>();
 function withReadPresentationFamilies(retained: PluginUiProjectionModel | null, read: PluginUiProjectionModel,
-    registrySources: boolean, skills: boolean, themes: boolean): PluginUiProjectionModel {
+    registrySources: boolean, skills: boolean, themes: boolean, listExtensions: boolean): PluginUiProjectionModel {
     if (registrySources && (!retained || retained.generation == null)) return read;
     const base = retained ?? EMPTY_PLUGIN_UI_PROJECTION;
     const held = partialPresentationByRead.get(read);
-    if (held?.retained === base && held.registrySources === registrySources && held.skills === skills && held.themes === themes) return held.model;
+    if (held?.retained === base && held.registrySources === registrySources && held.skills === skills && held.themes === themes
+        && held.listExtensions === listExtensions) return held.model;
     const installedPackagesById = { ...read.installedPackagesById, ...base.installedPackagesById };
     if (themes) for (const theme of Object.values(read.themesById)) {
         const installed = read.installedPackagesById[theme.pluginId];
@@ -140,8 +142,9 @@ function withReadPresentationFamilies(retained: PluginUiProjectionModel | null, 
         installedPackagesById: Object.freeze(installedPackagesById),
         registrySourcesById: registrySources ? read.registrySourcesById : base.registrySourcesById,
         skillsById: skills ? read.skillsById : base.skillsById,
-        themesById: themes ? read.themesById : base.themesById });
-    partialPresentationByRead.set(read, { retained: base, registrySources, skills, themes, model });
+        themesById: themes ? read.themesById : base.themesById,
+        listExtensionsById: listExtensions ? read.listExtensionsById : base.listExtensionsById });
+    partialPresentationByRead.set(read, { retained: base, registrySources, skills, themes, listExtensions, model });
     return model;
 }
 
@@ -468,7 +471,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 || (before?.presentedPluginIds ?? null) !== (report.presentedPluginIds ?? null)
                 || (before?.registrySourcesCurrent ?? false) !== (report.registrySourcesCurrent ?? false)
                 || (before?.skillsCurrent ?? false) !== (report.skillsCurrent ?? false)
-                || (before?.themesCurrent ?? false) !== (report.themesCurrent ?? false)) changedMembers.add(machineId);
+                || (before?.themesCurrent ?? false) !== (report.themesCurrent ?? false)
+                || (before?.listExtensionsCurrent ?? false) !== (report.listExtensionsCurrent ?? false)) changedMembers.add(machineId);
         }
         pendingMachineReports.clear();
         const machineReports = reports ?? beforeReports;
@@ -642,13 +646,16 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             // Held plugin slices (a mounted surface's, the Session's) present those plugins
             // while the Machine's catalogue stays establishing: others are not loaded, never absent.
             const { projection: presentedProjection, presentedPluginIds } = selectPresentedPluginUiProjection(current);
-            const read = !presentedPluginIds && current?.phase === 'establishing' ? current.installedPackagesProjection ?? null : null;
-            const registrySourcesRead = current?.registrySourcesCurrent === true;
-            const skillsRead = current?.skillsCurrent === true;
-            const themesRead = current?.themesCurrent === true && read !== null
+            const read = current?.phase === 'establishing' ? current.installedPackagesProjection ?? null : null;
+            const registrySourcesRead = !presentedPluginIds && current?.registrySourcesCurrent === true;
+            const skillsRead = !presentedPluginIds && current?.skillsCurrent === true;
+            const themesRead = !presentedPluginIds && current?.themesCurrent === true && read !== null
                 && (Object.keys(read.themesById).length > 0 || Object.keys(presentedProjection?.themesById ?? {}).length > 0);
-            const presentation = read && (registrySourcesRead || skillsRead || themesRead)
-                ? withReadPresentationFamilies(presentedProjection, read, registrySourcesRead, skillsRead, themesRead) : presentedProjection;
+            const listExtensionsRead = current?.listExtensionsCurrent === true && read !== null
+                && (Object.keys(read.listExtensionsById).length > 0 || Object.keys(presentedProjection?.listExtensionsById ?? {}).length > 0);
+            const presentation = read && (registrySourcesRead || skillsRead || themesRead || listExtensionsRead)
+                ? withReadPresentationFamilies(presentedProjection, read, registrySourcesRead, skillsRead, themesRead, listExtensionsRead)
+                : presentedProjection;
             // The last theme demand can leave when its installation is withdrawn.
             // An exact Home report retires cached themes even without another theme section read.
             const themesAdmitted = reportedHome && (!serverIdentityId || reportedHome === serverIdentityId)

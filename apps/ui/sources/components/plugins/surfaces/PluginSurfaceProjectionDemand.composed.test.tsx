@@ -42,6 +42,10 @@ import { StoreDiscover } from '@/components/store/StoreDiscover';
 import { listStoreKindContributions } from '@/components/store/catalog/storeKindContributions';
 import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { PluginSurfaceProjectionDemand } from './PluginSurfaceProjectionDemand';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { CollectionColumnsMenuTrigger } from '@/components/ui/lists/collection/CollectionColumnsMenu';
+import { WorkflowsColumn } from '@/components/workflows/column/WorkflowsColumn';
+import { WorkflowsViewRowDetails, WorkflowRunsViewMenu } from '@/components/workflows/library/WorkflowsViewMenu';
 import { SkillsSettingsLayout } from '@/components/settings/skills/SkillsSettingsLayout';
 import { MountedPluginActionControls } from './MountedPluginActionControls';
 import { createPluginSurfaceActionControls } from './pluginSurfaceActionControls';
@@ -97,14 +101,15 @@ afterEach(async () => {
     installDisconnectedServerSocketBoundary();
 });
 
-it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter', 'starter-warm', 'skills', 'services'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
+it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter', 'starter-warm', 'skills', 'services', 'workflow-row-details'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
     const accountId = 'presented-demand-account';
     const serverIdentityId = `srv_presented_demand_${surface}`;
     const starterSurface = surface === 'starter' || surface === 'starter-warm';
     const skillsSurface = surface === 'skills';
     const servicesSurface = surface === 'services';
+    const workflowSurface = surface === 'workflow-row-details';
     const serviceManifest = servicesSurface ? PluginManifestV2Schema.parse(createServiceColumnSource().manifest) : null;
-    const machine = createMachineFixture({ id: 'presented-machine', activeAt: starterSurface || skillsSurface || servicesSurface ? Date.now() : 0, storageMode: 'plain' });
+    const machine = createMachineFixture({ id: 'presented-machine', activeAt: starterSurface || skillsSurface || servicesSurface || workflowSurface ? Date.now() : 0, storageMode: 'plain' });
     const row = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
     const shippedManifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
     const pluginId = starterSurface ? shippedManifest.id : serviceManifest?.id ?? 'acme.preview';
@@ -135,6 +140,19 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         sourceRef: { machineId: machine.id, pluginId, sourceCustody } });
     const serviceEntries = serviceManifest ? Object.fromEntries(Object.entries(projectPluginPortableUiDeclarationsV1(serviceManifest))
         .map(([id, entry]) => [id, { ...entry, executionOrigin, occurrenceId: widget.occurrenceId }])) : null;
+    const rowDetailsManifest = workflowSurface ? PluginManifestV2Schema.parse({
+        schemaVersion: 2, id: pluginId, version: pluginVersion, displayName: 'Local row details',
+        engines: { happier: '^1.0.0' }, contributes: { ui: { listExtensions: [
+            { id: 'workflow-fields', entity: 'workflow', filterFields: [{
+                id: 'step-count', title: 'Steps', source: { factKey: 'stepCount' }, value: { kind: 'number', unit: '{step}' },
+            }], rowMark: { fieldId: 'step-count', slot: 'context' } },
+            { id: 'run-fields', entity: 'workflowRun', filterFields: [{
+                id: 'run-result', title: 'Result detail', source: { factKey: 'result' }, value: { kind: 'set' },
+            }], rowMark: { fieldId: 'run-result', slot: 'context' } },
+        ] } },
+    }) : null;
+    const rowDetailsEntries = rowDetailsManifest ? Object.fromEntries(Object.entries(projectPluginPortableUiDeclarationsV1(rowDetailsManifest))
+        .map(([id, entry]) => [id, { ...entry, executionOrigin, occurrenceId: widget.occurrenceId }])) : {};
     const storeKind = projectPluginStoreKindDeclarationV1({ pluginId, pluginVersion: '1.0.0', definition: {
         id: 'theme', title: 'Themes', viewId: 'store', operations: {
             list: 'list', read: 'read', installed: 'installed', prepare: 'prepare', acquire: 'acquire', manage: 'manage',
@@ -177,7 +195,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             familiesById: {
                 ...(starterSurface ? { registrySources: { family: 'registrySources', entriesById: Object.fromEntries(registrySources.map((entry: { id: string }) => [entry.id, { ...entry, executionOrigin }])) } } : {}),
                 storeKinds: { family: 'storeKinds', entriesById: { [storeKind.id]: storeKind } },
-                pluginUi: { family: 'pluginUi', entriesById: serviceEntries ?? { [widget.id]: widget } },
+                pluginUi: { family: 'pluginUi', entriesById: serviceEntries ?? { [widget.id]: widget, ...rowDetailsEntries } },
                 skills: { family: 'skills', entriesById: skillsSurface ? { [skillId]: {
                     id: skillId, pluginId, pluginVersion,
                     definition: { id: 'fixture-skill', directory: 'skills/fixture-skill' },
@@ -220,7 +238,10 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
     let serviceInstalled = false;
     let serviceEnabled = false;
     const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: `https://presented-${surface}.test`,
-        serverIdentityId, accountId, accountMode: 'plain', currentAccount: starterSurface || skillsSurface || servicesSurface }], route: async request => {
+        serverIdentityId, accountId, accountMode: 'plain', currentAccount: starterSurface || skillsSurface || servicesSurface || workflowSurface }], route: async request => {
+        if (workflowSurface && (request.path === '/v1/features' || request.path === '/v1/features/authenticated')) {
+            return Response.json(createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId } } }));
+        }
         if (starterSurface && request.path.startsWith('/v1/actions/')) {
             // The Home HTTP boundary keeps the real Action envelope and registry host.
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.body);
@@ -311,6 +332,9 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             if (skillsSurface) return <AppShellPluginUiProjectionProvider>{visible ? <SkillsSettingsLayout /> : null}</AppShellPluginUiProjectionProvider>;
             if (servicesSurface) return <AppShellPluginUiProjectionProvider>{visible ? <AllDeploymentsView read={servicesRead}
                 serverId={serverId} lifetime={lifetime} presented /> : null}</AppShellPluginUiProjectionProvider>;
+            if (workflowSurface) return <AppShellPluginUiProjectionProvider>
+                {visible ? <WorkflowsColumn /> : null}
+            </AppShellPluginUiProjectionProvider>;
             if (declaredDirectory) return <AppShellPluginUiProjectionProvider>
                 <StoreDiscover demand={{ presented: visible }} project={null}>
                     {() => <DeclaredDirectoryKinds />}
@@ -352,6 +376,39 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             availabilityCursor += 1;
             await act(async () => { await sync.refreshPluginAccountAvailability(); });
             await waitForHomeGovernance(() => expect(find(column).length).toBeGreaterThan(0));
+            const settledReads = requests.length;
+            await tree.update(<Presented visible={false} />);
+            await flushHookEffects();
+            expect(requests).toHaveLength(settledReads);
+            return;
+        }
+        if (workflowSurface) {
+            await waitForHomeGovernance(() => {
+                const menu = tree!.tree.root.findAllByType(CollectionColumnsMenuTrigger)
+                    .find(trigger => trigger.props.testID === 'workflows-column:view-menu');
+                const details = React.Children.toArray(menu?.props.children).find(
+                    (child): child is React.ReactElement<React.ComponentProps<typeof WorkflowsViewRowDetails>> =>
+                        React.isValidElement(child) && child.type === WorkflowsViewRowDetails);
+                expect(details?.props.choices).toContainEqual(expect.objectContaining({ id: 'steps' }));
+                expect(details?.props.choices).toContainEqual(expect.objectContaining({ id: `${pluginId}/step-count` }));
+            });
+            await act(async () => {
+                const runs = tree!.tree.root.findAllByProps({ testID: 'workflows-column:view:runs' })
+                    .find(node => typeof node.props.onPress === 'function');
+                expect(runs).toBeDefined();
+                runs!.props.onPress();
+            });
+            await waitForHomeGovernance(() => {
+                expect(tree!.tree.root.findByType(WorkflowRunsViewMenu).props.rows.details)
+                    .toEqual(expect.arrayContaining([expect.objectContaining({ id: `${pluginId}/run-result` })]));
+            });
+            const extension = readCurrentAppShellPluginUiProjection({ scope: lifetime.scope, declarationsOnly: true })
+                ?.listExtensionsById[`listExtension:${pluginId}:workflow-fields`];
+            expect(readPluginUiContributionSupplies(extension)).toMatchObject([{ machineId: machine.id, occurrenceId: widget.occurrenceId }]);
+            const unrelated = new Set(Object.entries(deferred.manifest.sections)
+                .filter(([section]) => !['base', 'installedPackagesById', 'familiesById.pluginUi'].includes(section)).map(([, digest]) => digest));
+            expect(requests.length).toBeGreaterThan(0);
+            expect(requests.filter(request => unrelated.has(request.sectionRead?.digest ?? ''))).toEqual([]);
             const settledReads = requests.length;
             await tree.update(<Presented visible={false} />);
             await flushHookEffects();

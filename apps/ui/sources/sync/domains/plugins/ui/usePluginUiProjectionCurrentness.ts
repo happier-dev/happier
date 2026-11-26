@@ -55,7 +55,7 @@ const CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR = Object.freeze({
     kind: 'error' as const,
     reason: 'transport' as const,
 });
-import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS, REGISTRY_SOURCE_PROJECTION_SECTIONS, SKILL_PROJECTION_SECTIONS, THEME_PROJECTION_SECTIONS } from './projectionSections';
+import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, LIST_EXTENSION_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS, REGISTRY_SOURCE_PROJECTION_SECTIONS, SKILL_PROJECTION_SECTIONS, THEME_PROJECTION_SECTIONS } from './projectionSections';
 import { selectPresentedPluginUiProjection } from './presentedPluginUiProjection';
 export { PLUGIN_UI_SECTIONS, PLUGIN_SEARCH_SECTIONS } from './projectionSections';
 const CONNECTED_ACCOUNT_PROJECTION_UNSUPPORTED = Object.freeze({
@@ -116,7 +116,8 @@ type LoadedProjectionState = Readonly<{
         registrySourcesRead?: boolean;
         skillsRead?: boolean;
         /** The addressed theme family can publish independently of the rest of presentation. */
-        themesRead?: boolean }>;
+        themesRead?: boolean;
+        listExtensionsRead?: boolean }>;
 }>;
 
 export type PluginUiProjectionCurrentness = Readonly<{
@@ -153,6 +154,8 @@ export type PluginUiProjectionCurrentness = Readonly<{
     skillsCurrent?: boolean;
     /** The theme family in `installedPackagesProjection` has a current answer. */
     themesCurrent?: boolean;
+    /** The Collection list extensions in `installedPackagesProjection` have a current answer. */
+    listExtensionsCurrent?: boolean;
 }>;
 
 /**
@@ -511,6 +514,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             const registrySourcesRead = daemonProjectionHasSections(entry, REGISTRY_SOURCE_PROJECTION_SECTIONS);
             const skillsRead = daemonProjectionHasSections(entry, SKILL_PROJECTION_SECTIONS);
             const themesRead = daemonProjectionHasSections(entry, THEME_PROJECTION_SECTIONS);
+            const listExtensionsRead = daemonProjectionHasSections(entry, LIST_EXTENSION_PROJECTION_SECTIONS);
             publishForCurrentRequest((previous) => {
                 const connectedAccountProjection = connectedAccountsReady
                     ? entry.inputs.connectedAccountProjection : previous.connectedAccountProjection;
@@ -531,7 +535,9 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                         && (held.registrySourcesRead ?? false) === registrySourcesRead
                         && (held.skillsRead ?? false) === skillsRead
                         && (held.themesRead ?? false) === themesRead
-                        ? held : { authorityKey, projection: entry.inputs.pluginUiProjection, presentedPluginIds, registrySourcesRead, skillsRead, themesRead };
+                        && (held.listExtensionsRead ?? false) === listExtensionsRead
+                        ? held : { authorityKey, projection: entry.inputs.pluginUiProjection, presentedPluginIds,
+                            registrySourcesRead, skillsRead, themesRead, listExtensionsRead };
                     return previous.connectedAccountProjection === connectedAccountProjection
                         && previous.installedPackages === installedPackages
                         ? previous : { ...previous, connectedAccountProjection, installedPackages };
@@ -648,6 +654,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     const registrySourcesCurrent = installedPackagesProjection !== null && loadedProjection.installedPackages?.registrySourcesRead === true;
     const skillsCurrent = installedPackagesProjection !== null && loadedProjection.installedPackages?.skillsRead === true;
     const themesCurrent = installedPackagesProjection !== null && loadedProjection.installedPackages?.themesRead === true;
+    const listExtensionsCurrent = installedPackagesProjection !== null && loadedProjection.installedPackages?.listExtensionsRead === true;
     // A mounted plugin's answered slices are current before the full catalog.
     // Publish the same admitted presentation the AppShell's Machine member uses.
     const { projection: runtimeProjection } = selectPresentedPluginUiProjection({ phase,
@@ -696,12 +703,14 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         registrySourcesCurrent,
         skillsCurrent,
         themesCurrent,
+        listExtensionsCurrent,
     }), [
         installedPackagesProjection,
         presentedPluginIds,
         registrySourcesCurrent,
         skillsCurrent,
         themesCurrent,
+        listExtensionsCurrent,
         interactionEnabled,
         connectedAccountProjection,
         machineId,

@@ -6916,8 +6916,13 @@ Missing portable descriptors remain preparing while their immutable release is
 read. In the unreleased 0.3 installed reader, omitted release-less manifest and
 UI declarations settle as unavailable: the persisted census has no producer for
 that source-bound content. This does not prove absent capabilities or an empty
-UI declaration, and later live daemon declarations remain usable. Reporting an
-installation does not enable Account intent, establish trust, or grant execution.
+UI declaration, and later live daemon declarations remain usable. Presented
+Workflow and Run collections request the existing Machine Plugin UI section for
+installations without complete Availability declarations. AppShell publishes the
+list extensions from that answer with their Machine and occurrence so collection
+fields and row details can use them before the rest of the live catalog loads.
+Reporting an installation does not enable Account intent, establish trust, or
+grant execution.
 With an explicit absent-intent read, UI Availability can admit an exact trusted,
 enabled portable installation against its immutable census release. Renderer
 Artifact requests carry that installation's complete execution origin; the same
