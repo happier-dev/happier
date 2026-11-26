@@ -628,6 +628,50 @@ describe('deployment scoped read transport', () => {
         expect(paths).not.toContain('/v1/artifacts/read');
     });
 
+    it('reads admitted collector Domain bodies in one batch, without opening unrelated captures', async () => {
+        const serverId = await homes.addHome({ name: 'Collector Domains', serverUrl: 'https://collector-domains.test',
+            accountId: 'account-owner', accountEncryptionMode: 'plain' });
+        const app = { environmentId: 'environment', targetLinkId: 'link', deploymentId: 'collector-deployment',
+            controller: { machineId: 'controller', installationId: 'installed' } };
+        const machineId = 'collector-child';
+        const makeDomain = (id: string, installationId: string) => {
+            const content = { contentArtifactId: `private-${id}`, contentHeaderVersion: 1, contentBodyVersion: 1 };
+            const placement = { serverId, accountId: 'account-owner', environmentId: app.environmentId,
+                targetLinkId: app.targetLinkId, domainId: id, machineId: app.controller.machineId,
+                installationId, actionOperationId: 'operation', requestId: 'request', nativeServer: 'private' };
+            return DeploymentDomainHeaderV1Schema.parse({ v: 1, id, environmentId: app.environmentId,
+                targetLinkId: app.targetLinkId, revision: 1, state: 'active', ...content, contentArtifactId: `summary-${id}`,
+                createdByAccountId: 'account-owner', createdAtMs: 1, updatedAtMs: 1, placements: [
+                    { placement, desired: true, listener: 'privateOrigin', content,
+                        telemetryCollector: { machineId, deploymentId: app.deploymentId } },
+                    { placement: { ...placement, nativeServer: 'https' }, desired: true, listener: 'public', content },
+                ] });
+        };
+        const domains = [makeDomain('first', 'installed'), makeDomain('other', 'replaced'), makeDomain('second', 'installed')];
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const writer = await captureLazyActionAccountContext(serverId);
+        try {
+            for (const domain of domains) await writer.createArtifactDocument({ artifactId: `private-${domain.id}`,
+                header: { kind: 'deployment-domain.v1', title: domain.id },
+                body: JSON.stringify({ hostname: `${domain.id}.test`, target: { kind: 'telemetry' } }) });
+        } finally { writer.dispose(); }
+        homes.answer(serverId, `/v1/deployments/environments/${app.environmentId}/domains`, { body: {
+            ok: true, environmentId: app.environmentId, revision: 1, domains, nextCursor: null,
+        } });
+        const scope = { serverId, accountId: 'account-owner' };
+        const lifetime: ServerAccountScopeLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const before = homes.requests.length;
+        const result = await createDeploymentReadTransport(lifetime).listPublicCollectorDomains(scope,
+            { serverId, machineId, app }, { signal: new AbortController().signal });
+        expect(result).toMatchObject({ ok: true, value: { app, items: [
+            { domainId: 'first', endpoint: 'https://first.test/' }, { domainId: 'second', endpoint: 'https://second.test/' },
+        ], nextCursor: null } });
+        const reads = homes.requests.slice(before).filter(request => request.path.startsWith('/v1/artifacts'));
+        expect(reads.map(request => ({ path: request.path, input: request.input }))).toEqual([
+            { path: '/v1/artifacts/read', input: { artifactIds: ['private-first', 'private-second'] } },
+        ]);
+    });
+
     it.each(['plain', 'e2ee'] as const)('reads %s Activity through the existing mode-aware receipt transport', async mode => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
         const secret = new Uint8Array(32).fill(11);

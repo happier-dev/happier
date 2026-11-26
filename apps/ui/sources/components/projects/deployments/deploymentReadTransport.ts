@@ -479,18 +479,27 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 app = rows.get(machineId)?.deploymentApp ?? undefined;
                 if (!app) return { ok: true, value: { app: null, items: [], nextCursor: null } };
             }
-            const { environmentId, targetLinkId } = app;
+            const { environmentId, targetLinkId, deploymentId, controller } = app;
             const page = await readDomainHeaders(environmentId, cursor ? { cursor } : {}, options);
             if (!page.ok) return page;
-            const items = [];
-            for (const domain of page.value.domains) {
+            // The selector admits each private-origin pointer before the Account reader batches it.
+            const routes = await Promise.allSettled(page.value.domains.map(async domain => {
                 const route = await selectPublicTelemetryCollectorDomainV1({
                     serverId, environmentId, targetLinkId, domainId: domain.id, domain,
-                    collector: { machineId, deploymentId: app.deploymentId, controller: app.controller },
-                    open: (artifactId, signal) => account.readArtifactContent(artifactId, { signal }),
+                    collector: { machineId, deploymentId, controller },
+                    open: async (artifactId, signal) => {
+                        const [result] = await account.readArtifactContents([artifactId], { signal });
+                        if (result?.status === 'rejected') throw result.reason;
+                        return result?.value ?? null;
+                    },
                     signal: options.signal,
                 });
-                if (route.kind === 'ready') items.push({ domainId: domain.id, endpoint: route.endpoint });
+                return route.kind === 'ready' ? { domainId: domain.id, endpoint: route.endpoint } : null;
+            }));
+            const items = [];
+            for (const route of routes) {
+                if (route.status === 'rejected') throw route.reason;
+                if (route.value) items.push(route.value);
             }
             return { ok: true, value: { app, items, nextCursor: page.value.nextCursor } };
         }),
