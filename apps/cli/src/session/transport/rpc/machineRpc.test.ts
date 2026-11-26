@@ -481,15 +481,19 @@ describe('callMachineRpc', () => {
     });
   });
 
-  it('does not send Usage Work evidence RPCs to Machines Home already answered offline', async () => {
+  it.each([
+    { name: 'fixed Home fixture', online: 1, offline: 1, onlineSessions: 1, offlineSessions: 1 },
+    { name: 'Week-shaped fixture', online: 3, offline: 50, onlineSessions: 2, offlineSessions: 20 },
+  ])('does not send Usage Work evidence RPCs to Machines Home already answered offline ($name)',
+  async ({ online, offline, onlineSessions, offlineSessions }) => {
     const { collectUsageWorkSources } = await import('@happier-dev/protocol/usage/usageWorkSources');
     const { normalizeUsageQuery } = await import('@happier-dev/protocol/inputs/usageQuery');
     const query = normalizeUsageQuery({ includeWorkEvidence: true });
-    const machines = Array.from({ length: 53 }, (_, index) => ({
-      id: `work-machine-${index}`, active: index < 3, activeAt: Date.now(),
+    const machines = Array.from({ length: online + offline }, (_, index) => ({
+      id: `work-machine-${index}`, active: index < online, activeAt: Date.now(),
       presenceProtocolVersion: 1, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
     }));
-    const targets = new Map(machines.flatMap(machine => Array.from({ length: machine.active ? 2 : 20 },
+    const targets = new Map(machines.flatMap(machine => Array.from({ length: machine.active ? onlineSessions : offlineSessions },
       (_, index) => [`${machine.id}-session-${index}`, machine] as const)));
     const credentials = { token: 'work-presence-fixture', encryption: null };
     const issued: { online: boolean; sessions: number }[] = [];
@@ -534,10 +538,10 @@ describe('callMachineRpc', () => {
         calls: issued.length, offline: issued.filter(call => !call.online).length, firstWave,
         onlineBatchSizes: issued.filter(call => call.online).map(call => call.sessions),
         elapsedMs: completedAt! - start,
-      }).toEqual({ calls: 3, offline: 0, firstWave: 3, onlineBatchSizes: [2, 2, 2], elapsedMs: 0 });
+      }).toEqual({ calls: online, offline: 0, firstWave: online, onlineBatchSizes: Array(online).fill(onlineSessions), elapsedMs: 0 });
       expect(result[0]).toMatchObject({
-        status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1000 },
-        pullRequestReadSessions: [...targets.keys()].slice(0, 6),
+        status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: offline * offlineSessions },
+        pullRequestReadSessions: [...targets.keys()].slice(0, online * onlineSessions),
       });
     } finally {
       vi.mocked(io).mockImplementation(originalIo);

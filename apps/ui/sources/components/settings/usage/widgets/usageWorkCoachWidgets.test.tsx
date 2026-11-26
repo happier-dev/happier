@@ -39,7 +39,7 @@ import {
   applyUsageCoachPreferences,
   evaluateUsageCoach,
 } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
-import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { UsageQueryBatchResult, UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -55,7 +55,7 @@ import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/dae
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/machineContributionRegistryProjection';
 import { UsageWorkMarks, UsageWorkSectionTitle, usageWorkLinksNotice } from './UsageWorkParts';
-import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
+import { usageAgentTitle, usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
 import { UsageSessionPageHost } from './usageBodyKit';
 import { UsageWorkAutopsy } from './UsageWorkAutopsy';
@@ -1957,6 +1957,75 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.getTextContent()).toContain('2493');
   });
 
+  it('shows witnessed Work and known unread Sessions on all three surfaces before a sibling Machine answers', async () => {
+    const workQuery = normalizeUsageQuery({ ...query, metric: 'tokens', includeWorkEvidence: true, workProjection: 'detail' });
+    const admitted = [...contributions, contribution('slow', 's3', 't3')];
+    const accounting = [{ query: workQuery, status: 'available' as const,
+      value: { ...slice.accounting!, contributions: admitted } }];
+    const slow = Promise.withResolvers<void>();
+    const progress = Promise.withResolvers<UsageQueryResultSlice>();
+    const project = (work: Awaited<ReturnType<typeof collectUsageWorkSources>>, previous?: UsageQueryBatchResult) =>
+      resolveUsagePageAggregation({ queries: [workQuery], accounting, work, previous, nowMs: 1000 }, bundledUsageModelPriceCatalog);
+    const renderWork = (state: UsageQueryResultSlice) => {
+      const body = { ...props, slice: state, query: workQuery };
+      return renderScreen(<>
+        <UsageProjectLedgerWidget {...body} id="usage_project_ledger" testID="progress-ledger" />
+        <UsageOutcomesWidget {...body} id="usage_outcomes" testID="progress-outcomes" />
+        <UsageOutcomesWidget {...body} id="usage_outcomes" testID="progress-shipped" presentation={{ style: 'shipped' }} />
+      </>);
+    };
+    const reading = collectUsageWorkSources({
+      queries: [workQuery], accounting, assertCurrent: () => {}, now: () => 1000,
+      resolveSession: async id => ({ machineId: id, cwd: '/repo' }),
+      readMachine: async id => {
+        if (id === 's3') await slow.promise;
+        return { sessions: [id === 's1'
+          ? { sessionId: id, status: 'partial', pullRequestsRead: true, evidence: [evidence('s1', 't1', 2493)] }
+          : { sessionId: id, status: 'error', errorCode: 'BACKEND_UNAVAILABLE' }] };
+      },
+      onProgress: work => {
+        const state = project(work).results[0]!;
+        if (state.work?.outcomes.length && state.sources.some(source => source.unreadSessions?.failed === 1)) {
+          progress.resolve(state);
+        }
+      },
+    });
+    try {
+      const state = await progress.promise;
+      const screen = await renderWork(state);
+      const cause = t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' });
+      const pending = t('usage.board.page.coveragePending', { sources: usageSourceTitle('work') });
+      expect.soft(screen.findByTestId('progress-ledger.conservation')?.props.accessibilityLabel).toContain(`${pending} · ${cause}`);
+      for (const widget of ['progress-outcomes', 'progress-shipped']) {
+        const notice = screen.findAllByType(SurfaceFreshnessLine).find(node => node.props.testID === widget + '.workProgress');
+        expect.soft(notice?.props.reason).toContain(`${pending} · ${cause}`);
+        expect.soft(notice?.props.busy).toBe(true);
+        expect.soft(notice?.props.action).toBeUndefined();
+      }
+      expect.soft(screen.getTextContent()).toContain('2493');
+      expect.soft(screen.findByTestId('progress-shipped.shipped')).toBeTruthy();
+      expect(state.workSummary?.mergedPrCount).toBeUndefined();
+    } finally {
+      slow.resolve();
+    }
+    const previous = project(await reading);
+    const previousSource = previous.results[0]!.sources.find(source => source.source === 'work');
+    expect(previousSource).toMatchObject({ status: 'partial', asOfMs: 1000, unreadSessions: { failed: 2 } });
+    const unstarted = project([{ query: workQuery, status: 'pending' }], previous).results[0]!;
+    expect(unstarted.sources.find(source => source.source === 'work')).toEqual({ source: 'work', status: 'pending', asOfMs: 1000 });
+    const screen = await renderWork(unstarted);
+    const pending = t('usage.board.page.coveragePending', { sources: usageSourceTitle('work') });
+    expect.soft(screen.findByTestId('progress-ledger.conservation')?.props.accessibilityLabel).toContain(pending);
+    expect.soft(screen.findByTestId('progress-ledger.conservation')?.props.accessibilityLabel).not.toContain(
+      t('usage.board.work.workUnreadOther', { count: 2, formattedCount: '2' }));
+    for (const widget of ['progress-outcomes', 'progress-shipped']) {
+      const notice = screen.findAllByType(SurfaceFreshnessLine).find(node => node.props.testID === widget + '.workProgress');
+      expect.soft(notice?.props.reason).toBe(pending);
+      expect.soft(notice?.props.busy).toBe(true);
+    }
+    expect(screen.getTextContent()).toContain('2493');
+  });
+
   it('explains Work that cannot be attributed when the recorded usage has a Session and no turn', async () => {
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1', metric: 'cost' });
     const unassigned: UsageWorkContribution = { ...contribution('pi-session-stats', 's1', null),
@@ -2451,7 +2520,8 @@ describe('Work and Coach widget bodies', () => {
 describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', () => {
   const offline = { source: 'work', status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1011 } } as const;
   const workStates = [
-    { state: 'reading', source: { source: 'work', status: 'pending' } as const, footer: () => t('usage.board.work.workUnavailableTitle') },
+    { state: 'reading', source: { source: 'work', status: 'pending' } as const,
+      footer: () => t('usage.board.page.coveragePending', { sources: usageSourceTitle('work') }) },
     { state: 'partly read', source: offline, footer: () => `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadUnreachable', { count: 1011, formattedCount: (1011).toLocaleString(getPreferredLanguage()) })}` },
     { state: 'failed', source: { source: 'work', status: 'error', errorCode: 'work_evidence_failed' } as const, footer: () => t('usage.board.page.workNotRead') },
   ];

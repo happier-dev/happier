@@ -19,6 +19,20 @@ export function readMachinePresenceProtocolV1(machine: MachinePresenceV1): 1 | n
     return machine.presenceProtocolVersion === 1 ? 1 : null;
 }
 
+/**
+ * An explicit current Home presence answer can skip a Machine RPC.
+ * Missing presence and predecessor rows leave the transport to resolve the target.
+ */
+export function isMachineReportedOfflineV1(machine: Readonly<{
+    active?: unknown;
+    presenceProtocolVersion?: unknown;
+    revokedAt?: unknown;
+    replacedByMachineId?: unknown;
+}>): boolean {
+    return machine.presenceProtocolVersion === 1 && machine.active === false
+        && !machine.revokedAt && !machine.replacedByMachineId;
+}
+
 /** Homes without the presence fact retain the incumbent heartbeat grace. */
 export function isMachineOnlineV1(machine: MachinePresenceV1, nowMs = Date.now(), graceMs = DEFAULT_MACHINE_ONLINE_GRACE_MS): boolean {
     if (typeof machine.revokedAt === 'number' && Number.isFinite(machine.revokedAt) && machine.revokedAt > 0) return false;

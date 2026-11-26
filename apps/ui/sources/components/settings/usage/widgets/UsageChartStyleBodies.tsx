@@ -27,7 +27,7 @@ import {
 } from './usageChartModels';
 import { readUsageChartSources } from './usageSourceSelection';
 import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
-import { usageWorkLinksNotice } from './UsageWorkParts';
+import { UsageWorkPendingNotice, UsageWorkReading, usageWorkLinksNotice } from './UsageWorkParts';
 
 export type UsageChartStyleBodyProps = UsageBodyProps;
 
@@ -297,10 +297,11 @@ export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
   const model = React.useMemo(() => projectUsageShippedModel(props.slice), [props.slice]);
   const agents = React.useMemo(() => [...new Set(model?.mode === 'weeks' ? model.weeks.flatMap((week) => week.spines.filter((spine) => spine !== 'mixed')) : [])].map(host.agent),
     [model, host.agent]);
+  const notice = usageWorkLinksNotice(props.slice);
   if (!model || model.total === 0) {
     const evidence = readUsageWorkOutcomesEvidence(props.slice, 'mergedOutcomes');
-    if (evidence === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
-    const { cause } = usageWorkLinksNotice(props.slice);
+    if (evidence === 'reading') return <UsageWorkReading slice={props.slice} testID={props.testID} />;
+    const { cause } = notice;
     if (evidence === 'unavailable' || evidence === 'partial')
       return <UsageBodyInsufficient testID={`${props.testID}.unavailable`} title={t('usage.board.charts.shippedUnavailableTitle')} reason={cause ?? undefined} />;
     return <UsageBodyInsufficient testID={`${props.testID}.empty`} title={t('usage.board.charts.shippedEmptyTitle')} reason={cause ?? t('usage.board.charts.shippedEmptyReason')} />;
@@ -311,6 +312,7 @@ export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
         ? `${title} · ${t('usage.board.page.mergedPrs')} · ${t('usage.board.page.notMeasuredYet')}`
         : t('usage.board.charts.shippedA11y', { count: model.total })}
       labels={usageShippedLabels(props.query, 'agent')} />
+    <UsageWorkPendingNotice notice={notice} testID={`${props.testID}.workProgress`} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;
 }

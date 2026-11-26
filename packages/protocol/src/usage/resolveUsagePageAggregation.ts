@@ -631,6 +631,8 @@ export type UsageWorkSourceSnapshot = Readonly<{
   errorCode?: string;
   updateRequired?: OperationUpdateRequiredV1;
   unreadSessions?: UsageQuerySourceState['unreadSessions'];
+  /** During acquisition, only Sessions without a replacement can lend old witnesses. */
+  retainWorkSessionIds?: readonly string[];
   /** Local acquisition facts used to apply a Session-scoped refusal before delivery. */
   unreadBySession?: readonly (readonly [string, keyof NonNullable<UsageQuerySourceState['unreadSessions']>])[];
 }>;
@@ -1019,6 +1021,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         || prior?.work !== undefined && (priorWorkSource?.status === 'available'
           || priorWorkSource?.status === 'partial' || priorWorkSource?.status === 'stale'));
     const pendingWork = workSnapshot?.status === 'pending';
+    const pendingWorkRetention = pendingWork ? workSnapshot.retainWorkSessionIds : undefined;
+    const progressingWork = pendingWorkRetention !== undefined;
     const retainWork = pendingWork || failedWork;
     // Only a readable answer can lend its date to a replacement. Pending and
     // stale dates already came from a readable answer through this projection.
@@ -1029,7 +1033,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         || prior?.work?.allocations.some(row => row.evidence.length > 0)
         || prior?.work?.branchAllocations.some(row => row.evidence.length > 0)));
     const workAsOfMs = retainWork ? (priorWorkReadable ? priorWorkSource?.asOfMs : undefined) : workSnapshot?.asOfMs;
-    const unreadWorkSessions = pendingWork ? priorWorkSource?.unreadSessions : workSnapshot?.unreadSessions;
+    // The pending snapshot can lend the old links and date, never its old unread counts.
+    const unreadWorkSessions = workSnapshot?.unreadSessions;
     // Accounting admits the Work turns. With no turns to read, an equal
     // unknown answer stays admitted until accounting supplies new membership.
     const awaitingWorkMembership = pendingWork && priorWorkSource?.status === 'unknown'
@@ -1052,7 +1057,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     // a terminal refusal below removes that previously admitted evidence.
     const retainedWork = retainWork ? prior?.work : undefined;
     const currentWork = workSnapshot?.status === 'available' || workSnapshot?.status === 'partial';
-    const readableWork = currentWork || workSnapshot?.status === 'stale';
+    const readableWork = currentWork || progressingWork || workSnapshot?.status === 'stale';
     // An open query is projected only up to a witnessed source as-of. It is not
     // relabelled as a different bounded query or filled forward to this clock.
     const startMs = period.startMs ?? 0;
@@ -1196,19 +1201,24 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     // Parsing here clones the same full history for every widget on every source
     // revision. Keep its identity and validate the batch at the Action/Resource boundary.
     const accountingValue = snapshot?.value;
-    const workEvidence = readableWork ? workSnapshot.evidence : undefined;
-    const branchEvidence = readableWork ? workSnapshot.branchEvidence : undefined;
+    const workEvidence = readableWork ? workSnapshot?.evidence : undefined;
+    const branchEvidence = readableWork ? workSnapshot?.branchEvidence : undefined;
     // Retained links are witnesses, but only this read establishes PR coverage.
     const readSessions = currentWork ? workSnapshot.pullRequestReadSessions : undefined;
     const workFacts = projectAdmittedUsageInputs(admitted?.work, {
       accounting: accountingValue, evidence: workEvidence, branchEvidence, readSessions,
-      readable: readableWork, retaining: retainWork,
+      readable: readableWork, retaining: retainWork, pendingRetention: pendingWorkRetention,
       retained: retainedWork === admitted?.work.value.work && admitted?.work.inputs.retaining ? admitted.work.inputs.retained : retainedWork,
     }, (): UsageWorkReadProjection => {
+      const retainSessions = pendingWorkRetention && new Set(pendingWorkRetention);
+      const retainedEvidence = retainedWork?.allocations.flatMap(row => row.evidence) ?? [];
+      const retainedBranches = retainedWork?.branchAllocations.flatMap(row => row.evidence) ?? [];
       const work = !query.includeWorkEvidence || accountingValue?.contributions === undefined ? undefined : allocateUsageOutcomes({
         contributions: accountingValue.contributions,
-        evidence: retainWork ? retainedWork?.allocations.flatMap(row => row.evidence) ?? [] : workEvidence ?? [],
-        branchEvidence: retainWork ? retainedWork?.branchAllocations.flatMap(row => row.evidence) ?? [] : branchEvidence ?? [],
+        evidence: retainSessions ? [...retainedEvidence.filter(row => retainSessions.has(row.sessionId)), ...(workEvidence ?? [])]
+          : retainWork ? retainedEvidence : workEvidence ?? [],
+        branchEvidence: retainSessions ? [...retainedBranches.filter(row => retainSessions.has(row.sessionId)), ...(branchEvidence ?? [])]
+          : retainWork ? retainedBranches : branchEvidence ?? [],
       });
       const admittedTurns = readableWork && query.includeWorkEvidence ? readUsageWorkSessionTurns(accountingValue) : undefined;
       const pullRequestsRead = hasUsagePullRequestRead(admittedTurns, readSessions);

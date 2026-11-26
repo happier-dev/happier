@@ -183,8 +183,8 @@ export type UsageQueryMachineConsumers = Readonly<{
 
 const NO_MACHINE_CONSUMERS: UsageQueryMachineConsumers = { poolMachineFilters: [], sessionMachineIds: [] };
 
-/** Work acquisition and reuse consume the same scoped Machine verdict. */
-export function readUsageWorkMachineReadiness(
+/** Scope route and presence changes wake Work reuse and update the pool selector. */
+function readUsageWorkMachineReadiness(
     scope: ServerAccountScope | null | undefined,
     machineId: string,
     machine: Machine | null | undefined,

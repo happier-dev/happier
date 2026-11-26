@@ -15,9 +15,11 @@ import { collectUsageWorkSources, readUsageWorkSessionTurns } from '@happier-dev
 import { hasSameUsageQueryWorkEvidenceMembership } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { USAGE_COACH_PREFERENCES_READ_SOURCE, readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
-import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
-import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { isMachineRpcTimeoutError, readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { readRpcRequestDisposition } from '@happier-dev/sync-client';
+import { isMachineReportedOfflineV1, isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { readMachineActivity, readMachinePresenceAnswer } from '@/sync/domains/machines/machineActivity';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { computePluginUiArtifactSha256Digest } from '@/sync/domains/plugins/ui/artifactIntegrity';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -73,7 +75,7 @@ import { isTransientConnectivityError, RetryableServerResponseError } from '@/sy
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
-import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaAccounts, readUsageQuotaBindingServiceKeys, readUsageQuotaChangedRecordIds, readUsageWorkMachineReadiness, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
+import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaAccounts, readUsageQuotaBindingServiceKeys, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand } from './apiProviderAccountUsage';
 import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
@@ -1353,36 +1355,38 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
 
 type SessionWorkSourceResult = import('@happier-dev/protocol/usage/usageWorkSources').SessionWorkSourceResult;
 
-/** Only Machine availability is shared; each Session keeps its own request and authorization. */
+/** Each batch keeps its Session admission. A failed route stops later batches in this read. */
 function createUsageWorkMachineReader(context: UsageQueryAccountContext, signal?: AbortSignal) {
-    const availability = new Map<string, Promise<'target_unavailable' | 'machine_offline' | null>>();
+    const routes = new Map<string, { initial?: Promise<void>; failure?: unknown }>();
     const scope = context.accountLifetime.scope;
-    // Retain the verdict, not an Error whose captured stack retains prior reads.
-    const unavailable = (code: 'target_unavailable' | 'machine_offline') =>
-        new RpcError(code === 'machine_offline' ? 'Machine offline' : 'Machine unavailable', code);
     return async (machineId: string, request: Parameters<typeof machineScmWorkEvidenceRead>[1]) => {
-        const previous = availability.get(machineId);
-        if (previous) {
-            const blocker = await previous;
-            if (blocker) throw unavailable(blocker);
-            requireCurrent(context, signal);
-        } else {
+        let route = routes.get(machineId);
+        if (!route) {
+            route = {};
+            routes.set(machineId, route);
             const machine = resolveServerScopedMachine(getStorage().getState(), scope.serverId, machineId);
-            const blocker = readUsageWorkMachineReadiness(scope, machineId, machine);
-            if (blocker === 'machine_offline' || blocker === 'target_unavailable') {
-                availability.set(machineId, Promise.resolve(blocker));
-                throw unavailable(blocker);
-            }
+            if (machine && readMachinePresenceAnswer(machine) && isMachineReportedOfflineV1({
+                active: readMachineActivity(machine).active, presenceProtocolVersion: machine.presenceProtocolVersion,
+                revokedAt: machine.revokedAt, replacedByMachineId: machine.replacedByMachineId,
+            })) route.failure = new RpcError('Machine offline', 'machine_offline');
+        } else {
+            // Preserve the initial wait for concurrent first admissions. Once
+            // it succeeds, later selectors do not wait for one another's reply.
+            await route.initial;
+            requireCurrent(context, signal);
         }
+        if (route.failure !== undefined) throw route.failure;
         const reading = machineScmWorkEvidenceRead(machineId, request, { ...scope, signal });
-        const verdict = reading.then(() => null, (error): 'target_unavailable' | 'machine_offline' | null => {
-            // Session refusals, missing methods and deadlines remain request-local.
-            if (!isMachineRequestReachabilityFailureV1(error)) return null;
-            const blocker = readRpcErrorCode(error) === 'machine_offline' ? 'machine_offline' : 'target_unavailable';
-            availability.set(machineId, Promise.resolve(blocker));
-            return blocker;
+        const state = route;
+        const verdict = reading.then(() => {}, (error: unknown) => {
+            // An unsent deadline exhausted route setup. A reply deadline or
+            // Session-specific refusal says nothing about the next selector.
+            if (isMachineRequestReachabilityFailureV1(error)
+                || (isMachineRpcTimeoutError(error) && readRpcRequestDisposition(error) === 'notSent')) {
+                state.failure ??= error;
+            }
         });
-        if (!previous) availability.set(machineId, verdict);
+        route.initial ??= verdict;
         return reading;
     };
 }
@@ -1888,6 +1892,10 @@ export async function readUiUsageQueryBatch(
             const targets = resolveUsageWorkSessionTargets(context.accountLifetime.scope, sessionIds, sessionWorkTargets);
             const admission = readOptions?.admitWork?.(query, targets, turns, periods.get(queryKey)!);
             let detailRefusedDuringRead: ((sessionId: string) => boolean) | undefined;
+            const publishWork = (source: UsageWorkSourceSnapshot) => {
+                work = work.map((previous, sourceIndex) => sourceIndex === index ? source : previous);
+                publish();
+            };
             const source = admission?.retained ?? await (async () => {
                 const acquisition = accountOwner.sessionInputs.beginWorkAdmission(readOptions?.referenceKey);
                 detailRefusedDuringRead = acquisition.detailRefusedDuringRead;
@@ -1900,12 +1908,12 @@ export async function readUiUsageQueryBatch(
                     readMachine: readWorkMachine,
                     onSessionAdmission: acquisition.observe,
                     previouslyRefused: id => priorRefusals.has(id),
+                    ...(readOptions?.onProgress ? { onProgress: ([snapshot]) => publishWork(snapshot!) } : {}),
                 });
                 return read!;
             })();
             admission?.settle(source, detailRefusedDuringRead);
-            work = work.map((previous, sourceIndex) => sourceIndex === index ? source : previous);
-            publish();
+            publishWork(source);
         }),
         ...evidenceQueries.map(async query => {
             // Current accounting owns historical dimension membership. A held

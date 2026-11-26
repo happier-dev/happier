@@ -11526,7 +11526,7 @@ describe('usage query Work composition', () => {
       const retained = replacement === 'drops a Session' ? nineLinks.slice(1) : nineLinks;
       const pending = readPage();
       expect.soft(UsageQueryBatchResultSchema.safeParse({ v: 1, results: [pending] }).success).toBe(true);
-      expect.soft(workSource(pending)).toMatchObject({ status: 'pending', asOfMs: firstReadAt, unreadSessions: { failed: 1 } });
+      expect.soft(workSource(pending)).toEqual({ source: 'work', status: 'pending', asOfMs: firstReadAt });
       expect.soft(pending?.pending).toBe(true);
       expect.soft(links(pending)).toEqual(retained);
       expect.soft(branches(pending)).toEqual(retained.map(number => `refs/heads/work-${number}`));
@@ -11905,13 +11905,14 @@ describe('usage query Work composition', () => {
 
   it.each([
     { first: 'read', second: 'read', state: 'partial', counts: undefined, links: 2, merged: 2 },
+    { first: 'read', second: 'offline', priorRouteFailure: true, state: 'partial', counts: { machine_unavailable: 1 }, links: 1 },
     { first: 'read', second: 'offline', state: 'partial', counts: { machine_unavailable: 1 }, links: 1 },
     { first: 'read', second: 'timeout', state: 'partial', counts: { timed_out: 1 }, links: 1 },
     { first: 'offline', second: 'offline', state: 'unknown', counts: { machine_unavailable: 2 }, links: 0 },
     { first: 'timeout', second: 'timeout', state: 'error', counts: { timed_out: 2 }, links: 0 },
     { first: 'read', second: 'denied', state: 'partial', counts: { not_entitled: 1 }, links: 1 },
     { first: 'read', second: 'backend', state: 'partial', counts: { failed: 1 }, links: 1 },
-  ])('delivers Work evidence through the mounted reader ($first, $second)', async ({ first, second, state, counts, links, merged }) => {
+  ])('delivers Work evidence through the mounted reader ($first, $second, earlier request failure: $priorRouteFailure)', async ({ first, second, state, counts, links, merged, priorRouteFailure }) => {
     const sessions = [first, second].map((answer, index) => ({
       answer, sessionId: `work-session-${index}`, machineId: `work-machine-${index}`, pr: index + 1,
     }));
@@ -11926,6 +11927,7 @@ describe('usage query Work composition', () => {
       id: target.machineId, accountId: 'account-a', machine: { active: target.answer !== 'offline',
         activeAt: Date.now(), presenceProtocolVersion: 1 },
     })));
+    if (priorRouteFailure) recordMachineRequestFailed({ ...scope, machineId: sessions[0].machineId });
     scmTransport.mockImplementation(async request => {
       const target = sessions.find(candidate => candidate.machineId === request.machineId)!;
       if (target.answer === 'timeout') throw createRpcCallError({ error: 'Deadline', errorCode: 'MACHINE_RPC_TIMEOUT' });
@@ -11969,6 +11971,7 @@ describe('usage query Work composition', () => {
     })]);
     await publishPresence(true);
     recordMachineRequestFailed({ ...scope, machineId });
+    scmTransport.mockRejectedValue(createRpcCallError({ error: 'Machine unavailable', errorCode: 'target_unavailable' }));
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, includeComparison: false });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
@@ -11982,7 +11985,8 @@ describe('usage query Work composition', () => {
       await expect.poll(() => readWork()?.status).toBe('unknown');
       expect(readWork()).toMatchObject({ unreadSessions: { machine_unavailable: 1 } });
       expect(readWork()).not.toHaveProperty('errorCode');
-      expect(scmTransport).not.toHaveBeenCalled();
+      expect(scmTransport).toHaveBeenCalledTimes(1);
+      scmTransport.mockClear();
 
       await publishPresence(false);
       publishHomeAccountChange(scope.serverId, [], {
@@ -12098,11 +12102,11 @@ describe('usage query Work composition', () => {
       expect(source).toMatchObject({ status: 'unknown', unreadSessions: { machine_unavailable: 1 } });
       expect(source).not.toHaveProperty('errorCode');
     }
-    // A failed request can settle an unanswered Machine's reachability, but does not prove offline presence.
+    // The previous route verdict is scoped to its acquisition; current Home presence is still unanswered.
     await publishMachineInventoryForTest(scope, []);
     scmTransport.mockClear();
     const knownUnavailable = await readUiUsageQueryBatch(captured, { queries: [first, second] });
-    expect.soft(scmTransport, 'a later finite read consumes canonical failure without another unavailable probe').not.toHaveBeenCalled();
+    expect.soft(scmTransport, 'one current route verdict covers the new finite read').toHaveBeenCalledTimes(1);
     for (const source of workSources(knownUnavailable)) {
       expect(source).toMatchObject({ status: 'unknown', unreadSessions: { machine_unavailable: 1 } });
       expect(source).not.toHaveProperty('errorCode');
@@ -12154,6 +12158,221 @@ describe('usage query Work composition', () => {
     }
     const delayedWork = departed.results.find(slice => slice.key === getUsageQueryKey(third))?.sources.find(source => source.source === 'work');
     expect(delayedWork).toMatchObject({ status: 'unknown', unreadSessions: { machine_unavailable: 1 } });
+  });
+
+  const workRouteBehaviors = ['healthy fast', 'healthy slow reply', 'fails at setup', 'fails at dispatch'] as const;
+  const workSliceSchedules = ['one', 'three sequential', 'three overlapping'] as const;
+
+  it.each(workRouteBehaviors.flatMap(behavior => workSliceSchedules.map(schedule => ({ behavior, schedule }))))(
+    'scopes the Work route verdict to one read ($behavior, $schedule)', async ({ behavior, schedule }) => {
+      const agents = ['route-first', 'route-second', 'route-third'].slice(0, schedule === 'one' ? 1 : 3);
+      const machineId = 'matrix-work-machine';
+      const accounting = agents.map(() => createDeferred<void>());
+      const releaseSetup = createDeferred<void>();
+      const releaseReply = createDeferred<void>();
+      const failedSetup = behavior === 'fails at setup';
+      const failedDispatch = behavior === 'fails at dispatch';
+      const slowReply = behavior === 'healthy slow reply';
+      const heldReplyIndex = agents.length === 1 ? 0 : 1;
+      let recovered = false;
+      let setupAttempts = 0;
+      const captured = await context(async request => {
+        if (request.path === '/v1/machines/read-batch' &&
+          (request.body as { machineIds?: string[] })?.machineIds?.includes(machineId)) {
+          setupAttempts++;
+          if (failedSetup && !recovered) {
+            await releaseSetup.promise;
+            return Response.json({}, { status: 503 });
+          }
+        }
+        if (request.path !== '/v2/usage/query') return undefined;
+        const agent = UsageAnalyticsQueryRequestSchema.parse(request.body).filters?.agentIds?.[0]!;
+        await accounting[agents.indexOf(agent)]!.promise;
+        return Response.json({ ...value, contributions: [{ ...workContribution, id: agent, sessionId: agent }] });
+      });
+      const scope = captured.accountLifetime.scope;
+      storage.getState().applySessions(agents.map(id => createSessionFixture({ id, active: true, serverId: scope.serverId,
+        metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })));
+      if (!failedSetup) await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+        id: machineId, accountId: 'account-a', machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 },
+      })]);
+      const dispatches: string[] = [];
+      scmTransport.mockImplementation(async request => {
+        const id = request.payload.sessions[0]!.sessionId;
+        dispatches.push(id);
+        if (!recovered && failedDispatch) {
+          await releaseReply.promise;
+          throw createRpcCallError({ error: 'Machine unavailable', errorCode: 'target_unavailable' });
+        }
+        if (!recovered && slowReply && id === agents[heldReplyIndex]) await releaseReply.promise;
+        return workBatch(request, { status: 'partial', evidence: [] });
+      });
+      const queries = agents.map(agent => normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, agents: [agent],
+        includeQuota: false, includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+        includeWorkEvidence: true, includeComparison: false, includeCoach: false }));
+      const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS: setupTimeout } = await import(
+        '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes');
+      const tick = async () => {
+        await vi.advanceTimersByTimeAsync(0);
+        await flushHookEffects({ cycles: 30 });
+      };
+      const workSources = (result: Awaited<ReturnType<typeof readUiUsageQueryBatch>>) =>
+        result.results.map(row => row.sources.find(source => source.source === 'work'));
+      vi.useFakeTimers();
+      const started = Date.now();
+      let settled = false;
+      const reading = readUiUsageQueryBatch(captured, { queries }, undefined, undefined, { onProgress: project => { project(); } })
+        .then(result => { settled = true; return result; });
+      try {
+        accounting[0]!.resolve();
+        await tick();
+        if (failedSetup || failedDispatch) {
+          if (schedule === 'three overlapping') {
+            accounting.slice(1).forEach(release => release.resolve());
+            await tick();
+          }
+          if (failedSetup) await vi.advanceTimersByTimeAsync(setupTimeout);
+          else releaseReply.resolve();
+          await tick();
+        }
+        if (schedule === 'three overlapping' && !failedSetup && !failedDispatch) {
+          accounting.slice(1).forEach(release => release.resolve());
+          await tick();
+          expect.soft(dispatches).toEqual(agents);
+          if (slowReply) expect.soft(settled).toBe(false);
+        }
+        if (schedule === 'three sequential') {
+          for (const [index, release] of accounting.entries()) {
+            if (index === 0) continue;
+            release.resolve();
+            await tick();
+            if (slowReply && index === heldReplyIndex) {
+              expect.soft(dispatches).toEqual(agents.slice(0, index + 1));
+              releaseReply.resolve();
+              await tick();
+            }
+          }
+        }
+        if (slowReply) releaseReply.resolve();
+        await tick();
+        expect.soft(dispatches).toEqual(failedSetup ? [] : failedDispatch ? agents.slice(0, 1) : agents);
+        if (failedSetup) expect.soft(setupAttempts).toBe(1);
+        expect.soft(settled).toBe(true);
+        expect.soft(Date.now() - started).toBe(failedSetup ? setupTimeout : 0);
+      } finally {
+        accounting.forEach(release => release.resolve());
+        releaseSetup.resolve();
+        releaseReply.resolve();
+        await vi.advanceTimersByTimeAsync(setupTimeout * queries.length);
+        await reading;
+        vi.useRealTimers();
+      }
+      const rows = workSources(await reading);
+      if (failedSetup || failedDispatch) for (const row of rows) {
+        expect.soft(row?.unreadSessions).toEqual(failedSetup ? { timed_out: 1 } : { machine_unavailable: 1 });
+      } else expect.soft(rows.every(row => row?.status === 'partial')).toBe(true);
+      dispatches.length = 0;
+      recovered = true;
+      await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+        id: machineId, accountId: 'account-a', machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 },
+      })]);
+      const nextRead = await readUiUsageQueryBatch(captured, { queries });
+      expect.soft([...dispatches].sort()).toEqual([...agents].sort());
+      expect(workSources(nextRead).every(row => row?.status === 'partial' && row.unreadSessions === undefined)).toBe(true);
+    },
+  );
+
+  it('publishes a healthy Machine’s Work while another Machine in the same slice waits', async () => {
+    const slow = createDeferred<void>();
+    const accountingHeld = createDeferred<void>();
+    const replacementSlow = createDeferred<void>();
+    let replacing = false;
+    let replacementAccountingStarted = false;
+    const fastSession = 'work-progress-fast';
+    const slowSession = 'work-progress-slow';
+    const failedSession = 'work-progress-failed';
+    const sessions = [fastSession, slowSession, failedSession];
+    const captured = await context(async request => {
+      if (request.path !== '/v2/usage/query') return undefined;
+      if (replacing) {
+        replacementAccountingStarted = true;
+        await accountingHeld.promise;
+      }
+      return Response.json({
+        ...value, contributions: sessions.map(sessionId => ({ ...workContribution, id: 'cost-' + sessionId, sessionId })),
+      });
+    });
+    const scope = captured.accountLifetime.scope;
+    storage.getState().applySessions(sessions.map(id => createSessionFixture({ id, active: true, serverId: scope.serverId,
+      metadata: { machineId: id, path: '/repo', host: 'test', homeDir: '/home/test' } })));
+    await publishMachineInventoryForTest(scope, sessions.map(id => createHydratedPlainMachineFixture({
+      id, accountId: 'account-a', machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 },
+    })));
+    const checkpoint = { sessionId: fastSession, turnId: workContribution.turnId, repositoryKey: 'repo', checkpointRef: 'checkpoint/turn',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' as const };
+    const linked = { ...checkpoint, pullRequest: { provider: { id: 'forge', kind: 'github' as const, displayName: 'Forge',
+      baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+    number: 1, title: 'Linked', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' as const } };
+    scmTransport.mockImplementation(async request => {
+      if (request.machineId === slowSession) {
+        await (replacing ? replacementSlow : slow).promise;
+        if (replacing) return workBatch(request, { status: 'partial', evidence: [], pullRequestsRead: true });
+      }
+      if (request.machineId !== fastSession) {
+        if (replacing) await accountingHeld.promise;
+        return workBatch(request, { status: 'error', errorCode: 'BACKEND_UNAVAILABLE' });
+      }
+      return workBatch(request, { status: 'partial', pullRequestsRead: true, evidence: [linked],
+        branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/feature', headSha: checkpoint.commitSha } }],
+      });
+    });
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 },
+      includeQuota: false, includeQuotaHistory: false, includeSessionEvidence: false,
+      includeTranscriptEvidence: false, includeWorkEvidence: true, includeComparison: false, workProjection: 'detail' });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const read = () => {
+      const value = entry.getSnapshot().value;
+      return value && decodeUsageQueryResource(value).results[0];
+    };
+    const stop = entry.subscribe(() => {}, true);
+    const readLinks = () => read()?.work?.outcomes.map(outcome => outcome.pullRequest.number);
+    const readSource = () => read()?.sources.find(source => source.source === 'work');
+    try {
+      await expect.poll(() => scmTransport.mock.calls.length).toBe(3);
+      try {
+        await expect.poll(readLinks).toEqual([1]);
+        expect(readSource()).toMatchObject({ status: 'pending', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } });
+        expect(read()?.work?.branches).toHaveLength(1);
+        expect(read()?.workSummary?.mergedPrCount).toBeUndefined();
+        expect(read()?.workSummary?.pullRequestsRead).not.toBe(true);
+      } finally { slow.resolve(); }
+      await expect.poll(readSource).toMatchObject({ status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 2 } });
+      expect(readLinks()).toEqual([1]);
+      expect(read()?.workSummary?.mergedPrCount).toBeUndefined();
+      const previousDate = readSource()!.asOfMs;
+      expect(previousDate).toBeDefined();
+      replacing = true;
+      publishHomeAccountChange(scope.serverId, [], { changeKinds: ['account'],
+        usageAccountingChange: { sessionId: null }, sessionReadinessChanges: { sessionIds: [], machineIds: [] } });
+      const refresh = entry.refresh();
+      try {
+        await expect.poll(() => replacementAccountingStarted).toBe(true);
+        await expect.poll(() => readSource()?.status).toBe('pending');
+        expect.soft(readSource()?.asOfMs).toBe(previousDate);
+        expect.soft(readSource()?.unreadSessions).toBeUndefined();
+        expect.soft(readLinks()).toEqual([1]);
+        accountingHeld.resolve();
+        await expect.poll(readSource).toMatchObject({ status: 'pending', unreadSessions: { failed: 1 } });
+        expect.soft(readLinks()).toEqual([1]);
+      } finally {
+        accountingHeld.resolve();
+        replacementSlow.resolve();
+        await refresh;
+      }
+      expect(readSource()).toMatchObject({ status: 'partial', unreadSessions: { failed: 1 } });
+      expect(readLinks()).toEqual([1]);
+    } finally { slow.resolve(); accountingHeld.resolve(); replacementSlow.resolve(); stop(); }
   });
 
   it.each(['available', 'unresolved'] as const)('keeps unresolved Session Machine control distinct from failed Work evidence (%s)', async target => {
@@ -12310,9 +12529,12 @@ describe('usage query Work composition', () => {
       expect(decodeUsageQueryResource(hostEntry.getSnapshot().value!).results[0]?.work?.allocations[0]?.reason).toBe('allocated');
       const beforeHostFlip = home!.requests.filter(request => request.path === '/v2/usage/query').length;
       scmTransport.mockClear();
-      // The next native read answers a changed partial inventory, so this
-      // proves Machine invalidation reaches Work without re-reading accounting.
-      scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [] }));
+      // The same Work admission observes the current RPC outcome after a route change.
+      let routeAvailable = false;
+      scmTransport.mockImplementation(async request => {
+        if (!routeAvailable) throw createRpcCallError({ error: 'Machine unavailable', errorCode: 'target_unavailable' });
+        return workBatch(request, { status: 'partial', evidence: [] });
+      });
       const scope = captured.accountLifetime.scope;
       const projectLookup = vi.spyOn(storage.getState(), 'getProjectForSession');
       const projectReads = () => projectLookup.mock.calls.filter(([sessionId, serverId]) =>
@@ -12335,7 +12557,8 @@ describe('usage query Work composition', () => {
         return content && decodeUsageQueryResource(content).results[0]?.sources.find(source => source.source === 'work')?.status;
       }).toBe('unknown');
       await expect.poll(() => hostEntry.getSnapshot().pending).toBe('idle');
-      expect(scmTransport, 'a canonical failed connection stops automatic Work RPCs').not.toHaveBeenCalled();
+      expect(scmTransport, 'the finite acquisition records one current Work route failure').toHaveBeenCalledTimes(1);
+      routeAvailable = true;
       clearMachineRequestReachabilityForMachine(scope, machine.id);
       await expect.poll(() => {
         const content = hostEntry.getSnapshot().value;
@@ -12346,7 +12569,7 @@ describe('usage query Work composition', () => {
         return content && decodeUsageQueryResource(content).results[0]?.work?.allocations[0]?.reason;
       }).toBe('missing_evidence');
       await expect.poll(() => hostEntry.getSnapshot().pending).toBe('idle');
-      expect(scmTransport, 'canonical recovery reacquires this admitted Work consumer once').toHaveBeenCalledTimes(1);
+      expect(scmTransport, 'canonical recovery reacquires this admitted Work consumer once').toHaveBeenCalledTimes(2);
       expect(home!.requests.filter(request => request.path === '/v2/usage/query').length,
         'Machine reachability changes Work evidence, not the Account accounting answer').toBe(beforeHostFlip);
     } finally { release(); recordMachineRequestSucceeded({ ...captured.accountLifetime.scope, machineId: machine.id }); }
@@ -12402,8 +12625,7 @@ describe('usage query Work composition', () => {
     const retried = await readUiUsageQueryBatch(captured, { queries: [query] }, undefined, partialFailure,
       { onProgress: project => { workProgress.push(project().results[0]!.sources.find(source => source.source === 'work')!); } });
     expect(workProgress.length).toBeGreaterThan(0);
-    expect(workProgress).toContainEqual({ source: 'work', status: 'pending', asOfMs: observedWork.asOfMs,
-      unreadSessions: observedWork.unreadSessions });
+    expect(workProgress).toContainEqual({ source: 'work', status: 'pending', asOfMs: observedWork.asOfMs });
     expect(workProgress.every(source => source.asOfMs === observedWork.asOfMs),
       'a replacement pending after failure keeps the readable answer dated').toBe(true);
     expect(retried.results[0]!.sources.find(source => source.source === 'work')).toBe(observedWork);

@@ -100,6 +100,7 @@ export async function collectUsageWorkSources(input: Readonly<{
     previouslyRefused?(sessionId: string): boolean;
     assertCurrent: () => void | Promise<void>;
     now: () => number;
+    onProgress?: (snapshots: readonly UsageWorkSourceSnapshot[]) => void;
 }>): Promise<readonly UsageWorkSourceSnapshot[]> {
     const { queries, accounting, now } = input;
     const sessionReads = input.sessionReads ?? new Map<string, Promise<SessionWorkSourceResult>>();
@@ -118,8 +119,9 @@ export async function collectUsageWorkSources(input: Readonly<{
     const readKeys = new Map([...sessionIds].map(sessionId => [sessionId,
         JSON.stringify([sessionId, [...turnsBySession.get(sessionId)!].sort()])]));
     const missing = [...sessionIds].filter(sessionId => !sessionReads.has(readKeys.get(sessionId)!));
-    const acquire = async (): Promise<Map<string, SessionWorkSourceResult>> => {
+    const acquire = async () => {
         const results = new Map<string, SessionWorkSourceResult>();
+        const pending = new Map<string, Promise<void>>();
         const machines = new Map<string, ScmWorkEvidenceReadRequest['sessions']>();
         const targets = await Promise.all(missing.map(async sessionId => {
             await input.assertCurrent();
@@ -140,7 +142,7 @@ export async function collectUsageWorkSources(input: Readonly<{
             sessions.push({ sessionId, cwd: target.cwd, turnIds: [...turnsBySession.get(sessionId)!] });
             machines.set(target.machineId, sessions);
         }
-        await Promise.all([...machines].map(async ([machineId, sessions]) => {
+        const read = async (machineId: string, sessions: ScmWorkEvidenceReadRequest['sessions']) => {
             try {
                 await input.assertCurrent();
                 const response = ScmWorkEvidenceReadResponseSchema.safeParse(await input.readMachine(machineId, { sessions }));
@@ -185,34 +187,21 @@ export async function collectUsageWorkSources(input: Readonly<{
                 const result = unreadWorkFailure(error);
                 for (const session of sessions) results.set(session.sessionId, result);
             }
-        }));
-        if (input.onSessionAdmission) for (const [id, source] of results) {
-            if (source.unreadReason === 'not_entitled') input.onSessionAdmission(id, false);
-            else if (source.status === 'partial' || source.pullRequestsRead) input.onSessionAdmission(id, true);
+        };
+        for (const [machineId, sessions] of machines) {
+            const reading = read(machineId, sessions);
+            for (const session of sessions) pending.set(session.sessionId, reading);
         }
-        return results;
+        return { results, pending };
     };
-    // Install promises before awaiting targets, so concurrent slices share an
-    // already admitted Session read instead of emitting another Machine call.
-    if (missing.length) {
-        const acquisition = acquire();
-        for (const sessionId of missing) sessionReads.set(readKeys.get(sessionId)!, acquisition.then(results => results.get(sessionId)!));
-    }
-    const sessions = new Map(await Promise.all([...sessionIds].map(async sessionId => [sessionId, await sessionReads.get(readKeys.get(sessionId)!)!] as const)));
-    // A failed attempt cannot replace a Session's known refusal. The caller
-    // supplies the admission it was replacing, scoped to this read.
-    for (const [id, source] of sessions) {
-        if (source.unreadReason !== undefined && source.unreadReason !== 'not_entitled' && input.previouslyRefused?.(id)) {
-            sessions.set(id, unreadSession(RPC_ERROR_CODES.FORBIDDEN));
-        }
-    }
-    const asOfMs = now();
-    return queries.map((query): UsageWorkSourceSnapshot => {
+
+    const project = (sessions: ReadonlyMap<string, SessionWorkSourceResult>, asOfMs?: number) => queries.map((query): UsageWorkSourceSnapshot => {
         const key = getUsageQueryKey(query);
         const admittedTurns = turnsByQuery.get(key);
-        if (!admittedTurns) return { query, status: 'unknown', asOfMs };
+        if (!admittedTurns) return asOfMs === undefined ? { query, status: 'pending' } : { query, status: 'unknown', asOfMs };
         const turns = new Set(admittedTurns.map(turn => JSON.stringify([turn.sessionId, turn.turnId])));
-        const selectedIds = [...new Set(admittedTurns.map(turn => turn.sessionId))];
+        const admittedIds = [...new Set(admittedTurns.map(turn => turn.sessionId))];
+        const selectedIds = admittedIds.filter(sessionId => sessions.has(sessionId));
         const selected = selectedIds.map(sessionId => sessions.get(sessionId)!);
         const pullRequestReadSessions = selectedIds.filter(sessionId => sessions.get(sessionId)?.pullRequestsRead === true);
         const evidence = selected.flatMap(source => 'evidence' in source ? source.evidence : [])
@@ -239,10 +228,50 @@ export async function collectUsageWorkSources(input: Readonly<{
             : readFailed ? 'error' as const : selected.some(source => source.status === 'unsupported') ? 'unsupported' as const : 'unknown' as const;
         const errorCode = readFailed ? 'work_evidence_failed'
             : hasOfflineMachine && (status === 'unknown' || status === 'partial') ? 'machine_offline' : undefined;
+        if (asOfMs === undefined) return {
+            query, status: 'pending', evidence, branchEvidence,
+            retainWorkSessionIds: admittedIds.filter(sessionId => {
+                const session = sessions.get(sessionId);
+                return !session || (!('evidence' in session) && session.unreadReason !== undefined);
+            }),
+            ...(unreadBySession.length ? { unreadSessions, unreadBySession } : {}),
+            ...(errorCode === undefined ? {} : { errorCode }),
+        };
         return { query, ...(failedReplacement ? {} : { evidence, branchEvidence }), status,
             pullRequestReadSessions,
             ...(status === 'error' ? {} : { asOfMs }),
             ...(unreadBySession.length ? { unreadSessions, unreadBySession } : {}),
             ...(errorCode === undefined ? {} : { errorCode }) };
     });
+
+    // Install promises before awaiting targets. Each Machine's batch settles
+    // its own Sessions, so a slow route does not hold other batches' witnesses.
+    if (missing.length) {
+        const acquisition = acquire();
+        for (const sessionId of missing) {
+            sessionReads.set(readKeys.get(sessionId)!, acquisition.then(async ({ results, pending }) => {
+                await pending.get(sessionId);
+                const source = results.get(sessionId)!;
+                if (source.unreadReason === 'not_entitled') input.onSessionAdmission?.(sessionId, false);
+                else if (source.status === 'partial' || source.pullRequestsRead) input.onSessionAdmission?.(sessionId, true);
+                return source;
+            }));
+        }
+    }
+    const sessions = new Map<string, SessionWorkSourceResult>();
+    let publishedSize = 0;
+    await Promise.all([...sessionIds].map(async sessionId => {
+        const source = await sessionReads.get(readKeys.get(sessionId)!)!;
+        // A failed attempt cannot replace a Session's known refusal. The caller
+        // supplies the admission it was replacing, scoped to this read.
+        sessions.set(sessionId, source.unreadReason !== undefined && source.unreadReason !== 'not_entitled'
+            && input.previouslyRefused?.(sessionId) ? unreadSession(RPC_ERROR_CODES.FORBIDDEN) : source);
+        if (!input.onProgress) return;
+        // Adjacent resolutions in one Machine answer publish as a batch.
+        await Promise.resolve();
+        if (sessions.size === sessionIds.size || sessions.size === publishedSize) return;
+        publishedSize = sessions.size;
+        input.onProgress(project(sessions));
+    }));
+    return project(sessions, now());
 }

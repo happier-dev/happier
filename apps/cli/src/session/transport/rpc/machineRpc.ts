@@ -5,7 +5,7 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { logger } from '@/ui/logger';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
 import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { isMachineOnlineV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { isMachineReportedOfflineV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import {
   resolvePublishedMachineContentCodec,
   type ExpectedRunnerMachineContentKeyBindingScope,
@@ -347,9 +347,7 @@ async function resolveMachineRpcContentCodec(params: Readonly<{
   if (access && access.accessState !== 'ready') throw new MachineRpcEncryptionModeMismatchError(params.machineId);
   // The exact lookup already carries Home's presence decision. Keep predecessor
   // and legacy routing unchanged when it cannot answer for the current Machine.
-  if (params.method === RPC_METHODS.SCM_WORK_EVIDENCE_READ && raw?.presenceProtocolVersion === 1
-    && typeof raw.active === 'boolean' && !raw.revokedAt && !raw.replacedByMachineId
-    && !isMachineOnlineV1({ active: raw.active, presenceProtocolVersion: raw.presenceProtocolVersion })) {
+  if (params.method === RPC_METHODS.SCM_WORK_EVIDENCE_READ && raw && isMachineReportedOfflineV1(raw)) {
     throw new RpcError('Machine offline', 'machine_offline');
   }
   if (params.expectedInstallationId && raw?.installationId !== params.expectedInstallationId) {

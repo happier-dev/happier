@@ -7,12 +7,13 @@ import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { getPreferredLanguage, t } from '@/text';
-import { UsageAgentMark, UsageShowAllRows, leadingUsageRows, readUsageWorkReadAsOfMs, useUsagePluginTheme } from './usageBodyKit';
+import { UsageAgentMark, UsageBodyReading, UsageShowAllRows, leadingUsageRows, readUsageWorkReadAsOfMs, useUsagePluginTheme } from './usageBodyKit';
 import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNames } from './UsageWorkProviderMark';
-import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
+import { usageAgentTitle, usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageWorkProjectionSchema } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
@@ -57,11 +58,25 @@ export function usageWorkAllocationReasonLabel(reason: UsageWorkUnallocatedReaso
   return t(`usage.board.work.reason_${reason}`);
 }
 
-/** Name the Work owner's settled gaps and the allocation reasons behind an answer with no linked outcomes. */
-export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null }> {
+/** Name known Work gaps while reading, and allocation reasons once the read settles. */
+export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null; progress?: true }> {
   const source = slice.sources.find(row => row.source === 'work');
   const coverage = readUsageWorkOutcomesEvidence(slice, 'work');
-  if (coverage === 'reading') return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
+  const unread = source?.unreadSessions ?? {};
+  const other = (unread.not_entitled ?? 0) + (unread.timed_out ?? 0) + (unread.failed ?? 0);
+  const formatCount = (count: number) => ({ count, formattedCount: count.toLocaleString(getPreferredLanguage()) });
+  const unreadCauses = [
+    unread.machine_unavailable ? t('usage.board.work.workUnreadUnreachable', formatCount(unread.machine_unavailable))
+      : source?.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadUnreachableSome') : null,
+    other > 0 ? t('usage.board.work.workUnreadOther', formatCount(other)) : null,
+  ];
+  if (coverage === 'reading') {
+    const cause = unreadCauses.filter(Boolean).join(' · ') || null;
+    if (source?.status === 'pending' && (cause || slice.work?.outcomes.length || slice.work?.branches.length)) {
+      return { title: t('usage.board.page.coveragePending', { sources: usageSourceTitle('work') }), cause, progress: true };
+    }
+    return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
+  }
 
   const attribution: string[] = [];
   if (slice.work && slice.work.outcomes.length === 0) {
@@ -80,16 +95,25 @@ export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ t
       cause: attribution.join(' · ') || null,
     };
   }
-  const unread = source.unreadSessions ?? {};
-  const other = (unread.not_entitled ?? 0) + (unread.timed_out ?? 0) + (unread.failed ?? 0);
-  const formatCount = (count: number) => ({ count, formattedCount: count.toLocaleString(getPreferredLanguage()) });
-  const cause = [
-    unread.machine_unavailable ? t('usage.board.work.workUnreadUnreachable', formatCount(unread.machine_unavailable))
-      : source.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadUnreachableSome') : null,
-    other > 0 ? t('usage.board.work.workUnreadOther', formatCount(other)) : null,
-    ...attribution,
-  ].filter(Boolean).join(' · ');
+  const cause = [...unreadCauses, ...attribution].filter(Boolean).join(' · ');
   return { title: t('usage.board.work.workPartialTitle'), cause: cause || null };
+}
+
+export function UsageWorkPendingNotice(props: Readonly<{
+  notice: ReturnType<typeof usageWorkLinksNotice>; testID: string; fallback?: React.ReactNode;
+}>) {
+  if (!props.notice.progress) return props.fallback ?? null;
+  return <SurfaceFreshnessLine testID={props.testID} busy
+    reason={[props.notice.title, props.notice.cause].filter(Boolean).join(' · ')} />;
+}
+
+export function UsageWorkReading(props: Readonly<{ slice: UsageQueryResultSlice; testID: string }>) {
+  const notice = usageWorkLinksNotice(props.slice);
+  return <>
+    <UsageBodyReading testID={`${props.testID}.loading`}
+      waitingOn={notice.progress ? undefined : { slice: props.slice, sources: ['work'] }} />
+    <UsageWorkPendingNotice notice={notice} testID={`${props.testID}.workProgress`} />
+  </>;
 }
 
 /**

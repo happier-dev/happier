@@ -10,7 +10,6 @@ import { usageTokensFromPartsNote } from '../usageCostPresentation';
 import {
   UsageBodyInsufficient,
   UsageBodyNote,
-  UsageBodyReading,
   UsageCoverageLine,
   usagePeriodPhrase,
   useUsagePluginTheme,
@@ -22,6 +21,8 @@ import { partitionUsageWorkMoneyRows, readUsageWorkOutcomesPresentation, type Us
 import {
   UsageWorkDisclosure,
   UsageWorkMarks,
+  UsageWorkPendingNotice,
+  UsageWorkReading,
   UsageWorkRowLead,
   UsageWorkSectionTitle,
   UsageWorkSessionRows,
@@ -66,7 +67,7 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
   useWidgetFrameBodyCaption(presentation.kind === 'unavailable' || presentation.kind === 'partial' || presentation.kind === 'reading' ? usagePeriodPhrase(props.query)
     : t('usage.board.page.noneLinkedByEvidence'));
   if (presentation.kind === 'reading')
-    return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
+    return <UsageWorkReading slice={props.slice} testID={props.testID} />;
   if (presentation.kind === 'unavailable' || presentation.kind === 'partial') {
     const notice = usageWorkLinksNotice(props.slice);
     return (
@@ -244,19 +245,20 @@ function UsageOutcomesFacts(props: UsageBodyProps) {
             },
           })),
   };
+  const notice = usageWorkLinksNotice(props.slice);
   return <UsageOutcomesBody theme={theme} model={model} sectionGap={appTheme.space.s10} testID={`${props.testID}.outcomes`}
       sectionTitle={<>
         <UsageWorkSectionTitle>{t('usage.board.work.prLabel')}</UsageWorkSectionTitle>
         {fromPartsNote ? <UsageBodyNote testID={`${props.testID}.fromParts`}>{fromPartsNote}</UsageBodyNote> : null}
       </>}
       empty={<UsageBodyInsufficient testID={`${props.testID}.noPrs`} replacesContent={false}
-        title={t('usage.board.work.noPrsTitle')} reason={usageWorkLinksNotice(props.slice).cause ?? t('usage.board.work.noPrsReason')} />}
-      coverage={<UsageCoverageLine
+        title={t('usage.board.work.noPrsTitle')} reason={notice.cause ?? t('usage.board.work.noPrsReason')} />}
+      coverage={<UsageWorkPendingNotice notice={notice} testID={`${props.testID}.workProgress`} fallback={<UsageCoverageLine
         slice={props.slice}
         sources={['work']}
         onRetry={props.model.refresh}
         testID={`${props.testID}.coverage`}
-      />} />;
+      />} />} />;
 }
 
 const styles = StyleSheet.create(() => ({
