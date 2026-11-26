@@ -16,7 +16,7 @@ import { projectPluginUiDeclarationEntries } from '../ui/projection';
 import { admitPluginContributionGraph } from './admission';
 import { DEEPSEEK_PROVIDER_CONTRIBUTION } from '../../../../../../../packages/plugins/deepseek/src/provider/contribution';
 import { loadPluginAuthorSourceModule } from '@/plugins/runtime/loadPluginModule';
-import { resolvePluginAuthorWorkspaceAliases } from '@/plugins/authoring/hostSdkResolution';
+import { resolvePluginAuthorWorkspaceLoadOptions } from '@/plugins/authoring/hostSdkResolution';
 import { loadCurrentBundledPluginLocatorResult } from '../builtIn/locators';
 
 it.each(['database-workbench', 'telemetry'] as const)(
@@ -24,9 +24,7 @@ it.each(['database-workbench', 'telemetry'] as const)(
   async (packageName) => {
     const pluginRootPath = fileURLToPath(new URL(`../../../../../../../packages/plugins/${packageName}/`, import.meta.url));
     const entryPath = `${pluginRootPath}src/index.ts`;
-    const module = await loadPluginAuthorSourceModule(entryPath, {
-      aliases: await resolvePluginAuthorWorkspaceAliases(pluginRootPath),
-    });
+    const module = await loadPluginAuthorSourceModule(entryPath, await resolvePluginAuthorWorkspaceLoadOptions(pluginRootPath));
     const manifest = normalizePluginManifestV2(module.manifest);
     const plugin: LoadedPlugin = {
       pluginId: manifest.id, pluginRootPath, manifestPath: `${pluginRootPath}src/manifest.ts`,

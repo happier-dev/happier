@@ -21,7 +21,7 @@ import {
 } from '@/plugins/runtime/loadPluginModule';
 import type { PluginRelativeModuleResolution } from '@/plugins/runtime/activationSources';
 import type { DevelopmentPluginSourceCustody, PluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
-import { preparePluginSingleFileDevelopmentLoad, readPackageJsonRecord, resolvePluginAuthorWorkspaceAliases } from './hostSdkResolution';
+import { preparePluginSingleFileDevelopmentLoad, readPackageJsonRecord, resolvePluginAuthorWorkspaceLoadOptions } from './hostSdkResolution';
 import {
   type PreparedPluginActivationGraph,
 } from '@/plugins/runtime/types';
@@ -316,14 +316,13 @@ export async function evaluatePluginAuthorSource(input: Readonly<{
   });
   const namespace = input.loadModule
     ? await input.loadModule(entry.entryPath)
-    : await loadPluginAuthorSourceModule(entry.entryPath, {
-      aliases: await resolvePluginAuthorWorkspaceAliases(entry.packageRoot, {
+    : await loadPluginAuthorSourceModule(entry.entryPath,
+      await resolvePluginAuthorWorkspaceLoadOptions(entry.packageRoot, {
         ...typeScriptConfig.aliases,
         ...(entry.kind === 'singleFile'
           ? await preparePluginSingleFileDevelopmentLoad(entry.entryPath)
           : {}),
-      }),
-    });
+      }));
   return Object.freeze({
     entry,
     actionContracts: namespace.actionContracts,
@@ -350,7 +349,7 @@ export async function evaluatePluginDevelopmentCandidate(input: Readonly<{
   const candidateScope = await createPluginTypeScriptCandidateScope({
     rootPath: entry.packageRoot,
     // Trusted-root tsconfig aliases never override the host SDK alias contract.
-    aliases: await resolvePluginAuthorWorkspaceAliases(entry.packageRoot, { ...typeScriptConfig.aliases, ...singleFileAliases }),
+    ...await resolvePluginAuthorWorkspaceLoadOptions(entry.packageRoot, { ...typeScriptConfig.aliases, ...singleFileAliases }),
   });
   const namespace = await loadVerifiedPluginModule({
     entryPath: entry.entryPath,
@@ -410,7 +409,7 @@ export async function evaluateManifestPluginDevelopmentCandidate(input: Readonly
   });
   const candidateScope = await createPluginTypeScriptCandidateScope({
     rootPath: packageRoot,
-    aliases: await resolvePluginAuthorWorkspaceAliases(packageRoot, typeScriptConfig.aliases),
+    ...await resolvePluginAuthorWorkspaceLoadOptions(packageRoot, typeScriptConfig.aliases),
   });
   const namespace = await loadVerifiedPluginModule({
     entryPath,
@@ -450,9 +449,9 @@ export async function evaluatePluginAuthorStagingSource(input: Readonly<{
   });
   let loadModule = input.loadModule;
   if (!loadModule) {
-    const generationScope = createPluginTypeScriptGenerationScope({
-      aliases: await resolvePluginAuthorWorkspaceAliases(entry.packageRoot, typeScriptConfig.aliases),
-    });
+    const generationScope = createPluginTypeScriptGenerationScope(
+      await resolvePluginAuthorWorkspaceLoadOptions(entry.packageRoot, typeScriptConfig.aliases),
+    );
     loadModule = entryPath => loadVerifiedPluginModule({
       entryPath,
       loadMode: 'source-ts',

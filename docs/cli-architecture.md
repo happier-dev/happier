@@ -11204,6 +11204,9 @@ When an attested retained first-party Agent belongs to the executing workspace,
 its factory and catalog reuse those same source module instances. Other
 retained TypeScript graphs use the generation-scoped evaluator, including a
 first-party Agent retained from a different source tree.
+First-party authoring candidates in the executing workspace reuse the source
+host's Protocol modules. Their mutable entrypoints and local dependencies still
+use the candidate evaluator so a new evaluation reads the current plugin source.
 Retained flat plugin copies still pass their local copy admission before import;
 immutable runtime artifacts retain their existing artifact admission. A failed
 source admission settles that demand; a later demand may retry through the same

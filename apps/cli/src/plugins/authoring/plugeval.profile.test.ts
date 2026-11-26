@@ -71,7 +71,7 @@ vi.mock('jiti', async (importOriginal) => {
 });
 
 import { createPluginTypeScriptCandidateScope, loadVerifiedPluginModule } from '../runtime/loadPluginModule';
-import { resolvePluginAuthorWorkspaceAliases } from './hostSdkResolution';
+import { resolvePluginAuthorWorkspaceLoadOptions } from './hostSdkResolution';
 import { resolvePluginAuthorTypeScriptConfigBoundary } from './typescriptConfigBoundary';
 import { projectPluginAuthorModule, resolvePluginAuthorSourceEntrypoint } from './sourceModule';
 
@@ -153,10 +153,10 @@ it.runIf(process.env.PLUGEVAL_PROFILE === '1').each(['channels', 'channel-email'
                 const config = await resolvePluginAuthorTypeScriptConfigBoundary({ packageRootPath: entry.packageRoot, entryPath: entry.entryPath });
                 const configMs = performance.now() - configStart;
                 const aliasStart = performance.now();
-                const aliases = await resolvePluginAuthorWorkspaceAliases(root, config.aliases);
+                const loadOptions = await resolvePluginAuthorWorkspaceLoadOptions(root, config.aliases);
                 const aliasesMs = performance.now() - aliasStart;
                 const scopeStart = performance.now();
-                const scope = await createPluginTypeScriptCandidateScope({ rootPath: root, aliases });
+                const scope = await createPluginTypeScriptCandidateScope({ rootPath: root, ...loadOptions });
                 const scopeMs = performance.now() - scopeStart;
                 const loadStart = performance.now();
                 const namespace = await loadVerifiedPluginModule({ entryPath: entry.entryPath, loadMode: 'source-ts', generationScope: scope });
@@ -180,7 +180,7 @@ it.runIf(process.env.PLUGEVAL_PROFILE === '1').each(['channels', 'channel-email'
                     group.count += 1; group.bytes += item.bytes; group.ms += item.ms;
                 }
                 console.info('PLUGEVAL profile', JSON.stringify({ name, revision, wallMs: performance.now() - start,
-                    cpu: process.cpuUsage(cpuStart), configMs, aliasesMs, aliases: Object.keys(aliases).length,
+                    cpu: process.cpuUsage(cpuStart), configMs, aliasesMs, aliases: Object.keys(loadOptions.aliases).length,
                     scopeMs, loadMs, projectionMs, projectionError, maxLagMs, transforms: observed.transforms.length, stats, unlimitedCaptures, packages }));
             } finally {
                 clearInterval(heartbeat); statSpy.mockRestore(); Error.captureStackTrace = capture;

@@ -14,6 +14,11 @@ export type PluginModuleNamespace = Readonly<Record<string, unknown>> & Readonly
     default?: unknown;
 }>;
 
+export type PluginSourceDependencyResolution = Readonly<{
+    aliases?: Readonly<Record<string, string>>;
+    virtualModules?: Record<string, unknown>;
+}>;
+
 type NativeFileUrlMode = 'generation-keyed' | 'canonical';
 
 const moduleLoadCache = new Map<string, Promise<PluginModuleNamespace>>();
@@ -56,8 +61,7 @@ export function isSupportedPluginAuthorSourceExtension(entryPath: string): boole
     );
 }
 
-function createPluginSourceLoader(options: Readonly<{
-    aliases?: Readonly<Record<string, string>>;
+function createPluginSourceLoader(options: PluginSourceDependencyResolution & Readonly<{
     forceTranspile?: boolean;
 }> = {}): ReturnType<typeof createJiti> {
     return createJiti(import.meta.url, {
@@ -70,6 +74,7 @@ function createPluginSourceLoader(options: Readonly<{
         moduleCache: true,
         interopDefault: false,
         nodeImportInterop: true,
+        ...(options.virtualModules ? { virtualModules: options.virtualModules } : {}),
         forceTranspile: options.forceTranspile ?? false,
         ...(options.aliases && Object.keys(options.aliases).length > 0
             ? { alias: { ...options.aliases } }
@@ -79,9 +84,7 @@ function createPluginSourceLoader(options: Readonly<{
 
 export async function loadPluginAuthorSourceModule(
     entryPath: string,
-    options: Readonly<{
-        aliases?: Readonly<Record<string, string>>;
-    }> = {},
+    options: PluginSourceDependencyResolution = {},
 ): Promise<PluginModuleNamespace> {
     const resolvedEntryPath = resolve(entryPath);
     const extension = extname(resolvedEntryPath).toLowerCase();
@@ -215,9 +218,7 @@ function resolveTypeScriptGenerationLoaderState(
     return created;
 }
 
-export function createPluginTypeScriptGenerationScope(options: Readonly<{
-    aliases?: Readonly<Record<string, string>>;
-}> = {}): object {
+export function createPluginTypeScriptGenerationScope(options: PluginSourceDependencyResolution = {}): object {
     const generationScope = Object.freeze({});
     typescriptGenerationLoaderStates.set(generationScope, Object.freeze({
         loader: createPluginSourceLoader(options),
@@ -231,14 +232,11 @@ export function createPluginTypeScriptGenerationScope(options: Readonly<{
  * Jiti shares Node's module cache even across loader instances, so evict only
  * modules physically owned by this author root before the candidate starts.
  */
-export async function createPluginTypeScriptCandidateScope(options: Readonly<{
+export async function createPluginTypeScriptCandidateScope(options: PluginSourceDependencyResolution & Readonly<{
     rootPath: string;
-    aliases?: Readonly<Record<string, string>>;
 }>): Promise<object> {
     const canonicalRoot = await realpath(resolve(options.rootPath));
-    const candidateScope = createPluginTypeScriptGenerationScope({
-        ...(options.aliases ? { aliases: options.aliases } : {}),
-    });
+    const candidateScope = createPluginTypeScriptGenerationScope(options);
     const state = resolveTypeScriptGenerationLoaderState(candidateScope);
     // Only the pinned Jiti patch declares this default-off instance option.
     // Unpatched installs retain their current evaluation behavior.

@@ -14,7 +14,7 @@ import {
   PLUGIN_SDK_PACKAGE_NAME,
   preparePluginSingleFileDevelopmentLoad,
   resolveHostPluginSdkPackageRoot,
-  resolvePluginAuthorWorkspaceAliases,
+  resolvePluginAuthorWorkspaceLoadOptions,
 } from './hostSdkResolution';
 
 async function writePackagedRuntimeFixture(params: Readonly<{
@@ -62,11 +62,15 @@ describe('host plugin SDK resolution', () => {
       .sort(([left], [right]) => right.split('/').length - left.split('/').length)
       .map(([specifier, targets]) => [specifier, targets[0]]));
     Object.defineProperty(exact, Symbol.for('pathe:normalizedAlias'), { value: true, enumerable: true });
-    const aliases = await resolvePluginAuthorWorkspaceAliases(root);
+    const { aliases } = await resolvePluginAuthorWorkspaceLoadOptions(root);
     const parent = join(repoRoot, 'packages/protocol/src/index.ts');
     const loader = createJiti(parent, { alias: aliases, fsCache: false });
     for (const [specifier, target] of Object.entries(exact)) {
-      expect(loader.resolve(specifier), specifier).toBe(await realpath(target));
+      if (specifier.includes('*')) {
+        expect(aliases[specifier], specifier).toBe(target);
+      } else {
+        expect(loader.resolve(specifier), specifier).toBe(await realpath(target));
+      }
     }
     // Report-only timings isolate repeated alias application from transforms.
     for (const [mode, table] of [['exact-control', exact], ['owner', aliases]] as const) {

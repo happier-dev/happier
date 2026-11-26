@@ -11,7 +11,7 @@ import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contribution
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { serializeCanonicalPluginManifest } from '@/plugins/manifest/serialize';
 import { classifyPluginAuthorDaemonBuild } from './toolchain';
-import { resolvePluginAuthorWorkspaceAliases } from './hostSdkResolution';
+import { resolvePluginAuthorWorkspaceLoadOptions } from './hostSdkResolution';
 import { evaluatePluginDevelopmentCandidate, evaluatePluginAuthorStagingSource, evaluatePluginAuthorSource, projectEvaluatedPluginDevelopmentSource, projectPluginAuthorModule, resolvePluginAuthorStagingModule, resolvePluginAuthoringSource, resolvePluginAuthorSourceEntrypoint } from './sourceModule';
 
 function projectDefinedPlugin(defined: ReturnType<typeof definePlugin>) {
@@ -65,7 +65,7 @@ describe('plugin author source module owner', () => {
         'export function activate() {}',
       ].join('\n');
       await writeFile(join(dependency, 'src/index.ts'), 'export const marker: string = "source";');
-      const aliases = await resolvePluginAuthorWorkspaceAliases(root);
+      const { aliases } = await resolvePluginAuthorWorkspaceLoadOptions(root);
       expect(aliases).not.toHaveProperty('@happier-dev/devplug-unrelated');
       expect(aliases['@happier-dev/devplug-protocol/schema-63']).toBe(join(dependency, 'src/index.ts'));
       let aliasTargetReads = 0;
@@ -95,7 +95,7 @@ describe('plugin author source module owner', () => {
   it.each(['channels', 'channel-email'])('evaluates the current %s workspace with its source SDK and protocol', async (name) => {
     const root = fileURLToPath(new URL(`../../../../../packages/plugins/${name}/`, import.meta.url));
     const aliasStart = performance.now();
-    const aliases = await resolvePluginAuthorWorkspaceAliases(root);
+    const { aliases } = await resolvePluginAuthorWorkspaceLoadOptions(root);
     console.info('DEVPLUG alias measurement', JSON.stringify({ name, elapsedMs: performance.now() - aliasStart, aliases: Object.keys(aliases).length }));
     if (name === 'channels') {
       const paths = workspaceSourceCompilerPaths(await readWorkspacePackages(fileURLToPath(new URL('../../../../../', import.meta.url))));

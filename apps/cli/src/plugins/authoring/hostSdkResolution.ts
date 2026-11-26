@@ -11,6 +11,8 @@ import {
   resolveAuthoritativePackagedRuntimeProjectRoot,
   type AuthoritativePackagedRuntimeProjectRoot,
 } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
+import { defaultCanImportFirstPartyPluginSource } from '@/packagedRuntime/firstPartySourceRuntime';
+import type { PluginSourceDependencyResolution } from '@/plugins/runtime/loadPluginModule';
 import {
   findRepoRoot,
   resolveInternalWorkspacePackageNameClosure,
@@ -32,6 +34,9 @@ import { resolveSameInstallNodeModulesRoot } from './packageInstallationRoot';
  */
 export const PLUGIN_SDK_PACKAGE_NAME = '@happier-dev/plugin-sdk';
 
+const PROTOCOL_PACKAGE_NAME = '@happier-dev/protocol';
+const requireFromHost = createRequire(import.meta.url);
+
 /** Source dependency/tool resolution is available only at the package's canonical workspace root. */
 export function resolvePluginAuthorSourceWorkspace(projectRoot: string): string | null {
   try {
@@ -48,12 +53,12 @@ export function resolvePluginAuthorSourceWorkspace(projectRoot: string): string 
 }
 
 /** Feed the source host's existing export projection to the single module evaluator. */
-export async function resolvePluginAuthorWorkspaceAliases(
+export async function resolvePluginAuthorWorkspaceLoadOptions(
   projectRoot: string,
   aliases: Readonly<Record<string, string>> = {},
-): Promise<Readonly<Record<string, string>>> {
+): Promise<PluginSourceDependencyResolution & Readonly<{ aliases: Readonly<Record<string, string>> }>> {
   const repoRoot = resolvePluginAuthorSourceWorkspace(projectRoot);
-  if (!repoRoot) return aliases;
+  if (!repoRoot) return { aliases };
   // Candidates execute the runtime dependency closure, not repository tooling
   // or unrelated plugins. Keep public subpaths for lazy runtime imports, but
   // never project every workspace export into each candidate.
@@ -106,7 +111,29 @@ export async function resolvePluginAuthorWorkspaceAliases(
   // every child loader. Absolute targets have no alias chains to rewrite.
   // Enumerable symbol metadata survives the evaluator's existing map copies.
   Object.defineProperty(normalized, Symbol.for('pathe:normalizedAlias'), { value: true, enumerable: true });
-  return Object.freeze(normalized);
+  const protocolSource = paths[PROTOCOL_PACKAGE_NAME]?.[0];
+  if (!protocolSource || !defaultCanImportFirstPartyPluginSource() || !process.features?.require_module) {
+    return { aliases: Object.freeze(normalized) };
+  }
+
+  const hostProtocolEntry = requireFromHost.resolve(PROTOCOL_PACKAGE_NAME);
+  if (!canonicalAbsolutePathsEqual(hostProtocolEntry, protocolSource)) {
+    return { aliases: Object.freeze(normalized) };
+  }
+
+  // Protocol belongs to the executing workspace's loader. Route exact public
+  // requests through that loader before Jiti can recompile the dependency
+  // graph. Jiti still owns the mutable candidate and its local children.
+  const virtualModules = new Proxy<Record<string, unknown>>({}, {
+    has(_target, specifier) {
+      return typeof specifier === 'string'
+        && (specifier === PROTOCOL_PACKAGE_NAME || specifier.startsWith(`${PROTOCOL_PACKAGE_NAME}/`));
+    },
+    get(_target, specifier) {
+      return requireFromHost(String(specifier));
+    },
+  });
+  return { aliases: Object.freeze(normalized), virtualModules };
 }
 
 export function resolvePluginAuthorWorkspaceUiBuilder(projectRoot: string): string | null {
