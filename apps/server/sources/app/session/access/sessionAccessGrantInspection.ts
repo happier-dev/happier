@@ -13,11 +13,8 @@ import { projectTeamGroupNameForRecipient } from "@/app/teams/groups/privateLabe
 /** What the grant inspector answers: the roster projection, or a typed refusal. */
 type SessionAccessGrantInspectionResult =
     | { ok: true; value: SessionAccessGrantsListResponseV1 }
-    | { ok: false; error:
-        | "session_access_forbidden"
-        | "session_access_authentication_required"
-        | "session_access_authentication_unavailable"
-    };
+    | { ok: false; error: "session_access_forbidden" | "session_access_authentication_unavailable" }
+    | { ok: false; error: "session_access_authentication_required"; signInTeamId?: string };
 
 /** Inspect explicit grants only after admission, keeping roster topology private to access managers. */
 export async function inspectSessionAccessGrants(params: Readonly<{
@@ -33,7 +30,12 @@ export async function inspectSessionAccessGrants(params: Readonly<{
             authentication: params.authentication,
         });
         if (admission.status === "authentication_required") {
-            return { ok: false, error: "session_access_authentication_required" };
+            return {
+                ok: false,
+                error: "session_access_authentication_required",
+                // Only the current member's own list read carries its recovery.
+                ...(params.recipientAccountId === undefined ? { signInTeamId: admission.signInTeamId } : {}),
+            };
         }
         if (admission.status === "authentication_unavailable") {
             return { ok: false, error: "session_access_authentication_unavailable" };

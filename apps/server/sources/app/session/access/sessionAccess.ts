@@ -302,7 +302,7 @@ function sessionGrantTeams(row: SessionAccessProjectionRow) {
 
 export type SessionAccessOperationDecision =
     | Readonly<{ status: "allowed"; access: EffectiveSessionAccess }>
-    | Readonly<{ status: "authentication_required" }>
+    | Readonly<{ status: "authentication_required"; signInTeamId: string }>
     | Readonly<{ status: "authentication_unavailable" }>
     | Readonly<{ status: "forbidden" }>
     | Readonly<{ status: "unavailable" }>;
@@ -416,11 +416,22 @@ async function resolveSessionAccessCapabilityDecisionsFromRow(reader: Tx, actor:
         teams: contributions.flatMap(({ team }) => team ? [team] : []),
     });
     const grants: ApplicableSessionGrant[] = [];
-    const unqualified: { capabilities: EffectiveSessionAccess['capabilities']; status: 'authentication_required' | 'unavailable' }[] = [];
-    for (const contribution of contributions) {
-        const qualification = contribution.team ? qualifications.get(contribution.team.id) ?? { status: 'unavailable' as const } : null;
-        if (qualification && qualification.status !== 'satisfied') unqualified.push({ capabilities: projectSessionAccessCapabilitiesV1({ owner: false, grants: [contribution.grant] }), status: qualification.status });
-        else grants.push(contribution.grant);
+    const unqualified: {
+        capabilities: EffectiveSessionAccess['capabilities'];
+        status: 'authentication_required' | 'unavailable';
+        teamId: string;
+    }[] = [];
+    for (const { team, grant } of contributions) {
+        const qualification = team ? qualifications.get(team.id) ?? { status: 'unavailable' as const } : null;
+        if (team && qualification && qualification.status !== 'satisfied') {
+            unqualified.push({
+                capabilities: projectSessionAccessCapabilitiesV1({ owner: false, grants: [grant] }),
+                status: qualification.status,
+                teamId: team.id,
+            });
+        } else {
+            grants.push(grant);
+        }
     }
     const collectiveAccess = collective ? projectApplicableSessionGrants(actor.accountId, row.id, false, grants) : null;
     const access = collectiveAccess ? { ...collectiveAccess, primaryTeamId: row.primaryTeamId ?? null } : null;
@@ -466,7 +477,8 @@ async function resolveSessionAccessCapabilityDecisionsFromRow(reader: Tx, actor:
             continue;
         }
         const relevant = unqualified.filter(({ capabilities }) => request.capability === undefined || capabilities[request.capability]);
-        decisions.push(relevant.some(item => item.status === 'authentication_required') ? { status: 'authentication_required' }
+        const signIn = relevant.find(item => item.status === 'authentication_required');
+        decisions.push(signIn ? { status: 'authentication_required', signInTeamId: signIn.teamId }
             : relevant.some(item => item.status === 'unavailable') || (request.capability === undefined && contributions.some(item => item.team))
                 ? { status: 'authentication_unavailable' } : missingCapability(request, access, cappedCollective));
     }

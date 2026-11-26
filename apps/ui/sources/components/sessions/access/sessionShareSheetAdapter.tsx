@@ -316,8 +316,17 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                     testID={`${idPrefix}session-access-historical-layout-update`}
                     disabled={historical.updating || !editable} onPress={update} /> });
             if (model.content.phase === 'initial' || model.content.phase === 'refreshing') notices.push({ id: 'loading', label: t('common.loading'), loading: true, disabled: true });
-            if (model.content.issue) notices.push({ id: 'issue', label: model.content.issue.message, onSelect: model.content.issue.retryable ? actions.retryContent : undefined,
-                rightAccessory: model.content.issue.retryable ? () => <Text>{t('common.retry')}</Text> : undefined });
+            const contentIssue = model.content.issue;
+            const contentRecovery = contentIssue?.action;
+            if (contentIssue) notices.push({
+                id: 'issue', label: contentIssue.message,
+                onSelect: contentIssue.retryable ? actions.retryContent : undefined,
+                rightAccessoryOutsidePressable: contentRecovery !== undefined,
+                rightAccessory: contentRecovery
+                    ? () => <ShareRowAction useHost={useShareGrantRowPresentation} label={contentRecovery.label}
+                        testID={`${idPrefix}session-access-content-recovery`} onPress={contentRecovery.onPress} />
+                    : contentIssue.retryable ? () => <Text>{t('common.retry')}</Text> : undefined,
+            });
             if (context?.error) notices.push({ id: 'context-issue', label: context.error.message });
             const readOnlyReason = model.readOnlyReason;
             if (readOnlyReason) notices.push({ id: 'read-only', label: readOnlyReason.message, onSelect: () => actions.explain(readOnlyReason) });

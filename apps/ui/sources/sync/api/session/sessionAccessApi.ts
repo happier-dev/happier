@@ -23,8 +23,8 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import type { ServerAccountRequestAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { captureEncryptionGenerationCurrentness } from '@/sync/encryption/encryption';
 import { searchUsersPageByUsername } from '@/sync/api/social/apiFriends';
-import { readSessionAccessHttpFailureCode, SessionAccessApiError } from './sessionAccessHttpFailure';
-export { SessionAccessApiError } from './sessionAccessHttpFailure';
+import { createSessionAccessApiErrorFromResponse, SessionAccessApiError } from './sessionAccessHttpFailure';
+export { createSessionAccessApiErrorFromResponse, SessionAccessApiError } from './sessionAccessHttpFailure';
 import type { SessionPublicVisualNetworkConsequence } from './sessionPublicVisualNetworkConsequence';
 import { SessionAccessCandidatesInspectRequestV1Schema, SessionAccessCandidatesInspectResponseV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { SessionAccessEncryptionPrepareResultV1Schema, SessionAccessLayoutUpdateResultV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
@@ -83,13 +83,6 @@ export class SessionAccessApprovalPendingError extends Error {
 }
 
 /** Preserve the Protocol-owned typed Session-access error at every HTTP consumer. */
-export function createSessionAccessApiErrorFromResponse(
-    payload: unknown,
-    status: number,
-): SessionAccessApiError {
-    return new SessionAccessApiError(readSessionAccessHttpFailureCode(payload, status), status);
-}
-
 export type SessionAccessRequestOptions = Readonly<{
     scope: ServerAccountScope;
     availability: SessionCollaborationAvailability;
@@ -462,12 +455,10 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
                     return spec.outputSchema!.parse({ changed: false });
                 }
                 const responseError = createSessionAccessApiErrorFromResponse(payload, response.status);
-                throw new SessionAccessApiError(
-                    retainedEnvelopeFallback && responseError.code === 'recipient_envelope_required'
-                        ? 'session_data_key_unavailable'
-                        : responseError.code,
-                    response.status,
-                );
+                if (retainedEnvelopeFallback && responseError.code === 'recipient_envelope_required') {
+                    throw new SessionAccessApiError('session_data_key_unavailable', responseError.status);
+                }
+                throw responseError;
             }
             try {
                 if (actionId === 'session.public_link.remove') {

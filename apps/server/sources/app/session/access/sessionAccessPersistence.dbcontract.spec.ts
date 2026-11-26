@@ -525,7 +525,7 @@ describe("Session access persistence provider contract", () => {
                 sessionId: session.id,
                 capability: "manageAccess",
                 authentication: required,
-            }))).resolves.toEqual({ status: "authentication_required" });
+            }))).resolves.toEqual({ status: "authentication_required", signInTeamId: team.id });
             await expect(inTx(tx => resolveSessionAccessForOperation(tx, {
                 accountId: collaborator.id,
                 sessionId: session.id,

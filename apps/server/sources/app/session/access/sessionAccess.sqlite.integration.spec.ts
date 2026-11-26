@@ -740,7 +740,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             accountId: actor.id,
             sessionId: session.id,
             authentication: unqualified,
-        }))).resolves.toEqual({ status: "authentication_required" });
+        }))).resolves.toEqual({ status: "authentication_required", signInTeamId: team.id });
         await expect(inTx(tx => resolveSessionAccessForOperation(tx, {
             accountId: actor.id,
             sessionId: session.id,
@@ -748,7 +748,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
                 ...qualified,
                 authenticationEvidence: [{ kind: "home_method", methodId: "password" }],
             },
-        }))).resolves.toEqual({ status: "authentication_required" });
+        }))).resolves.toEqual({ status: "authentication_required", signInTeamId: team.id });
         await expect(inTx(tx => listCurrentSessionAudienceAccountsInTx({
             tx,
             sessionId: session.id,
@@ -823,7 +823,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
                 sessionId: session.id,
                 authentication: enabled,
                 capability: "manageAccess",
-            })).resolves.toEqual({ status: "authentication_required" });
+            })).resolves.toEqual({ status: "authentication_required", signInTeamId: team.id });
             await expect(resolveSessionAccessForOperation(tx, {
                 accountId: actor.id,
                 sessionId: session.id,

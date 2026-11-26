@@ -40,6 +40,12 @@ export const SessionAccessErrorCodeV1Schema = lazyZodSchema(() => z.enum([
 ]));
 export type SessionAccessErrorCodeV1 = z.infer<typeof SessionAccessErrorCodeV1Schema>;
 
+/** A Team that can satisfy this member's refused grant inspection. */
+export const SessionAccessGrantListSignInRefusalV1Schema = lazyZodSchema(() => z.strictObject({
+  error: z.literal('session_access_authentication_required'),
+  signInTeamId: z.string().check(z.minLength(1)),
+}));
+
 /** Manager-only preview of the current context policy; the grant writer rechecks at commit. */
 export const SessionAccessCandidatesInspectRequestV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),

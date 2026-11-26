@@ -75,6 +75,10 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         }).toString(),
     }), [input.scope.serverId, input.sessionId]);
     const teamSignInOrigin = React.useMemo(() => shareSignInOrigin(true), [shareSignInOrigin]);
+    // Read at press time: navigation is not an input of the grant requests.
+    const router = useRouter();
+    const routerRef = React.useRef(router);
+    routerRef.current = router;
     const [state, dispatch] = React.useReducer(reduceSessionAccessEditorState,scopeKey,createSessionAccessEditorState);
     // The typed search lives in its own store: this controller is hosted above the whole
     // Collaboration pane, and a key must not re-render it.
@@ -135,11 +139,20 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
             return snapshot;
         } catch(error) {
             if (!lifetime.current || currentScope.current!==scopeKey || revision!==requestRevision.current) return null;
-            const issue=presentSessionAccessFailure(error);
+            const issue = error instanceof SessionAccessApiError && error.signInTeamId !== undefined
+                ? presentTeamSignInRequired({
+                    code: error.code,
+                    teamId: error.signInTeamId,
+                    serverId: input.scope.serverId,
+                    accepted: [],
+                    origin: () => shareSignInOrigin(false),
+                    navigate: (href) => routerRef.current.push(href as Href),
+                })
+                : presentSessionAccessFailure(error);
             dispatch({type:'failed',scopeKey,issue,denied:(error instanceof HappyError || error instanceof SessionAccessApiError) && (error.status===403 || error.status===404 || error.code==='session_access_forbidden' || error.code==='session_access_session_not_found')});
             return null;
         }
-    },[availability,client,input.scope.accountId,input.scope.serverId,input.sessionId,lifetime,scopeKey]);
+    },[availability,client,input.scope.accountId,input.scope.serverId,input.sessionId,lifetime,scopeKey,shareSignInOrigin]);
     React.useEffect(()=>{
         lifetime.current=true;
         setContextOperation('idle');
@@ -391,10 +404,6 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         // is only worth fetching once the Home agrees the grant exists.
         if(mutation&&result.changed)prepareEncryptedAccess(undefined,'pass');
     },[lifetime,prepareEncryptedAccess,refresh,scopeKey]);
-    // Read at press time: navigation is not an input of the mutation callbacks.
-    const router=useRouter();
-    const routerRef=React.useRef(router);
-    routerRef.current=router;
     const settleFailedMutation=React.useCallback(async(
         key:string,mutation:SessionGrantMutationV1|null,subject:PrincipalRefV1,failure:SessionAccessUiError,
     )=>{

@@ -182,6 +182,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
         granted: false,
         grantAccessLevel: 'view' as 'view' | 'edit' | 'admin',
         grantMode: 'normal' as 'normal' | 'malformed_after_commit' | 'malformed_without_commit',
+        grantListFailure: null as null | Readonly<{ status: number; code: string; signInTeamId?: string }>,
         grantFailure: null as null | Readonly<{ status: number; code: string }>,
         removeFailure: null as null | Readonly<{ status: number; code: string }>,
         mutationChanged: true,
@@ -328,6 +329,10 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
             } }));
         }
         if (path === '/v2/sessions/access-grants/list') {
+            if (state.grantListFailure) {
+                const { status, code, signInTeamId } = state.grantListFailure;
+                return Response.json({ error: code, ...(signInTeamId ? { signInTeamId } : {}) }, { status });
+            }
             return new Response(JSON.stringify({
                 visibility: 'complete', owner: OWNER, primaryTeamId: state.primaryTeamId,
                 grants: [...(state.granted ? [{...GRANT_ROW,grant:{...GRANT_ROW.grant,accessLevel:state.grantAccessLevel}}] : []), ...(state.includeRequiredTeamGrant ? [TEAM_GRANT_ROW] : []), ...state.additionalTeamIds.map(teamId => ({
@@ -529,6 +534,35 @@ describe('Team grant refusals', () => {
         }));
         expect(controller().model.content.issue).toBeUndefined();
         expect(controller().model.grants).toHaveLength(0);
+    });
+});
+
+describe('Share grant inspection refusals', () => {
+    it.each([
+        { code: 'session_access_authentication_required', status: 403, label: 'session.access.authenticationRequired', signInTeamId: 'actual-granting-team' },
+        { code: 'session_access_authentication_required', status: 403, label: 'session.access.authenticationRequired' },
+        { code: 'session_access_authentication_unavailable', status: 503, label: 'session.access.authenticationUnavailable' },
+        { code: 'session_access_forbidden', status: 403, label: 'errors.permissionDenied' },
+        { code: 'not_found', status: 404, label: 'session.collaboration.accessUnavailableReason' },
+        { code: 'unexpected', status: 500, label: 'errors.operationFailed', retryable: true },
+    ] as const)('present $code using the authoritative grant instead of the Session context', async scenario => {
+        const home = await setupHome({ sharing: true, encrypted: false });
+        home.state.primaryTeamId = 'different-context';
+        const controller = await mountController(home.profile.id);
+        home.state.grantListFailure = {
+            code: scenario.code, status: scenario.status,
+            ...('signInTeamId' in scenario ? { signInTeamId: scenario.signInTeamId } : {}),
+        };
+        await act(async () => { controller().actions.retryContent(); });
+        await vi.waitFor(() => expect(controller().model.content.issue).toBeDefined());
+        const issue = controller().model.content.issue;
+        expect(issue?.retryable).toBe('retryable' in scenario);
+        if ('signInTeamId' in scenario) {
+            expect(issue).toMatchObject({ message: t(scenario.label), action: { label: t('teams.errors.signInRequiredAction') } });
+        } else {
+            expect(issue).toMatchObject({ message: t(scenario.label) });
+            expect(issue?.action).toBeUndefined();
+        }
     });
 });
 

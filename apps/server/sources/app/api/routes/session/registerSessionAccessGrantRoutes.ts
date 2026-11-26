@@ -12,7 +12,7 @@ import { SessionTeamCredentialBindingRejectionV1Schema } from '@happier-dev/prot
 import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { type Fastify } from "../../types";
 import { inspectSessionAccessCandidatesInTx, resolveSessionAccessPrincipalsInTx } from "@/app/session/access/sessionAccessPrincipalResolution";
-import { SessionAccessCandidatesInspectRequestV1Schema, SessionAccessCandidatesInspectResponseV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import { SessionAccessCandidatesInspectRequestV1Schema, SessionAccessCandidatesInspectResponseV1Schema, SessionAccessGrantListSignInRefusalV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 
 const ErrorSchema = z.object({ error: z.string(), reason: z.optional(SessionTeamCredentialBindingRejectionV1Schema) });
 const errors = { 400: ErrorSchema, 403: ErrorSchema, 404: ErrorSchema, 409: ErrorSchema, 503: ErrorSchema };
@@ -66,7 +66,10 @@ export function registerSessionAccessGrantRoutes(app: Fastify) {
         preHandler: app.authenticate,
         config: { apiTokenSessionAction: 'session.access.grants.list',
             restrictedCredentialBinding: { scope: 'session', session: 'body.sessionId', allowSessionRuntime: false } },
-        schema: { body: SessionAccessGrantsListRequestV1Schema, response: { 200: SessionAccessGrantsListResponseV1Schema, ...errors } },
+        schema: { body: SessionAccessGrantsListRequestV1Schema, response: {
+            200: SessionAccessGrantsListResponseV1Schema, ...errors,
+            403: z.union([SessionAccessGrantListSignInRefusalV1Schema, ErrorSchema]),
+        } },
     }, async (request, reply) => {
         const result = await inspectSessionAccessGrants({
             actorAccountId: request.userId,
@@ -74,7 +77,12 @@ export function registerSessionAccessGrantRoutes(app: Fastify) {
             ...(request.body.recipientAccountId === undefined ? {} : { recipientAccountId: request.body.recipientAccountId }),
             authentication: readSessionAccessAuthenticationFromRequest(request),
         });
-        if (!result.ok) return reply.code(errorStatus(result.error)).send({ error: result.error });
+        if (!result.ok) {
+            if (result.error === "session_access_authentication_required" && result.signInTeamId !== undefined) {
+                return reply.code(403).send({ error: result.error, signInTeamId: result.signInTeamId });
+            }
+            return reply.code(errorStatus(result.error)).send({ error: result.error });
+        }
         return reply.send(result.value);
     });
     collaborationApp.post("/v2/sessions/access-grants/set", {

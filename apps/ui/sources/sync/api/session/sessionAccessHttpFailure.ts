@@ -1,5 +1,6 @@
 import {
     SessionAccessErrorCodeV1Schema,
+    SessionAccessGrantListSignInRefusalV1Schema,
     type SessionAccessErrorCodeV1,
 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -7,10 +8,17 @@ import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions
 import { readTransientAvailabilityFailure, type TransientAvailabilityCode } from '@/utils/errors/transientAvailability';
 
 export class SessionAccessApiError extends Error {
-    constructor(readonly code: string, readonly status?: number) {
+    constructor(readonly code: string, readonly status?: number, readonly signInTeamId?: string) {
         super(code);
         this.name = 'SessionAccessApiError';
     }
+}
+
+export function createSessionAccessApiErrorFromResponse(payload: unknown, status: number): SessionAccessApiError {
+    const signIn = status === 403 ? SessionAccessGrantListSignInRefusalV1Schema.safeParse(payload) : null;
+    return new SessionAccessApiError(
+        readSessionAccessHttpFailureCode(payload, status), status, signIn?.success ? signIn.data.signInTeamId : undefined,
+    );
 }
 
 export type SessionAccessHttpFailureCode =

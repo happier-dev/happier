@@ -578,6 +578,55 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         });
     });
 
+    it("names the granting Team for an active member who needs sign-in and hides it from other Accounts", async () => {
+        const { owner, recipient, team } = await fixture();
+        const outsider = await db.account.create({ data: { encryptionMode: "plain", publicKey: `outsider-${crypto.randomUUID()}` } });
+        const primaryTeam = await db.team.create({ data: { name: "Unrelated context" } });
+        const recipientBinding = createSignedAccountContentBinding();
+        await db.account.update({
+            where: { id: recipient.id },
+            data: {
+                encryptionMode: "e2ee",
+                publicKey: recipientBinding.publicKey,
+                contentPublicKey: Buffer.from(recipientBinding.contentPublicKey),
+                contentPublicKeySig: Buffer.from(recipientBinding.contentPublicKeySig),
+            },
+        });
+        await db.team.update({
+            where: { id: team.id },
+            data: { authenticationPolicy: {
+                v: 1,
+                mode: "restricted",
+                accepted: [{ kind: "home_method", methodId: "key_challenge" }],
+            } },
+        });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, primaryTeamId: primaryTeam.id, tag: "grant-inspection-sign-in",
+            encryptionMode: "plain", metadata: "{}", currentStorageState: "hosted",
+        } });
+        await db.sessionGrant.create({ data: {
+            principalKind: "team", sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
+        } });
+
+        await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+            const inspect = (accountId: string, evidence?: string) => app.inject({
+                method: "POST",
+                url: "/v2/sessions/access-grants/list",
+                headers: { ...headers(accountId), ...(evidence ? { "x-test-authentication-evidence": evidence } : {}) },
+                payload: { sessionId: session.id },
+            });
+            const hidden = await inspect(outsider.id);
+            expect(hidden.statusCode).toBe(403);
+            expect(hidden.json()).toEqual({ error: "session_access_forbidden" });
+            const needsSignIn = await inspect(recipient.id);
+            expect(needsSignIn.statusCode).toBe(403);
+            expect(needsSignIn.json()).toEqual({ error: "session_access_authentication_required", signInTeamId: team.id });
+            const signedIn = await inspect(recipient.id, JSON.stringify([{ kind: "home_method", methodId: "key_challenge" }]));
+            expect(signedIn.statusCode, signedIn.body).toBe(200);
+            expect(signedIn.json()).toMatchObject({ visibility: "self", grants: [] });
+        });
+    });
+
     it("returns unavailable when Team-only grant inspection cannot use its accepted authentication method", async () => {
         const { owner, recipient, team } = await fixture();
         await db.team.update({
