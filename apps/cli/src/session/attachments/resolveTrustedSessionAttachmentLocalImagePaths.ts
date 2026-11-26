@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
 import { constants as bufferConstants } from 'node:buffer';
-import { open } from 'node:fs/promises';
+import { open, realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { normalizeSessionAttachmentUploadPath, readAttachmentEnvelopeUploads } from '@happier-dev/protocol';
+import { filesystemPathComparisonKey } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { isWithinResolvedRoot } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
+import { resolveSessionMediaTempUploadBasePath } from '@/transfers/sessionMedia/resolveSessionMediaTransferTarget';
 import { normalizeSessionMediaWorkspaceRelativeDir } from '@/transfers/sessionMedia/sessionMediaConfig';
 import { sanitizeSessionMediaFileName } from '@/transfers/sessionMedia/sanitizeSessionMediaFileName';
 import { configuration } from '@/configuration';
@@ -28,6 +32,26 @@ function readConfiguredWorkspaceUploadPath(upload: ReturnType<typeof readAttachm
   return /^[a-f0-9]{8}-/.test(filename) && filename.slice(9) === sanitizeSessionMediaFileName(upload.name)
     ? relative
     : null;
+}
+
+async function resolveUploadReadPath(cwd: string, uploadPath: string): Promise<string | null> {
+  const absolutePath = path.resolve(cwd, uploadPath);
+  const temporary = path.isAbsolute(uploadPath);
+  const platform = process.platform;
+  if (temporary && !isWithinResolvedRoot(filesystemPathComparisonKey(absolutePath),
+    filesystemPathComparisonKey(resolveSessionMediaTempUploadBasePath()), platform)) return null;
+
+  try {
+    const [realUploadPath, realBase] = await Promise.all([realpath(absolutePath), realpath(temporary ? tmpdir() : cwd)]);
+    const root = temporary
+      ? resolveSessionMediaTempUploadBasePath(realBase)
+      : path.resolve(realBase, path.dirname(path.dirname(uploadPath)));
+    return isWithinResolvedRoot(filesystemPathComparisonKey(realUploadPath), filesystemPathComparisonKey(root), platform)
+      ? realUploadPath
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 async function readMatchingDeclaredUpload(params: Readonly<{
@@ -89,17 +113,18 @@ async function* readTrustedSessionAttachmentUploads(params: Readonly<{
     const uploadPath = normalizeSessionAttachmentUploadPath(upload.path)
       ?? (params.includeOrdinaryFiles ? readConfiguredWorkspaceUploadPath(upload) : null);
     if (!uploadPath) continue;
-    const absolutePath = path.resolve(params.cwd, uploadPath);
+    const readPath = await resolveUploadReadPath(params.cwd, uploadPath);
+    if (!readPath) continue;
     let bytes: Buffer | null;
     try {
-      bytes = await readMatchingDeclaredUpload({ absolutePath, sha256: upload.sha256, sizeBytes: upload.sizeBytes, maxBytes });
+      bytes = await readMatchingDeclaredUpload({ absolutePath: readPath, sha256: upload.sha256, sizeBytes: upload.sizeBytes, maxBytes });
     } catch (error) {
       // The Claude prompt can still deliver the user's message and other uploads
       // if a retained upload no longer fits the local read budget.
       if (params.includeOrdinaryFiles && error instanceof SessionAttachmentFileExceedsUploadLimitError) continue;
       throw error;
     }
-    if (bytes) yield { uploadPath, absolutePath, bytes };
+    if (bytes) yield { uploadPath, absolutePath: readPath, bytes };
   }
 }
 

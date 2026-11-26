@@ -75,7 +75,8 @@ function isImageAttachment(entry: MetadataRecord): boolean {
 }
 
 function readAttachmentEnvelope(value: MetadataRecord): MetadataRecord[] {
-  const happier = asRecord(value.happier);
+  const primary = asRecord(value.happier);
+  const happier = primary?.kind === 'attachments.v1' ? primary : asRecord(value.happierAttachments);
   if (happier?.kind !== 'attachments.v1') return [];
   const payload = asRecord(happier.payload);
   return asRecordArray(payload?.attachments);

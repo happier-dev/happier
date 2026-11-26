@@ -14,6 +14,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...actual,
     open: vi.fn(),
+    realpath: async (path: string) => path,
   };
 });
 

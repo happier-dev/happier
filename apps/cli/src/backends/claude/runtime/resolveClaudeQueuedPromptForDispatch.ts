@@ -30,6 +30,14 @@ export async function resolveClaudeQueuedPromptForDispatch(params: Readonly<{
   const localCommand = parseSpecialCommand(params.batch.message).type === 'clear'
     || parseCheckpointsCommand(params.batch.message) !== null
     || parseRewindCommand(params.batch.message) !== null;
+  const uploads = localCommand ? [] : [...await resolveTrustedSessionAttachmentFilePaths({
+    cwd: params.sessionDirectory,
+    metadata: params.batch.providerPromptMeta,
+  })];
+  const providerContext = uploads.length > 0
+    ? ['Use these absolute paths to read the uploaded files:', ...uploads.map((path) => JSON.stringify(path))].join('\n')
+    : undefined;
+
   const resolution = await resolveProviderPromptForDispatch({
     session: params.sessionClient,
     userText: params.batch.message,
@@ -38,20 +46,11 @@ export async function resolveClaudeQueuedPromptForDispatch(params: Readonly<{
     localId: params.batch.mode.localId ?? null,
     nowMs: Date.now(),
     refreshMetadataBeforeRead: !params.didBootstrap,
+    providerContext,
   });
 
-  const uploads = localCommand ? [] : [...await resolveTrustedSessionAttachmentFilePaths({
-    cwd: params.sessionDirectory,
-    metadata: params.batch.providerPromptMeta,
-  })];
-  const message = uploads.length === 0 ? resolution.providerPrompt
-    : `${resolution.providerPrompt}
-
-Use these absolute paths to read the uploaded files:
-${uploads.map((path) => JSON.stringify(path)).join('\n')}`;
-
   return {
-    message,
+    message: resolution.providerPrompt,
     didBootstrap: true,
     seedApplied: resolution.seedApplied,
     settleReplaySeedOnProviderAcceptance: resolution.settleReplaySeedOnProviderAcceptance,

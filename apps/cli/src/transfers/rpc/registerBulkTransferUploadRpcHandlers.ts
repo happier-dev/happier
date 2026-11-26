@@ -1,5 +1,4 @@
 import { randomUUID } from 'crypto';
-import { tmpdir } from 'os';
 import { join } from 'path';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -7,6 +6,7 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { TransferSessionStore } from '../core/transferSessionStore';
+import { resolveSessionMediaTempUploadBasePath } from '../sessionMedia/resolveSessionMediaTransferTarget';
 import {
   normalizeSessionMediaPathSegment,
   sanitizeSessionMediaFileName,
@@ -125,7 +125,7 @@ export function registerBulkTransferUploadRpcHandlers(
     }>;
   }>,
 ): void {
-  const tempUploadRoot = join(tmpdir(), 'happier', 'uploads', randomUUID());
+  const tempUploadRoot = join(resolveSessionMediaTempUploadBasePath(), randomUUID());
 
   registerUploadTransferLifecycleHandlers<BulkTransferUploadInitResponse, BulkTransferUploadFinalizeResponse>({
     rpcHandlerManager,
