@@ -7,6 +7,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { readSessionStopChildTargetV1 } from '../../actions/sessionSectionArchive.js';
 import { SessionSpawnNewInputV2Schema } from './sessionSpawnNewInputV2.js';
+import { isSessionProjectFilesSourceOpenChildRecipientOperandV1 } from './sessionProjectFilesOpenV1.js';
 import { ed25519 } from '@noble/curves/ed25519';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { sealBoxBundle, openBoxBundleWithSecretKey } from '../../crypto/boxBundle.js';
@@ -843,6 +844,10 @@ export function isReviewedChildRecipientPurposeV1(authorization: ExternalActionE
       return child !== null && recipient.machineId === child.machineId && recipient.installationId === child.installationId;
     }
     case 'stop': return readSessionStopChildTargetV1(purpose.params) !== null;
+    case 'session_project_files_source':
+      return isSessionProjectFilesSourceOpenChildRecipientOperandV1({
+        reviewedChild: purpose.reviewedChild, machineId: recipient.machineId, params: purpose.params,
+      });
     case 'service_move': case 'creation': case 'project_setup_set': return true;
     // Readiness stays on the root's own installation; no recipient is sealed for it.
     case 'readiness': case null: return false;

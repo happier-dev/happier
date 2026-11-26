@@ -46,6 +46,7 @@ import { ACTION_OPERATION_RPC_METHODS_V1 } from '../actions/operations/methodsV1
 import { readDeploymentArchiveRpcEffectV1 } from '../deployments/deploymentArchiveRpcV1.js';
 import { MachineSetupPlanInputV1Schema, readMachineSetupPlanChildInputV1 } from '../machines/managed/actionsV1.js';
 import { isBackupReceiverSetupChildOperandV1, readReviewedMachineRpcChildFamilyV1 } from '../machines/peer/mediation/rpc/reviewedChildFamilyV1.js';
+import { isSessionProjectFilesSourceOpenChildInputV1, isSessionProjectFilesSourceOpenChildRecipientOperandV1 } from '../sessions/creation/sessionProjectFilesOpenV1.js';
 
 /** Shared retained-root transport grammar, not signature or operand admission.
  * The Home and receiving host still verify the signed root and derived child.
@@ -90,6 +91,15 @@ export function readOriginalActionEnvelopeMachineRpcKindV1(input: Readonly<{
       const child = execution.deploymentChildRouting;
       return child?.machineId === machineId && child.actionId === effect ? 'child' : null;
     }
+    case 'session_project_files_source':
+      return typeof params === 'string'
+        || (envelope.v === 1
+          ? isSessionProjectFilesSourceOpenChildInputV1({
+            rootInput: envelope.input, reviewedChild: execution.reviewedChild, machineId, params,
+          })
+          : isSessionProjectFilesSourceOpenChildRecipientOperandV1({
+            reviewedChild: execution.reviewedChild, machineId, params,
+          })) ? 'child' : null;
     case 'readiness': case 'creation': case 'service_move': case 'project_setup_set': return 'child';
     case null: break;
   }

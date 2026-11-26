@@ -16,6 +16,14 @@ import {
   isBackupReceiverSetupChildOperandV1,
   readReviewedMachineRpcChildFamilyV1,
 } from './reviewedChildFamilyV1.js';
+import { computeActionInputApprovalDigestV1 } from '../../../../actions/decisionAuthority.js';
+import {
+  SESSION_PROJECT_FILES_OPEN_CHILDREN_V1,
+  buildSessionProjectFilesSourceOpenInputV1,
+  isSessionProjectFilesSourceOpenChildInputV1,
+} from '../../../../sessions/creation/sessionProjectFilesOpenV1.js';
+import { isReviewedChildRecipientPurposeV1 } from '../../../../sessions/creation/sessionRequesterBootstrapV1.js';
+import { SessionSpawnNewInputV2Schema } from '../../../../sessions/creation/sessionSpawnNewInputV2.js';
 
 const homeId = 'srv_backup_home';
 const rootInput = {
@@ -261,6 +269,128 @@ describe('cross-Machine reviewed child owner', () => {
         method: RPC_METHODS.MACHINE_SETUP_PLAN,
       }),
     ).toBeNull();
+  });
+
+  it('admits session_project_files_source only for the exact reviewed source-attach operand on the root source Machine', () => {
+    const spawnTarget = { kind: 'machine' as const, machineId: 'controller' };
+    const spawnRoot = SessionSpawnNewInputV2Schema.parse({
+      executionTarget: { serverId: homeId, machineId: 'controller' },
+      directory: { kind: 'path', path: '/boat/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      sessionPlacement: {
+        kind: 'machine',
+        target: { serverId: homeId, machineId: 'controller' },
+        projectFilesSource: { target: { serverId: homeId, machineId: 'boat' }, directory: '/boat/project' },
+        projectFiles: { kind: 'copy_once' },
+      },
+    });
+    const sourceOpenInput = buildSessionProjectFilesSourceOpenInputV1(spawnRoot.sessionPlacement!)!;
+    const reviewedChild: ReviewedActionChildHttpProofV1 = {
+      actionId: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source.action,
+      role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source.role,
+      inputDigest: computeActionInputApprovalDigestV1('projects.open', sourceOpenInput),
+    };
+    const spawnAuth = ExternalActionExecutionAuthorizationV1Schema.parse({
+      ...authorization,
+      binding: {
+        ...authorization.binding,
+        machineId: 'controller',
+        installationId: 'controller-installation',
+        actionId: 'session.spawn_new',
+        target: spawnTarget,
+        environmentId: undefined,
+        deploymentNativeAdmission: undefined,
+      },
+    });
+
+    expect(readReviewedMachineRpcChildFamilyV1({
+      binding: spawnAuth.binding, effectActionId: 'projects.open', method: RPC_METHODS.PROJECTS_OPEN,
+      target: { machineId: 'boat', installationId: 'boat-installation' }, reviewedChild,
+    })).toBe('session_project_files_source');
+    expect(isSessionProjectFilesSourceOpenChildInputV1({
+      rootInput: spawnRoot, reviewedChild, machineId: 'boat', params: sourceOpenInput,
+    })).toBe(true);
+    expect(readOriginalActionEnvelopeMachineRpcKindV1({
+      machineId: 'boat', method: RPC_METHODS.PROJECTS_OPEN,
+      envelope: { v: 1, requestId: 'backup-request', target: spawnTarget, input: spawnRoot },
+      execution: { v: 1, authorization: spawnAuth, effectActionId: 'projects.open', target: spawnTarget,
+        installationId: 'controller-installation', machineSignature: 'fixture', reviewedChild },
+      params: sourceOpenInput,
+    })).toBe('child');
+    expect(isReviewedChildRecipientPurposeV1(spawnAuth, {
+      kind: 'machine_rpc', method: RPC_METHODS.PROJECTS_OPEN, params: sourceOpenInput,
+      recipient: { machineId: 'boat', installationId: 'boat-installation' }, reviewedChild,
+    })).toBe(true);
+
+    // Negatives: wrong Machine, tampered folder, non-attach materialization, disallowed cloneSource, wrong role, missing child, wrong root.
+    const wrongMachineInput = { ...sourceOpenInput, machineId: 'elsewhere' };
+    expect(isSessionProjectFilesSourceOpenChildInputV1({
+      rootInput: spawnRoot, reviewedChild: { ...reviewedChild, inputDigest: computeActionInputApprovalDigestV1('projects.open', wrongMachineInput) },
+      machineId: 'elsewhere', params: wrongMachineInput,
+    })).toBe(false);
+    expect(readOriginalActionEnvelopeMachineRpcKindV1({
+      machineId: 'boat', method: RPC_METHODS.PROJECTS_OPEN,
+      envelope: { v: 1, requestId: 'backup-request', target: spawnTarget, input: spawnRoot },
+      execution: { v: 1, authorization: spawnAuth, effectActionId: 'projects.open', target: spawnTarget,
+        installationId: 'controller-installation', machineSignature: 'fixture', reviewedChild },
+      params: { ...sourceOpenInput, source: { kind: 'folder', path: '/boat/other' } },
+    })).toBeNull();
+    expect(isReviewedChildRecipientPurposeV1(spawnAuth, {
+      kind: 'machine_rpc', method: RPC_METHODS.PROJECTS_OPEN,
+      params: { ...sourceOpenInput, materialization: { kind: 'clone', destinationParentPath: '/tmp', destinationDirectoryName: 'x' } },
+      recipient: { machineId: 'boat', installationId: 'boat-installation' }, reviewedChild,
+    })).toBe(false);
+    const cloneSourceInput = { ...sourceOpenInput, cloneSource: true as const };
+    expect(isSessionProjectFilesSourceOpenChildInputV1({
+      rootInput: spawnRoot, reviewedChild: { ...reviewedChild, inputDigest: computeActionInputApprovalDigestV1('projects.open', cloneSourceInput) },
+      machineId: 'boat', params: cloneSourceInput,
+    })).toBe(false);
+    expect(readReviewedMachineRpcChildFamilyV1({
+      binding: spawnAuth.binding, effectActionId: 'projects.open', method: RPC_METHODS.PROJECTS_OPEN,
+      target: { machineId: 'boat', installationId: 'boat-installation' },
+      reviewedChild: { ...reviewedChild, role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target.role },
+    })).toBeNull();
+    expect(readReviewedMachineRpcChildFamilyV1({
+      binding: spawnAuth.binding, effectActionId: 'projects.open', method: RPC_METHODS.PROJECTS_OPEN,
+      target: { machineId: 'boat', installationId: 'boat-installation' },
+    })).toBeNull();
+    expect(readReviewedMachineRpcChildFamilyV1({
+      binding: { ...spawnAuth.binding, actionId: 'projects.open' }, effectActionId: 'projects.open',
+      method: RPC_METHODS.PROJECTS_OPEN, target: { machineId: 'boat', installationId: 'boat-installation' }, reviewedChild,
+    })).toBeNull();
+
+    // F2 (B23): fully-resolved git_clone (source + branch) admits NO source-attach child, even with cloneSource: true;
+    // unresolved git_clone (missing branch) admits only cloneSource: true.
+    const resolvedGitCloneRoot = SessionSpawnNewInputV2Schema.parse({
+      ...spawnRoot,
+      sessionPlacement: {
+        ...spawnRoot.sessionPlacement!,
+        projectFiles: { kind: "git_clone", source: { provider: { id: "github", kind: "github", displayName: "GitHub", baseUrl: "https://github.com" }, repository: { nameWithOwner: "owner/project", cloneUrl: "https://github.com/owner/project.git" }, protocol: "https" }, branch: "main" },
+      },
+    });
+    const cloneSourceReviewedChild: ReviewedActionChildHttpProofV1 = {
+      ...reviewedChild,
+      inputDigest: computeActionInputApprovalDigestV1("projects.open", cloneSourceInput),
+    };
+    expect(isSessionProjectFilesSourceOpenChildInputV1({
+      rootInput: resolvedGitCloneRoot, reviewedChild: cloneSourceReviewedChild, machineId: "boat", params: cloneSourceInput,
+    })).toBe(false);
+    expect(isSessionProjectFilesSourceOpenChildInputV1({
+      rootInput: resolvedGitCloneRoot, reviewedChild, machineId: "boat", params: sourceOpenInput,
+    })).toBe(false);
+    const unresolvedGitCloneRoot = SessionSpawnNewInputV2Schema.parse({
+      ...spawnRoot,
+      sessionPlacement: {
+        ...spawnRoot.sessionPlacement!,
+        projectFiles: { kind: "git_clone", source: { provider: { id: "github", kind: "github", displayName: "GitHub", baseUrl: "https://github.com" }, repository: { nameWithOwner: "owner/project", cloneUrl: "https://github.com/owner/project.git" }, protocol: "https" } },
+      },
+    });
+    expect(isSessionProjectFilesSourceOpenChildInputV1({
+      rootInput: unresolvedGitCloneRoot, reviewedChild: cloneSourceReviewedChild, machineId: "boat", params: cloneSourceInput,
+    })).toBe(true);
+    expect(isSessionProjectFilesSourceOpenChildInputV1({
+      rootInput: unresolvedGitCloneRoot, reviewedChild, machineId: "boat", params: sourceOpenInput,
+    })).toBe(false);
   });
 
 });

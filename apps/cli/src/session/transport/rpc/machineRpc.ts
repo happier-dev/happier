@@ -679,7 +679,7 @@ export async function callExactMachineRpc(params: Readonly<{
             if (encodeBase64(publicKey, 'base64') !== encodedKey) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_key_invalid');
             const sealed = await seal({ authorization: transportAuthorization,
               purpose: { kind: 'machine_rpc', method: params.method, params: request,
-                ...((creationChild || childFamily === 'backup_receiver_setup') && reviewedChild ? { reviewedChild } : {}),
+                ...((creationChild || childFamily === 'backup_receiver_setup' || childFamily === 'session_project_files_source') && reviewedChild ? { reviewedChild } : {}),
                 ...(moveChild && !readinessChild ? { recipient: { machineId, installationId: machineTarget.installationId } } : {}) }, installationPublicKey: publicKey });
             if (!sealed || !sealed.requesterAccountContext) throw new Error('Requester Account custody unavailable');
             const custodian = machineTarget.access?.custodian;

@@ -923,6 +923,7 @@ async function prepareRequesterAccountActionContextWithCustody(
           privateKey: input.installationPrivateKey, isCurrent: context.isCustodyCurrent ?? context.isCurrent,
           ...(rootAdmitted ? { rootAdmitted: true } : {}),
           ...(moveRecipient ? { forwardedMove: { credentials: context.credentials, isCurrent: context.isCurrent,
+            machineId: input.machineId,
             ...(input.purpose.kind === 'machine_rpc' ? { method: input.purpose.method,
               reviewedChild: input.purpose.reviewedChild } : {}) } } : {}),
           ...(deploymentChild ? { forwardedDeploymentChild: deploymentChild } : {}),

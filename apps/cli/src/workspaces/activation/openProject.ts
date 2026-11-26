@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { posix } from 'node:path';
 import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readHostReviewedChildReceivingAdmissionV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type ProjectOpenSyncMaterializationResultV1, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
@@ -407,10 +408,12 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       }
       // Native selection/acquisition happens before Open. Qualify only the
       // caller's chosen Machine; a manifest cannot redirect browse acceptance.
+      const receivingMachineId = readHostReviewedChildReceivingAdmissionV1(context.reviewedChildActionContext)?.machineId;
       const children = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
         relationshipId: requester.rows.authorization?.binding.workspaceSyncAdmission?.relationshipId,
         serverHttpBaseUrl: runtime.serverHttpBaseUrl, ...(credentials ? { credentials } : {}), machineIds: [runtime.machineId],
         ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}),
+        ...(receivingMachineId === runtime.machineId ? { receivingMachineId } : {}),
         purpose: 'child_namespace', signal: context.signal });
       const child = children[0];
       if (child?.managedMachine && !isManagedDevcontainerChildProjectionCurrentV1({ homeId: runtime.serverId,

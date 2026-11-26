@@ -387,6 +387,8 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
   relationshipId?: string;
   /** Namespace acceptance never borrows parent storage or requires parent reachability. */
   purpose?: 'physical_sync' | 'child_namespace' | 'admitted_mapping';
+  /** Admitted physical receiving Machine for a forwarded reviewed child namespace read. */
+  receivingMachineId?: string;
   signal?: AbortSignal;
   authorization?: ExternalActionExecutionAuthorizationV1;
   effectActionId?: string;
@@ -437,8 +439,10 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
         // it for every foreign endpoint, including when the admission is missing.
         // Project Open binds its opening Machine and has no WORKER: every other
         // endpoint is its Source, so only the admission may name it.
+        const localAdmittedMachineId = input.purpose === 'child_namespace' && input.receivingMachineId
+          ? input.receivingMachineId : input.authorization?.binding.machineId;
         if (input.authorization && !readOnly && (machineId === sourceMachineId
-          || machineId !== input.authorization.binding.machineId
+          || machineId !== localAdmittedMachineId
             && (input.authorization.binding.machineId !== sourceMachineId
               || isProjectWorkspaceSyncOpenActionV1(input.authorization.binding.actionId)))) {
           const binding = input.authorization.binding;

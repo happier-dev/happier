@@ -450,7 +450,8 @@ export function createCliMachineActionTransport(
       effectActionId: input.effectActionId, method: input.method,
       reviewedChild: readHostAdmittedReviewedChildV1(input.context) ?? undefined });
     const credentials = childFamily === 'creation' || childFamily === 'setup_plan' || childFamily === 'readiness'
-      || childFamily === 'backup_receiver_setup' ? transportRequester?.credentials : params.credentials;
+      || childFamily === 'backup_receiver_setup' || childFamily === 'session_project_files_source'
+      ? transportRequester?.credentials : params.credentials;
     if (!credentials) throw new RpcError('An authenticated Machine transport is required.', 'not_authenticated');
     return readMachineActionRpcResult(await invoke({
       credentials,

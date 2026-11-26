@@ -121,7 +121,9 @@ import { ActionIdSchema, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
     SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1, getManagedBoundSetupReportActionIdsV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
 import { isMachineGrantSetAccessReadV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
-import { admitSessionSpawnNewTargetedAuthoringInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { admitSessionSpawnNewTargetedAuthoringInputV2, SessionSpawnNewActionInputV2Schema, SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { buildSessionProjectFilesSourceOpenInputV1, isSessionProjectFilesSourceOpenChildInputV1, isSessionProjectFilesSourceOpenChildRecipientOperandV1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
+import { readSessionPlacementProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { bindApiSessionSpawnNewInput } from '@happier-dev/protocol/actions/specs/session/lifecycle';
 import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import type { ActionRequiredAuthority } from "@happier-dev/protocol/actions/metadata";
@@ -5950,8 +5952,9 @@ export async function verifyExternalActionMachineRpcExecution(
         reviewedChild: execution.reviewedChild });
     const setupPlanChild = childFamily === 'setup_plan';
     const setupSetChild = childFamily === 'project_setup_set';
+    const projectFilesSourceChild = childFamily === 'session_project_files_source';
     const backupReceiverChild = childFamily === 'backup_receiver_setup';
-    if (setupSetChild && !request.originalActionEnvelope) return null;
+    if ((setupSetChild || projectFilesSourceChild) && !request.originalActionEnvelope) return null;
     // Readiness keeps its own branch below; the deployment family was decided above.
     if (childFamily !== null && childFamily !== 'readiness' && childFamily !== 'deployment' && request.originalActionEnvelope) {
         const envelope = ExternalActionRequestEnvelopeSchema.safeParse(request.originalActionEnvelope);
@@ -5982,6 +5985,23 @@ export async function verifyExternalActionMachineRpcExecution(
             if (!root.success || root.data.workspace.machineId !== machineId
                 || typeof request.params !== 'string' && !isProjectSetupSetChildInputV1(root.data,
                     execution.effectActionId, wrapper.success ? wrapper.data.input : request.params, binding.serverIdentityId)) return null;
+        }
+        if (projectFilesSourceChild) {
+            if (envelope.data.v === 1) {
+                const root = SessionSpawnNewInputV2Schema.safeParse(envelope.data.input);
+                const expected = root.success && root.data.sessionPlacement
+                    ? buildSessionProjectFilesSourceOpenInputV1(root.data.sessionPlacement) : null;
+                const choice = root.success && root.data.sessionPlacement
+                    ? readSessionPlacementProjectFilesV1(root.data.sessionPlacement).projectFiles : undefined;
+                if (!root.success || !expected || expected.machineId !== machineId
+                    || expected.serverId !== root.data.executionTarget.serverId
+                    || choice?.kind === 'git_clone' && Boolean(choice.source) && Boolean(choice.branch)
+                    || typeof request.params !== 'string' && !isSessionProjectFilesSourceOpenChildInputV1({
+                        rootInput: envelope.data.input, reviewedChild: execution.reviewedChild, machineId, params: request.params,
+                    })) return null;
+            } else if (typeof request.params !== 'string' && !isSessionProjectFilesSourceOpenChildRecipientOperandV1({
+                reviewedChild: execution.reviewedChild, machineId, params: request.params,
+            })) return null;
         }
         if (setupPlanChild && envelope.data.v === 1 && (typeof envelope.data.input !== 'object'
             || envelope.data.input === null || !('homeId' in envelope.data.input)

@@ -72,7 +72,8 @@ import { deploymentOperationForRootActionV1, readDeploymentReferenceServiceListE
 import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployments/deploymentArchiveRpcV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { invokeHostAdmittedSignedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isRoleActionIdV1 } from '@happier-dev/protocol/prompts/roles/roleActionIdsV1';
 import { isWorkspaceSyncTargetInstalledContent, openWorkspaceSyncTargetContent } from './workspaceSyncTargetContent';
 import { waitForObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
@@ -1407,6 +1408,20 @@ export class RpcHandlerManager {
             const result = serviceMoveChild && childFamily === 'service_move'
                 ? await invokeReviewedServiceMoveChild({ method: targetMethod, params: decryptedParams, context: handlerContext,
                     execute: context => Promise.resolve(handler(decryptedParams, context)) })
+                : serviceMoveChild && childFamily === 'session_project_files_source' && machineAdmission?.success
+                    && workspaceSyncSourceExecution?.success && workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild
+                ? await invokeHostAdmittedSignedReviewedChildV1({
+                    context: { signal: controller.signal },
+                    child: {
+                        ...workspaceSyncSourceExecution.data.externalActionExecution.reviewedChild,
+                        input: projectNativeJsonValueForTransport(decryptedParams),
+                    },
+                    receivingAdmission: machineAdmission.data,
+                    execute: async (_input, issued) => await handler(decryptedParams, {
+                        ...handlerContext,
+                        reviewedChildActionContext: issued,
+                    }),
+                })
                 : await handler(decryptedParams, handlerContext);
             await remoteOperation?.flushOperationUpdates();
 

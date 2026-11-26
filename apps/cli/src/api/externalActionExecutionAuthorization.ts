@@ -97,6 +97,7 @@ import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/
 import { DaemonLocalServiceLauncherStartRequestV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1, isSessionProjectFilesSourceOpenChildInputV1, readSessionProjectFilesSourceOpenChildRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
 import { SessionSpawnNewInputV2Schema, SessionSpawnNewTargetedAuthoringInputV2Schema, SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2,
   projectSessionSpawnNewActionAuthoringInputV2, type SessionSpawnNewInputV2,
   type SessionSpawnNewTargetedAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -224,6 +225,22 @@ export async function isReviewedProjectSetupSetChild(input: Readonly<{
   const root = ProjectSetupSetInputV1Schema.safeParse(await readReviewedExternalActionInput(input));
   return root.success && root.data.workspace.machineId === input.machineId
     && isProjectSetupSetChildInputV1(root.data, input.actionId, input.params, binding.serverIdentityId);
+}
+
+export async function isReviewedSessionProjectFilesSourceChild(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1; envelope: unknown; actionId: string;
+  machineId: string; params: unknown; method?: string; signal?: AbortSignal;
+  reviewedChild?: ReviewedActionChildHttpProofV1;
+}>): Promise<boolean> {
+  const binding = input.authorization.binding;
+  if (!input.method
+    || readSessionProjectFilesSourceOpenChildRpcEffectV1(binding, input.method, input.reviewedChild) !== input.actionId) {
+    return false;
+  }
+  const rootInput = await readReviewedExternalActionInput(input);
+  return isSessionProjectFilesSourceOpenChildInputV1({
+    rootInput, reviewedChild: input.reviewedChild, machineId: input.machineId, params: input.params,
+  });
 }
 
 /** A finite target Plan retains the unchanged combined root and requester custody. */
@@ -621,6 +638,7 @@ export async function isReviewedMachineRpcChild(family: ReviewedMachineRpcChildF
     case 'setup_plan': return isReviewedMachineSetupPlanChild(base);
     case 'backup_receiver_setup': return isReviewedBackupReceiverSetupChild({ ...base, ...(reviewedChild ? { reviewedChild } : {}) });
     case 'project_setup_set': return isReviewedProjectSetupSetChild(base);
+    case 'session_project_files_source': return isReviewedSessionProjectFilesSourceChild({ ...base, ...(reviewedChild ? { reviewedChild } : {}) });
     case 'stop': return isReviewedSessionStopChild({ ...base, target });
     case 'service_move': {
       const { method: _method, ...move } = base;
@@ -1859,9 +1877,12 @@ export function createExternalActionSourceMachineRpcExecution(input: Readonly<{
   const signedReadinessChild = readinessChild === input.effectActionId
     && resolveMachineRpcExternalActionEffectV1(input.method.slice(input.method.indexOf(':') + 1), binding,
       { machineId: input.sourceMachineId, installationId: input.sourceInstallationId }, readinessProof) === readinessChild;
+  const projectFilesSourceChild = readSessionProjectFilesSourceOpenChildRpcEffectV1(
+    binding, input.method.slice(input.method.indexOf(':') + 1), readinessProof,
+  ) === input.effectActionId;
   if (!source || source.machineId !== input.sourceMachineId
     || source.installationId !== input.sourceInstallationId
-    || binding.actionId === 'session.spawn_new' && !nativeCredentialChild && !signedReadinessChild && !handoffResume && !sessionSourceRoot
+    || binding.actionId === 'session.spawn_new' && !nativeCredentialChild && !signedReadinessChild && !projectFilesSourceChild && !handoffResume && !sessionSourceRoot
     || isSessionStopChildRootV1(binding.actionId) && !stopChild
     || setupPlanRoot && !setupPlanChild && (input.effectActionId !== binding.actionId
       || input.method !== `${binding.machineId}:${binding.actionId}`)
@@ -1976,7 +1997,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
   requesterOperationCancelAddress?: z.infer<typeof ActionOperationAddressV1Schema>;
   /** Exact child ingress already rechecks the retained SOURCE packet at Home. */
   forwardedMove?: Readonly<{ credentials: StoredCredentials; isCurrent(): Promise<boolean>;
-    method?: string; reviewedChild?: ReviewedActionChildHttpProofV1 }>;
+    machineId?: string; method?: string; reviewedChild?: ReviewedActionChildHttpProofV1 }>;
   /** Present only after exact installed child ingress and its sealed purpose were admitted. */
   forwardedDeploymentChild?: DeploymentChildRpcV1;
   deploymentChildExecution?: WorkspaceSyncSourceExecutionV1;
@@ -1994,7 +2015,13 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
   if (requesterContext && (requesterContext.authorization.token !== authorization.token
     || !sameStrictJsonValue(requesterContext.authorization.binding, authorization.binding))) return null;
   const admittedCustody = requesterContext?.isCustodyCurrent;
+  const forwardedProjectFilesSource = Boolean(input.forwardedMove
+    && authorization.binding.actionId === 'session.spawn_new'
+    && input.forwardedMove.method === RPC_METHODS.PROJECTS_OPEN
+    && input.forwardedMove.reviewedChild?.actionId === SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source.action
+    && input.forwardedMove.reviewedChild.role === SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source.role);
   const nativePreparationReadCustody = authorization.binding.actionId === 'projects.service.relocate'
+    || forwardedProjectFilesSource
     || isSessionActionChildCreationRootV1(authorization.binding.actionId)
     || isSessionStopChildRootV1(authorization.binding.actionId)
     || authorization.binding.actionId === 'execution.run.start'
@@ -2153,6 +2180,21 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
         && request.path !== `/v1/machines/${encodeURIComponent(authorization.binding.machineId)}`) {
         return await (projectMachineReadCustody.isCustodyCurrent ?? projectMachineReadCustody.isCurrent)() && await isCurrent(request.signal)
           ? { Authorization: `Bearer ${projectMachineReadCustody.credentials.token}` } : null;
+      }
+      if (forwardedProjectFilesSource) {
+        const method = request.method.toUpperCase();
+        const receivingMachinePath = input.forwardedMove?.machineId
+          ? `/v1/machines/${encodeURIComponent(input.forwardedMove.machineId)}` : null;
+        const allowed = request.effectActionId === 'projects.open' && (
+          method === 'GET' && (request.path === '/v1/account/encryption'
+            || request.path === '/v1/account/encryption/currentness'
+            || receivingMachinePath !== null && request.path === receivingMachinePath)
+          || method === 'POST' && ['/v1/account/project-rows/read', '/v1/account/project-rows/list',
+            '/v1/account/project-rows/mutate', '/v1/account/project-trust/read', '/v1/account/project-trust/list',
+            '/v1/projects/execution/config/read'].includes(request.path)
+        );
+        return allowed && nativePreparationReadCustody && await nativePreparationReadCustody.isCurrent() && await isCurrent(request.signal)
+          ? { Authorization: `Bearer ${nativePreparationReadCustody.credentials.token}` } : null;
       }
       if (nativePreparationReadCustody && (authorization.binding.actionId === 'projects.service.relocate'
         || isSessionActionChildCreationRootV1(authorization.binding.actionId) && request.effectActionId === 'session.spawn_new'

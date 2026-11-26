@@ -340,7 +340,8 @@ resolveServerFeaturesSnapshot?: () =>
           && sameStrictJsonValue(movePacket.originalActionEnvelope, context.originalActionEnvelope)
           && await isReviewedMachineRpcChild(childFamily, { authorization: context.externalActionExecutionAuthorization,
             envelope: context.originalActionEnvelope, actionId, machineId: params.machineId, params: input,
-            ...(childFamily === 'creation' || childFamily === 'backup_receiver_setup'
+            method: childMethod,
+            ...(childFamily === 'creation' || childFamily === 'backup_receiver_setup' || childFamily === 'session_project_files_source'
               ? { reviewedChild: movePacket.externalActionExecution.reviewedChild } : {}),
             ...(childFamily === 'stop' ? { target: context.externalActionTarget } : {}),
             ...(context.signal ? { signal: context.signal } : {}) });

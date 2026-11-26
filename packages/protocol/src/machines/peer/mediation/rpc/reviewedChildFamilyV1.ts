@@ -13,6 +13,7 @@ import {
 } from '../../../../deployments/deploymentActionIdsV1.js';
 import { isDeploymentBackupConfigureNativeAdmissionV1 } from '../../../../deployments/deploymentCandidatePublicationV1.js';
 import { readSessionActionChildCreationRpcEffectV1 } from '../../../../sessions/creation/sessionCreationActionIdsV1.js';
+import { readSessionProjectFilesSourceOpenChildRpcEffectV1 } from '../../../../sessions/creation/sessionProjectFilesOpenV1.js';
 import { readProjectServiceMoveChildEffectV1 } from '../../../../workspaces/projectServiceRelocationV1.js';
 import {
   BACKUP_RECEIVER_SETUP_CHILDREN_V1,
@@ -36,6 +37,7 @@ export type ReviewedMachineRpcChildFamilyV1 =
   | 'stop'
   | 'service_move'
   | 'project_setup_set'
+  | 'session_project_files_source'
   | 'deployment';
 
 /** The receiving Machine a Backup configure root's own reviewed input named, signed into its native admission. */
@@ -91,6 +93,7 @@ export function readReviewedMachineRpcChildFamilyV1(input: Readonly<{
   if (isSessionStopChildRootV1(root) && method === RPC_METHODS.STOP_SESSION && fits('session.stop')) return 'stop';
   if (root === 'projects.service.relocate' && fits(readProjectServiceMoveChildEffectV1(method))) return 'service_move';
   if (fits(readProjectSetupSetChildRpcEffectV1(root, method))) return 'project_setup_set';
+  if (fits(readSessionProjectFilesSourceOpenChildRpcEffectV1(binding, method, reviewedChild))) return 'session_project_files_source';
   if (binding.deploymentChildRoot === true && method === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD
     && fits(deploymentChildEffectActionIdForRootV1(root, binding.deploymentPreparationAdmission, effect))) return 'deployment';
   return null;
