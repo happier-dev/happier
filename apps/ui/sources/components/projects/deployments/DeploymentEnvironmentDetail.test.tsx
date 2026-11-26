@@ -2431,8 +2431,14 @@ describe('Project deployments page', () => {
       expect(screen.findByTestId('project-deployments.environment.facts.health')).not.toBeNull();
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.receipt.row.earlier-attempt')).not.toBeNull());
       const healthFact = screen.findByTestId('project-deployments.environment.facts.health');
-      const healthWord = phase === 'degraded' ? '2 of 3 servers healthy' : phase === 'passing' ? 'Passing' : 'Deploying';
+      const healthWord = {
+        degraded: '2 of 3 servers healthy',
+        passing: 'Passing',
+        deploying: '0 of 3 servers healthy',
+        deployingWithoutAnObservation: '—',
+      }[phase];
       expect(healthFact?.findAll(node => node.props.children === healthWord).length).toBeGreaterThan(0);
+      expect(screen.findByTestId('project-deployments.environment.attention.deploying') !== null).toBe(inProgress);
       expect(screen.findByTestId('session-list-attention-indicator-deployment-earlier-attempt-running_unverified')).toBeNull();
       const recentRowIds = screen.findAll(node => typeof node.props.testID === 'string'
         && node.props.testID.startsWith('project-deployments.receipt.row.') && typeof node.props.onPress === 'function')
@@ -3937,19 +3943,30 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     const detail = definition === 'stored' ? { ...base, content: { ...base.content, definition: { kind: 'stored' as const,
       document: 'services:\n  app:\n    image: nginx:1\n', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
       profiles: [], services: ['app'] } } } : base;
-    const running = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'running-now', state: 'running', operation }) });
-    const { controller } = controllerFor({ detail, receipt: running, history: [running] });
+    const running = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'running-now', state: 'running', operation, settledAtMs: undefined }) });
+    const runtimeMachineId = `machine-running-${operation}`;
+    const targetLinks = detail.targetLinks.map(row => ({ ...row, targetLink: {
+      ...row.targetLink, machines: [runtimeMachineId],
+      members: row.targetLink.members.map(member => ({ ...member, machineId: runtimeMachineId })),
+    } }));
+    const { controller } = controllerFor({ detail: { ...detail, targetLinks }, receipt: running, history: [running] });
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const openReceipt = vi.fn();
     try {
+      await publishMachineInventoryForTest(scope, [createMachineFixture({ id: runtimeMachineId, active: true, activeAt: Date.now() })]);
       const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
         demand={shown} accountId="account-owner" serverId={scope.serverId} phone={false} deploy={vi.fn()}
-        review={noReview} onOpenReceipt={() => {}} />);
+        review={noReview} onOpenReceipt={openReceipt} />);
       const banner = 'project-deployments.environment.attention.deploying';
-      await waitForHomeGovernance(() => expect(screen.findByTestId(banner)).not.toBeNull());
+      await waitForContent(screen, banner);
       const text = screen.findByTestId(banner)!.findAll(node => typeof node.props?.children === 'string')
         .map(node => node.props.children as string).join(' ');
       expect(text).toMatch(new RegExp(`${title} [0-9a-f]{7}`));
       expect(text).not.toContain('A deploy is running');
       expect(screen.findByTestId(`${banner}.secondaryAction`) !== null).toBe(offersQueued);
+      await screen.pressByTestIdAsync(`${banner}.action`);
+      expect(openReceipt).toHaveBeenCalledWith(running.deployment.id);
     } finally { controller.retire(); }
   });
 
