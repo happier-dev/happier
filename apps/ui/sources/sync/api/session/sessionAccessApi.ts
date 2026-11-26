@@ -381,7 +381,7 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
                 }
             }
             if (actionId === 'session.access.grant.set') {
-                const { sessionId, ...grant } = publicInput as Record<string, unknown> & { sessionId: string };
+                const { sessionId, requiredTeamCredential: _requiredTeamCredential, ...grant } = publicInput as Record<string, unknown> & { sessionId: string };
                 const materialized = await materializeSessionGrant({
                     authority,
                     check,

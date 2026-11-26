@@ -353,6 +353,47 @@ describe('Session access exact Account transport', () => {
         expect(env.request.mock.calls.map(([url]) => new URL(url).pathname)).not.toContain('/v1/account/encryption');
     });
 
+    it('preserves the reviewed Review Team credential condition through grant materialization', async () => {
+        const env = await setup();
+        const { executeSessionAccessHttpAction } = await import('./sessionAccessApi');
+        const { createActionExecutor, invokeHostReviewedChildV1 } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { SetSessionAccessGrantRequestV1Schema, SetSessionAccessGrantResponseV1Schema } = await import('@happier-dev/protocol/sessions/access/sessionAccessOperationsV1');
+        const grant = { subject: { kind: 'team' as const, teamId: 'team-1' }, accessLevel: 'edit' as const,
+            canApprovePermissions: false };
+        const input = { sessionId: 'same', ...grant,
+            requiredTeamCredential: { resourceId: 'resource-1', expectedResourceRevision: 7, deliveryMode: 'brokered' as const } };
+        const granted = SetSessionAccessGrantResponseV1Schema.parse({ changed: true,
+            grant: { ...grant, requiredByTeamPolicy: true } });
+        env.request.mockImplementation(async (url) => {
+            const path = new URL(url).pathname;
+            if (path === '/v2/sessions/same') return Response.json({ session: {
+                id: 'same', createdAt: 1, updatedAt: 2, seq: 3, active: true, activeAt: 2,
+                encryptionMode: 'plain', dataEncryptionKey: null,
+                metadataLayoutVersion: 1, metadataVersion: 1, metadata: env.sharedMetadata, ownerMetadata: env.ownerMetadata,
+                agentStateVersion: 1, agentState: null, share: null,
+            } });
+            if (path.endsWith('/turns')) return Response.json({ error: 'not_found' }, { status: 404 });
+            if (path === '/v2/sessions/access-grants/set') return Response.json(granted);
+            throw new Error(`Unexpected Team grant request ${path}`);
+        });
+        // Keep the real reviewed-child issuer, Action parser, and UI crypto adapter;
+        // setup() replaces only retained credentials and HTTP responses.
+        const executor = createActionExecutor({ sessionAccessAction: async args => executeSessionAccessHttpAction({
+            scope: { serverId: env.target.id, accountId: 'target-account' }, availability: 'available',
+            actionId: args.actionId, input: args.input,
+        }) });
+        const result = await invokeHostReviewedChildV1({
+            parent: { actionId: 'review.start', input: { sessionId: 'same', cwd: '/repo', scope: 'repository',
+                reviewers: [{ kind: 'engine', engineId: 'agent:happier.agent.claude/claude' }] } },
+            context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
+            child: { action: 'session.access.grant.set', role: 'session.access.grant.set', input },
+            execute: (childInput, context, childId) => executor.execute(childId, childInput, context),
+        });
+        expect(result).toEqual({ ok: true, result: granted });
+        const call = env.request.mock.calls.find(([url]) => url.endsWith('/v2/sessions/access-grants/set'));
+        expect(SetSessionAccessGrantRequestV1Schema.parse(JSON.parse(String(call?.[1]?.body)))).toEqual(input);
+    });
+
     it('materializes the mounted logical Action into a physical envelope the recipient can open', async () => {
         const env = await setup({ accountEncryption: 'e2ee' });
         const { createSessionAccessClient } = await import('./sessionAccessApi');
