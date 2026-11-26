@@ -7189,9 +7189,10 @@ describe("external Action execution authorization", () => {
         ['POST', '/v1/public-shares', { subject: { kind: 'session', id: ':id' }, lookupId: 'scope-denial-test', keyDerivation: 'fragment_v1', encryptedDataKey: null }],
         ['PUT', '/v2/session-organization/pins/:id', { pinned: false }],
         ['PUT', '/v2/session-organization/attention-standings/:id', { standing: null }],
+        ['GET', '/v2/session-organization', undefined, 'https://denied.example.invalid'],
         ['PUT', '/v2/session-organization/folder-assignments/:id', { folderId: null }],
         ['PUT', '/v2/session-organization/tag-assignments/:id', { tagIds: [] }],
-    ] as const)('preserves authentication errors on declared Session route %s %s', async (method, path, body) => {
+    ] as const)('preserves authentication errors on declared Session route %s %s', async (method, path, body, origin?: string) => {
         const fixture = await createFixture({ qualifiedPat: true });
         const outside = await db.session.create({ data: { accountId: fixture.account.id,
             tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
@@ -7229,11 +7230,13 @@ describe("external Action execution authorization", () => {
             })}` : '';
             for (const token of ['invalid-token', fixture.pat.token]) {
                 const result = await app.inject({ method, url: `${url}${query}`,
-                    ...(payload === undefined ? {} : { payload }), headers: { authorization: `Bearer ${token}` } });
+                    ...(payload === undefined ? {} : { payload }),
+                    headers: { authorization: `Bearer ${token}`, ...(origin === undefined ? {} : { origin }) } });
                 const unscopedRead = path.includes('/data-key/') || path.includes('/subagents/');
                 expect({ status: result.statusCode, body: result.json() }, `${method} ${path}`).toEqual({
                     status: token === 'invalid-token' ? 401 : 403,
                     body: { error: token === 'invalid-token' ? 'invalid_token'
+                        : origin !== undefined ? 'credential_origin_denied'
                         : unscopedRead ? 'present_user_required' : 'credential_scope_denied' },
                 });
             }

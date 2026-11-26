@@ -12,7 +12,8 @@ import { fetchResourceSpaceMemberships } from '@/app/session/organization/organi
 
 import { enforceCurrentAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
-import { PresentUserRequiredResponseSchema, requirePresentUser } from '@/app/api/utils/requirePresentUser';
+import { AccountRouteAuthenticationForbiddenResponseSchema } from '@/app/api/utils/enableAuthentication';
+import { requirePresentUser } from '@/app/api/utils/requirePresentUser';
 import {
     deleteSessionOrganizationFolder,
     deleteSessionOrganizationLabel,
@@ -67,7 +68,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             response: {
                 200: SessionOrganizationSnapshotResponseSchema,
                 400: z.object({ error: z.literal("invalid-session-organization-snapshot-request") }),
-                403: PresentUserRequiredResponseSchema,
+                403: AccountRouteAuthenticationForbiddenResponseSchema,
                 426: AnyClientUpgradeRequiredV1Schema,
             },
         },
@@ -361,7 +362,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             response: {
                 200: z.union([SetSessionFolderAssignmentResponseSchema, SetWorkflowFolderAssignmentResponseV1Schema]),
                 400: z.object({ error: z.literal("invalid-session-folder-assignment") }),
-                403: PresentUserRequiredResponseSchema,
+                403: AccountRouteAuthenticationForbiddenResponseSchema,
                 404: z.object({ error: z.enum(['Session not found', 'Workflow not found']) }),
             },
         },
