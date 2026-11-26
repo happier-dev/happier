@@ -1102,6 +1102,7 @@ const styles = StyleSheet.create((theme) => ({
   section: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: theme.colors.surface.base,
     gap: theme.space.s10,
     minHeight: 52,
     paddingHorizontal: theme.space.s16,
