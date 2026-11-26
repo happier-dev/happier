@@ -22,6 +22,8 @@ import {
   publishLocalVoiceAssistantMessage,
   acknowledgeLocalVoicePendingEnqueue,
   registerLocalVoiceEngineHarnessHooks,
+  LOCAL_VOICE_STT_PACK_ID,
+  sherpaStreamingFinish,
   speechRecStart,
   speechRecStop,
   sessionRpcWithServerScope,
@@ -1262,5 +1264,197 @@ describe('local voice engine stop', () => {
     }
   });
 
+
+  it('does not revive connected state when an in-flight endpoint-driven STT stop settles after stopLocalVoiceSession', async () => {
+    const storage = await getStorage();
+    storage.__setState({
+      settings: {
+        ...storage.getState().settings,
+        voice: {
+          ...storage.getState().settings.voice,
+          providerId: 'local_direct',
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...readLocalDirectVoiceSettings(storage.getState().settings.voice),
+              stt: {
+                ...readLocalDirectVoiceSettings(storage.getState().settings.voice).stt,
+                provider: 'local_neural',
+                localNeural: { assetId: LOCAL_VOICE_STT_PACK_ID, language: 'en' },
+              },
+              tts: {
+                ...readLocalDirectVoiceSettings(storage.getState().settings.voice).tts,
+                autoSpeakReplies: false,
+              },
+              handsFree: {
+                ...readLocalDirectVoiceSettings(storage.getState().settings.voice).handsFree,
+                enabled: false,
+              },
+            } },
+          },
+        },
+      },
+    });
+
+    const sherpaFinishEntered = createDeferred<void>();
+    const sherpaFinishDeferred = createDeferred<{ status: 'finalized'; text: string }>();
+    sherpaStreamingFinish.mockImplementationOnce(() => {
+      sherpaFinishEntered.resolve();
+      return sherpaFinishDeferred.promise;
+    });
+
+    const { getVoiceConversationRuntimeSnapshot, useVoiceConversationRuntimeStore } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
+    const { toggleLocalVoiceTurn, stopLocalVoiceSession } = await import('./localVoiceEngine');
+
+    await toggleLocalVoiceTurn('s1');
+
+    // Begin stopSttAndSend (leaves stopEndpointDrivenCapture pending on sherpaStreamingFinish).
+    const finishTurnPromise = toggleLocalVoiceTurn('s1');
+    await sherpaFinishEntered.promise;
+    expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      controlSessionId: 's1',
+      state: 'transcribing',
+    });
+
+    // Explicit End finishes while stopEndpointDrivenCapture is still settling.
+    await stopLocalVoiceSession();
+    expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      controlSessionId: 's1',
+      state: 'disconnected',
+      error: null,
+    });
+
+    // Late endpoint-driven stop completion (ignore) must not revive connected state.
+    sherpaFinishDeferred.resolve({ status: 'finalized', text: '' });
+    await finishTurnPromise;
+
+    expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+    expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      controlSessionId: 's1',
+      state: 'disconnected',
+      error: null,
+    });
+  });
+
+  it('does not dispatch a late endpoint-driven transcript or revive connected state when a transcript lands during stopLocalVoiceSession', async () => {
+    const storage = await getStorage();
+    storage.__setState({
+      settings: {
+        ...storage.getState().settings,
+        voice: {
+          ...storage.getState().settings.voice,
+          providerId: 'local_direct',
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...readLocalDirectVoiceSettings(storage.getState().settings.voice),
+              stt: {
+                ...readLocalDirectVoiceSettings(storage.getState().settings.voice).stt,
+                provider: 'local_neural',
+                localNeural: { assetId: LOCAL_VOICE_STT_PACK_ID, language: 'en' },
+              },
+              tts: {
+                ...readLocalDirectVoiceSettings(storage.getState().settings.voice).tts,
+                autoSpeakReplies: false,
+              },
+              handsFree: {
+                ...readLocalDirectVoiceSettings(storage.getState().settings.voice).handsFree,
+                enabled: false,
+              },
+            } },
+          },
+        },
+      },
+    });
+
+    const sherpaFinishEntered = createDeferred<void>();
+    const sherpaFinishDeferred = createDeferred<{ status: 'finalized'; text: string }>();
+    sherpaStreamingFinish.mockImplementationOnce(() => {
+      sherpaFinishEntered.resolve();
+      return sherpaFinishDeferred.promise;
+    });
+
+    const { getVoiceConversationRuntimeSnapshot, useVoiceConversationRuntimeStore } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
+    const { toggleLocalVoiceTurn, stopLocalVoiceSession } = await import('./localVoiceEngine');
+
+    await toggleLocalVoiceTurn('s1');
+
+    const finishTurnPromise = toggleLocalVoiceTurn('s1');
+    await sherpaFinishEntered.promise;
+    expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      controlSessionId: 's1',
+      state: 'transcribing',
+    });
+
+    // Explicit End finishes before the in-flight endpoint-driven STT stop settles.
+    await stopLocalVoiceSession();
+    expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      controlSessionId: 's1',
+      state: 'disconnected',
+      error: null,
+    });
+
+    sherpaFinishDeferred.resolve({ status: 'finalized', text: 'late phrase after stop' });
+    await finishTurnPromise;
+
+    expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
+    expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      controlSessionId: 's1',
+      state: 'disconnected',
+      error: null,
+    });
+  });
+
+  it('does not revive connected state from prepareLocalVoiceForReadAloud or abortLocalVoiceTurn after stopLocalVoiceSession', async () => {
+    const storage = await getStorage();
+    storage.__setState({
+      settings: {
+        ...storage.getState().settings,
+        voice: {
+          ...storage.getState().settings.voice,
+          providerId: 'local_direct',
+          providers: {
+            ...storage.getState().settings.voice.providers,
+            local_direct: { schemaVersion: 1, config: {
+              ...readLocalDirectVoiceSettings(storage.getState().settings.voice),
+              stt: {
+                ...readLocalDirectVoiceSettings(storage.getState().settings.voice).stt,
+                provider: 'device',
+              },
+              tts: {
+                ...readLocalDirectVoiceSettings(storage.getState().settings.voice).tts,
+                autoSpeakReplies: false,
+              },
+            } },
+          },
+        },
+      },
+    });
+
+    const { getVoiceConversationRuntimeSnapshot } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
+    const { abortLocalVoiceTurn, prepareLocalVoiceForReadAloud, stopLocalVoiceSession, toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+
+    await toggleLocalVoiceTurn('s1');
+    const stopPromise = stopLocalVoiceSession();
+    emitSpeechRecEvent('end', {});
+    await stopPromise;
+
+    expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      controlSessionId: 's1',
+      state: 'disconnected',
+    });
+
+    await prepareLocalVoiceForReadAloud();
+    expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      controlSessionId: 's1',
+      state: 'disconnected',
+    });
+
+    await abortLocalVoiceTurn('s1');
+    expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
+      controlSessionId: 's1',
+      state: 'disconnected',
+    });
+  });
 
 });

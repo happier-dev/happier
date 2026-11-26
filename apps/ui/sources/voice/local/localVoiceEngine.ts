@@ -1142,6 +1142,7 @@ async function stopAndSendRecordedTurn(
         artifactCleanup.admit(uri);
       }
     } catch {
+      if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
       transitionVoiceRuntimeToIdle({
         controlSessionId: sessionId,
         reason: 'recording_stop_failed',
@@ -1187,6 +1188,7 @@ async function stopAndSendRecordedTurn(
 
     if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
     if (permissionResponse && await permissionResponse(text ?? '')) return;
+    if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
     if (!text) {
       transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
       await resumeNativeVoiceListening(admission, captureAttempt);
@@ -1219,11 +1221,10 @@ async function stopSttAndSend(
   provider: Extract<LocalVoiceCaptureProvider, 'device' | 'local_neural'>,
 ): Promise<void> {
   const sessionId = captureAttempt.controlSessionId;
-  if (
-    !isCaptureAdmissionCurrent(admission)
-    || admission.captureAttempt !== captureAttempt
-    || captureAttempt.provider !== provider
-  ) {
+  if (!isCaptureAttemptCurrent(admission, captureAttempt)) {
+    return;
+  }
+  if (captureAttempt.provider !== provider) {
     transitionVoiceRuntimeToIdle({
       controlSessionId: sessionId,
       reason: 'recording_stop_failed',
@@ -1240,6 +1241,7 @@ async function stopSttAndSend(
     sessionId,
   });
   resetInputLevel();
+  if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
 
   if (endpointDecision.kind === 'ignore') {
     if (voiceConversationRuntimeMachine.getSnapshot().error) {
@@ -1250,6 +1252,7 @@ async function stopSttAndSend(
       return;
     }
     if (!await maybeRearmHandsFreeCapture(admission, endpointDecision.followUp)) {
+      if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
       transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
       await resumeNativeVoiceListening(admission, captureAttempt);
     }
@@ -1263,6 +1266,7 @@ async function stopSttAndSend(
   }
 
   if (permissionResponse && await permissionResponse(endpointDecision.transcript)) return;
+  if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
 
   await runVoiceTurnWithSendFailureHandling(sessionId, (signal) =>
     dispatch({
@@ -1457,7 +1461,14 @@ export async function prepareLocalVoiceForReadAloud(): Promise<void> {
   const controlSessionId = admission?.controlSessionId
     ?? (snapshot.adapterId === null ? snapshot.controlSessionId : null);
   if (!controlSessionId) return;
-  if (snapshot.adapterId === null && snapshot.controlSessionId === controlSessionId) {
+  if (
+    snapshot.adapterId === null
+    && snapshot.controlSessionId === controlSessionId
+    && snapshot.state !== 'disconnected'
+    && snapshot.state !== 'ending'
+    && snapshot.state !== 'error'
+    && snapshot.state !== 'mic_error'
+  ) {
     voiceConversationRuntimeMachine.transitionToConnected({ controlSessionId });
   }
   await localVoiceCaptureOwner.stopSession(controlSessionId, { mode: 'read_aloud' });
@@ -1469,6 +1480,15 @@ export async function abortLocalVoiceTurn(sessionId: string): Promise<void> {
   const resolvedSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
   if (!current.sessionId) return;
   if (current.sessionId !== resolvedSessionId) return;
+  const snapshot = voiceConversationRuntimeMachine.getSnapshot();
+  if (
+    snapshot.state === 'disconnected'
+    || snapshot.state === 'ending'
+    || snapshot.state === 'error'
+    || snapshot.state === 'mic_error'
+  ) {
+    return;
+  }
 
   playbackController.interrupt();
   noteTtsStopped();
