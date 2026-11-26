@@ -1,33 +1,58 @@
 import axios from 'axios';
-import { afterEach, expect, it, vi } from 'vitest';
+import nacl from 'tweetnacl';
+import { encodeBase64 } from '@/api/encryption';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema,
+  ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { afterEach, expect, it, vi, onTestFinished } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PromptLibraryCatalogKeyV1Schema, PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { createPromptBundleInLibrary, type PromptLibraryArtifactStore } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1, SKILL_MACHINE_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
+import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createEmptyActionAutomationPort, createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { tryHandleSkillsCliCommand } from '@/cli/actions/skillsNameArgAdapter';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { reloadConfiguration } from '@/configuration';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
 
 const io = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', () => ({ io }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); process.exitCode = 0; });
 
 async function fixture(approvalRequired = false, invalidReply = false) {
+  installAxiosRequestMethodAdapter();
+  const rawMachineCalls: unknown[] = [];
+  bindApiSessionSocketMock(io, createApiSessionSocketStub({
+    emit: (event, args) => { if (event === SOCKET_RPC_EVENTS.CALL) rawMachineCalls.push(args); },
+    emitWithAck: (event, payload) => { if (event === SOCKET_RPC_EVENTS.CALL) rawMachineCalls.push(payload); },
+  }));
   const base = 'https://skills-cli.example.test', serverId = 'skills-home', identity = 'srv_skills';
   const token = `header.${Buffer.from(JSON.stringify({ sub: 'skills-account', tokenEpoch: 1,
     provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
   const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+  const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(18));
+  const homeDir = await createTempDir('skills-machine-cli-');
+  const env = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+  env.patch({ HAPPIER_HOME_DIR: homeDir });
+  reloadConfiguration();
+  onTestFinished(async () => { env.restore(); reloadConfiguration(); await removeTempDir(homeDir); });
+  const profile = await seedTestServerProfile({ id: serverId, homeId: identity, serverUrl: base });
   const actionsSettingsV1 = { v: 1 as const, approvalWaivedSurfaces: approvalRequired ? {} : {
     'skills.machine.install': ['cli' as const], 'skills.machine.uninstall': ['cli' as const],
   } };
@@ -49,9 +74,9 @@ async function fixture(approvalRequired = false, invalidReply = false) {
   };
   await createPromptBundleInLibrary({ store, request: { title: 'review', bundleSchemaId: 'skills.skill_md_v1',
     entries: [{ path: 'SKILL.md', contentKind: 'utf8', contentBase64: Buffer.from('---\nname: review\ndescription: Review changes\n---\nRead the patch.').toString('base64') }] } });
-  const reads: string[] = [], requests: Array<Readonly<{ method: string; params: unknown }>> = [];
-  // Home HTTP and Socket.IO are the substituted boundaries. The ordinary CLI
-  // factory, credential lifetime, library codecs, admission, and exact RPC stay real.
+  const reads: string[] = [], requests: Array<Readonly<{ actionId: string; input: unknown }>> = [];
+  // Home HTTP is the substituted boundary. The CLI, library codecs, root
+  // admission, requester sealing and response validation stay real.
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     const target = new URL(String(url)); expect(target.origin).toBe(base); reads.push(target.pathname);
     const path = target.pathname;
@@ -71,11 +96,47 @@ async function fixture(approvalRequired = false, invalidReply = false) {
     if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
     if (path === '/v1/machines/selected-machine') return { status: 200, data: { machine: {
       id: 'selected-machine', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, active: true,
+      kind: 'persistent', installationId: 'skills-installation', installationPublicKey: encodeBase64(installation.publicKey),
       revokedAt: null, replacedByMachineId: null,
+      access: { custodian: { accountId: 'skills-account', displayName: 'Skills owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
     } } };
     throw new Error(`Unexpected Skills CLI Home read: ${path}`);
   });
   vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+    const path = new URL(String(url)).pathname;
+    if (path.startsWith('/v1/actions/')) {
+      const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(carrier.envelope);
+      const actionId = path.split('/')[3]!;
+      expect(envelope.target).toEqual({ kind: 'machine', machineId: 'selected-machine' });
+      if (path.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'skills-admission', binding: {
+        accountId: 'skills-account', custodianAccountId: 'skills-account', authentication: { kind: 'account', tokenEpoch: 1 },
+        accountEncryptionMode: 'plain', serverIdentityId: identity, machineId: 'selected-machine', installationId: 'skills-installation',
+        actionId, requestId: envelope.requestId, target: envelope.target, idempotencyKey: envelope.idempotencyKey,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        ...(envelope.machineRuntimeDemand === undefined ? {} : { machineRuntimeDemand: envelope.machineRuntimeDemand }),
+      } } };
+      expect(carrier.executionAuthorization?.token).toBe('skills-admission');
+      if (actionId !== 'skills.machine.install' && actionId !== 'skills.machine.uninstall') throw new Error('Unexpected Skills Action');
+      const id = actionId;
+      const input = SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1[id].parse(envelope.input);
+      if (approvalRequired) return { status: 200, data: ExternalActionResponseEnvelopeV1Schema.parse({
+        v: 1, actionId, requestId: envelope.requestId, execution: { ok: true,
+          result: { kind: 'approval_request_created', artifactId: '00000000-0000-4000-8000-000000000002' } },
+      }) };
+      requests.push({ actionId: id, input });
+      // The receiving Action owner settles filesystem-adapter acknowledgements
+      // before Home relays its public result. Keep that strict owner real.
+      const receiver = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+        actionAutomations: createEmptyActionAutomationPort('skills-account'),
+        skillMachineActionExecute: async () => invalidReply ? { invalid: true }
+          : SKILL_MACHINE_ACTION_OUTPUT_SCHEMAS_V1[id].parse(id === 'skills.machine.install'
+            ? { receipts: [{ root: '/skills', path: '/skills/review', digest: 'sha256:review' }] } : { removed: ['/skills/review'] }),
+      });
+      const execution = await receiver.execute(id, input, { surface: 'cli', authority: 'present_user',
+        bypassApprovals: true, actionRequestId: envelope.requestId });
+      return { status: 200, data: { v: 1, actionId, requestId: envelope.requestId, execution } };
+    }
     expect(String(url)).toBe(`${base}/v1/artifacts`);
     const input = ArtifactJsonCreateHttpInputV1Schema.parse(body);
     artifacts.push({ id: input.id, header: input.header, body: input.body, dataEncryptionKey: input.dataEncryptionKey,
@@ -84,36 +145,21 @@ async function fixture(approvalRequired = false, invalidReply = false) {
     return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
   });
   vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
-  bindApiSessionSocketMock(io, createApiSessionSocketStub({ emitWithAck: (event, raw) => {
-    if (event !== SOCKET_RPC_EVENTS.CALL || !raw || typeof raw !== 'object'
-      || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) throw new Error('Unexpected Skills CLI socket request');
-    requests.push({ method: raw.method, params: raw.params });
-    const id = raw.method.slice('selected-machine:'.length);
-    if (id !== 'skills.machine.install' && id !== 'skills.machine.uninstall') throw new Error('Unexpected Skills machine method');
-    const input = SKILL_MACHINE_ACTION_INPUT_SCHEMAS_V1[id].parse(raw.params);
-    expect(input.machineId).toBe('selected-machine');
-    const result = invalidReply ? { invalid: true } : SKILL_MACHINE_ACTION_OUTPUT_SCHEMAS_V1[id].parse(id === 'skills.machine.install'
-      ? { receipts: [{ root: '/skills', path: '/skills/review', digest: 'sha256:review' }] } : { removed: ['/skills/review'] });
-    return { ok: true, result };
-  } }));
   const run = (leaf: 'machine-install' | 'machine-uninstall') => tryHandleSkillsCliCommand({
     argv: ['skills', leaf, 'review', '--machine', 'selected-machine', '--server-id', serverId,
       ...(leaf === 'machine-install' ? ['--agent', 'claude', '--agent', 'codex'] : ['--force']), '--json'],
     actionExecutionDeps: {
       readCredentialsForServerIdFn: async () => credentials,
-      getServerProfileFn: async () => ({ id: serverId, name: 'Skills Home', serverUrl: base, webappUrl: base,
-        createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: {
-          v: 1, homeServerIdentityId: identity, canonicalServerUrl: base, revision: 1, endpoints: [{ kind: 'https', url: base }],
-        } }),
+      getServerProfileFn: async () => profile,
       createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
         actionsSettingsProvider: createActionSettingsProvider({ scopeKey: runWithServerHttpBaseUrl(base, () => resolveAccountSettingsScopeKey(credentials)) }),
       }),
     },
   });
-  return { run, reads, requests, artifactId: artifacts[0]!.id };
+  return { run, reads, requests, rawMachineCalls, artifactId: artifacts[0]!.id };
 }
 
-it('mounts ordinary Skills machine CLI commands through the exact RPC after real library name resolution', async () => {
+it('mounts ordinary Skills machine CLI commands through admitted Home delivery after real library name resolution', async () => {
   const owner = await fixture(), output = captureConsoleJsonOutput<unknown>();
   try {
     expect(await owner.run('machine-install')).toBe(true);
@@ -121,14 +167,15 @@ it('mounts ordinary Skills machine CLI commands through the exact RPC after real
     expect(await owner.run('machine-uninstall')).toBe(true);
     expect(output.json()).toMatchObject({ ok: true, data: { removed: ['/skills/review'] } });
     expect(owner.requests).toEqual([
-      { method: 'selected-machine:skills.machine.install', params: { skillId: owner.artifactId, machineId: 'selected-machine', agents: ['claude', 'codex'] } },
-      { method: 'selected-machine:skills.machine.uninstall', params: { skillId: owner.artifactId, machineId: 'selected-machine', force: true } },
+      { actionId: 'skills.machine.install', input: { skillId: owner.artifactId, machineId: 'selected-machine', agents: ['claude', 'codex'] } },
+      { actionId: 'skills.machine.uninstall', input: { skillId: owner.artifactId, machineId: 'selected-machine', force: true } },
     ]);
     expect(owner.reads).toContain(`/v1/artifacts/${owner.artifactId}`);
+    expect(owner.rawMachineCalls).toEqual([]);
   } finally { output.restore(); }
 });
 
-it('keeps default machine Action approval admission ahead of its RPC effect', async () => {
+it('surfaces the Home machine Action approval without a machine effect', async () => {
   const owner = await fixture(true), output = captureConsoleJsonOutput<unknown>();
   vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
