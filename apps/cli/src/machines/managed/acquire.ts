@@ -124,16 +124,23 @@ function isOpaqueManagedAdmission(admission: ManagedAdmissionOutputV1): admissio
 
 const normalizeManagedPresetCarrier = openManagedPresetCarrier;
 
+function unavailableProvisionerCode(registry: ResolvedExecutablePluginRuntimeRegistry, pluginId: string): string {
+    const selection = registry.readAccountExecutionSelection?.(pluginId);
+    return selection?.kind === 'unavailable' ? selection.code : 'provider_unavailable';
+}
+
 async function qualifyManagedPresetAcquire(input: ManagedMachineAcquisitionDriverInput,
     machine: Pick<ManagedMachineFullV1, 'launch'>): Promise<MachineProvisionerContributionV1> {
     const candidates = (registry: ResolvedExecutablePluginRuntimeRegistry) => registry.contributes.machineProvisioners?.map(candidate => ({
         contribution: candidate.identity, descriptor: candidate.definition,
     })) ?? [];
     const declared = readManagedOpaquePresetProvisionerV1({ launch: machine.launch, provisioners: candidates(input.runtimeRegistry) });
-    if (!declared?.actions.acquire) throw new ManagedMachineControllerError('provider_unavailable');
+    if (!declared?.actions.acquire) throw new ManagedMachineControllerError(
+        unavailableProvisionerCode(input.runtimeRegistry, machine.launch.provider.pluginId));
     const roleHost = await resolveManagedRoleRuntime(input, machine.launch.provider.pluginId, declared.actions.acquire);
     const qualification = qualifyManagedOpaquePresetProvisionerV1({ launch: machine.launch, provisioners: candidates(roleHost.runtimeRegistry) });
-    if (qualification.kind === 'refused') throw new ManagedMachineControllerError('provider_unavailable');
+    if (qualification.kind === 'refused') throw new ManagedMachineControllerError(
+        unavailableProvisionerCode(roleHost.runtimeRegistry, machine.launch.provider.pluginId));
     const provider = qualification.provisioner;
     await resolveManagedRoleCredentialAuthorizations(roleHost, machine.launch.provider, provider.actions.acquire,
         machine.launch.credentials, { descriptor: provider, launch: machine.launch.choices });
@@ -1377,6 +1384,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             }
             if (action === 'machines.provisioners.check' || action === 'machines.provisioners.options') {
                 const probe = ManagedMachineActionInputSchemasV1[action].parse(parsed);
+                const selection = input.runtimeRegistry.readAccountExecutionSelection?.(probe.contribution.pluginId);
+                if (selection?.kind === 'unavailable') throw new ManagedMachineControllerError(selection.code);
                 const entries = (input.runtimeRegistry.contributes.machineProvisioners ?? []).flatMap(provider => {
                     const occurrenceId = input.runtimeRegistry.readPluginOccurrenceId?.(provider.pluginId);
                     return occurrenceId ? [{ contribution: provider.identity, occurrenceId, descriptor: provider.definition,
@@ -1391,7 +1400,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const localId = provider.descriptor.actions[role]!;
                 const roleHost = await resolveManagedRoleRuntime(input, pluginId, localId);
                 const roleOccurrenceId = roleHost.runtimeRegistry.readPluginOccurrenceId?.(pluginId);
-                if (!roleOccurrenceId) throw new ManagedMachineControllerError('provider_unavailable');
+                if (!roleOccurrenceId) throw new ManagedMachineControllerError(unavailableProvisionerCode(roleHost.runtimeRegistry, pluginId));
                 const authorizations = await resolveManagedRoleCredentialAuthorizations(roleHost, provider.contribution, localId, probe.credentials,
                     { descriptor: provider.descriptor, launch: 'selectors' in probe ? probe.selectors : undefined });
                 if (role === 'options' && isMachineProvisionerWorkspaceAttachmentV1(provider.descriptor, roleInput, 'options')) {

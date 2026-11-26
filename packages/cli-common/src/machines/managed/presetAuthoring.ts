@@ -118,6 +118,7 @@ export async function prepareManagedMachinePresetAuthoringV1(
     return failure('invalid_request');
   }
   const entries = await deps.readSelectedProvisioners(content.launch.provider.pluginId);
+  if (entries && 'ok' in entries) return entries;
   const qualification = qualifyManagedOpaquePresetProvisionerV1({ launch: content.launch, provisioners: entries ?? [] });
   if (qualification.kind === 'refused') return failure(qualification.code);
   const descriptor = qualification.provisioner;

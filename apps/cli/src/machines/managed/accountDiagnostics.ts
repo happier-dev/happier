@@ -24,7 +24,7 @@ export async function readCliManagedAccountGuestDiagnostics(input: Readonly<{
             if (!provisioner || !requestId || !input.context.hostReviewedChild) throw new ManagedMachineControllerError('admission_unavailable');
             const selected = await readCurrentAccountPluginExecutionSelection({ pluginId: input.machine.launch.provider.pluginId,
                 credentials: input.credentials, serverUrl: input.serverUrl, signal: input.signal });
-            if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+            if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
             const currentProvisioner = resolveCliManagedAccountProvisioner(input.machine, selected);
             if (!currentProvisioner) throw new ManagedMachineControllerError('provider_unavailable');
             const invoke = createCliManagedAccountNativeInvocation({ ...input, provisioner: currentProvisioner, selected, requestId });

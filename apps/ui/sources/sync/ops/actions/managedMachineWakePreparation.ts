@@ -98,10 +98,7 @@ export function createUiManagedMachineWakeReads(account: LazyActionAccountContex
                     ...(code === 'cancelled' ? {} : { details: { remedy: 'retry' as const } }) };
             }
         },
-        readSelectedProvisioners: async pluginId => {
-            const entries = await readUiManagedProvisioners(account, pluginId);
-            return 'ok' in entries ? null : entries;
-        },
+        readSelectedProvisioners: pluginId => readUiManagedProvisioners(account, pluginId),
         readSessionMachineId: async (target, context) => {
             try {
                 const read = await runWithServerRequestAuthorityForServerAccountScope({

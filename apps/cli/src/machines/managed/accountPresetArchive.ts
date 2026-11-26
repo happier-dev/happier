@@ -23,7 +23,7 @@ async function readArchivePreparationProvider(launch: ManagedMachinePresetPrepar
     host: ArchiveAccount, signal?: AbortSignal) {
     const selected = await readCurrentAccountPluginExecutionSelection({ pluginId: launch.provider.pluginId,
         credentials: host.credentials, serverUrl: host.serverUrl, signal });
-    if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+    if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
     const provisioner = MachineProvisionerContributionV1Schema.safeParse(selected.manifest.contributes.machineProvisioners
         .find(candidate => candidate.id === launch.provider.localId));
     if (!provisioner.success || provisioner.data.schemaVersion !== launch.schemaVersion || !provisioner.data.preparation) {

@@ -33,7 +33,8 @@ export async function prepareCliManagedMachinePresetAuthoring(
     readSelectedProvisioners: async pluginId => {
       const selected = await readCurrentAccountPluginExecutionDeclarations({ credentials, serverUrl: input.serverUrl,
         family: 'machineProvisioners', pluginId, signal: request.context.signal });
-      return selected.kind === 'available' ? projectAccountManagedProvisioners(selected.declarations) : null;
+      return selected.kind === 'available' ? projectAccountManagedProvisioners(selected.declarations)
+        : { ok: false, errorCode: selected.code, error: selected.code };
     }, randomBytes,
   });
 }

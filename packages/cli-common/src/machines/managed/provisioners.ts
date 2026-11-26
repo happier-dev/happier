@@ -16,7 +16,8 @@ import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/m
 
 export type ManagedProvisionerDiscoveryAction = 'machines.provisioners.list' | 'machines.provisioners.check' | 'machines.provisioners.options';
 export type ManagedProvisionerDiscoveryEntry = MachineProvisionersListResultV1['provisioners'][number];
-export type ManagedProvisionerSelectionRead = (pluginId: string) => Promise<readonly ManagedProvisionerDiscoveryEntry[] | null>;
+export type ManagedProvisionerSelection = readonly ManagedProvisionerDiscoveryEntry[] | ActionExecuteFailure | null;
+export type ManagedProvisionerSelectionRead = (pluginId: string) => Promise<ManagedProvisionerSelection>;
 export type ManagedOpaquePresetProvisionerCandidateV1 = Pick<ManagedProvisionerDiscoveryEntry, 'contribution' | 'descriptor'>;
 
 type RetainedProvisionerEntry = ManagedOpaquePresetProvisionerCandidateV1 | Readonly<{
@@ -121,13 +122,14 @@ export async function prepareManagedAcquireProvisionerAdmissionV1(
     const acquisition = request.input as ManagedAcquireInputV1;
     const facts = 'reviewedFacts' in acquisition ? acquisition.reviewedFacts : undefined;
     if (!facts?.provisioner) return null;
-    return await matchesSelectedProvisioner(facts.launch.provider, facts.provisioner, readSelected) ? null
+    const entries = await readSelected(facts.launch.provider.pluginId);
+    if (entries && 'ok' in entries) return entries;
+    return matchesSelectedProvisioner(facts.launch.provider, facts.provisioner, entries) ? null
         : { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
 }
 
-async function matchesSelectedProvisioner(provider: ManagedProvisionerDiscoveryEntry['contribution'],
-    descriptor: MachineProvisionerContributionV1, readSelected: ManagedProvisionerSelectionRead): Promise<boolean> {
-    const entries = await readSelected(provider.pluginId);
+function matchesSelectedProvisioner(provider: ManagedProvisionerDiscoveryEntry['contribution'],
+    descriptor: MachineProvisionerContributionV1, entries: readonly ManagedProvisionerDiscoveryEntry[] | null): boolean {
     const selected = entries?.find(entry => sameStrictJsonValue(entry.contribution, provider));
     return Boolean(selected && sameStrictJsonValue(selected.descriptor, descriptor));
 }
@@ -143,9 +145,11 @@ export async function prepareManagedPowerProvisionerAdmissionV1(machine: Managed
     if (machine.controller) return null;
     if (isManagedOpaquePresetMachineV1(machine)) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
     const resize = isManagedResizeActionIdV1(actionId);
-    const selected = resize ? (await readSelected(machine.launch.provider.pluginId))?.find(entry => sameStrictJsonValue(entry.contribution, machine.launch.provider)) : undefined;
+    const entries = resize || machine.reviewedFacts?.provisioner ? await readSelected(machine.launch.provider.pluginId) : null;
+    if (entries && 'ok' in entries) return entries;
+    const selected = resize ? entries?.find(entry => sameStrictJsonValue(entry.contribution, machine.launch.provider)) : undefined;
     const provisioner = resize ? selected?.descriptor : machine.reviewedFacts?.provisioner;
-    if (!provisioner || !resize && !await matchesSelectedProvisioner(machine.launch.provider, provisioner, readSelected))
+    if (!provisioner || !resize && !matchesSelectedProvisioner(machine.launch.provider, provisioner, entries))
         return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     return { children: [...readMachineProvisionerActionRolesV1(provisioner)
         .filter(({ role }) => resize ? role === 'resize' || role === 'power' || role === 'inspect'

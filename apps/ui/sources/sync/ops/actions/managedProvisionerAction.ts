@@ -80,10 +80,8 @@ export async function prepareUiManagedProvisionerAdmission(
                     withE2eeAccountKey: operation => custody.mode === 'e2ee' ? custody.withAccountKey(operation) : null,
                     readRecipientCensus: census => requestManagedMachinePresetRecipientCensusInContext({ homeId: census.homeId,
                         account, signal: request.context.signal }, census) },
-                readSelectedProvisioners: async pluginId => {
-                    const selected = await readUiManagedProvisioners(account, pluginId);
-                    return 'ok' in selected ? null : selected;
-                }, randomBytes: getRandomBytes,
+                readSelectedProvisioners: pluginId => readUiManagedProvisioners(account, pluginId),
+                randomBytes: getRandomBytes,
             });
         } finally { custody.dispose(); }
     }
@@ -153,11 +151,7 @@ export async function prepareUiManagedProvisionerAdmission(
                 } finally { active = false; }
             } };
     }
-    const readSelected = async (pluginId: string) => {
-        if (!account) return null;
-        const entries = await readUiManagedProvisioners(account, pluginId);
-        return 'ok' in entries ? null : entries;
-    };
+    const readSelected = async (pluginId: string) => account ? readUiManagedProvisioners(account, pluginId) : null;
     if (request.actionId === 'machines.managed.power.set' || request.actionId === MANAGED_RESIZE_ACTION_ID_V1 || request.actionId === 'machines.managed.inspect'
         || request.actionId === 'machines.managed.bootstrap.retry' || request.actionId === 'machines.managed.delete'
         || request.actionId === 'machines.managed.cancel') {

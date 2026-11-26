@@ -32,7 +32,7 @@ export async function executeCliManagedAccountInspect(input: Readonly<{
         resolveProvisioner: async () => {
             selected = await readCurrentAccountPluginExecutionSelection({ pluginId: machine.launch.provider.pluginId,
                 credentials: input.credentials, serverUrl: input.serverUrl, signal: input.signal });
-            if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+            if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
             return provisioner = resolveCliManagedAccountProvisioner(machine, selected);
         },
         home: {
@@ -48,7 +48,7 @@ export async function executeCliManagedAccountInspect(input: Readonly<{
                 if (!provisioner) throw new ManagedMachineControllerError('provider_unavailable');
                 selected ??= await readCurrentAccountPluginExecutionSelection({ pluginId: machine.launch.provider.pluginId,
                     credentials: input.credentials, serverUrl: input.serverUrl, signal: input.signal });
-                if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+                if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
                 native = createCliManagedAccountNativeInvocation({ ...input, machine, provisioner, selected, requestId: retained.requestId });
             }
             return await native(role, body, io);

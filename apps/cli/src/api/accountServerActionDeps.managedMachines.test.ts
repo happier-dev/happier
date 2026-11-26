@@ -806,7 +806,8 @@ describe('managed inventory CLI Home adapter', () => {
         details: { name: 'PluginError', code: authored.errorCode, message: authored.error } });
   });
 
-  it.each(['bound', 'pending-power', 'pending-acquisition', 'denied-read', 'missing-reviewed-child', 'wrong-purpose'] as const)('inspects Account native power and acquisition without a second effect and reports through retained correlation (%s)', async state => {
+  it.each(['bound', 'pending-power', 'pending-acquisition', 'denied-read', 'missing-reviewed-child', 'wrong-purpose',
+    'disabled-plugin', 'unavailable-release'] as const)('inspects Account native power and acquisition through the retained provisioner plan (%s)', async state => {
     const pending = state === 'pending-power';
     const acquiring = state === 'pending-acquisition';
     const credentialOwner = createConnectedAccountPurposeBindingOwner({
@@ -835,8 +836,9 @@ describe('managed inventory CLI Home adapter', () => {
         retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
     app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () => ({
       availabilityCursor: 1, hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
-      intent: { pluginId: provider.pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'intent-1' },
-      release: { ref: { pluginId: provider.pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+      intent: { pluginId: provider.pluginId, desiredVersion: '1.0.0', enabled: state !== 'disabled-plugin',
+        offlineUiHosting: 'enabled', writableCollections: [], revision: 'intent-1' },
+      release: state === 'unavailable-release' ? null : { ref: { pluginId: provider.pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
         normalizedManifest: manifest, collectionContracts: [], uiSlots: [],
         packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
       uiArtifacts: [], packageAssets: [],
@@ -861,6 +863,17 @@ describe('managed inventory CLI Home adapter', () => {
       settleManagedNativeOperation: settlement => { settlements.push(settlement); } };
     const plan = await prepareCliManagedProvisionerAdmission({ actionId: 'machines.managed.inspect', input: inspectInput, context: actionContext },
       { credentials: { token: 'bound', encryption: null }, serverUrl: 'http://home.test', managedMachineAction: deps.managedMachineAction });
+    if (state === 'disabled-plugin' || state === 'unavailable-release') {
+      const code = state === 'disabled-plugin' ? 'plugin_disabled' : 'plugin_release_unavailable';
+      expect(plan).toEqual({ ok: false, errorCode: code, error: code });
+      const cli = executor({ credentials: { token: 'bound', encryption: null } });
+      for (const surface of ['cli', 'agent'] as const) {
+        await expect(invoke(cli, surface, 'machines.managed.inspect', inspectInput))
+          .resolves.toMatchObject({ ok: false, errorCode: code });
+      }
+      expect(paths.some(path => path.endsWith('/controller/context'))).toBe(false);
+      return;
+    }
     if (state === 'denied-read') {
       expect(plan).toEqual({ children: [] });
       expect(await deps.managedMachineAction!({ actionId: 'machines.managed.inspect', input: inspectInput, context: actionContext }))

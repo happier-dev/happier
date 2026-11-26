@@ -1,6 +1,5 @@
-import { resolveRetainedMachineProvisioner } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { prepareManagedAcquireProvisionerAdmissionV1, prepareManagedPowerProvisionerAdmissionV1, projectAccountManagedProvisioners,
-    type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
+    resolveRetainedMachineProvisioner, type ManagedProvisionerSelection } from '@happier-dev/cli-common/machines/managed/provisioners';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { StoredCredentials } from '@/persistence';
 import { readCurrentAccountPluginExecutionDeclarations } from '@/plugins/runtime/accountPluginActivationSource';
@@ -44,7 +43,9 @@ export async function prepareCliManagedProvisionerAdmission(
         });
         if (!content.prepared || !managedMachinePresetPreparationNeedsNativeCleanupV1(content.prepared)) return null;
         const launch = content.prepared.binding.configuration.launch;
-        const selected = resolveRetainedMachineProvisioner(await readSelected(launch.provider.pluginId) ?? undefined, launch);
+        const entries = await readSelected(launch.provider.pluginId);
+        if (entries && 'ok' in entries) return entries;
+        const selected = resolveRetainedMachineProvisioner(entries ?? undefined, launch);
         if (!selected?.descriptor.preparation) return { ok: false as const, errorCode: 'provider_unavailable', error: 'provider_unavailable' };
         return { children: readMachineProvisionerActionRolesV1(selected.descriptor)
             .filter(({ role }) => role === 'preparationInspect' || role === 'preparationDestroy')
@@ -83,13 +84,14 @@ export async function prepareCliManagedProvisionerAdmission(
 }
 
 export async function readCliManagedProvisioners(pluginId: string,
-    account: Readonly<{ credentials?: StoredCredentials | null; serverUrl: string }>, signal?: AbortSignal): Promise<readonly ManagedProvisionerDiscoveryEntry[] | null> {
+    account: Readonly<{ credentials?: StoredCredentials | null; serverUrl: string }>, signal?: AbortSignal): Promise<ManagedProvisionerSelection> {
     if (!account.credentials) return null;
     try {
         const selected = await readCurrentAccountPluginExecutionDeclarations({ pluginId, family: 'machineProvisioners',
             credentials: account.credentials, serverUrl: account.serverUrl, ...(signal ? { signal } : {}),
         });
-        return selected.kind !== 'available' ? null : projectAccountManagedProvisioners(selected.declarations);
+        return selected.kind === 'available' ? projectAccountManagedProvisioners(selected.declarations)
+            : { ok: false, errorCode: selected.code, error: selected.code };
     } catch {
         return null;
     }

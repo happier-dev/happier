@@ -24,7 +24,7 @@ export async function executeCliManagedAccountResize(input: Omit<Parameters<type
     if (machine.controller) throw new ManagedMachineControllerError('controller_unavailable');
     const selected = await readCurrentAccountPluginExecutionSelection({ pluginId: machine.launch.provider.pluginId,
         credentials: input.credentials, serverUrl: input.serverUrl, signal: input.signal });
-    if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+    if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
     const provisioner = resolveCliManagedAccountProvisioner(machine, selected);
     const size = hydrator.isOpaque(machine)
         ? await hydrator.prepareResize(machine, 'presetContentOverride' in input.body ? input.body.presetContentOverride : undefined, input.signal)

@@ -42,7 +42,7 @@ export async function executeCliManagedAccountPower(input: Readonly<{
     // owns native placement and materialization at its ordinary boundary.
     const selected = await readCurrentAccountPluginExecutionSelection({ pluginId: machine.launch.provider.pluginId,
         credentials: input.credentials, serverUrl: input.serverUrl, signal: input.signal });
-    if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+    if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
     const provisioner = resolveCliManagedAccountProvisioner(machine, selected);
     const correlation = ManagedControllerCurrentnessV1Schema.parse({ homeId: machine.homeId, managedId: machine.id,
         expectedIntentRevision: machine.intentRevision, requestId });

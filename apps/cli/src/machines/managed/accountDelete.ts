@@ -37,7 +37,7 @@ export async function executeCliManagedAccountDelete(input: Omit<Parameters<type
     if (!machine.reviewedFacts?.provisioner) {
         selected = await readCurrentAccountPluginExecutionSelection({ pluginId: machine.launch.provider.pluginId,
             credentials: input.credentials, serverUrl: input.serverUrl, signal: input.signal });
-        if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+        if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
     }
     const provisioner = machine.reviewedFacts?.provisioner
         ?? (selected?.kind === 'available' ? resolveCliManagedAccountProvisioner(machine, selected) : undefined);
@@ -47,7 +47,7 @@ export async function executeCliManagedAccountDelete(input: Omit<Parameters<type
     const invoke: ManagedNativeInvocation = async (role, body, io) => {
         selected ??= await readCurrentAccountPluginExecutionSelection({ pluginId: machine.launch.provider.pluginId,
             credentials: input.credentials, serverUrl: input.serverUrl, signal: input.signal });
-        if (selected.kind !== 'available') throw new ManagedMachineControllerError('provider_unavailable');
+        if (selected.kind !== 'available') throw new ManagedMachineControllerError(selected.code);
         const native = createCliManagedAccountNativeInvocation({ machine, provisioner, selected,
             context: input.context, signal: input.signal, requestId });
         return native(role, body, io);
