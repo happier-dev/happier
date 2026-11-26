@@ -594,7 +594,11 @@ async function completeCommittedTransition(params: Readonly<{
   resolveAuthorizationHeaders?: Parameters<typeof sendSessionMessage>[0]['resolveAuthorizationHeaders'];
   admissionFence: Readonly<{ serviceId: string; groupId: string; epochId: string }> | null;
   inputAdmissionTimeoutMs: number;
-  firstLaunch?: Readonly<{ agentId: string; seed: ReplaySeedV1 | null }>;
+  firstLaunch?: Readonly<{
+    agentId: string;
+    seed: ReplaySeedV1 | null;
+    resolveCurrentAgentId: (metadata: Record<string, unknown>) => string | null;
+  }>;
   /** Proof that the target current view is committed; the source of every arm here. */
   committed: SessionAgentTransitionCurrentViewCommitted;
 }>): Promise<SessionAgentTransitionResultV1> {
@@ -669,7 +673,7 @@ async function completeCommittedTransition(params: Readonly<{
     const firstLaunch = params.firstLaunch;
     const resumed = firstLaunch && targetSession.rawSession.active === false
       && typeof targetSession.rawSession.pendingVersion === 'number'
-      && resolveCurrentAgentId(targetMetadata) === firstLaunch.agentId
+      && firstLaunch.resolveCurrentAgentId(targetMetadata) === firstLaunch.agentId
       && isDeepStrictEqual(targetMetadata.replaySeedV1, firstLaunch.seed ?? undefined)
       ? await runFirstTransitionLaunch({
           sessionId, localId,
@@ -1322,6 +1326,8 @@ export async function runSessionAgentTransition(
     admissionFence: sourceFence,
     inputAdmissionTimeoutMs,
     committed: stopped.cutoverCommitted(),
-    ...(returnPlan?.noNativeReturnRecord ? { firstLaunch: { agentId: target.agentId, seed: brief.seed } } : {}),
+    ...(returnPlan?.noNativeReturnRecord
+      ? { firstLaunch: { agentId: target.agentId, seed: brief.seed, resolveCurrentAgentId } }
+      : {}),
   });
 }

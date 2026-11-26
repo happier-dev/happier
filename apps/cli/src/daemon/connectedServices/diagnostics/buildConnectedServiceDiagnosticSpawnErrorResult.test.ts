@@ -333,7 +333,7 @@ describe('readConnectedServiceSpawnFailureLogFields', () => {
     if (!result) throw new Error('expected a spawn error result');
 
     expect(readConnectedServiceSpawnFailureLogFields(result)).toEqual({
-      serviceId: 'claude-subscription',
+      serviceId: 'happier.agent.claude/claude-subscription',
       profileId: 'Claude2',
       reason: 'spawn_preflight',
       refreshStatus: 'refresh_failed',

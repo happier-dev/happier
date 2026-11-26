@@ -8,16 +8,22 @@ import {
 } from '@happier-dev/protocol';
 
 import { runSessionAgentTransition } from './sessionAgentTransitionCoordinator';
+import { observeTransitionTargetSpawn, resolveFailedFirstLaunchAccountSwitch } from './failedFirstLaunch';
+import * as pendingQueueTransport from '@/api/session/pendingQueueV2Transport';
+import { buildProviderPromptWithReplaySeed, readReplaySeedV1FromMetadata } from '@/agent/runtime/replaySeed/replaySeedV1';
 import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { buildSpawnResumeUnreachableErrorResult } from '@/daemon/connectedServices/buildSpawnResumeUnreachableErrorResult';
 import { ConnectedServiceSpawnResumeUnreachableError } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import {
+  buildRawSession,
   buildTransitionRequest,
+  CLAUDE_SOURCE_METADATA,
   createTransitionDepsHarness,
   TEST_CREDENTIALS,
   TEST_LOCAL_ID,
+  TEST_SESSION_ID,
   type TransitionDepsHarness,
 } from './sessionAgentTransitionTestkit';
 
@@ -75,6 +81,69 @@ async function runTransition(harness: TransitionDepsHarness): Promise<SessionAge
 }
 
 describe('section 7.5 recovery projection', () => {
+  it('keeps the first preflight-refused launch recoverable with the committed handoff and input', async () => {
+    const seed = {
+      v: 1 as const,
+      seedText: 'Prior work from Claude',
+      sourceSessionId: TEST_SESSION_ID,
+      sourceCutoffSeqInclusive: 22,
+      createdAtMs: 1,
+    };
+    let metadata: Record<string, unknown> = CLAUDE_SOURCE_METADATA;
+    let pending: { localId?: string; message: string } | undefined;
+    const input = buildTransitionRequest().input!;
+    const harness = createTransitionDepsHarness({
+      buildActivationBrief: async () => ({ status: 'available', seed }),
+      resolveSessionTransportContext: async () => ({
+        ok: true,
+        sessionId: TEST_SESSION_ID,
+        rawSession: buildRawSession({
+          active: false,
+          metadata: JSON.stringify(metadata),
+          metadataVersion: 4,
+          pendingVersion: 1,
+        }) as never,
+        mode: 'plain',
+        accountEncryptionCurrentness: { mode: 'plain' },
+        ctx: null,
+      }),
+      decryptOwnerMetadataView: () => metadata,
+      applySessionAgentTransitionCutover: async ({ currentView }) => {
+        if (currentView.kind !== 'legacy_v0') throw new Error('Expected layout-0 cutover');
+        metadata = JSON.parse(currentView.metadataCiphertext);
+        return { ok: true, dividerSeq: 77 };
+      },
+      sendSessionMessage: async ({ localId, message }) => {
+        pending = { localId, message };
+        return { ok: true, sessionId: TEST_SESSION_ID, localId: localId!, waited: false };
+      },
+      requestInactiveSessionResume: async ({ sessionId, transitionLaunchNonce }) => {
+        observeTransitionTargetSpawn(sessionId, transitionLaunchNonce)?.();
+        return { ok: false, code: 'resume_failed', message: 'Credential preflight refused' };
+      },
+    });
+    const eligibility = vi.spyOn(pendingQueueTransport, 'readPendingQueueV2ActivationEligibilityFromServer')
+      .mockImplementation(async ({ requestId }) => pending?.localId === requestId ? 'eligible' : 'missing');
+    try {
+      expect(await runTransition(harness)).toMatchObject({ code: 'target_start_failed', localId: input.localId });
+      expect(await resolveFailedFirstLaunchAccountSwitch({
+        token: TEST_CREDENTIALS.token,
+        sessionId: TEST_SESSION_ID,
+        agentId: 'codex',
+        active: false,
+        metadataVersion: 4,
+        pendingVersion: 1,
+      })).toBe('retry_original_transition');
+      expect(pending).toEqual({ localId: input.localId, message: input.text });
+      expect(readReplaySeedV1FromMetadata(metadata)).toMatchObject(seed);
+      expect(buildProviderPromptWithReplaySeed({ metadata, userText: input.text, allowSeed: true }))
+        .toMatchObject({ providerPrompt: `${seed.seedText}\n\n${input.text}`, shouldConsumeSeed: true });
+    } finally {
+      eligibility.mockRestore();
+      observeTransitionTargetSpawn(TEST_SESSION_ID, undefined);
+    }
+  });
+
   it('reconciles an inputless cutover by its admitted Action identity without another switch or delivery', async () => {
     const harness = createTransitionDepsHarness({
       findTranscriptMessageByLocalId: vi.fn(async () => foundDivider({
