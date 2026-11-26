@@ -8,6 +8,7 @@ import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { Text } from '@/components/ui/text/Text';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Typography } from '@/constants/Typography';
+import { readDocumentFocusReturnTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { t } from '@/text';
 import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
@@ -179,6 +180,7 @@ function StatusAction(props: Readonly<{
     label: string;
     keyHint?: string;
     onPress: () => void;
+    preserveFocusOnPress?: boolean;
     /** `quiet`: a fact that also leads somewhere (the issue count), read in the line's own tone. */
     tone?: 'action' | 'quiet';
     testID: string;
@@ -190,6 +192,7 @@ function StatusAction(props: Readonly<{
             accessibilityRole="button"
             accessibilityLabel={props.label}
             onPress={props.onPress}
+            preserveFocusOnPress={props.preserveFocusOnPress}
             style={(state) => [styles.action, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
         >
             <Text style={props.tone === 'quiet' ? styles.status : styles.actionLabel}>{props.label}</Text>
@@ -269,6 +272,7 @@ export function WorkflowSaveStatus(props: Readonly<{
 }>): React.ReactElement {
     const { state, testIDPrefix } = props;
     const [comparing, setComparing] = React.useState(false);
+    const comparisonFocusReturnRef = React.useRef<FocusReturnTarget>(null);
     const saveKeyHint = useKeyboardShortcutLabel('workflow.save');
     const savedAtMs = state.kind === 'saved' ? state.savedAtMs : null;
     const presented = useLayoutPresentationActive();
@@ -287,6 +291,7 @@ export function WorkflowSaveStatus(props: Readonly<{
         title: t('workflows.save.conflictTitle'),
         testID: `${testIDPrefix}-comparison-modal`,
         phonePresentation: 'sheet',
+        focusReturnRef: comparisonFocusReturnRef,
         scrollHost: 'bounded',
         onRequestClose: () => setComparing(false),
     });
@@ -301,7 +306,13 @@ export function WorkflowSaveStatus(props: Readonly<{
                         <StatusAction
                             testID={`${testIDPrefix}-compare`}
                             label={t('workflows.save.compare')}
-                            onPress={() => setComparing((value) => !value)}
+                            preserveFocusOnPress
+                            onPress={() => {
+                                if (!comparing) {
+                                    comparisonFocusReturnRef.current = typeof document === 'undefined' ? null : readDocumentFocusReturnTarget(document);
+                                }
+                                setComparing(!comparing);
+                            }}
                         />
                     )}
                     <StatusAction
@@ -358,6 +369,7 @@ export function WorkflowSaveStatus(props: Readonly<{
                         label={t('workflows.page.save')}
                         {...(saveKeyHint === undefined ? {} : { keyHint: saveKeyHint })}
                         onPress={props.onSave}
+                        preserveFocusOnPress
                     />
                 ) : null}
                 {state.kind === 'saved' && state.discarded === true && props.onUndo !== undefined ? (
@@ -372,6 +384,7 @@ export function WorkflowSaveStatus(props: Readonly<{
                         testID={`${testIDPrefix}-save-retry`}
                         label={t('workflows.retry')}
                         onPress={props.onSave}
+                        preserveFocusOnPress
                     />
                 ) : null}
                 {props.readout ?? null}
