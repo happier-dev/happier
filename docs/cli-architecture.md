@@ -9447,7 +9447,10 @@ For a signed foreground start with plain terminal placement, the CLI opens the
 Session's existing Agent-terminal stream on the admitted Machine. When the runtime
 offers native provider presentation, the Session switches to local mode and starts
 the native client in an auxiliary held PTY through its admitted launch identity.
-The same Session retires the client on Switch to remote or Session shutdown.
+On Linux with isolation enabled, the auxiliary client borrows the Session's
+selected native placement. The primary Agent keeps custody of its launch files,
+MCP bridge and provider socket. The same Session retires the client on Switch
+to remote or Session shutdown.
 Viewer detach ends the stream without stopping the Session.
 
 Optional server-backed presenters use the adapter's single private launch handoff.

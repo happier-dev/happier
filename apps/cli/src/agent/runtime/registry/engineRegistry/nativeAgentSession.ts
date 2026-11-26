@@ -6498,9 +6498,21 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     ...(toolExecutionCapability === 'interceptable' ? {
                         setBeforeToolExecution: (handler: ((toolName: string) => Promise<void>) | null) => { beforeToolExecution = handler; },
                     } : {}),
-                    readNativeLaunchAuthority: (kind: 'attach' | 'terminal' | 'presenter') => signal.aborted ? null
-                        : captureAgentNativeLaunchAuthorityForHost(services.exec, kind === 'presenter' ? 'terminal' : kind,
-                            signal, undefined, kind === 'terminal' ? nativeLaunch : undefined),
+                    readNativeLaunchAuthority: (kind: 'attach' | 'terminal' | 'presenter') => {
+                        if (signal.aborted) return null;
+                        if (kind === 'presenter') {
+                            return captureAgentNativeLaunchAuthorityForHost(services.exec, 'terminal', signal, () => {
+                                const material = hostRuntimeParams.mcpLaunchMaterial;
+                                if (!material) return undefined;
+                                // The auxiliary client borrows the native placement. Its RunAs shim
+                                // must leave the primary Agent's selected files and bridge in place.
+                                const { runtimeHome, nativeIdentity, memberIdentity } = material;
+                                return { runtimeHome, nativeIdentity, memberIdentity, environment: {}, selectedMaterials: [] };
+                            });
+                        }
+                        return captureAgentNativeLaunchAuthorityForHost(services.exec, kind, signal,
+                            undefined, kind === 'terminal' ? nativeLaunch : undefined);
+                    },
                     readActiveTurnAdmissionWitness: () => readActiveTurnAdmissionWitness(),
                     getRuntimeLifetimeSignal: () => signal,
                     readSessionStartupInstructions: () => startupInstructions,

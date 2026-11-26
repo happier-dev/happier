@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { encodeAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
@@ -10,7 +10,19 @@ import { describe, expect, it } from 'vitest';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SessionAgentTerminalOpenResponseSchema, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
-import { createNativeAgentProviderAttachModeBinding } from '@/agent/runtime/session/terminal/providerCliAttachMode';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import {
+  createExternalContributionFixtures,
+  createLease,
+  createNativeAgentRuntimeSessionPlanFixture,
+  createSessionHostServiceOwners,
+} from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { authorizeResolvedProjectExecLaunchForHost, createStableRunnerPluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { createAgentIsolationSessionContext } from '@/daemon/agentIsolation/agentIsolationSessionContext';
 import { runTerminalRemoteSessionModeLoop } from '@/agent/runtime/session/loop/runTerminalRemoteSessionModeLoop';
 import { registerSessionAgentTerminalHandlers } from '@/rpc/handlers/sessionAgentTerminal';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
@@ -325,9 +337,13 @@ describe.skipIf(process.platform === 'win32')('native inherited PTY launch trans
       expect(output).not.toContain('happier-agent-launch-');
     } finally { manager.dispose(); await rm(root, { recursive: true, force: true }); }
   });
-  it.skipIf(process.platform !== 'linux')('streams an isolated native presenter through its Session Agent-terminal RPC', async () => {
+  it.skipIf(process.platform !== 'linux').each([false, true])(
+    'streams the native presenter when Open follows Session birth (isolated=%s)', async isolated => {
     const root = await mkdtemp(join(tmpdir(), 'happier-presenter-'));
-    const session = createMutableApiSessionClientFixture({ sessionId: 'signed-foreground-member' });
+    const session = createMutableApiSessionClientFixture({
+      sessionId: 'signed-foreground-presenter', metadata: createTestMetadata({ path: root }),
+    });
+    const lifecycle = new AbortController();
     const rpc = session.rpcHandlerManager;
     const controls: SessionRuntimeControls = {};
     let installControls!: () => void;
@@ -358,7 +374,6 @@ describe.skipIf(process.platform === 'win32')('native inherited PTY launch trans
         terminal: { accepted: () => process.stdout.write(frame.AGENT_LAUNCH_TERMINAL_ACCEPTED) } });
       process.exitCode = result.code ?? 1;
     `;
-    const lifecycle = new AbortController();
     const nativeSource = 'console.log("presenter-ready");process.stdin.once("data", data=>{console.log("presenter-received:"+data);process.exit(0)})';
     const attach = createProviderCliAttachSurface({
       agentId: 'codex',
@@ -366,33 +381,90 @@ describe.skipIf(process.platform === 'win32')('native inherited PTY launch trans
       createArgs: () => [],
       resolveLaunchSpec: () => ({ source: 'managed', resolvedPath: process.execPath, command: process.execPath, args: ['-e', nativeSource] }),
     });
-    const noTurn = () => { throw new Error('Unexpected turn during presentation'); };
-    const binding = createNativeAgentProviderAttachModeBinding({
-      runtime: { beginTurnLifecycle: noTurn, sendTurnPrompt: async () => noTurn(), steerInFlightTurn: async () => noTurn(),
-        waitForTurnCompletion: async () => noTurn(), subscribeRuntimeEvents: () => () => {}, cancelTurn: async () => {},
-        readSessionIdentity: () => ({ sessionId: 'native-thread' }), updateSessionRuntimeConfig: async () => {},
-        resetOrDisposeRuntime: async () => {}, prepareTerminalPresentation: async () => ({ kind: 'provider_attach', metadata: {} }),
+    const agentId = 'presenter-fixture';
+    const credentials = { token: 'synthetic-presenter-session', encryption: null };
+    const { agent, backend } = createExternalContributionFixtures(agentId);
+    const home = 'srv_presenter_launch';
+    const sessionRequester = { serverId: home, accountId: 'owner', machineId: 'machine', installationId: 'installation' };
+    const runtimeHome = join(root, 'runtime/person');
+    const nativeIdentity = { home: root, agentUid: 2401, agentGid: 2401 };
+    const material = { runtimeHome, environment: {}, selectedMaterials: [] };
+    const sessionFile = join(runtimeHome, 'files/session-owned');
+    if (isolated) {
+      await mkdir(join(runtimeHome, 'files'), { recursive: true, mode: 0o700 });
+      await writeFile(sessionFile, 'Session file', { mode: 0o600 });
+    }
+    const isolation = createAgentIsolationSessionContext({
+      machine: { read: () => isolated ? {
+        enabled: true, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [root],
+      } : { enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] } },
+      managedHappierBinaryPath: '/fixture/happier', sessionRequester,
+      sessionRequesterHomeServerIdentityId: home, hostHomeServerIdentityId: home, sessionCustodianAccountId: 'owner',
+      readMaterial: () => material,
+    });
+    const unavailableServices = createUnavailablePluginServices();
+    const unexpectedExec = async () => { throw new Error('Unexpected non-presenter Exec request'); };
+    let nativeRefusal: unknown;
+    const exec = createStableRunnerPluginExecService({
+      signal: lifecycle.signal, isOccurrenceCurrent: () => true, agentCli: unavailableServices.exec.agentCli,
+      resolveExecutable: unexpectedExec, resolveSystemTool: unexpectedExec, authorizeLaunch: unexpectedExec,
+      admitAgentNativeLaunch: async () => {},
+      // Stand in for the daemon transport. The same daemon finalizer and
+      // Session-owned isolation material decide whether a RunAs frame exists.
+      async authorizeResolvedAgentNativeLaunch(launch, options) {
+        const finalized = await authorizeResolvedProjectExecLaunchForHost({
+          launch, agentIsolation: isolation,
+          agentNativeLaunch: !options?.mcpLaunchMaterial || options.sessionMcpContext !== undefined,
+          agentLaunchKind: options?.agentLaunchKind, sessionMcpContext: options?.sessionMcpContext,
+          mcpLaunchMaterial: options?.mcpLaunchMaterial, signal: options?.signal ?? lifecycle.signal, assertCurrent() {},
+        }).catch(error => { nativeRefusal = error; throw error; });
+        if (!isolated) return finalized;
+        // Stand in for the OS identity switch only. Pass the finalizer's own
+        // bytes to the real shim, holder and interactive payload.
+        expect(finalized).toMatchObject({ command: 'sudo', args: ['-n', '-u', 'happier-agent', '--', '/fixture/happier', 'agent-launch'] });
+        return { ...finalized, command: process.execPath,
+          args: ['--import', require.resolve('tsx/esm'), '--input-type=module', '-e', shim],
+          launcherCwd: process.cwd(), env: { TSX_TSCONFIG_PATH: resolve('tsconfig.json') } };
       },
-      session, attach, workingDirectory: root, agentId: 'codex',
-      startingMode: 'remote', topology: 'shared', remoteWritable: true,
-      readNativePresenterLaunchAuthority: () => ({
-        signal: lifecycle.signal, admit: async () => {},
-        authorize: async launch => ({
-          command: process.execPath, args: ['--import', require.resolve('tsx/esm'), '--input-type=module', '-e', shim],
-          cwd: root, launcherCwd: process.cwd(), env: { TSX_TSCONFIG_PATH: resolve('tsconfig.json') },
-          stdinPreamble: encodeAgentLaunchFrame({ v: 1, executable: launch.command, args: launch.args, cwd: root,
-            runtimeHome: join(root, 'runtime/person'), environment: {}, selectedMaterials: [] }),
-          release() {},
-        }),
+    });
+    const plan = await createNativeAgentRuntimeSessionPlanFixture({
+      runtime: { sessions: { open: async () => ({
+        send: async () => { throw new Error('Unexpected turn during presentation'); },
+        watch: () => ({ dispose() {} }), dispose: async () => {},
+        prepareTerminalPresentation: async () => ({ kind: 'provider_attach', metadata: {} }),
+        runtimeCapabilities: { localControl: { supported: true, topology: 'shared', attachStrategy: 'provider_attach', remoteWritable: true } },
+      }) } },
+      lease: createLease(agentId), agent, backend, executionSurfaces: { attach }, createSessionHostServiceOwners,
+      generationSignal: lifecycle.signal, createInvocationServices: async () => ({ ...unavailableServices, exec }),
+      reportSessionMetadataToDaemon: async () => {},
+      sessionInput: buildPluginSessionBindingInput({
+        credentials, directory: root, startedBy: 'daemon', startingMode: 'remote',
+        backendTarget: { kind: 'backend', backendId: agentId }, terminalRuntime: { mode: 'plain' },
       }),
     });
-    controls.openAgentTerminalPresentation = binding.terminalRemoteModeLoop.openAgentTerminalPresentation;
+    const created = await plan.config.createSessionRuntime({
+      directory: root, metadata: session.getMetadataSnapshot()!, machineId: 'machine', agentTargetKey: `backend:${agentId}`,
+      session, transcriptSession: session, messageBuffer: new MessageBuffer(), mcpServers: {},
+      permissionHandler: new ProviderEnforcedPermissionHandler(session, { logPrefix: '[presenter]' }),
+      getPermissionMode: () => 'default', memoryRecallGuidanceEnabled: false,
+      runnerProcessIdentity: null, startupModelSelection: null,
+      async runWithTerminalModelSelection() { throw new Error('Unexpected terminal model selection'); },
+      ...(isolated ? {
+        sessionMcpContext: { v: 1 as const, socketPath: join(root, 'mcp.sock'), bearerToken: 'synthetic-mcp-fixture' },
+        mcpLaunchMaterial: { ...material, nativeIdentity,
+          selectedMaterials: [{ relativePath: 'files/session-owned', contentBase64: Buffer.from('Session file').toString('base64') }] },
+      } : {}),
+    });
+    const mode = created.terminalRemoteModeLoop;
+    if (!mode?.openAgentTerminalPresentation) throw new Error('Expected a daemon-owned plain native presentation');
+    controls.openAgentTerminalPresentation = mode.openAgentTerminalPresentation;
     installControls();
     // The Session installs controls before handing execution to its mode loop.
     await new Promise<void>(resolve => setImmediate(resolve));
-    const loop = runTerminalRemoteSessionModeLoop(binding.terminalRemoteModeLoop);
+    const loop = runTerminalRemoteSessionModeLoop(mode);
     try {
       const opened = SessionAgentTerminalOpenResponseSchema.parse(await foregroundOpen);
+      if (!opened.ok && nativeRefusal) throw new Error(opened.code, { cause: nativeRefusal });
       if (!opened.ok) throw new Error(opened.code);
       const { terminalId, byteOffset } = opened;
       await expect(rpc.invokeLocal(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_INPUT, {
@@ -415,10 +487,11 @@ describe.skipIf(process.platform === 'win32')('native inherited PTY launch trans
       })();
       expect(read).toContain('presenter-ready');
       expect(read).toContain('presenter-received:member-input');
+      if (isolated) expect(await readFile(sessionFile, 'utf8')).toBe('Session file');
       expect(read).not.toContain('happier-agent-launch-');
     } finally {
       lifecycle.abort();
-      await binding.runtime.resetOrDisposeRuntime('session_closed');
+      await created.operations.resetOrDisposeRuntime('session_closed');
       await loop;
       await rm(root, { recursive: true, force: true });
     }
