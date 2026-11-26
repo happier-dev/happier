@@ -12,7 +12,7 @@ import type { AgentSignInScope } from '@happier-dev/protocol/daemon/agentSignIn'
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
 import { prepareAgentSignIn, probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';
 import { projectIdentityFreeSignIn } from '@/capabilities/cliAuth/identityFreeSignIn';
-import { resolveHostRequesterTerminalPlacementForHost, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { isHostAgentIsolationPolicyUnread, resolveHostRequesterTerminalPlacementForHost, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { MachineTerminalRpcHandlerDeps } from './rpcHandlers.terminal';
 
 type AgentSignInRpcDeps = Pick<MachineTerminalRpcHandlerDeps, 'agentIsolation' | 'nativeOperationRuntime' | 'resolveHostHomeServerIdentityId'> & Readonly<{
@@ -53,7 +53,7 @@ async function resolveNativeSignInScope(
 
     const others = access.data.currentRequesterDisplayIdentities.filter(person => person.accountId !== admission.custodianAccountId);
     if (others.length === 0) return 'member';
-    if (!snapshot?.enabled) return 'machineOwner';
+    if (!snapshot?.enabled || isHostAgentIsolationPolicyUnread(snapshot)) return 'machineOwner';
     // Losing all access when a View grant is removed proves the person is Use-only.
     // Surviving access can include inherited Manage, whose role the roster does not expose.
     const useOnly = new Set(access.data.grants.flatMap(grant => grant.level === 'view' ? grant.removal.losesAccessAccountIds : []));

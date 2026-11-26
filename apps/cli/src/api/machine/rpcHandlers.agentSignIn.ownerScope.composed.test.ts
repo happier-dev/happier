@@ -22,6 +22,7 @@ it.each([
   { name: 'owner alone', enabled: true, level: null, scope: 'member', confirmationRequired: false },
   { name: 'another Manage person with isolation enabled', enabled: true, level: 'admin', scope: 'machineOwner', confirmationRequired: true },
   { name: 'a Use guest with isolation disabled', enabled: false, level: 'view', scope: 'machineOwner', confirmationRequired: true },
+  { name: 'a Use guest while the isolation policy is unread', enabled: true, unread: true, level: 'view', scope: 'machineOwner', confirmationRequired: true },
   { name: 'a Use guest with isolation enabled', enabled: true, level: 'view', scope: 'member', confirmationRequired: false },
   { name: 'a Manage person inherited from a controller', enabled: true, level: null, inherited: true, scope: 'machineOwner', confirmationRequired: true },
   { name: 'audience unavailable', enabled: true, level: null, unavailable: true, scope: 'machineOwner', confirmationRequired: true },
@@ -38,7 +39,9 @@ it.each([
     credentials,
     agentIsolation: { read: () => ({
       enabled: scenario.enabled,
-      status: scenario.enabled ? { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } : { kind: 'disabled' },
+      status: 'unread' in scenario
+        ? { kind: 'unavailable', code: 'metadata_unavailable' }
+        : scenario.enabled ? { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } : { kind: 'disabled' },
       workspaceRoots: [],
     }) },
     async readAdditionalHttpResponse(url, request) {
