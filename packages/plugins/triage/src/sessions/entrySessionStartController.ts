@@ -1018,7 +1018,7 @@ export function createTriageEntrySessionStartController(
                     if (draft.status !== 'settled') {
                         setPhase(draft.status === 'cancelled' ? IDLE : unavailable(
                             draft.status === 'unsupported' ? 'newSessionUnsupported' : 'newSessionUnavailable',
-                            draft.status === 'unavailable' ? draft.failure : undefined));
+                            (draft.status === 'unavailable' ? draft.failure : undefined) ?? placement?.failure));
                         return;
                     }
                     settlement = draft.settlement;
@@ -1043,7 +1043,7 @@ export function createTriageEntrySessionStartController(
                         ? IDLE
                         : unavailable(seeded.status === 'refused' ? 'preparedWorkspaceUnsupported' : seeded.status === 'unsupported'
                             ? 'newSessionUnsupported'
-                            : 'newSessionUnavailable', seeded.status === 'unavailable' ? seeded.failure : undefined));
+                            : 'newSessionUnavailable', (seeded.status === 'unavailable' ? seeded.failure : undefined) ?? placement?.failure));
                     return;
                 }
 

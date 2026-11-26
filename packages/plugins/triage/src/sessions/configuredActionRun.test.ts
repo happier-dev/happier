@@ -185,6 +185,30 @@ describe('configured action execution through the shared Session owner', () => {
             .toBe('plugins.triage.surface.session.workspaceMismatch');
     });
 
+    it.each(['single', 'attachAllToNewSession', 'oneSessionPerEntry'] as const)(
+        'keeps the Projects refusal if %s manual recovery cannot open',
+        async destination => {
+            const host = {
+                version: () => ({ methods: [] }),
+                executeAction: async (id: string) => {
+                    if (triageBoundaryActionId(id) === 'actions/read-v1') return catalog;
+                    if (id === 'projects.list') throw new PluginError({
+                        code: 'target_unavailable', details: { requestId: 'project-registry-17' },
+                    });
+                    throw new Error('Unexpected host Action ' + id);
+                },
+            } as unknown as TriageConfiguredActionRunHostV1;
+            const result = await runTriageConfiguredActionV1(host, {
+                actionId: action.actionId, entries: [{ ...entry, repository }], destination,
+            });
+            const publicResult = TriagePublicHandoffActionResultV1Schema.parse({
+                ...result, handoff: { kind: 'entryExecution', status: result.status },
+            });
+            expect(publicResult).toMatchObject({ status: 'unavailable',
+                failure: { codes: ['target_unavailable'], requestId: 'project-registry-17' } });
+        },
+    );
+
     it.each(['attachAllToNewSession', 'oneSessionPerEntry'] as const)('retains a typed bulk %s refusal through the public result', async (destination) => {
         const host = {
             version: () => ({ methods: ['openNewSession', 'selectActionInput'] }),

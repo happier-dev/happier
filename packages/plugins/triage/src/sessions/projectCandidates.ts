@@ -6,6 +6,7 @@ import type {
     TriageProjectCandidateV1,
     TriageProjectWorktreeV1,
 } from './launchPlacement.js';
+import { projectTriageNewSessionFailureV1, type TriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 
 /**
  * Reads the Account's persisted project registry through the one generic host
@@ -73,7 +74,7 @@ export type TriageProjectRegistryReadV1 =
      * `unsupported_action`; a mounted surface sees one rejected call either way,
      * and claiming otherwise would put a guess in front of a reader.
      */
-    | Readonly<{ status: 'unavailable' }>;
+    | Readonly<{ status: 'unavailable'; failure?: TriageNewSessionFailureV1 }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -152,12 +153,9 @@ export async function readTriageProjectRegistryV1(
         // A review places into any checkout of the repository, not only the
         // Projects the person keeps in their list (owner 11-08 curated list).
         result = await host.executeAction(TRIAGE_PROJECTS_LIST_ACTION_ID_V1, { includeUnlisted: true }, options);
-    } catch {
-        // A client that cannot serve the Action and a call that failed both
-        // arrive here as one rejection. Neither is an empty registry, and
-        // reporting one as such would tell the reader they have no checkout
-        // when nothing ever looked.
-        return { status: 'unavailable' };
+    } catch (error) {
+        const failure = projectTriageNewSessionFailureV1(error);
+        return { status: 'unavailable', ...(failure === undefined ? {} : { failure }) };
     }
     if (!isRecord(result) || !Array.isArray(result.items)) return { status: 'unavailable' };
 

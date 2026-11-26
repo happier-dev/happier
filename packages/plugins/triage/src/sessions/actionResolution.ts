@@ -28,7 +28,8 @@ export async function readTriageActionPlacementV1(
         workspaceMode: action.workspaceMode, profile, forge: repository,
         projects,
         registryComplete: registry?.status === 'read' && registry.complete,
-    }), availableCandidates: projects };
+    }), availableCandidates: projects,
+        ...(registry?.status === 'unavailable' && registry.failure !== undefined ? { failure: registry.failure } : {}) };
 }
 
 /**

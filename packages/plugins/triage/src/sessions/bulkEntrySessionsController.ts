@@ -777,6 +777,7 @@ export function createTriageBulkEntrySessionsController(
                     setPhase(IDLE);
                     return;
                 }
+                const placementFailure = registry.status === 'unavailable' ? registry.failure : undefined;
                 const placementFor = (
                     entries: readonly Pick<TriageBulkSelectedEntryV1, 'repository'>[],
                 ): TriageBulkSeedPlacementV1 => resolveTriageBulkSeedPlacementV1({
@@ -854,7 +855,8 @@ export function createTriageBulkEntrySessionsController(
                     }
                     if (seeded.status !== 'seeded') {
                         setPhase(unavailable(seeded.status === 'refused' ? seeded.reason
-                            : seeded.status === 'unsupported' ? 'newSessionUnsupported' : 'newSessionUnavailable', seeded.status === 'unavailable' ? seeded.failure : undefined));
+                            : seeded.status === 'unsupported' ? 'newSessionUnsupported' : 'newSessionUnavailable',
+                            (seeded.status === 'unavailable' ? seeded.failure : undefined) ?? placementFailure));
                         return;
                     }
                     setPhase(Object.freeze({
@@ -905,7 +907,7 @@ export function createTriageBulkEntrySessionsController(
                     if (draft.status !== 'settled') {
                         setPhase(unavailable(draft.status === 'unsupported'
                             ? 'newSessionUnsupported'
-                            : 'newSessionUnavailable', draft.status === 'unavailable' ? draft.failure : undefined));
+                            : 'newSessionUnavailable', (draft.status === 'unavailable' ? draft.failure : undefined) ?? placementFailure));
                         return;
                     }
                     const admitted = projectTriageNewSessionDestinationV1({
