@@ -141,6 +141,57 @@ an admitted contribution through the existing platform service and executes
 the original opaque operation handle; transports need no private registration
 or routing API. The first-party IMAP/SMTP transport uses this same contract.
 
+### Task kinds and creation places in 0.3 development source
+
+Declare the task kind and what people may set when creating or editing it in
+the source descriptor. Declare the source's scope labels and provider-side sort
+fields at the same point. Bind `listScopeUnits` to supply the source's available
+scopes for selection. Use `initialStatuses` for choices offered on create and
+`transitions` for changes to existing tasks. Keep source-native IDs stable.
+
+```ts
+import { TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
+
+const { operations } = TriageSourcesContributionProtocolV1;
+export const sourceContribution = TriageSourcesContributionProtocolV1.contribute({
+  descriptor: {
+    v: 1, displayName: 'Example Tracker', purpose: 'tracker-api',
+    scopeUnit: { singularLabel: 'Project', pluralLabel: 'Projects' },
+    sortFields: ['created', 'updated'],
+    kinds: [{
+      id: 'ticket', workflowSubject: 'issue', displayName: 'Ticket',
+      pluralDisplayName: 'Tickets', task: true,
+      taskCapabilities: {
+        createFields: ['title', 'body', 'projectId'],
+        editFields: ['title', 'body'],
+        initialStatuses: [{ id: 'open', label: 'Open', state: { presentation: 'active' } }],
+        transitions: [{ id: 'done', label: 'Done', state: { presentation: 'resolved' } }],
+      },
+    }],
+  },
+  operations: {
+    listInstances: operations.listInstances.bind('tracker/list-instances'),
+    scan: operations.scan.bind('tracker/scan'),
+    get: operations.get.bind('tracker/get'),
+    listScopeUnits: operations.listScopeUnits.bind('tracker/list-scope-units'),
+    listCreationPlaces: operations.listCreationPlaces.bind('tracker/list-places'),
+    create: operations.create.bind('tracker/create-task'),
+    edit: operations.edit.bind('tracker/edit-task'),
+    transition: operations.transition.bind('tracker/transition-task'),
+  },
+});
+```
+
+Implement the named Actions with the corresponding public operation schemas.
+`listCreationPlaces` receives the configured instance, optional search `query`,
+and an optional `cursor`. Return a `page` of places with `status: 'complete'`
+when the provider read succeeded, and include `nextCursor` while more places
+remain. To make a parent selection lead to a more specific place, return a
+`childScopeId`. Triage sends that value back as `scopeId` when it reads children.
+Return each writable place's `kindId`, creation `fields` and optional opaque
+`placeId`. Triage passes the selected operands to the `create` role. Authorize the
+actual write in that Action using the current configured instance and place.
+
 ### PRs & Issues agent actions in 0.3 development source
 
 A plugin can add an agent action, such as "Investigate this issue", to the action

@@ -3,6 +3,7 @@ export const LEDGER_PLUGIN_ID = 'acme.ledger';
 export const LEDGER_DISPLAY_NAME = 'Acme Ledger';
 export const LEDGER_ACTION_IDS = Object.freeze({
     listInstances: 'ledger/discover-spaces',
+    listCreationPlaces: 'ledger/list-creation-places',
     scan: 'ledger/walk-space',
     get: 'ledger/read-entry',
 });

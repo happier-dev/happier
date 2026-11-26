@@ -7741,6 +7741,709 @@
         ],
         "dangerLevel": "safe",
         "id": "ledger/read-entry"
+      },
+      {
+        "title": "List Acme Ledger ticket places",
+        "hostAccess": [
+          "acme-ledger-api"
+        ],
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "instance.binding.account",
+            "purpose": "acme-ledger-api"
+          }
+        ],
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "v": {
+              "const": 1
+            },
+            "instance": {
+              "type": "object",
+              "properties": {
+                "v": {
+                  "const": 1
+                },
+                "instance": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "pluginId": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 256,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                        },
+                        "localId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "sourceInstanceId": {
+                      "type": "string",
+                      "minLength": 36,
+                      "maxLength": 36,
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "sourceInstanceId"
+                  ],
+                  "additionalProperties": false
+                },
+                "localInstanceKey": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "configuration": {
+                  "type": "object",
+                  "properties": {
+                    "v": {
+                      "const": 1
+                    },
+                    "token": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7336
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "token"
+                  ],
+                  "additionalProperties": false
+                },
+                "locator": {
+                  "type": "object",
+                  "properties": {
+                    "v": {
+                      "const": 1
+                    },
+                    "displayLabel": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7336
+                    },
+                    "displayPath": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7336
+                    },
+                    "webUrl": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7336
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "displayLabel"
+                  ],
+                  "additionalProperties": false
+                },
+                "binding": {
+                  "type": "object",
+                  "properties": {
+                    "purpose": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "account": {
+                      "type": "object",
+                      "properties": {
+                        "service": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "pluginId": {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 256,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                                },
+                                "localId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "pluginId": {
+                                  "const": "happier"
+                                },
+                                "localId": {
+                                  "const": "mcp-sign-in"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "accountId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "purpose",
+                    "account"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "v",
+                "instance",
+                "localInstanceKey",
+                "configuration",
+                "binding"
+              ],
+              "additionalProperties": false
+            },
+            "scopeId": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "x-happier-max-utf8-bytes": 7336
+            },
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "x-happier-max-utf8-bytes": 3226
+            },
+            "cursor": {
+              "type": "object",
+              "properties": {
+                "v": {
+                  "const": 1
+                },
+                "token": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "x-happier-max-utf8-bytes": 180656
+                }
+              },
+              "required": [
+                "v",
+                "token"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "v",
+            "instance"
+          ],
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "page"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "complete"
+                    },
+                    {
+                      "const": "partial"
+                    }
+                  ]
+                },
+                "places": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "x-happier-max-utf8-bytes": 7336
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "x-happier-max-utf8-bytes": 3226
+                      },
+                      "kindId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "fields": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "body": {
+                            "type": "string"
+                          },
+                          "assigneeIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "labelIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "scopeId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                          },
+                          "projectId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              {
+                                "const": null
+                              }
+                            ]
+                          },
+                          "priority": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              {
+                                "const": null
+                              }
+                            ]
+                          },
+                          "dueDate": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "const": null
+                              }
+                            ]
+                          },
+                          "estimate": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "const": null
+                              }
+                            ]
+                          },
+                          "parent": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "source": {
+                                    "type": "object",
+                                    "properties": {
+                                      "pluginId": {
+                                        "type": "string",
+                                        "minLength": 3,
+                                        "maxLength": 256,
+                                        "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                                      },
+                                      "localId": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 256,
+                                        "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                                      }
+                                    },
+                                    "required": [
+                                      "pluginId",
+                                      "localId"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  "kindId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "collisionScope": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                                    "x-happier-max-utf8-bytes": 192
+                                  },
+                                  "entryId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "x-happier-max-utf8-bytes": 128
+                                  }
+                                },
+                                "required": [
+                                  "source",
+                                  "kindId",
+                                  "collisionScope",
+                                  "entryId"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "const": null
+                              }
+                            ]
+                          },
+                          "blockedBy": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "object",
+                                  "properties": {
+                                    "pluginId": {
+                                      "type": "string",
+                                      "minLength": 3,
+                                      "maxLength": 256,
+                                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                                    },
+                                    "localId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 256,
+                                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                                    }
+                                  },
+                                  "required": [
+                                    "pluginId",
+                                    "localId"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "kindId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "x-happier-max-utf8-bytes": 128
+                                },
+                                "collisionScope": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                                  "x-happier-max-utf8-bytes": 192
+                                },
+                                "entryId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                  "x-happier-max-utf8-bytes": 128
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "kindId",
+                                "collisionScope",
+                                "entryId"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "placeId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "x-happier-max-utf8-bytes": 7336
+                      },
+                      "childScopeId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "x-happier-max-utf8-bytes": 7336
+                      },
+                      "refusal": {
+                        "type": "object",
+                        "properties": {
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "message": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "label",
+                      "kindId",
+                      "fields"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "nextCursor": {
+                  "type": "object",
+                  "properties": {
+                    "v": {
+                      "const": 1
+                    },
+                    "token": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 180656
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "token"
+                  ],
+                  "additionalProperties": false
+                },
+                "failure": {
+                  "type": "object",
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 3226
+                    },
+                    "requiredPermissions": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 3226
+                    },
+                    "retryNotBeforeMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "status",
+                "places"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "failed"
+                },
+                "failure": {
+                  "type": "object",
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 3226
+                    },
+                    "requiredPermissions": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 3226
+                    },
+                    "retryNotBeforeMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "failure"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin",
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
+        ],
+        "placementBindings": [
+          "commandPalette"
+        ],
+        "dangerLevel": "safe",
+        "id": "ledger/list-creation-places"
       }
     ],
     "ui": {
@@ -7863,7 +8566,8 @@
               "id": "ticket",
               "workflowSubject": "issue",
               "displayName": "Ticket",
-              "pluralDisplayName": "Tickets"
+              "pluralDisplayName": "Tickets",
+              "task": true
             }
           ],
           "sortFields": [
@@ -7875,7 +8579,8 @@
         "operations": {
           "listInstances": "ledger/discover-spaces",
           "scan": "ledger/walk-space",
-          "get": "ledger/read-entry"
+          "get": "ledger/read-entry",
+          "listCreationPlaces": "ledger/list-creation-places"
         },
         "surfaces": {
           "detail": {

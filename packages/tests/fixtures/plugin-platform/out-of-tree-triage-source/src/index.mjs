@@ -201,6 +201,31 @@ async function runGet(input) {
     );
 }
 
+/** Lists Acme's account directory, one project at a time, then its ticket place. */
+function runListCreationPlaces({ scopeId, query, cursor }) {
+    const matches = (label) => !query || label.toLowerCase().includes(query.toLowerCase());
+    if (scopeId !== undefined) {
+        const placeId = `${scopeId}/ticket`;
+        const places = LEDGER_SPACE_ID_LIST.includes(scopeId) && matches('Ticket')
+            ? [{ id: placeId, label: 'Ticket', kindId: 'ticket', fields: { projectId: scopeId }, placeId }]
+            : [];
+        return { kind: 'page', status: 'complete', places };
+    }
+    const projects = LEDGER_SPACE_ID_LIST.filter(matches);
+    const previous = cursor === undefined ? -1 : projects.indexOf(cursor.token);
+    if (cursor !== undefined && previous === -1) {
+        return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'acme/invalid-project-cursor' } };
+    }
+    const project = projects[previous + 1];
+    if (!project) return { kind: 'page', status: 'complete', places: [] };
+    return {
+        kind: 'page', status: 'complete',
+        places: [{ id: project, label: project, kindId: 'ticket', fields: {}, childScopeId: project,
+            refusal: { reason: 'acme/select-ticket-place' } }],
+        ...(projects[previous + 2] ? { nextCursor: { v: 1, token: project } } : {}),
+    };
+}
+
 /**
  * Derives one Action declaration from its bound protocol role.
  *
@@ -303,6 +328,13 @@ const plugin = definePlugin({
             connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
             run: runGet,
         },
+        [LEDGER_ACTION_IDS.listCreationPlaces]: {
+            title: 'List Acme Ledger ticket places',
+            ...actionContract('listCreationPlaces'),
+            hostAccess: [LEDGER_ACCOUNT_PURPOSE],
+            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+            run: runListCreationPlaces,
+        },
     },
     resources: {
         [LEDGER_DETAIL_DOCUMENT_RESOURCE_ID]: {
@@ -371,6 +403,7 @@ const plugin = definePlugin({
                                 workflowSubject: 'issue',
                                 displayName: 'Ticket',
                                 pluralDisplayName: 'Tickets',
+                                task: true,
                             },
                         ],
                     },
@@ -379,6 +412,7 @@ const plugin = definePlugin({
                             .bind(LEDGER_ACTION_IDS.listInstances),
                         scan: sourceOperations.scan.bind(LEDGER_ACTION_IDS.scan),
                         get: sourceOperations.get.bind(LEDGER_ACTION_IDS.get),
+                        listCreationPlaces: sourceOperations.listCreationPlaces.bind(LEDGER_ACTION_IDS.listCreationPlaces),
                     },
                     surfaces: { detail: { renderer: DETAIL_RENDERER_ID } },
                 }),

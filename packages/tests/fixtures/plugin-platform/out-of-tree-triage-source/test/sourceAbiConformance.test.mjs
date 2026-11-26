@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 /**
  * `qa/QA-PROTOCOL.md` §2.1 as runnable cases.
@@ -84,6 +85,7 @@ const HARNESS_ACTION_IDS = Object.freeze({
     listInstances: 'harness/execute-list-instances',
     scan: 'harness/execute-scan',
     get: 'harness/execute-get',
+    listCreationPlaces: 'harness/execute-list-creation-places',
 });
 
 /** Parsed protocol values are null-prototype; compare them as plain JSON. */
@@ -170,6 +172,14 @@ function createHarnessTarget(slots) {
                 dangerLevel: 'safe',
                 run: runAdmitted(() => slots.get),
             },
+            [HARNESS_ACTION_IDS.listCreationPlaces]: {
+                title: 'Execute admitted creation-place read',
+                execution: { target: 'daemon' },
+                scopes: ['global'],
+                surfaces: ['plugin'],
+                dangerLevel: 'safe',
+                run: runAdmitted(() => slots.listCreationPlaces),
+            },
         },
     });
 }
@@ -199,6 +209,7 @@ async function activateSourceAndTarget(shipped, accountListingStatus) {
         listInstances: (input) => target.invokeAction(HARNESS_ACTION_IDS.listInstances, input),
         scan: (input) => target.invokeAction(HARNESS_ACTION_IDS.scan, input),
         get: (input) => target.invokeAction(HARNESS_ACTION_IDS.get, input),
+        listCreationPlaces: (input) => target.invokeAction(HARNESS_ACTION_IDS.listCreationPlaces, input),
         async dispose() {
             await target.dispose();
             await source.dispose();
@@ -212,7 +223,7 @@ async function install({ accountListingStatus, shipped = manifest } = {}) {
         const { contributions } = installed.target.readTargetedContributionFixture(installed.point);
         const [admitted] = contributions;
         assert.equal(contributions.length, 1, 'Expected the host to admit the fixture');
-        for (const role of Object.keys(HARNESS_ACTION_IDS)) {
+        for (const role of ['listInstances', 'scan', 'get']) {
             const operation = admitted.operations[role];
             assert.ok(operation, `Expected a host-admitted ${role} handle`);
             installed.slots[role] = operation;
@@ -253,6 +264,30 @@ test('QB-01: the provider declaration conforms to the public Triage source proto
     assert.equal(conformance.ok, true, JSON.stringify(conformance));
 });
 
+test('external task creation places page through their admitted operation', async () => {
+    const installed = await install();
+    try {
+        const { contributions: [source] } = installed.target.readTargetedContributionFixture(installed.point);
+        assert.ok(source.operations.listCreationPlaces);
+        installed.slots.listCreationPlaces = source.operations.listCreationPlaces;
+        const input = { v: 1, instance: configuredInstance() };
+        const first = plain(await installed.listCreationPlaces(input));
+        assert.equal(first.kind, 'page');
+        assert.equal(first.places[0].childScopeId, 'acme/ledger');
+        assert.ok(first.nextCursor);
+        const next = plain(await installed.listCreationPlaces({ ...input, cursor: first.nextCursor }));
+        assert.equal(next.kind, 'page');
+        assert.equal(next.places[0].id, 'acme/ledger-qa');
+        const children = plain(await installed.listCreationPlaces({ ...input, scopeId: first.places[0].childScopeId }));
+        assert.equal(children.kind, 'page');
+        assert.deepEqual(children.places.map(place => [place.placeId, place.fields]), [
+            ['acme/ledger/ticket', { projectId: 'acme/ledger' }],
+        ]);
+    } finally {
+        await installed.dispose();
+    }
+});
+
 test('QB-01: the host admits the out-of-tree source through the published contribution point', async () => {
     const installed = await activateSourceAndTarget(manifest);
     try {
@@ -265,7 +300,7 @@ test('QB-01: the host admits the out-of-tree source through the published contri
         assert.equal(admitted[0].contributor.contributionId, LEDGER_CONTRIBUTION_LOCAL_ID);
         assert.deepEqual(
             Object.keys(admitted[0].operations).filter((role) => admitted[0].operations[role]).sort(),
-            ['get', 'listInstances', 'scan'],
+            ['get', 'listCreationPlaces', 'listInstances', 'scan'],
         );
         // The target declares the published point value verbatim: it holds no
         // per-source wiring, allowlist, or contributor id.
