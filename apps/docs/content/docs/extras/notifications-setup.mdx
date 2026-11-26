@@ -12,7 +12,7 @@ Happier uses **Expo Push Notifications** as a delivery mechanism. In the current
   best-effort `session_changed` background wake used for silent reconciliation.
 - The **CLI/daemon** still owns the ordinary rich runtime notification path and can fetch the
   authenticated account's saved tokens to submit notifications via Expo's push API (for example:
-  *“It’s ready!”* or *Permission Request*).
+  *Finished* or *Permission Request*).
 - On a capable mobile build enrolled for remote alerts, the app rechecks access and recipient
   privacy locally and enriches the safe generic alert when possible; otherwise the already-safe
   generic fallback is shown. A build without the native alert consumer cannot receive this
@@ -28,7 +28,7 @@ For the full cross-surface model, including the desktop overlay, Live Activities
 
 Happier can notify you when a session needs attention, including:
 
-- **Ready** notifications when a turn finishes and the agent is waiting
+- **Finished** notifications for Session completions
 - **Permission requests** when a tool/action needs approval
 - **User-action requests** when the agent needs a structured human response
 
@@ -91,7 +91,9 @@ When you are already looking at a given session, Happier suppresses notification
 
 ### Browser notifications
 
-The web app shows browser system notifications when a turn finishes, and when a session needs a permission decision or your answer. The toggles under **Settings → Notifications → Device notifications** choose which ones appear, and clicking a notification opens its session on its Home.
+The web app can show browser notifications for Finished, permission decisions, and questions. The toggles under **Settings → Notifications → Device notifications** control which types are enabled. Clicking a notification opens its Session on its Home.
+
+**0.3 development builds:** On a Home that supports Follow, the Session’s Follow level also controls whether a Finished event can interrupt you in the browser, desktop app, or in-app notification surface. **Important** and **Quiet** keep ordinary completion in the Inbox. **Everything** allows a Finished alert when the device and account preferences allow it. See [Following sessions](/organize/following-sessions).
 
 Your browser asks for permission when you turn on the first switch under **Settings → Notifications → Device notifications**. If the switch is already on and your browser never asked, turn it off and back on. If you blocked notifications for the site earlier, allow them in your browser's site settings instead; the switch can't bring the prompt back.
 

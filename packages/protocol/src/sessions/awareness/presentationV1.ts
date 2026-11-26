@@ -68,7 +68,8 @@ export function readSessionAwarenessPresentationV1(awareness: SessionAwarenessPr
   // Operational evidence and runtime reachability are orthogonal: an active turn or pending
   // request stays meaningful without a presence channel, while no operational fact stays unknown.
   if (primary === 'working') return 'thinking';
-  if (awareness.runtime === 'background_active') return 'background_active';
+  if (primary !== 'failed' && (awareness.runtime === 'background_active'
+    || reasons?.includes('background_activity'))) return 'background_active';
   if (personal?.includes('ready_after_read')) return 'finished_unseen';
   if (personal?.includes('mentioned')) return 'mentioned';
   if (personal?.some(reason => reason === 'unread' || reason === 'unread_discussion' || reason === 'manual' || reason === 'reminder_due')) return 'unread';

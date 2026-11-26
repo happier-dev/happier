@@ -55,11 +55,13 @@ export function projectSessionAwarenessV1(
   const lifecycle = lifecycleUnavailable ? {} : input.lifecycle;
   const pending = pendingUnavailable ? {} : input.pending;
 
+  const managedWorkingCount = normalizeAwarenessCountV1(input.managedSessions?.working);
   const runtimeFacts = projectSessionAwarenessRuntimeV1({
     nowMs: input.nowMs,
     lifecycle,
     runtime: input.runtime,
     pending,
+    managedWorkingCount,
     runtimeEvidenceUnavailable: runtimeUnavailable,
     ...(input.currentness.observedAtMs !== undefined
       ? { currentnessObservedAtMs: input.currentness.observedAtMs }
@@ -117,7 +119,7 @@ export function projectSessionAwarenessV1(
     && lifecycle.processTerminalState !== 'stopped' && !lifecycle.archivedAtMs
     ? input.runtime.workStatus : null;
   const lineage = contentReadable ? input.lineage ?? undefined : undefined;
-  const runningWorkCount = normalizeAwarenessCountV1(input.managedSessions?.working)
+  const runningWorkCount = managedWorkingCount
     + (runtimeFacts.freshness === 'live' ? runtimeFacts.reportedActiveCount : 0);
   const retry = showStatus && operational.primary === 'working' && input.turnRetry != null
     ? SessionTurnProgressV1Schema.safeParse(input.turnRetry) : null;

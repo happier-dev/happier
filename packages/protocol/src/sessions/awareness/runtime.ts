@@ -157,6 +157,7 @@ export type ProjectSessionAwarenessRuntimeV1Input = Readonly<{
   lifecycle: SessionLifecycleAwarenessInputV1;
   runtime: SessionRuntimeAwarenessInputV1;
   pending: SessionPendingAwarenessInputV1;
+  managedWorkingCount?: number;
   runtimeEvidenceUnavailable?: boolean;
   /** Observation ceiling for callers projecting a retained/delayed aggregate snapshot. */
   currentnessObservedAtMs?: number | null;
@@ -261,7 +262,8 @@ export function projectSessionAwarenessRuntimeV1(
 
   const activity = { state: runtime.activityState, activeCount: normalizeAwarenessCountV1(runtime.activityActiveCount) };
   const reportedActiveCount = !archived && hasActiveSessionRuntimeActivity(activity) ? activity.activeCount : 0;
-  const backgroundActive = !working && reportedActiveCount > 0;
+  const backgroundActive = !archived && !working
+    && (reportedActiveCount > 0 || (input.managedWorkingCount ?? 0) > 0);
 
   // Pending facts and runtime reachability are orthogonal. A host can observe the runtime's
   // active projection without owning a presence channel (the CLI V2 row is the concrete case).

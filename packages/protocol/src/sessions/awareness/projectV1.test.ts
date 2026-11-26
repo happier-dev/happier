@@ -645,6 +645,34 @@ describe('projectSessionAwarenessV1 — work headline', () => {
       .toHaveProperty('runningWorkCount', 3);
   });
 
+  it('keeps a completed lead working until all three managed Sessions settle', () => {
+    const lead = input({
+      lifecycle: { latestTurnStatus: 'completed', latestReadyEventSeq: 9 },
+      managedSessions: { total: 3, working: 3, needsYou: 0, stalled: 0, finished: 0, attentionPrimary: 'thinking' },
+    });
+    const working = projectSessionAwarenessV1(lead);
+    expect(working.runtime).toBe('background_active');
+    expect(working.operational.reasons).not.toContain('ready');
+    expect(working.runningWorkCount).toBe(3);
+    expect(readSessionAwarenessPresentationV1({
+      ...working, viewer: { attention: { reasons: ['ready_after_read'] } },
+    })).toBe('background_active');
+
+    const failed = projectSessionAwarenessV1({ ...lead, lifecycle: { latestTurnStatus: 'failed' } });
+    expect(failed.operational.primary).toBe('failed');
+    expect(readSessionAwarenessPresentationV1({
+      ...failed, viewer: { attention: { reasons: ['failed'] } },
+    })).toBe('failed');
+    expect(readSessionAwarenessPresentationV1(failed)).not.toBe('background_active');
+    expect(failed.runningWorkCount).toBe(3);
+
+    const settled = projectSessionAwarenessV1({
+      ...lead,
+      managedSessions: { total: 3, working: 0, needsYou: 0, stalled: 0, finished: 3, attentionPrimary: null },
+    });
+    expect(settled.operational.primary).toBe('ready');
+  });
+
   it('projects the same task progress from full work state and its compact display', async () => {
     const { projectSessionWorkDisplayV1 } = await import('../work/state/sessionWorkStatePrimary.js');
     const work: NonNullable<ProjectSessionAwarenessV1Input['work']> = {

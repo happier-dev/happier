@@ -9,7 +9,7 @@ import { Platform } from 'react-native';
 import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName, resolvePushNotificationAndroidChannelId } from '@happier-dev/protocol/push/pushNotificationActions';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { resolveActivityRequestEventIdentityV1, resolveActivitySequenceEventIdentityV1, resolveActivityTranscriptLocalIdEventIdentityV1, resolveActivityTurnEventIdentityV1 } from '@happier-dev/protocol/activity/eventIdentity';
-import { resolveSessionPersonalEventEligibilityV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
+import { resolveSessionPersonalEventEligibilityV1, resolveSessionPersonalFollowEventV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
 import { resolveEffectiveAccountFollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
 import { useExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
@@ -280,7 +280,8 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                 access: session.access,
                 active: session.active,
             });
-            const followEvent = stalledOccurrence ? { kind: 'stalled' as const }
+            const followEvent = event.kind === 'ready' ? resolveSessionPersonalFollowEventV1(event.event)
+                : stalledOccurrence ? { kind: 'stalled' as const }
                 : event.kind === 'session-update' && event.event === 'message' ? event.followEvent : undefined;
             const eligibility = resolveSessionPersonalEventEligibilityV1({
                 event: event.event,
@@ -294,7 +295,7 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                 responsible: viewer?.relevance.reasons.includes('responsible_for_me') === true,
                 targeted: false,
                 followFacts: viewer ? viewer.follow : { follows: false, notificationLevel: null },
-                followEvent,
+                followEvent: followEvent ?? undefined,
                 capabilities: {
                     canSubmitAgentInput: interaction.canSendMessages,
                     canApprovePermissions: interaction.canApprovePermissions,

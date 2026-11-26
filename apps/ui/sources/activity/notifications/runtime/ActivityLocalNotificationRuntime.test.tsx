@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { createDeferred, createSessionAccessFixture, createSessionFixture, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createSessionAccessFixture, createSessionFixture, createSessionViewerFixture, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { storage } from '@/sync/domains/state/storage';
@@ -51,6 +51,9 @@ let restoredHome: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null
 type NotificationSessionFixture = Partial<Omit<Session, 'metadata'>> & {
     metadata?: Partial<NonNullable<Session['metadata']>>;
 };
+const finishedAlertFollow = {
+    follows: true, notificationLevel: 'all_messages', policy: { preset: 'everything' },
+} as const;
 const initialState = storage.getInitialState();
 const homes = createHomeGovernanceHarness();
 const desktopSecureStorage = createDesktopSecureStorageBoundary();
@@ -168,6 +171,10 @@ async function renderScreen(element: React.ReactElement) {
         return [id, createSessionFixture({
             active: true,
             ...fixture,
+            viewer: fixture.viewer ?? createSessionViewerFixture({
+                relevance: { relevant: true, reasons: ['owned_by_me'] },
+                follow: finishedAlertFollow,
+            }),
             id,
             encryptedContentAvailability: fixture.encryptedContentAvailability,
             metadata: fixture.metadata ? { path: '', host: '', ...fixture.metadata } : null,
@@ -627,9 +634,9 @@ describe('ActivityLocalNotificationRuntime', () => {
                 latestFailureSeq: null,
                 readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
                 relevance: { relevant: true, reasons: ['followed_by_me'] },
-                follow: { follows: true, notificationLevel: 'important', policy: { preset: 'important' } },
+                follow: finishedAlertFollow,
                 attention: { needsAttention: true, reasons: ['ready_after_read'], primary: 'ready_after_read', presentation: 'full' },
-                notification: { level: 'important', source: 'preference' },
+                notification: { level: 'all_messages', source: 'preference' },
             },
         };
         const { noteActivityAlertPresented, resetActivityAlertPresentationNotesForTests } =
@@ -817,7 +824,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         await act(async () => { screen.tree.unmount(); });
     });
 
-    it('delivers followed ready events with status-only privacy and honors explicit notification suppression', async () => {
+    it('applies the Session Follow policy to local Finished notifications', async () => {
         const viewer: NonNullable<Session['viewer']> = {
             latestFailureSeq: null,
             readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
@@ -833,6 +840,13 @@ describe('ActivityLocalNotificationRuntime', () => {
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
         const { notifyActivityReady } = await import('./activityLocalNotificationBus');
         const screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        await act(async () => {
+            notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
+        });
+        expect(sendExpoLocalNotification).not.toHaveBeenCalled();
+
+        viewer.follow.notificationLevel = 'all_messages';
+        viewer.follow.policy = { preset: 'everything' };
         await act(async () => {
             notifyActivityReady({ serverId: 'srv_home_a', sessionId: 'session-1' }, []);
         });
@@ -866,9 +880,9 @@ describe('ActivityLocalNotificationRuntime', () => {
                 latestFailureSeq: null,
                 readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
                 relevance: { relevant: true, reasons: ['owned_by_me'] },
-                follow: { follows: false, notificationLevel: null },
+                follow: finishedAlertFollow,
                 attention: { needsAttention: true, reasons: ['ready_after_read'], primary: 'ready_after_read', presentation: 'full' },
-                notification: { level: 'important', source: 'owner' },
+                notification: { level: 'all_messages', source: 'preference' },
             },
         };
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
@@ -903,9 +917,9 @@ describe('ActivityLocalNotificationRuntime', () => {
                 latestFailureSeq: null,
                 readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
                 relevance: { relevant: true, reasons: ['owned_by_me'] },
-                follow: { follows: false, notificationLevel: null },
+                follow: finishedAlertFollow,
                 attention: { needsAttention: true, reasons: ['ready_after_read'], primary: 'ready_after_read', presentation: 'full' },
-                notification: { level: 'important', source: 'owner' },
+                notification: { level: 'all_messages', source: 'preference' },
             },
         };
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
