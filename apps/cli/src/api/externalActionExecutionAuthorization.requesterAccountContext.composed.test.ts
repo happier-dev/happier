@@ -378,9 +378,10 @@ it('routes a deployment database operation through Home admission even on the da
     serviceId: 'database', database: 'app' };
   expect(requiresOriginalAccountMachineActionProof('action.invoke', { action: statement, input: {
     operation: 'statement.run', target, mode: 'read', statement: { sql: 'SELECT 1', parameters: [] } } })).toBe(true);
-  // Listing targets opens no data role; a non-deployment plugin Action keeps its local root.
+  // The Environment listing reads private deployment metadata before choosing a data target.
   expect(requiresOriginalAccountMachineActionProof('action.invoke', { action: targets, input: {
-    scope: { kind: 'environment', environment } } })).toBe(false);
+    scope: { kind: 'environment', environment } } })).toBe(true);
+  // An unrelated plugin Action keeps its local root.
   expect(requiresOriginalAccountMachineActionProof('action.invoke', { action: { pluginId: 'happier.example', localId: 'echo' },
     input: { target } })).toBe(false);
 });

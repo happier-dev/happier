@@ -282,7 +282,7 @@ describe('Session spawn defaults at admission', () => {
     { name: 'explicit null clears the Machine approval profile at Session birth', surface: 'cli' as const, layer: 'approval-null', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'Team approval profile is captured with derived provenance at Session birth', surface: 'cli' as const, layer: 'approval-team', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'Voice spawn binding reaches saved member model and service defaults', surface: 'voice' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
-    { name: 'explicit Muse source excludes the saved Codex pool', surface: 'mcp' as const, layer: 'muse', permission: 'safe-yolo', modelId: 'team-model' },
+    { name: 'explicit OpenAI source excludes the saved Codex pool', surface: 'mcp' as const, layer: 'explicit-source', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'no explicit source retains the saved Codex pool', surface: 'mcp' as const, layer: 'pool-default', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'explicit Automatic', surface: 'mcp' as const, layer: 'automatic', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'V2 native Team model', surface: 'mcp' as const, layer: 'v2', permission: 'safe-yolo', modelId: 'team-model' },
@@ -419,7 +419,7 @@ describe('Session spawn defaults at admission', () => {
         snapshot: { settings, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network',
           scopeKey: resolveAccountSettingsScopeKeyForToken(token),
           connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes',
-            value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: testCase.layer === 'muse' || testCase.layer === 'pool-default'
+            value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: testCase.layer === 'explicit-source' || testCase.layer === 'pool-default'
               ? [{ purpose: purpose.purpose, target: { kind: 'group', service, groupId: 'saved-codex-pool' } }]
               : testCase.layer === 'member' || testCase.layer === 'policy' || crossAccount
               ? [{ purpose: purpose.purpose, target: { kind: 'account', account: { service, accountId: 'member-account' } } }] : [] }) } } } }),
@@ -499,8 +499,8 @@ describe('Session spawn defaults at admission', () => {
         mode: { value: null, updatedAtMs: 1 }, model: { value: null, updatedAtMs: 1, selectionSource: 'inherited' },
         permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } } : {}),
       ...(testCase.layer === 'policy' ? { permissionMode: 'safe-yolo', modelSelection: model('explicit-model') } : {}),
-      connectedServices: { v: 2, bindingsByServiceId: testCase.layer === 'muse'
-        ? { 'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'own-muse' } }
+      connectedServices: { v: 2, bindingsByServiceId: testCase.layer === 'explicit-source'
+        ? { 'happier.voice.openai/openai': { source: 'connected', selection: 'profile', profileId: 'own-openai' } }
         : testCase.layer === 'policy' ? { [serviceId]: { source: 'connected', profileId: 'explicit-account' } } : {} }, memoryEnabled: false });
     // Voice preserves the authoring input for ordinary creation preparation.
     // Leave model/services unset: supplying them here would hide a defaults bypass.
@@ -602,13 +602,13 @@ describe('Session spawn defaults at admission', () => {
       const nativeSandbox = testCase.layer === 'isolated' ? 'off' : 'on';
       expect(launched[0]).toMatchObject({ nativeSandbox, sessionCreationCorrespondence: { recipe: { configuration: { nativeSandbox } } } });
     }
-    const expectedBindings = testCase.layer === 'muse'
-      ? { 'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'own-muse' } }
+    const expectedBindings = testCase.layer === 'explicit-source'
+      ? { 'happier.voice.openai/openai': { source: 'connected', selection: 'profile', profileId: 'own-openai' } }
       : testCase.layer === 'pool-default'
         ? { [serviceId]: { source: 'connected', selection: 'group', groupId: 'saved-codex-pool' } }
         : { [serviceId]: { source: 'connected', profileId: testCase.layer === 'requester-project'
           ? 'member-account' : testCase.modelId.replace('-model', '-account') } };
-    if (testCase.layer === 'muse' || testCase.layer === 'pool-default') {
+    if (testCase.layer === 'explicit-source' || testCase.layer === 'pool-default') {
       const services = ConnectedServiceBindingsV2IngressSchema.parse(launched[0]?.connectedServices);
       const connectedBindings = Object.fromEntries(Object.entries(services.bindingsByServiceId)
         .filter(([, binding]) => binding.source !== 'native'));

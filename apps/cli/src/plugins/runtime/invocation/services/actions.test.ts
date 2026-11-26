@@ -68,6 +68,12 @@ type TestActionExecutorOverrides = Partial<Pick<
     | 'approvalsCreate'
     | 'sessionSendMessage'
     | 'resolveSessionReference'
+    | 'subagentsList'
+    | 'subagentsGet'
+    | 'subagentsWatch'
+    | 'subagentsUpsert'
+    | 'subagentsUpdateStatus'
+    | 'subagentsComplete'
     | 'invokeContributedAction'
     | 'readActionsSettings'
     | 'listContributedActionDefinitions'
@@ -231,8 +237,10 @@ describe('plugin invocation ActionsService', () => {
             }), normalizeActionsSettingsV1({ v: 1 })),
             invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
         });
-        // This host boundary has no approval execution origin; a required review must refuse before effect.
-        await expect(service.execute('agents.backends.list', {})).rejects.toMatchObject({ code: 'approval_origin_unavailable' });
+        await expect(service.execute('agents.backends.list', {})).resolves.toMatchObject({
+            kind: 'approval_request_created', artifactId: 'run-profile-approval',
+            approvalProfile: { status: 'available', requestedId: 'ask-backends' },
+        });
         expect(effects).toBe(0);
         approvalProfileId = null;
         await expect(service.execute('agents.backends.list', {})).resolves.toMatchObject({ items: [] });
@@ -1986,6 +1994,9 @@ describe('plugin invocation ActionsService', () => {
         let approval: unknown;
         const effects: string[] = [];
         const executor = createActionExecutorForTest({
+            readActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+                actions: { 'session.message.send': { approvalRequiredSurfaces: ['plugin'] } },
+            }),
             approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'bob-preview' }; },
             sessionSendMessage: async ({ message }) => { effects.push(message); return { status: 'accepted', localId: 'effect' }; },
         });
@@ -2796,23 +2807,29 @@ describe('plugin invocation ActionsService', () => {
     });
 
     it('exposes bounded Session-subagent reads to plugin callers and keeps lifecycle mutations internal', async () => {
-        const subagentRef = {
-            id: 'subagent-1',
-            parentSessionId: 'session-bound',
-            origin: 'agent' as const,
-            kind: 'native' as const,
-            agentRef: { agentId: 'codex' },
-            status: 'pending' as const,
-            createdAt: 123,
-        };
-        const execute = vi.fn(async (actionId: string, _input: unknown, _context: unknown) => {
-            if (actionId === 'sessions.subagents.list') {
-                return { ok: true as const, result: [subagentRef] };
-            }
-            if (actionId === 'sessions.subagents.get') {
-                return { ok: true as const, result: subagentRef };
-            }
-            return { ok: true as const, result: { kind: 'snapshot' as const, subagents: [subagentRef] } };
+        const operand = { sessionId: 'session-bound', entryId: 'child-1', toolId: 'tool-1', beforeSeq: 124 };
+        const row = { id: 'child-1', title: 'Inspect repository', status: 'running' as const,
+            startedAtMs: 123, endedAtMs: null, parentId: null, operand };
+        const subagentRef = { id: 'subagent-1', parentSessionId: 'session-bound', origin: 'agent' as const,
+            kind: 'native' as const, agentRef: { agentId: 'codex' }, status: 'pending' as const, createdAt: 123 };
+        const contexts: ActionExecutorContext[] = [];
+        let mutations = 0;
+        // The Session transport is the boundary; plugin admission, Action dispatch and output parsing stay real.
+        const executor = createActionExecutorForTest({
+            subagentsList: async ({ parentSessionId }, context) => {
+                expect(parentSessionId).toBe('session-bound');
+                contexts.push(context);
+                return { rows: [row], nextBeforeSeq: null };
+            },
+            subagentsGet: async (input, context) => {
+                expect(input).toEqual(operand);
+                contexts.push(context);
+                return { ...row, detail: null };
+            },
+            subagentsWatch: async () => ({ kind: 'snapshot', subagents: [subagentRef] }),
+            subagentsUpsert: async () => { mutations++; return subagentRef; },
+            subagentsUpdateStatus: async () => { mutations++; return subagentRef; },
+            subagentsComplete: async () => { mutations++; return subagentRef; },
         });
         const service = createPluginInvocationActionsService({
             seed: {
@@ -2824,48 +2841,28 @@ describe('plugin invocation ActionsService', () => {
                 signal: new AbortController().signal,
                 isOccurrenceCurrent: () => true,
             },
-            actionExecutor: { execute },
-            invokeContributedAction: vi.fn(),
+            actionExecutor: executor,
+            invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
         });
 
         await expect(Reflect.apply(service.execute, service, ['sessions.subagents.list', {}]))
-            .resolves.toEqual([subagentRef]);
-        await expect(Reflect.apply(service.execute, service, ['sessions.subagents.get', { id: 'subagent-1' }]))
-            .resolves.toEqual(subagentRef);
+            .resolves.toEqual({ rows: [row], nextBeforeSeq: null });
+        await expect(Reflect.apply(service.execute, service, ['sessions.subagents.get', operand]))
+            .resolves.toEqual({ ...row, detail: null });
         await expect(Reflect.apply(service.execute, service, ['sessions.subagents.watch', {}]))
             .resolves.toEqual({ kind: 'snapshot', subagents: [subagentRef] });
-        expect(execute).toHaveBeenCalledTimes(3);
-        for (const call of execute.mock.calls) {
-            expect(call[2]).toMatchObject({
-                surface: 'plugin',
-                authority: 'account_automation',
-            });
-        }
+        expect(contexts).toEqual([expect.objectContaining({ surface: 'plugin', authority: 'account_automation' }),
+            expect.objectContaining({ surface: 'plugin', authority: 'account_automation' })]);
 
-        const unavailableExecute = vi.fn();
-        const guardedService = createPluginInvocationActionsService({
-            seed: {
-                plugin: { id: 'acme.caller', version: '1.0.0' },
-                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture('acme.caller').resolveCurrentPluginMaterializationRef,
-                occurrenceId: 'occurrenceId-1',
-                surface: 'ui',
-                session: { id: 'session-bound' },
-                signal: new AbortController().signal,
-                isOccurrenceCurrent: () => true,
-            },
-            actionExecutor: { execute: unavailableExecute },
-            invokeContributedAction: vi.fn(),
-        });
         for (const actionId of [
             'sessions.subagents.upsert',
             'sessions.subagents.updateStatus',
             'sessions.subagents.complete',
         ] as const) {
-            await expect(Reflect.apply(guardedService.execute, guardedService, [actionId, {}]))
+            await expect(Reflect.apply(service.execute, service, [actionId, {}]))
                 .rejects.toMatchObject({ code: 'plugin_action_not_available' });
         }
-
-        expect(unavailableExecute).not.toHaveBeenCalled();
+        expect(mutations).toBe(0);
     });
 
     it('invokes an executor-backed runtime action through its exact canonical schemas', async () => {
