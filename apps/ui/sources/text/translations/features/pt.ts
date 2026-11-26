@@ -20693,6 +20693,7 @@ const pt: WorkflowTriggersCopy = {
         title: 'Título',
         sendTo: 'Enviar para',
         sendToDefault: 'Suas configurações de notificação',
+        sendToFailed: 'Não foi possível carregar os destinos',
         workflow: 'Fluxo',
         choose: 'Escolher…',
     },

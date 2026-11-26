@@ -20768,6 +20768,7 @@ const fr: WorkflowTriggersCopy = {
         title: 'Titre',
         sendTo: 'Envoyer à',
         sendToDefault: 'Tes réglages de notification',
+        sendToFailed: 'Impossible de charger les destinations',
         workflow: 'Workflow',
         choose: 'Choisir…',
     },

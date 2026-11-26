@@ -20735,6 +20735,7 @@ const pl: WorkflowTriggersCopy = {
         title: 'Tytuł',
         sendTo: 'Wyślij do',
         sendToDefault: 'Twoje ustawienia powiadomień',
+        sendToFailed: 'Nie udało się wczytać miejsc docelowych',
         workflow: 'Przepływ',
         choose: 'Wybierz…',
     },

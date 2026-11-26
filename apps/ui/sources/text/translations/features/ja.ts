@@ -20643,6 +20643,7 @@ const ja: WorkflowTriggersCopy = {
         title: 'タイトル',
         sendTo: '送信先',
         sendToDefault: '通知設定',
+        sendToFailed: '送信先を読み込めませんでした',
         workflow: 'ワークフロー',
         choose: '選択…',
     },

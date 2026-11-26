@@ -20725,6 +20725,7 @@ const ca: WorkflowTriggersCopy = {
         title: 'Títol',
         sendTo: 'Envia a',
         sendToDefault: 'La teva configuració de notificacions',
+        sendToFailed: 'No s’han pogut carregar els destins',
         workflow: 'Flux',
         choose: 'Tria…',
     },

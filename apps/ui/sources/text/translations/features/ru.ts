@@ -20737,6 +20737,7 @@ const ru: WorkflowTriggersCopy = {
         title: 'Заголовок',
         sendTo: 'Отправить в',
         sendToDefault: 'Ваши настройки уведомлений',
+        sendToFailed: 'Не удалось загрузить способы отправки',
         workflow: 'Процесс',
         choose: 'Выбрать…',
     },

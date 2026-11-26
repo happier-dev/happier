@@ -20583,6 +20583,7 @@ const zhHans: WorkflowTriggersCopy = {
         title: '标题',
         sendTo: '发送到',
         sendToDefault: '你的通知设置',
+        sendToFailed: '无法加载发送目标',
         workflow: '工作流',
         choose: '选择…',
     },

@@ -20213,6 +20213,7 @@ const de: WorkflowTriggersCopy = {
         title: 'Titel',
         sendTo: 'Senden an',
         sendToDefault: 'Deine Benachrichtigungseinstellungen',
+        sendToFailed: 'Ziele konnten nicht geladen werden',
         workflow: 'Workflow',
         choose: 'Auswählen…',
     },

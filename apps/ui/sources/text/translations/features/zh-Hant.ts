@@ -20583,6 +20583,7 @@ const zhHant: WorkflowTriggersCopy = {
         title: '標題',
         sendTo: '傳送到',
         sendToDefault: '你的通知設定',
+        sendToFailed: '無法載入傳送目標',
         workflow: '工作流程',
         choose: '選擇…',
     },

@@ -384,6 +384,7 @@ export const en = {
         title: 'Title',
         sendTo: 'Send to',
         sendToDefault: 'Your notification settings',
+        sendToFailed: 'Couldn’t load where to send it',
         workflow: 'Workflow',
         choose: 'Choose…',
     },

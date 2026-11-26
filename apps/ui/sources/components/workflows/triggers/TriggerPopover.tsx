@@ -79,6 +79,7 @@ import {
 import { createWorkflowTriggerStartWhen, readWorkflowTriggerStartId } from './workflowTriggerStarts';
 import { buildSimpleScheduleCron, formatScheduleTimeInput, readOnceDateTimeBound, resolveOnceSchedule, SIMPLE_SCHEDULE_REPEATS as REPEATS } from './triggerSchedule';
 import { LocalDateTimeEditor } from '@/components/ui/dateTime/LocalDateTimeEditor';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
 import { useProposedScheduleOccurrence } from './useProposedScheduleOccurrence';
 import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition, type SendToOption } from './useTriggerThenOptions';
@@ -240,6 +241,7 @@ export type TriggerPopoverProps = TriggerPopoverBaseProps & (
 
 /** The popover is exactly as wide as its content, so no empty band sits beside the rows (lab T1). */
 // T1's content width plus the canonical page-row insets, rather than charging the insets to its controls.
+const EMPTY_SEND_TO_OPTIONS: readonly SendToOption[] = Object.freeze([]);
 export const TRIGGER_POPOVER_WIDTH = 380 + 2 * PAGE_LIST_METRICS.rowPaddingHorizontalPx;
 // A form taller than the popover scrolls under its foot; the fades and the shared edge chevron say there is more.
 const TRIGGER_POPOVER_EDGE_FADES = { top: true, bottom: true, size: 18 } as const;
@@ -460,20 +462,21 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         props.accountLifetime,
     );
     const notifyChannelFailure = notifyChannels.result?.kind === 'failed' ? notifyChannels.result : null;
-    const optionReadFailure = then.kind === 'runWorkflow' && workflow.status === 'failed'
-        ? { message: t('workflows.loadFailedBody'), retry: workflow.retry }
-        : notifyChannelFailure
-            ? {
-                message: resolveActionExecutionErrorMessage(
-                    notifyChannelFailure.error instanceof WorkflowActionError
-                        ? { errorCode: notifyChannelFailure.error.rawCode, details: notifyChannelFailure.error.rawDetails }
-                        : notifyChannelFailure.error,
-                    resolveWorkflowProblemPresentation(notifyChannelFailure.error).message,
-                    { closedCodesOnly: true },
-                ),
-                retry: notifyChannels.retry,
-            }
-            : null;
+    const workflowReadFailure = then.kind === 'runWorkflow' && workflow.status === 'failed'
+        ? { message: t('workflows.loadFailedBody'), retry: workflow.retry } : null;
+    // A failed read of the destinations stays under Send to, which keeps its place (R13).
+    const sendToFailure = notifyChannelFailure
+        ? {
+            message: resolveActionExecutionErrorMessage(
+                notifyChannelFailure.error instanceof WorkflowActionError
+                    ? { errorCode: notifyChannelFailure.error.rawCode, details: notifyChannelFailure.error.rawDetails }
+                    : notifyChannelFailure.error,
+                resolveWorkflowProblemPresentation(notifyChannelFailure.error).message,
+                { closedCodesOnly: true },
+            ),
+            retry: notifyChannels.retry,
+        }
+        : null;
     const target = needsTarget ? buildTriggerTarget(then, triggerScope) : null;
     const promptDestination = useSessionReferenceTarget(
         needsTarget && then.kind === 'sendPrompt' && then.runsIn?.kind === 'session' ? then.runsIn.sessionId : '', originServerId,
@@ -750,7 +753,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                         then={then}
                                         onChange={changeThen}
                                         workflowOptions={props.workflowOptions}
-                                        sendToOptions={notifyChannels.result?.kind === 'failed' ? null : notifyChannels.result?.options ?? []}
+                                        sendToOptions={notifyChannels.result?.kind === 'failed' ? EMPTY_SEND_TO_OPTIONS : notifyChannels.result?.options ?? EMPTY_SEND_TO_OPTIONS}
+                                        sendToFailure={sendToFailure}
                                         scope={triggerScope}
                                         machineId={props.machineId ?? null}
                                         serverId={props.serverId ?? null}
@@ -772,9 +776,9 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                     {then.kind === 'runWorkflow' && workflow.status === 'loading' ? (
                                         <Item title={t('common.loading')} mode="info" />
                                     ) : null}
-                                    {optionReadFailure ? (
-                                        <Item title={t('workflows.loadFailedTitle')} subtitle={optionReadFailure.message}
-                                            detail={t('workflows.retry')} onPress={optionReadFailure.retry} />
+                                    {workflowReadFailure ? (
+                                        <Item title={t('workflows.loadFailedTitle')} subtitle={workflowReadFailure.message}
+                                            detail={t('workflows.retry')} onPress={workflowReadFailure.retry} />
                                     ) : null}
                                     {/* Its own steps open as a workflow to review: a destination, so a row
                                         under the steps that says what happens, not one more foot button. No
@@ -929,7 +933,8 @@ function ThenRows(props: Readonly<{
     then: TriggerThenValue;
     onChange: (next: TriggerThenValue) => void;
     workflowOptions: readonly TriggerWorkflowOption[];
-    sendToOptions: readonly SendToOption[] | null;
+    sendToOptions: readonly SendToOption[];
+    sendToFailure: Readonly<{ message: string; retry: () => void }> | null;
     scope: 'session' | 'account';
     machineId: string | null;
     serverId: string | null;
@@ -1004,12 +1009,15 @@ function ThenRows(props: Readonly<{
                         allowEmpty
                         onCommit={(title) => props.onChange({ ...then, title })}
                     />
-                    {props.sendToOptions === null ? null : <SendToSelect
+                    <SendToSelect
                         testID={`${props.testID}-send-to`}
                         options={props.sendToOptions}
                         selected={then.channels}
                         onChange={(channels) => props.onChange({ ...then, channels })}
-                    />}
+                    />
+                    {props.sendToFailure ? <SurfaceStateCard testID={`${props.testID}-send-to-failed`} kind="error" size="line"
+                        title={t('workflows.triggers.then.sendToFailed')} reason={props.sendToFailure.message}
+                        action={{ testID: `${props.testID}-send-to-retry`, label: t('workflows.retry'), onPress: props.sendToFailure.retry }} /> : null}
                 </>
             );
         case 'runWorkflow':

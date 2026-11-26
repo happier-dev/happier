@@ -430,11 +430,12 @@ describe('Run a workflow trigger inputs', () => {
             workflowOptions={[]} onSubmit={vi.fn<ExistingTriggerSubmit>(async () => {})} />);
         await waitForHomeGovernance(() => expect(home.requestsFor('/v1/actions/action.options.resolve')).toHaveLength(1));
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('workflows.problem.preExecution.actionUnavailable'));
-        expect(screen.findByTestId('notify-options-send-to')).toBeNull();
-        const retry = screen.findByProps({ title: 'workflows.loadFailedTitle', detail: 'workflows.retry' });
-        expect(retry).not.toBeNull();
+        // The failure names what failed (where to send it), and Send to stays in place with Retry under it (R13).
+        expect(screen.findByTestId('notify-options-send-to')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.triggers.then.sendToFailed');
+        expect(screen.getTextContent()).not.toContain('workflows.loadFailedTitle');
         refused = false;
-        await act(async () => retry.props.onPress());
+        await screen.pressByTestIdAsync('notify-options-send-to-retry');
         await waitForHomeGovernance(() => expect(screen.findAllByType(DropdownMenu)
             .find(node => node.props.testID === 'notify-options-send-to')?.props.items)
             .toMatchObject([{ id: availableChannel.value, title: availableChannel.label }]));
