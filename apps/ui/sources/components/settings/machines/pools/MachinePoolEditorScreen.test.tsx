@@ -449,7 +449,7 @@ describe('MachinePoolEditorScreen', () => {
 
         const headingTexts = () => screen.root.findAll((node) =>
             typeof node.type === 'string' && node.props.accessibilityRole === 'header',
-        ).map((node) => node.props.children);
+        ).flatMap((node) => React.Children.toArray(node.props.children));
         expect(headingTexts()).not.toContain(t('machinePools.newPoolTitle'));
         await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Build farm'));
         expect(headingTexts()).toContain('Build farm');
@@ -1342,7 +1342,7 @@ describe('MachinePoolEditorScreen', () => {
         const editScreen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} poolId={poolView(1).pool.id} />);
         expect(editScreen.findByTestId('settings.machinePools.editor.featureUnavailable')).not.toBeNull();
         expect(editScreen.findByTestId('settings.machinePools.editor.name')?.props.editable).toBe(false);
-        expect(editScreen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(true);
+        expect(editScreen.findByTestId('settings.machinePools.editor.save')).toBeNull();
         // Nothing can be deleted where the Home offers no pools: the page has no `⋯` menu.
         expect(editScreen.findByTestId('settings.machinePools.editor.menu.trigger')).toBeNull();
         expect(boundaries.remove).not.toHaveBeenCalled();
