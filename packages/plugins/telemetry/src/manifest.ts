@@ -1,5 +1,5 @@
 import { createLocalCaptureContribution, LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAMES, LOCAL_CAPTURE_ENVIRONMENT_NAMES } from './contribution.js';
-import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { definePlugin, isDelegatedActionRequesterV1, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { DATABASE_PLUGIN_ID_V1 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
@@ -23,7 +23,7 @@ import { TELEMETRY_WIDGET_RENDERERS, TELEMETRY_WIDGET_VIEWS } from './widgets.js
 /** Local sources (the requester's own Machine and worktrees) are admitted for the Account that
  * recorded them: the source must be on this executing Machine, and the requester's Account selects
  * its own partition. Environment telemetry uses host admission for the selected action. */
-type CapturePlacement = Pick<PluginInvocationContext, 'requesterAccount' | 'chosenMachine'>;
+type CapturePlacement = Pick<PluginInvocationContext, 'requesterAccount' | 'chosenMachine' | 'agentCaller' | 'authority'>;
 
 function localCaptureOwner(machineId: string, context: CapturePlacement): string {
  const accountId = context.requesterAccount?.accountId;
@@ -34,7 +34,11 @@ function localCaptureOwner(machineId: string, context: CapturePlacement): string
 async function admitCaptureSource(source: DatabaseCaptureSourceV1, context: CapturePlacement,
  deployments: PluginInvocationContext['services']['deploymentDatabases'], actionId: DatabaseActionIdV1) {
  if (source.kind === 'worktree') {
-  return { source, partition: captureSourcePartition(source, localCaptureOwner(source.machineId, context)) };
+  const accountId = localCaptureOwner(source.machineId, context);
+  if (actionId !== DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 && isDelegatedActionRequesterV1(context)) {
+   throw new PluginError({ code: 'database_target_required' });
+  }
+  return { source, partition: captureSourcePartition(source, accountId) };
  }
  const environment = { serverId: source.serverId, environmentId: source.environmentId };
  const partition = captureSourcePartition(source, undefined);

@@ -131,7 +131,7 @@ async function setup(canClear = false) {
 }
 
 describe('R2-A3 local capture Source/project admission through the real manifest', () => {
-  it('keeps selected database query and N+1 evidence within the exact Worktree target', async () => {
+  it('requires an exact database target for agent capture reads and applies its access policy', async () => {
     const entries = new Map<string, JsonValue>();
     const storage: StorageScopeService = {
       async get<T extends JsonValue = JsonValue>(key: string) { return (entries.get(key) ?? null) as T | null; },
@@ -205,11 +205,16 @@ describe('R2-A3 local capture Source/project admission through the real manifest
       const listResult = database.DatabaseCaptureQueriesListResultV1Schema.parse(
         await invoke(list, { ...scoped, page }, person));
       expect(listResult.ok && listResult.items.map(row => row.id)).toEqual(selectedIds);
+      const worktreeResult = database.DatabaseCaptureQueriesListResultV1Schema.parse(
+        await invoke(list, { source, page }, person));
+      expect(worktreeResult.ok && worktreeResult.items.map(row => row.id))
+        .toEqual(expect.arrayContaining([...selectedIds, 'unassigned', 'neighbor']));
       expect(await invoke(detail, { ...scoped, id: 'selected-1' }, person))
         .toMatchObject({ ok: true, detail: { sql: 'selected' } });
       for (const id of ['neighbor', 'unassigned']) {
         expect(await invoke(detail, { ...scoped, id }, person)).toMatchObject({ ok: true, detail: null });
       }
+      await workbench.invokeAction(local(database.DATABASE_ACCESS_SET_ACTION_ID_V1), { target: databaseTarget, agentAccess: 'read' }, person);
       const traceResult = database.DatabaseCaptureTraceGetResultV1Schema.parse(
         await invoke(trace, { ...scoped, traceId, page: { limit: 2 } }, agent));
       expect(traceResult.ok && traceResult.summaries.map(row => row.id)).toEqual(selectedIds);
@@ -222,6 +227,7 @@ describe('R2-A3 local capture Source/project admission through the real manifest
         .rejects.toMatchObject({ code: 'capture_source_unavailable' });
       await workbench.invokeAction(local(database.DATABASE_ACCESS_SET_ACTION_ID_V1), { target: databaseTarget, agentAccess: 'none' }, person);
       await expect(invoke(list, { ...scoped, page }, agent)).rejects.toMatchObject({ code: 'database_agent_access_none' });
+      await expect(invoke(list, { source, page }, agent)).rejects.toMatchObject({ code: 'database_target_required' });
     } finally {
       await f.close();
       if (retained.kind === 'unchanged') await retained.release?.();
