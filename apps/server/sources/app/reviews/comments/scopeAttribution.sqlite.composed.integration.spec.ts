@@ -9,6 +9,8 @@ import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structure
 import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ReviewCommentGetResponseV1Schema, ReviewCommentTransitionResponseV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ReviewWorkflowHistoryResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 import type { AgentExecutionRunEvent, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createClawpatchExecutionRunFactory } from '../../../../../../packages/plugins/review-slices/src/agent/reviews/execution';
 import { createClawpatchProcessFixture } from '../../../../../../packages/plugins/review-slices/src/agent/reviews/run.testkit';
@@ -28,6 +30,7 @@ import { materializeReviewFindings } from '../../../../../cli/src/agent/runtime/
 import { createCliReviewCommentActionExecutorFromCredentials } from '../../../../../cli/src/agent/reviews/comments/executor';
 import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '../../../../../cli/src/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '../../../../../cli/src/api/client/serverHttpBaseUrl';
+import { createAccountServerActionDeps } from '../../../../../cli/src/api/accountServerActionDeps';
 import type { ExecutionRunState } from '../../../../../cli/src/agent/runtime/bridges/executionRun/executionRunTypes';
 import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '../../../../../ui/sources/components/sessions/files/views/sessionFilesViewTestkit';
 import { standardCleanup } from '../../../../../ui/sources/dev/testkit';
@@ -248,6 +251,116 @@ it('preserves the actual human dismissal and revision through native Stop and a 
             expect(projectReviewRunTriage([final])).toEqual({ findings: [{ id: 'clawpatch-1', status: 'reject', comment: 'Inspected and rejected by the person.' }] });
             expect(JSON.parse(await readFile(join(native.state, 'findings', 'one.json'), 'utf8'))).toMatchObject({ status: 'open' });
             expect((await records.read(reviewId))?.rounds.map(round => round.state)).toEqual(['completed', 'cancelled', 'completed']);
+        });
+    }, { authentication: 'real' });
+});
+
+it('shows authorized Hunt history counts without inheriting another Review human decision', async () => {
+    // The canonical mounted UI fixture owns this sandbox Account identity.
+    const account = await db.account.upsert({ where: { id: 'alice' }, update: {}, create: { id: 'alice', encryptionMode: 'plain' } });
+    const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+    const machineId = randomUUID(), installationId = randomUUID(), keyPair = tweetnacl.sign.keyPair();
+    await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+    const workflowId = randomUUID();
+    const repeated = { id: 'repeated', title: 'Session token reaches the log', severity: 'high' as const,
+        category: 'security', summary: 'A reconnect logs the token.', filePath: 'session.ts', startLine: 8 };
+    const stillOpen = { ...repeated, id: 'open', title: 'Missing reconnect cleanup', summary: 'The subscription remains open.', startLine: 15 };
+    const fresh = { ...repeated, id: 'fresh', title: 'New credential fallback', summary: 'A new fallback uses another account.', startLine: 22 };
+    await withAuthenticatedTestApp(app => {
+        registerReviewCommentRoutes(app); registerReviewReadRoutes(app); artifactsRoutes(app); registerAccountEncryptionRoutes(app);
+    }, async app => {
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        await runWithServerHttpBaseUrl(origin, async () => {
+            const artifacts = createCredentialedAccountArtifactStore({ token, encryption: null });
+            const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(artifacts));
+            const execute = createCliReviewCommentActionExecutorFromCredentials({ credentials: { token, encryption: null },
+                resolvePrincipalSigningContext: async () => ({ machineId, installationId,
+                    privateKeyBase64Url: Buffer.from(keyPair.secretKey).toString('base64url') }) });
+            const comments = createReviewRunCommentService({ cwd: harness.baseDir,
+                scope: { workspace: { machineId, path: harness.baseDir } }, execute });
+            const read = async (reviewId: string, commentId: string) => ReviewCommentGetResponseV1Schema.parse(
+                await execute('reviews.comments.get', { reviewId, commentId })).comment;
+            const persist = async (findings: typeof repeated[], workflow = workflowId) => {
+                const reviewId = randomUUID(), runId = randomUUID();
+                const binding = await records.start({ reviewId, title: 'Security sweep', subjectKind: 'repository',
+                    sourceKind: 'workflow', workflowId: workflow, workflowRunId: runId, reviewerIds: ['reviewer'], startedAt: Date.now() });
+                const run: ExecutionRunState = { runId, callId: runId, sidechainId: runId, sessionId: null, depth: 0,
+                    intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                    instructions: 'Review the repository.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+                    runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: Date.now(),
+                    intentInput: { reviewRound: binding, reviewReviewerId: 'reviewer' } };
+                const normalized = normalizeStrictJsonReviewOutput({ ...run, finishedAtMs: Date.now(),
+                    rawText: JSON.stringify({ summary: 'Reviewed.', reviewOutcome: 'complete', findings }) });
+                expect(normalized.status).toBe('succeeded');
+                const payload = ReviewFindingsV2Schema.parse(normalized.structuredMeta?.payload);
+                const result = await comments.materialize({ run, findings: payload.findings, reviewedFingerprint: null, review: binding });
+                expect(result).toMatchObject({ status: 'materialized', failures: [] });
+                await records.settle({ ...binding, outcome: 'completed', finishedAt: Date.now(), runs: [{ kind: 'workflow', runId }] });
+                return { reviewId, runId, result };
+            };
+            await persist([repeated]);
+            const previous = await persist([repeated, stillOpen]);
+            const priorFinding = await read(previous.reviewId, previous.result.comments.find(row => row.findingId === repeated.id)!.comment.id);
+            const closed = ReviewCommentTransitionResponseV1Schema.parse(await execute('reviews.comments.transition',
+                buildReviewTriageTransitionRequestV1({ comment: priorFinding, decision: 'reject',
+                    note: 'Inspected and rejected only in this Review.', clientMutationId: randomUUID() }))).comment;
+            expect(closed).toMatchObject({ state: 'dismissed', reviewTriageStatus: 'reject' });
+            // Same identity on a different Hunt cannot inflate this Hunt's counts.
+            await persist([repeated, fresh], randomUUID());
+            const current = await persist([repeated, stillOpen, fresh]);
+            const currentFinding = await read(current.reviewId, current.result.comments.find(row => row.findingId === repeated.id)!.comment.id);
+            const openFinding = await read(current.reviewId, current.result.comments.find(row => row.findingId === stillOpen.id)!.comment.id);
+            const freshFinding = await read(current.reviewId, current.result.comments.find(row => row.findingId === fresh.id)!.comment.id);
+            const reader = createActionExecutor(createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }));
+            const result = await reader.execute('review.history.list', { workflowId, reviewId: current.reviewId },
+                { surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+            if (!result.ok) throw new Error(result.error);
+            const history = ReviewWorkflowHistoryResponseV1Schema.parse(result.result);
+            expect(history.previousReviewId).toBe(previous.reviewId);
+            expect(history.items).toHaveLength(3);
+            expect(history.items).toEqual(expect.arrayContaining([
+                expect.objectContaining({ findingIdentity: currentFinding.findingIdentity, priorReviewCount: 2, priorRunCount: 2,
+                    newSincePrevious: false, inCurrentReview: true, inPreviousReview: true, openReviewCount: 2,
+                    previousAppearances: [expect.objectContaining({ runId: previous.runId })] }),
+                expect.objectContaining({ findingIdentity: openFinding.findingIdentity, priorReviewCount: 1, priorRunCount: 1,
+                    newSincePrevious: false, openReviewCount: 2 }),
+                expect.objectContaining({ findingIdentity: freshFinding.findingIdentity, priorReviewCount: 0, priorRunCount: 0,
+                    newSincePrevious: true, openReviewCount: 1 }),
+            ]));
+            const requests: string[] = [];
+            const fixture = await createSessionFilesViewFixture({ serverUrl: origin, credentials: { token },
+                serverIdentityId: await getOrCreateServerIdentityId(), machine: null, request: async (url, init) => {
+                    const path = new URL(String(url)).pathname;
+                    if (path.startsWith('/v1/reviews/') || path.startsWith('/v1/artifacts') || path.startsWith('/v1/actions/review.')) {
+                        requests.push(path);
+                        return fetch(url, init);
+                    }
+                    return undefined;
+                } });
+            const { WorkflowRunReview } = await import('../../../../../ui/sources/components/workflows/run/WorkflowRunReview');
+            const { ReviewSummary } = await import('../../../../../ui/sources/components/reviews/summary/ReviewSummary');
+            const { t } = await import('../../../../../ui/sources/text');
+            const screen = await fixture.render(React.createElement(WorkflowRunReview, {
+                runId: current.runId, scope: { serverId: fixture.scope.serverId, accountId: account.id }, enabled: true,
+            }));
+            try {
+                await vi.waitFor(() => {
+                    expect(screen.getTextContent()).toContain(repeated.title);
+                    expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.historyEarlierRuns', { count: 2 }));
+                    expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.historyEarlierRuns', { count: 1 }));
+                    expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.historyNewSincePrevious'));
+                });
+                expect(requests).toContain('/v1/reviews/history/list');
+                expect(screen.tree.root.findByType(ReviewSummary).props.rows).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ rowId: currentFinding.id, decision: 'undecided' }),
+                    expect.objectContaining({ rowId: openFinding.id, decision: 'undecided' }),
+                    expect.objectContaining({ rowId: freshFinding.id, decision: 'undecided' }),
+                ]));
+                expect(await read(previous.reviewId, closed.id)).toEqual(closed);
+                expect(await read(current.reviewId, currentFinding.id)).toEqual(currentFinding);
+                expect(currentFinding.reviewTriageStatus).not.toBe('reject');
+            } finally { await screen.unmount(); standardCleanup(); await fixture.dispose(); }
         });
     }, { authentication: 'real' });
 });
