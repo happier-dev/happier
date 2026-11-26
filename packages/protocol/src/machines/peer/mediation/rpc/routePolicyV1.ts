@@ -6,7 +6,7 @@ import { PET_DAEMON_RPC_METHODS } from '../../../../pets/daemonRpc.js';
 import { isApprovalWithdrawalDecisionV1 } from '../../../../actions/decisionAuthority.js';
 import { isProjectWorkspaceSyncPreparationActionV1, PROJECT_SETUP_SET_ACTION_ID_V1, readProjectSetupSetChildRpcEffectV1 } from '../../../../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
-import { ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1, PROJECT_EXECUTION_OUTPUT_COPY_ACTION_ID_V1,
+import { ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1, PROJECT_EXECUTION_OUTPUT_COPY_ACTION_ID_V1,
   PROJECT_EXECUTION_OUTPUT_READ_ACTION_ID_V1 } from '../../../../actions/operations/actionIdsV1.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
 import { MachineLiveStreamRelayCapsV1Schema, type MachineLiveStreamRelayCaps } from '../stream/v1.js';
@@ -1180,11 +1180,20 @@ export function readProjectExecutionOutputMachineAdmissionMethodV1(actionId: str
     ? RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES : undefined;
 }
 
+/** A verified Session Get uses the registered requester-scoped operation RPC. */
+export function readSessionOperationGetRpcMethodV1(actionId: string | undefined,
+  origin: ExternalActionExecutionAuthorizationV1['binding']['sessionActionOrigin']) {
+  return origin && actionId === ACTION_OPERATION_GET_ACTION_ID_V1 ? ACTION_OPERATION_RPC_METHODS_V2.get : undefined;
+}
+
 /** Proof-aware effect projection; raw resume never becomes public fresh-spawn input. */
 export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
   selectedTarget?: Readonly<{ machineId: string; installationId: string }>,
   reviewedChild?: ReviewedActionChildHttpProofV1): string | null {
+  if (binding && method === readSessionOperationGetRpcMethodV1(binding.actionId, binding.sessionActionOrigin)) {
+    return binding.actionId;
+  }
   if (binding && isProviderActionIdV1(binding.actionId)) {
     // These foreign roots run at the requester-catalog receiver, never as a custodian RPC.
     if (binding.accountId !== binding.custodianAccountId && readRequesterProviderMachineActionRoleV1(binding.actionId)) return null;

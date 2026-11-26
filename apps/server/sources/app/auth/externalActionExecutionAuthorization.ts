@@ -154,7 +154,7 @@ import { SessionMachineAccessKeyCreateBodySchema } from '@/app/accessKeys/sessio
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 import { PET_IMPORT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
 import { PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol/pets/daemonRpc';
-import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readSessionAgentReadinessChildActionV1, readSessionOperationGetRpcMethodV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { isBackupReceiverSetupChildOperandV1, readBackupReceiverMachineIdV1,
     readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import type { MachineAdmission, SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -456,8 +456,9 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(
             || isOriginalAccountProjectAction(input.actionId)) return admission;
         const action = SignedRootActionIdSchema.safeParse(input.actionId);
         const spec = action.success ? getActionSpec(action.data) : null;
-        if (spec?.bindings?.rpcMethod && (spec.surfaces.rpc
-            || spec.surfaces.agent && spec.bindings.rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE)) return admission;
+        if ((spec?.bindings?.rpcMethod && (spec.surfaces.rpc
+            || spec.surfaces.agent && spec.bindings.rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE))
+            || readSessionOperationGetRpcMethodV1(input.actionId, origin)) return admission;
     }
     return isExternalActionHomeRelayAccountEligible({ accountId: input.actorAccountId,
         custodianAccountId: admission.custodianAccountId, sessionActionOrigin: origin })

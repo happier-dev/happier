@@ -11,7 +11,7 @@ import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/en
 import { MachineRecipientKeyEnvelopePageQueryV1Schema, type AccessibleMachineAccessV1, type MachineAdmission, type MachineAccessRoleV1, type MachineAccessRefusalV1, type MachineAccessRefusalCode, type MachineAccessGrantRowV1, type MachineAccessGrantsListResultV1, type MachineAccessMutationResultV1, type MachineAccessRecipientCensusResponseV1, type MachineRecipientKeyEnvelopeCommitInputV1, type MachineRecipientKeyEnvelopeCommitResponseV1, type MachineRecipientKeyEnvelopePageQueryV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { type PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { resourceTeamShareScopeV1, type ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
-import { readProjectExecutionOutputMachineAdmissionMethodV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readProjectExecutionOutputMachineAdmissionMethodV1, readSessionOperationGetRpcMethodV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isProjectWorkerCopyInspectActionIdV1, PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
@@ -663,7 +663,8 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
             ? RPC_METHODS.DAEMON_COMPUTER_PERSONAL_ACTION_EXECUTE
             : requesterActionIngress ? undefined : isProviderActionIdV1(input.actionId)
             ? resolveProviderActionRpcRouteV1(input.actionId)?.method
-            : spec?.bindings?.rpcMethod ?? readProjectExecutionOutputMachineAdmissionMethodV1(input.actionId);
+            : spec?.bindings?.rpcMethod ?? readProjectExecutionOutputMachineAdmissionMethodV1(input.actionId)
+                ?? readSessionOperationGetRpcMethodV1(input.actionId, input.sessionActionOrigin);
         // Runtime Browser Actions use the signed Action executor rather than a
         // raw RPC binding. Its role owner above and the receiver's profile owner
         // govern guest access; absence of a raw binding is not a custody refusal.
