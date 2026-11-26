@@ -108,7 +108,7 @@ import {
   readTriageSourceGetOperationV1,
 } from './sourceSurface.js';
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
-import { TriageLinkedSessions, TriageLinkedSessionsAttention } from './linkedSessions.js';
+import { TriageLinkedSessions } from './linkedSessions.js';
 import { TriageDetailWholeBody, TriageSessionPanel } from './sessionPanel.js';
 import { TriageDetailPageLeadProvider, TriageDetailPanelMount, TriageDetailTabbedBody, type TriageDetailActionsNavigationV1, type TriageDetailSourceMountV1, type TriageDetailTabSelectionV1 } from './body.js';
 import { TriageAgentStep, TriagePermissionCard, type TriageAgentEntryV1 } from './storyRail.js';
@@ -282,6 +282,7 @@ export type TriageDetailHeaderViewProps = Readonly<{
   narrow?: boolean;
   /** Visible direct Pin/Unpin for the selected entry. */
   pin?: TriageDetailPinActionV1;
+  linkedSessionsAttention?: boolean;
   linkedSessionsPageState?: 'idle' | 'loading' | 'failed';
   onLoadMoreLinkedSessions?: () => void;
   onSelectLinkedSession?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
@@ -879,7 +880,7 @@ export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): Reac
       {props.lastKnown === true ? <Status tone="muted" labelKey="plugins.triage.surface.detail.lastKnown" label="These are the last facts this page held for this entry, and they may be out of date." /> : null}
       {attentionBadge === null || props.attentionInActions === true ? null : <TriageAttentionBadge attention={attentionBadge} />}
       {presenceCopy === null ? null : <Status tone="warning" label={presenceCopy} />}
-      {props.showLinkedSessions === false ? null : <TriageLinkedSessions key={props.instanceKey} sessions={header.linkedSessions} hasMore={header.linkedSessionsHasMore} pageState={props.linkedSessionsPageState} onLoadMore={props.onLoadMoreLinkedSessions} onSelect={props.onSelectLinkedSession} />}
+      {props.showLinkedSessions === false ? null : <TriageLinkedSessions key={props.instanceKey} sessions={header.linkedSessions} hasMore={header.linkedSessionsHasMore} attention={props.linkedSessionsAttention} pageState={props.linkedSessionsPageState} onLoadMore={props.onLoadMoreLinkedSessions} onSelect={props.onSelectLinkedSession} />}
     </>
   );
 }
@@ -1271,6 +1272,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
             sessionStates={linkedSessionStates}
             reviewEntry={reviewEntry}
             {...(detail?.kind === 'ready' ? {
+              attention: detail.linkedSessionsAttention,
               pageState: detail.linkedSessionsPageState,
               onLoadMore: sessionSelection.onLoadMore,
             } : {})}
@@ -1384,6 +1386,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
                     sessionStates={linkedSessionStates}
                     reviewEntry={reviewEntry}
                     {...(detail.kind === 'ready' ? {
+                      attention: detail.linkedSessionsAttention,
                       pageState: detail.linkedSessionsPageState,
                       onLoadMore: sessionSelection.onLoadMore,
                     } : {})}
@@ -1472,17 +1475,17 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         })}
         pin={props.pin}
         onClose={props.onClose}
-        showLinkedSessions={composition.kind === 'whole' && !isTask}
+        showLinkedSessions={openTask === null && composition.kind === 'whole' && !isTask}
         attentionInActions={actionRegionShown && !pinned}
         narrow={props.pushed === true}
         onSelectLinkedSession={selectInlineSession}
         {...(detail?.kind === 'ready' ? {
+          linkedSessionsAttention: detail.linkedSessionsAttention,
           linkedSessionsPageState: detail.linkedSessionsPageState,
           onLoadMoreLinkedSessions: sessionSelection.onLoadMore,
         } : {})}
       />
 
-      {detail?.kind === 'ready' && detail.linkedSessionsAttention === true ? <TriageLinkedSessionsAttention /> : null}
       {pinned ? null : actionRegion}
       {/* Without an action row (no workflow subject yet) the task's Status still leads its facts. */}
       {/* The task's Status keeps its own width at the start of the facts (lab t1 phone), never a bar. */}

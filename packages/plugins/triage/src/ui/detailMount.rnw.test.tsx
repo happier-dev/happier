@@ -827,7 +827,7 @@ function createHarness(options: Readonly<{
         async seedLinkedSessions(count: number): Promise<void> {
             const entryRef = TriageEntryRefV1Schema.parse({
                 source: SOURCE,
-                kindId: 'pull-request',
+                kindId: options.securityAlert ? 'dependabot-alert' : 'pull-request',
                 collisionScope: 'example/repository',
                 entryId: '17',
             });
@@ -961,6 +961,7 @@ async function mountShell(
         otherSourceEntry?: boolean;
         deferLinkedEntry?: boolean;
         linkedSessionCount?: number;
+        linkedSessionsAttention?: true;
         sessionTitle?: string;
         archivedSessionId?: string;
         hostedDetail?: boolean;
@@ -1205,7 +1206,12 @@ async function mountShell(
                             origins: ['user'], status: 'unknown', display: { title: 'Unprojected fix' } };
                         return { v: 1, candidates: [primary], primary, incomplete: false };
                     }
-                    return await harness.executeAction(request);
+                    const result = await harness.executeAction(request);
+                    if (action === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 && options.linkedSessionsAttention
+                        && result !== null && typeof result === 'object' && 'kind' in result && result.kind === 'read') {
+                        return { ...result, linkedSessionsAttention: true };
+                    }
+                    return result;
                 },
                 replacePageLocation: async ({ subPath, backLocation, signal }) => {
                     options.onPageLocationRequest?.(subPath);
@@ -1827,7 +1833,7 @@ describe('opening a row into the source detail', () => {
     });
 
     it('gives an open source-changes section the story’s place and returns the same story on Cancel', async () => {
-        const shell = await mountShell({ activeSurface: true, securityAlert: true,
+        const shell = await mountShell({ activeSurface: true, securityAlert: true, linkedSessionCount: 1, linkedSessionsAttention: true,
             subPath: buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: {
                 source: SOURCE, kindId: 'dependabot-alert', collisionScope: 'example/repository', entryId: '17',
             } }),
@@ -1847,12 +1853,16 @@ describe('opening a row into the source detail', () => {
             }
             return true;
         };
+        await expect(shell.getByText('Some linked Sessions are unavailable.')).resolves.toBeDefined();
+        const notice = [...document.querySelectorAll('[role="status"]')].find(node => node.textContent === 'Some linked Sessions are unavailable.');
+        expect(notice).toBeDefined();
         expect(shown(story!)).toBe(true);
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'More actions' })); });
         await act(async () => { await shell.press(await shell.getByRole('menuitem', { name: 'Change on Example forge' })); });
         await vi.waitFor(() => shell.getByRole('radio', { name: 'Risk is tolerable for this project' }));
         // The open section is the page's body: the story steps aside, kept mounted with its tab and scroll.
         expect(shown(story!)).toBe(false);
+        expect(notice!.isConnected && shown(notice!)).toBe(false);
         expect(story!.isConnected).toBe(true);
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Cancel' })); });
         await expect(shell.queryByRole('radio', { name: 'Risk is tolerable for this project' })).resolves.toBeUndefined();
@@ -2682,7 +2692,7 @@ describe('opening a row into the source detail', () => {
         await vi.waitFor(() => expect(document.querySelector('[data-testid="triage-story-fix-pr"]')?.textContent).toContain('Unprojected fix'));
     });
 
-    it('keeps the PR story open with one notice when its linked Sessions cannot be read', async () => {
+    it('keeps the PR story open without a linked Sessions notice when the list is empty', async () => {
         const shell = await mountShell({ activeSurface: true });
         const links = currentHarness!.collections.sessionLinks;
         const query = links.query.bind(links);
@@ -2697,8 +2707,20 @@ describe('opening a row into the source detail', () => {
 
         await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
         const detailRegion = document.querySelector(`[data-testid="${TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}"]`);
+        expect(detailRegion?.textContent).not.toContain('Some linked Sessions are unavailable.');
+    });
+
+    it.each([false, true])('puts one notice inside the linked Sessions list (tabbed: %s)', async tabbedDetail => {
+        const shell = await mountShell({ activeSurface: true, tabbedDetail, linkedSessionCount: 1, linkedSessionsAttention: true });
+        await openTheRow(shell);
+        await expect(shell.getByRole('button', { name: 'Linked session-linked-001' })).resolves.toBeDefined();
+        const card = document.querySelector('[data-testid="triage-session-card-session-linked-001"]');
+        const list = card?.parentElement?.parentElement?.parentElement;
+        expect(list?.textContent).toContain('Some linked Sessions are unavailable.');
+        const detailRegion = document.querySelector(`[data-testid="${TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}"]`);
         expect(detailRegion?.textContent?.split('Some linked Sessions are unavailable.')).toHaveLength(2);
     });
+
     it('lets an agent switch the mounted Collection to Board through the UI owner', async () => {
         let published: PluginUiContextEnrichmentV1 | null = null;
         const shell = await mountShell({ activeSurface: true, publishCurrentUiContext: (context) => { published = context; } });

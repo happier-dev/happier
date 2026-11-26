@@ -78,6 +78,7 @@ export function TriageLinkedSessionsAttention(): React.ReactElement {
 export function TriageLinkedSessions(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];
   hasMore: boolean;
+  attention?: boolean;
   pageState?: 'idle' | 'loading' | 'failed';
   onLoadMore?: () => void;
   onSelect?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
@@ -118,6 +119,7 @@ export function TriageLinkedSessions(props: Readonly<{
         ))}
       </Stack>
       <TriageLinkedSessionsContinuation hasMore={props.hasMore} pageState={props.pageState} onLoadMore={props.onLoadMore} />
+      {props.attention === true ? <TriageLinkedSessionsAttention /> : null}
     </Stack>
   );
 }

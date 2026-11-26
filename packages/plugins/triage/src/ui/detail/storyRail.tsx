@@ -68,6 +68,7 @@ const SHOWN_FINDINGS = 3;
 export function TriageAgentStep(props: Readonly<{
   sessions: readonly TriageLinkedSessionProjectionV1[];
   hasMore: boolean;
+  attention?: boolean;
   pageState?: 'idle' | 'loading' | 'failed';
   onLoadMore?: () => void;
   onSelectSession?: (sessionId: TriageLinkedSessionProjectionV1['sessionId']) => void;
@@ -215,6 +216,7 @@ export function TriageAgentStep(props: Readonly<{
       <TriageLinkedSessions
         sessions={props.sessions}
         hasMore={props.hasMore}
+        attention={props.attention}
         labelled={false}
         onSelect={props.onSelectSession}
         {...(props.sessionStates === undefined ? {} : { states: props.sessionStates })}
