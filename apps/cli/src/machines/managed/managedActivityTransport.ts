@@ -4,12 +4,90 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
     ManagedActivityBridgeResultV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { callSocketRpc, issueSocketRpcCallWithCancellation } from '@happier-dev/sync-client';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createExternalActionMachineRpcExecution } from '@/api/externalActionExecutionAuthorization';
 import { withUserScopedRpcSocket } from '@/session/transport/rpc/withUserScopedRpcSocket';
 import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import { ManagedMachineControllerError } from './controllerErrors';
 import type { ManagedMachineAcquisitionDriverInput, ManagedMachineExecutionOptions } from './acquire';
 import type { ManagedGuestActivityTransport } from './managedIntentReconciler';
+
+type ActivityObserver = Readonly<{
+    machineId: ManagedMachineFullV1['enrolledMachineId'];
+    attached: () => void;
+    changed: () => void;
+    failed: (error: unknown) => void;
+}>;
+
+type ActivityConnection = {
+    socket?: Parameters<typeof callSocketRpc>[0]['socket'];
+    observers: Set<ActivityObserver>;
+    stop: () => Promise<void>;
+};
+
+const connectionsByEnvironment = new WeakMap<NodeJS.ProcessEnv, Map<string, ActivityConnection>>();
+
+function subscribeGuestActivityConnection(input: Pick<ManagedMachineAcquisitionDriverInput, 'token' | 'serverUrl'>, observer: ActivityObserver) {
+    const environment = sessionProcessEnvironment();
+    let connections = connectionsByEnvironment.get(environment);
+    if (!connections) {
+        connections = new Map();
+        connectionsByEnvironment.set(environment, connections);
+    }
+    const serverUrl = normalizeServerHttpBaseUrl(input.serverUrl);
+    const key = `${serverUrl}\n${input.token}`;
+    let connection = connections.get(key);
+    if (!connection) {
+        const owner = connections;
+        const lifetime = new AbortController();
+        const active: ActivityConnection = { observers: new Set(), stop: async () => {
+            if (owner.get(key) === active) owner.delete(key);
+            lifetime.abort();
+            await pump;
+        } };
+        owner.set(key, active);
+        const pump = withUserScopedRpcSocket({ token: input.token, serverUrl,
+            connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(), signal: lifetime.signal,
+            reattachOnReconnect: true,
+        }, async (socket, connect, signal) => {
+            await connect();
+            signal?.throwIfAborted();
+            const onUpdate = (update: unknown) => {
+                const parsed = UpdateContainerSchema.safeParse(update);
+                if (!parsed.success || parsed.data.body.t !== 'update-machine') return;
+                const machineId = parsed.data.body.machineId;
+                for (const guest of active.observers) {
+                    if (guest.machineId === machineId) guest.changed();
+                }
+            };
+            socket.on('update', onUpdate);
+            active.socket = socket;
+            try {
+                for (const guest of active.observers) guest.attached();
+                await new Promise<void>(resolve => {
+                    signal?.addEventListener('abort', () => resolve(), { once: true });
+                });
+            } finally {
+                if (active.socket === socket) active.socket = undefined;
+                socket.off('update', onUpdate);
+            }
+        }).catch(error => {
+            if (owner.get(key) === active) owner.delete(key);
+            for (const guest of active.observers) guest.failed(error);
+        });
+        connection = active;
+    }
+    const active = connection;
+    active.observers.add(observer);
+    if (active.socket) observer.attached();
+    return {
+        get socket() { return active.socket; },
+        async dispose() {
+            if (active.observers.delete(observer) && active.observers.size === 0) await active.stop();
+        },
+    };
+}
 
 /** Only this retained row and the exact guest can invalidate its activity observation. */
 export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAcquisitionDriverInput, 'token' | 'serverUrl' | 'credentials' | 'externalActionMachineRequestPrivateKey' | 'subscribeManagedMachineChanges'>, options: ManagedMachineExecutionOptions, machine: ManagedMachineFullV1): ManagedGuestActivityTransport {
@@ -35,12 +113,11 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
     const machineId = machine.enrolledMachineId;
     let changed: false | 'activity' = false;
     let failure: unknown;
-    let rpcSocket: Parameters<typeof callSocketRpc>[0]['socket'] | undefined;
     let wake: (() => void) | undefined;
+    const activityChanged = () => { changed = 'activity'; wake?.(); };
     const unsubscribeManagedChanges = input.subscribeManagedMachineChanges?.(change => {
         if (change?.kind !== 'managed' || !change.managedIds.includes(machine.id)) return;
-        changed = 'activity';
-        wake?.();
+        activityChanged();
     });
     let ready!: () => void;
     let rejectReady!: (error: unknown) => void;
@@ -48,50 +125,18 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
     // Readiness starts eagerly, but a refused preparation may dispose without
     // a reader. Observe that rejection while preserving it for awaited reads.
     void connected.catch(() => {});
-    let close!: () => void;
-    const closed = new Promise<void>(resolve => { close = resolve; });
-    // The reconciler owns this connection through exact drain cleanup. Caller
-    // cancellation ends reads/begin, while reopen still needs the same socket.
-    const lifetime = new AbortController();
+    // This bridge retains its connection subscription through exact drain cleanup.
+    const fail = (error: unknown) => { failure = error; rejectReady(error); wake?.(); };
+    const connection = subscribeGuestActivityConnection(input, { machineId,
+        attached: () => { activityChanged(); ready(); }, changed: activityChanged, failed: fail,
+    });
     const waitUntilConnected = (signal?: AbortSignal) => issueSocketRpcCallWithCancellation({ signal, issue: () => connected });
-    const pump = withUserScopedRpcSocket({ token: input.token, serverUrl: input.serverUrl,
-        connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(), signal: lifetime.signal,
-        reattachOnReconnect: true,
-    }, async (socket, connect, attemptSignal) => {
-        const onUpdate = (update: unknown) => {
-            const parsed = UpdateContainerSchema.safeParse(update);
-            // ApiMachine classifies Account changes for all held guests;
-            // this socket carries only the exact guest's activity.
-            if (parsed.success && parsed.data.body.t === 'update-machine' && parsed.data.body.machineId === machineId) {
-                changed = 'activity';
-                wake?.();
-            }
-        };
-        socket.on('update', onUpdate);
-        let onDisconnect = () => {};
-        const disconnected = new Promise<never>((_resolve, reject) => {
-            onDisconnect = () => reject(attemptSignal?.reason);
-            attemptSignal?.addEventListener('abort', onDisconnect, { once: true });
-        });
-        try {
-            await connect();
-            rpcSocket = socket;
-            // Reconnect is also an invalidation, not a stale cached decision.
-            changed = 'activity';
-            wake?.();
-            ready();
-            await Promise.race([closed, disconnected]);
-        } finally {
-            if (rpcSocket === socket) rpcSocket = undefined;
-            socket.off('update', onUpdate);
-            attemptSignal?.removeEventListener('abort', onDisconnect);
-        }
-    }).catch(error => { failure = error; rejectReady(error); wake?.(); });
     const request = (current: ManagedMachineFullV1) => ({ homeId: current.homeId, managedId: current.id,
         expectedRevision: current.intentRevision, ...(current.controller ? { controller: current.controller } : {}) });
     const call = async (method: string, params: unknown, signal?: AbortSignal, signed = true) => {
         await waitUntilConnected(signal);
         if (failure) throw failure;
+        const rpcSocket = connection.socket;
         if (!machineId || !rpcSocket) throw new ManagedMachineControllerError('admission_unavailable');
         const result = await callSocketRpc({ socket: rpcSocket,
             target: { kind: 'machine', id: machineId }, method, params, content: { mode: 'plain' },
@@ -146,8 +191,8 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
         },
         dispose: async () => {
             unsubscribeManagedChanges?.();
-            close(); lifetime.abort();
-            await pump;
+            fail(new DOMException('RPC observation cancelled', 'AbortError'));
+            await connection.dispose();
         },
     };
 }

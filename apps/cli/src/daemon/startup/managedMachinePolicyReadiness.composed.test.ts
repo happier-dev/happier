@@ -32,7 +32,7 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/f
 // Only the socket transport is substituted. Real RPC decoding produces the
 // RpcError consumed by the acquisition driver, adapter and operation store.
 const wire = vi.hoisted(() => ({ reads: 0, publications: [] as string[], refusal: 'RPC_FORBIDDEN',
-    busyGuest: false, updates: new Set<(...args: unknown[]) => void>(),
+    busyGuest: false, openConnections: 0, updates: new Set<(...args: unknown[]) => void>(),
     heldRead: undefined as (() => void) | undefined, holdGuestRead: false,
     releaseGuestRead: undefined as (() => void) | undefined }));
 vi.mock('socket.io-client', async () => {
@@ -50,8 +50,16 @@ vi.mock('socket.io-client', async () => {
             if (event === 'update') wire.updates.delete(listener);
             listeners.get(event)?.delete(listener); return socket;
         },
-        connect() { socket.connected = true; for (const listener of listeners.get('connect') ?? []) listener(); },
-        disconnect() { socket.connected = false; }, close() { socket.connected = false; },
+        connect() {
+            if (!socket.connected) wire.openConnections += 1;
+            socket.connected = true;
+            for (const listener of listeners.get('connect') ?? []) listener();
+        },
+        disconnect() {
+            if (socket.connected) wire.openConnections -= 1;
+            socket.connected = false;
+        },
+        close() { socket.disconnect(); },
         removeAllListeners() {
             for (const listener of listeners.get('update') ?? []) wire.updates.delete(listener);
             listeners.clear();
@@ -87,6 +95,53 @@ vi.mock('socket.io-client', async () => {
 });
 
 afterEach(() => vi.restoreAllMocks());
+
+it('shares one Home activity connection across two live guests until the last bridge disposes', async () => {
+    wire.busyGuest = true;
+    const machine = ManagedMachineV1Schema.parse({ id: 'managed-a', homeId: 'home', custodianAccountId: 'owner',
+        controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
+        allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+        launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+        resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+        retention: { kind: 'unused', afterMs: 60_000, effect: 'stop' }, wakeOnAcceptedMessage: false });
+    const other = { ...machine, id: 'managed-b', enrolledMachineId: 'incumbent-guest' };
+    const token = 'shared-activity-fixture';
+    const input = { token, serverUrl: 'https://shared-activity.example', credentials: { token, encryption: null } };
+    const first = createManagedGuestActivityTransport(input, { requestId: 'retention-a' }, machine);
+    const second = createManagedGuestActivityTransport(input, { requestId: 'retention-b' }, other);
+    try {
+        expect(await Promise.all([first.read(machine), second.read(other)])).toEqual([
+            { kind: 'busy', reasons: ['finite'] }, { kind: 'busy', reasons: ['finite'] },
+        ]);
+        expect(wire.openConnections).toBe(1);
+        const cancelOther = new AbortController();
+        const otherChange = second.waitForChange(cancelOther.signal).then(() => true, () => false);
+        const guestChange = first.waitForChange();
+        for (const receive of wire.updates) receive({ id: 'exact-guest-change', seq: 1, createdAt: 1,
+            body: { t: 'update-machine', machineId: machine.enrolledMachineId } });
+        await expect(guestChange).resolves.toBe('activity');
+        cancelOther.abort();
+        await expect(otherChange).resolves.toBe(false);
+        await first.dispose?.();
+        expect(await second.read(other)).toEqual({ kind: 'busy', reasons: ['finite'] });
+        expect(wire.openConnections).toBe(1);
+        const distinct = createManagedGuestActivityTransport({ ...input, token: 'other-activity-fixture',
+            credentials: { token: 'other-activity-fixture', encryption: null },
+        }, { requestId: 'retention-c' }, machine);
+        try {
+            expect(await distinct.read(machine)).toEqual({ kind: 'busy', reasons: ['finite'] });
+            expect(wire.openConnections).toBe(2);
+        } finally {
+            await distinct.dispose?.();
+        }
+        expect(wire.openConnections).toBe(1);
+    } finally {
+        await first.dispose?.();
+        await second.dispose?.();
+        wire.busyGuest = false;
+    }
+    expect(wire.openConnections).toBe(0);
+});
 
 it('wakes a requester guest activity wait only from its exact existing managed-row feed', async () => {
     wire.busyGuest = true; wire.reads = 0; wire.updates.clear();
