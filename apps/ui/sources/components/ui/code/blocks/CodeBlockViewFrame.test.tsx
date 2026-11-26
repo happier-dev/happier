@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, findAllHostTestInstances, installBrowserClipboardBoundary, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installCodeBlockCommonModuleMocks } from './codeBlockTestHelpers';
 import { resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
+import { compositeThemeColor, parseThemeColorValue, themeContrastRatio } from '@happier-dev/protocol/account/settings/themeColor';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -60,6 +61,23 @@ function copyPlacementStyle(tree: renderer.ReactTestRenderer): Record<string, un
 }
 
 describe('CodeBlockViewFrame', () => {
+    it('keeps every built-in syntax color at WCAG AA contrast on the code block fill', async () => {
+        mockPlatform('ios');
+        const { lightTheme, darkTheme } = await import('@/theme');
+        const { resolveCodeBlockFramePaint } = await import('./codeBlockPaint');
+
+        for (const [mode, theme] of Object.entries({ light: lightTheme, dark: darkTheme })) {
+            const fill = parseThemeColorValue(resolveCodeBlockFramePaint(theme).background.color)!;
+            const base = parseThemeColorValue(theme.colors.surface.base)!;
+            const background = compositeThemeColor(fill, base.rgb);
+
+            for (const [token, color] of Object.entries(theme.colors.syntax)) {
+                const foreground = compositeThemeColor(parseThemeColorValue(color)!, background);
+                expect.soft(themeContrastRatio(foreground, background), `${mode} syntax.${token}`).toBeGreaterThanOrEqual(4.5);
+            }
+        }
+    });
+
     it('keeps frame provenance paired with the actual inner material calculation', async () => {
         mockPlatform('web');
         const { lightTheme } = await import('@/theme');
