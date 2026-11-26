@@ -67,9 +67,10 @@ Operator-configured age-based retention only becomes effective when both of thes
 - `HAPPIER_SERVER_RETENTION__ENABLED=1`
 - at least one retention domain is configured with a finite policy
 
-If retention is disabled, or if every domain is still set to `keep_forever`, the effective operator
-policy remains keep-forever for every domain. Intrinsic lifecycle rules such as RepeatKey expiry still
-run; they preserve rows whose intrinsic expiry is in the future.
+With automatic deletion off, domains that depend on the global switch keep their records.
+Provider usage history and public share access logs still use their own configured policies.
+Intrinsic lifecycle rules such as RepeatKey expiry also run and preserve rows whose expiry is in
+the future.
 
 ## Provider usage history (0.3 development)
 
@@ -81,10 +82,10 @@ HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__MODE=delete_older_than
 HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__DAYS=90
 ```
 
-With automatic deletion enabled, the existing retention worker can remove detailed observations
-older than this window only after their day has a summary covering its accepted observations. Days
-without a summary keep their detail. A normal usage write by a client that can open the history backfills every missing day it can
-read; no server decryption or separate cleanup timer is involved.
+The retention worker removes detailed observations older than this window only after their day has
+a summary covering its accepted observations. Days without a summary keep their detail. A normal
+usage write by a client that can open the history backfills every missing day it can read. The
+existing worker handles cleanup without decrypting history.
 
 Summaries group observations by UTC day and retain each provider window's last accepted reading, peak usage, first and last
 observation times, and every witnessed reset with its time and usage before the reset. Older Plans
