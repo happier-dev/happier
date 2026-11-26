@@ -1457,6 +1457,10 @@ describe('WorkflowsColumn', () => {
                 triggers: [{ id: `${workflow.id}-once`, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
                     triggerDefinitionEnvelope: null, nextRunAt: workflow.remaining === 1 ? scheduledAt : null,
                     remainingOccurrences: workflow.remaining, schedule: { kind: 'once', scheduledAt } }],
+                scheduleOccurrences: workflow.lastRun === null ? [] : [{
+                    triggerId: `${workflow.id}-once`, triggerRevision: 1, scheduledFor: scheduledAt,
+                    startedAt: workflow.lastRun === 'succeeded' ? scheduledAt : null, held: false, runState: workflow.lastRun,
+                }],
             }));
             automationDefinitionResponse = async (url, init) => {
                 if (url.pathname === '/v3/automations/query' && init?.method === 'POST') {

@@ -3,6 +3,7 @@ import { prismaRuntime } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { workflowRunSqlIdentifier } from '@/app/workflows/workflowRunAttention';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import type { AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 
 type ScheduleOccurrences = NonNullable<AutomationDefinitionDetail['scheduleOccurrences']>;
@@ -12,7 +13,7 @@ export async function loadAutomationScheduleOccurrences(accountId: string, autom
     const result = new Map<string, ScheduleOccurrences>();
     const id = workflowRunSqlIdentifier;
     type Row = { automationId: string; triggerId: string; triggerRevision: number; scheduledFor: Date | bigint | number;
-        startedAt: Date | bigint | number | null; state: string };
+        startedAt: Date | bigint | number | null; state: string; onceRunState: string | null };
     const timestamp = (value: Date | bigint | number) => value instanceof Date ? value.getTime() : Number(value);
     for (const page of portableQueryChunks({ values: automationIds, bindingsPerValue: 1, fixedBindings: 2 })) {
         const rows = await db.$queryRaw<Row[]>(prismaRuntime.sql`
@@ -20,6 +21,8 @@ export async function loadAutomationScheduleOccurrences(accountId: string, autom
                 SELECT r.${id('automationId')} AS ${id('automationId')}, r.${id('triggerId')} AS ${id('triggerId')},
                     t.${id('revision')} AS ${id('triggerRevision')}, r.${id('causeScheduledFor')} AS ${id('scheduledFor')},
                     r.${id('startedAt')} AS ${id('startedAt')}, r.${id('state')} AS ${id('state')},
+                    CASE WHEN t.${id('scheduleKind')} = 'once' AND t.${id('scheduledAt')} = r.${id('causeScheduledFor')}
+                        THEN r.${id('state')} END AS ${id('onceRunState')},
                     ROW_NUMBER() OVER (PARTITION BY r.${id('triggerId')}
                         ORDER BY r.${id('causeScheduledFor')} DESC, r.${id('createdAt')} DESC, r.${id('id')} DESC) AS ordinal
                 FROM ${id('AutomationRun')} r JOIN ${id('AutomationTrigger')} t ON t.${id('id')} = r.${id('triggerId')}
@@ -31,12 +34,14 @@ export async function loadAutomationScheduleOccurrences(accountId: string, autom
                     AND r.${id('causeTriggerKind')} = 'schedule' AND t.${id('deletedAt')} IS NULL
                     AND r.${id('causeScheduledFor')} <= ${new Date(now)}
             ) SELECT ${id('automationId')}, ${id('triggerId')}, ${id('triggerRevision')}, ${id('scheduledFor')},
-                ${id('startedAt')}, ${id('state')} FROM ranked WHERE ordinal = 1`);
+                ${id('startedAt')}, ${id('state')}, ${id('onceRunState')} FROM ranked WHERE ordinal = 1`);
         for (const row of rows) {
             const occurrences = result.get(row.automationId) ?? [];
             occurrences.push({ triggerId: AutomationTriggerIdSchema.parse(row.triggerId), triggerRevision: row.triggerRevision,
                 scheduledFor: timestamp(row.scheduledFor),
-                startedAt: row.startedAt === null ? null : timestamp(row.startedAt), held: row.state === 'waiting_for_review' });
+                startedAt: row.startedAt === null ? null : timestamp(row.startedAt), held: row.state === 'waiting_for_review',
+                ...(row.onceRunState !== null && isTerminalAutomationRunStateV3(row.onceRunState)
+                    ? { runState: row.onceRunState } : {}) });
             result.set(row.automationId, occurrences);
         }
     }

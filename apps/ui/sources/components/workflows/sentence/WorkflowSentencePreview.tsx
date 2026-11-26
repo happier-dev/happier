@@ -3,31 +3,12 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { t } from '@/text';
-import type { TriggerSummarySource } from '../triggers/formatTriggerSummary';
-
-import { resolveTriggerEventGroup } from '../triggers/triggerEventGroups';
+import type { IconName } from '@/components/ui/icons/Icon';
 import {
   WorkflowSentenceChip,
   WorkflowSentenceUnit,
   WorkflowSentenceWord,
 } from './WorkflowSentenceChip';
-
-/** "A pull request opens" reads "a pull request opens" after "When"; a name keeps its capitals. */
-function lowerStart(text: string): string {
-  return /^\p{Lu}\p{Ll}/u.test(text)
-    ? text.charAt(0).toLocaleLowerCase() + text.slice(1)
-    : text;
-}
-
-/** A trigger's own sentence after the clause's "When": a summary that already opens with the word drops it. */
-function readWhenChipLabel(title: string, when: string): string {
-  const lead = `${when} `;
-  return lowerStart(
-    title.toLocaleLowerCase().startsWith(lead.toLocaleLowerCase())
-      ? title.slice(lead.length)
-      : title,
-  );
-}
 
 /**
  * A workflow's Sentence view at static props (scene 8 D4, the 11-16 Sentence view): what starts it, then its steps
@@ -37,44 +18,31 @@ function readWhenChipLabel(title: string, when: string): string {
 export const WorkflowSentencePreview = React.memo(
   function WorkflowSentencePreview(
     props: Readonly<{
-      triggers: readonly (TriggerSummarySource & Readonly<{ enabled?: boolean }>)[];
+      triggerLine: string | null;
+      triggerGlyph?: IconName;
       steps: readonly string[];
       testID?: string;
     }>,
   ) {
-    const when = t('workflows.sentence.when');
     return (
       <View
         testID={props.testID}
         style={styles.sentence}
         importantForAccessibility="no-hide-descendants"
       >
-        <View style={styles.line}>
-          {props.triggers.length === 0 ? (
-            <WorkflowSentenceWord size="compact">
-              {t('workflows.triggers.card.manualSentence')}
-            </WorkflowSentenceWord>
-          ) : (
-            props.triggers.map((trigger, index) => {
-              const group = resolveTriggerEventGroup(trigger);
-              return (
-                <WorkflowSentenceUnit key={`${group.id}:${index}`}>
-                  <View style={styles.unit}>
-                    <WorkflowSentenceWord size="compact">
-                      {index === 0 ? when : t('workflows.sentence.or')}
-                    </WorkflowSentenceWord>
-                    <WorkflowSentenceChip
-                      kind="option"
-                      size="compact"
-                      icon={group.glyph}
-                      label={readWhenChipLabel(group.title, when)}
-                    />
-                  </View>
-                </WorkflowSentenceUnit>
-              );
-            })
-          )}
-        </View>
+        {props.triggerLine === null ? null : (
+          <View style={styles.line}>
+            {props.triggerGlyph === undefined ? (
+              <WorkflowSentenceWord size="compact">{props.triggerLine}</WorkflowSentenceWord>
+            ) : (
+              <WorkflowSentenceUnit>
+                <View style={styles.unit}>
+                  <WorkflowSentenceChip kind="option" size="compact" icon={props.triggerGlyph} label={props.triggerLine} />
+                </View>
+              </WorkflowSentenceUnit>
+            )}
+          </View>
+        )}
         {props.steps.length === 0 ? null : (
           <View style={styles.line}>
             {props.steps.map((step, index) => (

@@ -41,11 +41,11 @@ export function isWorkflowLibraryTriggerSetOff(set: WorkflowTriggerSetV1): boole
     return !set.enabled || (set.triggers.length > 0 && set.triggers.every(trigger => !trigger.enabled));
 }
 
-export function describeAccountWorkflowLibraryRecord(set: WorkflowTriggerSetV1, summary?: WorkflowAutomationRunSummary) {
+export function describeAccountWorkflowLibraryRecord(set: WorkflowTriggerSetV1) {
     const sourceGone = isWorkflowTriggerSourceGone(set);
     const inline = set.target?.kind === 'inline' ? set.target.definition.blocks : null;
     const standaloneAction = inline?.length === 1 && inline[0]?.kind === 'action' ? inline[0] : undefined;
-    const triggerSummary = formatTriggerSetSummary(set.triggers, summary?.lastRun?.state, {
+    const triggerSummary = formatTriggerSetSummary(set.triggers, {
         offSaidElsewhere: isWorkflowLibraryTriggerSetOff(set),
         ...(inline === null ? {} : { form: 'clause' }),
     });
@@ -70,12 +70,34 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
     previous?: readonly WorkflowLibraryRecordRow[];
 }>): readonly WorkflowLibraryRecordRow[] {
     if (input.inventoryPending) return input.previous ?? [];
+    type ScheduleTrigger = Extract<WorkflowTriggerSetV1['triggers'][number], { kind: 'schedule' }>;
+    const occurrenceByTrigger = new Map<string, { automationId: string; scheduledAt: number; trigger: ScheduleTrigger }>();
+    for (const set of input.accountTriggers) {
+        for (const trigger of set.triggers) {
+            if (trigger.kind === 'schedule' && trigger.schedule.kind === 'once' && trigger.spentOnceRun !== undefined) {
+                occurrenceByTrigger.set(trigger.id, {
+                    automationId: set.automationId, scheduledAt: trigger.schedule.scheduledAt, trigger,
+                });
+            }
+        }
+    }
+    const summarizeDefinitionTriggers = (definition: WorkflowLibraryDefinition) => {
+        if (definition.triggerSummaryErrorCode !== undefined) return t('common.unavailable');
+        const first = definition.triggers[0];
+        if (first?.kind === 'schedule' && first.schedule.kind === 'once' && first.triggerId !== undefined) {
+            const occurrence = occurrenceByTrigger.get(first.triggerId);
+            if (occurrence && occurrence.automationId === first.automationId && occurrence.scheduledAt === first.schedule.scheduledAt) {
+                return formatTriggerSetSummary([occurrence.trigger, ...definition.triggers.slice(1)], { offSaidElsewhere: true });
+            }
+        }
+        return formatTriggerSetSummary(definition.triggers, { offSaidElsewhere: true });
+    };
     const projectDefinition = (definition: WorkflowLibraryDefinition, group: 'library' | 'sharedWithYou'): WorkflowLibraryRecordRow => ({
         key: definition.definitionId,
         group,
         definition,
         name: formatWorkflowDefinitionLibraryTitle(definition),
-        triggerSummary: definition.triggerSummaryErrorCode === undefined ? formatTriggerSetSummary(definition.triggers) : t('common.unavailable'),
+        triggerSummary: summarizeDefinitionTriggers(definition),
         updatedAt: definition.updatedAt ?? 0,
         lastRunSummary: input.summaries?.get(definition.definitionId),
         openTarget: { kind: 'definition', definitionId: definition.definitionId, href: createWorkflowDefinitionRoute(definition.definitionId) },
@@ -91,7 +113,7 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
         if (definitionRef !== null && (representedDefinitions.has(definitionRef)
             || (input.savedLibraryIncomplete && !isWorkflowTriggerSourceGone(set)))) return [];
         const lastRunSummary = input.automationSummaries?.get(set.automationId);
-        const { name, sourceGone, triggerSummary } = describeAccountWorkflowLibraryRecord(set, lastRunSummary);
+        const { name, sourceGone, triggerSummary } = describeAccountWorkflowLibraryRecord(set);
         // Nothing of a gone source is editable, so its row is one press: remove the retained set.
         const triggerOpenTargets = (set.triggers.length && !sourceGone ? set.triggers.map(trigger => trigger.id) : [null]).map(triggerId => ({
             kind: 'accountTrigger' as const, automationId: set.automationId, triggerId,

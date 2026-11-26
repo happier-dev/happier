@@ -1,3 +1,4 @@
+import type { AutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { HAPPIER_CLOCK_TIME_FORMAT, parseHappierLocalDateTime, resolveHappierFutureLocalDateTime, type HappierLocalDateTimeDraft } from '@happier-dev/plugin-ui/presentation';
@@ -6,7 +7,8 @@ import { HAPPIER_CLOCK_TIME_FORMAT, parseHappierLocalDateTime, resolveHappierFut
 export type OnceScheduleDraft = HappierLocalDateTimeDraft & Readonly<{ relative: string; scheduledAt?: number }>;
 
 export type OnceScheduleSource = Readonly<{ kind: string; schedule?: Readonly<{ kind: string; scheduledAt?: number }>;
-    remainingOccurrences?: number | null; nextRunAt?: number | null }>;
+    revision?: number; remainingOccurrences?: number | null; nextRunAt?: number | null;
+    spentOnceRun?: Readonly<{ runState: AutomationRunStateV3; startedAt: number | null }> }>;
 
 /**
  * Consumption is scheduler-owned: no occurrence remains and none is next. A paused pending occurrence is still not
@@ -26,41 +28,47 @@ export function formatOnceScheduleInstant(scheduledAt: number): string {
 }
 
 export type SpentOnceSchedulePresentation = Readonly<{
-    /** How it ended, from its Run when that Run is loaded here; `unknown` otherwise (never a guess). */
-    state: 'done' | 'missed' | 'unknown';
-    /** The past-tense line: "Ran once on …", "Missed on …", or "Already ran". */
+    state: 'done' | 'missed' | 'stopped' | 'unknown';
+    /** The one sentence used by the Library, the editor and Run history. */
     line: string;
 }>;
 
 /**
- * A spent one-time schedule said in the past tense (R12 M12), for the editor block, the trigger popover and History.
- * The outcome reads through `readOnceScheduleState`, the one Completed/Missed mapping; with no Run loaded it says only
- * that it already ran. `null` for every trigger that is not spent, so an armed one keeps its next run.
+ * The scheduler decides consumption. The admitted occurrence supplies the result and actual start;
+ * a History Run supplies the same outcome when an earlier server omitted that projection.
  */
-export function presentSpentOnceSchedule(trigger: OnceScheduleSource, lastRunState?: string | null): SpentOnceSchedulePresentation | null {
-    if (!isSpentOnceSchedule(trigger)) return null;
+export function presentSpentOnceSchedule(trigger: OnceScheduleSource, historyRunState?: string | null): SpentOnceSchedulePresentation | null {
+    const runState = trigger.spentOnceRun?.runState ?? historyRunState;
+    const state = readOnceScheduleState(trigger, runState);
+    if (state === null || state === 'pending') return null;
     const scheduledAt = trigger.schedule?.scheduledAt;
-    const state = lastRunState == null || scheduledAt === undefined ? 'unknown' : readOnceScheduleState(trigger, lastRunState);
-    if (state === 'done') return { state, line: t('workflows.triggers.once.ranOn', { time: formatOnceScheduleInstant(scheduledAt!) }) };
-    if (state === 'missed') return { state, line: t('workflows.triggers.once.missedOn', { time: formatOnceScheduleInstant(scheduledAt!) }) };
-    return { state: 'unknown', line: t('workflows.triggers.once.alreadyRan') };
+    if (scheduledAt !== undefined) {
+        const time = formatOnceScheduleInstant(scheduledAt);
+        if (state === 'missed') return { state, line: t('workflows.triggers.once.missedOn', { time }) };
+        if (state === 'stopped') return { state, line: t('workflows.triggers.once.stoppedOn', { time }) };
+        if (runState === 'succeeded' || trigger.spentOnceRun?.startedAt != null) {
+            return { state: 'done', line: t('workflows.triggers.once.ranOn', { time }) };
+        }
+    }
+    return { state: 'unknown', line: t('workflows.triggers.once.noMoreOccurrences') };
 }
 
 /**
  * A one-time schedule's state: pending until the scheduler consumes its occurrence, then Missed when
- * that occurrence's Run says so (the admission owner's typed `missed` state), otherwise Completed. `null`
- * for any other trigger. The UI never infers Missed from the clock.
+ * that occurrence's Run says so, or Stopped on cancellation. A non-schedule returns `null`.
  */
-export function readOnceScheduleState(trigger: OnceScheduleSource, lastRunState?: string | null): 'pending' | 'done' | 'missed' | null {
+export function readOnceScheduleState(trigger: OnceScheduleSource, lastRunState?: string | null): 'pending' | 'done' | 'missed' | 'stopped' | null {
     if (trigger.kind !== 'schedule' || trigger.schedule?.kind !== 'once') return null;
     if (!isSpentOnceSchedule(trigger)) return 'pending';
-    return lastRunState === 'missed' ? 'missed' : 'done';
+    if (lastRunState === 'missed') return 'missed';
+    return lastRunState === 'cancelled' ? 'stopped' : 'done';
 }
 
 /** All trigger surfaces share the settled status vocabulary (07 §2.3). */
 export function formatOnceScheduleStateLabel(state: ReturnType<typeof readOnceScheduleState>): string | null {
     return state === 'done' ? t('workflows.runState.succeeded')
-        : state === 'missed' ? t('workflows.runState.missed') : null;
+        : state === 'missed' ? t('workflows.runState.missed')
+        : state === 'stopped' ? t('workflows.runState.cancelled') : null;
 }
 
 /**

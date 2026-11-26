@@ -11,7 +11,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, formatNextScheduledRunTime, readNextScheduledRunRefreshAtMs } from './formatTriggerSummary';
-import { presentSpentOnceSchedule, type OnceScheduleSource } from './triggerSchedule';
+import { isSpentOnceSchedule, presentSpentOnceSchedule, type OnceScheduleSource } from './triggerSchedule';
 
 import { useReportTriggerHistoryRuns } from './SessionTriggerHistoryScope';
 import { AutomationHistoryGapRecoveryAction } from '@/components/automations/screens/AutomationHistoryGapRecoveryAction';
@@ -38,7 +38,7 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     triggerName?: string;
     /** Exact saved scheduler occurrence for this trigger, absent on older summaries. */
     nextRunAt?: number | null;
-    /** The saved trigger: a spent one-time schedule heads its History with how it ended, from its latest Run once read. */
+    /** The saved trigger: a spent one-time schedule heads its History with its occurrence outcome. */
     trigger?: OnceScheduleSource;
     /** The server's reason this recurring schedule waits, from the same trigger set read. */
     hold?: ScheduleHold;
@@ -54,7 +54,16 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     const nextRunAt = props.nextRunAt ?? null;
     const readNextRefresh = React.useCallback((nowMs: number) => readNextScheduledRunRefreshAtMs(nextRunAt, nowMs), [nextRunAt]);
     const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, nextRunAt !== null);
-    const spent = props.trigger ? presentSpentOnceSchedule(props.trigger, read.rows[0]?.summary?.state) : null;
+    const trigger = props.trigger;
+    const spentTrigger = trigger && isSpentOnceSchedule(trigger) ? trigger : null;
+    const latest = read.rows[0]?.summary;
+    const occurrence = spentTrigger === null ? undefined : read.rows.find(({ summary }) => {
+        const cause = summary?.origin.kind === 'automation' ? summary.origin.cause : undefined;
+        return cause?.kind === 'trigger' && cause.triggerKind === 'schedule' && cause.triggerId === props.triggerId
+            && (spentTrigger.revision === undefined || cause.triggerRevision === spentTrigger.revision)
+            && cause.evidence.scheduledFor === spentTrigger.schedule?.scheduledAt;
+    })?.summary ?? (latest?.origin.kind === 'automation' && latest.origin.cause === undefined ? latest : undefined);
+    const spent = spentTrigger ? presentSpentOnceSchedule(spentTrigger, occurrence?.state) : null;
     const empty = read.rows.length === 0 && read.status !== 'failed';
     // An empty History with a future occurrence says both in one sentence (07 S4), so the next run isn't said twice.
     const emptyWithNext = empty && read.status !== 'loading' && nextRunAt !== null && nextRunAt > nowMs;
@@ -84,7 +93,7 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
         {/* A spent one-time trigger states how it ended once, then the one way on (R12 M12). */}
         {spent ? <Item testID={`session-work-trigger-history:${props.automationId}-once`} mode="info"
             title={spent.line} titleLines={0} subtitle={joinSentences(
-                spent.state === 'missed' && read.rows[0]?.summary ? formatWorkflowRunMissedCause(read.rows[0].summary) : null,
+                spent.state === 'missed' && occurrence ? formatWorkflowRunMissedCause(occurrence) : null,
                 t('workflows.triggers.once.runAgain'))} subtitleLines={0} /> : null}
         {read.status === 'failed' ? <SurfaceFreshnessLine
             tone="warning" reason={t('workflows.destination.history.loadFailedTitle')}
@@ -100,7 +109,7 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
         {serverId !== null ? <ListPresentationProvider value="page">{read.rows.map(row => <WorkflowRunWindowRow
             key={row.id} row={row} serverId={serverId} accountLifetime={read.accountLifetime}
             fallbackName={props.triggerName} inTriggerHistory
-            outcomeStated={spent !== null && spent.state !== 'unknown' && row.id === read.rows[0]?.id} testID={`session-work-trigger-history-row:${row.id}`} />)}</ListPresentationProvider> : null}
+            outcomeStated={spent !== null && spent.state !== 'unknown' && row.id === occurrence?.id} testID={`session-work-trigger-history-row:${row.id}`} />)}</ListPresentationProvider> : null}
         {read.hasMore ? <ToolbarButton testID={`session-work-trigger-history:${props.automationId}-loadMore`}
             label={t(read.loadMoreFailed ? 'workflows.retry' : 'workflows.destination.history.loadMore')}
             busy={read.loadingMore} disabled={read.loadingMore} onPress={read.loadMore} /> : null}

@@ -438,6 +438,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 const edited = edits[row.key];
                 const when = rowWhens[index] ?? null;
                 const startId = when === null ? null : readWorkflowTriggerStartId(when);
+                const outcome = row.kind === 'saved' && !row.changed && edited === undefined
+                    ? presentSpentOnceSchedule(row.trigger)?.line : undefined;
                 const summary = formatTriggerSummary(row.trigger);
                 const title = edited !== undefined ? startTitle(edited) : startId === null ? summary : startTitle(when!) || summary;
                 return { key: row.key, startId, startTitle: title, enabled: row.enabled, incomplete: edited !== undefined,
@@ -446,7 +448,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     ...(startId !== null && row.trigger.kind === 'sessionLifecycle'
                         ? (({ word, title: scope }) => ({ detail: scope, detailWord: t(`workflows.sentence.${word}`) }))(
                             formatSessionLifecycleScope(when !== null && 'subject' in when ? when.subject : undefined))
-                        : { detail: startId === null ? null
+                        : { outcome, detail: startId === null ? null
                             : row.trigger.kind === 'pluginEvent' || row.trigger.kind === 'action'
                                 ? formatTriggerSummary(row.trigger, { form: 'detail' })
                                 : summary === title || row.trigger.kind === 'runLifecycle' ? t('workflows.page.inspector.options') : summary }),

@@ -204,6 +204,7 @@ const spentOnce = { kind: 'schedule', schedule: { kind: 'once', scheduledAt: onc
 it.each([
   ['succeeded', 'workflows.triggers.once.ranOn'],
   ['missed', 'workflows.triggers.once.missedOn'],
+  ['cancelled', 'workflows.triggers.once.stoppedOn'],
 ] as const)('says a spent one-time schedule whose Run %s ended in the past tense', async (state, key) => {
   home.answer(serverId, route, {
     body: { runs: [createWorkflowRunSummaryFixture({
@@ -219,7 +220,7 @@ it.each([
     expect(screen.findByTestId('session-work-trigger-history-row:run-once')).not.toBeNull(),
   );
   expect(screen.getTextContent()).toContain(t(key, { time: formatOnceScheduleInstant(onceAt) }));
-  expect(screen.getTextContent()).not.toContain(t('workflows.triggers.once.alreadyRan'));
+  expect(screen.getTextContent()).not.toContain(t('workflows.triggers.once.noMoreOccurrences'));
 });
 
 it('states a missed one-time schedule once, then the one instruction, with no outcome sentence on its Run row (R12 M12)', async () => {
@@ -247,13 +248,32 @@ it('states a missed one-time schedule once, then the one instruction, with no ou
   expect(text).not.toContain(t('workflows.readState.historyTitle'));
 });
 
-it('says only that a spent one-time schedule already ran while its Run is not read', async () => {
+it('uses the exact scheduled occurrence when a newer Run belongs to another revision', async () => {
+  const occurrence = (id: string, revision: number, state: 'missed' | 'succeeded') => createWorkflowRunSummaryFixture({
+    id, ownerAccountId: 'account-a', state, origin: { kind: 'automation', automationId: 'once', cause: {
+      kind: 'trigger', triggerId, triggerRevision: revision, triggerKind: 'schedule', occurrenceKey: 'A'.repeat(43),
+      occurredAt: onceAt, evidence: { scheduledFor: onceAt },
+    } },
+  });
+  home.answer(serverId, route, { body: {
+    runs: [occurrence('run-other', 1, 'succeeded'), occurrence('run-once', 2, 'missed')],
+    acceptedEnvelopesByRunId: {}, keyCensusByRunId: {},
+  } });
+  const { formatOnceScheduleInstant } = await import('./triggerSchedule');
+  const trigger = { ...spentOnce, revision: 2 };
+  const screen = await renderScreen(<WorkflowTriggerRunHistory automationId="once" triggerId={triggerId} trigger={trigger} />);
+  await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(
+    t('workflows.triggers.once.missedOn', { time: formatOnceScheduleInstant(onceAt) }),
+  ));
+});
+
+it('states consumption without claiming a start while the occurrence is unread', async () => {
   const screen = await renderScreen(
     <WorkflowTriggerRunHistory automationId="once" triggerId={triggerId} nextRunAt={null} trigger={spentOnce} />,
   );
   await waitForHomeGovernance(() =>
     expect(screen.getTextContent()).toContain(t('workflows.empty.runsTitle')),
   );
-  expect(screen.getTextContent()).toContain(t('workflows.triggers.once.alreadyRan'));
+  expect(screen.getTextContent()).toContain(t('workflows.triggers.once.noMoreOccurrences'));
   expect(screen.getTextContent()).not.toContain(t('workflows.runState.succeeded'));
 });

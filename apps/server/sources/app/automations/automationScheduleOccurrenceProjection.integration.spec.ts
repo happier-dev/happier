@@ -19,6 +19,10 @@ describe('Automation schedule occurrence projection', () => {
             id: `${id}-${randomUUID()}`, automationId: automation.id, kind: 'schedule', scheduleKind: 'interval',
             everyMs: 60_000, revision: 2, nextRunAt: new Date(100),
         } })));
+        triggers.push(...await Promise.all(['missed', 'stopped', 'ran'].map(label => db.automationTrigger.create({ data: {
+            id: `${label}-${randomUUID()}`, automationId: automation.id, kind: 'schedule', scheduleKind: 'once',
+            scheduledAt: new Date(100), remainingOccurrences: 0, revision: 2, nextRunAt: null,
+        } }))));
         const run = (index: number, overrides: Partial<Prisma.AutomationRunUncheckedCreateInput> = {}) =>
             db.automationRun.create({ data: { accountId: account.id, automationId: automation.id,
                 triggerId: triggers[index]!.id, causeKind: 'trigger', causeTriggerKind: 'schedule', causeTriggerRevision: 2,
@@ -28,6 +32,10 @@ describe('Automation schedule occurrence projection', () => {
         await run(1, { startedAt: new Date(120), state: 'succeeded' });
         await run(2, { state: 'waiting_for_review' });
         await run(0, { causeTriggerRevision: 1, causeScheduledFor: new Date(200), startedAt: new Date(210), state: 'succeeded' });
+        await run(3, { state: 'missed' });
+        await run(4, { state: 'cancelled' });
+        await run(5, { startedAt: new Date(120), state: 'succeeded' });
+        await run(3, { causeTriggerRevision: 1, causeScheduledFor: new Date(200), startedAt: new Date(210), state: 'succeeded' });
         let requests = 0;
         const release = observePrismaRequests(db, { before: () => { requests++; } });
         let result: Awaited<ReturnType<typeof loadAutomationScheduleOccurrences>>;
@@ -38,8 +46,11 @@ describe('Automation schedule occurrence projection', () => {
             { triggerId: triggers[0]!.id, triggerRevision: 2, scheduledFor: 100, startedAt: null, held: false },
             { triggerId: triggers[1]!.id, triggerRevision: 2, scheduledFor: 100, startedAt: 120, held: false },
             { triggerId: triggers[2]!.id, triggerRevision: 2, scheduledFor: 100, startedAt: null, held: true },
+            { triggerId: triggers[3]!.id, triggerRevision: 2, scheduledFor: 100, startedAt: null, held: false, runState: 'missed' },
+            { triggerId: triggers[4]!.id, triggerRevision: 2, scheduledFor: 100, startedAt: null, held: false, runState: 'cancelled' },
+            { triggerId: triggers[5]!.id, triggerRevision: 2, scheduledFor: 100, startedAt: 120, held: false, runState: 'succeeded' },
         ]));
-        expect(result.get(automation.id)).toHaveLength(3);
+        expect(result.get(automation.id)).toHaveLength(triggers.length);
         expect(await loadAutomationScheduleOccurrences('another-account', [automation.id], 300)).toEqual(new Map());
         expect(await loadAutomationScheduleOccurrences(account.id, [], 300)).toEqual(new Map());
     });

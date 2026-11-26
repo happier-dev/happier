@@ -9006,6 +9006,15 @@ the absolute instant. Cron and interval shapes remain unchanged; this new
 kind requires matching development components and the additive schedule
 migration.
 
+The existing authenticated Automation detail read also reports optional
+`scheduleOccurrences[].runState` for an exact one-time occurrence that has
+settled. The Workflow trigger-list result carries that state and actual start
+time as optional `spentOnceRun`. These display facts keep the Run's trigger
+revision and due-time binding, and add no reads or access to Run content.
+Current readers still accept omission. The closed 0.3 result objects require
+matching development server and Protocol consumers when emitting these fields;
+0.2 has neither the one-time schedule nor this detail route.
+
 The development schedule and reply-handoff workers retain their existing
 10-second fallback scans. Process-local schedule wake hints cannot reach a
 different API replica, and a database can recover without a reconnect event.

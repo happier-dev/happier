@@ -30,6 +30,8 @@ export type WorkflowTriggerSentenceLine = Readonly<{
   startTitle: string;
   /** The trigger's own sentence (`formatTriggerSummary`), when it says more than its start. */
   detail: string | null;
+  /** The settled schedule sentence is read as supplied by its presenter. */
+  outcome?: string;
   /** The word before the detail chip when it names a scope ("in" any session, "on" this Machine). */
   detailWord?: string;
   enabled: boolean;
@@ -180,14 +182,14 @@ export function WorkflowTriggerSentenceLines(
                 />
               )}
             </WorkflowSentenceUnit>
-            {line.detail === null && !line.incomplete ? null : (
+            {line.detail === null && line.outcome === undefined && !line.incomplete ? null : (
               <WorkflowSentenceUnit word={line.incomplete ? undefined : line.detailWord} rowLabel={t('workflows.sentence.rows.details')}>
                 <WorkflowSentenceRowsChip
                   testID={`${props.testIDPrefix}-sentence-trigger:${line.key}-detail`}
                   label={
                     line.incomplete
                       ? t('workflows.triggers.card.setUp')
-                      : lowerStart(line.detail ?? '')
+                      : line.outcome ?? lowerStart(line.detail ?? '')
                   }
                   placeholder={line.incomplete}
                   struck={!line.enabled}

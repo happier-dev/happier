@@ -25,8 +25,7 @@ export const TRIGGER_LIFECYCLE_GLYPHS = {
 /** The relation glyph of an Action trigger: before (into the Action) and after (out of it); every trigger list draws it. */
 export const ACTION_PHASE_GLYPHS = { before: 'sign-in', after: 'sign-out' } as const satisfies Record<'before' | 'after', IconName>;
 
-export function resolveTriggerEventGroup(trigger: TriggerSummarySource): TriggerEventGroup {
-    const title = formatTriggerSummary(trigger);
+export function resolveTriggerEventGroup(trigger: TriggerSummarySource, title = formatTriggerSummary(trigger)): TriggerEventGroup {
     switch (trigger.kind) {
         case 'action':
             if (!('phase' in trigger)) return { id: 'action:consent', glyph: 'play', title };

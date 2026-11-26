@@ -21,23 +21,44 @@ const project = (accountTriggers: readonly WorkflowTriggerSetV1[]) => projectWor
 // R12 M12 (FIN ruling): a spent one-time trigger reads in the editor's phrase family in the Library too.
 describe('spent one-time trigger in the Library row', () => {
     const onceAt = Date.UTC(2026, 10, 25, 6, 55);
-    const spent = set('once', { triggers: [{ ...schedule('t1', 9), remainingOccurrences: 0, nextRunAt: null,
-        schedule: { kind: 'once', scheduledAt: onceAt } }] });
-    type RunSummary = NonNullable<Parameters<typeof describeAccountWorkflowLibraryRecord>[1]>;
+    const once = { ...schedule('t1', 9), remainingOccurrences: 0, nextRunAt: null,
+        schedule: { kind: 'once', scheduledAt: onceAt } };
+    const spent = set('once', { triggers: [once] });
     it.each([
         ['missed', 'workflows.triggers.once.missedOn'],
         ['succeeded', 'workflows.triggers.once.ranOn'],
+        ['cancelled', 'workflows.triggers.once.stoppedOn'],
     ] as const)('says a spent trigger whose Run %s ended in the dated past tense, not Completed · Once at', async (state, key) => {
         const { formatOnceScheduleInstant } = await import('../triggers/triggerSchedule');
-        const summary = { lastRun: { state } } as RunSummary;
-        const { triggerSummary } = describeAccountWorkflowLibraryRecord(spent, summary);
+        const admitted = set('once', { triggers: [{ ...once, spentOnceRun: {
+            runState: state, startedAt: state === 'succeeded' ? onceAt : null,
+        } }] });
+        const { triggerSummary } = describeAccountWorkflowLibraryRecord(admitted);
         expect(triggerSummary).toContain(key);
         expect(triggerSummary).toContain(formatOnceScheduleInstant(onceAt));
         expect(triggerSummary).not.toContain('workflows.runState');
         expect(triggerSummary).not.toContain('workflows.triggers.once.at');
     });
-    it('says Already ran while the last Run is not read', () => {
-        expect(describeAccountWorkflowLibraryRecord(spent).triggerSummary).toBe('workflows.triggers.once.alreadyRan');
+    it('states consumption without claiming a start when the exact occurrence outcome is unavailable', () => {
+        expect(describeAccountWorkflowLibraryRecord(spent).triggerSummary).toBe('workflows.triggers.once.noMoreOccurrences');
+    });
+
+    it('uses the admitted outcome of the matching saved definition occurrence only', () => {
+        const definitionId = '10000000-0000-4000-8000-000000000089';
+        const admitted = set('once', { target: { kind: 'workflow', ref: definitionId },
+            triggers: [{ ...once, spentOnceRun: { runState: 'missed', startedAt: null } }] });
+        const summary = (scheduledAt: number, nextRunAt: number | null) => {
+            const { definitions } = WorkflowDefinitionListResultV1Schema.parse({ definitions: [{
+                kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: 'Saved schedule' }, contentStatus: 'available', stepCount: 1, nextRunAt,
+                triggers: [{ automationId: 'once', triggerId: 't1', enabled: true, kind: 'schedule',
+                    schedule: { kind: 'once', scheduledAt }, remainingOccurrences: 1, nextRunAt }],
+            }] });
+            return projectWorkflowLibraryRecords({ definitions: { library: definitions, sharedWithYou: [] },
+                accountTriggers: [admitted], summaries: null, automationSummaries: null })[0]?.triggerSummary;
+        };
+        expect(summary(onceAt, onceAt)).toContain('workflows.triggers.once.missedOn');
+        expect(summary(onceAt + 60_000, onceAt + 60_000)).toContain('workflows.triggers.once.at');
     });
 });
 

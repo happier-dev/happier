@@ -467,6 +467,8 @@ export const AutomationDefinitionDetailSchema = lazyZodSchema(() => (<T extends 
   /** Latest due occurrence per current schedule revision; absence means the server has no exact projection. */
   scheduleOccurrences: z.optional(z.array(z.strictObject({ triggerId: AutomationTriggerIdSchema, triggerRevision: AutomationTriggerRevisionSchema,
     scheduledFor: TIMESTAMP_SCHEMA, startedAt: z.nullable(TIMESTAMP_SCHEMA), held: z.boolean(),
+    /** Terminal state of the exact one-time occurrence, when available. */
+    runState: z.optional(AutomationRunStateV3Schema),
   }))),
   /** Server-authorized incumbents consumed by the Workflow trigger-set projection. */
   scheduleHolds: z.optional(z.array(AutomationScheduleHoldV1Schema)),

@@ -20,7 +20,8 @@ import {
   type WorkflowMark,
 } from '../presentation/WorkflowMarks';
 import { WorkflowSentencePreview } from '../sentence/WorkflowSentencePreview';
-import { formatNextScheduledRun, formatTriggerSetSummary, type TriggerSummarySource } from '../triggers/formatTriggerSummary';
+import { formatNextScheduledRun, type TriggerSummarySource } from '../triggers/formatTriggerSummary';
+import { resolveTriggerEventGroup } from '../triggers/triggerEventGroups';
 import { isWorkflowTriggerSourceGone } from '../triggers/sessionTriggerGroups';
 import {
   isAccountWorkflowOff,
@@ -72,9 +73,6 @@ export function readWorkflowRowStrip(facts: WorkflowLibraryRowFacts): WorkflowRu
 }
 /** A trigger as the list facts carry it: the trigger owner's summary source and whether it is on. */
 export type WorkflowTriggerFact = TriggerSummarySource & Readonly<{ enabled?: boolean }>;
-
-/** Every place that draws these facts says Off in its own state slot. */
-const OFF_SAID_ELSEWHERE = Object.freeze({ offSaidElsewhere: true });
 
 const isAccountItem = (
   row: WorkflowLibraryItem,
@@ -147,12 +145,7 @@ export function readWorkflowLibraryRowFacts(
       definition.triggerSummaryErrorCode === undefined
         ? definition.triggers
         : [],
-    triggerLine:
-      definition.triggerSummaryErrorCode === undefined
-        // A workflow without triggers reads "Manual", as the trigger owner says it (scene 8 lab), never a sentence
-        // repeated on every row (FIN-DESIGN-ACCEPT-2 F15).
-        ? formatTriggerSetSummary(definition.triggers, undefined, OFF_SAID_ELSEWHERE)
-        : t('common.unavailable'),
+    triggerLine: row.triggerSummary,
     stepCount: available ? definition.stepCount : null,
     steps: available ? (definition.previewSteps ?? EMPTY_STEPS) : EMPTY_STEPS,
     lastRunAt: readStartedAt(summary?.lastRun?.startedAt),
@@ -185,8 +178,7 @@ export function readWorkflowLineThree(
   const next = details.nextRun ? readWorkflowNextRunPhrase(row, facts, nowMs) : null;
   return {
     start: [steps, next].filter(Boolean).join(' · ') || null,
-    end: details.lastRun && facts.lastRunAt !== null
-      ? t('workflows.destination.ranAgo', { age: formatRelativeTimeShort(facts.lastRunAt, nowMs) }) : null,
+    end: details.lastRun ? formatLastRun(facts.lastRunAt, nowMs) : null,
   };
 }
 
@@ -354,8 +346,8 @@ export const WorkflowLibraryStateWord = React.memo(
   },
 );
 
-function formatLastRun(at: number | null): string | null {
-  return at === null ? null : formatRelativeTimeShort(at, Date.now());
+function formatLastRun(at: number | null, nowMs = Date.now()): string | null {
+  return at === null ? null : t('workflows.destination.lastRunStandalone', { age: formatRelativeTimeShort(at, nowMs) });
 }
 
 /**
@@ -467,9 +459,11 @@ export function buildWorkflowLibraryCard(
     body: {
       render: (row) => {
         const facts = readFacts(row);
+        const trigger = facts.triggers[0];
         return (
           <WorkflowSentencePreview
-            triggers={facts.triggers}
+            triggerLine={facts.triggerLine}
+            triggerGlyph={trigger ? resolveTriggerEventGroup(trigger, facts.triggerLine ?? undefined).glyph : undefined}
             steps={facts.steps}
             testID={`workflows-home:card:${row.key}:sentence`}
           />
@@ -485,12 +479,9 @@ export function buildWorkflowLibraryCard(
             <WorkflowMarks layout="row" marks={readWorkflowLibraryRowMarks(facts, row)} />
           ) : null}
           <View style={styles.cardFootSpacer} />
-          {/* "Last run 2h ago", or "Never ran" once the history is read and empty (scene 8 card, fix 7). */}
-          {lastRun === null && facts.strip === null ? null : (
+          {lastRun === null ? null : (
             <Text variant="meta" numberOfLines={1} style={styles.cardFootText}>
-              {lastRun === null
-                ? t('workflows.destination.neverRan')
-                : t('workflows.destination.lastRunStandalone', { age: lastRun })}
+              {lastRun}
             </Text>
           )}
           {!details.recentRuns ? null : (

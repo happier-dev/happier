@@ -16,6 +16,7 @@ import { AutomationEventSourceStatusV1Schema } from '../../automations/automatio
 import { AutomationHealthCheckSubjectV1Schema } from '../../automations/automationSubjectV1.js';
 import { AutomationTriggerReferenceV1Schema } from '../../automations/automationTriggerIdentity.js';
 import { AutomationDefinitionListRequestSchema, AutomationEnvironmentHealthCheckSelectionV1Schema, AutomationScheduleHoldV1Schema } from '../../automations/automationApiV3.js';
+import { AutomationRunStateV3Schema } from '../../automations/automationRunStateV3.js';
 import { WorkflowRunLastStartedSummaryV1Schema } from '../workflowProgressV1.js';
 import { AutomationSubjectV1Schema, type AutomationSubjectV1 } from '../../automations/automationSubjectV1.js';
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
@@ -336,7 +337,13 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
   /** Current enabled assignments; plural/empty predecessor placement is preserved on conversion. */
   placements: z.optional(z.array(zMini.pick(WorkflowProjectTargetV1Schema, { machineId: true, directory: true }))),
   triggers: z.array(z.union([
-    AutomationTriggerDetailSchema._zod.def.options[2],
+    zMini.extend(AutomationTriggerDetailSchema._zod.def.options[2], {
+      /** An exact schedule occurrence, independent of the Automation's most recent start. */
+      spentOnceRun: z.optional(z.strictObject({
+        runState: AutomationRunStateV3Schema,
+        startedAt: z.nullable(z.number().check(z.int(), z.nonnegative())),
+      })),
+    }),
     zMini.extend(AutomationTriggerDetailSchema._zod.def.options[3], {
       /** Private source owner projection, independent of execution placement and Environment lifecycle. */
       subject: z.optional(HealthCheckSubjectV1Schema),

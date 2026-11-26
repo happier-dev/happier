@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { findAllHostTestInstances, renderScreen } from '@/dev/testkit/render/renderScreen';
 import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -261,6 +261,134 @@ describe('workflow library page anatomy', () => {
             });
             expect(storage.getState().settingsVersion).toBe(settingsVersion);
             expect(workflowReads()).toEqual(initialReads);
+        } finally {
+            windowSize.width = previousWidth;
+            await screen.unmount();
+        }
+    });
+
+    it('shows the same trigger and last-run facts in the table, phone list and cards', async () => {
+        const { HostCollection } = await import('@happier-dev/plugin-ui');
+        const { AutomationDefinitionDetailSchema, AutomationDefinitionDetailsRequestSchema, AutomationDefinitionListRequestSchema,
+            AutomationDefinitionListResponseSchema } =
+            await import('@happier-dev/protocol/automations/automationApiV3');
+        const { createWorkflowAutomationLastRunSummaryFixture, createWorkflowRunRecentSummaryFixture, createWorkflowRunSummaryFixture } =
+            await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        const { formatOnceScheduleInstant } = await import('../triggers/triggerSchedule');
+        const { t } = await import('@/text');
+        const scheduledAt = Date.now();
+        const nextAt = scheduledAt + 3_600_000;
+        const startedAt = new Date(scheduledAt).toISOString();
+        const time = formatOnceScheduleInstant(scheduledAt);
+        const once = { kind: 'once', scheduledAt };
+        const recurring = { kind: 'interval', everyMs: 3_600_000, scheduleExpr: null, timezone: null };
+        const cases = [
+            { id: 'missed', schedule: once, remaining: 0, next: null, trigger: t('workflows.triggers.once.missedOn', { time }),
+                hasStarted: false, runState: 'missed' as const },
+            { id: 'ran', schedule: once, remaining: 0, next: null, trigger: t('workflows.triggers.once.ranOn', { time }),
+                hasStarted: true, runState: 'succeeded' as const },
+            { id: 'stopped', schedule: once, remaining: 0, next: null, trigger: t('workflows.triggers.once.stoppedOn', { time }),
+                hasStarted: false, runState: 'cancelled' as const },
+            { id: 'pending', schedule: { ...once, scheduledAt: nextAt }, remaining: 1, next: nextAt,
+                trigger: t('workflows.triggers.once.at', { time: formatOnceScheduleInstant(nextAt) }), hasStarted: false },
+            { id: 'recurring', schedule: recurring, remaining: null, next: nextAt, trigger: t('workflows.triggers.summary.everyHours', { count: 1 }), hasStarted: true },
+        ].map((scenario, index) => ({ ...scenario, definitionId: `10000000-0000-4000-8000-00000000007${index}` }));
+        const automations = cases.map(({ id, definitionId, schedule, remaining, next, hasStarted, runState }) => AutomationDefinitionDetailSchema.parse({
+            id, name: `Scheduled ${id}`, description: null, enabled: true,
+            workflowDefinitionId: definitionId, scopeSessionId: null, targetType: null, existingSessionId: null,
+            templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+            assignments: [{ machineId: 'm1', enabled: true, priority: 0, updatedAt: 1 }],
+            executionRecipe: { v: 2, templateVersion: 1, workflow: { t: 'plain', v: {
+                workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
+            } }, triggerEvidence: null },
+            triggers: [{ id: `trigger-${id}`, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
+                triggerDefinitionEnvelope: null, nextRunAt: next, remainingOccurrences: remaining, schedule }],
+            ...(runState === undefined ? {} : { scheduleOccurrences: [{ triggerId: `trigger-${id}`, triggerRevision: 1,
+                scheduledFor: scheduledAt, held: false, startedAt: hasStarted ? scheduledAt : null, runState }] }),
+        }));
+        const list = AutomationDefinitionListResponseSchema.parse({ automations: automations.map(({
+            executionRecipe: _recipe, scheduleOccurrences: _occurrences, triggers, ...definition
+        }) => ({ ...definition, triggers: triggers.map(({ triggerDefinitionEnvelope: _envelope, ...trigger }) => trigger) })), nextCursor: null });
+        automationDefinitionResponse = async (url, init) => {
+            if (url.pathname === '/v3/automations') return Response.json(list);
+            if (url.pathname !== '/v3/automations/query' || init?.method !== 'POST') return undefined;
+            const input = JSON.parse(String(init.body));
+            const details = input?.details === true;
+            const query = details ? AutomationDefinitionDetailsRequestSchema.parse(input) : AutomationDefinitionListRequestSchema.parse(input);
+            const rows = details ? automations : list.automations;
+            return Response.json({ automations: rows.filter(row => query.scope !== 'account_inline' && row.workflowDefinitionId !== null
+                && (query.workflowDefinitionId === undefined || query.workflowDefinitionId === row.workflowDefinitionId)
+                && (query.workflowDefinitionIds === undefined || query.workflowDefinitionIds.includes(row.workflowDefinitionId))), nextCursor: null });
+        };
+        const missed = createWorkflowRunSummaryFixture({ id: 'run-missed', sourceArtifactId: cases[0]!.definitionId,
+            origin: { kind: 'automation', automationId: 'missed' },
+            state: 'missed', workflowCustodyState: 'settled', finishedAt: startedAt });
+        execute.mockImplementation(async (actionId: string, input: { automationIds?: string[]; sourceArtifactIds?: string[] }) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: cases.map(({ id, definitionId, next }) => ({
+                kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: `Scheduled ${id}` }, contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: next,
+            })) } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [missed], metadataByRunId: {} } };
+            if (actionId === 'workflow.run.summaries' && input.sourceArtifactIds !== undefined) return { ok: true, result: {
+                remainingSourceArtifactIds: [],
+                summaries: cases.filter(({ definitionId }) => input.sourceArtifactIds?.includes(definitionId))
+                    .map(({ id, definitionId, runState, hasStarted }) => {
+                        const recent = runState === undefined && !hasStarted ? null : createWorkflowRunRecentSummaryFixture({
+                            runId: `run-${id}`, state: runState ?? 'succeeded',
+                        });
+                        return { sourceArtifactId: definitionId, recent: recent ? [recent] : [], needsYouCount: 0, needsYouRunId: null,
+                            lastRun: hasStarted ? { ...recent, createdAt: startedAt, startedAt, finishedAt: startedAt } : null };
+                    }),
+            } };
+            if (actionId === 'workflow.run.summaries') return { ok: true, result: {
+                remainingAutomationIds: [],
+                // A missed occurrence was admitted but never started. The summary endpoint only indexes starts.
+                automationSummaries: cases.filter(({ id }) => input.automationIds?.includes(id)).map(({ id, hasStarted }) => ({
+                    automationId: id, lastRun: hasStarted
+                        ? createWorkflowAutomationLastRunSummaryFixture({ id: `run-${id}`, startedAt, state: 'succeeded' }) : null,
+                })),
+            } };
+            return { ok: false, errorCode: 'unexpected', error: 'Unexpected fixture request' };
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        const previousWidth = windowSize.width;
+        try {
+            for (const [width, presentation] of [[1440, 'table'], [390, 'list'], [1440, 'grid']] as const) {
+                windowSize.width = width;
+                await act(async () => {
+                    const { settings } = storage.getState();
+                    storage.setState({ settings: { ...settings, collectionDisplayPreferencesV1: {
+                        ...settings.collectionDisplayPreferencesV1,
+                        workflow: { presentation, lines: 3, details: { trigger: true, steps: false, nextRun: false, lastRun: true } },
+                    } } });
+                });
+                const collection = () => screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflows-home:collection');
+                const text = (definitionId: string) => {
+                    const rowId = `workflows-home:row:${definitionId}`;
+                    // Row presses may be layered behind the content; inspect the whole item, including its cells.
+                    const row = screen.findAllByTestId(presentation === 'grid' ? `${rowId}:chrome` : rowId)[0];
+                    return row === undefined ? [] : findAllHostTestInstances(row, node => typeof node.props.children === 'string')
+                        .map(node => node.props.children);
+                };
+                await vi.waitFor(() => {
+                    expect(collection()?.props.presentation).toBe(presentation);
+                    expect(collection()?.props.model.keys, `${presentation} row keys`)
+                        .toEqual(expect.arrayContaining(cases.map(({ definitionId }) => definitionId)));
+                });
+                await reportCollectionLayout(screen, 'workflows-home:collection', { width, height: 900 });
+                const age = t('time.nowShort');
+                await vi.waitFor(() => {
+                    for (const { id, definitionId } of cases) expect(text(definitionId), `${presentation}: ${id} rendered text`).not.toHaveLength(0);
+                    expect(text(cases[1]!.definitionId), `${presentation}: last-started Run is loaded`)
+                        .toEqual(expect.arrayContaining([expect.stringContaining(age)]));
+                });
+                for (const { id, definitionId, trigger, hasStarted } of cases) {
+                    const copy = text(definitionId);
+                    expect.soft(copy, `${presentation}: ${id} trigger`).toContain(trigger);
+                    expect.soft(copy.filter(line => line.includes(age) || line === t('workflows.destination.neverRan')),
+                        `${presentation}: ${id} last run`).toEqual(hasStarted ? [t('workflows.destination.lastRunStandalone', { age })] : []);
+                }
+            }
         } finally {
             windowSize.width = previousWidth;
             await screen.unmount();

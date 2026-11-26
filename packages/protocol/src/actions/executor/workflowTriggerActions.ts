@@ -809,6 +809,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     }>): Promise<Readonly<{ set: WorkflowTriggerSetV1; definition?: WorkflowDefinitionV1;
       children?: ReadonlyMap<string, WorkflowDefinitionV1> }>> => {
     const triggers: WorkflowTriggerSetV1['triggers'] = [];
+    const scheduleOccurrences = new Map(row.scheduleOccurrences?.map(occurrence => [occurrence.triggerId, occurrence]));
     for (const trigger of row.triggers) {
       const readSubject = trigger.kind !== 'pluginEvent' ? null
         : isDeploymentReceiptEventSourceV1(trigger) ? readDeploymentReceiptEventSubjectV1
@@ -828,6 +829,11 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         const definition = AutomationPullRequestTriggerSchema.parse(await deps.openPullRequestTrigger(row, trigger));
         if (definition.kind !== trigger.kind) refuse('source_unavailable');
         triggers.push({ ...trigger, ...definition });
+      } else if (trigger.kind === 'schedule' && trigger.schedule.kind === 'once') {
+        const occurrence = scheduleOccurrences.get(trigger.id);
+        triggers.push(occurrence?.runState !== undefined && occurrence.triggerRevision === trigger.revision
+          && occurrence.scheduledFor === trigger.schedule.scheduledAt
+          ? { ...trigger, spentOnceRun: { runState: occurrence.runState, startedAt: occurrence.startedAt } } : trigger);
       } else if (trigger.kind === 'pluginEvent' && readSubject && deps.openPluginEventTrigger) {
         let subject: ReturnType<typeof readHealthCheckEventSubjectV1> = null;
         try {

@@ -22,7 +22,7 @@ import { joinList } from '@/utils/text/joinList';
 import { resolveActionTitle } from '@/text/actionTitles';
 
 import type { ScheduleHoldPresentation } from './scheduleHoldPresentation';
-import { formatCalendarDate, formatClockTime, formatMonthName, formatOnceScheduleInstant, parseCalendarSchedule, presentSpentOnceSchedule } from './triggerSchedule';
+import { formatCalendarDate, formatClockTime, formatMonthName, formatOnceScheduleInstant, parseCalendarSchedule, presentSpentOnceSchedule, type OnceScheduleSource } from './triggerSchedule';
 
 function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
     const next = new Date(nextRunAt);
@@ -425,14 +425,15 @@ export function lowerTriggerSentenceStart(summary: string): string {
  * header chip and the settings-pane section use this same string for the same draft (04 §9.1).
  */
 export function formatTriggerSetSummary(
-    triggers: readonly (TriggerSummarySource & Readonly<{ enabled?: boolean; remainingOccurrences?: number | null }>)[],
-    /** The set's last Run state, when its owner has read it: a spent one-time schedule says Completed or Missed from it. */
-    lastRunState?: string | null,
+    triggers: readonly (TriggerSummarySource & OnceScheduleSource & Readonly<{ enabled?: boolean }>)[],
     /** The row says Off in its own state place (a workflow table's State cell, a row's state word), so the sentence doesn't. */
     options?: Readonly<{ offSaidElsewhere?: boolean; form?: TriggerSummaryContext['form'] }>,
 ): string {
-    const [first, ...rest] = triggers;
+    const first = triggers[0];
     if (first === undefined) return t('workflows.triggers.summary.manual');
+    const more = triggers.length - 1;
+    const spent = presentSpentOnceSchedule(first);
+    if (spent !== null) return more === 0 ? spent.line : t('workflows.triggers.summary.more', { first: spent.line, count: more });
     // A trigger that won't fire says so first, as its row does ("Off · Every day at 2:00 AM"); a spent
     // one-time schedule says how it ended ("Ran once on …"), a pending one keeps its due time.
     // A collection row never shows a raw expression: a cron that can't be said reads "On a schedule" there.
@@ -441,9 +442,7 @@ export function formatTriggerSetSummary(
         ? t('workflows.triggers.summary.schedule')
         : formatTriggerSummary(first, first.kind === 'action' && 'phase' in first && first.phase === 'before'
             ? { ...options, form: 'clause' } : options);
-    // A spent one-time schedule reads in the one phrase family every trigger surface uses (R12 M12, FIN ruling).
-    const spent = presentSpentOnceSchedule(first, lastRunState);
     const state = first.enabled === false && options?.offSaidElsewhere !== true ? t('workflows.triggers.row.off') : null;
-    const summary = spent !== null ? spent.line : state === null ? when : [state, when].join(' · ');
-    return rest.length === 0 ? summary : t('workflows.triggers.summary.more', { first: summary, count: rest.length });
+    const summary = state === null ? when : [state, when].join(' · ');
+    return more === 0 ? summary : t('workflows.triggers.summary.more', { first: summary, count: more });
 }
