@@ -379,6 +379,7 @@ describe('Team directory (SQLite integration)', () => {
     );
     expect(unqualifiedInherited?.capabilities.viewTeam).toBe(true);
     expect(unqualifiedInherited?.capabilities.manageMembers).toBe(true);
+    expect(unqualifiedInherited?.authenticationQualification).toEqual({ ok: true });
     const unqualifiedRestricted = unqualified.page.items.find(
       (item) => item.id === restricted.id,
     );
@@ -387,6 +388,14 @@ describe('Team directory (SQLite integration)', () => {
     expect(unqualifiedRestricted?.capabilities).toEqual(
       NO_TEAM_CAPABILITIES_V1,
     );
+    expect(TeamSummaryV1Schema.parse(unqualifiedRestricted)).toMatchObject({
+      authenticationQualification: { ok: false, error: 'team_authentication_required' },
+      counts: null,
+      hasSetup: null,
+      viewerJoinedAt: null,
+      managedDefaultsGroupIds: [],
+      policy: { managedDefaults: null, homeDefaults: null },
+    });
 
     const qualified = await list(viewer.id, {
       authentication: {
@@ -398,10 +407,11 @@ describe('Team directory (SQLite integration)', () => {
     });
     expect(qualified.ok).toBe(true);
     if (!qualified.ok) return;
-    expect(
-      qualified.page.items.find((item) => item.id === restricted.id)
-        ?.capabilities.manageMembers,
-    ).toBe(true);
+    expect(TeamSummaryV1Schema.parse(qualified.page.items.find((item) => item.id === restricted.id)))
+      .toMatchObject({
+        authenticationQualification: { ok: true },
+        capabilities: { manageMembers: true },
+      });
 
     const homeAdmin = await account('admin', 'e2ee');
     const administered = await list(homeAdmin.id, { scope: 'administered' });

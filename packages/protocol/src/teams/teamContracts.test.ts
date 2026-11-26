@@ -219,6 +219,17 @@ describe('Team summary projection', () => {
 
   it('round-trips and rejects undeclared fields', () => {
     expect(TeamSummaryV1Schema.parse(summary)).toEqual(summary);
+    for (const authenticationQualification of [
+      { ok: true },
+      { ok: false, error: 'team_authentication_required' },
+      { ok: false, error: 'team_authentication_unavailable' },
+    ]) {
+      expect(TeamSummaryV1Schema.parse({ ...summary, authenticationQualification }).authenticationQualification)
+        .toEqual(authenticationQualification);
+    }
+    expect(TeamSummaryV1Schema.safeParse({
+      ...summary, authenticationQualification: { ok: false, error: 'team_not_found' },
+    }).success).toBe(false);
     expect(TeamSummaryV1Schema.parse({ ...summary, viewerJoinedAt: 1700000000000 }))
       .toMatchObject({ viewerJoinedAt: 1700000000000 });
     expect(TeamSummaryV1Schema.parse({ ...summary, viewerJoinedAt: null }))

@@ -889,6 +889,25 @@ export function applyTeamsDirectoryPage(params: Readonly<{
         reachability: 'reachable',
         error: null,
     }));
+    if (params.current !== false) {
+        for (const row of params.items) {
+            if (row.authenticationQualification?.ok !== true || !row.capabilities.viewTeam) continue;
+            const address = { serverId: params.scope.serverId, teamId: row.id };
+            const key = serverAccountScopedTeamKey(params.scope, address);
+            if (teams.has(key)) continue;
+            teams.set(key, Object.freeze({
+                scope: params.scope,
+                address,
+                status: 'ready',
+                data: row,
+                lastObservedAt: params.observedAt,
+                // Render immediately while the exact detail read revalidates the projection.
+                stale: true,
+                reachability: 'reachable',
+                error: null,
+            }));
+        }
+    }
     notify();
 }
 

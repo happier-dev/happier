@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { SessionAccessPrincipalSummaryV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
-import { TeamsPageV1Schema, type TeamExternalSharingPolicyV1, type TeamMembershipV1, type TeamPolicyV1, type TeamSessionCreationPolicyV1, type TeamsPageV1 } from '@happier-dev/protocol/teams';
+import { TeamsPageV1Schema, type TeamExternalSharingPolicyV1, type TeamMembershipV1, type TeamPolicyV1, type TeamSessionCreationPolicyV1, type TeamSummaryV1, type TeamsPageV1 } from '@happier-dev/protocol/teams';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
@@ -40,6 +40,7 @@ export type SessionAccessDirectoryTeamContext = Readonly<{
     externalSharingPolicy?: TeamExternalSharingPolicyV1;
     /** The Team's sign-in rule as its members read it, to name what a refused sign-in needs. */
     authenticationPolicy?: TeamPolicyV1['authenticationPolicy'];
+    authenticationQualification?: TeamSummaryV1['authenticationQualification'];
 }>;
 
 type DirectoryCandidateRow = SessionAccessCandidateRowModel;
@@ -89,6 +90,13 @@ const EMPTY_GROUP_PAGE: GroupDirectoryPage = Object.freeze({
     loadingMore: false,
     revision: 0,
 });
+
+function hasUnreadGroupSources(
+    page: GroupDirectoryPage,
+    teams: readonly SessionAccessDirectoryTeamContext[],
+): boolean {
+    return teams.some((team) => !Object.hasOwn(page.byTeam, team.teamId));
+}
 
 /** Carries a Team read's typed refusal out of the paging code that throws on failure. */
 class TeamDirectoryReadError extends Error {
@@ -264,7 +272,7 @@ export function useSessionAccessDirectory(input: Readonly<{
     pagesRef.current = pages;
     const groupPageRef = React.useRef(groupPage);
     groupPageRef.current = groupPage;
-    const groupRequest = React.useRef<Promise<GroupDirectoryPage> | null>(null);
+    const groupRequest = React.useRef<Readonly<{ promise: Promise<GroupDirectoryPage>; legacyOnly: boolean }> | null>(null);
     const firstTeamPageRequest = React.useRef<Promise<Readonly<{ rows: readonly SessionAccessCandidateRowModel[]; teamContexts?: readonly SessionAccessDirectoryTeamContext[]; nextCursor: string | null }>> | null>(null);
     const contextTeamsRef = React.useRef(contextTeams);
     contextTeamsRef.current = contextTeams;
@@ -279,6 +287,7 @@ export function useSessionAccessDirectory(input: Readonly<{
     React.useEffect(() => {
         firstTeamPageRequest.current = null;
         groupRequest.current = null;
+        groupPageRef.current = null;
         setPages({});
         setGroupPage(null);
         setTeamMemberQuery('');
@@ -296,24 +305,35 @@ export function useSessionAccessDirectory(input: Readonly<{
     const serverId = scope?.serverId ?? null;
     const navigateTo = React.useCallback((href: string) => routerRef.current.push(href as Href), []);
     /**
-     * Each Team whose Groups the Home refused because this sign-in does not meet its rule, with that Team's own
-     * reason and its sign-in step. The Team's row carries it in place of Add, which could only be refused, and no
-     * section repeats it.
+     * Each Team row presents its own sign-in decision. An older Home reports
+     * the sign-in refusal through that Team's Groups read.
      */
-    const teamSignInRefusals = React.useCallback((page: GroupDirectoryPage | null): ReadonlyMap<string, SessionAccessUiError> => {
+    const teamSignInRefusals = React.useCallback((
+        teams: readonly SessionAccessDirectoryTeamContext[],
+        groups: GroupDirectoryPage | null,
+    ): ReadonlyMap<string, SessionAccessUiError> => {
         const refusals = new Map<string, SessionAccessUiError>();
-        if (!page || !serverId) return refusals;
-        for (const source of Object.values(page.byTeam)) {
-            if (!isTeamSignInRefusal(source)) continue;
-            refusals.set(source.team.teamId, presentTeamSignInRequired({
-                code: source.failure?.code ?? 'team_authentication_required', teamId: source.team.teamId, serverId,
-                accepted: source.team.authenticationPolicy?.accepted ?? [],
+        if (!serverId) return refusals;
+        for (const team of teams) {
+            const qualification = team.authenticationQualification;
+            const source = groups?.byTeam[team.teamId];
+            const code = qualification
+                ? qualification.ok ? null : qualification.error
+                : source && isTeamSignInRefusal(source) ? 'team_authentication_required' : null;
+            if (!code) continue;
+            refusals.set(team.teamId, code === 'team_authentication_required' ? presentTeamSignInRequired({
+                code, teamId: team.teamId, serverId,
+                accepted: team.authenticationPolicy?.accepted ?? [],
                 origin: teamSignInOrigin,
-                navigate: (href) => routerRef.current.push(href as Href),
-            }));
+                navigate: navigateTo,
+            }) : {
+                code,
+                retryable: false,
+                message: teamReadFailureLabel({ kind: 'unknown', code, retryable: false }),
+            });
         }
         return refusals;
-    }, [serverId, teamSignInOrigin]);
+    }, [navigateTo, serverId, teamSignInOrigin]);
 
     /**
      * A live add is dispatched by subject before any grant row exists, so the
@@ -385,6 +405,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 sessionCreationPolicy: team.policy.sessionCreationPolicy,
                 externalSharingPolicy: team.policy.externalSharingPolicy,
                 authenticationPolicy: team.policy.authenticationPolicy,
+                authenticationQualification: team.authenticationQualification,
             })),
             nextCursor: outcome.value.nextCursor,
         };
@@ -440,10 +461,20 @@ export function useSessionAccessDirectory(input: Readonly<{
         };
     }, [scope, directoryLifetime, openedGroupDisplayNames, viewer]);
 
-    const advanceGroups = React.useCallback((mode: 'initial' | 'more' | 'retry'): Promise<GroupDirectoryPage> => {
-        if (groupRequest.current) return groupRequest.current;
+    const advanceGroups = React.useCallback(function advanceGroups(
+        mode: 'initial' | 'more' | 'retry',
+        legacyPage?: Pick<Page, 'teamContexts' | 'nextCursor'>,
+    ): Promise<GroupDirectoryPage> {
+        const active = groupRequest.current;
+        const signal = directoryLifetime.controller.signal;
+        if (active) {
+            if (!legacyPage && active.legacyOnly) {
+                return active.promise.then(page => signal.aborted ? page : advanceGroups(mode));
+            }
+            return active.promise;
+        }
         const request = (async () => {
-            let teamPage = pagesRef.current.team;
+            let teamPage = legacyPage ? { ...legacyPage, failed: false, rows: [] } : pagesRef.current.team;
             let teamDiscoveryFailed = groupPageRef.current?.teamDiscoveryFailed ?? false;
             let teamDiscoveryFailure = groupPageRef.current?.teamDiscoveryFailure;
             if (teamPage?.failed) {
@@ -470,8 +501,10 @@ export function useSessionAccessDirectory(input: Readonly<{
                 ...EMPTY_GROUP_PAGE,
                 teamCursor: teamPage?.nextCursor ?? null,
             };
-            const teams = new Map(contextTeamsRef.current.map((team) => [team.teamId, team]));
-            for (const team of teamPage?.teamContexts ?? []) teams.set(team.teamId, team);
+            const teams = new Map(legacyPage ? [] : contextTeamsRef.current.map((team) => [team.teamId, team]));
+            for (const team of teamPage?.teamContexts ?? []) {
+                if (!legacyPage || team.authenticationQualification === undefined) teams.set(team.teamId, team);
+            }
             let byTeam = { ...base.byTeam };
             for (const team of teams.values()) {
                 if (!byTeam[team.teamId]) {
@@ -480,10 +513,11 @@ export function useSessionAccessDirectory(input: Readonly<{
             }
 
             let teamCursor = base.teamCursor ?? teamPage?.nextCursor ?? null;
-            const candidates = () => Object.values(byTeam).filter((source) => mode === 'retry'
-                ? source.failed || !source.initialized
-                : !source.initialized || (mode === 'more' && source.nextCursor !== null));
-            let sources = candidates();
+            let sources = Object.values(byTeam).filter((source) => {
+                if (mode === 'initial') return !Object.hasOwn(base.byTeam, source.team.teamId);
+                if (mode === 'retry') return source.failed || !source.initialized;
+                return !source.initialized || (mode === 'more' && source.nextCursor !== null);
+            });
 
             // A Group continuation advances one bounded Team-directory page
             // only after all currently known Group sources have had a chance
@@ -528,15 +562,21 @@ export function useSessionAccessDirectory(input: Readonly<{
                 loadingMore: false,
                 revision: base.revision + 1,
             };
-        })();
-        groupRequest.current = request;
+        })().then(page => {
+            if (!signal.aborted && currentScope.current === scopeKey) {
+                groupPageRef.current = page;
+                setGroupPage(page);
+            }
+            return page;
+        });
+        groupRequest.current = { promise: request, legacyOnly: legacyPage !== undefined };
         void request.then(() => {
-            if (groupRequest.current === request) groupRequest.current = null;
+            if (groupRequest.current?.promise === request) groupRequest.current = null;
         }, () => {
-            if (groupRequest.current === request) groupRequest.current = null;
+            if (groupRequest.current?.promise === request) groupRequest.current = null;
         });
         return request;
-    }, [loadFirstTeamPage, loadGroupSource, loadTeams, scopeKey]);
+    }, [directoryLifetime, loadFirstTeamPage, loadGroupSource, loadTeams, scopeKey]);
 
     const resolveAccount = React.useCallback(async (
         query: string,
@@ -601,20 +641,29 @@ export function useSessionAccessDirectory(input: Readonly<{
     const resolveGroupAnswer = React.useCallback(async (): Promise<GroupDirectoryPage | null> => {
         if (!allowsGroups || teamAddress) return null;
         const existing = groupPageRef.current;
-        if (existing) return existing;
+        if (existing && !hasUnreadGroupSources(existing, [
+            ...contextTeamsRef.current, ...(pagesRef.current.team?.teamContexts ?? []),
+        ])) return existing;
         const page = await advanceGroups('initial');
         if (currentScope.current !== scopeKey) return null;
-        setGroupPage(page);
         return page;
     }, [advanceGroups, allowsGroups, scopeKey, teamAddress]);
 
     /**
-     * The refusals the Team rows carry. Each Team's Group answer is its own read: one that fails is the Group
-     * section's to say, never a reason to withhold the Team rows, so a failed answer leaves the rows as they are.
+     * Only rows from older Homes need a Groups read for sign-in evidence.
+     * Retain those answers for the Groups section's own paging and retry.
      */
-    const resolveTeamRefusals = React.useCallback(async (): Promise<ReadonlyMap<string, SessionAccessUiError>> => (
-        teamSignInRefusals(await resolveGroupAnswer().catch(() => null))
-    ), [resolveGroupAnswer, teamSignInRefusals]);
+    const resolveTeamRefusals = React.useCallback(async (
+        page: Pick<Page, 'teamContexts' | 'nextCursor'>,
+    ): Promise<ReadonlyMap<string, SessionAccessUiError>> => {
+        const teams = page.teamContexts ?? EMPTY_TEAM_CONTEXTS;
+        let groups = groupPageRef.current;
+        if (allowsGroups && !teamAddress && teams.some(team =>
+            team.authenticationQualification === undefined && !Object.hasOwn((groups ?? EMPTY_GROUP_PAGE).byTeam, team.teamId))) {
+            groups = await advanceGroups('initial', page).catch(() => groups);
+        }
+        return teamSignInRefusals(teams, groups);
+    }, [advanceGroups, allowsGroups, teamAddress, teamSignInRefusals]);
 
     const resolvePaged = React.useCallback(async (
         kind: 'team' | 'group',
@@ -629,7 +678,7 @@ export function useSessionAccessDirectory(input: Readonly<{
         }
         const existing = pagesRef.current.team ?? EMPTY_PAGE;
         if (existing.rows.length > 0) {
-            const refusals = rows === 'presented' ? await resolveTeamRefusals() : new Map<string, SessionAccessUiError>();
+            const refusals = rows === 'presented' ? await resolveTeamRefusals(existing) : new Map<string, SessionAccessUiError>();
             return applyOperations(withTeamSignInRefusals(narrow(existing.rows, query), refusals));
         }
         let page: Awaited<ReturnType<typeof loadFirstTeamPage>>;
@@ -643,7 +692,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             }
             throw error;
         }
-        const refusals = rows === 'presented' ? await resolveTeamRefusals() : new Map<string, SessionAccessUiError>();
+        const refusals = rows === 'presented' ? await resolveTeamRefusals(page) : new Map<string, SessionAccessUiError>();
         return applyOperations(withTeamSignInRefusals(narrow(page.rows, query), refusals));
     }, [applyOperations, loadFirstTeamPage, resolveGroupAnswer, resolveTeamRefusals, scopeKey]);
 
@@ -699,9 +748,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             const existing = groupPageRef.current;
             if (existing?.loadingMore) return;
             if (existing) setGroupPage({ ...existing, loadingMore: true });
-            void advanceGroups('more').then((page) => {
-                if (currentScope.current === scopeKey) setGroupPage(page);
-            });
+            void advanceGroups('more');
             return;
         }
         const existing = pagesRef.current.team ?? EMPTY_PAGE;
@@ -769,9 +816,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             const existing = groupPageRef.current;
             if (existing?.loadingMore) return;
             if (existing) setGroupPage({ ...existing, loadingMore: true });
-            void advanceGroups('retry').then((page) => {
-                if (currentScope.current === scopeKey) setGroupPage(page);
-            });
+            void advanceGroups('retry');
             return;
         }
         if (kind === 'team') {
@@ -790,7 +835,8 @@ export function useSessionAccessDirectory(input: Readonly<{
         });
     }, [advanceGroups, loadMore, scopeKey, teamAddress, teamGroups, teamMembers]);
 
-    const teamRefusals = React.useMemo(() => teamSignInRefusals(groupPage), [groupPage, teamSignInRefusals]);
+    const listedTeams = pages.team?.teamContexts ?? EMPTY_TEAM_CONTEXTS;
+    const teamRefusals = React.useMemo(() => teamSignInRefusals(listedTeams, groupPage), [groupPage, listedTeams, teamSignInRefusals]);
     const sections = React.useMemo(() => {
         if (!enabled) return [];
         const accountPage = pages.account ?? EMPTY_PAGE;
@@ -862,9 +908,7 @@ export function useSessionAccessDirectory(input: Readonly<{
         });
         const currentGroupPage = groupPage ?? EMPTY_GROUP_PAGE;
         const groupSources = Object.values(currentGroupPage.byTeam);
-        const knownTeamIds = new Set(groupSources.map((source) => source.team.teamId));
-        const hasUninitializedKnownTeam = [...contextTeams, ...(teamPage.teamContexts ?? [])]
-            .some((team) => !knownTeamIds.has(team.teamId));
+        const hasUninitializedKnownTeam = hasUnreadGroupSources(currentGroupPage, [...contextTeams, ...listedTeams]);
         // Groups are discovered through the member-Team directory, so a settled refusal of that read
         // is already the Group directory's answer before anyone browses it.
         const teamRefusal = groupPage === null && teamPage.failed && teamPage.failure?.retryable === false
@@ -897,7 +941,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             resolveCandidates: (query) => resolvePaged('group', query),
         });
         return built.filter((section) => principalKinds.includes(section.kind));
-    }, [applyOperations, availability, contextTeamKey, teamRefusals, contextTeams, enabled, groupDisplayNamesKey, groupPage, openedGroupDisplayNames, operationsKey, pages, principalKinds, resolveAccount, resolvePaged, resolveTeamMember, revision, scopeKey, teamAddress, teamGroups.hasMore, teamGroups.rows, teamGroups.status, teamMemberQuery, teamMembers.hasMore, teamMembers.rows, teamMembers.status, viewer, viewerPresentationKey]);
+    }, [applyOperations, availability, contextTeamKey, teamRefusals, contextTeams, enabled, groupDisplayNamesKey, groupPage, listedTeams, openedGroupDisplayNames, operationsKey, pages, principalKinds, resolveAccount, resolvePaged, resolveTeamMember, revision, scopeKey, teamAddress, teamGroups.hasMore, teamGroups.rows, teamGroups.status, teamMemberQuery, teamMembers.hasMore, teamMembers.rows, teamMembers.status, viewer, viewerPresentationKey]);
 
     const teamContexts = React.useMemo(() => {
         const discovered = pages.team?.teamContexts ?? [];

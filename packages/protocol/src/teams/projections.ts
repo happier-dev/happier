@@ -9,6 +9,7 @@ import {
   readTeamKeysetIdV1,
   readTeamKeysetTextV1,
 } from './cursor.js';
+import { TeamErrorCodeV1Schema } from './errors.js';
 import { isTeamPrincipalRoleV1, TeamPolicyV1Schema, TeamRoleV1Schema } from './team.js';
 
 /**
@@ -102,6 +103,15 @@ export const TeamSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   viewerRole: z.nullable(TeamRoleV1Schema),
   /** The viewer's membership lifetime; omission by an older Home is unknown. */
   viewerJoinedAt: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0)))),
+  /** The current viewer's projection-read decision. Omission by an older Home is unknown. */
+  authenticationQualification: z.optional(z.discriminatedUnion('ok', [
+    z.strictObject({ ok: z.literal(true) }),
+    z.strictObject({
+      ok: z.literal(false),
+      error: z.enum(TeamErrorCodeV1Schema.options.filter(code =>
+        code === 'team_authentication_required' || code === 'team_authentication_unavailable')),
+    }),
+  ])),
   /** Accessible Source hint; omission/null is unknown. */
   hasSetup: z.optional(z.nullable(z.boolean())),
   capabilities: TeamCapabilitiesV1Schema,

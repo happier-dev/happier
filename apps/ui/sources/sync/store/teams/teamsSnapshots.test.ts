@@ -42,6 +42,7 @@ import {
     getTeamsDirectorySnapshot,
     getTeamsDirectorySnapshotsSelectionKey,
     invalidateTeamGroupsForTeam,
+    invalidateTeamSnapshot,
     invalidateTeamCredentialResources,
     invalidateTeamsSnapshotsForServer,
     readTeamGroup,
@@ -106,6 +107,53 @@ afterEach(() => {
 });
 
 describe('teamsSnapshots', () => {
+    it('seeds qualified Team data within the exact Account scope and leaves detail revalidation pending', () => {
+        const row = team(groupAddressA.teamId, {
+            capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true },
+            authenticationQualification: { ok: true },
+        });
+        applyTeamsDirectoryPage({ scope: scopeA, queryKey, items: [row], observedAt: 10 });
+        expect(getTeamSnapshot(scopeA, groupAddressA)).toMatchObject({
+            status: 'ready', data: row, stale: true, lastObservedAt: 10,
+        });
+        expect(getTeamSnapshot(scopeAOther, groupAddressA)).toBeNull();
+
+        beginTeamLoad(scopeA, groupAddressA);
+        expect(getTeamSnapshot(scopeA, groupAddressA)).toMatchObject({ status: 'refreshing', data: row });
+        const detail = team(row.id, { name: 'From the detail read' });
+        applyTeamProjection({ scope: scopeA, address: groupAddressA, team: detail, observedAt: 11 });
+        const currentDetail = getTeamSnapshot(scopeA, groupAddressA);
+        expect(currentDetail).toMatchObject({ status: 'ready', data: detail, stale: false, lastObservedAt: 11 });
+        applyTeamsDirectoryPage({ scope: scopeA, queryKey, items: [row], observedAt: 10 });
+        expect(getTeamSnapshot(scopeA, groupAddressA)).toBe(currentDetail);
+        expect(invalidateTeamSnapshot(scopeA, groupAddressA)).toBe(true);
+        const invalidatedDetail = getTeamSnapshot(scopeA, groupAddressA);
+        applyTeamsDirectoryPage({ scope: scopeA, queryKey, items: [row], observedAt: 12 });
+        expect(getTeamSnapshot(scopeA, groupAddressA)).toBe(invalidatedDetail);
+    });
+
+    it('leaves in-flight detail and refused, legacy, or superseded directory rows out of detail seeding', () => {
+        const qualified = { ok: true } as const;
+        const viewable = { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true };
+        beginTeamLoad(scopeA, groupAddressA);
+        const inFlight = getTeamSnapshot(scopeA, groupAddressA);
+        applyTeamsDirectoryPage({ scope: scopeA, queryKey, observedAt: 10, items: [
+            team(groupAddressA.teamId, { capabilities: viewable, authenticationQualification: qualified }),
+            team('refused', { capabilities: viewable,
+                authenticationQualification: { ok: false, error: 'team_authentication_required' } }),
+            team('legacy', { capabilities: viewable }),
+            team('withheld', { authenticationQualification: qualified }),
+        ] });
+        expect(getTeamSnapshot(scopeA, groupAddressA)).toBe(inFlight);
+        for (const teamId of ['refused', 'legacy', 'withheld']) {
+            expect(getTeamSnapshot(scopeA, createTeamAddress(scopeA.serverId, teamId))).toBeNull();
+        }
+        applyTeamsDirectoryPage({ scope: scopeA, queryKey, observedAt: 11, current: false, items: [
+            team('superseded', { capabilities: viewable, authenticationQualification: qualified }),
+        ] });
+        expect(getTeamSnapshot(scopeA, createTeamAddress(scopeA.serverId, 'superseded'))).toBeNull();
+    });
+
     it('publishes no content for repeated equal recipient catalog admissions at scale', () => {
         // Constructed scale from the brief; no real Account census is available to this lane.
         const resources = Array.from({ length: 400 }, (_, index): TeamCredentialResourceCatalogEntryV1 => ({

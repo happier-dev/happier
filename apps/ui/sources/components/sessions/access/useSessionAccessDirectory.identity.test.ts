@@ -85,14 +85,25 @@ describe('shared directory viewer presentation', () => {
             await hook.unmount();
         } finally { await home.dispose(); releaseLoader(); }
     });
-    it('keeps the other Teams\' Groups when one Team refuses this sign-in', async () => {
+    it.each([
+        { name: 'current rows', openQualified: true, restrictedQualified: true, fallbackCalls: 0 },
+        { name: 'older rows', openQualified: false, restrictedQualified: false, fallbackCalls: 2 },
+        { name: 'mixed rows', openQualified: true, restrictedQualified: false, fallbackCalls: 1 },
+    ])('keeps the other Teams\' Groups when one Team refuses this sign-in ($name)', async ({
+        openQualified, restrictedQualified, fallbackCalls,
+    }) => {
         const releaseLoader = await installRealActionExecutorModuleLoader();
         const open = teamSummaryFixture({ id: 'team-open', name: 'Open Team' });
         const restricted = teamSummaryFixture({ id: 'team-restricted', name: 'Willow Design Studio' });
         const group = teamGroupFixture({ teamId: open.id });
         const home = await serveAccountHomes({ homes: [{ key: 'mixed', serverUrl: 'https://mixed-directory.test', accountId: 'owner' }],
             route: request => {
-                if (request.path === '/v1/teams/list') return Response.json({ items: [open, restricted], nextCursor: null });
+                if (request.path === '/v1/teams/list') return Response.json({ items: [
+                    { ...open, ...(openQualified ? { authenticationQualification: { ok: true } } : {}) },
+                    { ...restricted, ...(restrictedQualified ? {
+                        authenticationQualification: { ok: false, error: 'team_authentication_required' },
+                    } : {}) },
+                ], nextCursor: null });
                 if (request.path !== '/v1/teams/groups/list') return undefined;
                 return JSON.stringify(request.body ?? '').includes(restricted.id)
                     ? Response.json({ error: 'team_authentication_required' }, { status: 403 })
@@ -110,18 +121,26 @@ describe('shared directory viewer presentation', () => {
                 teams = await hook.getCurrent().sections.find(section => section.kind === 'team')!
                     .resolveCandidates!('', new AbortController().signal);
             });
+            const groupRequests = () => home.requests.filter(request => request.path === '/v1/teams/groups/list');
+            expect(groupRequests()).toHaveLength(fallbackCalls);
             const refusedTeam = teams.find(row => row.principal.ref.kind === 'team' && row.principal.ref.teamId === restricted.id);
             expect(refusedTeam?.addition).toMatchObject({ kind: 'blocked', reason: {
                 message: t('session.access.authenticationRequired'), action: { label: t('teams.errors.signInRequiredAction') },
             } });
             expect(teams.find(row => row.principal.ref.kind === 'team' && row.principal.ref.teamId === open.id)?.addition)
                 .toEqual({ kind: 'allowed' });
+            expect(hook.getCurrent().sections.find(section => section.kind === 'team')?.candidates)
+                .toMatchObject([
+                    { addition: { kind: 'allowed' } },
+                    { addition: { kind: 'blocked', reason: { code: 'team_authentication_required' } } },
+                ]);
             let groups: readonly SessionAccessCandidateRowModel[] = [];
             await act(async () => {
                 groups = await hook.getCurrent().sections.find(section => section.kind === 'group')!
                     .resolveCandidates!('', new AbortController().signal);
             });
             expect(groups.map(row => row.principal.ref)).toEqual([{ kind: 'group', teamId: open.id, groupId: group.id }]);
+            expect(groupRequests()).toHaveLength(2);
             expect(hook.getCurrent().sections.find(section => section.kind === 'group')!.status).not.toBe('error');
             await hook.unmount();
         } finally { await home.dispose(); releaseLoader(); }

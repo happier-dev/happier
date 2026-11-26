@@ -220,8 +220,10 @@ export async function listTeamsForActorInTx(
         // Home authority is not Team-derived and is therefore not qualified,
         // so the withheld row is recomposed by the same capability owner with
         // the membership removed rather than re-decided here.
-        const qualified = qualifications.get(context.team.id)?.ok ?? false;
-        items.push(projectTeamSummaryV1({
+        const authenticationQualification = qualifications.get(context.team.id)
+            ?? { ok: false as const, error: "team_authentication_unavailable" as const };
+        const qualified = authenticationQualification.ok;
+        const summary = projectTeamSummaryV1({
             counts: counts.get(context.team.id)!,
             managedDefaultsGroupIds: managedDefaultsGroupIds.get(context.team.id) ?? [],
             teamCapabilities: qualified ? context.teamCapabilities : NO_TEAM_CAPABILITIES_V1,
@@ -241,7 +243,8 @@ export async function listTeamsForActorInTx(
             ownerRequired: context.ownerRequired,
             homeAuthority: context.homeAuthority,
             homeDefaults,
-        }));
+        });
+        items.push({ ...summary, authenticationQualification });
     }
 
     // Advance over scanned rows, including withheld summaries, so pagination
