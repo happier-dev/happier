@@ -208,7 +208,6 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         ioSpy.mockReset();
         modalShow.mockClear();
         modalAlert.mockClear();
-        modalPrompt.mockClear();
     });
 
     it('offers a labelled reset in the session header for an override and clears back to the project colour', async () => {
