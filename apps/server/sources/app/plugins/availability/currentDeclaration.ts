@@ -474,6 +474,25 @@ export async function resolveCurrentPluginDeclarationTx(params: Readonly<{
     return resolved.get(declarationRefKey(params.pluginId, params.version, params.machineId, params.machineInstallationId)) ?? null;
 }
 
+/**
+ * Whether the Account selects any declaration of this plugin for the exact
+ * Machine installation, read body-free. A refusal uses it to tell a missing
+ * installation declaration from a selected one that does not match.
+ */
+export async function hasCurrentPluginDeclarationSelectionTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    pluginId: string;
+    machineId: string;
+    machineInstallationId: string;
+}>): Promise<boolean> {
+    const [intent] = await readDeclarationIntentIdentitiesTx(params.tx, params.accountId, [params.pluginId]);
+    if (!intent?.enabled) return false;
+    if (intent.desiredVersion !== null) return true;
+    return readReleaseLessDeclarationListSummary(intent.releaseLessDeclaration, params.pluginId,
+        { machineId: params.machineId, machineInstallationId: params.machineInstallationId }).currentDeclaration !== null;
+}
+
 export function currentPluginDeclarationKeyV1(pluginId: string, version: string, machineId?: string, machineInstallationId?: string): string {
     return declarationRefKey(pluginId, version, machineId, machineInstallationId);
 }

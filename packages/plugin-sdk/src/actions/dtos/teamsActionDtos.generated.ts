@@ -5717,7 +5717,7 @@ export type TeamsActionResultById = {
         nextCursor: null | string;
         failures: {
             teamId: string;
-            error: 'access_only_expiry_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'disclosure_not_allowed' | 'feature_disabled' | 'forbidden' | 'invalid_audience' | 'invalid_limit' | 'invalid_resource_input' | 'limit_identity_immutable' | 'member_not_eligible' | 'not_found_or_not_visible' | 'resource_changed' | 'resource_corrupt' | 'resource_forbidden' | 'resource_not_found' | 'session_policy_incompatible' | 'source_owner_required' | 'source_replaced_or_missing' | 'subject_not_in_team' | 'team_authentication_policy_unavailable' | 'team_authentication_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+            error: 'access_only_expiry_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'disclosure_not_allowed' | 'feature_disabled' | 'forbidden' | 'invalid_audience' | 'invalid_limit' | 'invalid_resource_input' | 'limit_identity_immutable' | 'member_not_eligible' | 'not_found_or_not_visible' | 'plugin_declaration_not_found' | 'resource_changed' | 'resource_corrupt' | 'resource_forbidden' | 'resource_not_found' | 'session_policy_incompatible' | 'source_owner_required' | 'source_replaced_or_missing' | 'subject_not_in_team' | 'team_authentication_policy_unavailable' | 'team_authentication_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
         }[];
     } | {
         resources: {

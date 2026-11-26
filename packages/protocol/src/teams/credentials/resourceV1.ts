@@ -665,6 +665,7 @@ export const TeamCredentialErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'member_not_eligible', 'session_policy_incompatible',
   'invalid_limit', 'limit_identity_immutable', 'subject_not_in_team',
   'token_limit_unavailable', 'cost_limit_unavailable', 'team_credential_usage_limit',
+  'plugin_declaration_not_found',
 ]));
 export type TeamCredentialErrorCodeV1 = z.infer<typeof TeamCredentialErrorCodeV1Schema>;
 
@@ -698,6 +699,7 @@ export function teamCredentialErrorHttpStatusV1(code: TeamCredentialErrorCodeV1)
       return 403;
     case 'not_found_or_not_visible':
     case 'resource_not_found':
+    case 'plugin_declaration_not_found':
       return 404;
     case 'resource_changed':
     case 'session_policy_incompatible':

@@ -566,7 +566,8 @@ export type CurrentTeamCredentialRecipientMaterialResult =
         recipientContentPublicKeyFingerprint: string | null;
     }>
     | Readonly<{ ok: false; outcome: "unavailable"; reason: "access_removed" | "disabled" | "preparing" | "source_changed" | "recipient_binding_changed" | "resource_corrupt" }>
-    | Readonly<{ ok: false; outcome: "operation_error"; error: "team_authentication_required" | "team_authentication_policy_unavailable" }>;
+    | Readonly<{ ok: false; outcome: "operation_error"; error: "team_authentication_required" | "team_authentication_policy_unavailable"
+        | "plugin_declaration_not_found" }>;
 
 export async function readCurrentTeamCredentialRecipientMaterialInTx(
     tx: Tx,
@@ -579,7 +580,9 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
             | { kind: "platform_operation"; operationId: string }
             | TeamCredentialActionOperationConsumerV1
         >;
-        actionAdmission?: Readonly<{ rootActionId: string; machineId: string; installationId?: string; admittedReviewedChildActionId?: string;
+        /** The verified executing installation; its owning Account's declaration admits the Action. */
+        actionAdmission?: Readonly<{ rootActionId: string; machineId: string; installationId: string; declarationAccountId: string;
+            admittedReviewedChildActionId?: string;
             /** From `readTeamCredentialActionDeclaration`, read before this transaction's Account lock. */
             preparedDeclaration: CurrentPluginDeclarationV1 | null }>;
         sessionAuthentication: SessionAccessAuthentication;
@@ -591,8 +594,10 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     });
     const admissionSessionId = input.consumer.kind === "session" ? input.consumer.sessionId
         : input.consumer.kind === "execution_run" ? input.consumer.parentSessionId : null;
+    const declarationAccountId = input.consumer.kind === "action_operation" ? input.actionAdmission?.declarationAccountId : undefined;
     const admissionAudience = await readSessionAccountCursorAudienceInTx(tx, admissionSessionId ? [admissionSessionId] : [],
-        [input.recipientAccountId, ...(resourceIdentity ? [resourceIdentity.custodianAccountId] : [])]);
+        [input.recipientAccountId, ...(resourceIdentity ? [resourceIdentity.custodianAccountId] : []),
+            ...(declarationAccountId ? [declarationAccountId] : [])]);
     await acquireAccountChangePublicationLocksInTx(tx, admissionAudience.accountIds, { includeSingleAccount: true });
     const resource = await tx.teamCredentialResource.findUnique({
         where: { id: input.resourceId },
@@ -635,15 +640,20 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     }
     if (input.consumer.kind === 'action_operation') {
         if (!input.actionAdmission) return { ok: false, outcome: 'unavailable', reason: 'access_removed' };
+        // The requester was admitted above; the declaration is the executing installation owner's.
         const declared = await admitTeamCredentialDirectActionDeclarationInTx(tx, {
-            accountId: input.recipientAccountId, machineId: input.actionAdmission.machineId,
-            directMachineInstallationId: input.actionAdmission.installationId,
+            accountId: input.actionAdmission.declarationAccountId, machineId: input.actionAdmission.machineId,
+            machineInstallationId: input.actionAdmission.installationId,
             rootActionId: input.actionAdmission.rootActionId, pluginVersion: input.consumer.pluginVersion,
             consumer: input.consumer, source: admitted.sourceBinding,
             admittedReviewedChildActionId: input.actionAdmission.admittedReviewedChildActionId,
             preparedDeclaration: input.actionAdmission.preparedDeclaration,
         });
-        if (!declared) return { ok: false, outcome: 'unavailable', reason: 'access_removed' };
+        if (!declared.ok) {
+            return declared.reason === 'plugin_declaration_not_found'
+                ? { ok: false, outcome: 'operation_error', error: declared.reason }
+                : { ok: false, outcome: 'unavailable', reason: 'access_removed' };
+        }
     }
     if (admitted.binding.resourceRevision !== resource.revision) {
         return { ok: false as const, outcome: "unavailable" as const, reason: "source_changed" as const };

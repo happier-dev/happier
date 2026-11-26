@@ -2242,6 +2242,12 @@ member’s Direct grant before disclosing material to the requester.
 Finite Project Setup, scripts and compute use that same signed request for
 system-tool credentials. Home matches the requested purpose and credential
 service to the tool’s launch declaration in the selected plugin version.
+As for brokered Actions, Home reads that declaration from the Account that owns
+the exact Machine installation running the Action. A member's own plugin
+selection is not used. After the member's Team access and Direct grant are
+admitted, an installation with no current declaration of the plugin returns
+`plugin_declaration_not_found`; a declaration that does not cover the use
+returns `access_removed`.
 In 0.3 development, selected-resource revalidation passes the exact resource id
 through the existing Home entitlement read and shared CLI catalog transport;
 Team authorization, application compatibility and withdrawal checks still run.

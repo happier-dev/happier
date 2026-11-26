@@ -101,7 +101,8 @@ export async function createTeamDirectActionMaterialFixture(options: Readonly<{
         actionId: `${manifest.id}/actions/${purpose.consumer.localId}` as const, pluginVersion: manifest.version, purpose };
     // The owner admits any root Action id; refusal cases substitute non-plugin roots.
     const actionAdmission: Omit<NonNullable<Parameters<typeof readCurrentTeamCredentialRecipientMaterialInTx>[1]['actionAdmission']>,
-        'preparedDeclaration'> = { rootActionId: consumer.actionId, machineId: machine.id };
+        'preparedDeclaration'> = { rootActionId: consumer.actionId, machineId: machine.id,
+            declarationAccountId: recipient.id, installationId: 'fixture-installation' };
     const input = { teamId: team.id, resourceId: resource.id, recipientAccountId: recipient.id,
         slot: { kind: 'connected_service_purpose' as const, purpose }, disclosedMember: sourceAccount, consumer,
         actionAdmission,
@@ -110,8 +111,9 @@ export async function createTeamDirectActionMaterialFixture(options: Readonly<{
     // Like the material route, prepare the declaration body before the locked read.
     const readCurrent = async (override: Partial<typeof input> = {}) => {
         const current = { ...input, ...override };
-        const preparedDeclaration = await readTeamCredentialActionDeclaration({ accountId: current.recipientAccountId,
-            machineId: current.actionAdmission.machineId, consumer: current.consumer });
+        const preparedDeclaration = await readTeamCredentialActionDeclaration({ accountId: current.actionAdmission.declarationAccountId,
+            machineId: current.actionAdmission.machineId, machineInstallationId: current.actionAdmission.installationId,
+            consumer: current.consumer });
         return await inTx(tx => readCurrentTeamCredentialRecipientMaterialInTx(tx, { ...current,
             actionAdmission: { ...current.actionAdmission, preparedDeclaration } }));
     };

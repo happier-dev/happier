@@ -12,7 +12,7 @@ import type { TeamCredentialActionOperationConsumerV1 } from '@happier-dev/proto
 import type { TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
 import type { PluginUiArtifactDigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import type { ProviderBrokerActionDeclarationRefusalV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { resolveCurrentPluginDeclarationTx, type CurrentPluginDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
+import { hasCurrentPluginDeclarationSelectionTx, resolveCurrentPluginDeclarationTx, type CurrentPluginDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { db } from '@/storage/db';
 import type { Tx } from '@/storage/inTx';
 
@@ -44,14 +44,14 @@ function readProjectSystemToolIdentity(rootActionId: string | undefined, consume
 /** Reads the consumer's selected declaration body before the caller takes its
  * Account serialization lock; admission rechecks only its identity under it. */
 export async function readTeamCredentialActionDeclaration(input: TeamCredentialDeclarationRead & Readonly<{
-    directRoot?: Readonly<{ actionId: string; installationId?: string }>;
+    directRootActionId?: string;
 }>): Promise<CurrentPluginDeclarationV1 | null> {
-    const tool = readProjectSystemToolIdentity(input.directRoot?.actionId, input.consumer);
-    const identity = tool ?? parseQualifiedPluginActionId(input.consumer.actionId);
+    const identity = readProjectSystemToolIdentity(input.directRootActionId, input.consumer)
+        ?? parseQualifiedPluginActionId(input.consumer.actionId);
     if (!identity) return null;
     return await resolveCurrentPluginDeclarationTx({ tx: db, accountId: input.accountId,
         pluginId: identity.pluginId, version: input.consumer.pluginVersion,
-        machineId: input.machineId, machineInstallationId: tool ? input.directRoot?.installationId : input.machineInstallationId });
+        machineId: input.machineId, machineInstallationId: input.machineInstallationId });
 }
 
 async function readCurrentPreparedDeclaration(tx: Tx, input: TeamCredentialDeclarationAdmissionInput, pluginId: string) {
@@ -68,18 +68,33 @@ function readConnectedService(source: TeamCredentialSourceBindingV1) {
     return source.kind === 'connected_account' ? source.target.account.service : source.target.service;
 }
 
-/** A Project system-tool launch consumes a Direct grant under its signed root. */
-export async function admitTeamCredentialDirectActionDeclarationInTx(tx: Tx, input: TeamCredentialDeclarationAdmissionInput & Readonly<{
-    directMachineInstallationId?: string;
-}>): Promise<boolean> {
-    const tool = readProjectSystemToolIdentity(input.rootActionId, input.consumer);
-    if (!tool) return (await admitTeamCredentialActionDeclarationInTx(tx, input)).ok;
-    const declaration = await readCurrentPreparedDeclaration(tx, { ...input, machineInstallationId: input.directMachineInstallationId }, tool.pluginId);
+async function admitProjectSystemToolDeclarationInTx(tx: Tx, input: TeamCredentialDeclarationAdmissionInput,
+    tool: Readonly<{ pluginId: string; localId: string }>): Promise<boolean> {
+    const declaration = await readCurrentPreparedDeclaration(tx, input, tool.pluginId);
     const launch = declaration?.manifest.contributes.systemTools.find(candidate => candidate.id === tool.localId)?.connectedAccountLaunch;
     if (!launch || launch.purpose !== input.consumer.purpose.purpose) return false;
     const declaredService = typeof launch.service === 'string' ? { pluginId: tool.pluginId, localId: launch.service } : launch.service;
     const service = readConnectedService(input.source);
     return service?.pluginId === declaredService.pluginId && service.localId === declaredService.localId;
+}
+
+/**
+ * Direct material for a finite Action, or a Project system-tool launch under
+ * its signed root, read from the executing installation's declaration. A
+ * refusal names a missing installation declaration separately.
+ */
+export async function admitTeamCredentialDirectActionDeclarationInTx(tx: Tx, input: TeamCredentialDeclarationAdmissionInput & Readonly<{
+    machineInstallationId: string;
+}>): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; reason: 'plugin_declaration_not_found' | 'not_declared' }>> {
+    const tool = readProjectSystemToolIdentity(input.rootActionId, input.consumer);
+    const admitted = tool ? await admitProjectSystemToolDeclarationInTx(tx, input, tool)
+        : (await admitTeamCredentialActionDeclarationInTx(tx, input)).ok;
+    if (admitted) return { ok: true };
+    // Only the refusal reads the body-free selection to name its cause.
+    const pluginId = tool?.pluginId ?? parseQualifiedPluginActionId(input.consumer.actionId)?.pluginId;
+    const selected = pluginId !== undefined && await hasCurrentPluginDeclarationSelectionTx({ tx, accountId: input.accountId,
+        pluginId, machineId: input.machineId, machineInstallationId: input.machineInstallationId });
+    return { ok: false, reason: pluginId !== undefined && !selected ? 'plugin_declaration_not_found' : 'not_declared' };
 }
 
 /** The Team operation owner admits declared credential use once, from Home's

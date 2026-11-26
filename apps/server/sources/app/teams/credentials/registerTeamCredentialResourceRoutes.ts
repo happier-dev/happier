@@ -620,8 +620,9 @@ export function registerTeamCredentialResourceRoutes(
         const body = TeamCredentialDirectMaterialOpenRequestV1Schema.safeParse(request.body);
         if (request.validationError || !params.success || !body.success
             || body.data.resourceId !== params.data.resourceId) return fail(reply, "invalid_resource_input");
+        const actionBinding = request.externalActionExecutionAuthorizationBinding;
         if (body.data.consumer.kind === 'platform_operation' && !request.externalActionPlatformMaterialAdmission
-            || body.data.consumer.kind === 'action_operation' && !request.externalActionActionMaterialAdmission) {
+            || body.data.consumer.kind === 'action_operation' && (!request.externalActionActionMaterialAdmission || !actionBinding)) {
             return reply.send(TeamCredentialDirectMaterialMineResponseV1Schema.parse({ status: 'unavailable', reason: 'access_removed' }));
         }
         const run = body.data.consumer.kind === "execution_run"
@@ -644,18 +645,21 @@ export function registerTeamCredentialResourceRoutes(
                 status: "unavailable", reason: "access_removed",
             }));
         }
-        const actionAdmission = request.externalActionActionMaterialAdmission;
-        const installationId = request.externalActionExecutionAuthorizationBinding?.installationId;
+        const verifiedAction = request.externalActionActionMaterialAdmission;
+        // A shared controller runs its owning Account's declaration. The Team
+        // credential binding separately admits the requester.
+        const actionAdmission = verifiedAction && actionBinding ? { ...verifiedAction,
+            declarationAccountId: actionBinding.custodianAccountId, installationId: actionBinding.installationId } : undefined;
         // Declaration bodies are read before the material transaction's Account lock.
         const preparedDeclaration = actionAdmission && body.data.consumer.kind === "action_operation"
-            ? await readTeamCredentialActionDeclaration({ accountId: request.userId,
-                machineId: actionAdmission.machineId, consumer: body.data.consumer,
-                directRoot: { actionId: actionAdmission.rootActionId, installationId } })
+            ? await readTeamCredentialActionDeclaration({ accountId: actionAdmission.declarationAccountId,
+                machineId: actionAdmission.machineId, machineInstallationId: actionAdmission.installationId,
+                consumer: body.data.consumer, directRootActionId: actionAdmission.rootActionId })
             : null;
         const result = await inTx(tx => readCurrentTeamCredentialRecipientMaterialInTx(tx, {
             ...params.data,
             recipientAccountId: request.userId,
-            ...(actionAdmission ? { actionAdmission: { ...actionAdmission, installationId, preparedDeclaration } } : {}),
+            ...(actionAdmission ? { actionAdmission: { ...actionAdmission, preparedDeclaration } } : {}),
             ...("sourceMemberKey" in body.data
                 ? { slot: body.data.slot, sourceMemberKey: body.data.sourceMemberKey }
                 : { slot: body.data.slot, disclosedMember: body.data.disclosedMember }),

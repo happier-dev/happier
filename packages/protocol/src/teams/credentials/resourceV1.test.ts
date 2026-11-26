@@ -651,6 +651,7 @@ describe('team credential resource errors', () => {
       source_owner_required: 400,
       source_replaced_or_missing: 400,
       invalid_audience: 400,
+      access_only_expiry_unavailable: 400,
       disclosure_not_allowed: 400,
       broker_unavailable: 400,
       update_required: 400,
@@ -665,6 +666,7 @@ describe('team credential resource errors', () => {
       token_limit_unavailable: 400,
       cost_limit_unavailable: 400,
       team_credential_usage_limit: 400,
+      plugin_declaration_not_found: 404,
     } as const;
 
     expect(TeamCredentialErrorCodeV1Schema.options).toEqual(Object.keys(expectedStatuses));
