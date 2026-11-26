@@ -622,7 +622,7 @@ describe('canonical review Run comments', () => {
       intentInput: { workflowScope: { actionRequestId: 'workflow-1/invocation-1/0', invocationId: 'invocation-1',
         sessions: [{ serverId: 'home', sessionId: 'target-B' }] } } },
       findings: [findings[1]], reviewedFingerprint: null, workflowRunId: 'workflow-1' });
-    expect(result).toMatchObject({ status: 'failed', commentIds: [], failures: [{ errorCode: 'not_authenticated' }] });
+    expect(result).toMatchObject({ status: 'failed', commentIds: [], failures: [{ errorCode: 'review_comment_permission_denied' }] });
     });
   });
 
