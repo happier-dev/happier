@@ -1,9 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import axios from 'axios';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createLightSqliteHarness } from '../../../../../server/sources/testkit/lightSqliteHarness';
 import { createAuthenticatedTestApp } from '../../../../../server/sources/app/api/testkit/sqliteFastify';
 import { accountRoutes } from '../../../../../server/sources/app/api/routes/account/accountRoutes';
 import { artifactsRoutes } from '../../../../../server/sources/app/api/routes/artifacts/artifactsRoutes';
 import { sessionRoutes } from '../../../../../server/sources/app/api/routes/session/sessionRoutes';
+import { sessionPendingRoutes } from '../../../../../server/sources/app/api/routes/session/pendingRoutes';
+import { registerAutomationActionIndexRoutes } from '../../../../../server/sources/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { featuresRoutes } from '../../../../../server/sources/app/api/routes/features/featuresRoutes';
 import { registerPluginAvailabilityRoutes } from '../../../../../server/sources/app/plugins/availability/routes';
 import { registerAccountSecurityRoutes } from '../../../../../server/sources/app/api/routes/auth/registerAccountSecurityRoutes';
@@ -17,10 +20,12 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createCliActionDeps } from '../createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
+import { createDeferredOutcomeDeliveryBoundary } from './deferredOutcomeDelivery.testkit';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { skillFileFromBytesV1 } from '@happier-dev/protocol/prompts/library/skills/skillZipV1';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
@@ -46,37 +51,69 @@ describe('Session skill creation through durable approval replay', () => {
     let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
     try {
       const account = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 1 } });
+      const machineId = `machine-${mode}`;
+      const serverIdentityId = await initializeServerIdentityCache();
+      if (!serverIdentityId) throw new Error('Missing Home identity');
+      const machine = await db.machine.create({ data: { id: machineId, accountId: account.id, installationId: `installation-${mode}`,
+        metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+        operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
       for (const key of PromptLibraryCatalogKeyV1Schema.options) await db.userKVStore.create({ data: {
         accountId: account.id, key: buildPromptLibraryPhysicalKeyV1(key), version: 1,
         value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: emptyPromptLibraryRecordV1(key) })),
       } });
-      const seedMetadata = createTestMetadata({ machineId: 'machine', path: '/project',
+      const seedMetadata = createTestMetadata({ machineId, path: '/project',
         agentRuntimeCapabilitiesV1: { capabilitySelection: { vendorResume: 'supported', skillsLiveReload: 'supported' } } });
       const owner = createSessionOwnerMetadataV1({ metadata: seedMetadata });
       if (!owner.ok) throw new Error('Invalid canonical Session fixture');
-      const session = await db.session.create({ data: { accountId: account.id, tag: `d26-${mode}`, encryptionMode: 'plain', active: false,
+      const session = await db.session.create({ data: { accountId: account.id, tag: `d26-${mode}`, encryptionMode: 'plain', active: true,
         metadataLayoutVersion: 1, metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: seedMetadata })),
         ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata)) } });
+      await db.accessKey.create({ data: { accountId: account.id, sessionId: session.id, machineId, data: 'opaque' } });
+      await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: { homeId: serverIdentityId,
+        accountId: account.id, sessionId: session.id, machineId, installationId: machine.installationId! } } });
       const credentials = { token: await auth.createToken(account.id, undefined, { kind: 'terminal', authority: 'account_automation' }),
         credentialProvenance: 'stored_session' as const, encryption: null };
       accountRoutes(app); artifactsRoutes(app); sessionRoutes(app); registerPluginAvailabilityRoutes(app); registerAccountSecurityRoutes(app);
-      const serverIdentityId = await initializeServerIdentityCache(); featuresRoutes(app);
-      if (!serverIdentityId) throw new Error('Missing Home identity');
+      sessionPendingRoutes(app); registerAutomationActionIndexRoutes(app);
+      featuresRoutes(app);
       const url = await app.listen({ port: 0, host: '127.0.0.1' });
       env.patch({ HAPPIER_HOME_DIR: `${sqlite.baseDir}/${mode}`, HAPPIER_SERVER_URL: url, HAPPIER_WEBAPP_URL: url });
       reloadConfiguration(); resetInMemoryAccountSettingsContextForTests();
       runtime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController,
-        runtimeOptions: { pluginIds: ['codex'] } });
+        runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
       await runWithServerHttpBaseUrl(url, async () => {
         await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force' });
+        const origin = mode === 'approved' || mode === 'explicit'
+          ? await createDeferredOutcomeDeliveryBoundary({ accountId: account.id, serverId: configuration.activeServerId, serverIdentityId,
+              machineId, sessionId: session.id, sessionCrypto: { mode: 'plain', ctx: null },
+              callerAuthority: 'account_automation', readReceiver: () => executor }) : null;
+        if (origin) {
+          onTestFinished(() => origin.close());
+          const get = axios.get.bind(axios);
+          const http = vi.spyOn(axios, 'get').mockImplementation(async (requestUrl, options) => {
+            const path = new URL(String(requestUrl)).pathname;
+            if (path === `/v1/machines/${machineId}`) return { status: 200, data: { machine: origin.machine } };
+            const prefix = `/v2/sessions/${session.id}/messages/by-local-id/`;
+            if (path.startsWith(prefix)) {
+              const message = origin.readMessage(decodeURIComponent(path.slice(prefix.length)));
+              if (message) return { status: 200, data: { message } };
+              throw Object.assign(new axios.AxiosError('Message not found'), { response: { status: 404, data: { error: 'Message not found' } } });
+            }
+            return await get(requestUrl, options);
+          });
+          onTestFinished(() => http.mockRestore());
+        }
         const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId: session.id, mode: 'plain', ctx: null,
-          serverHttpBaseUrl: url });
+          serverHttpBaseUrl: url, ...(origin ? {
+            externalActionMachineInstallationId: origin.machine.installationId,
+            externalActionMachineRequestPrivateKey: origin.installation.secretKey,
+          } : {}) });
         const executor = createActionExecutor(deps);
         const pending = executor.execute('skills.install', { source: { kind: 'upload', files: [
           skillFileFromBytesV1('SKILL.md', new TextEncoder().encode('---\nname: replay-skill\n---\nA harmless fixture.'), 0o644),
         ] }, ...(mode === 'explicit' ? { where: { kind: 'write', write: { place: { t: 'machine', machineId: 'chosen-machine' }, state: 'on' } } } : {}) }, {
           surface: 'mcp', authority: 'account_automation', serverId: deps.skillRules!.serverId, serverIdentityId, runtimeAccountId: account.id,
-          defaultSessionId: session.id, actionRequestId: `d26-${mode}`,
+          defaultSessionId: session.id, ...(origin ? { defaultSessionMachineId: machineId } : {}), actionRequestId: `d26-${mode}`,
           ...(mode === 'waived' || mode === 'rules' ? { actionsSettings: {
             v: 1 as const, actions: {}, approvalWaivedSurfaces: { 'skills.install': ['agent' as const] },
           } } : {}),
@@ -105,6 +142,12 @@ describe('Session skill creation through durable approval replay', () => {
           const settled = ApprovalRequestV2Schema.parse(await deps.approvalsGet!({ artifactId }));
           if (!decided.ok) throw new Error(`Decision refused: ${decided.errorCode}`);
           expect(decided, settled.execution?.errorCode).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+          if (!origin) throw new Error('Missing origin delivery boundary');
+          const deliveries = await db.sessionPendingMessage.findMany({ where: { sessionId: session.id }, select: { localId: true } });
+          expect(deliveries,
+            JSON.stringify({ decided, settled, deliveries, replays: origin.replayArtifacts }))
+            .toEqual([{ localId: `approval-result:${artifactId}` }]);
+          expect(origin.replayArtifacts).toEqual([{ artifactId }]);
         }
         const listed = await executor.execute('skills.list', {}, { surface: 'ui', authority: 'present_user' });
         if (!listed.ok) throw new Error(`Library read refused: ${listed.errorCode}`);
