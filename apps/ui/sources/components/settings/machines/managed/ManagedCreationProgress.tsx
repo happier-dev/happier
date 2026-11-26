@@ -26,7 +26,6 @@ import { describeActionOperationStatusLabel, resolveActionOperationStatus } from
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { describeManagedObservationDiagnostic, describeManagedOperationDiagnostic } from './managedNativeFailurePresentation';
 import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
-import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 
 /** Only durable allocation/enrollment observations; task stages are supplied by their operation owner. */
 export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachineFullV1; handlers?: ManagedLifecycleHandlers;
@@ -101,9 +100,10 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const installationRetryOnly = !(operation && status) && canRetryInstallation && Boolean(props.handlers?.reinstall);
     // A Keep wait the operation reports (busy, draining, activity unknown) is the machine's state: its row says it once.
     const observation = machine.observation;
-    const bootstrapRunning = operation?.snapshot.state === 'running' && isManagedMachineBootstrapIncomplete(machine);
+    const bootstrapObservation = isManagedMachineBootstrapIncomplete(machine);
+    const bootstrapRunning = operation?.snapshot.state === 'running' && bootstrapObservation;
     // Bootstrap evidence is written during the attempt, before its operation settles.
-    const operationTime = (observation?.reason?.startsWith('bootstrap.') ? operation?.snapshot.startedAt : operation?.snapshot.settledAt)
+    const operationTime = (bootstrapObservation ? operation?.snapshot.startedAt : operation?.snapshot.settledAt)
         ?? operation?.snapshot.startedAt ?? operation?.snapshot.createdAt ?? 0;
     // A newer check supersedes the old error; the pre-IO bootstrap marker is not a completed check.
     const newerObservation = !prompt && !heldAsk && !bootstrapRunning && observation
@@ -112,7 +112,8 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const observationDiagnostic = newerObservation && (newerObservation.reason || newerObservation.nativeCause || newerObservation.carrierFailure) ? newerObservation : null;
     const failure = observationDiagnostic ? {
         title: machine.allocation === 'confirmed-absent' ? t('managedMachines.inspect.notCreated')
-            : resolveSystemTaskFailureMessage({ code: observationDiagnostic.reason }) ?? t('managedMachines.inspect.checkFailed'),
+            : describeManagedInstallationFailure(operation?.snapshot.error, operation?.snapshot.progress, observationDiagnostic)
+                ?? t('managedMachines.inspect.checkFailed'),
         detail: describeManagedObservationDiagnostic(observationDiagnostic),
     } : error ? {
         title: nothingCreated ? lifecycle.line

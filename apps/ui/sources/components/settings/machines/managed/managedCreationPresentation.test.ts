@@ -33,6 +33,59 @@ it('says an expired sign-in approval in the app\'s words, with the retry it need
     undefined)).toBe(t('machineSignIn.expired'));
 });
 
+it.each([
+  ['auth_request_expired', t('machineSignIn.expired')],
+  ['database_connection_unavailable', t('managedMachines.creation.homeRequestFailed')],
+  ['database_transaction_conflict_exhausted', t('managedMachines.creation.homeRequestFailed')],
+  ['database_transaction_timeout', t('managedMachines.creation.homeRequestFailed')],
+  ['managed_controller_request_failed', t('managedMachines.detail.controllerRequestFailed')],
+  ['remote_cli_update_required', t('setupOnboarding.remoteSshChecklist.remoteCliUpdateRequired')],
+  ['service_reconciliation_declined', t('machine.backgroundServicePrompt.replaceDeclined')],
+  ['approval_required', t('notifications.activity.permissionFallbackBody')],
+  ['home_not_guest_reachable', t('managedMachines.creation.homeNotGuestReachable')],
+  ['vercel_resource_stopped', t('managedMachines.creation.vercelSessionEnded')],
+])('presents a retained bootstrap %s cause with or without the matching receipt', (code, sentence) => {
+  const error = { errorCode: code, error: 'private installer diagnostic' };
+  const observation = { reason: `bootstrap.${code}` };
+  expect(describeManagedInstallationFailure(error, undefined)).toBe(sentence);
+  expect(describeManagedInstallationFailure(error, undefined, observation)).toBe(sentence);
+  expect(describeManagedInstallationFailure({ errorCode: 'action_failed', error: 'Earlier install error' }, undefined, observation)).toBe(sentence);
+  expect(describeManagedInstallationFailure(undefined, undefined, observation)).toBe(sentence);
+});
+
+it.each([
+  'action_outcome_unknown',
+  'controller_unavailable',
+  'credential_unavailable',
+  'enrollment_retired',
+  'intent_changed',
+  'request_conflict',
+])('uses the existing Action sentence for a retained bootstrap %s refusal', code => {
+  const error = { errorCode: code, error: code };
+  const sentence = describeManagedInstallationFailure(error, undefined);
+  expect(sentence).toBeTruthy();
+  expect(describeManagedInstallationFailure(undefined, undefined, { reason: `bootstrap.${code}` })).toBe(sentence);
+});
+
+it('keeps the enrollment phase of a matching provider refusal', () => {
+  const error = { errorCode: 'provider_unavailable', error: 'private installer diagnostic' };
+  const progress = { kind: 'phase', phase: 'ssh.auth.wait', label: 'Waiting for sign-in' } as const;
+  const observation = { reason: 'bootstrap.provider_unavailable' };
+  expect(describeManagedInstallationFailure(error, progress, observation)).toBe(t('managedMachines.creation.enrollmentUnavailable'));
+  expect(describeManagedInstallationFailure(undefined, undefined, observation)).toBe(
+    describeManagedInstallationFailure(error, undefined),
+  );
+});
+
+it('uses Home diagnostic details only when the receipt matches the bootstrap cause', () => {
+  const homeOrigin = 'https://home.example.test:9443';
+  const error = { errorCode: 'action_failed', error: 'home_not_guest_reachable',
+    details: { kind: 'managedGuestHome', homeOrigin } } as const;
+  expect(describeManagedInstallationFailure(error, undefined, { reason: 'bootstrap.home_not_guest_reachable' })).toContain(homeOrigin);
+  expect(describeManagedInstallationFailure(error, undefined, { reason: 'bootstrap.failed' })).toBeNull();
+  expect(describeManagedInstallationFailure(error, undefined, { reason: 'transport' })).toBeNull();
+});
+
 const machine = {
   id: 'managed',
   homeId: 'home',
@@ -438,7 +491,7 @@ describe('managed creation presentation', () => {
     expect(
       describeManagedInstallationFailure(
         {
-          errorCode: 'provider_unavailable',
+          errorCode: 'unknown_install_failure',
           error: 'Native command failed: GITHUB_TOKEN unset',
         },
         progress,

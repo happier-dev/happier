@@ -22,28 +22,44 @@ export function canPresentManagedMachineControl(
         || (controller?.access?.role === 'manage' && controller.access.accessState === 'ready');
 }
 
+const BOOTSTRAP_FAILURE_PREFIX = 'bootstrap.';
+
 /**
- * The short cause the page says for a failed install, in the app's words; null when only the installer's own
- * message exists. That raw message (it can name commands and environment variables) stays behind Details.
+ * The short cause the page says for a failed install, in the app's words.
+ * Bootstrap retains the producer's code on the Machine even when the operation cannot be read.
  */
 export function describeManagedInstallationFailure(
-    error: NonNullable<ActionOperationProjection['snapshot']['error']>,
+    error: ActionOperationProjection['snapshot']['error'],
     progress: ActionOperationProjection['snapshot']['progress'],
+    observation?: Pick<NonNullable<ManagedMachineReadSnapshotV1['observation']>, 'reason'>,
 ): string | null {
-    const details = error.details;
+    const reason = observation?.reason;
+    if (observation && !reason?.startsWith(BOOTSTRAP_FAILURE_PREFIX)) {
+        return resolveSystemTaskFailureMessage({ code: reason }) ?? null;
+    }
+
+    const observedCode = reason?.slice(BOOTSTRAP_FAILURE_PREFIX.length);
+    // Refusals outside the typed controller codes can arrive as action_failed with the cause as the message.
+    const operationCode = error?.errorCode === 'action_failed' ? error.error : error?.errorCode;
+    const cause = error?.failureCause;
+    const receipt = observedCode === undefined || observedCode === operationCode
+        || cause && 'errorCode' in cause && observedCode === cause.errorCode ? error : undefined;
+    const errorCode = observedCode ?? receipt?.errorCode;
+    if (errorCode === undefined) return null;
+
+    const details = receipt?.details;
     const request = details && 'kind' in details && details.kind === 'managedControllerRequest' ? details : undefined;
-    if (error.errorCode === 'database_connection_unavailable' || error.errorCode === 'database_transaction_conflict_exhausted'
-        || error.errorCode === 'database_transaction_timeout'
+    if (errorCode === 'database_connection_unavailable' || errorCode === 'database_transaction_conflict_exhausted'
+        || errorCode === 'database_transaction_timeout'
         || request?.category === 'status' && (request.status ?? 0) >= 500) {
         return t('managedMachines.creation.homeRequestFailed');
     }
-    if (error.errorCode === 'provider_unavailable' && progress?.kind === 'phase'
+    if (errorCode === 'provider_unavailable' && receipt && progress?.kind === 'phase'
         && progress.phase === 'ssh.auth.wait') return t('managedMachines.creation.enrollmentUnavailable');
-    if (error.errorCode === 'auth_request_expired') return t('machineSignIn.expired');
-    // A refusal outside the typed controller codes reaches the executor's result as `action_failed` with its code as the message.
-    const code = error.errorCode === 'action_failed' ? error.error : error.errorCode;
-    return resolveActionExecutionFailureMessage({ ok: false, errorCode: error.errorCode, details, failureCause: error.failureCause },
-        resolveSystemTaskFailureMessage({ code, message: null, details }) ?? '') || null;
+    if (errorCode === 'auth_request_expired') return t('machineSignIn.expired');
+    // The raw installer message stays behind Details.
+    return resolveActionExecutionFailureMessage({ ok: false, errorCode, details, failureCause: receipt?.failureCause },
+        resolveSystemTaskFailureMessage({ code: observedCode ?? operationCode, details }) ?? '') || null;
 }
 
 /** Setup is observed on the admitted row; Join alone cannot complete this stage. */

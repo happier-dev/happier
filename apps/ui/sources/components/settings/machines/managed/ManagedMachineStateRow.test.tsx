@@ -322,6 +322,28 @@ describe('created machine resource rows (UIR5)', () => {
     expect(screen.findByTestId('managed-machine.progress:checkNow')?.props.accessibilityState?.busy).toBe(true);
   });
 
+  it('shows the expired sign-in cause and Retry install on the Machine receipt', async () => {
+    const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
+    const { t } = await import('@/text');
+    const machine = await boundMachine({ enrolledMachineId: undefined, desired: 'start', observation: {
+      observedAt: 30, availability: 'unavailable', reason: 'bootstrap.auth_request_expired',
+    } });
+    const operation = { serverId: machine.homeId, observation: 'available' as const, isUnavailableProjection: false,
+      snapshot: ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'bootstrap', revision: 27,
+        actionId: 'machines.managed.acquire', state: 'failed', scope: { accountId: 'owner', machineId: 'controller' },
+        title: 'Create', createdAt: 10, startedAt: 20, settledAt: 40, cancellation: 'supported',
+        domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
+        progress: { kind: 'phase', phase: 'ssh.auth.wait', label: 'Waiting for sign-in' },
+        error: { errorCode: 'auth_request_expired', error: 'auth_request_expired' },
+      }) };
+    const reinstall = vi.fn();
+    const screen = await renderScreen(<ManagedCreationProgress machine={machine} operation={operation} handlers={{ reinstall }} />);
+    expect(screen.getTextContent()).toContain(t('machineSignIn.expired'));
+    await screen.pressByTestIdAsync('managed-machine.installation-retry');
+    expect(reinstall).toHaveBeenCalledOnce();
+    await screen.unmount();
+  });
+
   it('keeps native identity out of a healthy created machine and names the row after the machine', async () => {
     const { ManagedCreationProgress } = await import('./ManagedCreationProgress');
     const machine = await boundMachine();
