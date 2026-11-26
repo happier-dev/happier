@@ -1,4 +1,5 @@
 FROM node:24-bookworm
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \

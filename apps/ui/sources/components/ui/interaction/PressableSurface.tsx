@@ -73,6 +73,13 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
     const [focused, setFocused] = React.useState(false);
     const [hoveredForTooltip, setHovered] = React.useState(false);
     const anchorRef = React.useRef<View | null>(null);
+    const webTooltip = Platform.OS === 'web' && props.accessibilityState?.expanded !== true
+        ? props.webTooltip
+        : undefined;
+    const hoverDisabledTooltip = disabled && Boolean(webTooltip) && (props.pointerEvents ?? 'auto') === 'auto';
+    if (!webTooltip && hoveredForTooltip) {
+        setHovered(false);
+    }
     const ringVisible = focused && keyboardModality && !disabled;
     // `FocusRing` runs a Reanimated animated style, so an always-mounted one would cost a shared
     // value per control on every surface in the app for a ring that native can never show (RN
@@ -85,6 +92,9 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
     const handleBlur = React.useCallback(() => setFocused(false), []);
     const handleHoverIn = React.useCallback(() => setHovered(true), []);
     const handleHoverOut = React.useCallback(() => setHovered(false), []);
+    const handleDisabledPointerEnter = React.useCallback<NonNullable<PressableProps['onPointerEnter']>>((event) => {
+        if (event.nativeEvent.pointerType !== 'touch') handleHoverIn();
+    }, [handleHoverIn]);
 
     const resolveStyle = React.useCallback(({ pressed, hovered }: { pressed?: boolean; hovered?: boolean }) => {
         const backgroundColor = feedbackInset > 0 ? undefined : feedback.resolveBackgroundColor({ pressed, hovered });
@@ -92,9 +102,10 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
             props.style,
             Platform.OS === 'web' ? WEB_FOCUS_OUTLINE_RESET : null,
             backgroundColor === undefined ? null : { backgroundColor },
+            hoverDisabledTooltip ? { pointerEvents: 'auto' as const } : null,
             props.styleOverride,
         ];
-    }, [feedback, feedbackInset, props.style, props.styleOverride]);
+    }, [feedback, feedbackInset, hoverDisabledTooltip, props.style, props.styleOverride]);
 
     const renderContent = ({ pressed, hovered }: { pressed?: boolean; hovered?: boolean }) => (
         <>
@@ -123,8 +134,8 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
                 </View>
             ) : null}
             {props.children}
-            {Platform.OS === 'web' && props.webTooltip && (hoveredForTooltip || ringVisible) ? (
-                <DeferredAnchoredTooltip activationKey={`${hoveredForTooltip}:${focused}`} anchorRef={anchorRef} label={props.webTooltip} content={props.tooltipContent} placement={props.tooltipPlacement} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
+            {webTooltip && (hoveredForTooltip || ringVisible) ? (
+                <DeferredAnchoredTooltip activationKey={`${hoveredForTooltip}:${focused}`} anchorRef={anchorRef} label={webTooltip} content={props.tooltipContent} placement={props.tooltipPlacement} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
             ) : null}
             {feedbackInset === 0 && ringMounted ? (
                 <FocusRing
@@ -150,8 +161,10 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
             importantForAccessibility={props.importantForAccessibility}
             onFocus={handleFocus}
             onBlur={handleBlur}
-            onHoverIn={props.webTooltip ? handleHoverIn : undefined}
-            onHoverOut={props.webTooltip ? handleHoverOut : undefined}
+            onHoverIn={webTooltip && !disabled ? handleHoverIn : undefined}
+            onHoverOut={webTooltip && !disabled ? handleHoverOut : undefined}
+            // React Native Web disables its hover listeners along with activation.
+            {...(hoverDisabledTooltip ? { onPointerEnter: handleDisabledPointerEnter, onPointerLeave: handleHoverOut } : null)}
             hitSlop={props.hitSlop}
             disabled={disabled}
             accessibilityRole={props.accessibilityRole ?? 'button'}

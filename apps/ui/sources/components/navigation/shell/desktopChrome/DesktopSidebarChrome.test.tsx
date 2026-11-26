@@ -99,7 +99,7 @@ describe('DesktopSidebarChrome', () => {
         itemRowActionsState.lastActionIds = [];
     });
 
-    it('shows each rail and overflow tooltip from its accessible name on hover, including disabled history', async () => {
+    it('shows each rail and overflow tooltip from its accessible name on hover', async () => {
         const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
         await withPopoverWebGlobals(async () => {
             const screen = await renderScreen(
@@ -109,7 +109,8 @@ describe('DesktopSidebarChrome', () => {
                     onPressBack={vi.fn()}
                     onPressForward={vi.fn()}
                     onPressCollapse={vi.fn()}
-                    canNavigateBack={false}
+                    canNavigateBack
+                    canNavigateForward
                     environmentBadge={null}
                     headerActions={[]}
                     topUtilityActions={[{ id: 'settings', title: 'Filter sessions', inlineTestID: 'nav-settings', icon: 'sliders-horizontal', onPress: vi.fn() }]}

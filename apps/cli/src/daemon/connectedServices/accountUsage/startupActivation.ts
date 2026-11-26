@@ -22,6 +22,7 @@ export async function activateConnectedServiceQuotaAutomationAfterProviderAccoun
     refreshSources: ConnectedServiceUsageSourceV1[];
   }>>;
   createCoordinator: () => TCoordinator;
+  onCoordinatorReady?: (coordinator: TCoordinator) => void;
   startLoop: (coordinator: TCoordinator) => TLoopHandle;
   onActivationError: (error: unknown) => void;
 }>): Promise<
@@ -29,8 +30,12 @@ export async function activateConnectedServiceQuotaAutomationAfterProviderAccoun
   | Readonly<{ status: 'quota_policy_disabled'; error: unknown }>
   | Readonly<{ status: 'active'; coordinator: TCoordinator; loopHandle: TLoopHandle }>
 > {
-  if (!input.enabled) return { status: 'disabled' };
+  if (!input.enabled || input.retry.signal.aborted) return { status: 'disabled' };
 
+  // Manual recovery checks the selected credential and provider directly. Only
+  // background policy needs the full provider-account usage inventory first.
+  const coordinator = input.createCoordinator();
+  input.onCoordinatorReady?.(coordinator);
   const serviceIds = [...new Set(input.quotaFetchers.map((fetcher) => fetcher.serviceId))];
   let activation: Readonly<{ status: 'active'; coordinator: TCoordinator; loopHandle: TLoopHandle }> | undefined;
   let activationError: unknown;
@@ -47,7 +52,6 @@ export async function activateConnectedServiceQuotaAutomationAfterProviderAccoun
         if (input.retry.signal.aborted) return;
         const hydration = await input.hydrate({ serviceIds });
         if (input.retry.signal.aborted) return;
-        const coordinator = input.createCoordinator();
         coordinator.scheduleCurrentSourceRefresh(hydration.refreshSources);
         const loopHandle = input.startLoop(coordinator);
         activation = { status: 'active', coordinator, loopHandle };
