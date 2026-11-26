@@ -391,18 +391,22 @@ function PluginUiPrivateQRCode(props: Readonly<{ data: string; size: number; tes
     );
 }
 
+const SAVED_SECRET_ADD_INLINE: ViewStyle = { alignSelf: 'flex-start' };
+
 /** A plugin's saved-secret choice reads the signed-in Account's catalog, as Happier's own picker does. */
 function PluginUiPrivateSavedSecretChoice(input: SavedSecretChoiceListProps): React.ReactElement {
     const scope = useAccountSettingsScope();
     if (input.onConnect) {
         const onConnect = input.onConnect;
-        return <PluginButton testID={`${input.testIDPrefix}-open`} title={t('connectedServicesSetup.keyTitle')}
+        // Adding a key is a step inside a form, not the form's lead action: one ordinary inline secondary button.
+        return <View style={SAVED_SECRET_ADD_INLINE}><PluginButton testID={`${input.testIDPrefix}-open`} variant="secondary"
+            title={t('connectedServicesSetup.keyTitle')}
             onPress={() => {
                 void presentConnectSheet({ scope, intent: 'link', service: { kind: 'key', keyKind: 'other' },
                     current: input.selectedRef ?? undefined }).then(result => {
                     if (result.kind !== 'dismissed') onConnect(result.secretRef);
                 });
-            }} />;
+            }} /></View>;
     }
     return <SavedSecretReferenceChoice scope={scope} selectedRef={input.selectedRef} onSelect={input.onSelect}
         testIDPrefix={input.testIDPrefix} />;
