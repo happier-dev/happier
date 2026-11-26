@@ -135,10 +135,12 @@ export function StoreKindPage(
 function BrowserExtensionMachineRequired(props: Readonly<{ presented: boolean }>) {
   const directory = useStoreDirectoryState();
   const machineSelection = React.useContext(StoreMachineSelectionContext)!;
+  const query = directory.state?.query ?? '';
   return <StoreKindFrame kind="browserExtension" presented={props.presented}
-    query={directory.state?.query ?? ''} onQueryChange={directory.setQuery}>
+    query={query} onQueryChange={directory.setQuery}>
+    {props.presented ? <StoreBrowserExtensionLinkResult query={query} /> : null}
     <SurfaceStateCard kind="unavailable" size="page" testID="store.kind.browserExtension.needsMachine"
-      diagnosticCode="needs_machine" title={t('capabilities.store.kinds.browserExtension.chooseMachine')}
+      title={t('widgetGlances.needsMachineTitle')} reason={t('capabilities.store.kinds.browserExtension.chooseMachine')}
       action={{ label: t('settingsPlugins.targetSelection.chooseMachine'), onPress: () => machineSelection.setPickerOpen(true) }} />
   </StoreKindFrame>;
 }

@@ -264,6 +264,37 @@ it.each([
         .toEqual(Array.from({ length: 3 }, () => ({ uri: iconUrl }))));
 });
 
+it('opens the browser extension dependency form from a pasted link on an Account with no Machines', async () => {
+    await setup('extension-link-no-machine', 'browserExtension');
+    const { StoreKindPage } = await import('./StoreKindPage');
+    const { StoreMachineSelectionProvider } = await import('@/components/settings/plugins/model/useStoreMachineScope');
+    const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+    const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const extensionId = 'c'.repeat(32);
+    const navigation = { push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} };
+    const screen = await renderScreen(<DestinationInstanceHost tabId="browser-extensions"
+        ref={{ kind: 'plugins', params: { view: 'kind', kind: 'browserExtension', q: extensionId } }}
+        pathname="/plugins" focused visible navigation={navigation}>
+        <AppPaneProvider>
+            <StoreMachineSelectionProvider presented accountScope={storage.getState().settingsScope}>
+                <StoreKindPage kind="browserExtension" presented />
+            </StoreMachineSelectionProvider>
+        </AppPaneProvider>
+    </DestinationInstanceHost>);
+    expect(screen.findByTestId('store.kind.browserExtension.needsMachine')).not.toBeNull();
+    expect(screen.findByTestId('store.kind.browserExtension.needsMachine-details-toggle')).toBeNull();
+    await waitForHomeGovernance(() => {
+        const add = screen.findHostByTestId('store.browserExtension.link.add');
+        expect(add).not.toBeNull();
+        expect(add?.props.accessibilityState?.disabled).not.toBe(true);
+    });
+    await screen.pressByTestIdAsync('store.browserExtension.link.add');
+    const presented = dialogs.show.mock.calls.at(-1)?.[0] as unknown as { props: { form: ActionInputForm } };
+    expect(presented.props.form.getFields().map(field => field.path)).toEqual(['machineId', 'profileId']);
+    expect(presented.props.form.getInput()).toEqual({});
+});
+
 it('a pasted Chrome Web Store link in Store search installs that extension through the same install form', async () => {
     dialogs.confirm.mockResolvedValue(true);
     const { serve, serverUrl, serverIdentityId } = await setup('extension-link', 'browserExtension');
