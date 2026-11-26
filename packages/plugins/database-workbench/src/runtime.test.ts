@@ -188,15 +188,22 @@ describe('semantic database Action runtime', () => {
         it('settles native size and statements reads when the observation catalog is unavailable', async () => {
             // The optional Event catalog is a host boundary. The SDK still owns its unsettled disposition.
             const readSourceCatalog = vi.fn(async () => { throw new PluginError({ code: 'plugin_service_unavailable' }); });
+            const unexpectedActionCall = async (): Promise<never> => { throw new Error('Unexpected host Action operation in the catalog fixture'); };
+            const actions: ActionsService = {
+                execute: readSourceCatalog,
+                observe: unexpectedActionCall,
+                observeAdmittedTargetedOperation: unexpectedActionCall,
+                executeAdmittedTargetedOperation: unexpectedActionCall,
+                executeWithExecutionOrigin: unexpectedActionCall,
+                executeAdmittedTargetedOperationWithExecutionOrigin: unexpectedActionCall,
+            };
             const runtime = createDatabaseRuntime({ async admit() {}, async resolve(input) {
                 return { descriptor: { ...descriptor, engine: 'postgresql' }, connection: await openManualDatabaseConnection({
                     target, secretValue, access: input.access, signal: input.context.signal,
                 }) };
             } });
             const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', displayName: 'Database', actions: createDatabaseActions(runtime) });
-            const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: {
-                actions: { execute: readSourceCatalog } as ActionsService,
-            } });
+            const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { actions } });
             // A native Action always carries the routed Machine and invocation identity.
             const identity = { requesterAccount: { accountId: 'alice' }, chosenMachine: { machineId: 'machine', installationId: 'installation' },
                 agentCaller: false, authority: 'present_user' as const };
