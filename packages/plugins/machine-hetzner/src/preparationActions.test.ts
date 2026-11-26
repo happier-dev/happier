@@ -19,8 +19,9 @@ const input = { operationId: operation.operationId, input: {
 const response = (status: number, value: unknown) => ({ status, body: new TextEncoder().encode(JSON.stringify(value)) });
 const absent = () => response(404, { error: { code: 'not_found' } });
 
-function fixture(options: { lostCreate?: boolean; failCreateAction?: boolean; setupPending?: boolean; foreign?: boolean; foreignImage?: boolean; deletePending?: boolean; failSnapshot?: boolean; failSnapshotAction?: boolean; lostSnapshot?: boolean; error?: PluginError } = {}) {
+function fixture(options: { lostCreate?: boolean; failCreateAction?: boolean; setupPending?: boolean; foreign?: boolean; foreignImage?: boolean; deletePending?: boolean; asyncServerDelete?: boolean; failSnapshot?: boolean; failSnapshotAction?: boolean; lostSnapshot?: boolean; error?: PluginError } = {}) {
   let server = false, image = false, ip = false, snapshotting = false;
+  let serverDeleteSettled = !options.asyncServerDelete;
   const calls: { path: string; method: string; body?: Record<string, unknown> }[] = [];
   const serverValue = () => ({ id: 41, status: options.setupPending ? 'running' : 'off', labels: options.foreign ? { 'happier-preparation': 'someone-else' } : labels,
     public_net: { ipv4: { id: 61, ip: '192.0.2.1' }, ipv6: null } });
@@ -45,13 +46,21 @@ function fixture(options: { lostCreate?: boolean; failCreateAction?: boolean; se
         if (options.lostSnapshot) throw new TypeError('response lost');
         reply = response(201, { image: imageValue(), action: { id: 2, status: 'running' } });
       } else if (path === '/v1/servers/41/actions/2') reply = response(200, { action: { id: 2, status: options.failSnapshotAction ? 'error' : 'success' } });
-      else if (path === '/v1/servers/41') {
-        if (request.method === 'DELETE' && !options.deletePending) server = false;
-        reply = server ? response(200, { server: serverValue() }) : absent();
+      else if (path === '/v1/servers/actions/3') {
+        serverDeleteSettled = true;
+        reply = response(200, { action: { id: 3, status: 'success' } });
+      } else if (path === '/v1/servers/41') {
+        if (request.method === 'DELETE' && server) {
+          if (!options.deletePending) server = false;
+          reply = response(200, { action: { id: 3, status: serverDeleteSettled ? 'success' : 'running' } });
+        } else reply = server ? response(200, { server: serverValue() }) : absent();
       } else if (path === '/v1/images/71') {
         if (request.method === 'DELETE' && !options.deletePending) image = false;
         reply = image ? response(200, { image: imageValue() }) : absent();
       } else if (path === '/v1/primary_ips/61') {
+        if (request.method === 'DELETE' && !serverDeleteSettled) {
+          return { finalUrl: request.url, headers: {}, ...response(422, { error: { code: 'must_be_unassigned' } }) };
+        }
         if (request.method === 'DELETE' && !options.deletePending) ip = false;
         reply = ip ? response(200, { primary_ip: { id: 61 } }) : absent();
       } else if (path === '/v1/servers') reply = response(200, { servers: server ? [serverValue()] : [], meta: { pagination: { next_page: null } } });
@@ -67,6 +76,16 @@ async function kitFor(native: ReturnType<typeof fixture>) {
 }
 
 describe('Hetzner credential-free preparation through public Actions', () => {
+  it('produces a ready snapshot when the deleted builder disappears before its primary IP detaches', async () => {
+    const native = fixture({ asyncServerDelete: true }), kit = await kitFor(native);
+    try {
+      expect(await kit.invokeAction('prepare-build', input, { surface: 'plugin' })).toMatchObject({
+        kind: 'ready', artifact: { value: { imageId: 71 } },
+      });
+      expect(native.resources()).toEqual({ server: false, image: true, ip: false });
+    } finally { await kit.dispose(); }
+  });
+
   it.skipIf(process.platform === 'win32').each(['exit 0', 'false'])('executes standalone install/setup with success-only shutdown after %s', async setup => {
     const native = fixture(), kit = await kitFor(native), directory = mkdtempSync(join(tmpdir(), 'hetzner-cloud-init-'));
     try {

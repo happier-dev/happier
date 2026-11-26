@@ -116,7 +116,7 @@ export const createHetznerPlugin = (resolveSshBootstrap?: typeof resolveMachineP
       async run(input, context) { return (await preparationRuntime(context)).destroy({
         ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
         ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
-      }); } },
+      }, () => context.services.machineProvisioners.waitForNativeObservation()); } },
     snapshot: { ...defaults, scopes: ['machine'], execution: { target: 'daemon' },
       title: 'Snapshot Hetzner server disk', dangerLevel: 'externalSideEffect',
       confirmation: { title: 'Snapshot this Hetzner Server?', body: 'This creates a billable snapshot of the exact managed Server’s root disk. Attached volumes are not included.' },

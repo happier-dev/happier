@@ -16,6 +16,7 @@ const serverSchema = mini.object({
   server_type: mini.optional(mini.object({ cores: nativeId(), memory: mini.number().check(mini.positive()), disk: mini.number().check(mini.nonnegative()) })),
 });
 const actionSchema = mini.object({ id: nativeId(), status: mini.enum(['running', 'success', 'error']) });
+type NativeAction = mini.infer<typeof actionSchema>;
 const paginationSchema = mini.object({ pagination: mini.object({ next_page: mini.nullable(nativeId()) }) });
 const amount = mini.string().check(mini.regex(/^\d+(?:\.\d+)?$/));
 const pricePair = mini.object({ net: amount, gross: amount });
@@ -140,20 +141,34 @@ export function createHetznerNativeTransport(options: HetznerNativeClientOptions
     }
     return values;
   }
-  async function waitForAction(serverId: number, initial: mini.infer<typeof actionSchema>, waitForObservation: () => Promise<void>) {
+  async function readAction(path: string, id: number) {
+    const { action } = decode(mini.object({ action: actionSchema }), await request(`${path}/${id}`));
+    if (action.id !== id) throw new HetznerNativeError('native_identity_mismatch');
+    return action;
+  }
+  async function waitForActionAt(path: string, initial: NativeAction, waitForObservation: () => Promise<void>) {
     let action = initial;
     while (action.status === 'running') {
       await waitForObservation();
-      action = decode(mini.object({ action: actionSchema }), await request(`/servers/${serverId}/actions/${initial.id}`)).action;
-      if (action.id !== initial.id) throw new HetznerNativeError('native_identity_mismatch');
+      action = await readAction(path, initial.id);
     }
     return action;
   }
-  return { request, decode, list, waitForAction };
+  const deletionActionsPath = '/servers/actions';
+  return {
+    request, decode, list,
+    waitForAction: (serverId: number, action: NativeAction, wait: () => Promise<void>) => waitForActionAt(`/servers/${serverId}/actions`, action, wait),
+    async deleteServer(serverId: number) {
+      const deletion = await request(`/servers/${serverId}`, 'DELETE', undefined, true);
+      return deletion.kind === 'ok' ? decode(mini.object({ action: actionSchema }), deletion).action : undefined;
+    },
+    readServerDeletionAction: (id: number) => readAction(deletionActionsPath, id),
+    waitForServerDeletionAction: (action: NativeAction, wait: () => Promise<void>) => waitForActionAt(deletionActionsPath, action, wait),
+  };
 }
 
 export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
-  const { request, decode, list, waitForAction } = createHetznerNativeTransport(options);
+  const { request, decode, list, waitForAction, deleteServer, readServerDeletionAction } = createHetznerNativeTransport(options);
   function ownedAttachments(resource: HetznerResourceV1): CleanupResource[] {
     return [
       ...resource.owned.volumeIds.map(id => ({ kind: 'volume' as const, id })),
@@ -284,14 +299,8 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
       const attachments = ownedAttachments(resource);
       const remaining: CleanupResource[] = [{ kind: 'server', id: resource.serverId }, ...attachments];
       try {
-        let action: mini.infer<typeof actionSchema> | undefined;
-        if (!continuing) {
-          const deletion = await request(`/servers/${resource.serverId}`, 'DELETE', undefined, true);
-          if (deletion.kind === 'ok') action = decode(mini.object({ action: actionSchema }), deletion).action;
-        } else if (operation.deleteActionId !== undefined) {
-          action = decode(mini.object({ action: actionSchema }), await request(`/servers/actions/${operation.deleteActionId}`)).action;
-          if (action.id !== operation.deleteActionId) throw new HetznerNativeError('native_identity_mismatch');
-        }
+        const action = !continuing ? await deleteServer(resource.serverId)
+          : operation.deleteActionId === undefined ? undefined : await readServerDeletionAction(operation.deleteActionId);
         // REST v1 removes the Server from the account immediately, while its
         // attachments detach asynchronously. Only action success proves they
         // are ready for cleanup. CD33's host observer owns the wait/cadence.

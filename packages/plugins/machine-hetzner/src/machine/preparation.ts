@@ -34,7 +34,7 @@ const labelKey = 'happier-preparation';
 // snapshotted. Success powers it off; failed setup remains running until the
 // person cancels. There is deliberately no invented setup timeout or callback.
 export function createHetznerPreparationClient(options: HetznerNativeClientOptions) {
-  const { request, decode, list, waitForAction } = createHetznerNativeTransport(options);
+  const { request, decode, list, waitForAction, deleteServer, waitForServerDeletionAction } = createHetznerNativeTransport(options);
   function owned(labels: Record<string, string>, operation: Operation) {
     if (labels[labelKey] !== operation.operationId) throw new HetznerNativeError('native_identity_mismatch');
   }
@@ -83,8 +83,14 @@ export function createHetznerPreparationClient(options: HetznerNativeClientOptio
     return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const,
       code: error instanceof HetznerNativeError ? error.code : 'native_transport_unavailable', nativeOperationRef: reference(operation) }));
   }
-  async function retireServer(operation: Operation) {
-    if (await server(operation) !== null) await request('/servers/' + operation.serverId, 'DELETE', undefined, true);
+  async function retireServer(operation: Operation, waitForObservation: () => Promise<void>) {
+    const builder = await server(operation);
+    if (builder) {
+      const deletion = await deleteServer(builder.id);
+      if (deletion && (await waitForServerDeletionAction(deletion, waitForObservation)).status === 'error') {
+        throw new HetznerNativeError('native_action_failed');
+      }
+    }
     if (await server(operation) !== null) return false;
     let absent = true;
     for (const ipId of operation.primaryIpIds) {
@@ -155,7 +161,7 @@ export function createHetznerPreparationClient(options: HetznerNativeClientOptio
         result = classify(next, operation);
       }
       if (result.kind !== 'ready') return { kind: 'unknown', code: 'native_snapshot_failed', nativeOperationRef: reference(operation) };
-      while (!await retireServer(operation)) await waitForObservation();
+      while (!await retireServer(operation, waitForObservation)) await waitForObservation();
       return result;
     } catch (error) { return failure(error, operation); }
   }
@@ -184,7 +190,7 @@ export function createHetznerPreparationClient(options: HetznerNativeClientOptio
         : { kind: 'pending', nativeOperationRef: reference(operation) };
     } catch (error) { return failure(error, operation); }
   }
-  async function destroy(input: { artifact?: Artifact; nativeOperation?: Operation }): Promise<DestroyResult> {
+  async function destroy(input: { artifact?: Artifact; nativeOperation?: Operation }, waitForObservation: () => Promise<void>): Promise<DestroyResult> {
     let operation = input.artifact ? HetznerPreparedArtifactSchema.parse(input.artifact) : HetznerPreparationOperationSchema.parse(input.nativeOperation);
     try {
       const found = await discover(operation);
@@ -195,7 +201,7 @@ export function createHetznerPreparationClient(options: HetznerNativeClientOptio
         await request('/images/' + nativeImage.id, 'DELETE', undefined, true);
         if (await image(nativeImage.id, operation) !== null) return { kind: 'pending', nativeOperationRef: reference(operation) };
       }
-      return await retireServer(operation) ? { kind: 'confirmed' } : { kind: 'pending', nativeOperationRef: reference(operation) };
+      return await retireServer(operation, waitForObservation) ? { kind: 'confirmed' } : { kind: 'pending', nativeOperationRef: reference(operation) };
     } catch (error) {
       if (error instanceof HetznerNativeError && ['native_identity_mismatch', 'native_identity_ambiguous', 'native_authorization_failed'].includes(error.code)) return { kind: 'refused', code: error.code };
       return failure(error, operation);
