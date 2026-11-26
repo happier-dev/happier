@@ -274,6 +274,7 @@ export const RoundButton = React.memo((props: {
      * read as one control. Logical, so it follows the reading direction.
      */
     joinedEdge?: 'start' | 'end',
+    preserveFocusOnPress?: HappierPressableProps['preserveFocusOnPress'],
     onPress?: HappierPressableProps['onPress'],
     onLongPress?: HappierPressableProps['onLongPress'],
     accessibilityActions?: HappierPressableProps['accessibilityActions'],
@@ -387,6 +388,7 @@ export const RoundButton = React.memo((props: {
             ]}
             onPressIn={pressFeedback.onPressIn}
             onPressOut={pressFeedback.onPressOut}
+            preserveFocusOnPress={props.preserveFocusOnPress}
             onPress={doAction}
             onLongPress={props.onLongPress}
             accessibilityActions={props.accessibilityActions}

@@ -191,6 +191,7 @@ export type NavigationHeaderAction = Readonly<{
     accessibilityHint?: string;
     loading?: boolean;
     testID?: string;
+    preserveFocusOnPress?: boolean;
     /** A quiet main action (`PageHeaderPrimaryAction.presentation`): the header draws it as secondary too. */
     presentation?: 'secondary';
 }>;
@@ -275,7 +276,7 @@ export function useNavigationHeaderActions(input: Readonly<{
         else primaryDoesNotFitRef.current?.();
     };
     const primaryKey = primary ? [primary.title, primary.disabled === true, primary.loading === true, primary.testID ?? '',
-        primary.presentation ?? ''] : null;
+        primary.presentation ?? '', primary.preserveFocusOnPress === true] : null;
     const cancelKey = cancel ? [cancel.title, cancel.disabled === true, cancel.testID ?? ''] : null;
     const key = JSON.stringify([primaryKey, cancelKey]);
     React.useEffect(() => {
@@ -303,6 +304,7 @@ export function useNavigationHeaderActions(input: Readonly<{
                                 {...(primary.disabledReason ? { disabledReason: primary.disabledReason } : {})}
                                 {...(primary.accessibilityHint ? { accessibilityHint: primary.accessibilityHint } : {})}
                                 loading={primary.loading}
+                                preserveFocusOnPress={primary.preserveFocusOnPress}
                                 {...(primary.presentation === 'secondary' ? { display: 'secondary' as const } : {})}
                                 action={() => Promise.resolve(primaryRef.current?.onPress())}
                             />

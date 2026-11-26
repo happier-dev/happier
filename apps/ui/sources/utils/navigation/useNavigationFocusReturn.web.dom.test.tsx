@@ -34,6 +34,7 @@ const loadProduction = () => Promise.all([
     import('@/keyboard/focusReturn'),
     import('./useNavigationFocusReturn'),
     import('@/components/ui/panels/RetainedPanelSurface'),
+    import('@/components/ui/layout/PageHeader'),
 ]);
 const production = await (async () => {
     const locks = installBrowserStorageLockBoundary();
@@ -46,7 +47,7 @@ const production = await (async () => {
 })();
 const [{ WorkspaceProvider }, { DestinationInstanceHost }, { useLocalSearchParams, useRouter },
     { hrefForDestinationRef, resolveCompactAppDestinations }, { storage }, { FocusReturnProvider },
-    { useNavigationFocusReturn }, { RetainedPanelSurface }] = production;
+    { useNavigationFocusReturn }, { RetainedPanelSurface }, { PageHeaderActionButton }] = production;
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -66,6 +67,9 @@ function Page(props: Readonly<{ phone: boolean }>) {
         <div data-testid={`content-${view}`}>
             <button data-testid={`open-${view}`} onClick={() => navigate(() => router.pushRetainingCurrent(next))}>Open</button>
             <button data-testid={`back-${view}`} onClick={() => router.back()}>Back</button>
+            <input data-testid={`draft-${view}`} defaultValue="Unsaved branch name" />
+            <PageHeaderActionButton action={{ title: 'Run now', testID: `run-${view}`, preserveFocusOnPress: true,
+                onPress: () => navigate(() => router.pushRetainingCurrent(next)) }} />
         </div>
     </div>;
 }
@@ -221,4 +225,24 @@ it.each(['none', 'move', 'stay'] as const)('restores phone Search after a bottom
         await h.click('back-listing'); await h.returned('search');
         expect(page.scrollTop).toBe(7682);
     }
+});
+
+it('returns from a pointer-started page action to the selected text in the retained editor', async () => {
+    const h = await mount('discover', 390);
+    const field = h.element('draft-discover') as HTMLInputElement;
+    const run = h.element('run-discover');
+    await act(async () => {
+        field.focus();
+        field.setSelectionRange(3, 14);
+        const pointerDown = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
+        // jsdom omits the browser's default pointer focus transfer.
+        if (run.dispatchEvent(pointerDown)) run.focus();
+        run.click();
+    });
+    await h.returned('listing');
+    await h.click('back-listing');
+    await h.returned('discover');
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe('Unsaved branch name');
+    expect([field.selectionStart, field.selectionEnd]).toEqual([3, 14]);
 });

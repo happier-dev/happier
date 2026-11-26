@@ -419,6 +419,7 @@ export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrima
             {...(action.disabledReason ? { disabledReason: action.disabledReason } : {})}
             {...(action.accessibilityHint ? { accessibilityHint: action.accessibilityHint } : {})}
             loading={action.loading}
+            preserveFocusOnPress={action.preserveFocusOnPress}
             action={() => Promise.resolve(action.onPress())}
         />
     );

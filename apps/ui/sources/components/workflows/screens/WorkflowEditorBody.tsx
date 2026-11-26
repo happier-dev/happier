@@ -1472,6 +1472,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             disabled={runUnavailable}
             leading={<Icon name="play" size={14} color={theme.colors.button.primary.tint} />}
             {...(runKeyHint === undefined ? {} : { trailing: <Text style={styles.keyHint}>{runKeyHint}</Text> })}
+            preserveFocusOnPress
             onPress={submitRun}
         />
         </View>
@@ -1479,6 +1480,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
 
     const phoneRunNowAction = compactLayout && hasPageCommands && onRunNow !== undefined && props.runNowAction === undefined ? {
         title: t('workflows.editor.runNow'), onPress: submitRun, disabled: runUnavailable, testID: `${testIDPrefix}-run-now`,
+        preserveFocusOnPress: true,
     } : undefined;
     // A phone's Undo and Redo: frequent controls at the navigation bar's trailing edge (WAVE-ACCEPT-1117C), one stable
     // element so the bar is not re-published per edit; the icons subscribe to the history themselves.
