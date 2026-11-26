@@ -9,9 +9,11 @@ import { isArtifactReadUnavailable, readRecordedApprovalDecision } from '@happie
 import { observeAccountChanges } from '@/api/observeAccountChanges';
 
 /** For a deferred receipt, returning without a decision hands approval off to the app. */
-export type CliApprovalRequestedHandler = (artifactId: string, signal: AbortSignal,
+export type CliApprovalRequestedHandler = ((artifactId: string, signal: AbortSignal,
   decide: (decision: 'approve' | 'reject') => Promise<ActionExecuteResult>,
-  readPreview?: () => Promise<unknown>) => void | ActionExecuteResult | Promise<void | ActionExecuteResult>;
+  readPreview?: () => Promise<unknown>) => void | ActionExecuteResult | Promise<void | ActionExecuteResult>) & Readonly<{
+    presentPendingChild?: (approval: ActionApprovalRequestCreatedResult, requestId: string) => void;
+  }>;
 
 async function readCliApprovalReceipt(execute: ReturnType<typeof createActionExecutor>['execute'], artifactId: string,
   context: ActionExecutorContext | undefined, signal: AbortSignal) {

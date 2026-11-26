@@ -71,7 +71,7 @@ export function createCliActionApprovalPresenter(options: Readonly<{
   envelopeKind: string;
   approve?: boolean;
 }>): CliApprovalRequestedHandler {
-  return async (artifactId, signal, decide, readPreview) => {
+  const present: CliApprovalRequestedHandler = async (artifactId, signal, decide, readPreview) => {
     const preview = options.actionId === HOME_ACCOUNTS_DELETE_ACTION_ID_V1 ? await readPreview?.() : null;
     const erasure = AccountErasureReviewV1Schema.safeParse(readRecord(preview).accountErasure);
     if (options.json) console.error(JSON.stringify({ v: 1, ok: true, kind: options.envelopeKind,
@@ -106,4 +106,10 @@ export function createCliActionApprovalPresenter(options: Readonly<{
     return !approve && decision.ok
       ? { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' } : decision;
   };
+  return Object.assign(present, { presentPendingChild: (approval: { actionId: string; artifactId: string }, requestId: string) => {
+    if (options.json) console.error(JSON.stringify({ v: 1, ok: true, kind: options.envelopeKind,
+      data: { kind: 'approval_pending', actionId: approval.actionId, artifactId: approval.artifactId, requestId, approveIn: 'app' },
+    } satisfies SessionControlJsonEnvelope));
+    else console.error(`Waiting for ${terminalText(approval.actionId)} approval ${terminalText(approval.artifactId)}. Approve it in the app Inbox to continue.`);
+  } });
 }

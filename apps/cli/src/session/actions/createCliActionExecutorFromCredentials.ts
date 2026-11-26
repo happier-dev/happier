@@ -2444,7 +2444,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                   ...(originalContext.authority ? { authority: originalContext.authority } : {}),
                   ...(requestSignal ? { signal: requestSignal } : {}) });
                 const requester = params.onApprovalRequested && accountId && context.serverIdentityId
-                  ? await executeOriginalAccountCliApprovalRequest({ actionId: parsedActionId.data, requestId,
+                  ? await executeOriginalAccountCliApprovalRequest({ actionId: parsedActionId.data, input: admittedInput, requestId,
                     target: requesterTarget, accountId, homeId: context.serverIdentityId,
                     token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),
                     onApprovalRequested: params.onApprovalRequested,

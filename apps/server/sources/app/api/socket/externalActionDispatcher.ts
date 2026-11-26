@@ -232,7 +232,7 @@ function emitDispatchPhaseWitness(
     }>,
     machineId?: string,
     context: Readonly<{ requestId?: string; refusalBranch: PlacementRefusalBranch | 'daemon_envelope_rejected'; availability?: MachineResolution;
-        refusalCode?: ManagedMachineError['code'] | ApiTokenOperationError['code'] }> = {
+        actionId?: string; relayCode?: string; refusalCode?: ManagedMachineError['code'] | ApiTokenOperationError['code'] }> = {
         refusalBranch: 'phase_exception',
     },
 ): void {
@@ -240,6 +240,8 @@ function emitDispatchPhaseWitness(
         log({ module: 'external-action-dispatch', level: 'warn', phase: failure.phase,
             errorClass: failure.errorClass, message: failure.message,
             refusalBranch: context.refusalBranch,
+            ...(context.actionId === undefined ? {} : { actionId: context.actionId }),
+            ...(context.relayCode === undefined ? {} : { relayCode: context.relayCode }),
             ...(context.refusalCode === undefined ? {} : { refusalCode: context.refusalCode }),
             ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
             ...(context.availability === undefined ? {} : { availability: context.availability }),
@@ -312,6 +314,8 @@ function createPlacementError(input: Readonly<{
     refusalBranch: PlacementRefusalBranch;
     requestId: string | undefined;
     machineId?: string;
+    actionId?: string;
+    relayCode?: string;
     availability?: MachineResolution;
     phaseFailure?: DispatchPhaseFailure;
     failureCause?: ActionFailureCauseV1;
@@ -326,6 +330,8 @@ function createPlacementError(input: Readonly<{
         message: 'External Action placement refused',
     }, input.machineId, {
         refusalBranch: input.refusalBranch,
+        ...(input.actionId === undefined ? {} : { actionId: input.actionId }),
+        ...(input.relayCode === undefined ? {} : { relayCode: input.relayCode }),
         ...(input.refusalCode === undefined ? {} : { refusalCode: input.refusalCode }),
         ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
         ...(input.availability === undefined ? {} : { availability: input.availability }),
@@ -1080,7 +1086,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                         : refusal?.success ? refusal.data : 'target_unavailable',
                     refusalBranch: forwarded.kind === 'failed' ? 'phase_exception'
                         : options.signal?.aborted ? 'aborted' : 'daemon_forward_not_ok',
-                    requestId: request.envelope.requestId, machineId,
+                    requestId: request.envelope.requestId, machineId, actionId: request.actionId,
+                    ...(refusal?.success ? { relayCode: refusal.data } : {}),
                     ...(cause?.success ? { failureCause: cause.data } : {}),
                     machineAvailabilityDiagnostic: forwarded.kind === 'ready' && 'machineAvailabilityDiagnostic' in forwarded.value
                         ? forwarded.value.machineAvailabilityDiagnostic : undefined,

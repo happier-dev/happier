@@ -243,6 +243,21 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(JSON.stringify(witnesses)).not.toContain('private-');
     });
 
+    it('logs the Action and recognized relay code without transport prose', async () => {
+        const records = capturePhaseRecords();
+        const dispatch = createExternalActionDaemonDispatcher({ io: {} as never,
+            resolveMachine: async () => 'available',
+            forwardRpc: async () => ({ ok: false, errorCode: 'RPC_FORBIDDEN', error: 'private-transport-marker' }),
+        });
+        await dispatch({ actionId: 'session.spawn_new', principal,
+            envelope: { v: 1, requestId: 'request-relay-code',
+                target: { kind: 'machine', machineId: 'machine-1' }, input: {} } });
+        const witnesses = records.filter(record => record.msg === '[external-action-phase]');
+        expect(witnesses).toMatchObject([{ actionId: 'session.spawn_new', relayCode: 'RPC_FORBIDDEN',
+            refusalBranch: 'daemon_forward_not_ok' }]);
+        expect(JSON.stringify(witnesses)).not.toContain('private-transport-marker');
+    });
+
     it('preserves a correlated target admission refusal phase from the daemon', async () => {
         const refusal = { kind: 'invalid_request' as const, errorCode: 'target_not_local' as const,
             requestId: 'request-target-admission', phase: 'target_installation' as const };
