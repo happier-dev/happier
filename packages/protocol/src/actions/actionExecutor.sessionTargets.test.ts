@@ -94,6 +94,14 @@ it('admits each exact Session in a contributed read set once and preserves reada
   })).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', details: { reason: 'target_required' } });
   expect(reads).toHaveLength(2);
   expect(lookups).toEqual(['a', 'foreign', 'missing', 'b']);
+
+  const workflow: ActionExecutorContext = { ...context, surface: 'agent', authority: 'account_automation',
+    actionCaller: { kind: 'workflowRun', runId: 'run', authorization: {
+      principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
+    } } };
+  expect(await executor.execute('action.invoke', {
+    action: { pluginId: 'com.acme.targets', localId: 'read' }, input: { sessionIds: ['a', 'foreign', 'missing', 'b'] },
+  }, workflow)).toEqual(result);
 });
 
 function harness() {

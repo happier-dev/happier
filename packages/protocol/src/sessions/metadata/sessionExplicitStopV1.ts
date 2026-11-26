@@ -6,6 +6,13 @@ import { SessionSpawnLaunchErrorV1Schema } from '../creation/sessionSpawnLaunchE
 /** Resource/lifecycle Stop frees the runner; explicit Stop also holds future automatic wake. */
 export type SessionStopIntent = 'explicit_stop' | 'lifecycle_control';
 
+function readStopAuthorSessionId(context: ActionExecutorContext | undefined): string | undefined {
+  const caller = context?.actionCaller;
+  if (caller?.kind === 'session') return caller.sessionId;
+  const starter = caller?.kind === 'workflowRun' ? caller.authorization.principal : undefined;
+  return starter?.kind === 'session' ? starter.sessionId : undefined;
+}
+
 /** Classifies an admitted Stop author; Action dispatch and Home own target scope. */
 export function resolveSessionExplicitControlIntent(input: Readonly<{
   rawSession: Readonly<{ id: string }>;
@@ -16,8 +23,9 @@ export function resolveSessionExplicitControlIntent(input: Readonly<{
   const admittedCaller = input.actionContext?.agentStartContext?.caller;
   if (caller?.kind === 'session') {
     if (admittedCaller?.kind !== 'session' || admittedCaller.sessionId !== caller.sessionId) return 'unauthorized';
-    return input.rawSession.id === caller.sessionId ? 'self_stop_forbidden' : 'manager';
   }
+  const authorSessionId = readStopAuthorSessionId(input.actionContext);
+  if (authorSessionId !== undefined) return input.rawSession.id === authorSessionId ? 'self_stop_forbidden' : 'manager';
   return (input.actionContext?.authority ?? input.executionAuthority) === 'account_automation'
     ? 'automatic' : 'person';
 }
@@ -44,10 +52,9 @@ export function buildSessionStopHoldV1(input: Parameters<typeof resolveSessionEx
   const author = resolveSessionExplicitControlIntent(input);
   if (author === 'unauthorized' || author === 'self_stop_forbidden') return { kind: 'refused', reason: author };
   if (input.stopIntent === 'lifecycle_control' || author === 'automatic') return { kind: 'no_hold' };
-  const caller = input.actionContext?.actionCaller;
   return { kind: 'hold', stop: SessionExplicitStopV1Schema.parse({
     v: 1, cause: 'explicit_stop', requestId: input.requestId, requestedAtMs: input.requestedAtMs,
-    ...(author === 'manager' && caller?.kind === 'session' ? { managerSessionId: caller.sessionId } : {}),
+    ...(author === 'manager' ? { managerSessionId: readStopAuthorSessionId(input.actionContext) } : {}),
   }) };
 }
 

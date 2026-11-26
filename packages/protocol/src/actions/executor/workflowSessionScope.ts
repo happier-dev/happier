@@ -136,11 +136,15 @@ export async function readActionWorkflowInvocationContextV1(
   }
 }
 
+export function isWorkflowReviewSessionScopeAction(actionId: ActionId): boolean {
+  return actionId === 'review.start' || actionId === 'review.apply' || actionId.startsWith('reviews.comments.');
+}
+
 export async function resolveActionWorkflowSessionScopeV1(
   actionId: ActionId, context: ActionExecutorContext,
   deps: Pick<ActionExecutorDeps, 'workflowAction' | 'resolveSessionReference' | 'resolveServerProfileScopeId'>,
 ): Promise<WorkflowSessionScopeV1 | null> {
-  if (actionId !== 'review.start' && actionId !== 'review.apply' && !actionId.startsWith('reviews.comments.')) return null;
+  if (!isWorkflowReviewSessionScopeAction(actionId)) return null;
   const binding = await readActionWorkflowInvocationContextV1(actionId, context, deps);
   if (!binding) return null;
   const { opened, invocation, structure, leaf } = binding;

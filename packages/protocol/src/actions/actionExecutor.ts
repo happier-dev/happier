@@ -376,7 +376,7 @@ import {
   resolveActionCurrentSessionScopeFailure,
   resolveActionSessionListAccessFailure,
 } from './executor/sessionListAccess.js';
-import { resolveActionWorkflowSessionScopeV1 } from './executor/workflowSessionScope.js';
+import { isWorkflowReviewSessionScopeAction, resolveActionWorkflowSessionScopeV1 } from './executor/workflowSessionScope.js';
 import { parseSessionFollowActionResponse } from '../sessions/follow/actionTransport.js';
 import { parseSessionReadStateActionResponse } from '../sessions/readState/actionTransport.js';
 import {
@@ -1428,9 +1428,6 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     const invocation = ActionInvokeInputSchema.safeParse(input);
     if (!invocation.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     const contributedActionId = formatQualifiedPluginActionId(invocation.data.action);
-    if (context.actionCaller?.kind === 'workflowRun' && workflowSessionScope === undefined) {
-      workflowSessionScope = await resolveActionWorkflowSessionScopeV1(actionId, context, deps);
-    }
     return admitActionSessionReadSet(deps, {
       actionId, contributedActionId, declaration, input, context,
       sameHome: (left, right) => isSameHome(left, right, context),
@@ -2736,15 +2733,17 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           childActionId: childId, position }),
       } : childCaller;
       if (!hostInternal && execute) return execute(childId, childInput, derivedContext);
-      // This private host continuation spends its parent's admitted corpus.
-      // A changed caller, Home, Account or target is a separate invocation.
-      const inheritedScope = hostInternal && ctx.actionCaller?.kind === 'workflowRun'
-        && sameStrictJsonValue(childCaller.actionCaller, ctx.actionCaller)
-        && isSameHome(childCaller.serverId, ctx.serverId, ctx)
-        && childCaller.expectedAccountId === ctx.expectedAccountId
-        && childCaller.runtimeAccountId === ctx.runtimeAccountId
-        && sameStrictJsonValue(childCaller.externalActionTarget ?? null, ctx.externalActionTarget ?? null)
-        ? workflowSessionScope : undefined;
+      // A private Review continuation remains Review-scoped. It can spend
+      // the admitted corpus only for the same caller, Home, Account and target.
+      let inheritedScope: CoreOptions['workflowSessionScope'];
+      if (hostInternal && workflowSessionScope !== undefined) {
+        inheritedScope = sameStrictJsonValue(childCaller.actionCaller, ctx.actionCaller)
+          && isSameHome(childCaller.serverId, ctx.serverId, ctx)
+          && childCaller.expectedAccountId === ctx.expectedAccountId
+          && childCaller.runtimeAccountId === ctx.runtimeAccountId
+          && sameStrictJsonValue(childCaller.externalActionTarget ?? null, ctx.externalActionTarget ?? null)
+          ? workflowSessionScope : null;
+      }
       if (!hostInternal && deps.executeOrdinaryChildAction) {
         return deps.executeOrdinaryChildAction({ actionId: childId, input: childInput, context: derivedContext });
       }
@@ -3288,7 +3287,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     // preparation and effect. Exact writes retain the contextual scope guard.
     const selectorGoalMutation = (ctx.sessionTargetsV1 !== undefined || options?.sessionTargetLeaf === true)
       && (actionId === 'session.goal.set' || actionId === 'session.goal.clear');
-    if (ctx.actionCaller?.kind === 'workflowRun' && workflowSessionScope === undefined) {
+    if (ctx.actionCaller?.kind === 'workflowRun' && workflowSessionScope === undefined
+      && isWorkflowReviewSessionScopeAction(actionId)) {
       try {
         workflowSessionScope = await resolveActionWorkflowSessionScopeV1(actionId, ctx, deps);
       } catch (error) {

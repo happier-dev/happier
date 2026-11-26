@@ -2335,10 +2335,10 @@ describe('shared Account workflow run owner', () => {
     })).resolves.toMatchObject({ ok: false, errorCode: 'subtree_denied' });
     expect(admitted).toBe(false);
   });
-  it.each(['admitted', 'scale', 'originless', 'retry', 'recovered_parent', 'revoked_recovered_parent', 'wrong_attempt', 'other_slot', 'different', 'revoked', 'miswired', 'foreign_home', 'session_caller', 'untyped', 'unreadable', 'no_witness', 'other_action'] as const)(
+  it.each(['admitted', 'scale', 'originless', 'retry', 'recovered_parent', 'revoked_recovered_parent', 'wrong_attempt', 'other_slot', 'different', 'revoked', 'miswired', 'foreign_home', 'session_caller', 'untyped', 'unreadable', 'no_witness'] as const)(
     'restricts Workflow Action scope to the current accepted typed reviewSession: %s', async scenario => {
       const address = { serverId: 'home', sessionId: 'review-target' };
-      const scopedActionId = scenario === 'other_action' ? 'session.stop' : 'reviews.comments.list';
+      const scopedActionId = 'reviews.comments.list';
       const action = {
         kind: 'action' as const, id: 'read', actionId: scopedActionId, input: {
           sessionId: { kind: 'input' as const, name: 'reviewSession', path: ['sessionId'] },

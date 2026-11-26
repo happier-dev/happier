@@ -10,7 +10,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import type { AgentStartContextV1 } from '../../account/settings/admitAgentStartV1.js';
 import { isWorkflowSessionScopeTargetV1 } from '../../workflows/workflowSessionScopeV1.js';
-import { resolveActionWorkflowSessionScopeV1 } from './workflowSessionScope.js';
+import { isWorkflowReviewSessionScopeAction, resolveActionWorkflowSessionScopeV1 } from './workflowSessionScope.js';
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 import { SessionInputSourceSessionV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
 import { DiscussionDetailsResultV1Schema, DiscussionReadResultV1Schema } from '../../discussions/actions.js';
@@ -113,8 +113,8 @@ export function resolveActionSessionListAccessFailure(
  * Reads, registered Session field setters and stop/archive/unarchive/turn cancel use the
  * same host Session caller and server-proved led subtree as start admission.
  * Headless Resume additionally requires the caller to be the target's direct manager.
- * Other mutations remain current-Session-only. A Workflow caller additionally
- * admits its accepted typed reviewSession after a fresh exact access check.
+ * Other mutations remain current-Session-only. Workflow Review retains its
+ * admitted Review corpus. Other Workflow Actions use the starter's scope.
  */
 export async function resolveActionCurrentSessionScopeFailure(
   actionId: ActionId,
@@ -134,11 +134,17 @@ export async function resolveActionCurrentSessionScopeFailure(
   // with the generic contextual-default guard. External MCP/plugin surfaces
   // remain bound when their host declares current-Session-only list access.
   if (actionId === 'session.message.send' && context?.surface === 'agent') return null;
-  if (!isAutonomousSessionListSurface(context?.surface)) return null;
-  if (context?.surface !== 'agent'
-    && context?.sessionListAccess !== 'current_session'
-    && context?.sessionListAccess !== 'led_subtree'
-    && context?.sessionListAccess !== 'unavailable') return null;
+  if (!context) return null;
+  const workflow = context.actionCaller?.kind === 'workflowRun' ? context.actionCaller : undefined;
+  const reviewScope = workflow && (workflowSessionScope !== undefined || isWorkflowReviewSessionScopeAction(actionId));
+  const starter = reviewScope ? undefined : workflow?.authorization?.principal;
+  if (starter?.kind === 'host' || starter?.kind === 'api') return null;
+  const surface = starter?.kind === 'plugin' ? 'plugin' : context.surface;
+  if (!isAutonomousSessionListSurface(surface)) return null;
+  const sessionListAccess = context.sessionListAccess
+    ?? (starter?.kind === 'plugin' && context.defaultSessionId ? 'current_session' : undefined);
+  if (surface !== 'agent' && sessionListAccess !== 'current_session'
+    && sessionListAccess !== 'led_subtree' && sessionListAccess !== 'unavailable') return null;
 
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
   const inputRecord = input as Readonly<Record<string, unknown>>;
@@ -150,7 +156,8 @@ export async function resolveActionCurrentSessionScopeFailure(
   if (!Object.prototype.hasOwnProperty.call(inputRecord, 'sessionId')) return null;
   if (typeof inputRecord.sessionId !== 'string') return null;
 
-  const defaultSessionId = context.defaultSessionId?.trim() ?? '';
+  const starterSessionId = starter?.kind === 'session' ? starter.sessionId : undefined;
+  const defaultSessionId = (starterSessionId ?? context.defaultSessionId)?.trim() ?? '';
   const refuse = (cause: ActionCurrentSessionScopeFailureDetailsV1['cause']): ActionExecuteFailure => ({
     ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}`, details: { cause },
   });
@@ -164,7 +171,7 @@ export async function resolveActionCurrentSessionScopeFailure(
     }
     return null;
   }
-  if (context.actionCaller?.kind === 'workflowRun') {
+  if (reviewScope || (workflow && !starter)) {
     // Accepted admission witnesses and the exact invocation frame own this
     // corpus. A typed field alone, including one in a sibling, grants nothing.
     const scope = workflowSessionScope === undefined
@@ -185,11 +192,11 @@ export async function resolveActionCurrentSessionScopeFailure(
   }
   // Compact's contextual safety admission owns own-versus-other approval.
   // A current-Session default is selection, not a restriction on this control.
-  if (actionId === 'session.compact' && context.surface === 'agent') return null;
+  if (actionId === 'session.compact' && surface === 'agent') return null;
   // Own-Session destinations already passed above. Copy may read any authorized
   // source. Led-subtree reads do not expand the caller's Board write scope.
   if (isSessionBoardActionIdV1(actionId) && inputRecord.copySource !== undefined) {
-    return context.sessionListAccess === 'current_session' || context.sessionListAccess === 'led_subtree'
+    return sessionListAccess === 'current_session' || sessionListAccess === 'led_subtree'
       ? refuse('current_session_only') : null;
   }
   if (!defaultSessionId) {
@@ -197,28 +204,28 @@ export async function resolveActionCurrentSessionScopeFailure(
   }
 
   const sideEffectClass = scopeSideEffectClass ?? (await import('../actionSpecs.js')).getActionSpec(actionId).sideEffectClass;
-  if (context.sessionListAccess === 'current_session' && sideEffectClass !== 'read') {
+  if (sessionListAccess === 'current_session' && sideEffectClass !== 'read') {
     return refuse('current_session_only');
   }
-  if (context.sessionListAccess === 'unavailable') return refuse('session_scope_unavailable');
+  if (sessionListAccess === 'unavailable') return refuse('session_scope_unavailable');
   // Turn cancel uses the same corpus at executor admission. The installed
   // lifecycle HTTP predicate also selects native archive/unarchive routes.
   if (sideEffectClass !== 'read' && !isSessionStateFieldActionId(actionId)
     && !ledLifecycleAction && actionId !== SESSION_TURN_CANCEL_ACTION_ID_V1 && !headlessResume) {
     return refuse('action_scope_restricted');
   }
-  const resolved = await resolveActionAgentStartContextV1(deps, context, undefined, { purpose: 'session_scope' });
-  if (!resolved || 'ok' in resolved) return refuse('caller_context_unavailable');
-  if (resolved.caller.kind !== 'session' || resolved.caller.sessionId !== defaultSessionId) {
-    return refuse('caller_identity_mismatch');
+  if (!starterSessionId) {
+    const resolved = await resolveActionAgentStartContextV1(deps, context, undefined, { purpose: 'session_scope' });
+    if (!resolved || 'ok' in resolved) return refuse('caller_context_unavailable');
+    if (resolved.caller.kind !== 'session' || resolved.caller.sessionId !== defaultSessionId) return refuse('caller_identity_mismatch');
+    // Retain identity facts only within the execution owner's current invocation.
+    if (ledLifecycleAction) retainCallerContext?.(resolved);
   }
   if (await admitsAddressedDiscussionSourceRead(actionId, inputRecord, context, deps.discussionAction)) return null;
   if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-  // Retain identity facts only within the execution owner's current invocation.
-  // The Home membership observation below admits that invocation once.
-  if (ledLifecycleAction) retainCallerContext?.(resolved);
+  const scopeContext = starterSessionId ? { ...context, defaultSessionId } : context;
   if (headlessResume) {
-    const rows = await readActionCallerLedSubtreeSessions(deps, context, undefined, [targetSessionId]);
+    const rows = await readActionCallerLedSubtreeSessions(deps, scopeContext, undefined, [targetSessionId]);
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const row = rows?.get(targetSessionId);
     if (!rows) return refuse('subtree_observation_unavailable');
@@ -227,7 +234,7 @@ export async function resolveActionCurrentSessionScopeFailure(
   }
   // Observe membership through the same canonical reader used by start
   // admission, retaining failure separately from a successful empty subtree.
-  const ids = await readActionCallerLedSubtreeSessionIds(deps, context, undefined, [targetSessionId]);
+  const ids = await readActionCallerLedSubtreeSessionIds(deps, scopeContext, undefined, [targetSessionId]);
   if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   if (!ids) return ledLifecycleAction
     ? { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',

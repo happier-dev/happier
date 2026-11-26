@@ -1947,19 +1947,21 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         expect(effect).toHaveBeenCalledTimes(methods.length + 1);
     });
 
-    it("refuses an ordinary shared reader's abort and an automation caller's permission decision", async () => {
+    it("refuses a shared reader's abort and model change and an automation caller's permission decision", async () => {
         const method = "sess_1:abort";
+        const modelMethod = `sess_1:${SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION}`;
         const effect = vi.fn(async () => ({ success: true }));
         const target = { id: "session-daemon", data: { clientType: "session-scoped" }, timeout: () => ({ emitWithAck: effect }) };
         const permissionMethod = "sess_1:permission";
         const { io } = createTargetRoutingIo({
             [`rpc:session-owner:${method}`]: [target], [`rpc:user-1:${method}`]: [target],
+            [`rpc:session-owner:${modelMethod}`]: [target], [`rpc:user-1:${modelMethod}`]: [target],
             [`rpc:session-owner:${permissionMethod}`]: [target], [target.id]: [target],
         });
         sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({ id: 'direct-grant', ...{ accountId: "user-1", accessLevel: "view", canApprovePermissions: true } }));
         const socket = createFakeSocket({ data: { clientType: "user-scoped", authAuthority: "account_automation" } });
         registerSocketRpcHandlers({ userId: "user-1", socket: socket as unknown as Socket, io });
-        for (const deniedMethod of [method, permissionMethod]) {
+        for (const deniedMethod of [method, modelMethod, permissionMethod]) {
             const denied = vi.fn();
             await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method: deniedMethod, params: {} }, denied);
             expect(denied).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));

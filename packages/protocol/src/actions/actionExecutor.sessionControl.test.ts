@@ -1851,6 +1851,81 @@ describe('createActionExecutor (session control)', () => {
     expect(getActionSpec('session.stop').inputSchema.safeParse({ sessionId: 's1', entryPoint: 'resource' }).success).toBe(false);
   });
 
+  it('uses the direct Session stop decision for a person-started Workflow', async () => {
+    const effects: string[] = [];
+    const executor = createExecutor({
+      sessionStop: async ({ sessionId, context }) => {
+        if (sessionId === 'shared-view') return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
+        if (sessionId !== 'owned-other' || context?.runtimeAccountId !== 'starter-account') {
+          return { ok: false, errorCode: 'session_not_found', error: 'session_not_found' };
+        }
+        effects.push(sessionId);
+        return { ok: true, stopped: true };
+      },
+      sessionActivityGet: async ({ sessionId }) => ({ sessionId, view: 'recap', status: 'empty', recap: null }),
+      sessionSendMessage: async () => ({ status: 'accepted', localId: 'workflow-input' }),
+    });
+    const direct = { surface: 'cli', serverId: 'home', defaultSessionId: 'origin', runtimeAccountId: 'starter-account' } as const;
+    const workflow = { ...direct, surface: 'agent', authority: 'account_automation',
+      actionCaller: { kind: 'workflowRun', runId: 'run', authorization: {
+        principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
+      } }, workflowSessionInput: { purpose: 'invocation', runId: 'run', invocationRecordId: 'leaf' } } as const;
+
+    const allowed = await executor.execute('session.stop', { sessionId: 'owned-other' }, direct);
+    expect(allowed).toMatchObject({ ok: true, result: { stopped: true } });
+    const refused = await executor.execute('session.stop', { sessionId: 'foreign-private' }, direct);
+    expect(refused).toMatchObject({ ok: false, errorCode: 'session_not_found' });
+
+    await expect.soft(executor.execute('session.stop', { sessionId: 'owned-other' }, workflow)).resolves.toEqual(allowed);
+    await expect.soft(executor.execute('session.stop', { sessionId: 'foreign-private' }, workflow)).resolves.toEqual(refused);
+    await expect(executor.execute('session.stop', { sessionId: 'shared-view' }, workflow))
+      .resolves.toMatchObject({ ok: false, errorCode: 'forbidden' });
+    await expect(executor.execute('session.activity.get', { sessionId: 'shared-view', view: 'recap' }, workflow))
+      .resolves.toMatchObject({ ok: true, result: { sessionId: 'shared-view' } });
+    await expect(executor.execute('session.message.send', { sessionId: 'owned-other', message: 'Proceed.' }, workflow))
+      .resolves.toMatchObject({ ok: true, result: { status: 'accepted' } });
+    await expect(executor.execute('session.stop', { sessionId: 'owned-other' }, { ...workflow, runtimeAccountId: 'guest' }))
+      .resolves.toEqual(refused);
+    expect(effects).toEqual(['owned-other', 'owned-other']);
+  });
+
+  it('uses the Agent starter’s led Sessions, even when the Workflow has a different origin', async () => {
+    const { buildSessionStopHoldV1 } = await import('../sessions/metadata/sessionExplicitStopV1.js');
+    const caller = AgentStartSessionCallerV1Schema.parse({ kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 });
+    const direct: ActionExecutorContext = { surface: 'agent', defaultSessionId: 'parent', actionCaller: caller,
+      authority: 'account_automation', serverId: 'home' };
+    const executor = createExecutor({
+      resolveAgentStartContext: async () => ({ caller, baseline: { machineId: 'machine', directory: '/repo' },
+        roles: {}, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default' }),
+      sessionRead: async ({ sessionIds, underSessionId }) =>
+        createSessionMembershipReadFixture(sessionIds, underSessionId === 'parent' ? ['child'] : []),
+      sessionTurnCancel: async () => ({ requested: true }),
+      sessionStop: async ({ sessionId, stopIntent, context }) => {
+        const hold = buildSessionStopHoldV1({ rawSession: { id: sessionId }, actionContext: context,
+          stopIntent, requestId: 'stop', requestedAtMs: 1 });
+        if (hold.kind === 'refused') return { ok: false, errorCode: 'unsupported_action', error: hold.reason };
+        return { ok: true, stopped: true, hold };
+      },
+    });
+    const workflow: ActionExecutorContext = { ...direct, defaultSessionId: 'other-origin',
+      actionCaller: { kind: 'workflowRun', runId: 'run', authorization: {
+        principal: { kind: 'session', sessionId: 'parent' }, admittedPermissionCeiling: 'default',
+      } } };
+    for (const sessionId of ['parent', 'child', 'other-origin']) {
+      const result = await executor.execute('session.turn.cancel', { sessionId }, direct);
+      expect(result).toMatchObject(sessionId === 'other-origin'
+        ? { ok: false, errorCode: 'unsupported_action', details: { cause: 'target_outside_led_subtree' } }
+        : { ok: true, result: { requested: true } });
+      await expect.soft(executor.execute('session.turn.cancel', { sessionId }, workflow)).resolves.toEqual(result);
+    }
+    const own = await executor.execute('session.stop', { sessionId: 'parent' }, direct);
+    expect(own).toMatchObject({ ok: false, error: 'self_stop_forbidden' });
+    await expect.soft(executor.execute('session.stop', { sessionId: 'parent' }, workflow)).resolves.toEqual(own);
+    const managed = await executor.execute('session.stop', { sessionId: 'child' }, direct);
+    expect(managed).toMatchObject({ ok: true, result: { stopped: true, hold: { kind: 'hold', stop: { managerSessionId: 'parent' } } } });
+    await expect.soft(executor.execute('session.stop', { sessionId: 'child' }, workflow)).resolves.toEqual(managed);
+  });
+
   it('preserves structured session.stop outcomes as top-level action success', async () => {
     const dependencyResult = {
       ok: true as const,

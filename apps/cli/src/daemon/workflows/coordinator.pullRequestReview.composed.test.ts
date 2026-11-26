@@ -32,6 +32,7 @@ const workspace = { machineId: 'machine-a', directory: '/repo', checkoutRootPath
 async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, unknown>; standardReview?: Record<string, unknown>;
   withoutSelectedWorkspace?: boolean }>) {
   const reviews: unknown[] = [];
+  const preparations: unknown[] = [];
   const source = await createTriagePullRequestReviewActionTestkit({ baseRules: options?.baseRules, executeReview: async raw => {
     reviews.push(raw);
     const input = ReviewStartInputSchema.parse(raw);
@@ -46,8 +47,11 @@ async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, 
   const list = () => definitions;
   const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
     listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
-    invokeContributedAction: async request => ({ ok: true,
-      result: await source.invoke(request.action.localId, projectNativeJsonValueForTransport(request.input)) }) });
+    invokeContributedAction: async request => {
+      const input = projectNativeJsonValueForTransport(request.input);
+      if (request.action.localId === 'entries/prepare-pull-request-review-v1') preparations.push(input);
+      return { ok: true, result: await source.invoke(request.action.localId, input) };
+    } });
   const action = { executor, buildContext: async (params: Parameters<typeof buildWorkflowActionContext>[0]) => buildWorkflowActionContext(params),
     observeRun: async () => { throw new Error('Triage returns the admitted Review'); } };
   let workspaceReads = 0;
@@ -112,7 +116,7 @@ async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, 
     if (prepare?.kind !== 'action') throw new Error('Missing PR preparation Action');
     return materialize(runId, { kind: 'user' }, { ...definition, blocks: [prepare] });
   };
-  return { source, reviews, action, ...newRun(), newRun, admitted, inputs, manualPreparation,
+  return { source, reviews, preparations, action, ...newRun(), newRun, admitted, inputs, manualPreparation,
     workspaceReads: () => workspaceReads };
 }
 
@@ -277,12 +281,16 @@ describe('PR review automation through the workflow coordinator', () => {
     h.source.setPullRequestNumber(18);
     const second = h.newRun();
     expect(await second.coordinator.run(await h.admitted('head-b', 'internal', next.headSha, 18, 'synchronize'))).toMatchObject({ state: 'succeeded' });
+    expect(h.preparations).toEqual([
+      expect.objectContaining({ sessionId: h.inputs.sessionId }),
+      expect.objectContaining({ sessionId: h.inputs.sessionId }),
+    ]);
     expect(h.source.prepareInputs).toHaveLength(2);
     expect(h.reviews).toEqual([
-      expect.objectContaining({ instructions: 'Quick composition', scmPullRequestReviewScope: expect.objectContaining({ observed: expect.objectContaining({
+      expect.objectContaining({ sessionId: h.inputs.sessionId, instructions: 'Quick composition', scmPullRequestReviewScope: expect.objectContaining({ observed: expect.objectContaining({
         baseSha: TESTKIT_OBSERVED_REVISION.baseSha, headSha: TESTKIT_OBSERVED_REVISION.headSha, nativeRevision: TESTKIT_OBSERVED_REVISION.nativeRevision,
       }) }) }),
-      expect.objectContaining({ instructions: 'Quick composition', scmPullRequestReviewScope: expect.objectContaining({ observed: expect.objectContaining({
+      expect.objectContaining({ sessionId: h.inputs.sessionId, instructions: 'Quick composition', scmPullRequestReviewScope: expect.objectContaining({ observed: expect.objectContaining({
         baseSha: next.baseSha, headSha: next.headSha, nativeRevision: next.nativeRevision,
       }) }) }),
     ]);

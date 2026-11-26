@@ -8993,7 +8993,12 @@ second writer or shim for superseded development intermediates. Existing native
 0.2 Workflow activity and retained Automation data keep their distinct readers;
 the Run presentation extraction changes none of those data formats.
 
-Typed Session inputs confer no authority by themselves. Current admission records
+Ordinary Workflow Session Actions use the Run starter's Session access. The
+Session owner decides each Action under the same capability rules as a direct
+call. Agent starters retain their existing own and led Session scope. A Run on
+a shared Machine uses the starter's Account for Session access.
+
+Typed Session inputs confer no authority by themselves. Review admission records
 per-leaf `sessionAuthorityBindings` only after exact target resolution and the
 starting principal's current Session-corpus check. Session-authored direct and
 trigger starts retain their own/led restrictions; person-authorized starts use
