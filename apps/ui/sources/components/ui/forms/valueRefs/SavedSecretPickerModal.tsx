@@ -155,6 +155,7 @@ export function SavedSecretReferenceChoice(props: Readonly<{
                 {create}</ScrollView> : (
         <SavedSecretChoiceList
             rows={rows}
+            referenceCommands
             selectedRef={props.selectedRef}
             onChoose={(ref) => { choose(ref); }}
             testIDPrefix={prefix}

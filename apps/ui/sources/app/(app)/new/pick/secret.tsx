@@ -168,6 +168,7 @@ export default React.memo(function SecretPickerScreen() {
         <NewSessionPickerRouteScreen options={screenOptions}>
 
             <SecretsList
+                referenceCommands
                 secrets={savedSecretCatalog.personalSecrets}
                 sharedEntries={savedSecretCatalog.sharedEntries}
                 resolveSharedReference={savedSecretCatalog.resolveReference}

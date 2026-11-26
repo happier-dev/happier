@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import {
     createNavigationMock,
     createRouterMock,
@@ -59,6 +59,7 @@ await installPickerCommonModuleMocks({
     },
 });
 
+await prepareSessionPaneRuntimeForTests();
 const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('SecretPickerScreen (Stack.Screen options stability)', () => {

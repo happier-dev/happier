@@ -29,9 +29,8 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: () => null,
 }));
 
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
+vi.mock('react-native-safe-area-context', async () =>
+    (await import('@/dev/testkit/mocks/safeAreaContext')).createSafeAreaContextMock());
 
 vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) =>
     (await import('@/dev/testkit/mocks/serverProfiles')).createPartialServerProfilesModuleMock(importOriginal, {

@@ -11761,6 +11761,11 @@ root crash fallback and unsupported-WebCrypto startup screen can copy diagnostic
 details before an Account Action runtime is available. These exceptions do not
 grant an Agent another clipboard path.
 
+Pending-field and Session-requirement Saved Secret choices publish listed
+identities or references only. Disabled choices retain their existing reason
+and return typed unavailability. Selection does not return secret material;
+consent, connection grants and persisted defaults retain their existing owners.
+
 In unreleased 0.3 source, `files.save` is the shared client file handoff for native
 and deployment log downloads and Agent/MCP/CLI callers. Its `source` accepts
 `{ kind: 'text', text }` or `{ kind: 'deploymentLog', reference }`; the latter

@@ -13,6 +13,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { t } from '@/text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useModalContentId } from '@/modal/ModalProvider';
 
 /** One saved secret offered for choice: why it leads or why it can't be used now, and whether it can be pressed. */
 export type SavedSecretChoiceRow = Readonly<{
@@ -33,6 +35,8 @@ export function SavedSecretChoiceList(
     selectedRef: string | null;
     onChoose: (ref: string) => void;
     testIDPrefix: string;
+    /** Pending field choices only; connection grants keep their existing person-owned confirmation. */
+    referenceCommands?: boolean;
     /** A line above the rows that applies to all of them (the catalog can't be refreshed, with its retry). */
     notice?: React.ReactNode;
   }>,
@@ -60,6 +64,16 @@ export function SavedSecretChoiceList(
     [props.rows, needle],
   );
   const prefix = props.testIDPrefix;
+  const choices = shown.map(row => ({ ...row,
+    onPress: row.disabled === true ? undefined : () => props.onChoose(row.entry.ref),
+  }));
+  const modalId = useModalContentId();
+  useCurrentUiContextLocalCommands(props.referenceCommands ? choices.flatMap(({ entry, note, onPress }) => onPress || note ? [{
+    key: entry.ref,
+    title: entry.name ?? t('secrets.catalog.unavailableName'),
+    ...(onPress ? {} : { description: note! }),
+    invoke: onPress ?? (() => ({ ok: false as const, code: 'unavailable' as const, errorCode: 'unavailable', message: note! })),
+  }] : []) : [], { contextKey: prefix, foregroundOverlay: modalId !== null });
   return (
     <>
       {searchable ? (
@@ -86,7 +100,7 @@ export function SavedSecretChoiceList(
             title={t('common.noMatches')}
           />
         ) : null}
-        {shown.map(({ entry, note, disabled }) => {
+        {choices.map(({ entry, note, disabled, onPress }) => {
           const isSelected = entry.ref === props.selectedRef;
           const ownerName =
             entry.relationship === 'recipient' && entry.owner
@@ -140,9 +154,7 @@ export function SavedSecretChoiceList(
                   </View>
                 </View>
               }
-              onPress={
-                disabled === true ? undefined : () => props.onChoose(entry.ref)
-              }
+              onPress={onPress}
             />
           );
         })}

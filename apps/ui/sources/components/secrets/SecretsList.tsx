@@ -23,6 +23,8 @@ import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveAc
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { sharedSecretProvenanceSegments, sharedSecretStatusLabel } from './savedSecretRowCopy';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useModalContentId } from '@/modal/ModalProvider';
 
 
 export interface SecretsListProps {
@@ -37,6 +39,8 @@ export interface SecretsListProps {
 
     selectedId?: string;
     onSelectId?: (id: string) => void;
+    /** Pending field/Session choices only, never a confidential approval or persisted default. */
+    referenceCommands?: boolean;
 
     includeNoneRow?: boolean;
     noneSubtitle?: string;
@@ -143,8 +147,26 @@ export function SecretsList(props: SecretsListProps) {
         ? t('secrets.catalog.relationship.owner')
         : t('settings.secrets'));
     const groupFooter = props.footer === undefined ? t('settings.secretsSubtitle') : (props.footer ?? undefined);
-    const ownerSharedEntries = (props.sharedEntries ?? []).filter((entry) => entry.relationship === 'owner' && matches(entry.name));
-    const recipientSharedEntries = (props.sharedEntries ?? []).filter((entry) => entry.relationship === 'recipient' && matches(entry.name));
+    const personalChoices = orderedSecrets.map(secret => {
+        const ref = secret.id;
+        return { secret, onPress: onSelectId ? () => onSelectId(ref) : undefined };
+    });
+    const sharedChoices = (props.sharedEntries ?? []).map(entry => {
+        const resolution = props.resolveSharedReference?.(entry.ref);
+        const resolvedStatus = resolution?.status ?? entry.materialStatus;
+        const failureMessage = resolution?.errorCause
+            ? resolveActionExecutionErrorMessage(resolution.errorCause, sharedSecretStatusLabel(resolvedStatus), { safeToRetry: true }) : null;
+        // A passkey is a key for a browser profile, not a value a field can use: listed, not choosable.
+        const passkey = entry.storage?.kind === 'passkey';
+        const ready = resolvedStatus === 'ready' && entry.capabilities.use && !passkey;
+        const provenance = [...(passkey ? [t('secretsSettings.kindPasskey')] : []), ...sharedSecretProvenanceSegments(entry)];
+        const subtitle = [...provenance, ...(failureMessage ? [failureMessage] : resolvedStatus === 'temporarily_unavailable' ? [] : [sharedSecretStatusLabel(resolvedStatus)])].join(' · ') || undefined;
+        return { entry, resolution, resolvedStatus, failureMessage, provenance, subtitle, ready,
+            onPress: onSelectId && ready ? () => onSelectId(entry.ref) : undefined };
+    });
+    const ownerSharedEntries = sharedChoices.filter(({ entry }) => entry.relationship === 'owner' && matches(entry.name));
+    const recipientSharedEntries = sharedChoices.filter(({ entry }) => entry.relationship === 'recipient' && matches(entry.name));
+    const modalId = useModalContentId();
     const noMatches = needle.length > 0 && orderedSecrets.length === 0
         && ownerSharedEntries.length === 0 && recipientSharedEntries.length === 0;
     // A configured shared ref the Home no longer authorizes (revoked, deleted,
@@ -159,20 +181,27 @@ export function SecretsList(props: SecretsListProps) {
         const resolution = props.resolveSharedReference(ref);
         return resolution.kind === 'shared_resource' ? resolution : null;
     })();
+    const unavailableSelectionReason = unavailableSelection
+        ? resolveActionExecutionErrorMessage(unavailableSelection.errorCause, sharedSecretStatusLabel(unavailableSelection.status), { safeToRetry: true }) : null;
+    useCurrentUiContextLocalCommands(props.referenceCommands ? [
+        ...(unavailableSelection && unavailableSelectionReason ? [{
+            key: unavailableSelection.ref, title: unavailableSelection.entry?.name ?? t('secrets.catalog.unavailableName'),
+            description: unavailableSelectionReason,
+            invoke: () => ({ ok: false as const, code: 'unavailable' as const, errorCode: 'unavailable', message: unavailableSelectionReason }),
+        }] : []),
+        ...personalChoices.flatMap(({ secret, onPress }) => onPress ? [{
+            key: secret.id, title: secret.name, invoke: onPress,
+        }] : []),
+        ...[...ownerSharedEntries, ...recipientSharedEntries].flatMap(({ entry, subtitle, onPress }) => onSelectId && (onPress || subtitle) ? [{
+            key: entry.ref, title: entry.name ?? t('secrets.catalog.unavailableName'),
+            ...(onPress ? {} : { description: subtitle! }),
+            invoke: onPress ?? (() => ({ ok: false as const, code: 'unavailable' as const, errorCode: 'unavailable', message: subtitle! })),
+        }] : []),
+    ] : [], { contextKey: 'savedSecret.pendingChoice', foregroundOverlay: modalId !== null });
 
-    const resolveStatus = (entry: SavedSecretCatalogEntryV1) => props.resolveSharedReference?.(entry.ref).status ?? entry.materialStatus;
     // A Home out of reach is one cause for every shared row: it is said once above the rows, not on each.
-    const homeUnreachable = !props.sharedCatalogError && (props.sharedEntries ?? []).some((entry) => resolveStatus(entry) === 'temporarily_unavailable' && !props.resolveSharedReference?.(entry.ref).errorCause);
-    const renderSharedEntry = (entry: SavedSecretCatalogEntryV1, idx: number, total: number) => {
-        const resolution = props.resolveSharedReference?.(entry.ref);
-        const resolvedStatus = resolution?.status ?? entry.materialStatus;
-        const failureMessage = resolution?.errorCause
-            ? resolveActionExecutionErrorMessage(resolution.errorCause, sharedSecretStatusLabel(resolvedStatus), { safeToRetry: true }) : null;
-        // A passkey is a key for a browser profile, not a value a field can use: listed, not choosable.
-        const passkey = entry.storage?.kind === 'passkey';
-        const provenance = [...(passkey ? [t('secretsSettings.kindPasskey')] : []), ...sharedSecretProvenanceSegments(entry)];
-        const ready = resolvedStatus === 'ready'
-            && entry.capabilities.use && !passkey;
+    const homeUnreachable = !props.sharedCatalogError && sharedChoices.some(({ resolvedStatus, resolution }) => resolvedStatus === 'temporarily_unavailable' && !resolution?.errorCause);
+    const renderSharedEntry = ({ entry, resolvedStatus, failureMessage, provenance, subtitle, ready, onPress }: typeof sharedChoices[number], idx: number, total: number) => {
         return (
             <Item
                 key={entry.ref}
@@ -180,7 +209,7 @@ export function SecretsList(props: SecretsListProps) {
                 title={entry.name ?? t('secrets.catalog.unavailableName')}
                 // A pick list names each secret in full; similar names differ only at the end.
                 titleLines={0}
-                subtitle={[...provenance, ...(failureMessage ? [failureMessage] : resolvedStatus === 'temporarily_unavailable' ? [] : [sharedSecretStatusLabel(resolvedStatus)])].join(' · ') || undefined}
+                subtitle={subtitle}
                 accessibilityLabel={[
                     entry.name ?? t('secrets.catalog.unavailableName'),
                     entry.relationship === 'owner'
@@ -190,7 +219,7 @@ export function SecretsList(props: SecretsListProps) {
                     failureMessage ?? sharedSecretStatusLabel(resolvedStatus),
                 ].join(', ')}
                 icon={<Icon name="key" size={29} color={theme.colors.button.secondary.tint} />}
-                onPress={props.onSelectId && ready ? () => props.onSelectId?.(entry.ref) : undefined}
+                onPress={onPress}
                 showChevron={false}
                 selected={Boolean(props.onSelectId) && props.selectedId === entry.ref}
                 showDivider={idx < total - 1}
@@ -250,7 +279,7 @@ export function SecretsList(props: SecretsListProps) {
                     <Item
                         testID={`saved-secret:${unavailableSelection.ref}`}
                         title={unavailableSelection.entry?.name ?? t('secrets.catalog.unavailableName')}
-                        subtitle={resolveActionExecutionErrorMessage(unavailableSelection.errorCause, sharedSecretStatusLabel(unavailableSelection.status), { safeToRetry: true })}
+                        subtitle={unavailableSelectionReason}
                         accessibilityLabel={[
                             unavailableSelection.entry?.name ?? t('secrets.catalog.unavailableName'),
                             sharedSecretStatusLabel(unavailableSelection.status),
@@ -280,7 +309,7 @@ export function SecretsList(props: SecretsListProps) {
                     />
                 ) : (
                     <>
-                    {orderedSecrets.map((secret, idx) => {
+                    {personalChoices.map(({ secret, onPress }, idx) => {
                         const isSelected = props.selectedId === secret.id;
                         const isDefault = props.defaultId === secret.id;
                         return (
@@ -292,7 +321,7 @@ export function SecretsList(props: SecretsListProps) {
                                 titleLines={0}
                                 subtitle={t('secrets.savedHiddenSubtitle')}
                                 icon={<Icon name="key" size={29} color={theme.colors.button.secondary.tint} />}
-                                onPress={props.onSelectId ? () => props.onSelectId?.(secret.id) : undefined}
+                                onPress={onPress}
                                 showChevron={false}
                                 selected={Boolean(props.onSelectId) ? isSelected : false}
                                 showDivider={idx < orderedSecrets.length - 1 || (props.sharedEntries?.length ?? 0) > 0}

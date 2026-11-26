@@ -12,7 +12,7 @@ import {
     installPickerCommonModuleMocks,
     PICKER_THEME_COLORS,
 } from './testHarness';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 
 enableReactActEnvironment();
 
@@ -49,6 +49,7 @@ await installPickerCommonModuleMocks({
         }).module,
 });
 
+await prepareSessionPaneRuntimeForTests();
 const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('SecretPickerScreen (iOS presentation)', () => {

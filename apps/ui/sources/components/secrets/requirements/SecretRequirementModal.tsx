@@ -606,6 +606,7 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
                     {selectedSource === 'saved' && (
                         <SecretsList
                             wrapInItemList={false}
+                            referenceCommands={variant === 'requirement'}
                             secrets={savedSecretCatalog.personalSecrets}
                             sharedEntries={savedSecretCatalog.sharedEntries}
                             resolveSharedReference={savedSecretCatalog.resolveReference}
