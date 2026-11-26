@@ -28,7 +28,7 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } 
 import { createDeploymentReceiptHeaderV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError, createActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { DEPLOYMENT_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
@@ -3646,7 +3646,7 @@ describe('installed deployment storage and target composition', () => {
                 // The owner knows the reservation was made but no provider Action ran.
                 expect(result).toMatchObject({ effectAttempted: false });
                 const refusal = ActionExecuteFailureSchema.parse(result);
-                for (const actionId of DEPLOYMENT_ACTION_IDS_V1) {
+                for (const actionId of ACTION_IDS.filter(id => id.startsWith('deployments.'))) {
                     const output = createActionExecuteResultSchema(getActionSpec(actionId).outputSchema);
                     expect(output.parse(settleActionOutput(actionId, refusal)), actionId).toEqual(refusal);
                 }
