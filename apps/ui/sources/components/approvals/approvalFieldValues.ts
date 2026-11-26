@@ -15,6 +15,7 @@ import { HealthCheckSourceConfigV1Schema } from '@happier-dev/protocol/deploymen
 import { formatTriggerSummary } from '@/components/workflows/triggers/formatTriggerSummary';
 import { t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
+import { readVoiceSettingsDeclaration } from '@/voice/settings/voiceContributedSettingsDeclarations';
 
 function workflowTriggerLabels(environmentName?: string | null): WorkflowTriggerApprovalLabels {
     return {
@@ -60,6 +61,7 @@ export function presentTriggerUpdateAutomationName(
 /** All UI readings use the program's quantity formatter; Protocol still owns the fields. */
 export function describeApprovalActionFields(input: Parameters<typeof describeProtocolApprovalActionFields>[0]) {
     return describeProtocolApprovalActionFields({ ...input, context: { ...input.context,
+        readSettingDeclaration: readVoiceSettingsDeclaration,
         formatDataBytes: formatHappierDataBytes, workflowTriggerLabels: workflowTriggerLabels() } });
 }
 
@@ -67,6 +69,7 @@ export function describeApprovalActionFields(input: Parameters<typeof describePr
 export function describeApprovalRequestFields(input: Parameters<typeof describeProtocolApprovalRequestFields>[0],
     environmentName?: string | null, automationName?: string | null) {
     const presentation = describeProtocolApprovalRequestFields(input, {
+        readSettingDeclaration: readVoiceSettingsDeclaration,
         formatDataBytes: formatHappierDataBytes, workflowTriggerLabels: workflowTriggerLabels(environmentName),
     });
     return presentTriggerUpdateAutomationName(presentation, automationName);
@@ -77,7 +80,8 @@ export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest)
 export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest | TargetActionApprovalRequestV1):
     ReturnType<typeof resolveProtocolApprovalRequestApproveAdmission>;
 export function resolveApprovalRequestApproveAdmission(request: ApprovalRequest | TargetActionApprovalRequestV1) {
-    return resolveProtocolApprovalRequestApproveAdmission(request, { workflowTriggerLabels: workflowTriggerLabels() });
+    return resolveProtocolApprovalRequestApproveAdmission(request, {
+        readSettingDeclaration: readVoiceSettingsDeclaration, workflowTriggerLabels: workflowTriggerLabels() });
 }
 
 export {

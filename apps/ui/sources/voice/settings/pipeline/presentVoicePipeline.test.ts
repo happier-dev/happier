@@ -6,6 +6,7 @@ import { projectVoiceSettingsPipeline } from '@/voice/settings/projectVoiceSetti
 import { t } from '@/text';
 
 import { presentVoicePipeline, resolveVoiceReadinessTone } from './presentVoicePipeline';
+import { translateVoiceReadiness } from '../panels/voiceProviderReadinessPresentation';
 
 const translate = (key: string) => key;
 
@@ -31,6 +32,20 @@ describe('resolveVoiceReadinessTone', () => {
 });
 
 describe('presentVoicePipeline', () => {
+    it('names the provider and known execution machine in a failed runtime check without repeating the cause', () => {
+        const fact = readiness('unavailable', 'runtime_unknown', 'retry');
+        const pipeline = projectVoiceSettingsPipeline({ mode: 'conversations', providerId: 'p', steps: [
+            { ...think, readiness: fact },
+        ] });
+        const presented = presentVoicePipeline(pipeline, translateVoiceReadiness, fact, 'Local voice');
+        expect(presented.steps[0]?.readiness?.message).toContain('Claude Code');
+        expect(presented.steps[0]?.readiness?.message).toContain('devbox');
+        expect(presented.card).toBeNull();
+        const differentRemedy = presentVoicePipeline(pipeline, translateVoiceReadiness,
+            { ...fact, status: 'needs_setup', recoveryAction: 'switch_provider' }, 'Local voice');
+        expect(differentRemedy.card?.recoveryAction).toBe('switch_provider');
+    });
+
     it('uses the blocked tone for an incompatible or failed pack, including the aggregate', () => {
         const fact = readiness('incompatible', 'model_incompatible', 'install_model');
         const pipeline = projectVoiceSettingsPipeline({ mode: 'dictation', providerId: 'p', steps: [{ ...hear, readiness: fact }] });

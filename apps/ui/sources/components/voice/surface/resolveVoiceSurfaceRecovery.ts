@@ -33,8 +33,8 @@ export type VoiceSurfaceRecovery = Readonly<{
 }>;
 
 /**
- * The session's one recovery action: its failure's own remedy, otherwise Retry while a lost connection
- * waits between tries (the runtime admits a retry only then). Every placement reads this one answer.
+ * The session's one recovery action: its failure's own remedy, otherwise the runtime's admitted Retry
+ * throughout reconnecting, including backoff and an active try. Every placement reads this one answer.
  */
 export function resolveVoiceSnapshotRecoveryAction(
   snapshot: Pick<VoiceSessionSnapshot, 'errorRecoveryAction' | 'presentationState' | 'reconnectRetryAvailable'>,

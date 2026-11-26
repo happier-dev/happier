@@ -51,6 +51,7 @@ export type VoiceReadinessCopy = {
   runtime_installing: string;
   runtime_incompatible: string;
   runtime_unknown: string;
+  runtime_unknown_named: (params: { service: string; machine?: string }) => string;
   model_missing: string;
   model_installing: string;
   model_incompatible: string;
@@ -147,7 +148,8 @@ export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTrans
     runtime_missing: 'Install what this service needs to run.',
     runtime_installing: 'The Voice provider runtime is still being installed.',
     runtime_incompatible: 'The installed runtime is incompatible with this Voice provider.',
-    runtime_unknown: 'The Voice provider runtime could not be checked.',
+    runtime_unknown: 'Couldn’t check Voice.',
+    runtime_unknown_named: ({ service, machine }) => machine ? `Couldn’t check ${service} on ${machine}.` : `Couldn’t check ${service}.`,
     model_missing: 'Install or choose a speech model to start.',
     model_installing: 'The selected Voice model is still being installed.',
     model_incompatible: 'The selected model is incompatible with this Voice provider.',

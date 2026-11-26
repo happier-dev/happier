@@ -33,4 +33,12 @@ describe('VoiceAgentTurnV1Schema', () => {
       transcriptEpoch: 4,
     });
   });
+
+  it('rejects an invalid known device label while preserving legacy turns', () => {
+    const legacy = { v: 1, epoch: 3, role: 'assistant', voiceAgentId: 'va_1', ts: 123 };
+    expect(VoiceAgentTurnV1Schema.safeParse(legacy).success).toBe(true);
+    expect(VoiceAgentTurnV1Schema.safeParse({ ...legacy, deviceDisplayName: 42 }).success).toBe(false);
+    expect(VoiceAgentTurnV1Schema.parse({ ...legacy, deviceDisplayName: 'Alice’s phone' }).deviceDisplayName)
+      .toBe('Alice’s phone');
+  });
 });

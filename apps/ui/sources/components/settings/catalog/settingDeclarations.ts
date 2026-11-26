@@ -238,6 +238,8 @@ export type SettingDeclaration = Readonly<{
     /** Resolved author-owned label for contribution fields; never a host translation-key cast. */
     title?: string;
     description?: string;
+    /** Presentation comes from the same declaration that describes Action approvals. */
+    numberDisplay?: PortableSettingDeclarationV1['numberDisplay'];
     /** Activation-owned contribution fields may only use their admitted Account's projection. */
     contribution?: PluginContributionIdentityV1;
     /** Extra searchable words, as translation keys so they are found in every language. */
@@ -450,7 +452,7 @@ function projectPortableDeclaration(anchor: string, adapter: SettingDeclaration,
         : adapter.operation;
     return {
         ...adapter, titleKey: labels.titleKey, descriptionKey: labels.descriptionKey, keywordKeys: labels.keywordKeys,
-        sensitive: portable.sensitive, storage, operation,
+        sensitive: portable.sensitive, numberDisplay: portable.numberDisplay, storage, operation,
     };
 }
 

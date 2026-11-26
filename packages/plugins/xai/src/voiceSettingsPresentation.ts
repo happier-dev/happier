@@ -102,10 +102,13 @@ export const XAI_REALTIME_SETTINGS_SECTION = Object.freeze({
       subtitleKey: 'settingsVoice.realtimeProviders.fields.turnDetection.subtitle',
       subfields: Object.freeze([
         vadField('threshold', { min: 0.1, max: 0.9 }),
-        vadField('silenceDurationMs', { min: 0, max: 10_000, integer: true }),
-        vadField('prefixPaddingMs', { min: 0, max: 10_000, integer: true }),
+        Object.freeze({ ...vadField('silenceDurationMs', { min: 0, max: 10_000, integer: true }),
+          numberDisplay: Object.freeze({ divisor: 1000 as const, unit: 's' as const }) }),
+        Object.freeze({ ...vadField('prefixPaddingMs', { min: 0, max: 10_000, integer: true }),
+          numberDisplay: Object.freeze({ divisor: 1000 as const, unit: 's' as const }) }),
         Object.freeze({
           ...vadField('idleTimeoutMs', { min: 1, max: 600_000, integer: true }),
+          numberDisplay: Object.freeze({ divisor: 1000 as const, unit: 's' as const }),
           requiresOptIn: true,
           confirmTitleKey: 'settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.confirmTitle',
           confirmBodyKey: 'settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.confirmBody',

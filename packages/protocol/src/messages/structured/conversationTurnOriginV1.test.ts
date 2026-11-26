@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ConversationTurnV1Schema } from './conversationTurnOriginV1.js';
 
 import {
   AGENT_THREAD_TEXT_CONVERSATION_TURN_ORIGIN_V1,
@@ -8,6 +9,11 @@ import {
 } from '../../index.js';
 
 describe('ConversationTurnOriginV1', () => {
+  it('reads earlier presentation payloads without a device label and retains a known label', () => {
+    expect(ConversationTurnV1Schema.parse({ v: 1 })).toEqual({ v: 1 });
+    expect(ConversationTurnV1Schema.parse({ v: 1, deviceDisplayName: 'Alice’s phone' }))
+      .toEqual({ v: 1, deviceDisplayName: 'Alice’s phone' });
+  });
   it('accepts the two canonical interaction origins and rejects mixed channel/modality shapes', () => {
     expect(ConversationTurnOriginV1Schema.parse({
       ...REALTIME_CONVERSATION_VOICE_TURN_ORIGIN_V1,

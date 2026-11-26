@@ -33,10 +33,11 @@ export function VoiceHearControls(props: Readonly<{
   const { handsFree } = props;
   const handsFreeOn = props.handsFreeSupported && handsFree.enabled;
   const commitEndpointing = (key: 'silenceMs' | 'minSpeechMs') => (draft: string) => {
-    const next = Math.max(0, Math.min(MAX_VOICE_TIMER_DELAY_MS, Math.round(Number(draft) * 1000)));
-    if (!Number.isFinite(next)) return String(handsFree.endpointing[key] / 1000);
+    const { divisor } = VOICE_CONVERSATIONS_SETTINGS.settings[key].numberDisplay!;
+    const next = Math.max(0, Math.min(MAX_VOICE_TIMER_DELAY_MS, Math.round(Number(draft) * divisor)));
+    if (!Number.isFinite(next)) return String(handsFree.endpointing[key] / divisor);
     props.setHandsFree({ ...handsFree, endpointing: { ...handsFree.endpointing, [key]: next } });
-    return String(next / 1000);
+    return String(next / divisor);
   };
   return (
     <>
@@ -65,8 +66,8 @@ export function VoiceHearControls(props: Readonly<{
             title={t(VOICE_CONVERSATIONS_SETTINGS.settings.silenceMs.titleKey)}
             fieldTestID={`${props.testIDPrefix}.handsFree.silenceMs.field`}
             kind="decimal"
-            unit="s"
-            value={String(handsFree.endpointing.silenceMs / 1000)}
+            unit={VOICE_CONVERSATIONS_SETTINGS.settings.silenceMs.numberDisplay!.unit}
+            value={String(handsFree.endpointing.silenceMs / VOICE_CONVERSATIONS_SETTINGS.settings.silenceMs.numberDisplay!.divisor)}
             onCommit={commitEndpointing('silenceMs')}
           />
         </SettingAnchor>
@@ -75,8 +76,8 @@ export function VoiceHearControls(props: Readonly<{
             title={t(VOICE_CONVERSATIONS_SETTINGS.settings.minSpeechMs.titleKey)}
             fieldTestID={`${props.testIDPrefix}.handsFree.minSpeechMs.field`}
             kind="decimal"
-            unit="s"
-            value={String(handsFree.endpointing.minSpeechMs / 1000)}
+            unit={VOICE_CONVERSATIONS_SETTINGS.settings.minSpeechMs.numberDisplay!.unit}
+            value={String(handsFree.endpointing.minSpeechMs / VOICE_CONVERSATIONS_SETTINGS.settings.minSpeechMs.numberDisplay!.divisor)}
             onCommit={commitEndpointing('minSpeechMs')}
           />
         </SettingAnchor>

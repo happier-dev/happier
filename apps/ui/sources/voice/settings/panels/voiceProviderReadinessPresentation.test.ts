@@ -16,6 +16,22 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
 
   const translate = (key: string) => key;
 
+  it('keeps a failed runtime check useful without inventing an execution location', () => {
+    const readiness = { status: 'unavailable' as const, code: 'runtime_unknown',
+      reasonKey: 'voice.readiness.runtime_unknown', recoveryAction: 'retry' as const };
+    const named = resolveVoiceProviderReadinessPresentation(readiness, translateVoiceReadiness, 'Grok Voice');
+    expect(named.summary).toContain('Grok Voice');
+    expect(named.summary).not.toContain('undefined');
+    expect(named.action).toBe(t('voice.readiness.actions.check_again'));
+    expect(resolveVoiceProviderReadinessPresentation(readiness, translateVoiceReadiness).summary)
+      .toContain(t('voicePresence.title'));
+    const selected = resolveVoiceProviderReadinessPresentation({ ...readiness,
+      selectedAgent: { title: 'Codex', needsSignIn: false, machineLabel: 'Studio', runtimeTarget: null },
+    }, translateVoiceReadiness, 'Local voice');
+    expect(selected.summary).toContain('Codex');
+    expect(selected.summary).toContain('Studio');
+  });
+
   it('uses the Voice fallback in the Start setup label without a service name', () => {
     expect(translateVoiceReadiness('voice.readiness.settings_missing_required_setting'))
       .toBe('Finish setting up Voice to start.');

@@ -1190,6 +1190,23 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(typed.getTextContent()).not.toContain(marker);
     });
 
+    it.each([
+        { kind: 'user-text', role: 'user', envelopeKind: 'voice_agent_turn.v1', marker: 'voiceMoments.spokenTurn' },
+        { kind: 'agent-text', role: 'assistant', envelopeKind: 'conversation_turn.v1', marker: 'voicePresence.title' },
+    ] as const)('identifies the capture device on a $envelopeKind $role turn', async ({ kind, role, envelopeKind, marker }) => {
+        const { MessageView } = await import('./MessageView');
+        const payload = envelopeKind === 'voice_agent_turn.v1'
+            ? { v: 1, epoch: 3, role, voiceAgentId: 'mid', ts: 100, deviceDisplayName: 'Alice’s phone' }
+            : { v: 1, deviceDisplayName: 'Alice’s phone' };
+        const message: Message = {
+            kind, id: `device-${role}`, localId: null, createdAt: 1, text: 'Hello',
+            meta: { happier: { kind: envelopeKind, payload,
+                conversationTurnOriginV1: { v: 1, channel: 'realtime_conversation', modality: 'voice' } } },
+        };
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+        expect(screen.getTextContent()).toContain(`${marker} · Alice’s phone`);
+    });
+
     it('hides internal voice tool follow-up payload turns from the hidden voice transcript', async () => {
         const { MessageView } = await import('./MessageView');
 

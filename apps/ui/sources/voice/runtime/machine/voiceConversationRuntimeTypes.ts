@@ -74,7 +74,7 @@ export type VoiceConversationRuntimeSnapshot = Readonly<{
     state: VoiceConversationRuntimeState;
     /** True only while the owning realtime controller is replacing its connection. */
     reconnecting: boolean;
-    /** True only while that controller has a scheduled reconnect slot to advance. */
+    /** The owning realtime controller admits Retry throughout reconnecting. */
     reconnectRetryAvailable?: boolean;
     micMuted: boolean;
     /** Teardown began without a connected runtime projection (startup, failure or disconnect). */

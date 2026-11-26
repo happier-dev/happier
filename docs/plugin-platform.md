@@ -11080,6 +11080,13 @@ with a Default reset; nullable resets retain the settings owner's unset value.
 Formatting does not change stored units or the configuration accepted by Settings
 Actions. Services own these facts in their contribution, not host id branches.
 
+Numeric fields and subfields can also declare `numberDisplay` as
+`{unit:'s',divisor:1000}` for stored milliseconds or `{unit:'%',divisor:0.01}`
+for a stored ratio. The Settings Catalog owns that display representation and
+approvals consume its localized declaration, including provider-generated fields.
+Review formatting never rewrites the admitted numeric Action operand. Provider
+input controls retain their declared configuration units.
+
 Optional `groups` arrange the declared top-level fields into sections. Each group
 has a unique `id`, localized `titleKey`, optional `descriptionKey`, and
 `fieldPaths`. When groups are present, every top-level presentation field must

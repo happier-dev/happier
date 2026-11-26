@@ -28,6 +28,7 @@ import { DeploymentReviewConflictFailureDetailsV1Schema } from '@happier-dev/pro
 import { presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { DiscussionReplyDestinationResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { presentActionApproval, readApprovalPreviewSummary } from './actionApprovalPresentation';
 
 it.each([
     { actionId: 'machines.managed.delete', actionArgs: { homeId: 'home-a', managedId: 'managed-a', expectedRevision: 2,
@@ -666,18 +667,37 @@ it('keeps widget placement internals behind the canonical Details disclosure', a
     }
 });
 
-it('reads the declared setting name and exact new value in both approval anatomies', async () => {
-    const anchor = 'delegation.workDepthLimit';
-    const presentation = describeApprovalActionFields({ actionId: 'settings.set', actionArgs: { anchor, value: 3 } });
-    for (const anatomy of ['page', 'card'] as const) {
+it.each([
+    { anchor: 'delegation.workDepthLimit', value: 3, displayed: '3' },
+    { anchor: 'voiceConversations.silenceMs', value: 1400, displayed: '1.4 s' },
+    { anchor: 'voiceConversations.minSpeechMs', value: 300, displayed: '0.3 s' },
+    { anchor: 'appearance.textSize', value: 1.1, displayed: '110 %' },
+    { anchor: 'voiceConversations.provider.happier.voice.xai/realtime-grok.turnDetection.silenceDurationMs', value: 1400, displayed: '1.4 s' },
+])('reads the declared $anchor name and displayed units without changing the approved value', async ({ anchor, value, displayed }) => {
+    const actionArgs = Object.freeze({ anchor, value });
+    const request = { actionId: 'settings.set', actionArgs };
+    expect(presentActionApproval(request).summary).toContain(displayed);
+    expect(readApprovalPreviewSummary({ summary: 'Change this setting.' }, request)).toContain(displayed);
+    const presentations = [describeApprovalActionFields(request)];
+    if (anchor.startsWith('voiceConversations.provider.')) presentations.push(describeApprovalRequestFields(ApprovalRequestV2Schema.parse({
+        v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' },
+        ...request, summary: 'Change the silence duration',
+        executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+            serverId: 'home', actionId: 'settings.set', requestId: 'provider-silence' },
+    })));
+    for (const presentation of presentations) for (const anatomy of ['page', 'card'] as const) {
         const screen = await renderScreen(<ActionApprovalFieldsCard presentation={presentation} anatomy={anatomy} />);
         const text = screen.getTextContent();
-        expect(text).toContain(t(builtInSettingUiDeclaration(anchor).titleKey));
-        expect(text).toContain('3');
+        expect(text).toContain(t(anchor.startsWith('voiceConversations.provider.')
+            ? 'settingsVoice.realtimeProviders.fields.turnDetection.silenceDurationMs.title'
+            : builtInSettingUiDeclaration(anchor).titleKey));
+        expect(text).toContain(displayed);
         expect(text).not.toContain(anchor);
         await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
         expect(screen.getTextContent()).toContain(anchor);
+        await screen.unmount();
     }
+    expect(request.actionArgs).toEqual({ anchor, value });
 });
 
 it('the approval Details page preserves an exact remote host id when a session has the same id', async () => {

@@ -820,6 +820,20 @@ describe('approval field presentation', () => {
       .toBe(`Reset “${declaration.title}” to its default.`);
     expect(getActionSpec('settings.set').approvalPresentation?.summary({ anchor: 'unknown.setting', value: 3 })).toBeNull();
   });
+  it.each([
+    { anchor: 'voiceConversations.silenceMs', value: 1400, display: '1.4 s' },
+    { anchor: 'voiceConversations.minSpeechMs', value: 300, display: '0.3 s' },
+    { anchor: 'appearance.textSize', value: 1.1, display: '110 %' },
+    { anchor: 'appearance.textSize', value: 1.15, display: '115 %' },
+  ])('projects $anchor in its declared display units without rewriting the admitted input', ({ anchor, value, display }) => {
+    const actionArgs = Object.freeze({ anchor, value });
+    const presentation = describeApprovalActionFields({ actionId: 'settings.set', actionArgs });
+    expect(presentation.unrepresentable).toBeNull();
+    expect(presentation.rows.find(row => row.path === 'value')).toMatchObject({ value: display });
+    expect(getActionSpec('settings.set').approvalPresentation?.summary(actionArgs))
+      .toContain(`“${readBuiltInSettingDeclarationV1(anchor)!.title}” to ${display}`);
+    expect(actionArgs).toEqual({ anchor, value });
+  });
   it('reads a theme choice as the choice it makes, not as profile ids, timestamps and schema versions', () => {
     const profile = { schemaVersion: 1, id: 'custom-2', name: 'Custom theme 2', createdAt: '2026-10-16T08:00:00.000Z',
       updatedAt: '2026-10-16T08:00:00.000Z', base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };

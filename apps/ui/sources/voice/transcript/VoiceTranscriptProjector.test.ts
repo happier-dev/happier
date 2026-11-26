@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import Constants from 'expo-constants';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storage';
 import { normalizeRawMessage } from '@happier-dev/session-core/raw';
@@ -38,6 +39,35 @@ function seedOrderedTranscript() {
 }
 
 describe('VoiceTranscriptProjector', () => {
+    it.each(['Alice’s phone', null])('retains only a known capture-device label (%s) on realtime turns', async (deviceName) => {
+        const previousName = Constants.deviceName;
+        Object.assign(Constants, { deviceName });
+        try {
+            const { buildRealtimeConversationRawRecord } = await import('./VoiceTranscriptProjector');
+            const rawRecord = buildRealtimeConversationRawRecord({ id: 'spoken-device', role: 'user', text: 'Hello' });
+            const normalized = normalizeRawMessage('spoken-device', 'spoken-device', 100, JSON.parse(JSON.stringify(rawRecord)));
+            const legacy = createVoiceTranscriptProjector({ getState: storage.getState }).projectUserText({
+                conversationSessionId: 'carrier-s1', text: 'Hello',
+                turn: { epoch: 1, role: 'user', voiceAgentId: 'voice', ts: 100 },
+            });
+            expect(legacy?.meta?.happier).toMatchObject({
+                kind: 'voice_agent_turn.v1', payload: deviceName ? { deviceDisplayName: deviceName } : { v: 1 },
+            });
+            if (!deviceName) expect(legacy?.meta?.happier).toEqual({
+                kind: 'voice_agent_turn.v1',
+                payload: { v: 1, epoch: 1, role: 'user', voiceAgentId: 'voice', ts: 100 },
+            });
+            expect(normalized?.meta?.happier).toMatchObject({
+                kind: 'conversation_turn.v1', payload: deviceName ? { v: 1, deviceDisplayName: deviceName } : { v: 1 },
+            });
+            if (!deviceName) expect(normalized?.meta?.happier).toEqual({
+                kind: 'conversation_turn.v1', payload: { v: 1 },
+                conversationTurnOriginV1: { v: 1, channel: 'realtime_conversation', modality: 'voice' },
+            });
+        } finally {
+            Object.assign(Constants, { deviceName: previousName });
+        }
+    });
     it('persists continuation notes with the bound Run backend rather than a Claude envelope', async () => {
         const sessionId = 'conversation';
         let written: PersistSessionTranscriptMessageInput | undefined;

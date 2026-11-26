@@ -8,7 +8,7 @@ import type { VoiceReadinessTone } from './VoiceReadinessGlyph';
 import { isVoiceReadinessCouldNotCheck, resolveVoiceProviderReadinessPresentation } from '../panels/voiceProviderReadinessPresentation';
 
 /** Resolves the dynamic keys a readiness fact carries (its reason and recovery action). */
-type Translate = (key: string, params?: { service: string }) => string;
+type Translate = (key: string, params?: { service: string; machine?: string }) => string;
 
 export type VoicePipelineStepPresentation = Readonly<{
     key: string;
@@ -114,10 +114,10 @@ export function resolveVoicePipelineWhere(step: VoiceSettingsPipelineStep): Read
 }
 
 
-function presentReadiness(readiness: VoiceRoleReadiness, translate: Translate, progress: number | null, service: string): VoicePipelineStepPresentation['readiness'] {
+function presentReadiness(readiness: VoiceRoleReadiness, translate: Translate, progress: number | null, service: string, machineName?: string): VoicePipelineStepPresentation['readiness'] {
     const tone = resolveVoiceReadinessTone(readiness);
     if (!tone || tone === 'ready' || (tone === 'unknown' && !isVoiceReadinessCouldNotCheck(readiness))) return null;
-    const copy = resolveVoiceProviderReadinessPresentation(readiness, translate, service);
+    const copy = resolveVoiceProviderReadinessPresentation(readiness, translate, service, { machineName });
     return {
         tone: tone === 'unknown' ? 'waiting' : tone,
         message: copy.summary,
@@ -147,10 +147,16 @@ export function presentVoicePipeline(
             name: step.engine.title,
             where: where.text,
             whereIcon: where.icon,
-            readiness: step.readiness ? presentReadiness(step.readiness, translate, progress, step.engine.title) : null,
+            readiness: step.readiness ? presentReadiness(step.readiness, translate, progress, step.engine.title,
+                step.placement.kind === 'machine' ? step.placement.machineName : undefined) : null,
         };
     });
-    const serviceFact = cardReadiness ? presentReadiness(cardReadiness, translate, null, serviceTitle ?? pipeline.steps[0]?.engine.title ?? t('voicePresence.title')) : null;
+    // Borrow only the step's display context; the service keeps its own readiness and remedy.
+    const serviceStep = cardReadiness ? pipeline.steps.find(step => step.readiness?.code === cardReadiness.code
+        && step.readiness.providerId === cardReadiness.providerId && step.readiness.reasonKey === cardReadiness.reasonKey) : undefined;
+    const serviceFact = cardReadiness ? presentReadiness(cardReadiness, translate, null,
+        serviceStep?.engine.title ?? serviceTitle ?? pipeline.steps[0]?.engine.title ?? t('voicePresence.title'),
+        serviceStep?.placement.kind === 'machine' ? serviceStep.placement.machineName : undefined) : null;
     const needYou = steps.filter((step) => step.readiness?.tone === 'blocked').length;
     const toSetUp = steps.some((step) => step.readiness?.tone === 'needs_setup');
     // One cause, one line: when every step says the same thing (their one machine is offline), the card

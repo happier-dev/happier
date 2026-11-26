@@ -798,10 +798,12 @@ describe('VoiceProviderSection', () => {
             },
         );
         const readinessHost = checkedReadinessRow(screen.tree);
-        expect(readinessHost?.props.announcement).toContain(tLoose('voice.readiness.runtime_unknown'));
+        expect(readinessHost?.props.announcement).toContain(tLoose('voice.readiness.short.cantCheck'));
+        expect(readinessHost?.props.announcement).toContain('Codex Live');
         expect(readinessHost?.props.announcement).not.toContain(tLoose('voice.readiness.actions.switch_provider'));
         // The card itself shows the checked readiness; there is no second "Setup status" row.
-        expect(screen.getTextContent()).toContain(tLoose('voice.readiness.runtime_unknown'));
+        expect(screen.getTextContent()).toContain(tLoose('voice.readiness.short.cantCheck'));
+        expect(screen.getTextContent()).toContain('Codex Live');
         expect(screen.findHostByTestId('settings.voice.provider.readiness')).toBeNull();
         const status = screen.findHostByTestId('settings.voice.provider.readiness-status');
         expect(status).not.toBeNull();
@@ -970,7 +972,7 @@ describe('VoiceProviderSection', () => {
         expect(passiveSetupBoundary.invoke).toHaveBeenLastCalledWith('machine-2', expect.anything());
         const readiness = checkedReadinessRow(screen.tree);
         expect(readiness?.props.announcement).toContain(tLoose('voice.readiness.ready'));
-        expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.runtime_unknown'));
+        expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.short.cantCheck'));
     }, 120_000);
 
     it('clears a settled passive result when the active Account changes', async () => {
@@ -1038,7 +1040,7 @@ describe('VoiceProviderSection', () => {
         // Account A was unavailable; only a fresh Account B answer can be ready.
         const readiness = checkedReadinessRow(screen.tree);
         expect(readiness?.props.announcement).toContain(tLoose('voice.readiness.ready'));
-        expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.runtime_unknown'));
+        expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.short.cantCheck'));
     }, 120_000);
 
     it('does not display a settled passive result after the active Account lifetime restarts', async () => {
@@ -1108,8 +1110,9 @@ describe('VoiceProviderSection', () => {
             freshCheck.resolve({ ok: true, result: { v: 1, status: 'unavailable' } });
         });
         await waitForTestEvent(screen.subscribe, () => checkedReadinessRow(screen.tree)?.props.announcement,
-            announcement => typeof announcement === 'string' && announcement.includes(tLoose('voice.readiness.runtime_unknown')));
-        expect(checkedReadinessRow(screen.tree)?.props.announcement).toContain(tLoose('voice.readiness.runtime_unknown'));
+            announcement => typeof announcement === 'string' && announcement.includes(tLoose('voice.readiness.short.cantCheck')));
+        expect(checkedReadinessRow(screen.tree)?.props.announcement).toContain(tLoose('voice.readiness.short.cantCheck'));
+        expect(checkedReadinessRow(screen.tree)?.props.announcement).toContain('Codex Live');
     }, 120_000);
 
     it('does not commit a stale passive result after the active Account lifetime restarts', async () => {
@@ -1185,8 +1188,9 @@ describe('VoiceProviderSection', () => {
             freshCheck.resolve({ ok: true, result: { v: 1, status: 'unavailable' } });
         });
         await waitForTestEvent(screen.subscribe, () => checkedReadinessRow(screen.tree)?.props.announcement,
-            announcement => typeof announcement === 'string' && announcement.includes(tLoose('voice.readiness.runtime_unknown')));
-        expect(checkedReadinessRow(screen.tree)?.props.announcement).toContain(tLoose('voice.readiness.runtime_unknown'));
+            announcement => typeof announcement === 'string' && announcement.includes(tLoose('voice.readiness.short.cantCheck')));
+        expect(checkedReadinessRow(screen.tree)?.props.announcement).toContain(tLoose('voice.readiness.short.cantCheck'));
+        expect(checkedReadinessRow(screen.tree)?.props.announcement).toContain('Codex Live');
     }, 120_000);
 
     it('does not commit a delayed passive result after the selected daemon restarts', async () => {
@@ -1254,7 +1258,7 @@ describe('VoiceProviderSection', () => {
         expect(passiveSetupBoundary.invoke).toHaveBeenCalledTimes(2);
         const readiness = checkedReadinessRow(screen.tree);
         expect(readiness?.props.announcement).toContain(tLoose('voice.readiness.ready'));
-        expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.runtime_unknown'));
+        expect(readiness?.props.announcement).not.toContain(tLoose('voice.readiness.short.cantCheck'));
     }, 120_000);
 
     it('keeps the first passive setup check visibly and accessibly checking until it settles', async () => {
@@ -1462,7 +1466,8 @@ describe('VoiceProviderSection', () => {
             await primeCapabilities();
             await screen.update(render());
         });
-        expect(checkedReadinessRow(tree)?.props.announcement).toContain(tLoose('voice.readiness.runtime_unknown'));
+        expect(checkedReadinessRow(tree)?.props.announcement).toContain(tLoose('voice.readiness.short.cantCheck'));
+        expect(checkedReadinessRow(tree)?.props.announcement).toContain('Codex Live');
         expect(tree.root.findAllByProps({
             statusTestID: 'settings.voice.provider.readiness-status',
         })[0]?.props.transitionKey).not.toBe(terminalTransitionKey);

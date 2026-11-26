@@ -13,6 +13,7 @@ import { areProviderContributionKeysEqualV1, parseProviderContributionIdentityV1
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { readBuiltInSettingUiIdentifierTitleKey } from '@/components/settings/catalog/settingDeclarations';
+import { readVoiceSettingsDeclaration } from '@/voice/settings/voiceContributedSettingsDeclarations';
 import { useMcpServerCatalogForServer } from '@/components/settings/mcpServers/useMcpServersSettings';
 import { mcpServerDisplayName } from '@/components/settings/mcpServers/collection/mcpServerCollectionModel';
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
@@ -790,7 +791,8 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     }
     if (reference?.kind === 'setting') {
         const titleKey = readBuiltInSettingUiIdentifierTitleKey(reference.id);
-        return { text: titleKey ? t(titleKey) : reference.id, named: titleKey !== undefined };
+        const title = titleKey ? t(titleKey) : readVoiceSettingsDeclaration(reference.id, sources.localizePluginText)?.title;
+        return { text: title ?? reference.id, named: title !== undefined };
     }
     if (reference?.kind === 'providerContribution') {
         const declaration = declarations.find(row => areProviderContributionKeysEqualV1(row.contributionKey, reference.id));

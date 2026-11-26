@@ -15,6 +15,7 @@ import { SessionSynopsisV1Schema } from '@happier-dev/protocol/messages/structur
 import { SubagentCommandV1Schema } from '@happier-dev/protocol/messages/structured/subagentCommandV1';
 import { SubagentLaunchV1Schema } from '@happier-dev/protocol/messages/structured/subagentLaunchV1';
 import { VoiceAgentTurnV1Schema } from '@happier-dev/protocol/messages/structured/voiceAgentTurnV1';
+import { ConversationTurnV1Schema } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 import { ReviewFindingsMessageCard, projectReviewFindingsFindText } from '@/components/sessions/reviews/messages/ReviewFindingsMessageCard';
 import { ReviewFollowUpMessageCard, projectReviewFollowUpFindText } from '@/components/sessions/reviews/messages/ReviewFollowUpMessageCard';
 import { PlanOutputMessageCard, projectPlanOutputFindText } from '@/components/sessions/plans/messages/PlanOutputMessageCard';
@@ -242,7 +243,7 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
     },
     {
         kind: 'conversation_turn.v1',
-        schema: z.strictObject({ v: z.literal(1) }),
+        schema: ConversationTurnV1Schema,
         // The origin annotates ordinary turn text; it never replaces the body with a card.
         render: () => null,
         projectFindText: () => null,

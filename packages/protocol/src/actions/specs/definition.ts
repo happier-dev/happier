@@ -30,6 +30,7 @@ import type { TeamCredentialApprovalSource, TeamCredentialSourceSelection } from
 import type { TeamSetupBatchInputV1 } from '../../teams/setupBatchV1.js';
 import type { TeamMemberApprovalPresentation } from './teamMemberApproval.js';
 import type { HomeLayoutApprovalEffect } from './homeHub.js';
+import type { PortableSettingDeclarationV1 } from '../settings/settingsDeclarations.js';
 
 export type SessionVisualCopyApprovalSummaryInput = Readonly<{
   source: string;
@@ -57,6 +58,8 @@ export function formatGovernanceApprovalSummary(context: ApprovalPresentationCon
 
 /** What a presenting app knows that an approval summary may use; every field is optional. */
 export type ApprovalPresentationContext = Readonly<{
+  /** The presenting host's catalog supplies declaration labels and units, never mutation policy. */
+  readSettingDeclaration?: (anchor: string) => PortableSettingDeclarationV1 | null;
   /** Public labels captured for the exact Team admission operands. */
   teamMemberPresentation?: TeamMemberApprovalPresentation;
   /** Recipient-safe source names captured before admission, never selected adapter facts. */

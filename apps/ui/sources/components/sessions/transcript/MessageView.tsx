@@ -40,6 +40,9 @@ import {
 } from '@/components/sessions/transcript/messageSelection/resolveSelectableMessageText';
 import { prepareTranscriptMessageBody, readableMessageText, readTranscriptAttachmentsMeta, resolveTranscriptMessageDisplayText } from '@/components/sessions/transcript/messageDisplayText';
 import { renderStructuredMessage } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
+import { parseHappierMetaEnvelope } from './structured/happierMetaEnvelope';
+import { VoiceAgentTurnV1Schema } from '@happier-dev/protocol/messages/structured/voiceAgentTurnV1';
+import { ConversationTurnV1Schema } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 import { hasToolCarriedStructuredResultCard } from '@/components/sessions/transcript/structured/structuredToolResultCards';
 import { ForgeEvidenceInputCard } from '@/components/sessions/transcript/forgeEvidence/ForgeEvidenceInputCard';
 import { readSessionInputForgeEvidenceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
@@ -501,11 +504,19 @@ function resolveMessageMetaText(input: Readonly<{
   showTimestamp: boolean;
   createdAt: number;
   voiceTurnRole: 'user' | 'assistant' | null;
+  meta: unknown;
 }>): string | null {
   const time = input.showTimestamp ? formatTranscriptMessageTimestamp(input.createdAt) : null;
   if (!input.voiceTurnRole) return time;
-  const marker = t(input.voiceTurnRole === 'user' ? 'voiceMoments.spokenTurn' : 'voiceMoments.spokenAloud');
-  return time ? `${marker} · ${time}` : marker;
+  const envelope = parseHappierMetaEnvelope(input.meta);
+  const schema = envelope?.kind === 'voice_agent_turn.v1' ? VoiceAgentTurnV1Schema
+    : envelope?.kind === 'conversation_turn.v1' ? ConversationTurnV1Schema : null;
+  const parsed = schema?.safeParse(envelope?.payload);
+  const deviceDisplayName = parsed?.success ? parsed.data.deviceDisplayName?.trim() : null;
+  const marker = t(input.voiceTurnRole === 'user' ? 'voiceMoments.spokenTurn'
+    : deviceDisplayName ? 'voicePresence.title' : 'voiceMoments.spokenAloud');
+  const provenance = deviceDisplayName ? `${marker} · ${deviceDisplayName}` : marker;
+  return time ? `${provenance} · ${time}` : provenance;
 }
 
 function resolveMessageTimestampPresentation(input: {
@@ -1107,6 +1118,7 @@ function UserTextBlock(props: {
     showTimestamp: timestampPresentation.showTimestamp,
     createdAt: props.message.createdAt,
     voiceTurnRole: messageDisplay.isVoiceAgentTurn ? 'user' : null,
+    meta: props.message.meta,
   });
   // A Voice turn's marker carries the Voice planet, as the conversation's other Voice lines do.
   const timestampGlyph = messageDisplay.isVoiceAgentTurn ? 'planet' as const : undefined;
@@ -1523,6 +1535,7 @@ function AgentTextBlock(props: {
     showTimestamp: timestampPresentation.showTimestamp,
     createdAt: props.message.createdAt,
     voiceTurnRole: messageDisplay.isVoiceAgentTurn ? 'assistant' : null,
+    meta: props.message.meta,
   });
   // A Voice turn's marker carries the Voice planet, as the conversation's other Voice lines do.
   const timestampGlyph = messageDisplay.isVoiceAgentTurn ? 'planet' as const : undefined;

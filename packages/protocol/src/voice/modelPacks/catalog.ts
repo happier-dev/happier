@@ -67,7 +67,7 @@ export const MODEL_PACK_CATALOG = [
     packId: KOKORO_DEFAULT_TTS_PACK_ID,
     kind: 'tts_sherpa',
     model: 'kokoro-int8-multi-lang-v1_1',
-    displayName: 'Kokoro v1.0 (q8)',
+    displayName: 'Kokoro',
     runtimeFamily: 'sherpa_kokoro_offline',
     defaultFor: 'tts_sherpa',
     runtimeArtifacts: {

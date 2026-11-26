@@ -95,7 +95,7 @@ export type VoiceSessionSnapshot = Readonly<{
   errorRecoveryAction?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineRecoveryAction;
   errorPresentation?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineErrorPresentation;
   presentationState?: VoiceSessionPresentationState;
-  /** The owned realtime reconnect scheduler has a pending backoff slot. */
+  /** The owned realtime controller admits Retry throughout reconnecting. */
   reconnectRetryAvailable?: boolean;
   /** The current connected adapter's accepted application snapshot. Unknown is omitted. */
   inputDeviceLabel?: string;

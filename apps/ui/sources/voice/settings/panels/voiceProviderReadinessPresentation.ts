@@ -1,7 +1,10 @@
 import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
 import { t, tLoose } from '@/text';
 
-export function translateVoiceReadiness(key: string, params?: { service: string }): string {
+export function translateVoiceReadiness(key: string, params?: { service: string; machine?: string }): string {
+  if (key === 'voice.readiness.runtime_unknown' && params?.service) {
+    return t('voice.readiness.runtime_unknown_named', params);
+  }
   if (key === 'voice.readiness.voice_feature_policy_disabled') {
     return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.voice') });
   }
@@ -58,18 +61,21 @@ export function isVoiceReadinessCouldNotCheck(
 
 export function resolveVoiceProviderReadinessPresentation(
   readiness: Pick<VoiceRoleReadiness, 'status' | 'code' | 'reasonKey' | 'recoveryAction' | 'selectedAgent'>,
-  translate: (key: string, params?: { service: string }) => string,
+  translate: (key: string, params?: { service: string; machine?: string }) => string,
   service?: string,
-  credential?: Readonly<{ resolving: boolean }>,
+  context?: Readonly<{ resolving?: boolean; machineName?: string }>,
 ): VoiceProviderReadinessPresentation {
-  if (readiness.code === 'credential_unknown' && credential?.resolving) {
+  if (readiness.code === 'credential_unknown' && context?.resolving) {
     const checking = translate('profiles.requirements.checking');
     return { checking: true, summary: checking, reason: checking, action: null, short: checking };
   }
   const summary = readiness.code === 'agent_signed_out' && readiness.selectedAgent
     ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: readiness.selectedAgent.title,
       machine: readiness.selectedAgent.machineLabel ?? readiness.selectedAgent.runtimeTarget?.machineId ?? '' })
-    : translate(readiness.reasonKey, service ? { service } : undefined);
+    : translate(readiness.reasonKey, {
+      service: (readiness.code === 'runtime_unknown' ? readiness.selectedAgent?.title : undefined) ?? service ?? t('voicePresence.title'),
+      machine: readiness.selectedAgent?.machineLabel ?? context?.machineName,
+    });
   if (readiness.status === 'ready') {
     return { summary, reason: null, action: null, short: null };
   }

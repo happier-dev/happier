@@ -2981,6 +2981,10 @@ export const XAI_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManifestProj
                     "max": 10000,
                     "min": 0,
                     "nullable": true,
+                    "numberDisplay": {
+                      "divisor": 1000,
+                      "unit": "s"
+                    },
                     "path": "turnDetection.silenceDurationMs",
                     "promptBodyKey": "settingsVoice.realtimeProviders.fields.turnDetection.silenceDurationMs.promptBody",
                     "promptTitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.silenceDurationMs.promptTitle",
@@ -2993,6 +2997,10 @@ export const XAI_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManifestProj
                     "max": 10000,
                     "min": 0,
                     "nullable": true,
+                    "numberDisplay": {
+                      "divisor": 1000,
+                      "unit": "s"
+                    },
                     "path": "turnDetection.prefixPaddingMs",
                     "promptBodyKey": "settingsVoice.realtimeProviders.fields.turnDetection.prefixPaddingMs.promptBody",
                     "promptTitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.prefixPaddingMs.promptTitle",
@@ -3008,6 +3016,10 @@ export const XAI_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManifestProj
                     "max": 600000,
                     "min": 1,
                     "nullable": true,
+                    "numberDisplay": {
+                      "divisor": 1000,
+                      "unit": "s"
+                    },
                     "path": "turnDetection.idleTimeoutMs",
                     "promptBodyKey": "settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.promptBody",
                     "promptTitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.promptTitle",

@@ -34,7 +34,7 @@ describe('resolveVoiceSurfaceRecovery', () => {
     expect(resolveVoiceSurfaceRecovery(null)).toBeNull();
   });
 
-  it('offers Retry while a lost connection waits between tries, and the failure\'s own remedy first', () => {
+  it('offers the runtime-admitted Retry throughout reconnecting, and the failure\'s own remedy first', () => {
     expect(resolveVoiceSurfaceRecovery(resolveVoiceSnapshotRecoveryAction({ presentationState: 'reconnecting', reconnectRetryAvailable: true })))
       .toEqual({ kind: 'retry', labelKey: 'common.retry', icon: 'arrow-clockwise' });
     expect(resolveVoiceSnapshotRecoveryAction({ presentationState: 'reconnecting' })).toBeNull();

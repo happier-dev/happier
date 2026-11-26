@@ -7,6 +7,7 @@ import { readPortableAccountSettingBindingV1 } from './accountSettingBindings.js
 import { applyAtmosphereLayoutDefault, type HomeAtmosphere } from '../../account/settings/homeAtmosphere.js';
 import { readCollectionSpaceDeletionApprovalV1 } from './collectionSpaceApproval.js';
 import { getFeatureAliases, isFeatureId } from '../../features/catalog.js';
+import type { SettingNumberDisplayV1 } from './settingNumberDisplay.js';
 
 export type PortableSettingStorageV1 = Readonly<{
   scope: 'account' | 'local' | 'home' | 'team' | 'project';
@@ -29,6 +30,8 @@ export type PortableSettingDeclarationV1 = Readonly<{
   sectionId: string;
   titleKey: string;
   title: string;
+  /** Display-only units; mutation operands retain their declared storage representation. */
+  numberDisplay?: SettingNumberDisplayV1;
   descriptionKey?: string;
   description?: string;
   keywordKeys?: readonly string[];
@@ -145,25 +148,35 @@ function describeThemeModeValue(value: unknown): string | null {
  * reads as the choice it makes. Declarations whose value is already a short scalar need no description.
  */
 export function describeSettingsDeclarationValueV1(declaration: PortableSettingDeclarationV1, value: unknown): string | null {
+  if (declaration.numberDisplay && typeof value === 'number') {
+    // Intl formats decimal percentages without exposing binary multiplication artifacts.
+    if (declaration.numberDisplay.unit === '%') {
+      const percent = new Intl.NumberFormat('en', { style: 'percent', useGrouping: false, maximumFractionDigits: 20 });
+      return `${percent.formatToParts(value).filter(part => part.type !== 'percentSign').map(part => part.value).join('').trim()} %`;
+    }
+    return `${value / declaration.numberDisplay.divisor} ${declaration.numberDisplay.unit}`;
+  }
   // This host-private compound edit has no public replacement value to review.
   if (declaration.storage?.owner === 'voiceSettingsEditBinding' && value === null) return `Change “${declaration.title}”`;
   return declaration.storage?.owner === 'themeModeStorageBinding' ? describeThemeModeValue(value) : null;
 }
 
 /** The review shows a described value in place of its raw members; other inputs pass through unchanged. */
-export function projectSettingsDeclarationApprovalInputV1(actionId: SettingsDeclarationActionIdV1, input: unknown): unknown {
+export function projectSettingsDeclarationApprovalInputV1(actionId: SettingsDeclarationActionIdV1, input: unknown,
+  readDeclaration: (anchor: string) => PortableSettingDeclarationV1 | null = readBuiltInSettingDeclarationV1): unknown {
   const parsed = SettingsDeclarationActionInputSchemasV1[actionId].safeParse(input);
   if (!parsed.success || actionId !== 'settings.set' || !('anchor' in parsed.data) || !('value' in parsed.data)) return input;
-  const declaration = readBuiltInSettingDeclarationV1(parsed.data.anchor);
+  const declaration = readDeclaration(parsed.data.anchor);
   const described = declaration ? describeSettingsDeclarationValueV1(declaration, parsed.data.value) : null;
   return described === null ? input : { ...parsed.data, value: described };
 }
 
 /** Approval copy consumes the same declaration that names the setting on its page and in discovery. */
-export function describeSettingsDeclarationApprovalSummaryV1(actionId: SettingsDeclarationActionIdV1, input: unknown): string | null {
+export function describeSettingsDeclarationApprovalSummaryV1(actionId: SettingsDeclarationActionIdV1, input: unknown,
+  readDeclaration: (anchor: string) => PortableSettingDeclarationV1 | null = readBuiltInSettingDeclarationV1): string | null {
   const parsed = SettingsDeclarationActionInputSchemasV1[actionId].safeParse(input);
   if (!parsed.success || !('anchor' in parsed.data)) return null;
-  const declaration = readBuiltInSettingDeclarationV1(parsed.data.anchor);
+  const declaration = readDeclaration(parsed.data.anchor);
   if (!declaration) return null;
   if (actionId === 'settings.invoke') {
     const collectionDeletion = readCollectionSpaceDeletionApprovalV1(parsed.data);
@@ -175,7 +188,7 @@ export function describeSettingsDeclarationApprovalSummaryV1(actionId: SettingsD
   }
   const name = `“${declaration.title}”`;
   const described = actionId === 'settings.set' && 'value' in parsed.data ? describeSettingsDeclarationValueV1(declaration, parsed.data.value) : null;
-  const effect = described !== null ? `${described}.` : actionId === 'settings.set'
+  const effect = described !== null ? declaration.numberDisplay ? `Change ${name} to ${described}.` : `${described}.` : actionId === 'settings.set'
     ? `Change ${name}${!declaration.sensitive && 'value' in parsed.data && (parsed.data.value === null || typeof parsed.data.value !== 'object')
       ? ` to ${JSON.stringify(parsed.data.value)}` : ''}.`
     : actionId === 'settings.reset' ? `Reset ${name} to its default.`

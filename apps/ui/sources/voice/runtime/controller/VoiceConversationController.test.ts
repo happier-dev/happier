@@ -23,6 +23,7 @@ import { useVoiceConversationRuntimeStore } from '@/voice/runtime/machine/voiceC
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import { resolveVoiceAttemptControl } from '@/components/voice/attempt/resolveVoiceAttemptControl';
 import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
+import { resolveVoiceSnapshotRecoveryAction } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import { readVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { storage } from '@/sync/domains/state/storage';
@@ -1018,12 +1019,15 @@ describe('VoiceConversationController', () => {
       expect(firstPeer.close).toHaveBeenCalledTimes(1);
       expect(connectedPublications).toBe(1);
       expect(composed.runtime.adapter.getSnapshot().status).toBe('connecting');
+      expect(resolveVoiceSnapshotRecoveryAction(composed.runtime.adapter.getSnapshot())).toBe('retry');
       browser.peer.channel.open();
       await expect(reconnecting).resolves.toBe(true);
       expect(connectedPublications).toBe(2);
       expect(composed.controller?.getOwnedAttemptId()).toBe(ownedAttempt);
       expect(composed.runtime.adapter.getSnapshot().status).toBe('connected');
       expect(useVoiceConversationRuntimeStore.getState().snapshot.reconnecting).toBe(false);
+      expect(composed.runtime.adapter.getSnapshot().reconnectRetryAvailable).toBeUndefined();
+      expect(resolveVoiceSnapshotRecoveryAction(composed.runtime.adapter.getSnapshot())).toBeNull();
     } finally {
       unsubscribe();
       vi.useRealTimers();
@@ -2040,8 +2044,17 @@ describe('VoiceConversationController', () => {
     // Six physical failures cross the removed five-attempt cutoff. The contract
     // is continued, paced recovery until End or a fresh Start, not a new budget.
     const gates = Array.from({ length: 6 }, () => conversation.sdk.holdNextOpen());
+    const reconnectRecoveries: Array<ReturnType<typeof resolveVoiceSnapshotRecoveryAction>> = [];
+    machineSubscriptions.push(conversation.adapter.subscribe!(() => {
+      const snapshot = conversation.adapter.getSnapshot();
+      if (snapshot.presentationState === 'reconnecting') {
+        reconnectRecoveries.push(resolveVoiceSnapshotRecoveryAction(snapshot));
+      }
+    }));
     const expectEndAvailable = () => {
       const snapshot = conversation.adapter.getSnapshot();
+      expect(snapshot.reconnectRetryAvailable).toBe(true);
+      expect(resolveVoiceSnapshotRecoveryAction(snapshot)).toBe('retry');
       expect(resolveVoiceAttemptControl({
         ...snapshot,
         surfaceState: resolveVoiceSurfaceState(snapshot),
@@ -2063,6 +2076,10 @@ describe('VoiceConversationController', () => {
           budget.baseBackoffMs * budget.backoffFactor ** (slot - 1)));
         expectEndAvailable();
         await Promise.race([gate.entered, reconnecting]);
+        // B2: Retry stays offered during the physical connection attempt too,
+        // without withdrawing it on intermediate reconnect publications.
+        expectEndAvailable();
+        expect(new Set(reconnectRecoveries)).toEqual(new Set(['retry']));
         expect(conversation.sdk.openCount).toBe(slot + 1);
         expect(conversation.getController().getOwnedAttemptId()).toBe(firstAttempt);
         gate.reject(new Error('offline'));

@@ -1,4 +1,5 @@
-import { getSettingsDeclarationCatalogV1, voiceSettingsPageIds } from '@happier-dev/protocol/actions/settings/settingsDeclarationCatalog';
+import { getSettingsDeclarationCatalogV1, readSettingsCatalogDeclarationV1, voiceSettingsPageIds } from '@happier-dev/protocol/actions/settings/settingsDeclarationCatalog';
+import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { createVoiceProviderFieldBinding } from '@happier-dev/protocol/voice/settings/providerFieldBinding';
 import { defineSettingsPage, SETTING_VALUE_UNAVAILABLE, type SettingDeclaration, type SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
 import type { SettingsPageId } from '@/components/settings/catalog/types';
@@ -69,18 +70,38 @@ function providerFieldBinding(
     };
 }
 
-/** Projection of the admitted registry, not a second field catalog or provider-id table. */
-export function getVoiceContributedSettingsDeclarations(
-    registry: VoiceProviderRegistry = voiceSettingsDeclarationRegistry,
+function voiceSettingsLabel(
+    registry: VoiceProviderRegistry,
     localize?: PluginLocalizedTextResolver,
 ) {
-    const label = (entry: Pick<VoiceProviderRegistryEntry, 'providerId'>, value: unknown) => {
+    return (entry: Pick<VoiceProviderRegistryEntry, 'providerId'>, value: unknown) => {
         const current = registry.get(entry.providerId);
         return current?.source.kind !== 'external' && typeof value === 'string'
             ? String(tLoose(value))
             : localize?.(current?.pluginId ?? '', value) ?? resolvePluginLocalizedText({ projection: null, pluginId: current?.pluginId ?? '', value });
     };
-    const catalog = getSettingsDeclarationCatalogV1(registry, label);
+}
+
+/** Pages and approvals consume the same localized projection of the admitted registry. */
+export function getVoiceSettingsDeclarationCatalog(
+    registry: VoiceProviderRegistry = voiceSettingsDeclarationRegistry,
+    localize?: PluginLocalizedTextResolver,
+) {
+    return getSettingsDeclarationCatalogV1(registry, voiceSettingsLabel(registry, localize));
+}
+
+export function readVoiceSettingsDeclaration(anchor: string, localize?: PluginLocalizedTextResolver) {
+    return readBuiltInSettingDeclarationV1(anchor)
+        ?? readSettingsCatalogDeclarationV1(getVoiceSettingsDeclarationCatalog(voiceSettingsDeclarationRegistry, localize), anchor);
+}
+
+/** Projection of the admitted registry, not a second field catalog or provider-id table. */
+export function getVoiceContributedSettingsDeclarations(
+    registry: VoiceProviderRegistry = voiceSettingsDeclarationRegistry,
+    localize?: PluginLocalizedTextResolver,
+) {
+    const catalog = getVoiceSettingsDeclarationCatalog(registry, localize);
+    const label = voiceSettingsLabel(registry, localize);
     const speechDeclarations = new Map(registry.list().map(entry => [entry.providerId, readBundledSpeechSettingsDescriptorFromEntry(entry.providerId, entry)]));
     const pages = new Map<string, { pageId: SettingsPageId; section: string; title: string; fields: Record<string, SettingDeclaration> }>();
     for (const row of catalog) {
@@ -93,6 +114,7 @@ export function getVoiceContributedSettingsDeclarations(
         const declaration = 'declaration' in entry ? entry.declaration : undefined;
         const path = row.storage?.options?.[1];
         const field: { -readonly [K in keyof SettingDeclaration]: SettingDeclaration[K] } = { titleKey: 'settingsVoice.providerSectionTitle', title: row.title,
+            ...(row.numberDisplay ? { numberDisplay: row.numberDisplay } : {}),
             ...(row.description ? { description: row.description } : {}), contribution: row.contribution,
             ...(row.sensitive ? { sensitive: true } : {}),
         };

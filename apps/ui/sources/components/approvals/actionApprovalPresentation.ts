@@ -27,6 +27,7 @@ import { isDiscussionPostActionIdV1, type DiscussionExternalSourceV1 } from '@ha
 import { SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { getNewSessionDraftActionIdentity } from '@/components/sessions/new/hooks/useNewSessionDraftPresentation';
+import { readVoiceSettingsDeclaration } from '@/voice/settings/voiceContributedSettingsDeclarations';
 
 export type ActionApprovalPresentationInput = Readonly<{
     actionId: string;
@@ -129,7 +130,7 @@ export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalS
     const captured = readWidgetApprovalPresentationV1(preview) || readTeamCredentialApprovalSources(preview).length > 0;
     const canonical = !captured && spec.approvalPresentation
         && (spec.inputSchema.safeParse(request.actionArgs).success || spec.approvalPresentation.inputSchema?.safeParse(request.actionArgs).success)
-        ? spec.approvalPresentation.summary?.(request.actionArgs) : null;
+        ? spec.approvalPresentation.summary?.(request.actionArgs, { readSettingDeclaration: readVoiceSettingsDeclaration }) : null;
     // A generic Action description cannot replace copy supplied by the receiving owner.
     const authoredSummary = canonical && canonical !== spec.description?.trim() && canonical !== spec.inputHints?.description?.trim()
         ? canonical : storedSummary;
@@ -300,6 +301,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     let homeLayoutTitle: string | null = null;
     const phase = readGovernanceApprovalPhase(input);
     const summarySource = buildApprovalPreviewSummary(spec, input.actionArgs, {
+        readSettingDeclaration: readVoiceSettingsDeclaration,
         ...(input.formatPath ? { formatPath: input.formatPath } : {}), ...(widgetPresentation ? { widgetPresentation } : {}),
         teamCredentialSources: spawnCredentialSuffix ? [] : teamCredentialSources,
         ...(teamMember ? { teamMemberPresentation: teamMember } : {}),

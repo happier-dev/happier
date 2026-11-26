@@ -1,5 +1,16 @@
 # Compatibility and version skew
 
+## Spoken-turn device labels (unreleased 0.3)
+
+The persisted presentation payloads `conversation_turn.v1` and
+`voice_agent_turn.v1` accept optional `deviceDisplayName`. The local Voice
+transcript projector captures the existing local device label when known;
+unknown labels are omitted. Current readers keep earlier label-free turns
+readable. Load matching 0.3 development presentation readers to display device
+labels on `conversation_turn.v1` turns.
+The label carries no identity, routing or authorization meaning. Channel and
+modality provenance, turn identities and wire epochs are unchanged.
+
 ## Initial Task relationship failure causes (unreleased 0.3)
 
 The closed Triage `tasks/create-v1` aggregate result optionally carries
@@ -7372,6 +7383,15 @@ The existing Settings schema still reads stored suppression fields. Updated UI a
 must load together; no dual writer or older-development-client rollback is promised.
 
 ### Voice duration settings (0.3 development)
+
+Unreleased 0.3 numeric Voice presentation fields and subfields can declare
+`numberDisplay` for milliseconds shown in seconds or ratios shown as percentages.
+The Settings Catalog carries this display metadata into approval review; the
+admitted numeric Action input and stored provider configuration keep their units.
+This optional metadata extends the closed `voice.provider-settings.v1` declaration
+under the unpublished 0.3 direct cut: load matching plugin declarations and strict
+host readers together. Omitted metadata retains the previous display. There is
+no persisted format change, migration or compatibility adapter.
 
 The canonical Local conversation and Local direct settings schemas accept
 positive integer speech-request timeouts, retaining only the JavaScript timer

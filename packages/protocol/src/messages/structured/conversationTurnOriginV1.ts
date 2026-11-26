@@ -8,6 +8,14 @@ import { PluginIdSchema } from '../../plugins/pluginId.js';
 
 export const CONVERSATION_TURN_ORIGIN_META_FIELD_V1 = 'conversationTurnOriginV1';
 
+/** Presentation payload; channel and modality remain owned by ConversationTurnOriginV1. */
+export const ConversationTurnV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  deviceDisplayName: z.optional(z.string().check(z.minLength(1))),
+}));
+
+export type ConversationTurnV1 = z.infer<typeof ConversationTurnV1Schema>;
+
 const ConversationTurnOriginSourceV1Schema = lazyZodSchema(() => z.strictObject({
   pluginId: asProtocolZod(PluginIdSchema),
   contributionId: asProtocolZod(PluginContributionLocalIdSchema),

@@ -1,4 +1,4 @@
-import { REALTIME_CONVERSATION_VOICE_TURN_ORIGIN_V1, type ConversationTurnOriginV1 } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import { REALTIME_CONVERSATION_VOICE_TURN_ORIGIN_V1, type ConversationTurnOriginV1, type ConversationTurnV1 } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 import { deriveVoiceAgentTurnLocalId, deriveVoiceAgentTurnProvisionalLocalId, readVoiceAgentTurnPayloadFromMeta, readVoiceAgentTurnProvisionalLocalId } from '@happier-dev/protocol/messages/structured/voiceAgentTurnLocalId';
 import type { VoiceAgentTurnV1 } from '@happier-dev/protocol/messages/structured/voiceAgentTurnV1';
 import type { VoiceTranscriptCanonicalEventV1 } from '@happier-dev/protocol/voice/realtime/events';
@@ -11,6 +11,9 @@ import {
 } from "@happier-dev/session-core/messages";
 import type { PersistSessionTranscriptMessageInput } from "@happier-dev/session-core/messages";
 import { storage } from '@/sync/domains/state/storage';
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabel';
 import type { NormalizedMessage, RawRecord } from "@happier-dev/session-core/raw";
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
@@ -73,6 +76,7 @@ function buildVoiceTurnMeta(turn: VoiceTranscriptTurn | null): NormalizedMessage
     const runId = normalizeNonEmptyString(turn.runId);
     const streamId = normalizeNonEmptyString(turn.streamId);
     const requestId = normalizeNonEmptyString(turn.requestId);
+    const deviceDisplayName = resolveLocalDeviceLabel({ deviceName: Constants.deviceName, platform: Platform.OS });
     return {
         happier: {
             kind: 'voice_agent_turn.v1',
@@ -85,6 +89,7 @@ function buildVoiceTurnMeta(turn: VoiceTranscriptTurn | null): NormalizedMessage
                 ...(runId ? { runId } : {}),
                 ...(streamId ? { streamId } : {}),
                 ...(requestId ? { requestId } : {}),
+                ...(deviceDisplayName ? { deviceDisplayName } : {}),
             } satisfies VoiceAgentTurnV1,
         },
     };
@@ -93,10 +98,11 @@ function buildVoiceTurnMeta(turn: VoiceTranscriptTurn | null): NormalizedMessage
 export function buildRealtimeConversationTurnMeta(
     source?: RealtimeConversationTurnSource,
 ): NormalizedMessage['meta'] {
+    const deviceDisplayName = resolveLocalDeviceLabel({ deviceName: Constants.deviceName, platform: Platform.OS });
     return {
         happier: {
             kind: 'conversation_turn.v1',
-            payload: { v: 1 },
+            payload: { v: 1, ...(deviceDisplayName ? { deviceDisplayName } : {}) } satisfies ConversationTurnV1,
             conversationTurnOriginV1: {
                 ...REALTIME_CONVERSATION_VOICE_TURN_ORIGIN_V1,
                 ...(source ? { source } : {}),

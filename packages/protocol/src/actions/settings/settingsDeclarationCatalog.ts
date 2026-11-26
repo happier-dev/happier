@@ -43,6 +43,7 @@ function projectContributedDeclarations(entry: VoiceSettingsRegistryEntry, local
         fields.set(id, { titleKey: 'settingsVoice.providerSectionTitle', title: text(title, path),
             ...(description ? { description: text(description) } : {}), contribution, sensitive, targetKinds: [],
             ...(providerFieldPresentation ? { providerFieldPresentation } : {}),
+            ...(providerFieldPresentation?.numberDisplay ? { numberDisplay: providerFieldPresentation.numberDisplay } : {}),
             ...(sensitive ? { storage: { scope: 'account', kind: 'owner', access: 'sensitive' },
                 operation: { kind: 'interaction', requiresHumanInteraction: true } }
                 : { storage: { scope: 'account', kind: 'owner', access: 'read_write',

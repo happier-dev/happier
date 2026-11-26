@@ -16,6 +16,8 @@ export const VoiceAgentTurnV1Schema = lazyZodSchema(() => z.looseObject({
   runId: z.optional(z.string().check(z.minLength(1))),
   streamId: z.optional(z.string().check(z.minLength(1))),
   requestId: z.optional(z.string().check(z.minLength(1))),
+  /** Presentation only: the local device that captured or played this turn, when known. */
+  deviceDisplayName: z.optional(z.string().check(z.minLength(1))),
   ts: z.number().check(z.int(), z.minimum(0)),
 }));
 

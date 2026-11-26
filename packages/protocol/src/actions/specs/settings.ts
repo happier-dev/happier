@@ -77,8 +77,8 @@ export const SETTINGS_ADMINISTRATION_ACTION_SPECS: ActionSpecArrayConcat<readonl
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_') },
     surfaces: { ui: true, cli: true, rpc: true, agent: true, mcp: true, voice: true },
     inputSchema: SettingsDeclarationActionInputSchemasV1[id], outputSchema: SettingsDeclarationActionOutputSchemasV1[id],
-    approvalPresentation: { summary: (input: unknown) => describeSettingsDeclarationApprovalSummaryV1(id, input),
-      projectInput: (input: unknown) => projectSettingsDeclarationApprovalInputV1(id, input) },
+    approvalPresentation: { summary: (input, context) => describeSettingsDeclarationApprovalSummaryV1(id, input, context?.readSettingDeclaration),
+      projectInput: (input, context) => projectSettingsDeclarationApprovalInputV1(id, input, context?.readSettingDeclaration) },
     inputHints: { fields: id === 'settings.list'
       ? [{ path: 'pageId', title: 'Settings page', widget: 'text',
         description: 'Optional exact page id from settings discovery, not a display name. Omit to list all settings and discover their page ids, displayed titles, anchors and allowed values. Built-in page ids: '

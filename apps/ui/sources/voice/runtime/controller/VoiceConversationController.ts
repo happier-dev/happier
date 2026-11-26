@@ -79,7 +79,7 @@ export type VoiceConversationControllerMachinePort = Readonly<{
     controlSessionId: string;
     attemptId: number;
     active: boolean;
-    /** True only while the next retained reconnect slot is waiting. */
+    /** True throughout reconnecting; Retry expedites waiting backoff or joins the active try. */
     retryAvailable?: boolean;
   }>): void;
   connected(input: Readonly<{ controlSessionId: string; attemptId: number }>): void;
@@ -536,12 +536,6 @@ export function createVoiceConversationController(
     const reconnectPromise = (async () => {
     attempt.reconnecting = true;
     void attempt.heldInput?.cancel().catch(() => undefined);
-    deps.machine.reconnecting?.({
-      controlSessionId: attempt.controlSessionId,
-      attemptId: attempt.id,
-      active: true,
-      retryAvailable: false,
-    });
     const previousConnection = attempt.connection;
     try {
       if (reason === 'auth_refresh') {
@@ -586,14 +580,6 @@ export function createVoiceConversationController(
           attempt.abortController.signal.removeEventListener('abort', abortBackoff);
           if (attempt.pendingReconnectBackoffAbortController === backoffAbortController) {
             attempt.pendingReconnectBackoffAbortController = null;
-          }
-          if (owns(attempt) && attempt.reconnecting) {
-            deps.machine.reconnecting?.({
-              controlSessionId: attempt.controlSessionId,
-              attemptId: attempt.id,
-              active: true,
-              retryAvailable: false,
-            });
           }
         }
         if (!owns(attempt)) return;

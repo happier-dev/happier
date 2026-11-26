@@ -1,5 +1,6 @@
 import { lazyZodSchema, lazyDefinition } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { SettingNumberDisplayV1Schema } from '../../actions/settings/settingNumberDisplay.js';
 import { valid as semverValid } from 'semver';
 
 import {
@@ -481,6 +482,7 @@ const VoiceProviderSettingsPresentationSubfieldSchema = lazyZodSchema(() => z.st
   reset: z.optional(z.number()),
   integer: z.optional(z.boolean()),
   nullable: z.optional(z.boolean()),
+  numberDisplay: z.optional(SettingNumberDisplayV1Schema),
   requiresOptIn: z.optional(z.boolean()),
 }));
 
@@ -521,6 +523,7 @@ export const VoiceProviderSettingsPresentationFieldSchema = lazyZodSchema(() => 
   defaultValue: z.optional(VoiceJsonScalarSchema),
   /** Presentation only; stored and agent-edited numeric values remain unformatted. */
   valueSuffix: z.optional(z.string()),
+  numberDisplay: z.optional(SettingNumberDisplayV1Schema),
   /** The shared numeric field control; its increment is declared, never guessed by the host. */
   numericControl: z.optional(z.literal('stepper')),
   unitKey: z.optional(VoiceProviderSettingsPresentationTextSchema),
