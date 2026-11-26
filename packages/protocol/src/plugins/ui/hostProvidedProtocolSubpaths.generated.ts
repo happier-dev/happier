@@ -2048,6 +2048,7 @@ export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_SPECIFIERS: readonly string[] = Ob
     '@happier-dev/protocol/projects/deploymentCreationDefaultsV1',
     '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1',
     '@happier-dev/protocol/projects/openProjectDraftV1',
+    '@happier-dev/protocol/projects/openProjectRefusalV1',
     '@happier-dev/protocol/projects/openProjectV1',
     '@happier-dev/protocol/projects/projectAccountRowCipherV1',
     '@happier-dev/protocol/projects/projectAccountRowsV1',
