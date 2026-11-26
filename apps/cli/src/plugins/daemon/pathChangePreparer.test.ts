@@ -52,6 +52,7 @@ import { createPluginReloadController } from '@/plugins/runtime/reload/controlle
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { presentMachineAuthorityV1, type MachineDaemonRightsV1 } from '@happier-dev/protocol';
 import { createExternalStoreKind } from '../../../../../packages/plugin-sdk/examples/public-authoring/storeKinds';
+import { evaluatePortableCommonJs } from '../../../../../packages/plugin-sdk/src/test-support/evaluatePortableCommonJs';
 
 const BUNDLED_PLUGIN_ROOT = resolve(import.meta.dirname, '../../../../../packages/plugins/codex');
 
@@ -81,8 +82,13 @@ async function buildUiWithManagedProcessBoundary(
       }
       const { runPluginBuildUiCli } = await import('../../../../../packages/plugin-sdk/src/ui/build/bin');
       const errors: string[] = [];
-      const exitCode = await runPluginBuildUiCli({ argv: spawnInput.args.slice(1), cwd: spawnInput.cwd, onError: (message) => errors.push(message) });
-      return { exitCode, signal: null, stdout: '', stderr: errors.join('\n') };
+      vi.stubEnv('HAPPIER_PLUGIN_UI_BUILD_FROM_SOURCE', spawnInput.env.HAPPIER_PLUGIN_UI_BUILD_FROM_SOURCE);
+      try {
+        const exitCode = await runPluginBuildUiCli({ argv: spawnInput.args.slice(1), cwd: spawnInput.cwd, onError: (message) => errors.push(message) });
+        return { exitCode, signal: null, stdout: '', stderr: errors.join('\n') };
+      } finally {
+        vi.unstubAllEnvs();
+      }
     },
   });
 }
@@ -720,6 +726,56 @@ await runPluginAuthorMaterializationChild();
       expect(nextInventory.entries).toEqual([]);
       await expect(readFile(join(pluginRoot, 'dist/happier-plugin-ui/hosted-web/panel/index.html'))).rejects.toMatchObject({ code: 'ENOENT' });
       await next.cleanup();
+    }
+  });
+
+  it.each([
+    { exportKey: '.', importSuffix: '' },
+    { exportKey: './ui', importSuffix: '/ui' },
+  ])('prepares executable development UI from linked workspace export $exportKey before it emits dist', async ({ exportKey, importSuffix }) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-cold-ui-'));
+    roots.push(root);
+    const pluginRoot = join(root, 'plugin');
+    const dependencyRoot = join(root, 'workspace-dependency');
+    const dependencyName = '@happier-dev/cold-ui-dependency';
+    await mkdir(join(pluginRoot, 'node_modules/@happier-dev'), { recursive: true });
+    await mkdir(join(dependencyRoot, 'src'), { recursive: true });
+    await symlink(dependencyRoot, join(pluginRoot, 'node_modules', dependencyName), 'junction');
+    await writeFile(join(dependencyRoot, 'package.json'), JSON.stringify({
+      name: dependencyName, version: '0.0.0', type: 'module',
+      exports: { [exportKey]: { 'happier-source': './src/surface.ts', default: './dist/surface.js' } },
+    }));
+    await writeFile(join(dependencyRoot, 'src/surface.ts'), 'export const value: string = "workspace-source";');
+    await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({
+      name: 'cold-ui-plugin', type: 'module', dependencies: { [dependencyName]: '0.0.0' },
+      exports: { './happier-plugin-ui/panel': './panel.ts' },
+    }));
+    const manifest = createPluginManifestV2Fixture({
+      id: 'acme.cold-ui',
+      entrypoints: { development: './index.ts' },
+      contributes: { ui: { renderers: [{ id: 'panel', kind: 'reactNative', artifact: 'panel' }] } },
+    });
+    await writeFile(join(pluginRoot, 'index.ts'), `export const manifest = ${JSON.stringify(manifest)};\nexport function activate() {}\n`);
+    await writeFile(join(pluginRoot, 'panel.ts'), `import { value } from '${dependencyName}${importSuffix}';\nexport function renderSurface() { return value; }\n`);
+
+    const prepare = createBaseDaemonPathPluginChangePreparer({
+      happyHomeDir: join(root, 'home'),
+      runtimeLifecycle: { prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }) },
+      runManagedPluginPnpm: successfulManagedPnpmBoundary,
+      runPluginUiArtifactBuild: buildUiWithManagedProcessBoundary,
+    });
+    const candidate = await prepare({ kind: 'development', sourceRootPath: pluginRoot });
+    try {
+      expect(candidate.review?.uiArtifacts).toEqual({ status: 'verified', contributionIds: ['panel'] });
+      const bytes = await readFile(join(pluginRoot, 'dist/happier-plugin-ui/react-native/panel/entry.cjs.bundle'), 'utf8');
+      const module = { exports: {} as Record<string, unknown> };
+      evaluatePortableCommonJs(bytes, module);
+      const renderSurface = module.exports.renderSurface;
+      if (typeof renderSurface !== 'function') throw new Error('Expected the compiled UI export');
+      expect(renderSurface()).toBe('workspace-source');
+      await expect(lstat(join(dependencyRoot, 'dist'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await candidate.cleanup();
     }
   });
 

@@ -82,11 +82,9 @@ export type DaemonPathPluginChangePreparationContext = DaemonPluginChangePrepara
   installedUpdate?: Readonly<{ pluginId: string }>;
 }>;
 
-type RunPluginUiArtifactBuildBoundary = (params: Readonly<{
-  projectRoot: string;
-  manifest?: Parameters<typeof runPluginUiArtifactBuild>[0]['manifest'];
-  signal?: AbortSignal;
-}>) => Promise<PluginUiArtifactBuildResult>;
+type RunPluginUiArtifactBuildBoundary = (
+  params: Parameters<typeof runPluginUiArtifactBuild>[0],
+) => Promise<PluginUiArtifactBuildResult>;
 
 async function buildOwnedPluginDevelopmentUiArtifacts(params: Readonly<{
   projectRoot: string;
@@ -95,6 +93,7 @@ async function buildOwnedPluginDevelopmentUiArtifacts(params: Readonly<{
 }>): Promise<Parameters<typeof projectPluginInstallationReview>[0]['uiArtifacts']> {
   const build = await (params.runPluginUiArtifactBuild ?? runPluginUiArtifactBuild)({
     projectRoot: params.projectRoot,
+    development: true,
     ...(params.manifest ? { manifest: params.manifest } : {}),
   });
   if (build.ok) {

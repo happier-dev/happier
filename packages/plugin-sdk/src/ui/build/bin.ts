@@ -4,6 +4,8 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { SOURCE_CONDITION } from '@happier-dev/cli-common/sourceRuntimeEntries';
+
 import { PluginUiBuildError } from './errors.js';
 import {
     buildUniversalPluginUiArtifacts,
@@ -74,7 +76,9 @@ export async function runPluginBuildUiCli(input: RunPluginBuildUiCliInputV1): Pr
         return 0;
     }
     try {
-        const result = await buildUniversalPluginUiArtifacts(parsed.projectRoot, parsed.manifestPath);
+        const result = await buildUniversalPluginUiArtifacts(parsed.projectRoot, parsed.manifestPath, {
+            exportConditions: process.env.HAPPIER_PLUGIN_UI_BUILD_FROM_SOURCE === '1' ? [SOURCE_CONDITION] : undefined,
+        });
         input.onSuccess?.(result);
         return 0;
     } catch (cause) {

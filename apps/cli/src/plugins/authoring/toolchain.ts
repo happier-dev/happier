@@ -954,7 +954,7 @@ export type PluginUiArtifactBuildResult =
  * runs from source. The CLI development loop only observes and submits edits.
  */
 export async function runPluginUiArtifactBuild(
-  params: Readonly<{ projectRoot: string; manifest?: ParsedPluginManifestV2; signal?: AbortSignal }>,
+  params: Readonly<{ projectRoot: string; development?: boolean; manifest?: ParsedPluginManifestV2; signal?: AbortSignal }>,
   deps: PluginAuthorToolchainDeps = defaultDeps,
 ): Promise<PluginUiArtifactBuildResult> {
   let projectRoot: string;
@@ -1023,7 +1023,9 @@ export async function runPluginUiArtifactBuild(
         command: runtimeCommand,
         args: resolvePluginUiBuildArguments({ projectRoot, builderPath: uiBuildBin, manifestPath }),
         cwd: projectRoot,
-        env: deps.processEnv,
+        env: params.development
+          ? { ...deps.processEnv, HAPPIER_PLUGIN_UI_BUILD_FROM_SOURCE: '1' }
+          : deps.processEnv,
         ...(params.signal ? { signal: params.signal } : {}),
       });
     } finally {

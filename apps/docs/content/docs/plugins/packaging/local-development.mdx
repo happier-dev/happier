@@ -98,6 +98,11 @@ source and before candidate adoption. The ephemeral candidate contains the
 resulting `dist/happier-plugin-ui` tree, so each
 accepted edit publishes UI artifacts that match the source you just saved.
 
+In 0.3 development source, registration can compile UI against an installed
+workspace link before that dependency has emitted its build output. The linked
+package must declare a `happier-source` export for the import. Packages with
+ordinary exports continue to resolve through the installed dependency tree.
+
 A failing UI build rejects the submitted candidate before adoption, so the
 previously admitted occurrence stays current for this daemon lifetime. Fix the
 source and save again.
