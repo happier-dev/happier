@@ -644,15 +644,17 @@ export function registerTeamCredentialResourceRoutes(
             }));
         }
         const actionAdmission = request.externalActionActionMaterialAdmission;
+        const installationId = request.externalActionExecutionAuthorizationBinding?.installationId;
         // Declaration bodies are read before the material transaction's Account lock.
         const preparedDeclaration = actionAdmission && body.data.consumer.kind === "action_operation"
             ? await readTeamCredentialActionDeclaration({ accountId: request.userId,
-                machineId: actionAdmission.machineId, consumer: body.data.consumer })
+                machineId: actionAdmission.machineId, consumer: body.data.consumer,
+                directRoot: { actionId: actionAdmission.rootActionId, installationId } })
             : null;
         const result = await inTx(tx => readCurrentTeamCredentialRecipientMaterialInTx(tx, {
             ...params.data,
             recipientAccountId: request.userId,
-            ...(actionAdmission ? { actionAdmission: { ...actionAdmission, preparedDeclaration } } : {}),
+            ...(actionAdmission ? { actionAdmission: { ...actionAdmission, installationId, preparedDeclaration } } : {}),
             ...("sourceMemberKey" in body.data
                 ? { slot: body.data.slot, sourceMemberKey: body.data.sourceMemberKey }
                 : { slot: body.data.slot, disclosedMember: body.data.disclosedMember }),

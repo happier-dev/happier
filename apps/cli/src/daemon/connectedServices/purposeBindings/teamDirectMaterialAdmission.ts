@@ -87,23 +87,32 @@ export function teamDirectMaterialOperationFailure(
 
 export type ConnectedAccountActionPurposeBindingSubject = Extract<ConnectedAccountPurposeBindingSubject, { kind: 'action_operation' }>;
 
+type DirectMaterialOperation = Readonly<{
+  requestId: string;
+  pluginVersions: ReadonlyMap<string, string>;
+}>;
+
 /** The existing finite operation lease retains the material admitted before effects. */
 export async function admitTeamDirectActionMaterialOrigins(input: Readonly<{
   subject: ConnectedAccountActionPurposeBindingSubject;
   origins: readonly ConnectedAccountTeamDirectMaterialOrigin[];
   openTeamDirect?: TeamCredentialDirectMaterialClient['open'];
   resolveRequestHeaders?: TeamCredentialOperationRequestHeaders;
+  directMaterialOperation?: DirectMaterialOperation;
   signal: AbortSignal;
 }>): Promise<readonly ConnectedAccountTeamDirectMaterialOrigin[]> {
   const origins: ConnectedAccountTeamDirectMaterialOrigin[] = [];
   for (const origin of input.origins) {
     input.signal.throwIfAborted();
     if (!input.openTeamDirect) throw listedAccountOutOfScope();
+    const operation = input.directMaterialOperation;
+    const pluginVersion = operation ? operation.pluginVersions.get(origin.purpose.consumer.pluginId) : input.subject.pluginVersion;
+    if (!pluginVersion) throw teamDirectMaterialFailure('access_removed', origin.disclosedMember.service);
     const opened = await input.openTeamDirect({
       ...(origin.teamId ? { teamId: origin.teamId } : {}),
       resourceId: origin.resourceId,
-      consumer: { kind: 'action_operation', operationId: input.subject.operationId,
-        actionId: input.subject.actionId, pluginVersion: input.subject.pluginVersion, purpose: origin.purpose },
+      consumer: { kind: 'action_operation', operationId: operation?.requestId ?? input.subject.operationId,
+        actionId: input.subject.actionId, pluginVersion, purpose: origin.purpose },
       slot: { kind: 'connected_service_purpose', purpose: origin.purpose },
       disclosedMember: origin.disclosedMember,
       signal: input.signal,
@@ -123,6 +132,7 @@ export type ActionPurposeBindingAdmissionInput = Omit<Parameters<ConnectedAccoun
   subject: ConnectedAccountActionPurposeBindingSubject;
   teamResourceSelections?: readonly QualifiedConnectedAccountPurposeTeamResourceSelectionV1[];
   resolveRequestHeaders?: TeamCredentialOperationRequestHeaders;
+  directMaterialOperation?: DirectMaterialOperation;
   signal: AbortSignal;
 }>;
 export type BrokeredActionExecutionInput = Readonly<{
@@ -165,9 +175,11 @@ export function createActionPurposeBindingAdmission(dependencies: Readonly<{
     });
     const directMaterialOrigins = await admitTeamDirectActionMaterialOrigins({ subject: input.subject,
       origins: [...(input.directMaterialOrigins ?? []), ...projections.map(entry => entry.origin)],
-      openTeamDirect: dependencies.openTeamDirect, signal: input.signal, resolveRequestHeaders: input.resolveRequestHeaders });
+      openTeamDirect: dependencies.openTeamDirect, signal: input.signal, resolveRequestHeaders: input.resolveRequestHeaders,
+      directMaterialOperation: input.directMaterialOperation });
     input.signal.throwIfAborted();
-    const { signal: _signal, teamResourceSelections: _teamResourceSelections, resolveRequestHeaders: _resolveRequestHeaders, ...activation } = input;
+    const { signal: _signal, teamResourceSelections: _teamResourceSelections, resolveRequestHeaders: _resolveRequestHeaders,
+      directMaterialOperation: _directMaterialOperation, ...activation } = input;
     const lease = dependencies.activatePurposeBindings({ ...activation,
       bindings: [...input.bindings, ...projections.map(entry => entry.binding)], directMaterialOrigins });
     return Object.freeze({ kind: 'local' as const, lease });

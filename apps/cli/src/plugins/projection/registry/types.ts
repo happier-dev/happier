@@ -703,6 +703,7 @@ export type ResolvedSystemToolContribution = Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId?: string;
+    pluginVersion?: string;
     manifestPath?: string;
     daemonEntryPath?: string | null;
     devDaemonEntryPath?: string | null;

@@ -1,5 +1,5 @@
 import type { TeamCredentialActionOperationConsumerV1 } from '@happier-dev/protocol/teams/credentials/actionOperationV1';
-import { admitTeamCredentialActionDeclarationInTx } from './actionDeclarationAdmission';
+import { admitTeamCredentialDirectActionDeclarationInTx } from './actionDeclarationAdmission';
 import type { CurrentPluginDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { computeTeamCredentialSourceMemberKeyV1, matchesTeamCredentialSourceVersionBasisV1, parseTeamCredentialDirectMaterialStoredV1, parseTeamCredentialSourceVersionV1, type TeamCredentialDirectMaterialUseV1, type TeamCredentialDirectMaterialStoredV1, type TeamCredentialDirectMaterialMineResponseV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
@@ -579,7 +579,7 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
             | { kind: "platform_operation"; operationId: string }
             | TeamCredentialActionOperationConsumerV1
         >;
-        actionAdmission?: Readonly<{ rootActionId: string; machineId: string; admittedReviewedChildActionId?: string;
+        actionAdmission?: Readonly<{ rootActionId: string; machineId: string; installationId?: string; admittedReviewedChildActionId?: string;
             /** From `readTeamCredentialActionDeclaration`, read before this transaction's Account lock. */
             preparedDeclaration: CurrentPluginDeclarationV1 | null }>;
         sessionAuthentication: SessionAccessAuthentication;
@@ -633,14 +633,15 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     }
     if (input.consumer.kind === 'action_operation') {
         if (!input.actionAdmission) return { ok: false, outcome: 'unavailable', reason: 'access_removed' };
-        const declaration = await admitTeamCredentialActionDeclarationInTx(tx, {
+        const declared = await admitTeamCredentialDirectActionDeclarationInTx(tx, {
             accountId: input.recipientAccountId, machineId: input.actionAdmission.machineId,
+            directMachineInstallationId: input.actionAdmission.installationId,
             rootActionId: input.actionAdmission.rootActionId, pluginVersion: input.consumer.pluginVersion,
             consumer: input.consumer, source: admitted.sourceBinding,
             admittedReviewedChildActionId: input.actionAdmission.admittedReviewedChildActionId,
             preparedDeclaration: input.actionAdmission.preparedDeclaration,
         });
-        if (!declaration.ok) return { ok: false, outcome: 'unavailable', reason: 'access_removed' };
+        if (!declared) return { ok: false, outcome: 'unavailable', reason: 'access_removed' };
     }
     if (admitted.binding.resourceRevision !== resource.revision) {
         return { ok: false as const, outcome: "unavailable" as const, reason: "source_changed" as const };

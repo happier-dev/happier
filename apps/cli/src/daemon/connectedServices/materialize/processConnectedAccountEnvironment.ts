@@ -1,5 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { isProjectFiniteActionIdV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { DaemonConnectedAccountPurposeBindingRuntime } from '../purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import type { resolveSystemToolLaunchPurposeDeclarations } from '../requestAuth/agentPurposeDeclarations';
@@ -7,6 +9,7 @@ import type { ActionPurposeBindingAdmissionInput } from '../purposeBindings/team
 import { assertLaunchPurposeDeliverySupported, mergeLaunchPurposeDeclarationSnapshots, selectBoundSystemToolLaunchPurposeDeclarations } from '../requestAuth/agentPurposeDeclarations';
 import { materializeQualifiedConnectedAccountLaunchUses } from './materializeQualifiedConnectedAccountLaunchUses';
 import { stripUnsetEnvironmentVariables } from '@/utils/processEnv/buildScopedProcessEnv';
+import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 
 export type ConnectedAccountProcessEnvironment = Readonly<Record<string, string>>;
 export type ConnectedAccountProcessEnvironmentMaterialization = Readonly<{
@@ -30,6 +33,7 @@ export async function prepareFiniteConnectedAccountProcessEnvironment(input: Rea
   runtime: Pick<DaemonConnectedAccountPurposeBindingRuntime, 'owner' | 'resolveCurrentSessionPurposeBindingSnapshot' | 'admitActionPurposeBindings'>;
   declarations: ToolDeclarations;
   subject: Omit<ActionPurposeBindingAdmissionInput['subject'], 'consumer' | 'consumers'>;
+  actionContext?: ActionExecutorContext;
   signal: AbortSignal;
 }>): Promise<Readonly<{ produce: ConnectedAccountProcessEnvironmentProducer; dispose(): void }>> {
   if (!input.declarations.length) return { produce: async environment => ({ environment, secretValues: [] }), dispose() {} };
@@ -39,10 +43,18 @@ export async function prepareFiniteConnectedAccountProcessEnvironment(input: Rea
   const deliveryByPurpose = new Map(selected.teamResourceSelections.map(entry => [qualifiedPurposeKey(entry.purpose), entry.selection.deliveryMode]));
   assertLaunchPurposeDeliverySupported({ declarations: input.declarations,
     readDeliveryMode: scope => deliveryByPurpose.get(qualifiedPurposeKey(scope.purpose)) ?? null });
+  const authorization = input.actionContext?.externalActionExecutionAuthorization;
+  const resolveRequestHeaders = authorization && selected.directMaterialOrigins.length > 0
+    && isProjectFiniteActionIdV1(input.subject.actionId)
+    ? createExternalActionRequesterServerRequestHeaders(input.actionContext) : undefined;
   const admission = await input.runtime.admitActionPurposeBindings({
     subject: { ...input.subject, consumer: input.declarations[0]!.consumer,
       consumers: input.declarations.map(declaration => declaration.consumer) },
     purposes: selected.purposes, bindings: selected.bindings, directMaterialOrigins: selected.directMaterialOrigins,
+    ...(authorization && resolveRequestHeaders ? { resolveRequestHeaders,
+      directMaterialOperation: { requestId: authorization.binding.requestId, pluginVersions: new Map(
+        input.declarations.flatMap(declaration => declaration.pluginVersion
+          ? [[declaration.consumer.pluginId, declaration.pluginVersion] as const] : [])) } } : {}),
     signal: input.signal,
   });
   if (admission.kind !== 'local') throw new PluginError({ code: 'credential_unavailable',

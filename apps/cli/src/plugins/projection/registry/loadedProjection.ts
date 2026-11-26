@@ -832,6 +832,7 @@ export function projectLoadedPluginRegistry(
             provenance: readProvenance(contribution),
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
             manifestPath: contribution.manifestPath,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,

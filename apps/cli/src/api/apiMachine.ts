@@ -1275,7 +1275,9 @@ export class ApiMachineClient {
             if (!account && input.requesterAccountId !== readAccountIdFromToken(this.token)) throw new PluginError({ code: 'credential_unavailable', message: 'Requester credential bindings are unavailable', retryable: false });
             const prepared = await prepareFiniteConnectedAccountProcessEnvironment({ runtime, declarations,
                 subject: { kind: 'action_operation', operationId: input.operationId, actionId: input.actionId,
-                    pluginVersion: configuration.currentCliVersion, isCurrent: () => !input.signal.aborted }, signal: input.signal });
+                    pluginVersion: configuration.currentCliVersion, isCurrent: () => !input.signal.aborted }, signal: input.signal,
+                ...(input.authorization ? { actionContext: { serverId: this.machineRuntimeServerId, signal: input.signal,
+                    externalActionExecutionAuthorization: input.authorization } } : {}) });
             return { produce: prepared.produce, dispose: async () => { prepared.dispose(); await material?.dispose(); } };
         } catch (error) { await material?.dispose(); throw error; }
     }

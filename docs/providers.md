@@ -2239,6 +2239,9 @@ identity, exact destination and local cancellation remain enforced.
 In 0.3 development, a finite Action opens Direct material with the requester’s
 signed execution proof. Home checks the Action’s declared purpose and the
 member’s Direct grant before disclosing material to the requester.
+Finite Project Setup, scripts and compute use that same signed request for
+system-tool credentials. Home matches the requested purpose and credential
+service to the tool’s launch declaration in the selected plugin version.
 In 0.3 development, selected-resource revalidation passes the exact resource id
 through the existing Home entitlement read and shared CLI catalog transport;
 Team authorization, application compatibility and withdrawal checks still run.

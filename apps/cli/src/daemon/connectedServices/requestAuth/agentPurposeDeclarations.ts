@@ -49,7 +49,7 @@ export type AgentSpawnPurposeCatalogEntry = Readonly<{
 }>;
 
 export type AgentSpawnPurposeContributions = Readonly<{
-    systemTools?: readonly Readonly<{ pluginId?: string; definition: PluginSystemToolContributionV1 }>[];
+    systemTools?: readonly Readonly<{ pluginId?: string; pluginVersion?: string; definition: PluginSystemToolContributionV1 }>[];
     agentDefinitionsById: ReadonlyMap<string, Readonly<{
         identity?: unknown;
         richDefinition?: Readonly<{
@@ -79,6 +79,7 @@ export type AgentSpawnQualifiedPurposeDeclarationSnapshot = Readonly<{
 
 type ResolvedAgentSpawnPurposeDeclarations = Readonly<{
     consumer: PluginContributionIdentityV1;
+    pluginVersion?: string;
     declarations: readonly ConnectedAccountPurposeDeclarationV1[];
     snapshot: AgentSpawnQualifiedPurposeDeclarationSnapshot;
     brokeredUnavailableCode?: string;
@@ -336,14 +337,15 @@ export function selectBoundSystemToolLaunchPurposeDeclarations(
 
 /** The same tool purposes also apply to admitted processes with no Agent. */
 export function resolveSystemToolLaunchPurposeDeclarations(contributions: Pick<AgentSpawnPurposeContributions, 'systemTools'>): readonly ResolvedAgentSpawnPurposeDeclarations[] {
-    return (contributions.systemTools ?? []).flatMap<ResolvedAgentSpawnPurposeDeclarations>(({ pluginId, definition }) => {
+    return (contributions.systemTools ?? []).flatMap<ResolvedAgentSpawnPurposeDeclarations>(({ pluginId, pluginVersion, definition }) => {
         const launch = definition.connectedAccountLaunch;
         if (!pluginId || !launch) return [];
         const consumer = { pluginId, localId: definition.id };
         const purpose = { consumer, purpose: launch.purpose };
         const service = typeof launch.service === 'string' ? { pluginId, localId: launch.service } : launch.service;
         const scope = { purpose, serviceRefs: [service] };
-        return [{ consumer, declarations: [{ purpose: launch.purpose, service: launch.service, materializationKinds: ['environment'] }],
+        return [{ consumer, ...(pluginVersion ? { pluginVersion } : {}),
+            declarations: [{ purpose: launch.purpose, service: launch.service, materializationKinds: ['environment'] }],
             ...(launch.brokeredUnavailableCode ? { brokeredUnavailableCode: launch.brokeredUnavailableCode } : {}),
             snapshot: { purposes: [purpose], authorizedPurposes: [scope], fileMaterializationPurposes: [],
                 environmentUses: [{ ...scope, environmentKey: launch.environmentKey,

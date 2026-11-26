@@ -1037,6 +1037,7 @@ export function projectPluginContributionRegistry(params: Readonly<{
     for (const definition of readSemanticDefinitions<PluginSystemToolContributionV1>('systemTools')) {
       systemTools.push({
         pluginId: plugin.pluginId,
+        pluginVersion: plugin.manifest.version,
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
         daemonEntryPath: plugin.daemonEntryPath,
