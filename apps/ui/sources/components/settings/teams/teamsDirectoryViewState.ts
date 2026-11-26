@@ -93,7 +93,7 @@ export function teamsUnavailableReason(
 export function teamsUnavailableHomeReason(home: Pick<TeamsDirectoryUnavailableHome, 'reason'>): string {
     switch (home.reason) {
         case 'loading': return t('teams.directory.loading');
-        case 'denied': return t('teams.errors.forbidden');
+        case 'denied': return t('errors.permissionDenied');
         case 'sign_in_outdated': return t('teams.errors.signInOutdated');
         case 'unsupported': return t('teams.unavailable.updateRequired');
         case 'disabled': return t('teams.unavailable.disabled');

@@ -321,7 +321,7 @@ describe('HomeAdministrationTeamsScreen', () => {
 
     it.each([
         { status: 404, code: 'teams_unavailable', reason: 'teams.unavailable.disabled' },
-        { status: 403, code: 'team_forbidden', reason: 'teams.errors.forbidden' },
+        { status: 403, code: 'team_forbidden', reason: 'errors.permissionDenied' },
     ])('names $code once in the administered directory with no Retry', async ({ status, code, reason }) => {
         const home = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', teamsEnabled: true });
         harness.answer(home, GOVERNANCE_PATH, { body: homeGovernanceProjectionFixture() });

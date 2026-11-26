@@ -190,7 +190,7 @@ describe('TeamsDirectoryScreen craft', () => {
         { width: 390, status: 400, body: { error: 'invalid_team_input' },
             reason: 'homeGovernance.invalidRead', action: null },
         { width: 1440, status: 403, body: { error: 'team_forbidden' },
-            reason: 'teams.errors.forbidden', action: null },
+            reason: 'errors.permissionDenied', action: null },
     ])('shows one reason and one recovery action for HTTP $status at $width px', async ({ width, status, body, reason, action }) => {
         const home = await memberHome(0);
         harness.answer(home, TEAMS_LIST_PATH, { status, body });

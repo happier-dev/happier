@@ -477,7 +477,7 @@ describe('Invite people', () => {
         harness.answer(home, TEAMS_LIST_PATH, { status: 403, body: { error: 'team_forbidden' } });
 
         const screen = await renderDialog(home);
-        await waitForHomeGovernance(() => expect(screen.getTextContent().split('teams.errors.forbidden')).toHaveLength(2));
+        await waitForHomeGovernance(() => expect(screen.getTextContent().split('errors.permissionDenied')).toHaveLength(2));
         expect(ids(screen)).not.toContain('home-invite-people-teams-failed-retry');
         expect(ids(screen)).not.toContain('home-invite-people-no-teams');
     });
