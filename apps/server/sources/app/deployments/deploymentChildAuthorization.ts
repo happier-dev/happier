@@ -449,7 +449,9 @@ async function readAcceptedDeploymentChildInTx(tx: Tx, binding: ExternalActionEx
     }
     if (routing.kind === 'retention') {
         link.activeDeploymentId = routing.activeDeploymentId;
-        environment.deployments = { none: { state: { in: ['queued', 'running', 'outcome_unknown'] } } };
+        // In-flight work holds retention until it settles. An outcome_unknown Receipt has no
+        // natural end; the retention owner protects each release, source, archive and log it references.
+        environment.deployments = { none: { state: { in: ['queued', 'running'] } } };
     }
     const custody: Prisma.DeploymentWhereInput = routing.kind === 'member' || routing.kind === 'teardown' ? { targetLink: member }
         : routing.kind === 'build' ? builder : { OR: [builder, { targetLink: member }] };

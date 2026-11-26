@@ -10944,6 +10944,33 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await restored.verify(recoveryJob)).toBeNull();
     });
 
+    it('admits settled retention beside an outcome_unknown Receipt but not beside an in-flight one', async () => {
+        const f = await fixture('team');
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded', revision: { increment: 1 } } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id, revision: { increment: 1 } } });
+        const raw = { v: 1, kind: 'retention', actionId: 'deployments.deploy', input: f.input,
+            machineId: f.member.id, installationId: f.member.installationId, deploymentId: f.receipt.id,
+            actionOperationId: f.receipt.actionOperationId,
+            settledTargetLinkRevision: f.link.revision + 1, settledDeploymentRevision: f.receipt.revision + 1,
+            activeDeploymentId: f.receipt.id };
+        const job = DeploymentChildRpcV1Schema.parse(raw);
+        expect(await f.verify(job), 'the settled active release admits retention').not.toBeNull();
+        // A stuck Receipt has no natural end; the retention owner protects what it references.
+        const unknown = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), state: 'outcome_unknown',
+            acceptedRequestEnvelopeDigest: null } });
+        expect(await f.verify(job), 'an outcome_unknown sibling does not stop retention').not.toBeNull();
+        expect(await f.verify(DeploymentChildRpcV1Schema.parse({ ...raw, deploymentId: unknown.id,
+            actionOperationId: unknown.actionOperationId, settledDeploymentRevision: unknown.revision })),
+        'the unknown Receipt itself is never a retention custody').toBeNull();
+        await db.deployment.update({ where: { id: unknown.id }, data: { state: 'running' } });
+        expect(await f.verify(job), 'an in-flight Receipt still holds retention until it settles').toBeNull();
+        await db.deployment.update({ where: { id: unknown.id }, data: { state: 'outcome_unknown' } });
+        const other = await fixture('team');
+        expect(await f.verify(DeploymentChildRpcV1Schema.parse({ ...raw, input: other.input })),
+            'another Environment Link is outside this retention').toBeNull();
+    });
+
     it('admits signed observation of only the current eligible uniform baseline', async () => {
         const f = await fixture('team');
         const uniform = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
