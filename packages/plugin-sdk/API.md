@@ -4123,6 +4123,7 @@
 | `./ui` | `PLUGIN_DECLARATIVE_DOCUMENT_CONTENT_TYPE_V1` | value | any |
 | `./ui` | `PLUGIN_UI_ICON_TOKENS_V1` | value | any |
 | `./ui` | `PLUGIN_UI_SUB_PATH_MAX_UTF8_BYTES_V1` | value | any |
+| `./ui` | `PickWorkspaceFileResult` | type | any |
 | `./ui` | `PluginCollectionListExtensionInputV1` | type | any |
 | `./ui` | `PluginCollectionListExtensionV1` | type | any |
 | `./ui` | `PluginDeclarativeDataFieldV1` | type | any |

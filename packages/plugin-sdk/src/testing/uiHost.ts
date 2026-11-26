@@ -12,6 +12,7 @@ import { PluginUiReadAuthorityReferenceV1Schema } from '@happier-dev/protocol/pl
 import { PluginUiOpenManagedMachineConfigurationRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenDeploymentRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiSetUnsavedChangesRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiPickWorkspaceFileRequestV1Schema, PluginUiPickWorkspaceFileResultV1Schema, type PluginUiPickWorkspaceFileResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiDeviceStateRequestV1Schema, PluginUiDeviceStateResultV1Schema, type PluginUiDeviceStateRequestV1, type PluginUiDeviceStateResultV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiSetPageNavigationRequestV1Schema, type PluginUiPageNavigationV1 } from '@happier-dev/protocol/plugins/ui/pageNavigation';
 import type { PluginUiHostApiWireEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
@@ -672,6 +673,7 @@ export type PluginUiTestkitHostHandlers = Readonly<{
         input: PluginUiTestkitReplacePageLocationInput,
     ) => string | Promise<string>;
     setUnsavedChanges?: (input: Readonly<{ isDirty: boolean; signal: AbortSignal }>) => void | Promise<void>;
+    pickWorkspaceFile?: (signal: AbortSignal) => PluginUiPickWorkspaceFileResultV1 | Promise<PluginUiPickWorkspaceFileResultV1>;
     deviceState?: (input: PluginUiDeviceStateRequestV1, signal: AbortSignal) => PluginUiDeviceStateResultV1 | Promise<PluginUiDeviceStateResultV1>;
     setPageNavigation?: (input: Readonly<{ navigation: PluginUiPageNavigationV1 | null; signal: AbortSignal }>) => void | Promise<void>;
     /** Delegate presentation to the captured host presenter. */
@@ -714,6 +716,7 @@ const hostMethodPolicies = {
     replacePageLocation: 'replacePageLocation',
     setUnsavedChanges: 'setUnsavedChanges',
     deviceState: 'deviceState',
+    pickWorkspaceFile: 'pickWorkspaceFile',
     setPageNavigation: 'setPageNavigation',
     notify: 'notify',
     confirm: 'confirm',
@@ -1758,6 +1761,13 @@ async function createPluginUiTestkitInternal<TSurface>(
                 if (!payload.success) throw fixtureError('invalid_payload', 'writeClipboard payload is invalid.');
                 await handlers.writeClipboard({ value: payload.data.value, signal });
                 return undefined;
+            }
+            case 'pickWorkspaceFile': {
+                if (!handlers.pickWorkspaceFile) throw fixtureError('unsupported_method', 'pickWorkspaceFile is not installed.');
+                if (!PluginUiPickWorkspaceFileRequestV1Schema.safeParse(message.payload).success) {
+                    throw fixtureError('invalid_payload', 'pickWorkspaceFile payload is invalid.');
+                }
+                return PluginUiPickWorkspaceFileResultV1Schema.parse(await handlers.pickWorkspaceFile(signal));
             }
             case 'deviceState': {
                 if (!handlers.deviceState) throw fixtureError('unsupported_method', 'deviceState is not installed.');

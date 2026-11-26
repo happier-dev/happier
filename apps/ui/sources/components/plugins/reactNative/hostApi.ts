@@ -31,6 +31,7 @@ import {
     PluginUiOpenAutomationEventRequestV1Schema,
     PluginUiOpenConnectedAccountsRequestV1Schema,
     PluginUiOpenConnectedAccountsResultV1Schema,
+    PluginUiPickWorkspaceFileResultV1Schema,
     PluginUiOpenManagedMachineConfigurationRequestV1Schema,
     PluginUiOpenDeploymentRequestV1Schema,
     PluginUiArtifactDigestV1Schema,
@@ -1502,6 +1503,15 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const payload = PluginUiOpenDeploymentRequestV1Schema.safeParse(request);
             if (!payload.success) throwHostApiError('invalid_payload');
             await transport.request('openDeployment', payload.data, options);
+        },
+        pickWorkspaceFile: async (options) => {
+            assertActive(options?.signal);
+            assertInstalled('pickWorkspaceFile');
+            const result = PluginUiPickWorkspaceFileResultV1Schema.safeParse(
+                await transport.request('pickWorkspaceFile', {}, options),
+            );
+            if (!result.success) throwHostApiError('invalid_payload');
+            return result.data;
         },
         openConnectedAccounts: async (request = {}, options) => {
             assertActive(options?.signal);

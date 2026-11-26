@@ -2793,6 +2793,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         ...baseControllerFacts,
         isHostCurrent: pluginRetired ? isDisabledPluginSurfaceCurrent : baseControllerFacts.isHostCurrent,
         daemonReachable: daemonInteraction.daemonReachable,
+        surfaceTarget: resolvedSurfaceTarget.resolved ? resolvedSurfaceTarget.target : undefined,
         resourceContext: baseControllerFacts.resourceContext?.kind === 'global' ? baseControllerFacts.resourceContext
             : baseControllerFacts.resourceContext ? { ...baseControllerFacts.resourceContext,
                 ...(resolvedSurfaceTarget.resolved ? { target: resolvedSurfaceTarget.target } : {}) } : ordinaryResourceContext,

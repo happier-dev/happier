@@ -268,6 +268,7 @@ function createHostApi(
         openDeployment: async () => unexpectedHostApiCall('openDeployment'),
         openAutomationEvent: async () => unexpectedHostApiCall('openAutomationEvent'),
         revealSessionInput: async () => unexpectedHostApiCall('revealSessionInput'),
+        pickWorkspaceFile: async () => unexpectedHostApiCall('pickWorkspaceFile'),
         openConnectedAccounts: async () => unexpectedHostApiCall('openConnectedAccounts'),
         readResource: async () => {
             throw new Error('not used by this menu');

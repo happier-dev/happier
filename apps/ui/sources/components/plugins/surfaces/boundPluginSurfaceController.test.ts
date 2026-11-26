@@ -56,6 +56,8 @@ import {
 import type { PluginSurfaceResourceReadTransport } from './pluginSurfaceResourceRead';
 import type { PluginSurfaceResourceWatchTransport } from './pluginSurfaceResourceWatch';
 
+import { Modal } from '@/modal';
+
 const clipboard = vi.hoisted(() => ({
     getStringAsync: vi.fn(),
     setStringAsync: vi.fn(),
@@ -470,6 +472,65 @@ function request(method: string, payload?: unknown) {
         ...(payload === undefined ? {} : { payload }),
     } as never;
 }
+
+describe('mounted checkout file picker', () => {
+    function mount(kind: 'project' | 'session' | 'services' | 'app' = 'project') {
+        const show = vi.spyOn(Modal, 'show').mockReturnValue('checkout-picker');
+        const hide = vi.spyOn(Modal, 'hide').mockImplementation(() => {});
+        const project = { kind: 'project' as const, projectKey: 'project-a', checkout: {
+            id: 'checkout-b', serverId: FACTS.serverId, machineId: 'checkout-machine',
+            rootPath: 'C:\\Repos\\Worktree', createdAtMs: 1,
+        } };
+        const surfaceTarget = kind === 'project' ? project
+            : kind === 'session' ? { kind, sessionId: 'session-a', project }
+            : kind === 'services' ? { kind, project } : { kind };
+        const controller = createBoundPluginSurfaceController({ facts: { ...FACTS, surfaceTarget } });
+        onTestFinished(() => {
+            controller.dispose();
+            show.mockRestore();
+            hide.mockRestore();
+        });
+        return { controller, show, hide };
+    }
+
+    it.each([
+        ['services', 'c:/repos/worktree/Seeds/Init.sql', { kind: 'picked', relativePath: 'Seeds/Init.sql' }],
+        ['session', 'C:/Repos/Worktree-other/Init.sql', { kind: 'unavailable', reason: 'outside_checkout' }],
+        ['project', null, { kind: 'cancelled' }],
+    ] as const)('settles a %s file picker selection or dismissal (%s)', async (kind, path, expected) => {
+        const { controller, show } = mount(kind);
+        const pending = controller.hostApi.handleRequest(request('pickWorkspaceFile', {}));
+        expect(controller.hostApi.installedMethods).toContain('pickWorkspaceFile');
+        const modal = show.mock.lastCall?.[0];
+        expect(modal?.props).toMatchObject({
+            machineId: 'checkout-machine', serverId: FACTS.serverId,
+            rootDirectoryPath: 'C:/Repos/Worktree', selectionMode: 'file', allowMachineChange: false,
+        });
+        if (path === null) {
+            modal?.onRequestClose?.();
+        } else {
+            const resolve = modal?.props && Reflect.get(modal.props, 'onResolve');
+            if (typeof resolve === 'function') resolve(path);
+        }
+        await expect(pending).resolves.toEqual(expected);
+    });
+
+    it('reports an unavailable checkout without opening a browser', async () => {
+        const { controller, show } = mount('app');
+        await expect(controller.hostApi.handleRequest(request('pickWorkspaceFile', {})))
+            .resolves.toEqual({ kind: 'unavailable', reason: 'checkout_unavailable' });
+        expect(show).not.toHaveBeenCalled();
+    });
+
+    it('retires the modal when its mount is disposed', async () => {
+        const { controller, show, hide } = mount();
+        const pending = controller.hostApi.handleRequest(request('pickWorkspaceFile', {}));
+        expect(show).toHaveBeenCalled();
+        controller.dispose();
+        await expect(pending).resolves.toEqual({ kind: 'cancelled' });
+        expect(hide).toHaveBeenCalledWith('checkout-picker');
+    });
+});
 
 describe('BoundPluginSurfaceController (§3.1)', () => {
     it('keeps page tab Actions on the parent owner while an embedded Session borrows chrome', async () => {

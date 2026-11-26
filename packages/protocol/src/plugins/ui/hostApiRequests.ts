@@ -12,6 +12,7 @@ import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connected
 import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
 import { PluginDiagnosticRemediationV1Schema } from '../../daemon/pluginContributionIntrospection.js';
 import * as zMini from '../../zodRuntimePolicy.js';
+import { WorkspaceManifestRelativePathSchema } from '../../workspaces/manifestSchema.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { AutomationEventSourceInstanceIdV1Schema } from '../../automations/automationEventJsonBoundsV1.js';
 import { HealthCheckAlertChannelV1Schema } from '../../deployments/healthCheckSourceV1.js';
@@ -581,6 +582,18 @@ export type PluginUiOpenDeploymentRequestV1 = z.infer<typeof PluginUiOpenDeploym
  * Account focus is valid only beside its exact service because connected
  * account ids are qualified by the producing contribution.
  */
+/** The mount supplies the checkout. Authors cannot address a filesystem. */
+export const PluginUiPickWorkspaceFileRequestV1Schema = lazyZodSchema(() => z.strictObject({}));
+export const PluginUiPickWorkspaceFileResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('picked'), relativePath: WorkspaceManifestRelativePathSchema }),
+  z.strictObject({ kind: z.literal('cancelled') }),
+  z.strictObject({
+    kind: z.literal('unavailable'),
+    reason: z.enum(['checkout_unavailable', 'outside_checkout']),
+  }),
+]));
+export type PluginUiPickWorkspaceFileResultV1 = z.infer<typeof PluginUiPickWorkspaceFileResultV1Schema>;
+
 export const PluginUiOpenConnectedAccountsRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({}),
   z.strictObject({

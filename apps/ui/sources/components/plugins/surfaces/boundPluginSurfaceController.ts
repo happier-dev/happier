@@ -9,6 +9,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 import { createPluginWidgetAreaHostHandler } from './pluginWidgetAreaHost';
 import { createPluginOpenAutomationEventHostApiHandler } from './pluginOpenAutomationEventHostApi';
+import { createPluginWorkspaceFilePicker } from './pluginWorkspaceFilePicker';
 import { createPluginRevealSessionInputHostApiHandler } from './pluginRevealSessionInput';
 import { createPluginSurfaceDownloadOwner } from './pluginSurfaceDownload';
 import { createPluginSurfaceMachineDisplayNameHandler } from './pluginSurfaceMachineDisplayName';
@@ -221,6 +222,7 @@ export type BoundPluginSurfaceFacts = Readonly<{
      * a placement moves to a different target under the same mount instance.
      */
     targetAuthorityKey?: string | null;
+    surfaceTarget?: import('@happier-dev/protocol/plugins/ui').PluginUiHostApiSurfaceTargetV1;
     placement: PluginUiSurfaceContextV1['placement'];
     platform: PluginUiSurfaceContextV1['platform'];
     channel?: PluginUiChannelV1;
@@ -1290,6 +1292,12 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         }) : null;
     };
     let storedImages = createStoredImages();
+    const pickWorkspaceFile = accountLifetime && !isOpenableContentViewer
+        ? createPluginWorkspaceFilePicker({
+            readTarget: () => readActionInputFacts().surfaceTarget,
+            lifetimeSignal: mountLifetime.signal,
+        })
+        : null;
     const readHostApiMountedHandlers = (): PluginSurfaceHostApiHandlers => sessionHandlers
         ? {
             ...readMountedHostApiHandlers(),
@@ -1697,7 +1705,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         ...(daemon && binding?.openableContent ? { openableContent: binding.openableContent } : {}),
         ...(binding?.openSurface ? { openSurface: binding.openSurface } : {}),
         ...(binding?.resourceNavigation ? { resourceNavigation: binding.resourceNavigation } : {}),
-        readMountedHostApiHandlers: () => ({ ...readHostApiMountedHandlers(), ...(storedImages ? { readStoredImage: storedImages.readStoredImage } : {}),
+        readMountedHostApiHandlers: () => ({ ...readHostApiMountedHandlers(),
+            ...(pickWorkspaceFile ? { pickWorkspaceFile } : {}), ...(storedImages ? { readStoredImage: storedImages.readStoredImage } : {}),
             ...(downloads ? { downloadFile: downloads.downloadFile } : {}), ...(widgetArea ? { widgetArea } : {}),
             ...(actionControls ? { actionControl: actionControls.handleRequest } : {}) }),
         ...(disposeHostApiMountedHandlers

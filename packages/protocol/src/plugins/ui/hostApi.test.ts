@@ -146,7 +146,6 @@ describe('plugin UI initial host-method vocabulary closure', () => {
   });
 
   it('makes selectActionInput part of the sole initial 1.0 declaration contract', () => {
-    expect(PLUGIN_UI_HOST_API_VERSION_V1).toBe('1.1.0');
     expect(PLUGIN_UI_HOST_METHODS_V1).toContain('selectActionInput');
     expect(PluginUiHostMethodV1Schema.options).toEqual([...PLUGIN_UI_HOST_METHODS_V1]);
 
@@ -160,7 +159,7 @@ describe('plugin UI initial host-method vocabulary closure', () => {
   });
 
   it('owns the one compatible Host API range rather than comparing a draft literal', () => {
-    expect(PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1).toBe('^1.1.0');
+    expect(PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1).toBe(`^${PLUGIN_UI_HOST_API_VERSION_V1}`);
     for (const range of ['^1', '^1.0.0', '>=1.0.0 <2.0.0']) {
       expect(isPluginUiHostApiVersionCompatibleV1(range)).toBe(true);
     }
@@ -179,7 +178,7 @@ describe('plugin UI initial host-method vocabulary closure', () => {
       expect(resolvePluginUiHostApiVersionV1(range)).toBe('1.0.0');
     }
     expect(resolvePluginUiHostApiVersionV1('^1.1.0')).toBe('1.1.0');
-    expect(resolvePluginUiHostApiVersionV1('^1.2.0')).toBeNull();
+    expect(resolvePluginUiHostApiVersionV1('^1.2.0')).toBe('1.2.0');
     expect(resolvePluginUiHostApiVersionV1('not-a-range')).toBeNull();
     expect(isPluginUiHostMethodSupportedInVersionV1('actionControl', '1.0.0')).toBe(false);
     expect(isPluginUiHostMethodSupportedInVersionV1('openManagedMachineConfiguration', '1.0.0')).toBe(false);
@@ -188,6 +187,16 @@ describe('plugin UI initial host-method vocabulary closure', () => {
     expect(isPluginUiHostMethodSupportedInVersionV1('openResource', '1.0.0')).toBe(false);
     expect(isPluginUiHostMethodSupportedInVersionV1('openResource', '1.1.0')).toBe(true);
     expect(isPluginUiHostMethodSupportedInVersionV1('context', 'unknown')).toBe(false);
+  });
+
+  it('negotiates the checkout file picker only with Host API clients that know it', () => {
+    expect(resolvePluginUiHostApiVersionV1('^1.3.0')).toBe('1.3.0');
+    expect(parseRendererWithRequiredMethods('pickWorkspaceFile')).toBe(true);
+    expect(parseWireRequestMethod('pickWorkspaceFile')).toBe(true);
+    expect(parseWireResultMethod('pickWorkspaceFile')).toBe(true);
+    const picker = PluginUiHostMethodV1Schema.parse('pickWorkspaceFile');
+    expect(isPluginUiHostMethodSupportedInVersionV1(picker, '1.2.0')).toBe(false);
+    expect(isPluginUiHostMethodSupportedInVersionV1(picker, '1.3.0')).toBe(true);
   });
 
   it('owns strict diagnostic and utility-effect request grammars at the Host API boundary', () => {

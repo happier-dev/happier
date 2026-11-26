@@ -494,6 +494,9 @@ export type OpenConnectedAccountsRequest =
     }>;
 
 /** The selected account reference, dismissal, or no result from an older host. */
+export type PickWorkspaceFileResult =
+    import('@happier-dev/protocol/plugins/ui/client').PluginUiPickWorkspaceFileResultV1;
+
 export type OpenConnectedAccountsResult = import('@happier-dev/protocol/plugins/ui/client').PluginUiOpenConnectedAccountsResultV1;
 
 export type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
@@ -649,6 +652,8 @@ export interface PluginUiHostApi {
         request?: OpenConnectedAccountsRequest,
         options?: PluginCancellationOptions,
     ): Promise<OpenConnectedAccountsResult>;
+    /** Open Happier's file picker for the checkout admitted by this surface. */
+    pickWorkspaceFile(options?: PluginCancellationOptions): Promise<PickWorkspaceFileResult>;
     /**
      * Set THIS full-page surface's plugin-local location. Filters and ordering
      * replace the current history entry. Opening a detail from the current `backLocation`

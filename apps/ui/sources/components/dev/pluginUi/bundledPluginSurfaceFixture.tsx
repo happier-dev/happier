@@ -70,6 +70,7 @@ export function createBundledPluginFixtureHostApi(
     openDeployment: unsupported,
     openAutomationEvent: unsupported,
     revealSessionInput: unsupported,
+    pickWorkspaceFile: unsupported,
     openConnectedAccounts: unsupported,
     settleEphemeralInput: unsupported,
     readResource: (async (resource: unknown) => {

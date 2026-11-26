@@ -21,6 +21,8 @@ type OpenMachinePathBrowserParams = OpenPathBrowserOptions & Readonly<{
     machineId: string;
     serverId?: string | null;
     allowMachineChange?: boolean;
+    rootDirectoryPath?: string;
+    signal?: AbortSignal;
 }>;
 type OpenManagedPathBrowserParams = OpenPathBrowserOptions & Readonly<{
     workspace: Pick<ManagedWorkspaceLocatorV2, 'serverId' | 'managedId' | 'controller'>
@@ -84,8 +86,10 @@ export async function openMachinePathBrowserModal(
     const machineId = 'workspace' in params ? params.workspace.controller.machineId : params.machineId;
     const serverId = 'workspace' in params ? params.workspace.serverId : params.serverId;
     const allowMachineChange = 'allowMachineChange' in params && params.allowMachineChange === true;
+    const signal = 'signal' in params ? params.signal : undefined;
+    if (signal?.aborted) return null;
     const deferred = createDeferredOnce<Readonly<{ machineId: string; path: string }> | null>();
-    Modal.show({
+    const modalId = Modal.show({
         commandBridge: params.commandBridge,
         webPortalTarget: params.webPortalTarget ?? null,
         component: MachinePathBrowserModalEntry,
@@ -93,6 +97,7 @@ export async function openMachinePathBrowserModal(
             machineId,
             serverId: serverId ?? null,
             ...(workspace ? { workspace } : {}),
+            ...('rootDirectoryPath' in params ? { rootDirectoryPath: params.rootDirectoryPath } : {}),
             title: params.title,
             initialPath: params.initialPath ?? null,
             includeFiles: params.includeFiles ?? false,
@@ -110,7 +115,17 @@ export async function openMachinePathBrowserModal(
             dimensions: { maxHeightRatio: 0.92 },
         },
     });
-    const picked = await deferred.promise;
-    if (workspace) return picked ? { path: picked.path } : null;
-    return allowMachineChange ? picked : picked?.path ?? null;
+    const abort = (): void => {
+        deferred.resolve(null);
+        Modal.hide(modalId);
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    try {
+        const picked = await deferred.promise;
+        if (workspace) return picked ? { path: picked.path } : null;
+        return allowMachineChange ? picked : picked?.path ?? null;
+    } finally {
+        signal?.removeEventListener('abort', abort);
+    }
 }

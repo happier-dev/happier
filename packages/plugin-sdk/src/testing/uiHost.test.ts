@@ -63,7 +63,7 @@ it('round-trips device drafts through the negotiated fixture transport and refus
         return { status: 'ready', value: values.get(request.key) ?? null };
     } } });
     try {
-        expect(fixture.context.hostApi.version().apiVersion).toBe('1.2.0');
+        expect(fixture.context.hostApi.version().apiVersion).toBe('1.3.0');
         expect(fixture.context.hostApi.version().methods).toContain('deviceState');
         const value = { sql: 'select $1', history: [{ sql: 'select 1' }] };
         await expect(fixture.context.hostApi.deviceState({ operation: 'read', key: 'draft' })).resolves.toEqual({ status: 'ready', value: null });

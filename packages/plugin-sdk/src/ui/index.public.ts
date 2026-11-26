@@ -135,6 +135,7 @@ export type { OpenSurfaceOptions } from './hostApi.js';
 export type { OpenAutomationEventRequest } from './hostApi.js';
 export type { UiAuthoringInput } from './surface.js';
 export type { OpenConnectedAccountsRequest, OpenConnectedAccountsResult } from './hostApi.js';
+export type { PickWorkspaceFileResult } from './hostApi.js';
 export type { OpenManagedMachineConfigurationRequest } from './hostApi.js';
 export type { OpenDeploymentRequest } from './hostApi.js';
 export type { OpenableContentBody } from './hostApi.js';

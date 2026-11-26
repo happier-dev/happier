@@ -291,6 +291,7 @@ function createDocumentHost(input: Readonly<{
         openDeployment: async () => unexpectedHostApiCall('openDeployment'),
         openAutomationEvent: async () => unexpectedHostApiCall('openAutomationEvent'),
         revealSessionInput: async () => unexpectedHostApiCall('revealSessionInput'),
+        pickWorkspaceFile: async () => unexpectedHostApiCall('pickWorkspaceFile'),
         openConnectedAccounts: async () => unexpectedHostApiCall('openConnectedAccounts'),
         readResource: input.readResource,
         statOpenableContent: async () => unexpectedHostApiCall('statOpenableContent'),

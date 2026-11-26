@@ -145,6 +145,7 @@ function createFixtureHostApi(context: SurfaceContext, state: FixtureState): Plu
         openDeployment: unsupported,
         openAutomationEvent: unsupported,
         revealSessionInput: unsupported,
+        pickWorkspaceFile: unsupported,
         openConnectedAccounts: unsupported,
         settleEphemeralInput: unsupported,
         readResource: readResource as PluginUiHostApi['readResource'],

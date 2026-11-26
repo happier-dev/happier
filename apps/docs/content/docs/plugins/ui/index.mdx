@@ -295,6 +295,26 @@ authors do not supply currentness flags or destination callbacks. See the
 generated [host Action reference](/plugins/api/host-actions#sessionauthoringopen)
 for the current input and outcome contracts.
 
+
+### Pick a file from the mounted checkout (0.3 development)
+
+Installed plugins can call `host.pickWorkspaceFile()` on Project, Session,
+and Services surfaces with a checkout. Happier opens its file browser at the
+checkout already associated with the surface. This method is available in
+semantic Host API 1.3. Check `host.version().methods` if your plugin supports
+earlier hosts.
+
+```ts
+const selection = await host.pickWorkspaceFile();
+if (selection.kind === 'picked') {
+  useCheckoutRelativePath(selection.relativePath);
+}
+```
+
+Dismissing the picker returns `cancelled`. An unavailable checkout or a
+selection outside the checkout returns `unavailable` with reason
+`checkout_unavailable` or `outside_checkout`. Pass `{ signal }` to cancel a
+pending request when your surface no longer needs it.
 ### Run an Action after creating the Session (development)
 
 In unreleased 0.3, mounted plugins can include one `postCreateAction` in

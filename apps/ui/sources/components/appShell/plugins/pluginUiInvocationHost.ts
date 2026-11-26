@@ -200,6 +200,7 @@ export function createAppShellPluginUiInvocationHost(input: Readonly<{
         openNewSession: async () => unavailable(),
         openAutomationEvent: async () => unavailable(),
         revealSessionInput: async () => unavailable(),
+        pickWorkspaceFile: async () => unavailable(),
         openConnectedAccounts: async () => unavailable(),
         openManagedMachineConfiguration: async () => unavailable(),
         openDeployment: async () => unavailable(),

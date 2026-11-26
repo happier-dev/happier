@@ -261,6 +261,7 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         revealSessionInput: async () => {
             throw new Error('dev surface cannot reveal Session input');
         },
+        pickWorkspaceFile: async () => ({ kind: 'unavailable', reason: 'checkout_unavailable' }),
         openConnectedAccounts: async () => {
             throw new Error('dev surface cannot open Connected Accounts');
         },

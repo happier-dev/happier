@@ -48,6 +48,7 @@ export function createHostApiStub(
     selectActionInput: async () => ({ kind: 'cancelled' as const }),
     openNewSession: async () => unsupportedHostMethod(),
     openAutomationEvent: async () => unsupportedHostMethod(),
+    pickWorkspaceFile: async () => unsupportedHostMethod(),
     openConnectedAccounts: async () => unsupportedHostMethod(),
     openManagedMachineConfiguration: async () => unsupportedHostMethod(),
     openDeployment: async () => unsupportedHostMethod(),

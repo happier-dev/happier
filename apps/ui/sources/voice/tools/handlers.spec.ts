@@ -534,6 +534,7 @@ async function createElevenLabsToolHarness() {
       openManagedMachineConfiguration: async () => unavailableUi(),
       openDeployment: async () => unavailableUi(),
       revealSessionInput: async () => unavailableUi(),
+      pickWorkspaceFile: async () => unavailableUi(),
       openConnectedAccounts: async () => unavailableUi(), settleEphemeralInput: async () => unavailableUi(),
       readResource: async () => unavailableUi(), statOpenableContent: async () => unavailableUi(),
       readOpenableContent: async () => unavailableUi(), watchResource: async () => unavailableUi(),

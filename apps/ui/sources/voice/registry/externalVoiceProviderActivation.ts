@@ -419,6 +419,7 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
     openManagedMachineConfiguration: async () => unavailable(),
     openDeployment: async () => unavailable(),
     revealSessionInput: async () => unavailable(),
+    pickWorkspaceFile: async () => unavailable(),
     openConnectedAccounts: async () => unavailable(),
     settleEphemeralInput: async () => unavailable(),
     readResource: async () => unavailable(),

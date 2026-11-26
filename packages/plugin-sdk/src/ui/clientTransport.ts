@@ -22,6 +22,7 @@ import { PluginUiOpenDeploymentRequestV1Schema } from '@happier-dev/protocol/plu
 import { PluginUiRevealSessionInputRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiDownloadFileRequestV1Schema, FilesystemDownloadOutputSchema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiPickWorkspaceFileResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenConnectedAccountsResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import {
     decodePluginUiClipboardReadResult,
@@ -1361,6 +1362,13 @@ export async function createPluginUiHostApiClientFromTransport(
             const payload = PluginUiOpenDeploymentRequestV1Schema.safeParse(openRequest);
             if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload');
             await request('openDeployment', payload.data, requestOptions?.signal);
+        },
+        pickWorkspaceFile: async (options) => {
+            const result = PluginUiPickWorkspaceFileResultV1Schema.safeParse(
+                await request('pickWorkspaceFile', {}, options?.signal),
+            );
+            if (!result.success) throw new PluginUiHostApiClientError('invalid_payload', 'pickWorkspaceFile_response_invalid');
+            return result.data;
         },
         openConnectedAccounts: async (openRequest = {}, requestOptions) => {
             const payload = PluginUiOpenConnectedAccountsRequestV1Schema.safeParse(openRequest);

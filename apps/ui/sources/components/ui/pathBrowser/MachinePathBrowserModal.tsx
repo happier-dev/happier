@@ -48,6 +48,7 @@ import type { ManagedWorkspaceLocatorV2 } from '@happier-dev/protocol/workspaces
 import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useMachinePathBrowserCommands } from './useMachinePathBrowserCommands';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
+import { normalizeAbsoluteLocalPath, resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 
 export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
@@ -60,6 +61,7 @@ export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
     /** The prepared workspace, returned with the picked folder. */
     onPrepared?: (workspace: ManagedWorkspaceLocatorV2) => void;
     serverId?: string | null;
+    rootDirectoryPath?: string;
     title?: string;
     initialPath?: string | null;
     includeFiles?: boolean;
@@ -527,7 +529,13 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         return '';
     }, [nodesByPath, rootDirectoryPath, selectedPath]);
 
-    const typedPath = React.useMemo(() => readTypedMachinePath(searchQuery), [searchQuery]);
+    const typedPath = React.useMemo(() => {
+        const parsed = readTypedMachinePath(searchQuery);
+        if (!parsed || !rootDirectoryPath) return parsed;
+        const directory = normalizeAbsoluteLocalPath(parsed.directory.replace(/\\/g, '/'));
+        return resolvePathRelativeToRoot({ path: directory, root: rootDirectoryPath }) === null
+            ? null : { ...parsed, directory: normalizeAbsolutePath(directory) ?? directory };
+    }, [rootDirectoryPath, searchQuery]);
     const deepSearchEnabled = !workspace && typedPath === null && deepSearchRootDirectoryPath !== '' && searchQuery.trim().length > 0;
     // A typed name in a folder whose listing is capped may sit past the first page: ask the Machine for
     // that name among the folder's children instead of filtering the capped page (QA-BREADTH Q11).
@@ -640,10 +648,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     // Typing or pasting a path opens the folders on the way to it, and picks it once it is there.
     React.useEffect(() => {
         if (!typedPath) return;
-        const way = workspace ? [rootDirectoryPath, ...buildInitialExpandedPathsWithinRoot(rootDirectoryPath, typedPath.directory)]
-            : buildInitialExpandedPaths(typedPath.directory);
-        setExpandedPaths((current) => way.every((path) => current.includes(path)) ? current : [...new Set([...current, ...way])]);
-    }, [rootDirectoryPath, typedPath, workspace]);
+        const way = usesRootsListing
+            ? buildInitialExpandedPaths(typedPath.directory)
+            : buildInitialExpandedPathsWithinRoot(rootDirectoryPath, typedPath.directory);
+        const expandedWay = workspace ? [rootDirectoryPath, ...way] : way;
+        setExpandedPaths((current) => expandedWay.every((path) => current.includes(path)) ? current : [...new Set([...current, ...expandedWay])]);
+    }, [rootDirectoryPath, typedPath, usesRootsListing, workspace]);
     const typedTarget = typedPath ? (typedPath.prefix ? joinMachinePath(typedPath.directory, typedPath.prefix) : typedPath.directory) : null;
     const typedTargetNode = typedTarget
         ? nodesByPath.get(typedTarget) ?? typedLookupNodes.find((node) => node.path === typedTarget) : undefined;
@@ -1223,6 +1233,7 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
             workspace={workspace}
             onMachineChange={!workspace && props.allowMachineChange ? setMachineId : undefined}
             serverId={workspace?.serverId ?? props.serverId}
+            rootDirectoryPath={props.rootDirectoryPath}
             title={props.title}
             initialPath={props.initialPath}
             includeFiles={props.includeFiles}

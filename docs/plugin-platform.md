@@ -12801,7 +12801,7 @@ negotiation reply retires the controller. Invalid addressed negotiation results
 settle as `invalid_negotiation` rather than leaving the client pending.
 In 0.3 development, the host selects the oldest supported semantic generation
 matching the requested range: an installed `^1.0.0` client receives exactly 1.0.0,
-while the current SDK requests `^1.2.0`. The Protocol-owned method introduction
+while the current SDK requests `^1.3.0`. The Protocol-owned method introduction
 facts project each reply's method set; 1.1 adds `actionControl`,
 `openManagedMachineConfiguration`, `openDeployment` and `openResource`. The latter submits a typed
 resource intent to core's Account preference, contributed-handler selection and
@@ -12818,8 +12818,13 @@ the latest client's range must not narrow a sibling's installed operations.
 Withheld methods and unknown wire or operation payload fields remain refused.
 Wire epoch 1, mount identity and installed-handler
 authority are unchanged. A 1.2 client can negotiate only hosts supporting its
-generation; `deviceState` first appears in 1.2. Earlier 1.0 and 1.1 replies keep
-their closed method sets. A 1.1 wire negotiation request reaching a 1.0-only
+generation; `deviceState` first appears in 1.2. Semantic Host API 1.3 adds
+`pickWorkspaceFile`. The mounted host reads the admitted Project checkout on
+Project, Session, and Services surfaces and opens the existing Machine file
+browser at that root. The closed request carries no target. The result is a
+checkout-relative path, `cancelled`, or `unavailable` with a typed reason.
+The picker retires with its request or mount. Earlier replies keep their
+closed method sets. A 1.1 wire negotiation request reaching a 1.0-only
 Host API receives `incompatible_api_version`; there is no silent downgrade.
 An older host's injected single-range controller can instead refuse a later
 1.1 client locally after its presentation client negotiated 1.0. Safe refusal

@@ -155,7 +155,7 @@ describe('hosted web plugin host API adapter', () => {
         restricted.dispose();
     });
 
-    it('keeps the installed 1.0 reader usable while advertising new methods only to 1.1 clients', async () => {
+    it('preserves the installed 1.0 reader and advertises the picker from 1.3', async () => {
         const handler = createPluginHostedWebHostApiBridgeHandler({
             surface, requestIdPrefix: 'sdk-version-skew', identity: canonicalIdentity,
             canonicalHostApi: { identity: canonicalIdentity, surface: canonicalSurface,
@@ -171,10 +171,15 @@ describe('hosted web plugin host API adapter', () => {
             kind: 'negotiated', apiVersion: installedPluginUiSdk1.apiVersion,
             methods: installedPluginUiSdk1.methods.filter(method => method !== 'widgetArea'),
         } });
-        await expect(negotiate('^1.1.0')).resolves.toMatchObject({ kind: 'result', payload: {
-            kind: 'negotiated', apiVersion: '1.1.0',
-            methods: PLUGIN_UI_HOST_METHODS_V1.filter(method => method !== 'widgetArea'),
-        } });
+        for (const generation of ['1.1.0', '1.2.0', '1.3.0']) {
+            const reply = await negotiate(`^${generation}`);
+            const negotiated = PluginUiHostApiWireEnvelopeV1Schema.parse(reply.payload);
+            if (negotiated.kind !== 'negotiated') throw new Error('Expected negotiation');
+            expect(negotiated.apiVersion).toBe(generation);
+            expect(negotiated.methods).toContain('openManagedMachineConfiguration');
+            expect(negotiated.methods.includes('pickWorkspaceFile')).toBe(generation === '1.3.0');
+            expect(negotiated.methods).not.toContain('widgetArea');
+        }
         await expect(negotiate('>=1.0.0 <2.0.0')).resolves.toMatchObject({ payload: {
             kind: 'negotiated', apiVersion: installedPluginUiSdk1.apiVersion,
             methods: installedPluginUiSdk1.methods.filter(method => method !== 'widgetArea'),
