@@ -63,10 +63,24 @@ export const MachineReachabilityPlanV1Schema = lazyZodSchema(() => z.strictObjec
   reviewedPlanDigest: digest(), basis: MachineReachabilityPlanBasisV1Schema,
 }));
 export type MachineReachabilityPlanV1 = z.infer<typeof MachineReachabilityPlanV1Schema>;
+
+export function buildMachineReachabilityConfigureInput(
+  serverId: string | undefined, plan: MachineReachabilityPlanV1,
+): MachineReachabilityConfigureInputV1 {
+  return {
+    ...(serverId === undefined ? {} : { serverId }),
+    machineId: plan.basis.machineId, change: plan.basis.change,
+    reviewedPlanDigest: plan.reviewedPlanDigest, reviewedPlanBasis: plan.basis,
+  };
+}
 export const MachineReachabilityInspectResultV1Schema = lazyZodSchema(() => z.strictObject({
   machineId: text(), metadataVersion: revision(), posture: z.nullable(MachineReachabilityPostureV1Schema),
   selections: z.array(AccessProviderSelectionV1Schema), observation: MachineReachabilityObservationV1Schema,
   plan: z.optional(MachineReachabilityPlanV1Schema),
+  initialPostureReview: z.optional(z.strictObject({
+    kind: z.literal('required'),
+    configureInput: z.optional(MachineReachabilityConfigureInputV1Schema),
+  })),
   relayAccess: z.optional(RelayAccessTaskSnapshotV1Schema),
 }));
 export type MachineReachabilityInspectResultV1 = z.infer<typeof MachineReachabilityInspectResultV1Schema>;

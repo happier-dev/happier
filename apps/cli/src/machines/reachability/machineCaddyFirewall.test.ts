@@ -26,6 +26,6 @@ it('explains the missing Network posture before changing native or saved state',
       callConnectedClientRpc: async () => { throw new Error('No Home call before posture review'); },
     } }),
   }))).rejects.toMatchObject({ code: 'machine_reachability_posture_unavailable',
-    details: { requiredFact: 'reachabilityPosture', remedy: expect.stringMatching(/\S/) } });
+    details: { requiredFact: 'reachabilityPosture', machineId: 'machine', remedy: expect.stringMatching(/\S/) } });
   expect(metadata).toEqual({});
 });

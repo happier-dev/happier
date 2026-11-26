@@ -12671,6 +12671,12 @@ The unreleased Configure result also retains the firewall owner's optional
 0.3 protocol, daemon, UI and generated SDK readers refresh together; no migration
 is needed. Existing results without the optional capture remain readable.
 
+The unreleased strict Inspect result adds optional `initialPostureReview`.
+The closed object carries a `required` review and, when available, the existing
+Configure input. Existing results remain readable by updated clients. Older
+strict readers need a matching 0.3 update for a first-posture inspection.
+The persisted posture, Configure input and admission rules are unchanged.
+
 Saving the first open public SSH posture records the desired settings without
 changing the native firewall. Configure returns `saved_not_enforced` with
 `nextStep: 'apply_firewall_recipe'`. To change native SSH access, apply a reviewed

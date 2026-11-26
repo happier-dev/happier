@@ -13,6 +13,7 @@ import { useMachineNetworkExposure } from './useMachineNetworkExposure';
 export type MachineNetworkModel = ReturnType<typeof presentMachineNetwork> & Readonly<{
   read: MachineNetworkRead;
   approval: ActionApprovalContinuation | null;
+  initialPostureReview?: MachineReachabilityInspectResultV1['initialPostureReview'];
   /** Effective Docker bindings retain their own admission, push, failure and refresh owner. */
   services: ReturnType<typeof useMachineServicesList>;
   exposure: ReturnType<typeof useMachineNetworkExposure>;
@@ -90,5 +91,8 @@ export function useMachineNetwork(input: Readonly<{
       ? record.read : { kind: 'unrequested' };
   return { ...presentMachineNetwork({ facts: { ...facts, exposure: exposure.facts }, read,
     reachable: input.reachable, needsManage: input.needsManage }),
-    read, approval: bound && input.enabled && input.reachable === true ? record.approval : null, services, exposure, refresh };
+    read, approval: bound && input.enabled && input.reachable === true ? record.approval : null,
+    initialPostureReview: bound && input.enabled && !input.needsManage && input.reachable === true && facts.posture === null
+      ? record.inspection?.initialPostureReview : undefined,
+    services, exposure, refresh };
 }

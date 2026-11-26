@@ -371,6 +371,57 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     } finally { await api.dispose(); }
   });
 
+  it('offers the exact unchanged first posture through the reachability Actions and requires Manage to save', async () => {
+    const { f, api } = prepared;
+    try {
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      const { reachabilityPosture: _posture, ...metadata } = snapshot.metadata;
+      expect(await api.client.compareAndSwapMachineMetadata({ expectedMetadataVersion: snapshot.metadataVersion, metadata }))
+        .toMatchObject({ status: 'applied' });
+      await f.hostNative.setNativeSshPort(22);
+      const inspectInput = { serverId: f.home.serverIdentityId, machineId };
+      const inspect = async () => {
+        const result = await api.inspectOriginalCli(inspectInput);
+        if (!result.ok) throw new Error(result.errorCode);
+        return parseReachabilityInspectResult(result.result);
+      };
+      const review = await inspect();
+      const expectedPosture = { revision: 0, management: { providers: [],
+        publicSsh: { kind: 'open', port: 22, sourceCidrs: ['0.0.0.0/0', '::/0'] } },
+        defaultServiceIngress: { kind: 'none' } };
+      expect(review).toMatchObject({ posture: null, observation: { management: { publicSsh: 'open' },
+        nativeFirewall: { status: 'available', retainedSshEndpoints: expect.arrayContaining([
+          expect.objectContaining({ port: 22, sourceCidrs: ['0.0.0.0/0'] }),
+        ]) } },
+        initialPostureReview: { kind: 'required', configureInput: {
+          ...inspectInput, change: { kind: 'posture', posture: expectedPosture },
+          reviewedPlanBasis: { currentPostureRevision: null, nativeFirewall: review.observation.nativeFirewall },
+        } } });
+      const configureInput = review.initialPostureReview?.configureInput;
+      if (!configureInput) throw new Error('Expected an owner-prepared no-change Configure input');
+      const context = f.context();
+      await expect(api.client.executeMachineReachabilityAction({
+        actionId: 'machines.reachability.configure', input: configureInput, context,
+      }, {
+        signal: api.signal, verifyMachineAdmissionCurrent: async () => true,
+        machineAdmission: { actorAccountId: 'use-guest', custodianAccountId: f.accountRuntime.accountId,
+          machineId, installationId: api.machine.installationId, role: 'use', encryptionMode: 'plain' },
+      })).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+      expect(api.client.getMachineMetadataSnapshot()).toMatchObject({ metadata, metadataVersion: snapshot.metadataVersion + 1 });
+      const saved = await executeReviewedReachabilityConfigure(f, api, review, { configureInput });
+      expect(parseCompletedReachabilityConfigure(saved.result)).toMatchObject({
+        status: 'saved_not_enforced', posture: expectedPosture, nextStep: 'apply_firewall_recipe',
+        observation: { nativeFirewall: review.observation.nativeFirewall },
+      });
+      expect(f.hostNative.firewallStages).toEqual([]);
+      const after = await inspect();
+      expect(after.posture).toEqual(expectedPosture);
+      expect(after.observation.nativeFirewall).toEqual(review.observation.nativeFirewall);
+      expect(after.initialPostureReview).toBeUndefined();
+    } finally { await api.dispose(); }
+  });
+
   it.each([false, true])('reviews and configures the first posture against native SSH facts, refusing changed facts (socket activation: %s)', async socketActivated => {
     const { f, api } = prepared;
     try {
@@ -556,16 +607,19 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       await f.hostNative.setNativeSshPort(null);
       const posture = MachineReachabilityPostureV1Schema.parse({ revision: 0,
         management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } });
-      const raw = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId,
-        change: { kind: 'posture', posture } });
+      const raw = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId });
       expect(raw.ok, JSON.stringify(raw)).toBe(true);
       if (!raw.ok) throw new Error(raw.errorCode);
       const review = parseReachabilityInspectResult(raw.result);
       expect(review).toMatchObject({ posture: null,
         observation: { management: { publicSsh: 'closed' }, nativeFirewall: {
           status: 'available', ownedTable: 'absent', retainedSshEndpoints: [],
-        } }, plan: { basis: { nativeFirewall: { status: 'available', ownedTable: 'absent', retainedSshEndpoints: [] } } } });
-      const saved = await executeReviewedReachabilityConfigure(f, api, review);
+        } }, initialPostureReview: { kind: 'required', configureInput: {
+          change: { kind: 'posture', posture }, reviewedPlanBasis: { nativeFirewall: review.observation.nativeFirewall },
+        } } });
+      const configureInput = review.initialPostureReview?.configureInput;
+      if (!configureInput) throw new Error('Expected an owner-prepared no-change Configure input');
+      const saved = await executeReviewedReachabilityConfigure(f, api, review, { configureInput });
       expect(parseCompletedReachabilityConfigure(saved.result)).toMatchObject({ status: 'applied', posture });
       expect(f.elevation.diagnostics.flatMap(diagnostic => diagnostic.requests).every(request => request.mode === 'check')).toBe(true);
       expect(f.hostNative.calls.filter(call => call.executable === '/usr/sbin/nft').every(call =>

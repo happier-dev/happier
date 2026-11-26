@@ -12226,6 +12226,15 @@ inventory returns its classified fact and remedy, rather than an empty binding
 list. Only a successful empty native inventory establishes that no owned Caddy
 container exists.
 
+A plain `machines.reachability.inspect` on a Machine with no saved posture returns
+`initialPostureReview.kind: 'required'` alongside its observation. If the existing
+posture format can represent the observed SSH access, the review includes a
+`configureInput` to save those settings unchanged. Submit that exact input to
+`machines.reachability.configure` through normal approval. If no input is supplied,
+use the native facts and the explicit change review. The Domain refusal
+`machine_network_review_required` identifies the serving Machine in
+`details.machineId` and the missing review in `details.requiredFact`.
+
 Reviewing an explicit first posture uses the same native observation as its plan
 basis while `posture` stays null. Configure observes those facts again and rejects
 `plan_changed` before saving if they differ from the reviewed digest. Unavailable

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityInspectResultV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityConfigureResultV1, type MachineReachabilityPlanV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityInspectResultV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityConfigureInputV1, type MachineReachabilityConfigureResultV1, type MachineReachabilityPlanV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
@@ -111,6 +111,11 @@ export function useMachineNetworkReview(
     [input.machineId, input.serverId, lifetime, run],
   );
 
+  const prepareObserved = React.useCallback((input: MachineReachabilityConfigureInputV1) => {
+    if (inFlight()) return;
+    setReview({ kind: 'review', plan: { basis: input.reviewedPlanBasis, reviewedPlanDigest: input.reviewedPlanDigest } });
+  }, [inFlight]);
+
   const apply = React.useCallback(async () => {
     if (inFlight() || review.kind !== 'review') return;
     const plan = review.plan;
@@ -149,5 +154,5 @@ export function useMachineNetworkReview(
     setReview({ kind: 'idle' });
   }, [abort]);
 
-  return { review, prepare, apply, cancel };
+  return { review, prepare, prepareObserved, apply, cancel };
 }

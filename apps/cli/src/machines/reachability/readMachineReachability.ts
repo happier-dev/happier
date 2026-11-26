@@ -6,6 +6,7 @@ import { AccessProviderSelectionV1Schema, accessProviderRefsEqualV1,
   type AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { readMachineMetadataFieldV1, readMachineMetadataSnapshotV1, type MachineMetadataFieldDefinitionV1,
   type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
+import type { MachineFirewallTransitionFactsV1 } from '@happier-dev/protocol/machines/setup/machineFirewallV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -22,6 +23,31 @@ export const reachabilityPostureField: MachineMetadataFieldDefinitionV1<MachineR
   field: 'reachabilityPosture', storedSchema: z.nullable(MachineReachabilityPostureV1Schema),
   defaultValue: () => null, equal: sameStrictJsonValue,
 };
+/**
+ * The saved policy describes one public SSH port and one source set per IP
+ * family. Only offer an unchanged review when that shape represents the facts.
+ */
+export function readObservedInitialPosture(facts: MachineFirewallTransitionFactsV1): MachineReachabilityPostureV1 | undefined {
+  if (facts.status !== 'available') return;
+  const retained = facts.retainedSshEndpoints.filter(endpoint => endpoint.sourceCidrs.length > 0);
+  const external = retained.filter(endpoint => facts.externalInterfaces.includes(endpoint.interfaceName));
+  const first = external[0];
+  const initial = { revision: 0, defaultServiceIngress: { kind: 'none' } } as const;
+  // An explicit close with any retained SSH scopes would run the firewall transition.
+  if (!first) return retained.length ? undefined : { ...initial, management: { providers: [], publicSsh: { kind: 'closed' } } };
+  const sourceCidrsByFamily = new Map<boolean, string[]>();
+  for (const endpoint of external) {
+    if (endpoint.port !== first.port) return;
+    const ipv6 = endpoint.hostAddress.includes(':');
+    const sources = [...new Set(endpoint.sourceCidrs)].sort();
+    const prior = sourceCidrsByFamily.get(ipv6);
+    if (prior && !sameStrictJsonValue(prior, sources)) return;
+    sourceCidrsByFamily.set(ipv6, sources);
+  }
+  return { ...initial, management: { providers: [], publicSsh: { kind: 'open', port: first.port,
+    sourceCidrs: [...(sourceCidrsByFamily.get(false) ?? []), ...(sourceCidrsByFamily.get(true) ?? [])] } } };
+}
+
 export const accessProviderSelectionsField: MachineMetadataFieldDefinitionV1<AccessProviderSelectionV1[]> = {
   field: 'accessProviderSelections', storedSchema: z.array(AccessProviderSelectionV1Schema),
   defaultValue: () => [], equal: sameStrictJsonValue,

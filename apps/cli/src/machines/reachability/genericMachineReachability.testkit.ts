@@ -26,7 +26,7 @@ import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals
 import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineReachabilityInspectResultV1Schema, MachineReachabilityConfigureResultV1Schema,
   MachineReachabilityInspectInputV1Schema, MachineReachabilityConfigureInputV1Schema,
-  MachineReachabilityPlanBasisV1Schema } from '@happier-dev/protocol';
+  MachineReachabilityPlanBasisV1Schema, type MachineReachabilityConfigureInputV1 } from '@happier-dev/protocol';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1, MachineConnectorSecretGrantInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
@@ -2017,7 +2017,7 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
         expect(response.status, 'The real proof boundary must reject an invalid signature').toBe(403);
         expect(fixture.home.admissionProofChecks.at(-1)).toEqual({ signatureValid: false, accepted: false });
       },
-      runOriginalCli: (input: ReturnType<typeof fixture.configureInput>) => {
+      runOriginalCli: (input: MachineReachabilityConfigureInputV1) => {
         console.info('Generic public journey stage', { stage: 'configure_submitted', atMs: Date.now() });
         return executeOriginalCli('machines.reachability.configure', input, 'account_automation');
       },
@@ -2326,13 +2326,14 @@ async function executeReviewedReachabilityConfigureTask(
   fixture: Awaited<ReturnType<typeof journey>>,
   api: Awaited<ReturnType<typeof createGenericDefaultFactoryJourney>>,
   review: ReturnType<typeof parseReachabilityInspectResult>,
-  options: Readonly<{ beforeDecision?(): void | Promise<void>; reviewArtifact?(request: ApprovalRequest): void }> = {},
+  options: Readonly<{ beforeDecision?(): void | Promise<void>; reviewArtifact?(request: ApprovalRequest): void;
+    configureInput?: MachineReachabilityConfigureInputV1 }> = {},
 ) {
-  if (!review.plan) throw new Error('Expected the real reviewed plan');
+  const input = options.configureInput ?? fixture.configureInput(review);
   const artifactCount = fixture.home.artifacts.size;
   const before = { mutations: fixture.hostNative.networkMutations(), grants: await fixture.home.readConnectorGrantCount(),
     metadata: api.metadataPublications.length, root: fixture.elevation.launches.length };
-  const raw = ActionExecuteResultSchema.parse(await api.runOriginalCli(fixture.configureInput(review)));
+  const raw = ActionExecuteResultSchema.parse(await api.runOriginalCli(input));
   api.signal.throwIfAborted();
   const earlyFailure = readActionFailureEnvelope(raw);
   const earlyBoundary = earlyFailure ? await api.readFailureDiagnostic(earlyFailure.error) : undefined;
@@ -2362,7 +2363,7 @@ async function executeReviewedReachabilityConfigureTask(
     throw new Error('The retained approval has no reviewed checklist');
   }
   const basis = MachineReachabilityPlanBasisV1Schema.parse(preview.actionArgs.reviewedPlanBasis);
-  expect(basis).toEqual(review.plan.basis);
+  expect(basis).toEqual(input.reviewedPlanBasis);
   const presentation = describeApprovalActionFields({ actionId: request.actionId, actionArgs: request.actionArgs,
     preview: request.preview, status: request.status });
   expect(presentation.unrepresentable).toBeNull();

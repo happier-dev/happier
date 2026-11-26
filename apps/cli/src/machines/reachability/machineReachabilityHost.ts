@@ -16,7 +16,7 @@ import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { accessProviderRefsEqualV1, type AccessProviderMembershipFactsV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { MachineRecipeSelectionV1Schema, type MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { machineSetupRecipeInputsAcceptedV1 } from '@happier-dev/protocol/machines/setup/machineSetupPreparationV1';
-import { MachineReachabilityPlanV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityInspectInputV1, type MachineReachabilityConfigureInputV1, type MachineReachabilityConfigureResultV1, type MachineReachabilityPlanBasisV1, type MachineReachabilityPlanV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { buildMachineReachabilityConfigureInput, MachineReachabilityPlanV1Schema, type MachineReachabilityChangeV1, type MachineReachabilityInspectInputV1, type MachineReachabilityConfigureInputV1, type MachineReachabilityConfigureResultV1, type MachineReachabilityPlanBasisV1, type MachineReachabilityPlanV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { MachineReachabilityObservationV1 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
 import { checkMachineSetupEffectPlan, createMachineSetupEffectPlan, createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
@@ -39,7 +39,7 @@ import { inspectMachineReachabilityNativeFirewall } from './inspectMachineReacha
 import { withReachabilityJoinCredential } from './prepareReachabilityJoinCredential';
 import { machineConnectorCredentialDirectory as credentialDirectory,
   machineConnectorCredentialFilePath as credentialFilePath } from '@happier-dev/cli-common/machineSetup/credentialFile';
-import { SelectedProfileRefusal, readMachineReachabilityMetadata, observeMachineReachability,
+import { SelectedProfileRefusal, readMachineReachabilityMetadata, observeMachineReachability, readObservedInitialPosture,
   reachabilityPostureField, accessProviderSelectionsField, builtinTailscaleMembershipSelection } from './readMachineReachability';
 
 export type MachineReachabilityHostDependencies = Readonly<{
@@ -129,7 +129,7 @@ function reviewedPlanDigest(basis: MachineReachabilityPlanBasisV1) {
     [createCanonicalJsonSigningInput(operation)]);
 }
 
-async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineReachabilityHostDependencies,
+async function prepare(input: MachineReachabilityInspectInputV1 | MachineReachabilityConfigureInputV1, deps: MachineReachabilityHostDependencies,
   actionId: 'machines.reachability.inspect' | 'machines.reachability.configure') {
   // The Action executor resolves Home aliases; the receiving transport binds
   // that Home's Machine admission. A local profile label is not a Home identity.
@@ -267,11 +267,15 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   observation ??= await observeMachineReachability({ state, providers, isCurrent: deps.isCurrent });
   // A first posture has no saved policy to review against. Bind its native
   // facts in the plan, and rebuild them at configure before the metadata CAS.
+  const initialPostureReview = actionId === 'machines.reachability.inspect' && !change && state.posture === null;
+  let observedInitialChange: MachineReachabilityChangeV1 | undefined;
   let nativeFirewall: MachineReachabilityPlanBasisV1['nativeFirewall'];
   let firewallTransition: MachineReachabilityPlanBasisV1['firewallTransition'];
   const sshChanged = change?.kind === 'posture' && !!state.posture
     && !sameStrictJsonValue(change.posture.management.publicSsh, state.posture.management.publicSsh);
-  const reviewFirewall = change?.kind === 'posture' && (sshChanged || change.posture.management.publicSsh.kind === 'closed');
+  const settingsOnlyFirstSave = state.posture === null && 'reviewedPlanBasis' in input && !input.reviewedPlanBasis.firewallTransition;
+  const reviewFirewall = change?.kind === 'posture'
+    && (sshChanged || change.posture.management.publicSsh.kind === 'closed' && !settingsOnlyFirstSave);
   if (actionId === 'machines.reachability.inspect' && (!change || change.kind === 'posture')
     || change?.kind === 'posture' && (!state.posture || reviewFirewall)) {
     const requestId = deps.context.actionRequestId;
@@ -298,7 +302,13 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
       facts.externalInterfaces.includes(endpoint.interfaceName) && endpoint.sourceCidrs.length > 0) ? 'open' : 'closed';
     observation = { ...observation, nativeFirewall: facts,
       management: { ...observation.management, publicSsh } };
-    if (change?.kind === 'posture' && (!state.posture || reviewFirewall)) {
+    if (initialPostureReview) {
+      const posture = readObservedInitialPosture(facts);
+      if (posture) {
+        observedInitialChange = { kind: 'posture', posture };
+        nativeFirewall = facts;
+      }
+    } else if (change?.kind === 'posture' && (!state.posture || reviewFirewall)) {
       if (facts.status === 'unavailable') return { ok: false as const,
         errorCode: 'native_check_unavailable', error: 'native_check_unavailable', details: {
           failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', phase: 'check', requiredFact: facts.requiredFact },
@@ -306,14 +316,23 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
         } };
       const needsTransition = sshChanged || change.posture.management.publicSsh.kind === 'closed'
         && facts.retainedSshEndpoints.some(endpoint => endpoint.sourceCidrs.length > 0);
-      if (!state.posture || needsTransition) nativeFirewall = facts;
+      // A reviewed settings-only save cannot be promoted to a firewall transition by drift.
+      if (needsTransition && settingsOnlyFirstSave) return refuse('plan_changed', undefined, false);
+      if (needsTransition) nativeFirewall = facts;
+      else if (!state.posture) {
+        // Caddy bounds an SSH transition. A settings-only first save uses the
+        // same SSH basis as plain Inspect, which does not demand Caddy facts.
+        const { caddy: _caddy, ...sshFacts } = facts;
+        nativeFirewall = sshFacts;
+      }
       if (needsTransition) firewallTransition = { setupRevision: setup.policy.revision, dockerEngineIds,
         intent: { v: 1, kind: 'retainSsh', caddy: bindings, publicSsh: change.posture.management.publicSsh } };
     }
   }
-  const basis: MachineReachabilityPlanBasisV1 | undefined = change ? { machineId: deps.target.machineId,
+  const plannedChange = change ?? observedInitialChange;
+  const basis: MachineReachabilityPlanBasisV1 | undefined = plannedChange ? { machineId: deps.target.machineId,
     installationId: deps.target.installationId, currentPostureRevision: state.posture?.revision ?? null,
-    currentSelections: state.selections, change, occurrences, recipePlans,
+    currentSelections: state.selections, change: plannedChange, occurrences, recipePlans,
     ...(nativeFirewall ? { nativeFirewall } : {}),
     ...(firewallTransition ? { firewallTransition } : {}),
     ...(nativeProfiles.length ? { nativeProfiles } : {}),
@@ -323,7 +342,7 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   // that same plan, so prerequisite filtering cannot accidentally execute the
   // membership program before its protected credential is materialized.
   const reviewedMembership = membershipEntry && plan?.basis.recipePlans.find(entry => sameStrictJsonValue(entry, membershipEntry));
-  return { state, providers, observation, plan, membershipEntry: reviewedMembership, removeSavedSelection };
+  return { state, providers, observation, plan, initialPostureReview, membershipEntry: reviewedMembership, removeSavedSelection };
 }
 
 async function prepareHomeRelay(input: MachineReachabilityInspectInputV1, deps: MachineReachabilityHostDependencies,
@@ -376,7 +395,12 @@ export async function inspectMachineReachability(input: MachineReachabilityInspe
   if ('ok' in prepared) return prepared;
   const observation = await deps.publish(prepared.observation);
   return { machineId: deps.target.machineId, ...prepared.state, observation,
-    ...(prepared.plan ? { plan: prepared.plan } : {}) };
+    ...(prepared.initialPostureReview ? { initialPostureReview: {
+      kind: 'required' as const,
+      ...(prepared.plan ? { configureInput: buildMachineReachabilityConfigureInput(
+        input.serverId ?? deps.context.serverIdentityId ?? deps.target.serverId, prepared.plan,
+      ) } : {}),
+    } } : prepared.plan ? { plan: prepared.plan } : {}) };
 }
 
 export async function executeMachineReachabilityTransition(input: MachineReachabilityConfigureInputV1, deps: MachineReachabilityHostDependencies) {
@@ -803,6 +827,7 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
   const state = await readMachineReachabilityMetadata(input.port);
   if (!state.posture) return refuse('machine_reachability_posture_unavailable', {
     requiredFact: 'reachabilityPosture',
+    machineId: input.machineId,
     remedy: 'This Machine’s network setup hasn’t been reviewed yet. Review and apply it, then add the domain again.',
   });
   const transitioned = await executeRetainedSshTransition({ ...input,

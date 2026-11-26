@@ -75,8 +75,10 @@ unknown first origin leaves removal unavailable.
 Domain setup requires a saved Network posture before it starts a firewall
 transition. A clean Machine with no posture also needs its first reviewed
 posture; a previous failed SSH close is not required to produce this refusal.
-The Domain result names `reachabilityPosture` and tells the person to review
-and apply Network posture. If native rules and the effective table disagree,
+The Domain result names the serving Machine and the missing
+`reachabilityPosture` review. Inspect that Machine's reachability and submit the
+returned `initialPostureReview.configureInput` for an unchanged first save when
+available. If native rules and the effective table disagree,
 review itself refuses: administrator or provider-console reconciliation of
 the inspected rules, table and service must precede a fresh review. Updating
 the renderer prevents recurrence but does not repair an already inconsistent

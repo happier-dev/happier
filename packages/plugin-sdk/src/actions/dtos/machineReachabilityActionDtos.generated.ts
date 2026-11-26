@@ -3567,6 +3567,1617 @@ export type MachineReachabilityActionResultById = {
                 };
             };
         };
+        initialPostureReview?: undefined | {
+            kind: 'required';
+            configureInput?: undefined | {
+                change: {
+                    kind: 'homeRelay';
+                    relay: {
+                        channel: 'dev' | 'preview' | 'stable';
+                        mode: 'system' | 'user';
+                    };
+                    selection: null | {
+                        provider: {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        config: JsonValue;
+                        credentialRefs: {
+                            purpose: string;
+                            credentialRef: {
+                                kind: 'connectedAccount';
+                                account: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'savedSecret';
+                            };
+                        }[];
+                    };
+                    hostname?: string | undefined;
+                } | {
+                    kind: 'posture';
+                    posture: {
+                        revision: number;
+                        management: {
+                            providers: {
+                                provider: {
+                                    kind: 'builtin';
+                                    id: string;
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                config: JsonValue;
+                                credentialRefs: {
+                                    purpose: string;
+                                    credentialRef: {
+                                        kind: 'connectedAccount';
+                                        account: {
+                                            service: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            accountId: string;
+                                        };
+                                    } | {
+                                        ref: string;
+                                        resourceRevision: number;
+                                        kind: 'savedSecret';
+                                    };
+                                }[];
+                            }[];
+                            publicSsh: {
+                                kind: 'closed';
+                            } | {
+                                kind: 'open';
+                                port: number;
+                                sourceCidrs: string[];
+                            };
+                            independentRecovery?: undefined | {
+                                kind: 'explicitSsh' | 'providerConsole' | 'tailscaleSsh';
+                                evidence: 'userAttested' | 'verified';
+                                confirmedAtMs?: number | undefined;
+                            };
+                        };
+                        defaultServiceIngress: {
+                            kind: 'none';
+                        } | {
+                            kind: 'provider';
+                            selection: {
+                                provider: {
+                                    kind: 'builtin';
+                                    id: string;
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                config: JsonValue;
+                                credentialRefs: {
+                                    purpose: string;
+                                    credentialRef: {
+                                        kind: 'connectedAccount';
+                                        account: {
+                                            service: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            accountId: string;
+                                        };
+                                    } | {
+                                        ref: string;
+                                        resourceRevision: number;
+                                        kind: 'savedSecret';
+                                    };
+                                }[];
+                            };
+                        };
+                    };
+                } | {
+                    kind: 'privateNetwork';
+                    intent: 'join' | 'leave';
+                    selection: {
+                        provider: {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        config: JsonValue;
+                        credentialRefs: {
+                            purpose: string;
+                            credentialRef: {
+                                kind: 'connectedAccount';
+                                account: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'savedSecret';
+                            };
+                        }[];
+                    };
+                };
+                reviewedPlanDigest: string;
+                reviewedPlanBasis: {
+                    machineId: string;
+                    installationId: string;
+                    currentPostureRevision: null | number;
+                    currentSelections: {
+                        provider: {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        config: JsonValue;
+                        credentialRefs: {
+                            purpose: string;
+                            credentialRef: {
+                                kind: 'connectedAccount';
+                                account: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'savedSecret';
+                            };
+                        }[];
+                    }[];
+                    change: {
+                        kind: 'homeRelay';
+                        relay: {
+                            channel: 'dev' | 'preview' | 'stable';
+                            mode: 'system' | 'user';
+                        };
+                        selection: null | {
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            config: JsonValue;
+                            credentialRefs: {
+                                purpose: string;
+                                credentialRef: {
+                                    kind: 'connectedAccount';
+                                    account: {
+                                        service: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        accountId: string;
+                                    };
+                                } | {
+                                    ref: string;
+                                    resourceRevision: number;
+                                    kind: 'savedSecret';
+                                };
+                            }[];
+                        };
+                        hostname?: string | undefined;
+                    } | {
+                        kind: 'posture';
+                        posture: {
+                            revision: number;
+                            management: {
+                                providers: {
+                                    provider: {
+                                        kind: 'builtin';
+                                        id: string;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    config: JsonValue;
+                                    credentialRefs: {
+                                        purpose: string;
+                                        credentialRef: {
+                                            kind: 'connectedAccount';
+                                            account: {
+                                                service: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                accountId: string;
+                                            };
+                                        } | {
+                                            ref: string;
+                                            resourceRevision: number;
+                                            kind: 'savedSecret';
+                                        };
+                                    }[];
+                                }[];
+                                publicSsh: {
+                                    kind: 'closed';
+                                } | {
+                                    kind: 'open';
+                                    port: number;
+                                    sourceCidrs: string[];
+                                };
+                                independentRecovery?: undefined | {
+                                    kind: 'explicitSsh' | 'providerConsole' | 'tailscaleSsh';
+                                    evidence: 'userAttested' | 'verified';
+                                    confirmedAtMs?: number | undefined;
+                                };
+                            };
+                            defaultServiceIngress: {
+                                kind: 'none';
+                            } | {
+                                kind: 'provider';
+                                selection: {
+                                    provider: {
+                                        kind: 'builtin';
+                                        id: string;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    config: JsonValue;
+                                    credentialRefs: {
+                                        purpose: string;
+                                        credentialRef: {
+                                            kind: 'connectedAccount';
+                                            account: {
+                                                service: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                accountId: string;
+                                            };
+                                        } | {
+                                            ref: string;
+                                            resourceRevision: number;
+                                            kind: 'savedSecret';
+                                        };
+                                    }[];
+                                };
+                            };
+                        };
+                    } | {
+                        kind: 'privateNetwork';
+                        intent: 'join' | 'leave';
+                        selection: {
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            config: JsonValue;
+                            credentialRefs: {
+                                purpose: string;
+                                credentialRef: {
+                                    kind: 'connectedAccount';
+                                    account: {
+                                        service: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        accountId: string;
+                                    };
+                                } | {
+                                    ref: string;
+                                    resourceRevision: number;
+                                    kind: 'savedSecret';
+                                };
+                            }[];
+                        };
+                    };
+                    occurrences: {
+                        provider: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        occurrenceId: string;
+                    }[];
+                    recipePlans: {
+                        sourceIndex: number;
+                        itemIndex: number;
+                        plan: {
+                            v: 1;
+                            basis: {
+                                kind: 'adminAccess';
+                                machineId: string;
+                                operationId: string;
+                                previousPolicy: {
+                                    version: 1;
+                                    mode: 'ask';
+                                    administratorUsername: string;
+                                } | {
+                                    version: 1;
+                                    mode: 'none';
+                                } | {
+                                    version: 1;
+                                    mode: 'preauthorized';
+                                };
+                                policy: {
+                                    version: 1;
+                                    mode: 'ask';
+                                    administratorUsername: string;
+                                } | {
+                                    version: 1;
+                                    mode: 'none';
+                                } | {
+                                    version: 1;
+                                    mode: 'preauthorized';
+                                };
+                            } | {
+                                kind: 'agentIsolation';
+                                machineId: string;
+                                enabled: boolean;
+                                expectedPolicy: {
+                                    enabled: boolean;
+                                    memberProvisioning?: 'linuxUsersV1' | undefined;
+                                };
+                                review?: undefined | {
+                                    roots: {
+                                        rootId: string;
+                                        path: string;
+                                    }[];
+                                    ancestorAcls: {
+                                        path: string;
+                                        add: 'x';
+                                    }[];
+                                    sessionsToReplace: number;
+                                    memberProvisioning?: 'linuxUsersV1' | undefined;
+                                };
+                            } | {
+                                kind: 'bootstrap';
+                                managedId: string;
+                                operationId: string;
+                                admittedInputDigest: string;
+                            } | {
+                                kind: 'boundSetup';
+                                managedId: string;
+                                sessionId: string;
+                                operationId: string;
+                            } | {
+                                kind: 'preparation';
+                                operationId: string;
+                            } | {
+                                kind: 'reboot';
+                                machineId: string;
+                                operationId: string;
+                            } | {
+                                kind: 'setup';
+                                machineId: string;
+                                desiredRevision: number;
+                                selection?: undefined | {
+                                    ref: {
+                                        pluginId: string;
+                                        recipeId: string;
+                                        revision: string;
+                                    };
+                                    inputs: PluginJsonValueV2;
+                                };
+                            } | {
+                                kind: 'sshBootstrap';
+                                operationId: string;
+                                admittedInputDigest: string;
+                            } | {
+                                kind: 'updates';
+                                machineId: string;
+                                scope: 'all' | 'security';
+                            };
+                            steps: ({
+                                check: {
+                                    executable: string;
+                                    args: string[];
+                                    unsatisfiedExitCodes: number[];
+                                    stdoutJson?: InputPredicate | undefined;
+                                } | {
+                                    kind: 'audit';
+                                    rules: string[];
+                                    state?: 'absent' | 'present' | undefined;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'userManagerGroups';
+                                    username: string;
+                                };
+                                executable: string;
+                                args: string[];
+                                kind: 'command';
+                                id: string;
+                                remove?: undefined | {
+                                    executable: string;
+                                    args: string[];
+                                };
+                                affects?: 'dockerEngine' | 'none' | undefined | {
+                                    services: string[];
+                                };
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'firewall';
+                                rules: string;
+                                id: string;
+                                exposures?: ({
+                                    exposure: 'loopback' | 'public';
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                } | {
+                                    exposure: 'privateNetwork';
+                                    providerId: string;
+                                    networkIdentity: string;
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                })[] | undefined;
+                                operation?: 'remove' | undefined;
+                                caddyObservation?: undefined | {
+                                    privateNetworks: {
+                                        provider: {
+                                            kind: 'builtin';
+                                            id: string;
+                                        } | {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        networkIdentity: null | string;
+                                        displayName: null | string;
+                                        dnsName: null | string;
+                                        addresses: string[];
+                                        state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                        interfaceName: null | string;
+                                        sourceRanges: string[];
+                                        magicDnsEnabled: boolean | null;
+                                    }[];
+                                };
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'group';
+                                name: string;
+                                members: string[];
+                                id: string;
+                                state?: 'absent' | 'present' | undefined;
+                                existingOnly?: true | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'package';
+                                manager: string;
+                                packages: {
+                                    name: string;
+                                    version?: string | undefined;
+                                    kind?: 'cask' | 'formula' | undefined;
+                                    source?: string | undefined;
+                                    scope?: 'machine' | 'user' | undefined;
+                                }[];
+                                id: string;
+                                state?: 'absent' | 'present' | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'pathTraversal';
+                                path: string;
+                                agentUsername: string;
+                                id: string;
+                                state?: 'absent' | 'present' | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'reboot';
+                                id: string;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'script';
+                                shell: 'bash' | 'sh';
+                                body: string;
+                                id: string;
+                                check?: undefined | {
+                                    body: string;
+                                    unsatisfiedExitCodes: number[];
+                                };
+                                affects?: 'dockerEngine' | 'none' | undefined | {
+                                    services: string[];
+                                };
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'serviceUnit';
+                                unit: string;
+                                running: boolean;
+                                id: string;
+                                enabled?: boolean | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'user';
+                                username: string;
+                                id: string;
+                                home?: string | undefined;
+                                shell?: string | undefined;
+                                system?: boolean | undefined;
+                                locked?: boolean | undefined;
+                                uid?: number | undefined;
+                                state?: 'absent' | 'present' | undefined;
+                                ownershipMarker?: string | undefined;
+                                supplementaryGroups?: string[] | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'workspaceAccess';
+                                path: string;
+                                group: string;
+                                agentUsername: string;
+                                id: string;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                manager: 'apt';
+                                suite: string;
+                                components: string[];
+                                architectures: string[];
+                                kind: 'packageSource';
+                                path: string;
+                                keyPath: string;
+                                url: string;
+                                keyUrl: string;
+                                keyFingerprint: string;
+                                id: string;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                manager: 'dnf';
+                                repositoryId: string;
+                                architectures: string[];
+                                kind: 'packageSource';
+                                path: string;
+                                keyPath: string;
+                                url: string;
+                                keyUrl: string;
+                                keyFingerprint: string;
+                                id: string;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                owner: string;
+                                group: string;
+                                mode: number;
+                                kind: 'directory';
+                                path: string;
+                                id: string;
+                                preserveExistingOwnership?: true | undefined;
+                                protectedAncestors?: true | undefined;
+                                ownershipMarker?: string | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                owner: string;
+                                group: string;
+                                mode: number;
+                                kind: 'file';
+                                path: string;
+                                id: string;
+                                state?: 'absent' | 'present' | undefined;
+                                lifetime?: 'invocation' | undefined;
+                                content?: undefined | {
+                                    kind: 'iniKeys';
+                                    sections: Record<string, Record<string, string>>;
+                                } | {
+                                    kind: 'jsonMerge';
+                                    value: Record<string, JSONType>;
+                                } | {
+                                    kind: 'literal';
+                                    value: string;
+                                } | {
+                                    kind: 'secretGrant';
+                                    grantRef: string;
+                                } | {
+                                    kind: 'template';
+                                    value: string;
+                                    variables: Record<string, string>;
+                                };
+                                expectedContentDigest?: string | undefined;
+                                ownershipMarker?: string | undefined;
+                                validate?: 'docker' | 'sudoers' | undefined | {
+                                    kind: 'audit';
+                                    rules: string[];
+                                    state?: 'absent' | 'present' | undefined;
+                                } | {
+                                    kind: 'caddy';
+                                } | {
+                                    kind: 'docker';
+                                } | {
+                                    kind: 'fail2ban';
+                                    jails: Record<string, {
+                                        maxRetry: number;
+                                        findTimeSeconds: number;
+                                        banTimeSeconds: number;
+                                        port?: number | undefined;
+                                    }>;
+                                } | {
+                                    kind: 'nft';
+                                } | {
+                                    kind: 'sshd';
+                                    contexts: {
+                                        user: string;
+                                        host: string;
+                                        address: string;
+                                        expected?: Record<string, string> | undefined;
+                                    }[];
+                                    publicHostKeyEvidence?: true | undefined;
+                                } | {
+                                    kind: 'sudoers';
+                                };
+                                probe?: undefined | {
+                                    kind: 'audit';
+                                    rules: string[];
+                                    state?: 'absent' | 'present' | undefined;
+                                } | {
+                                    kind: 'caddy';
+                                } | {
+                                    kind: 'docker';
+                                } | {
+                                    kind: 'fail2ban';
+                                    jails: Record<string, {
+                                        maxRetry: number;
+                                        findTimeSeconds: number;
+                                        banTimeSeconds: number;
+                                        port?: number | undefined;
+                                    }>;
+                                } | {
+                                    kind: 'nft';
+                                } | {
+                                    kind: 'sshd';
+                                    contexts: {
+                                        user: string;
+                                        host: string;
+                                        address: string;
+                                        expected?: Record<string, string> | undefined;
+                                    }[];
+                                    publicHostKeyEvidence?: true | undefined;
+                                } | {
+                                    kind: 'sudoers';
+                                };
+                                onChange?: undefined | {
+                                    serviceStepId: string;
+                                    action: 'reload' | 'restart';
+                                };
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            })[];
+                            nativeFacts: {
+                                stepId: string;
+                                status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                                facts: Record<string, JSONType>;
+                                reason?: string | undefined;
+                            }[];
+                            planDigest: string;
+                            checks?: ({
+                                check: {
+                                    executable: string;
+                                    args: string[];
+                                    unsatisfiedExitCodes: number[];
+                                    stdoutJson?: InputPredicate | undefined;
+                                } | {
+                                    kind: 'audit';
+                                    rules: string[];
+                                    state?: 'absent' | 'present' | undefined;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'userManagerGroups';
+                                    username: string;
+                                };
+                                executable: string;
+                                args: string[];
+                                kind: 'command';
+                                id: string;
+                                remove?: undefined | {
+                                    executable: string;
+                                    args: string[];
+                                };
+                                affects?: 'dockerEngine' | 'none' | undefined | {
+                                    services: string[];
+                                };
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            } | {
+                                kind: 'kernel';
+                                capability: string;
+                                id: string;
+                                architectures?: string[] | undefined;
+                            } | {
+                                kind: 'package';
+                                manager: string;
+                                packages: {
+                                    name: string;
+                                    version?: string | undefined;
+                                    kind?: 'cask' | 'formula' | undefined;
+                                    source?: string | undefined;
+                                    scope?: 'machine' | 'user' | undefined;
+                                }[];
+                                id: string;
+                                state?: 'absent' | 'present' | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                review?: undefined | {
+                                    title: string | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                    description?: string | undefined | {
+                                        key: string;
+                                        fallback: string;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                };
+                            })[] | undefined;
+                            checkFacts?: undefined | {
+                                stepId: string;
+                                status: 'drifted' | 'satisfied' | 'unavailable' | 'unsupported';
+                                facts: Record<string, JSONType>;
+                                reason?: string | undefined;
+                            }[];
+                            selectedCheckIds?: string[] | undefined;
+                        };
+                    }[];
+                    homeRelay?: undefined | {
+                        route: {
+                            ownerId: string;
+                            hostname: string;
+                            httpsPort: number;
+                            path: string;
+                            upstream: string;
+                        };
+                        currentSelection: null | {
+                            provider: {
+                                kind: 'builtin';
+                                id: string;
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            config: JsonValue;
+                            credentialRefs: {
+                                purpose: string;
+                                credentialRef: {
+                                    kind: 'connectedAccount';
+                                    account: {
+                                        service: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        accountId: string;
+                                    };
+                                } | {
+                                    ref: string;
+                                    resourceRevision: number;
+                                    kind: 'savedSecret';
+                                };
+                            }[];
+                        };
+                        currentRoute?: undefined | {
+                            ownerId: string;
+                            hostname: string;
+                            httpsPort: number;
+                            path: string;
+                            upstream: string;
+                        };
+                    };
+                    nativeFirewall?: undefined | {
+                        status: 'available';
+                        ownedTable: 'absent' | 'present';
+                        externalInterfaces: string[];
+                        privateInterfaces: {
+                            providerId: string;
+                            networkIdentity: string;
+                            hostAddress: string;
+                            interfaceName: string;
+                        }[];
+                        retainedSshEndpoints: {
+                            interfaceName: string;
+                            hostAddress: string;
+                            port: number;
+                            sourceCidrs: string[];
+                        }[];
+                        privateWorkloadBindings?: undefined | {
+                            environmentId: string;
+                            bindings: {
+                                exposure: {
+                                    exposure: 'privateNetwork';
+                                    providerId: string;
+                                    networkIdentity: string;
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                };
+                                interfaceName: string;
+                                sourceRanges: string[];
+                            }[];
+                        }[];
+                        caddy?: undefined | {
+                            status: 'ready';
+                            bindings: {
+                                publicBindings?: ({
+                                    exposure: 'loopback' | 'public';
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                } | {
+                                    exposure: 'privateNetwork';
+                                    providerId: string;
+                                    networkIdentity: string;
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                })[] | undefined;
+                                privateBinding?: undefined | {
+                                    exposure: {
+                                        exposure: 'loopback' | 'public';
+                                        requirementId: string;
+                                        hostAddress: string;
+                                        hostPort: number;
+                                        protocol: 'tcp' | 'udp';
+                                        containerPort?: number | undefined;
+                                    } | {
+                                        exposure: 'privateNetwork';
+                                        providerId: string;
+                                        networkIdentity: string;
+                                        requirementId: string;
+                                        hostAddress: string;
+                                        hostPort: number;
+                                        protocol: 'tcp' | 'udp';
+                                        containerPort?: number | undefined;
+                                    };
+                                    interfaceName: string;
+                                    sourceRanges: string[];
+                                };
+                            };
+                        } | {
+                            status: 'unavailable';
+                            reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                            details?: undefined | {
+                                failure: {
+                                    kind: 'native_effect_failed' | 'native_observation_unavailable';
+                                    reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                                    requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                                    errorCode?: string | undefined;
+                                    stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                                    nativeCommand?: undefined | {
+                                        command: 'docker';
+                                        phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                        exitCode: null | number;
+                                    };
+                                    containerExitCode?: number | undefined;
+                                    containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                                    port?: number | undefined;
+                                };
+                                remedy: string;
+                                requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                            };
+                        };
+                    } | {
+                        status: 'unavailable';
+                        requiredFact: string;
+                        remedy?: string | undefined;
+                        caddy?: undefined | {
+                            status: 'ready';
+                            bindings: {
+                                publicBindings?: ({
+                                    exposure: 'loopback' | 'public';
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                } | {
+                                    exposure: 'privateNetwork';
+                                    providerId: string;
+                                    networkIdentity: string;
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                })[] | undefined;
+                                privateBinding?: undefined | {
+                                    exposure: {
+                                        exposure: 'loopback' | 'public';
+                                        requirementId: string;
+                                        hostAddress: string;
+                                        hostPort: number;
+                                        protocol: 'tcp' | 'udp';
+                                        containerPort?: number | undefined;
+                                    } | {
+                                        exposure: 'privateNetwork';
+                                        providerId: string;
+                                        networkIdentity: string;
+                                        requirementId: string;
+                                        hostAddress: string;
+                                        hostPort: number;
+                                        protocol: 'tcp' | 'udp';
+                                        containerPort?: number | undefined;
+                                    };
+                                    interfaceName: string;
+                                    sourceRanges: string[];
+                                };
+                            };
+                        } | {
+                            status: 'unavailable';
+                            reason: 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'required_fact_unavailable';
+                            details?: undefined | {
+                                failure: {
+                                    kind: 'native_effect_failed' | 'native_observation_unavailable';
+                                    reason: 'native_effect_failed' | 'port_in_use' | 'required_fact_unavailable';
+                                    requiredFact: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks';
+                                    errorCode?: string | undefined;
+                                    stepId?: 'caddy-container-create' | 'caddy-container-network-connect' | 'caddy-container-rm' | 'caddy-container-start' | 'caddy-container-stop' | 'caddy-container-wait' | 'caddy-public-port' | undefined;
+                                    nativeCommand?: undefined | {
+                                        command: 'docker';
+                                        phase: 'create' | 'network-connect' | 'rm' | 'start' | 'stop' | 'wait';
+                                        exitCode: null | number;
+                                    };
+                                    containerExitCode?: number | undefined;
+                                    containerError?: 'container_start_failed' | 'port_in_use' | undefined;
+                                    port?: number | undefined;
+                                };
+                                remedy: string;
+                                requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
+                            };
+                        };
+                    };
+                    firewallTransition?: undefined | {
+                        intent: {
+                            v: 1;
+                            kind: 'preserveSsh' | 'retainSsh';
+                            caddy: {
+                                publicBindings?: ({
+                                    exposure: 'loopback' | 'public';
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                } | {
+                                    exposure: 'privateNetwork';
+                                    providerId: string;
+                                    networkIdentity: string;
+                                    requirementId: string;
+                                    hostAddress: string;
+                                    hostPort: number;
+                                    protocol: 'tcp' | 'udp';
+                                    containerPort?: number | undefined;
+                                })[] | undefined;
+                                privateBinding?: undefined | {
+                                    exposure: {
+                                        exposure: 'loopback' | 'public';
+                                        requirementId: string;
+                                        hostAddress: string;
+                                        hostPort: number;
+                                        protocol: 'tcp' | 'udp';
+                                        containerPort?: number | undefined;
+                                    } | {
+                                        exposure: 'privateNetwork';
+                                        providerId: string;
+                                        networkIdentity: string;
+                                        requirementId: string;
+                                        hostAddress: string;
+                                        hostPort: number;
+                                        protocol: 'tcp' | 'udp';
+                                        containerPort?: number | undefined;
+                                    };
+                                    interfaceName: string;
+                                    sourceRanges: string[];
+                                };
+                            };
+                            publicSsh: {
+                                kind: 'closed';
+                            } | {
+                                kind: 'open';
+                                port: number;
+                                sourceCidrs: string[];
+                            };
+                            caddyObservation?: undefined | {
+                                privateNetworks: {
+                                    provider: {
+                                        kind: 'builtin';
+                                        id: string;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    networkIdentity: null | string;
+                                    displayName: null | string;
+                                    dnsName: null | string;
+                                    addresses: string[];
+                                    state: 'needsAuth' | 'ready' | 'stopped' | 'unavailable' | 'unknown';
+                                    interfaceName: null | string;
+                                    sourceRanges: string[];
+                                    magicDnsEnabled: boolean | null;
+                                }[];
+                            };
+                            privateWorkloadBindings?: undefined | {
+                                environmentId: string;
+                                bindings: {
+                                    exposure: {
+                                        exposure: 'privateNetwork';
+                                        providerId: string;
+                                        networkIdentity: string;
+                                        requirementId: string;
+                                        hostAddress: string;
+                                        hostPort: number;
+                                        protocol: 'tcp' | 'udp';
+                                        containerPort?: number | undefined;
+                                    };
+                                    interfaceName: string;
+                                    sourceRanges: string[];
+                                }[];
+                            };
+                        };
+                        setupRevision: number;
+                        dockerEngineIds: string[];
+                    };
+                    nativeProfiles?: undefined | {
+                        provider: {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        profileId: null | string;
+                        networkIdentity: null | string;
+                    }[];
+                    credentialFileReview?: undefined | {
+                        purpose: 'network.join';
+                        path: string;
+                        owner: string;
+                        group: string;
+                        ownerUid: number;
+                        groupGid: number;
+                        mode: 384;
+                    };
+                };
+                machineId: string;
+                serverId?: string | undefined;
+            };
+        };
         relayAccess?: undefined | {
             configured: boolean;
             providerId: null | string;

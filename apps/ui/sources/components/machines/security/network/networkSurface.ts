@@ -6,6 +6,7 @@ import type {
   MachineReachabilityConfigureInputV1,
   MachineReachabilityInspectInputV1,
 } from '@happier-dev/protocol';
+import { buildMachineReachabilityConfigureInput } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { MachineNetworkExposureFacts } from './networkExposureFacts';
 import { projectMachineNetworkAccessFacts, type MachineNetworkAccessFacts } from './networkAccessFacts';
@@ -136,8 +137,5 @@ export function buildNetworkInspectInput(
 
 /** Only the host-produced reviewed basis supplies mutation inputs, never the live form draft. */
 export function buildNetworkConfigureInput(serverId: string, plan: MachineReachabilityPlanV1): MachineReachabilityConfigureInputV1 {
-  return {
-    serverId, machineId: plan.basis.machineId,
-    change: plan.basis.change, reviewedPlanDigest: plan.reviewedPlanDigest, reviewedPlanBasis: plan.basis,
-  };
+  return buildMachineReachabilityConfigureInput(serverId, plan);
 }
