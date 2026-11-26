@@ -1,23 +1,30 @@
 import { expect, it } from 'vitest';
 
-import { DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
+import { ActionOperationAcceptedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ActionOperationGetV1ResponseSchema, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1,
+    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
 import {
+    DatabaseActivityCancelInputV1Schema,
     DatabaseOperationResultV1Schema,
     DatabaseStatementExplainInputV1Schema,
     DatabaseStatsOperationInputV1Schema,
 } from '@happier-dev/plugin-sdk/database';
 import { DatabaseStatsReasonV1Schema, type DatabaseStatsReadV1 } from '@happier-dev/plugin-sdk/database';
 import { type DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
-import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
+import { startDatabaseWorkbenchAgent, startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
 
 // D15: one real CLI → Postgres Home → daemon → selected native target journey.
 // No refusal/unavailable assertion is reached until this flow's G1 passes.
 it('P4-F6-known-good-stats', async () => {
-  const fixture = await startDatabaseWorkbenchInsightsFixture({ testDir: run.testDir('dbw-insights-f6') });
+  const testDir = run.testDir('dbw-insights-f6');
+  const fixture = await startDatabaseWorkbenchInsightsFixture({ testDir });
   try {
     const targets = {
       selected: (await fixture.connectDatabase(fixture.postgres.selectedDatabaseUrl, 'F6 selected')).target,
@@ -152,6 +159,100 @@ it('P4-F6-known-good-stats', async () => {
       elapsedMs: activityElapsedMs, returnedRows: activity.data.length,
       serializedBytes: Buffer.byteLength(JSON.stringify(activity)),
       sqlCount, engineDurationMs, instrumentation: measurementReason });
+
+    // Two test-owned PostgreSQL connections make the blocker and its waiter
+    // observable through the same selected Activity read used by Refresh.
+    const psql = (sql: string) => fixture.postgres.sql('dbw_selected', sql);
+    const holder = Promise.allSettled([psql(`SET application_name = 'dbw_f6_blocker';
+      SELECT pg_advisory_lock(743026); SELECT pg_sleep(120);`)]);
+    let waiter: Promise<PromiseSettledResult<string>[]> | undefined;
+    let cancelTarget: { key: string; queryStartedAt: string } | undefined;
+    try {
+      let blockerPid = '';
+      await waitFor(async () => {
+        blockerPid = await psql("SELECT pid FROM pg_stat_activity WHERE application_name = 'dbw_f6_blocker' AND wait_event = 'PgSleep'");
+        return Boolean(blockerPid);
+      }, { context: 'F6 fixture blocker holds its advisory lock' });
+      waiter = Promise.allSettled([psql(`SET application_name = 'dbw_f6_waiter';
+        SELECT pg_advisory_lock(743026);`)]);
+      let waiterPid = '';
+      await waitFor(async () => {
+        waiterPid = await psql("SELECT pid FROM pg_stat_activity WHERE application_name = 'dbw_f6_waiter' AND wait_event_type = 'Lock'");
+        return Boolean(waiterPid);
+      }, { context: 'F6 fixture waiter is blocked' });
+      const refreshed = await read(targets.selected,
+        { kind: 'stats.read', group: 'activity', selection: { activityKey: waiterPid, page: { rows: 1 } } });
+      if (refreshed.status !== 'available' || refreshed.group !== 'activity') throw new Error('Selected Activity Refresh unavailable');
+      expect(refreshed.data).toMatchObject([{ key: waiterPid, state: 'active', waitClass: 'Lock', blockingKeys: [blockerPid] }]);
+      const queryStartedAt = refreshed.data[0]?.queryStartedAt;
+      if (!queryStartedAt) throw new Error('Selected blocker row omitted the exact query start');
+      cancelTarget = { key: waiterPid, queryStartedAt };
+    } finally {
+      await psql("SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name = 'dbw_f6_blocker'");
+      await Promise.all([holder, waiter]);
+    }
+    if (!cancelTarget) throw new Error('Selected waiter was not observed');
+    const cancelInput = DatabaseActivityCancelInputV1Schema.parse({
+      operation: 'activity.cancel', target: targets.selected,
+      activityKey: cancelTarget.key, queryStartedAt: cancelTarget.queryStartedAt,
+    });
+    async function observeOperation(result: ActionExecuteResult): Promise<ActionExecuteResult> {
+      if (!result.ok) return result;
+      const accepted = ActionOperationAcceptedResultSchema.safeParse(result.result);
+      if (!accepted.success) return result;
+      const { machineId, operationId } = accepted.data;
+      const observed = await fixture.owner.execute(ACTION_OPERATION_GET_ACTION_ID_V1, {
+        ...fixture.machine.target, machineId, operationId, waitForTerminal: true,
+      });
+      if (!observed.ok) throw new Error(`F6 Activity operation observation refused (${observed.errorCode})`);
+      const receipt = ActionOperationGetV1ResponseSchema.parse(observed.result);
+      const terminal = receipt.kind === 'found' ? readActionOperationTerminalResultV1(receipt.operation) : undefined;
+      if (!terminal) throw new Error('F6 Activity operation did not settle');
+      return terminal;
+    }
+    const ended = await observeOperation(await fixture.executeDatabaseAsPerson(DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, cancelInput));
+    if (!ended.ok) throw new Error(`Reviewed Activity Cancel refused (${ended.errorCode}): ${ended.error}`);
+    expect(DatabaseOperationResultV1Schema.parse(ended.result)).toMatchObject({
+      ok: true, operation: 'activity.cancel', status: 'activity_ended',
+    });
+
+    const access = await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1,
+      { target: targets.selected, agentAccess: 'read' });
+    expect(access).toMatchObject({ ok: true, result: { ok: true, agentAccess: 'read' } });
+    const allowed = await fixture.owner.executeAsPerson('actions.policy.set', {
+      actionId: DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, audience: 'agent', mode: 'allowed',
+    });
+    if (!allowed.ok) throw new Error(`F6 Agent Cancel policy setup refused (${allowed.errorCode})`);
+    const agent = await startDatabaseWorkbenchAgent(fixture, testDir);
+    try {
+      const statsInput = DatabaseStatsOperationInputV1Schema.parse({
+        operation: 'stats.read', target: targets.selected, request,
+      });
+      const agentRead = await agent.execute(DATABASE_STATS_READ_ACTION_ID_V1, statsInput);
+      if (!agentRead.ok) throw new Error(`F6 selected Agent Stats control refused (${agentRead.errorCode})`);
+      expect(DatabaseOperationResultV1Schema.parse(agentRead.result)).toMatchObject({
+        ok: true, operation: 'stats.read', observation: { status: 'available', scope: { database: 'dbw_selected' } },
+      });
+      expect(await observeOperation(await agent.execute(DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, cancelInput)))
+        .toMatchObject({ ok: false, errorCode: 'database_agent_access_read_only' });
+      expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, {
+        target: targets.selected, agentAccess: 'readWriteNoApproval',
+      })).toMatchObject({ ok: true, result: { ok: true, agentAccess: 'readWriteNoApproval' } });
+      const agentEnded = await observeOperation(await agent.execute(DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, cancelInput));
+      if (!agentEnded.ok) throw new Error(`Authorized Agent Activity Cancel refused (${agentEnded.errorCode})`);
+      expect(DatabaseOperationResultV1Schema.parse(agentEnded.result)).toMatchObject({
+        ok: true, operation: 'activity.cancel', status: 'activity_ended',
+      });
+      expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target: targets.selected, agentAccess: 'none' }))
+        .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'none' } });
+      expect(await agent.execute(DATABASE_STATS_READ_ACTION_ID_V1, statsInput))
+        .toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
+      expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target: targets.selected, agentAccess: 'read' }))
+        .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'read' } });
+      console.info('P4-F6-external-blocker-and-vanished-cancel passed', fixture.runtime);
+    } finally {
+      await agent.stop();
+    }
 
     // Keep the positive target enabled while testing a separate missing-extension DB.
     expect(await read(targets.noExtension)).toMatchObject({ status: 'unavailable', group: 'statements',
