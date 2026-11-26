@@ -1,6 +1,6 @@
 import { isReviewedMachineSetupCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema, buildMachineSetupTargetApplyInput, machineSetupPlanInputFromApplyTargetV1, type MachineSetupApplyInputV1, type MachineSetupApplyTargetV1, type MachineSetupCombinedPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveCombinedActionWorkflowHostV1, prepareWorkflowRunStartV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
 import { deriveBackupReceiverSetupRunIdV1, deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
@@ -15,7 +15,8 @@ import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/e
 import type { WorkflowActionLeafV1, WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { readHostAdmittedReviewedChildV1, readHostReviewedChildReceivingAdmissionV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { isBackupReceiverSetupChildOperandV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { isBackupReceiverSelection } from './backupReceiverResult';
 
 type Preparation = NonNullable<ActionExecutorDeps['prepareMachineSetupApply']>;
@@ -96,13 +97,40 @@ async function isNativeMachineSetupApply(input: MachineSetupApplyInputV1, contex
     && parent.data.targets.some(reviewed => sameStrictJsonValue(buildMachineSetupTargetApplyInput(reviewed), input)));
 }
 
-/** Only a freshly opened exact reviewed leaf or issued creation continuation is native. */
+/** Forward the source host's reviewed Backup receiver Setup Apply over Machine RPC
+ * so the named receiver composes and owns its combined Setup Workflow Run. */
+function isBackupReceiverSetupApplyRemoteForward(
+  input: MachineSetupApplyInputV1,
+  context: ActionExecutorContext,
+  localMachineId?: string,
+): boolean {
+  const target = input.targets[0];
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  const child = readHostAdmittedReviewedChildV1(context);
+  if (!binding || !child || readHostReviewedChildReceivingAdmissionV1(context) !== null) return false;
+  if (input.targets.length !== 1 || !target || input.machineId !== target.machineId || input.homeId !== target.homeId)
+    return false;
+  if (binding.machineId === target.machineId || localMachineId === target.machineId) return false;
+  return child.actionId === BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.action
+    && child.role === BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply.role
+    && sameStrictJsonValue(child.input, input)
+    && isBackupReceiverSetupChildOperandV1({
+      binding,
+      reviewedChild: child,
+      machineId: target.machineId,
+      params: input,
+    });
+}
+
+/** Only a freshly opened exact reviewed leaf, issued creation continuation, or remote Backup receiver child dispatches via native. */
 export function createMachineSetupApplyDispatcher(params: Readonly<{
   readDeps(): ActionExecutorDeps;
+  localMachineId?: string;
   native: NonNullable<ActionExecutorDeps['machineSetupApply']>;
   compose: NonNullable<ActionExecutorDeps['machineSetupApply']>;
 }>): NonNullable<ActionExecutorDeps['machineSetupApply']> {
-  return async request => await isNativeMachineSetupApply(request.input, request.context, params.readDeps)
+  return async request => isBackupReceiverSetupApplyRemoteForward(request.input, request.context, params.localMachineId)
+    || await isNativeMachineSetupApply(request.input, request.context, params.readDeps)
     ? params.native(request) : params.compose(request);
 }
 
