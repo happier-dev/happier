@@ -7,7 +7,9 @@ import {
   createDeploymentEnvironmentHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { ACTION_OPERATION_RPC_METHODS_V2, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
@@ -18,6 +20,7 @@ import {
   waitForTestEvent,
 } from '@/dev/testkit';
 import {
+  createAccountTokenForTests,
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -634,6 +637,70 @@ describe('Environment → Database → Restore: restore a backup (L3B)', () => {
     } finally {
       view.dispose();
     }
+  });
+
+  it('shows why the archived amcheck extension could not be installed from the retained restore Receipt', async () => {
+    const { getActionOperation } = await import('@/sync/ops/actionOperations');
+    const { ModalProvider } = await import('@/modal');
+    const { showDeploymentRestoreSheet } = await import('./DeploymentRestoreSheet');
+    const screen = await renderScreen(<ModalProvider><></></ModalProvider>);
+    const serverId = 'home';
+    const machineId = 'machine-a';
+    const environmentId = 'environment-staging';
+    const actionId = DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1;
+    const outputSchema = DeploymentActionOutputSchemasV1[actionId];
+    let confirmReceipt: Promise<unknown> | undefined;
+
+    await act(async () => showDeploymentRestoreSheet({
+      serverId, name: 'Staging', machine: 'Data Machine',
+      backup: { deploymentId: 'deployment-a', restoreBackupId: snapshotId, takenAtMs: Date.parse('2026-11-01T12:00:00Z'),
+        service: 'postgres', database: 'shop', versionLabel: null },
+      operands: { environmentId, expectedRevision: 7, machineId, installationId: 'installation-a',
+        targetLinkId: 'target-link', deploymentId: 'deployment-a', source: { kind: 'repository', snapshotId } },
+      restore: async (input, context) => {
+        if (input.mode === 'prepare') return outputSchema.parse(prepared(environmentId, true));
+        const requestId = readDeploymentActionOperationRequestIdV1(actionId, { ...input, serverId })
+          ?? context?.actionRequestId ?? 'retained-restore-request';
+        const receipt = getActionOperation({
+          serverId, machineId, operationId: 'retained-restore', waitForTerminal: true,
+          // The Machine wire response is the only substituted part of the Receipt read.
+          rpc: (async ({ method, payload }) => {
+            expect(method).toBe(ACTION_OPERATION_RPC_METHODS_V2.get);
+            expect(payload).toEqual({ operationId: 'retained-restore', waitForTerminal: true });
+            return { kind: 'found', operation: {
+              version: 1, operationId: 'retained-restore', revision: 2, actionId, requestId,
+              state: 'succeeded', scope: { accountId: 'account-owner', machineId }, title: 'Restore database',
+              createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
+              result: { kind: 'recoveryRequired', verified: false, nextAction: 'inspectStagingDatabase',
+                evidence: { code: 'restore_failed', failureCause: { phase: 'restore.import', errorClass: 'Error',
+                  errorCode: 'restore_failed', httpStatus: null, nativeErrorReason: 'postgresql_amcheck_create_denied' },
+                  nativeFailure: { exitCode: 1, stderr: 'pg_restore: rejected CREATE EXTENSION amcheck', stderrTruncated: false } },
+              },
+            } };
+          }) as import('@/sync/ops/actionOperations').ActionOperationRpc,
+        }).then(read => {
+          const terminal = read.kind === 'found' ? readActionOperationTerminalResultV1(read.operation) : null;
+          if (!terminal?.ok) throw new Error('Expected the retained restore result');
+          return outputSchema.parse(terminal.result);
+        });
+        confirmReceipt = receipt;
+        return receipt;
+      },
+      onApproval: () => {},
+    }));
+    await screen.pressByTestIdAsync('project-deployments.restore.check');
+    await vi.waitFor(() => expect(screen.findByTestId('project-deployments.restore.confirm')).not.toBeNull(), { timeout: 5000 });
+    await screen.pressByTestIdAsync('project-deployments.restore.confirm');
+    expect(confirmReceipt).toBeDefined();
+    await act(async () => { await confirmReceipt; });
+    expect(screen.findByTestId('project-deployments.restore.result.recoveryRequired')).not.toBeNull();
+
+    const summary = screen.getTextContent();
+    const reason = 'The backup includes the PostgreSQL extension amcheck, which this database’s role cannot create.';
+    expect(summary.split(reason)).toHaveLength(2);
+    expect(summary).toContain('Restore to a PostgreSQL destination where an administrator can install amcheck');
+    expect(summary).toContain('ask your administrator to grant the required access');
+    expect(summary).not.toContain('pg_restore:');
   });
 
   it.each(['restore_prepare_required', 'artifact_read_unavailable'])(

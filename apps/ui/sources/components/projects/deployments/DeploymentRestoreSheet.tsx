@@ -2,7 +2,7 @@ import * as React from 'react';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { View } from 'react-native';
 import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import {
@@ -455,9 +455,14 @@ function DeploymentRestoreSheet(
     const restored = result.kind === 'restored';
     const integrityUnavailable = restored && !result.verified;
     const superseded = result.kind === 'superseded';
-    const code = isRecord(result.evidence) && typeof result.evidence.code === 'string' ? result.evidence.code : result.kind;
-    const failure = restored || superseded ? null : presentActionFailureOutcome({ errorCode: code, error: code,
-      details: result.evidence }, 'deployment');
+    const evidence = isRecord(result.evidence) ? result.evidence : null;
+    const code = typeof evidence?.code === 'string' ? evidence.code : result.kind;
+    const fallbackReason = t(integrityUnavailable ? 'projects.deployments.restoreIntegrityUnavailable' : 'projects.deployments.restoreCodeUnchanged');
+    const failureCause = ActionFailureCauseV1Schema.safeParse(evidence?.failureCause);
+    const failure = restored || superseded ? null : presentActionFailureOutcome({
+      errorCode: code, error: code, details: result.evidence,
+      ...(failureCause.success ? { failureCause: failureCause.data } : {}),
+    }, 'deployment', fallbackReason);
     return (
       <ListPresentationProvider value="page" pageInsets="contained">
         <View testID="project-deployments.restore" style={deploymentSheetStyles.body}>
@@ -485,7 +490,7 @@ function DeploymentRestoreSheet(
                     ? t('projects.deployments.restoreUnknown')
                     : t('projects.deployments.restoreRecoveryRequired')
             }
-            reason={t(integrityUnavailable ? 'projects.deployments.restoreIntegrityUnavailable' : 'projects.deployments.restoreCodeUnchanged')}
+            reason={failure?.reason ?? fallbackReason}
             diagnosticCode={restored || superseded ? undefined : code}
             diagnosticDetail={failure?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
           />

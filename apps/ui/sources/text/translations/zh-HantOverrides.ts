@@ -14259,7 +14259,10 @@ settingsSession: {
   projects: {
       title: "專案",
         deployments: {
-            receipt: { homeStorageUnavailable: "此 Home 暫時無法使用。" },
+            receipt: {
+                homeStorageUnavailable: "此 Home 暫時無法使用。",
+                restoreAmcheckCreateDenied: "備份包含 PostgreSQL 擴充套件 amcheck，而此資料庫的角色無權建立這個擴充套件。請還原到管理員可以安裝 amcheck 的 PostgreSQL 資料庫，或請管理員授予所需權限。",
+            },
             checksBackingUp: "正在備份",
             providerDomainPending: "供應商指派的位址",
             domainAddressKind: "位址類型",

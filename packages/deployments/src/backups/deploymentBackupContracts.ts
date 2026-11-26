@@ -23,6 +23,9 @@ export { DeploymentBackupSourceV1Schema, DeploymentBackupRetentionV1Schema, Depl
     DeploymentBackupManifestV1Schema, type DeploymentBackupTestResultV1, type DeploymentBackupSourceV1, type DeploymentBackupRetentionV1,
     type DeploymentBackupSnapshotV1, type DeploymentBackupManifestV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 
+/** Native import refused an extension already present in the PostgreSQL archive. */
+export const DEPLOYMENT_RESTORE_AMCHECK_CREATE_DENIED_V1 = 'postgresql_amcheck_create_denied';
+
 export const DeploymentEnvironmentBackupV1Schema = lazyZodSchema(() => z.union([
     DeploymentBackupConfigurationV1Schema, z.strictObject({ notNeeded: z.literal(true) }),
 ]));

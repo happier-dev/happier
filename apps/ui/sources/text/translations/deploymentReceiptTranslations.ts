@@ -41,6 +41,7 @@ type ReceiptCopy = Readonly<{
   imagesTitle: string;
   imagesDescription: string;
   platformDomainRequired: string;
+  restoreAmcheckCreateDenied: string;
   publicAddressFailed: string;
   publicAddressHttpError: (params: { address: string; status: number }) => string;
   removedPerson: string;
@@ -63,6 +64,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `Some deployment artifacts remain on ${machines}. Check storage on the affected Machines.`,
     homeStorageUnavailable: "This Home is temporarily unavailable.",
     platformDomainRequired: "Add a Domain in the Environment to reach this deployment.",
+    restoreAmcheckCreateDenied: "The backup includes the PostgreSQL extension amcheck, which this database’s role cannot create. Restore to a PostgreSQL destination where an administrator can install amcheck, or ask your administrator to grant the required access.",
     publicAddressFailed: "Deployed, but the public address did not answer",
     publicAddressHttpError: ({ address, status }) => `${address} returned HTTP ${status}. Check the app’s entry point and routing.`,
     state: "State",
@@ -117,6 +119,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `Des éléments du déploiement restent sur ${machines}. Vérifiez le stockage des Machines concernées.`,
     homeStorageUnavailable: "Ce Home est temporairement indisponible.",
     platformDomainRequired: "Ajoutez un domaine dans l’environnement pour accéder à ce déploiement.",
+    restoreAmcheckCreateDenied: "La sauvegarde contient l’extension PostgreSQL amcheck, que le rôle de cette base de données ne peut pas créer. Restaurez la sauvegarde vers une base PostgreSQL où un administrateur peut installer amcheck, ou demandez à votre administrateur d’accorder les droits nécessaires.",
     publicAddressFailed: "Déploiement effectué, mais l’adresse publique n’a pas répondu",
     publicAddressHttpError: ({ address, status }) => `${address} a renvoyé HTTP ${status}. Vérifiez le point d’entrée et le routage de l’application.`,
     state: "État",
@@ -171,6 +174,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `Auf ${machines} sind Bereitstellungsartefakte verblieben. Prüfe den Speicher der betroffenen Maschinen.`,
     homeStorageUnavailable: "Dieses Home ist vorübergehend nicht verfügbar.",
     platformDomainRequired: "Füge in der Umgebung eine Domain hinzu, um dieses Deployment zu erreichen.",
+    restoreAmcheckCreateDenied: "Die Sicherung enthält die PostgreSQL-Erweiterung amcheck. Die Rolle dieser Datenbank darf sie nicht erstellen. Stellen Sie die Sicherung in einer PostgreSQL-Datenbank wieder her, in der ein Administrator amcheck installieren kann, oder bitten Sie Ihren Administrator um die erforderlichen Berechtigungen.",
     publicAddressFailed: "Bereitgestellt, aber die öffentliche Adresse hat nicht geantwortet",
     publicAddressHttpError: ({ address, status }) => `${address} hat HTTP ${status} zurückgegeben. Prüfe den Einstiegspunkt und das Routing der App.`,
     state: "Status",
@@ -225,6 +229,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `Quedan artefactos del despliegue en ${machines}. Comprueba el almacenamiento de las máquinas afectadas.`,
     homeStorageUnavailable: "Este Home no está disponible temporalmente.",
     platformDomainRequired: "Añade un dominio en el entorno para acceder a este despliegue.",
+    restoreAmcheckCreateDenied: "La copia de seguridad incluye la extensión amcheck de PostgreSQL, que el rol de esta base de datos no puede crear. Restaura la copia en una base de datos PostgreSQL donde un administrador pueda instalar amcheck o pídele que conceda los permisos necesarios.",
     publicAddressFailed: "Desplegado, pero la dirección pública no respondió",
     publicAddressHttpError: ({ address, status }) => `${address} devolvió HTTP ${status}. Comprueba el punto de entrada y el enrutamiento de la aplicación.`,
     state: "Estado",
@@ -279,6 +284,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `Su ${machines} restano artefatti del deployment. Controlla lo spazio di archiviazione delle macchine interessate.`,
     homeStorageUnavailable: "Questo Home non è temporaneamente disponibile.",
     platformDomainRequired: "Aggiungi un dominio nell’ambiente per raggiungere questa distribuzione.",
+    restoreAmcheckCreateDenied: "Il backup contiene l’estensione PostgreSQL amcheck, che il ruolo di questo database non può creare. Ripristina il backup in un database PostgreSQL in cui un amministratore possa installare amcheck, oppure chiedi all’amministratore di concedere le autorizzazioni necessarie.",
     publicAddressFailed: "Distribuzione completata, ma l’indirizzo pubblico non ha risposto",
     publicAddressHttpError: ({ address, status }) => `${address} ha restituito HTTP ${status}. Controlla il punto di ingresso e il routing dell’app.`,
     state: "Stato",
@@ -333,6 +339,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `Ainda há artefatos da implantação em ${machines}. Verifique o armazenamento das máquinas afetadas.`,
     homeStorageUnavailable: "Este Home está temporariamente indisponível.",
     platformDomainRequired: "Adicione um domínio no ambiente para acessar esta implantação.",
+    restoreAmcheckCreateDenied: "A cópia de segurança inclui a extensão amcheck do PostgreSQL, que a função desta base de dados não pode criar. Restaure a cópia numa base de dados PostgreSQL onde um administrador possa instalar amcheck ou peça ao administrador para conceder as permissões necessárias.",
     publicAddressFailed: "Implantado, mas o endereço público não respondeu",
     publicAddressHttpError: ({ address, status }) => `${address} retornou HTTP ${status}. Verifique o ponto de entrada e o roteamento do app.`,
     state: "Estado",
@@ -387,6 +394,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `Encara queden artefactes del desplegament a ${machines}. Comprova l’emmagatzematge de les màquines afectades.`,
     homeStorageUnavailable: "Aquest Home no està disponible temporalment.",
     platformDomainRequired: "Afegeix un domini a l’entorn per accedir a aquest desplegament.",
+    restoreAmcheckCreateDenied: "La còpia de seguretat inclou l’extensió amcheck de PostgreSQL, que el rol d’aquesta base de dades no pot crear. Restaura la còpia en una base de dades PostgreSQL on un administrador pugui instal·lar amcheck o demana-li que concedeixi els permisos necessaris.",
     publicAddressFailed: "Desplegat, però l’adreça pública no ha respost",
     publicAddressHttpError: ({ address, status }) => `${address} ha retornat HTTP ${status}. Comprova el punt d’entrada i l’encaminament de l’aplicació.`,
     state: "Estat",
@@ -441,6 +449,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `Na ${machines} pozostały artefakty wdrożenia. Sprawdź pamięć masową tych maszyn.`,
     homeStorageUnavailable: "Ten Home jest chwilowo niedostępny.",
     platformDomainRequired: "Dodaj domenę w środowisku, aby uzyskać dostęp do tego wdrożenia.",
+    restoreAmcheckCreateDenied: "Kopia zapasowa zawiera rozszerzenie PostgreSQL amcheck, którego rola tej bazy danych nie może utworzyć. Przywróć kopię w bazie PostgreSQL, w której administrator może zainstalować amcheck, lub poproś administratora o przyznanie wymaganych uprawnień.",
     publicAddressFailed: "Wdrożono, ale adres publiczny nie odpowiedział",
     publicAddressHttpError: ({ address, status }) => `${address} zwrócił HTTP ${status}. Sprawdź punkt wejścia i routing aplikacji.`,
     state: "Stan",
@@ -495,6 +504,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `На ${machines} остались артефакты развёртывания. Проверьте хранилище этих машин.`,
     homeStorageUnavailable: "Этот Home временно недоступен.",
     platformDomainRequired: "Добавьте домен в окружении, чтобы открыть это развёртывание.",
+    restoreAmcheckCreateDenied: "В резервной копии есть расширение PostgreSQL amcheck, которое роль этой базы данных не может создать. Восстановите копию в базе PostgreSQL, где администратор может установить amcheck, или попросите администратора выдать необходимые права.",
     publicAddressFailed: "Развёрнуто, но публичный адрес не ответил",
     publicAddressHttpError: ({ address, status }) => `${address} вернул HTTP ${status}. Проверьте точку входа и маршрутизацию приложения.`,
     state: "Состояние",
@@ -549,6 +559,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `${machines} にデプロイの成果物が残っています。対象マシンのストレージを確認してください。`,
     homeStorageUnavailable: "このホームは一時的に利用できません。",
     platformDomainRequired: "このデプロイにアクセスするには、環境にドメインを追加してください。",
+    restoreAmcheckCreateDenied: "バックアップには PostgreSQL の拡張機能 amcheck が含まれています。このデータベースのロールには、その拡張機能を作成する権限がありません。管理者が amcheck をインストールできる PostgreSQL データベースに復元するか、管理者に必要な権限の付与を依頼してください。",
     publicAddressFailed: "デプロイ済みですが、公開アドレスが応答しませんでした",
     publicAddressHttpError: ({ address, status }) => `${address} が HTTP ${status} を返しました。アプリのエントリーポイントとルーティングを確認してください。`,
     state: "状態",
@@ -603,6 +614,7 @@ export const deploymentReceiptTranslations = {
     cleanupWarningBody: ({ machines }) => `${machines} 上仍有部署产物。请检查相关机器的存储空间。`,
     homeStorageUnavailable: "此 Home 暂时不可用。",
     platformDomainRequired: "请在环境中添加域名以访问此部署。",
+    restoreAmcheckCreateDenied: "备份包含 PostgreSQL 扩展 amcheck，而此数据库的角色无权创建该扩展。请还原到管理员可以安装 amcheck 的 PostgreSQL 数据库，或请管理员授予所需权限。",
     publicAddressFailed: "已部署，但公开地址未响应",
     publicAddressHttpError: ({ address, status }) => `${address} 返回了 HTTP ${status}。请检查应用入口和路由。`,
     state: "状态",

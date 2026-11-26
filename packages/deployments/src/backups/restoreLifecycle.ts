@@ -1,6 +1,6 @@
 import type { DeploymentRestoreIntegrityUnavailableV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { postgresqlBoundedLoginAuthoritySql } from '@happier-dev/deployment-protocol';
-import { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupNativeFailureV1, type DeploymentRestoreStepV1, type DeploymentBackupManifestV1, type DeploymentRestoreUploadSourceV1, type DeploymentRestoreUploadFormatV1 } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_RESTORE_AMCHECK_CREATE_DENIED_V1, readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupNativeFailureV1, type DeploymentRestoreStepV1, type DeploymentBackupManifestV1, type DeploymentRestoreUploadSourceV1, type DeploymentRestoreUploadFormatV1 } from '@happier-dev/deployments/contracts/v1';
 export { deploymentRestoreStepProgressV1, readDeploymentRestoreStepProgressV1 } from '@happier-dev/deployments/contracts/v1';
 
 import { runDeploymentBackupV1, type DeploymentBackupNativeResultV1, type DeploymentBackupRunInputV1,
@@ -163,9 +163,13 @@ function restoreSteps(input: Pick<RestoreCapture, 'onStep'>, previous: readonly 
         },
     };
 }
-function completed(result: DeploymentRestoreNativeResultV1) {
+function completed(result: DeploymentRestoreNativeResultV1, failureCause?: ActionFailureCauseV1) {
     if (result.kind !== 'completed') return refuse('outcome_unknown');
-    if (result.exitCode !== 0) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: 'restore_failed', error: 'restore_failed' }), { details: readBackupNativeFailureEvidenceV1(result) });
+    if (result.exitCode !== 0) throw createActionExecuteFailureError({
+        ok: false, errorCode: 'restore_failed', error: 'restore_failed',
+        details: readBackupNativeFailureEvidenceV1(result),
+        ...(failureCause ? { failureCause } : {}),
+    });
     return result;
 }
 function identifier(value: string) { return `"${value.replaceAll('"', '""')}"`; }
@@ -478,11 +482,17 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
                     ...(input.sourceFormat === 'postgresSql' ? ['-X', '-v', 'ON_ERROR_STOP=1', '--single-transaction']
                         : ['--no-owner', '--no-acl', '--clean', '--if-exists', '--exit-on-error', '--single-transaction']),
                     `--dbname=${destination.stagingDatabase}`] };
-            const restored = completed(await execute(input.source.kind === 'upload'
+            const imported = await execute(input.source.kind === 'upload'
                 ? { kind: 'restoreUpload', source: input.source, consumer }
                 : { kind: 'restoreStream', producer: buildResticRequestV1({ environmentId: input.source.environmentId,
                     access: input.access ?? refuse('backup_required'), command: { kind: 'dump', snapshotId: input.source.snapshot.snapshotId,
-                        path: path ?? refuse('backup_integrity_failed') } }), consumer }));
+                        path: path ?? refuse('backup_integrity_failed') } }), consumer });
+            const amcheckCreateDenied = imported.kind === 'completed' && imported.exitCode !== 0
+                && /\bERROR:[ \t]+permission denied to create extension "amcheck"[ \t]*(?:\r?\n|$)/.test(imported.stderr ?? '');
+            const restored = completed(imported, amcheckCreateDenied ? {
+                phase: 'restore.import', errorClass: 'Error', errorCode: 'restore_failed', httpStatus: null,
+                nativeErrorReason: DEPLOYMENT_RESTORE_AMCHECK_CREATE_DENIED_V1,
+            } : undefined);
             if (input.source.kind !== 'upload' && (restored.producer?.exitCode !== 0
                 || restored.producer.checksumSha256 !== input.source.producerChecksumSha256
                 || restored.producer.bytes !== input.source.totalBytesProcessed)) refuse('backup_integrity_failed');

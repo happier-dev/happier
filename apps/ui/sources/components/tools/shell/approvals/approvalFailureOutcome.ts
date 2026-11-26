@@ -1,4 +1,5 @@
-import type { ActionExecuteFailure} from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DEPLOYMENT_RESTORE_AMCHECK_CREATE_DENIED_V1 } from '@happier-dev/deployments/contracts/v1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readDeploymentConnectionPermissionRemedy, readDeploymentRefusalRecovery } from '@/components/projects/deployments/deploymentPresentation';
 import { readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -160,6 +161,12 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
         reason: refusal.message ?? t('common.requestFailed'), message: null, code: failure.errorCode ?? null,
         technicalDetails,
     };
+    const cause = failure.failureCause;
+    if (scope === 'deployment' && failure.errorCode === 'restore_failed' && cause && 'nativeErrorReason' in cause
+        && cause.nativeErrorReason === DEPLOYMENT_RESTORE_AMCHECK_CREATE_DENIED_V1) return {
+        reason: t('projects.deployments.receipt.restoreAmcheckCreateDenied'),
+        message: null, code: failure.errorCode, technicalDetails,
+    };
     if (scope === 'workflowCheck' && isWorkflowOperationErrorCode(failure.errorCode ?? null)) return {
         reason: formatWorkflowProblemMessage(new WorkflowActionError({ rawCode: failure.errorCode ?? null,
             message: failure.error, rawDetails: failure.details })),
@@ -190,7 +197,7 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
             : missingSecrets?.success
             ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
             : retiredDomain ? `${retiredDomain} · ${remedy}`
-            : deploymentRecovery?.remedy || fallback || null);
+            : fallbackReason || deploymentRecovery?.remedy || fallback || null);
     return {
         reason: scope === 'deployment' ? readDeploymentConnectionPermissionRemedy(failure.errorCode, failure.details) ?? reason : reason,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,
