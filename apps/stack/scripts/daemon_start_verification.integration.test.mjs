@@ -45,9 +45,10 @@ const rootDir = dirname(scriptsDir);
 const DAEMON_TEST_PROCESS_HELPER_PATH = join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs');
 const PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS = '15000';
 
-for (const scenario of ['default', 'broker', 'reload-identities', 'adopt-identities']) {
-const identity = scenario.endsWith('identities') ? 'default' : scenario;
-test(`source restart gives the ${scenario} successor the stack-owned server URLs before create-path attestation`, async (t) => {
+for (const scenario of ['default', 'broker', 'broker-relay-enable', 'broker-relay-clear', 'reload-identities', 'adopt-identities']) {
+const relayRestart = scenario.startsWith('broker-relay-');
+const identity = relayRestart ? 'broker' : scenario.endsWith('identities') ? 'default' : scenario;
+test(`source restart gives the ${scenario} successor the stack-owned ${relayRestart ? 'relay configuration' : 'server URLs'} before create-path attestation`, async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-reload-control-', registerCleanup: false });
   const cliHomeDir = fixture.path(identity === 'default' ? 'cli' : `cli-identities/${identity}`);
   await mkdir(cliHomeDir, { recursive: true });
@@ -98,6 +99,13 @@ test(`source restart gives the ${scenario} successor the stack-owned server URLs
     HAPPIER_STACK_RUNTIME_STATE_PATH: runtimeStatePath,
     HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS };
   const script = `
+${relayRestart ? `
+process.env.TSX_TSCONFIG_PATH = ${JSON.stringify(fileURLToPath(new URL('../../cli/tsconfig.json', import.meta.url)))};
+process.env.HAPPIER_STACK_TOOLING_PACKAGES = 'live';
+await import(${JSON.stringify(new URL('../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url).href)});
+const { resolveDaemonLaunchSpec } = await import(${JSON.stringify(new URL('../../cli/src/daemon/runtime/resolveDaemonLaunchSpec.ts', import.meta.url).href)});
+const { readIrohRelayConfigFromEnv } = await import(${JSON.stringify(new URL('../../../packages/iroh-native/src/nodeNative.ts', import.meta.url).href)});
+` : ''}
 import { createServer } from 'node:http';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -116,7 +124,7 @@ const server = createServer((req, res) => {
   if (req.headers['x-happier-daemon-token'] !== 'fixture-token') { res.writeHead(401); res.end(); return; }
   let raw = '';
   req.on('data', chunk => raw += chunk);
-  req.on('end', () => {
+  req.on('end', async () => {
     res.setHeader('content-type', 'application/json');
     if (req.url === '/ping') { res.end('{"ok":true}'); return; }
     const body = JSON.parse(raw);
@@ -126,9 +134,11 @@ const server = createServer((req, res) => {
     const state = JSON.parse(readFileSync(${JSON.stringify(runtimeStatePath)}, 'utf8'));
     const entrypoint = state.sourceRuntimeIdentities.daemon.selected === 'unloaded' ? ${JSON.stringify(selected)} : state.sourceRuntimeLaunch.entrypoint;
     const staleDataArgs = state.sourceRuntimeIdentities.daemon.selected === 'unloaded' ? [state.sourceRuntimeLaunch.entrypoint] : [];
+    ${relayRestart ? `const launch = await resolveDaemonLaunchSpec(['daemon', 'start-sync'], { ...process.env, HAPPIER_DAEMON_STARTUP_SOURCE: 'self-restart' });` : ''}
     const child = spawn(process.execPath, [entrypoint, 'daemon', 'start-sync', ...staleDataArgs], {
       env: {
         ...process.env,
+        ${relayRestart ? '...launch.env,' : ''}
         HAPPIER_SERVER_URL: body.successorServerUrls?.serverUrl ?? process.env.HAPPIER_SERVER_URL,
         HAPPIER_WEBAPP_URL: body.successorServerUrls?.webappUrl ?? process.env.HAPPIER_WEBAPP_URL,
       },
@@ -142,7 +152,7 @@ const server = createServer((req, res) => {
 });
 server.listen(0, '127.0.0.1', () => {
   mkdirSync(dirname(statePath), { recursive: true });
-  writeFileSync(statePath, JSON.stringify({ startedWithRuntimeEntrypoint: process.argv[1], pid: process.pid, httpPort: server.address().port, controlToken: 'fixture-token' }));
+  writeFileSync(statePath, JSON.stringify({ ${relayRestart ? 'relay: readIrohRelayConfigFromEnv(process.env),' : ''} startedWithRuntimeEntrypoint: process.argv[1], pid: process.pid, httpPort: server.address().port, controlToken: 'fixture-token' }));
   process.send?.('ready'); process.disconnect?.();
 });
 `;
@@ -156,15 +166,23 @@ server.listen(0, '127.0.0.1', () => {
   children.push(runner);
   const initial = spawnTestProcess(process.execPath, [scenario === 'adopt-identities' ? selected : incumbent, 'daemon', 'start-sync'], {
     env: scenario === 'adopt-identities'
-      ? { ...env, HAPPIER_SERVER_URL: serverUrl, HAPPIER_WEBAPP_URL: serverUrl } : env,
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      ? { ...env, HAPPIER_SERVER_URL: serverUrl, HAPPIER_WEBAPP_URL: serverUrl } : { ...env, ...(relayRestart ? {
+        HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '0',
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: '',
+        HAPPIER_IROH_RELAY_POLICY: scenario === 'broker-relay-enable' ? 'disabled' : 'automatic',
+        HAPPIER_IROH_RELAY_URLS: scenario === 'broker-relay-enable' ? '' : 'https://old-relay.example.test',
+      } : {}) },
+    stdio: ['ignore', 'ignore', relayRestart ? 'inherit' : 'ignore', 'ipc'],
   });
   children.push(initial);
   await once(initial, 'message');
   const options = { cliBin: incumbent, cliEntrypoint: selected, cliHomeDir,
     internalServerUrl: serverUrl, publicServerUrl, stackName, runtimeStatePath, cliIdentity: identity,
     // The incumbent keeps its old origin; the new connection selects the successor UI.
-    env: { ...env, HAPPIER_WEBAPP_URL: publicServerUrl },
+    env: { ...env, HAPPIER_WEBAPP_URL: publicServerUrl, ...(relayRestart ? {
+      HAPPIER_IROH_RELAY_POLICY: 'automatic',
+      HAPPIER_IROH_RELAY_URLS: scenario === 'broker-relay-enable' ? 'https://new-relay.example.test' : '',
+    } : {}) },
     forceRestart: true, preserveSessionsOnRestart: true,
     sourceRuntimeLaunchUpdate: { launch: { entrypoint: selected, cliDir: fixture.root }, identity: 'next' } };
   const reloadPath = fixture.path('source-runtime/reload.json');
@@ -309,6 +327,12 @@ server.listen(0, '127.0.0.1', () => {
     body: { successorServerUrls: { serverUrl, webappUrl: publicServerUrl } },
   });
   assert.equal(result.ok, true, result.error?.message);
+  if (relayRestart) {
+    const successor = JSON.parse(await readFile(statePath, 'utf8'));
+    assert.deepEqual(successor.relay, { relayPolicy: 'automatic',
+      relayUrls: scenario === 'broker-relay-enable' ? ['https://new-relay.example.test'] : [],
+      explicitlyConfigured: true });
+  }
   assert.equal(JSON.parse(await readFile(reloadPath, 'utf8')).status, 'ready');
   assert.equal(JSON.parse(await readFile(reloadPath, 'utf8')).code, undefined);
   assert.doesNotThrow(() => process.kill(runner.pid, 0));

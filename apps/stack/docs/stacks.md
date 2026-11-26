@@ -194,6 +194,13 @@ reload status retains these diagnostics under
 `runtime.sourceReload.identityRestore` in `stack info --json`, alongside the
 existing preparation result. A non-starting daemon is never counted as restored.
 
+In 0.3 development, a session-preserving source daemon restart projects the
+Stack's current, validated `HAPPIER_IROH_RELAY_POLICY` and
+`HAPPIER_IROH_RELAY_URLS` through the selected launch for both default and named
+identities. Empty values clear the incumbent's prior relay settings. Older
+incumbents that do not read these keys retain their settings until the next
+ordinary restart; no version negotiation is performed.
+
 Use `hstack stack start <stack> --runtime=source --restart --verify` for a
 background reload followed by one `READY` or `NOT_READY` verdict. Verification
 consumes Stack's selected/loaded identities and authenticated daemon-control

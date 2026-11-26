@@ -4,6 +4,7 @@ import { coerceHappyMonorepoRootFromPath, getStacksStorageRoot } from './utils/p
 import { readLastLines } from './utils/fs/tail.mjs';
 import { ensureCliBuilt, isCliDistBuildLockActive } from './utils/proc/pm.mjs';
 import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
+import { IROH_RELAY_POLICY_ENV_KEY, IROH_RELAY_URLS_ENV_KEY, readIrohRelayConfigFromEnv } from '@happier-dev/iroh-native/node';
 import { parseDaemonLockSnapshot } from '@happier-dev/cli-common/process';
 import { readCliNodeWorkspaceRuntimeIdentityAsync } from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
 import {
@@ -2086,9 +2087,14 @@ export async function startLocalDaemonWithAuth({
     // an incumbent started before source command exposure has no shim on PATH.
     const commandEnv = Object.fromEntries(Object.entries(daemonEnv)
       .filter(([name]) => /^(PATH|PATHEXT)$/i.test(name)));
+    const relay = readIrohRelayConfigFromEnv(daemonEnv);
     sourceRuntimeLaunchUpdate = { ...sourceRuntimeLaunchUpdate, launch: {
       ...sourceRuntimeLaunchUpdate.launch,
-      env: { ...sourceRuntimeLaunchUpdate.launch.env, ...commandEnv },
+      env: { ...sourceRuntimeLaunchUpdate.launch.env, ...commandEnv,
+        // Empty values withdraw the incumbent's previous relay configuration.
+        [IROH_RELAY_POLICY_ENV_KEY]: relay.explicitlyConfigured ? relay.relayPolicy : '',
+        [IROH_RELAY_URLS_ENV_KEY]: relay.relayUrls.join(','),
+      },
     } };
   }
   const isTui = (baseEnv.HAPPIER_STACK_TUI ?? '').toString().trim() === '1';

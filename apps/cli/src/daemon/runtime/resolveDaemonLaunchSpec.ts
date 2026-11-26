@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 
+import { IROH_RELAY_POLICY_ENV_KEY, IROH_RELAY_URLS_ENV_KEY } from '@happier-dev/iroh-native/node';
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
 import { assertSourceRuntimeDependenciesCurrent } from '@happier-dev/cli-common/sourceRuntimeEntries';
 
@@ -212,14 +213,15 @@ async function resolveSelectedStackSourceLaunch(
   if ('env' in launch && launch.env !== null && typeof launch.env === 'object') {
     for (const [name, value] of Object.entries(launch.env)) {
       if ((/^(PATH|PATHEXT)$/i.test(name) || name === 'HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT'
-        || name === 'HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA')
+        || name === 'HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA'
+        || name === IROH_RELAY_POLICY_ENV_KEY || name === IROH_RELAY_URLS_ENV_KEY)
         && typeof value === 'string') commandEnv[name] = value;
     }
   }
   return {
     filePath: runtimeExecutable,
     args: ['--no-warnings', '--no-deprecation', launch.entrypoint, ...cliArgs],
-    // Stack publishes shell-command exposure and the current guest CLI payload.
+    // Stack publishes shell-command exposure, guest CLI payload and validated relay settings.
     // Root/entry fields still derive
     // from the validated selection so no incumbent support root survives.
     env: {
