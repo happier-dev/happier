@@ -172,6 +172,28 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         });
         expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
     });
+    it('reserves the Session bar\'s room from first paint while the Session has not drawn its bar yet', async () => {
+        // A slow Home delays the Session's own bar by seconds, and the composer then rose by the bar's height
+        // (delta check 21: 4 of 4 cold loads at 390). The bar's height is known before it draws.
+        route.pathname = '/session/session-1'; enableCockpit();
+        const screen = await renderScreen(<Harness />, {
+            createNodeMock: element => element.props.testID === 'mobile-bottom-chrome-bar' ? { offsetHeight: 56 } : null,
+        });
+        expect(screen.findAllByType(SessionCockpitTabBar)).toHaveLength(0);
+        expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
+        await screen.update(<Harness mounted />);
+        expect(screen.findAllByType(SessionCockpitTabBar)).toHaveLength(1);
+        expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
+    });
+    it.each([
+        ['Classic', '/session/session-1', 390, false],
+        ['a wide window', '/session/session-1', 1440, true],
+        ['a pushed Settings page', '/settings/session', 390, true],
+    ] as const)('reserves no bar room on %s, where no phone bar will stand', async (_case, pathname, width, cockpit) => {
+        route.pathname = pathname; native.width = width; if (cockpit) enableCockpit();
+        const screen = await renderScreen(<Harness />);
+        expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(0);
+    });
     it('offers new Session creation only beside Sessions and selects Workflows from its route', async () => {
         const screen = await renderScreen(<Harness />);
         expect(screen.findByType(MainAppTabBar).props.trailingAccessory).toBeTruthy();

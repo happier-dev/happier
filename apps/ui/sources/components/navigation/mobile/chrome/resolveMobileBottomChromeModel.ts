@@ -33,6 +33,11 @@ export function resolveMobileBottomChromeModel(input: Readonly<{
         }
         // Session history is a Sessions list: a retained Session's bar never stands over it.
         if (input.mountedDetail && !isSessionHistoryRoutePathname(pathname)) return { kind: 'detail', ...input.mountedDetail };
+        // Before its host mounts, a page whose detail host draws its own bar already knows the bar will stand there
+        // (a slow Home delays the host by seconds); the pushed SCM reading keeps its own bottom controls instead.
+        if (!input.mountedDetail && isDetailHostRoutePathname(pathname) && input.sessionDetailsKind !== 'scmReview') {
+            return { kind: 'detailPending' };
+        }
     }
 
     // The bar is coherent on every page (owner 11-06): a page a section or More destination claims keeps the

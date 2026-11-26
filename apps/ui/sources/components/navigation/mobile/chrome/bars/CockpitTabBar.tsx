@@ -11,7 +11,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { Text } from '@/components/ui/text/Text';
-import { FloatingTabBarSurface } from '@/components/ui/navigation/FloatingTabBarSurface';
+import { FloatingTabBarSurface, resolveFloatingTabBarHeight } from '@/components/ui/navigation/FloatingTabBarSurface';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { resolveTabBarMetrics, type TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -172,6 +172,19 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
     usePublishCockpitBarScrolls(!folded && cockpitTabBarScrolls(props));
     if (folded) return <>{props.trailing}</>;
     return <CockpitTabBarView {...props} bottomInset={insets.bottom} metrics={props.metrics ?? settingsMetrics} />;
+}
+
+/**
+ * The height this bar draws at, known before it draws: a tab's padding and glyph, and its label when labels show,
+ * in the floating surface. The chrome host reserves it where a Session's bar will stand but has not drawn yet.
+ */
+export function useCockpitTabBarHeight(): number {
+    const insets = useChromeSafeAreaInsets();
+    const metrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
+    const { theme } = useUnistyles();
+    const label = metrics.showLabels ? theme.space.s4 + (Typography.variant('micro').lineHeight ?? 0) : 0;
+    return resolveFloatingTabBarHeight({ rowHeight: metrics.tabPaddingVertical * 2 + metrics.iconSize + label,
+        bottomInset: insets.bottom, isIos: Platform.OS === 'ios' });
 }
 
 function cockpitTabBarScrolls(props: Pick<CockpitTabBarProps<string>, 'layout' | 'tabs'>): boolean {

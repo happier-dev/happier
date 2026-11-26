@@ -36,7 +36,7 @@ describe('resolveMobileBottomChromeModel', () => {
     it.each(['workflowEditor', 'workflowRun'])('uses only the foreground mounted %s, retaining Classic presentation', (pageKind) => {
         const base = createChromeInput({ pathname: '/workflows/runs/route-run', mobileWorkspaceExperience: 'cockpit' });
         const mountedDetail = { pageKind, identity: 'mounted', activeId: 'flow' };
-        expect(resolveMobileBottomChromeModel(base)).toEqual({ kind: 'hidden' });
+        expect(resolveMobileBottomChromeModel(base)).toEqual({ kind: 'detailPending' });
         expect(resolveMobileBottomChromeModel({ ...base, mountedDetail })).toEqual({ kind: 'detail', ...mountedDetail });
         expect(resolveMobileBottomChromeModel({ ...base, mountedDetail, mobileWorkspaceExperience: 'classic' })).toEqual({ kind: 'hidden' });
     });
@@ -44,7 +44,7 @@ describe('resolveMobileBottomChromeModel', () => {
     it('uses mounted Machine identity and selection, with no pathname fallback or Classic bar', () => {
         const base = createChromeInput({ pathname: '/machines/route-machine', mobileWorkspaceExperience: 'cockpit' });
         const mountedDetail = { pageKind: 'machine', identity: 'home-a:mounted', activeId: 'storage' };
-        expect(resolveMobileBottomChromeModel(base)).toEqual({ kind: 'hidden' });
+        expect(resolveMobileBottomChromeModel(base)).toEqual({ kind: 'detailPending' });
         expect(resolveMobileBottomChromeModel({ ...base, mountedDetail })).toEqual({ kind: 'detail', ...mountedDetail });
         expect(resolveMobileBottomChromeModel({ ...base, mountedDetail, mobileWorkspaceExperience: 'classic' })).toEqual({ kind: 'hidden' });
     });
@@ -52,7 +52,10 @@ describe('resolveMobileBottomChromeModel', () => {
     it('takes Session identity and restored first-frame selection only from mounted presentation', () => {
         for (const pathname of ['/session/route-session', '/session/route-session/files', '/session/route-session/files/browse']) {
             const base = createChromeInput({ pathname, mobileWorkspaceExperience: 'cockpit' });
-            expect(resolveMobileBottomChromeModel(base)).toEqual({ kind: 'hidden' });
+            // Before the Session mounts, its bar is known to stand here (its room is reserved), but not its tabs.
+            expect(resolveMobileBottomChromeModel(base)).toEqual({ kind: 'detailPending' });
+            expect(resolveMobileBottomChromeModel({ ...base, mobileWorkspaceExperience: 'classic' })).toEqual({ kind: 'hidden' });
+            expect(resolveMobileBottomChromeModel({ ...base, sessionDetailsKind: 'scmReview' })).toEqual({ kind: 'hidden' });
             for (const activeId of ['tabs', 'git', 'browse']) {
                 const mountedDetail = sessionDetail(activeId);
                 expect(resolveMobileBottomChromeModel({ ...base, mountedDetail })).toEqual({ kind: 'detail', ...mountedDetail });
@@ -69,16 +72,18 @@ describe('resolveMobileBottomChromeModel', () => {
     });
 
     it('does not infer Project chrome from malformed or selection route paths', () => {
-        for (const pathname of ['/projects/%E0%A4/plugins/external.tools/builds', '/projects/open',
-            '/projects/open/?sourceId=source', '/projects/sources', '/projects/sources/']) {
+        for (const pathname of ['/projects/open', '/projects/open/?sourceId=source', '/projects/sources', '/projects/sources/']) {
             expect(resolveMobileBottomChromeModel(createChromeInput({ pathname, mobileWorkspaceExperience: 'cockpit' })))
                 .toEqual({ kind: 'hidden' });
         }
+        // A Project's own route waits for its host's bar; the route alone never names the Project's page.
+        expect(resolveMobileBottomChromeModel(createChromeInput({ pathname: '/projects/%E0%A4/plugins/external.tools/builds',
+            mobileWorkspaceExperience: 'cockpit' }))).toEqual({ kind: 'detailPending' });
     });
 
     it('uses only the mounted Discussion presentation and leaves Classic unchanged', () => {
         const base = createChromeInput({ pathname: '/discussions/disc-1', mobileWorkspaceExperience: 'cockpit' });
-        expect(resolveMobileBottomChromeModel(base)).toEqual({ kind: 'hidden' });
+        expect(resolveMobileBottomChromeModel(base)).toEqual({ kind: 'detailPending' });
         for (const activeId of ['participants', 'details', 'chat']) {
             const mountedDetail = { pageKind: 'discussion', identity: 'mounted', activeId };
             expect(resolveMobileBottomChromeModel({ ...base, mountedDetail })).toEqual({ kind: 'detail', ...mountedDetail });
@@ -166,7 +171,7 @@ describe('resolveMobileBottomChromeModel', () => {
         }
         for (const pathname of ['/discussions/disc-1', '/session/s_123', '/projects/wr_1', '/machines/m-1', '/workflows/wf-1']) {
             expect(resolveMobileBottomChromeModel(createChromeInput({ pathname, mobileWorkspaceExperience: 'cockpit', sectionPage: true })), pathname)
-                .toEqual({ kind: 'hidden' });
+                .toEqual({ kind: 'detailPending' });
         }
         expect(resolveMobileBottomChromeModel(createChromeInput({ pathname: '/zen', sectionPage: false }))).toEqual({ kind: 'hidden' });
     });

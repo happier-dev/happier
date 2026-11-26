@@ -37,6 +37,7 @@ import {
 import { parseSessionPaneUrlState, serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
 import { PhoneMainAppTabBar, usePhoneLauncherDestinationPinned } from '@/components/appShell/destinations/PhoneDestinationsMenu';
+import { useCockpitTabBarHeight } from './bars/CockpitTabBar';
 import { isAppDestinationRootPath, isCompactAppDestinationVisible, resolveCurrentAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { useCompactAppDestinations } from '@/components/appShell/destinations/useCompactAppDestinations';
 import { PHONE_HOME_ROUTE } from '@/components/navigation/shell/PhoneHomeLogoButton';
@@ -309,6 +310,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     const frozenChromeRef = React.useRef<BottomChromeItem | null>(null);
 
     const pageBarFolds = usePageBarFoldsChrome();
+    const knownBarHeight = useCockpitTabBarHeight();
     const resolvedChrome = React.useMemo((): BottomChromeItem | null => {
         if (overlayRouteActive && frozenChromeRef.current) {
             return frozenChromeRef.current;
@@ -526,11 +528,16 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         stopChromeAnimation();
     }, [stopChromeAnimation]);
 
+    // Where a detail host's bar will stand but the host has not mounted it yet (a slow Home delays it by seconds), its
+    // room is reserved from the first frame: the composer's first top is its settled top, and the bar lands in it.
+    const reservedBarHeight = model.kind === 'detailPending' && presenter !== 'system' && !pageBarFolds
+        && isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience }) ? knownBarHeight : 0;
     React.useLayoutEffect(() => {
-        if (presenter === 'system' || !renderedChrome.current) {
-            setBottomChromeHeight(0);
+        // A bar resolved but not yet drawn is measured in the commit that draws it, below.
+        if (presenter === 'system' || (!renderedChrome.current && !resolvedChrome)) {
+            setBottomChromeHeight(reservedBarHeight);
         }
-    }, [presenter, renderedChrome.current, setBottomChromeHeight]);
+    }, [presenter, renderedChrome.current, resolvedChrome, reservedBarHeight, setBottomChromeHeight]);
 
     // The bar's height reaches the composer's reservation in the commit that first draws the bar. A web layout
     // event arrives a task after paint, so a composer that waited for it painted once in the bar's place and then

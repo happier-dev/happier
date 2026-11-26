@@ -42,6 +42,16 @@ function accessorySquareFor(tabHeight: number): number {
 }
 
 /**
+ * The height the floating bar draws at, from its row's height and the bottom inset: the gap above the capsule,
+ * the capsule's padding and the float above the system region. A surface that knows a bar will stand at its
+ * foot reserves this before the bar draws; once it draws, its measured height is the answer.
+ */
+export function resolveFloatingTabBarHeight(input: Readonly<{ rowHeight: number; bottomInset: number; isIos: boolean }>): number {
+    return FLOATING_TOP_GAP + PILL_PADDING_VERTICAL * 2 + input.rowHeight
+        + resolveFloatingTabBarBottomPadding(input.bottomInset, input.isIos);
+}
+
+/**
  * How many tab slots of `tabMinWidth` the floating capsule holds on this window: the window less
  * the side gutters and the capsule's own padding, capped by the content max width. Bars use it
  * to decide what fits before they render, since a capsule that shrink-wraps its tabs cannot be
