@@ -34,9 +34,10 @@ describe('Account deployment inventory pages', () => {
     expect(spec.outputSchema.safeParse({ ...page, artifacts: [{ ...artifact, authority: 'owner' }] }).success).toBe(false);
     const environment = DeploymentEnvironmentHeaderV1Schema.parse({ v: 1, id: 'environment', serverId: 'home', projectSourceId: 'source', revision: 1,
       owner: { kind: 'account', accountId: 'owner' }, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+      dataEditorMode: 'off', dataAgentAccess: 'read',
       controllerMachineId: 'machine', contentArtifactId: 'artifact', contentHeaderVersion: 1, contentBodyVersion: 1,
       createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1,
-      capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true } });
+      capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true } });
     const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'domain', environmentId: environment.id,
       targetLinkId: 'target', revision: 1, state: 'pending', contentArtifactId: 'domain-content', contentHeaderVersion: 1,
       contentBodyVersion: 1, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 });
