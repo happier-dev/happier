@@ -16,10 +16,11 @@ import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protoc
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
-import { SessionSpawnNewInputV2Schema, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
+import { SessionSpawnNewInputV2Schema, deriveAccountMachineKeyFromRecoverySecret, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { ExternalActionRequestEnvelopeV2Schema, openExternalActionRequestV2,
     prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions';
-import { ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionHttpError,
+    projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { configuration } from '@/configuration';
 import { writeDaemonState } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -40,7 +41,6 @@ import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
-import { SessionSpawnNewInputV2Schema as BeforeCommitObservationInputSchema } from '../../../../../packages/protocol/src/sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation';
 
 // The daemon uses bundled Undici; keep the file's HTTP fixtures at that same
 // network boundary while retaining its real control transport and parsers.
@@ -258,8 +258,31 @@ describe('paired terminal Action admission', () => {
                 executionTarget: { serverId: configuration.activeServerId, machineId: 'own-machine' },
                 directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
             const transported: unknown[] = [];
-            vi.spyOn(axios, 'get').mockRejectedValue(new Error('Requester Machine probe unavailable'));
-            vi.spyOn(axios, 'post').mockRejectedValue(new Error('No Home Action dispatch expected'));
+            const keys = nacl.sign.keyPair();
+            const machine = { id: 'own-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+                installationId: 'installed', installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+                dataEncryptionKey: null, runnerContentKeyBinding: null,
+                access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'owner', displayName: 'Owner' },
+                    role: 'manage', resourceMode: 'plain', accessState: 'ready' }) };
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                if (url.endsWith('/v1/machines/own-machine')) return { status: 200, data: { machine } };
+                throw new Error(`Unexpected observer-admission Home read ${url}`);
+            });
+            const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                if (url.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'observer-admission-root', binding: {
+                    accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'terminal', tokenEpoch: 4 },
+                    accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', machineId: machine.id, installationId: machine.installationId,
+                    actionId: 'session.spawn_new', requestId: request.envelope.requestId, target: request.envelope.target,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
+                expect(url).toBe('https://home.test/v1/actions/session.spawn_new');
+                expect(request.envelope.v).toBe(1);
+                if (request.envelope.v !== 1) throw new Error('Observer admission fixture is plain');
+                transported.push(request.envelope.input);
+                return { status: 200, data: { v: 1, actionId: 'session.spawn_new', requestId: request.envelope.requestId,
+                    execution: { ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false } } } };
+            });
             vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
                 if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
                 const request: unknown = JSON.parse(String(options.body));
@@ -277,11 +300,13 @@ describe('paired terminal Action admission', () => {
             };
             expect(await invoke(input)).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false } });
             expect(transported).toHaveLength(1);
-            expect(BeforeCommitObservationInputSchema.safeParse(transported[0]).success).toBe(true);
+            expect(transported[0]).toEqual({ ...SessionSpawnNewInputV2Schema.parse(input),
+                sessionPlacement: { kind: 'machine', target: input.executionTarget } });
+            const postCount = post.mock.calls.length;
             const observed = await invoke({ ...input, observeSessionCommit: true });
-            expect(transported.every(value => BeforeCommitObservationInputSchema.safeParse(value).success)).toBe(true);
             expect(observed).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
             expect(transported).toHaveLength(1);
+            expect(post).toHaveBeenCalledTimes(postCount);
         });
     });
 
@@ -772,6 +797,8 @@ describe('paired terminal Action admission', () => {
                     accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 4 },
                     accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', machineId: machine.id, installationId: 'installed',
                     actionId: 'session.spawn_new', requestId: request.envelope.requestId, target: request.envelope.target,
+                    projectSessionDefaultsAdmission: projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1({
+                        actionId: 'session.spawn_new', envelope: request.envelope }),
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
                 const opened = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
                     purpose: { kind: 'external_action' }, machineId: machine.id, installationId: 'installed',
@@ -792,13 +819,14 @@ describe('paired terminal Action admission', () => {
 
     it.each([
         { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null },
-        { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null, requesterProbeUnavailable: true },
+        { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: 'target_unavailable', requesterProbeUnavailable: true },
         { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null, discoverIdentity: true },
         { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null, discoverIdentity: true, prepare: true },
         { outerTarget: true, daemonAccountId: 'owner', authority: undefined, errorCode: null },
-        // A foreign daemon cannot admit this caller; Home admission rejects the incomplete Machine access fixture.
-        { outerTarget: false, daemonAccountId: 'different-account', authority: undefined, errorCode: 'admission_unavailable' },
-        { outerTarget: false, daemonAccountId: 'owner', authority: 'account_automation', errorCode: 'invalid_parameters' },
+        // Original-Account Home admission owns Machine authority independently
+        // of an unrelated local daemon publication.
+        { outerTarget: false, daemonAccountId: 'different-account', authority: undefined, errorCode: null },
+        { outerTarget: false, daemonAccountId: 'owner', authority: 'account_automation', errorCode: null },
     ] as const)('preserves exact Home/Account and terminal authority (%j)', async scenario => {
         const { outerTarget, daemonAccountId, authority, errorCode } = scenario;
         await withConfiguredDaemonTestHome({ prefix: 'happier-terminal-create-admission-' }, async () => {
@@ -811,32 +839,52 @@ describe('paired terminal Action admission', () => {
             const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'terminal-create',
                 executionTarget: { serverId, machineId: 'own-machine' }, directory: { kind: 'managed' },
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } });
+            const keys = nacl.sign.keyPair();
+            const machine = { id: 'own-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+                installationId: 'installed', installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+                dataEncryptionKey: null, runnerContentKeyBinding: null,
+                access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'owner', displayName: 'Owner' },
+                    role: 'manage', resourceMode: 'plain', accessState: 'ready' }) };
+            const admittedInvocations: unknown[] = [];
             // HTTP and persisted daemon publication are the system boundaries;
             // credential provenance, target resolution and both Action factories are real.
             vi.spyOn(axios, 'get').mockImplementation(async (url) => {
                 if ('requesterProbeUnavailable' in scenario) throw new Error('Requester Machine probe is unavailable');
                 if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-                if (url.endsWith('/v1/machines/own-machine')) return { status: 200, data: { machine: {
-                    id: 'own-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
-                    dataEncryptionKey: null, runnerContentKeyBinding: null } } };
+                if (url.endsWith('/v1/machines/own-machine')) return { status: 200, data: { machine } };
                 throw new Error(`Unexpected HTTP read: ${url}`);
             });
-            vi.spyOn(axios, 'post').mockRejectedValue(new Error('Session creation is not a terminal Home finite Action'));
-            vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
-                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
-                expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
-                expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
-                expect(JSON.parse(String(options.body))).toMatchObject({ actionId: 'session.spawn_new', input });
-                // Mirror the existing receiver: an automation ceiling has no
-                // bare terminal creation namespace and must not become human.
-                if (new Headers(options.headers).get(AUTHORITY_CEILING_HEADER_V1) === 'account_automation') {
-                    return Response.json({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+            const homePost = vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                expect(request.envelope.target).toEqual({ kind: 'machine', machineId: machine.id });
+                if (url.endsWith('/execution-authorization')) {
+                    expect(request.machineId).toBe(machine.id);
+                    return { status: 200, data: { v: 1, token: 'terminal-create-root', binding: {
+                        accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'terminal', tokenEpoch: 4 },
+                        accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', machineId: machine.id, installationId: machine.installationId,
+                        actionId: 'session.spawn_new', requestId: request.envelope.requestId, target: request.envelope.target,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
                 }
-                return Response.json({ ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } });
+                expect(url).toBe('https://home.test/v1/actions/session.spawn_new');
+                const opened = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+                    purpose: { kind: 'external_action' }, machineId: machine.id, installationId: machine.installationId,
+                    serverIdentityId: 'srv_home', installationPrivateKey: keys.secretKey, includeInvocation: true });
+                expect(opened?.credentials).toEqual({ token });
+                admittedInvocations.push(opened?.invocation);
+                return { status: 200, data: { v: 1, actionId: 'session.spawn_new', requestId: request.envelope.requestId,
+                    execution: { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } } } };
+            });
+            const loopbackExecutions: unknown[] = [];
+            vi.stubGlobal('fetch', async (url: unknown) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
+                loopbackExecutions.push(url);
+                throw new Error('Home-admitted Session creation must not execute on a local daemon');
             });
             const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
                 serverId, serverIdentityId: 'discoverIdentity' in scenario ? undefined : 'srv_home', serverApiUrl: 'https://home.test',
-                resolveServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
+                resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated',
+                    features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }) }),
                 ...(outerTarget ? { machineId: 'own-machine' } : {}),
                 actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
             const context = { surface: 'cli' as const, ...(authority ? { authority } : {}) };
@@ -846,9 +894,15 @@ describe('paired terminal Action admission', () => {
                     return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
                 })()
                 : await executor.execute('session.spawn_new', input, context);
-            expect(result).toEqual(errorCode === null
-                ? { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } }
-                : { ok: false, errorCode, error: errorCode });
+            if (errorCode === null) expect(result, JSON.stringify({ result, admittedInvocations })).toEqual(
+                { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } });
+            else expect(result).toMatchObject({ ok: false, errorCode, error: errorCode });
+            expect(loopbackExecutions).toEqual([]);
+            if ('requesterProbeUnavailable' in scenario) expect(homePost).not.toHaveBeenCalled();
+            else {
+                expect(admittedInvocations).toHaveLength(1);
+                expect(admittedInvocations[0]).toMatchObject({ surface: 'cli', authority: authority ?? 'present_user', caller: { kind: 'host' } });
+            }
         });
     });
 });

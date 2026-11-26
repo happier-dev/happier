@@ -96,19 +96,25 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
     const base = 'https://account-read-sibling.example.invalid';
     const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-read-sibling' })).toString('base64url')}.signature`,
       encryption: null, credentialProvenance: 'stored_session' as const };
-    axiosGet.mockImplementation(async (url: string) => {
-      const path = new URL(url).pathname;
-      if (path === ACCOUNT_SECURITY_PATH_V1) return { status: 200, data: AccountSecurityGetResponseV1Schema.parse({
-        v: 1, encryptionMode: 'plain', nativeEmail: null,
-        password: { status: 'not_enrolled', revision: null },
-      }) };
-      if (path === '/v2/account/settings') return { status: 200, data: AccountSettingsV2GetResponseSchema.parse({
-        version: 1, content: { t: 'plain', v: { actionsSettingsV1: { v: 1,
-          actions: { 'account.profile.get': { approvalRequiredSurfaces: ['cli'] } } } } },
-      }) };
-      throw new Error(`Unexpected sibling Action HTTP ${path}`);
+    const app = Fastify();
+    registerAccountHomeHttp(app, { accountId: 'account-read-sibling', serverId: 'srv_sibling-home',
+      settings: accountSettingsParse({ actionsSettingsV1: { v: 1,
+        actions: { 'account.profile.get': { approvalRequiredSurfaces: ['cli'] } } } }) });
+    registerPlainArtifactRoutes(app, 'account-read-sibling');
+    app.get(ACCOUNT_SECURITY_PATH_V1, async () => AccountSecurityGetResponseV1Schema.parse({
+      v: 1, encryptionMode: 'plain', nativeEmail: null,
+      password: { status: 'not_enrolled', revision: null },
+    }));
+    const restore = installAxiosFastifyAdapter({ app, origin: base });
+    const originalAxios = (await vi.importActual<typeof import('axios')>('axios')).default;
+    axiosGet.mockImplementation(originalAxios.get);
+    axiosPost.mockImplementation(originalAxios.post);
+    const authenticatedLookups: string[] = [];
+    const features = vi.fn(async (url: string) => {
+      if (new URL(url).pathname === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {} }));
+      authenticatedLookups.push(url);
+      return new Response('{}', { status: 503 });
     });
-    const features = vi.fn(async () => new Response('{}', { status: 503 }));
     vi.stubGlobal('fetch', features);
     try {
       const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'account-sibling-profile',
@@ -116,13 +122,10 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
       const context = { surface: 'cli' as const, actionCaller: { kind: 'host' as const } };
       expect(await executor.execute('account.security.get', {}, context)).toMatchObject({ ok: true });
       expect(features).not.toHaveBeenCalled();
-      // Without a request identity the unchanged strict builder refuses the
-      // proposal. Its failed eager lookup must not become a second probe.
-      expect(await executor.execute('account.profile.get', {}, context))
-        .toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
-      expect(features).toHaveBeenCalledTimes(1);
-      expect(axiosPost).not.toHaveBeenCalled();
-    } finally { vi.unstubAllGlobals(); }
+      const sibling = await executor.execute('account.profile.get', {}, context);
+      expect(sibling).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'account.profile.get' } });
+      expect(authenticatedLookups).toEqual([`${base}/v1/features/authenticated`]);
+    } finally { vi.unstubAllGlobals(); restore(); await app.close(); }
   });
 
   it.each(['ready', 'cancelled', 'cancelled-bound', 'unavailable', 'eager-unavailable'] as const)('resolves authenticated Home identity at the Account read approval demand (%s)', async state => {
@@ -542,9 +545,10 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
     'uses an explicit reviewed policy for %s without bootstrapping ambient Account settings',
     async (method) => {
       vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
+      const token = `scoped-reviewed-policy-${method}`;
       const executor = createCliActionExecutorFromCredentials({
         credentials: {
-          token: `scoped-reviewed-policy-${method}`,
+          token,
           encryption: null,
           credentialProvenance: 'stored_session',
         },
@@ -564,7 +568,10 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
       expect(result).toMatchObject(method === 'execute'
         ? { ok: false, errorCode: 'action_disabled' }
         : { kind: 'settled', result: { ok: false, errorCode: 'action_disabled' } });
-      expect(axiosGet).not.toHaveBeenCalled();
+      // Another Account's asynchronous history hydration is independent of
+      // this invocation's explicit policy; this bearer must perform no read.
+      expect(axiosGet.mock.calls.flatMap(([url, options]) =>
+        options?.headers?.Authorization === `Bearer ${token}` ? [url] : [])).toEqual([]);
     },
   );
 

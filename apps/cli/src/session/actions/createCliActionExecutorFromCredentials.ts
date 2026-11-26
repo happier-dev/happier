@@ -848,9 +848,9 @@ function createApprovalRoutingContext(
       : await enrichApprovalRoutingContext(undefined, credentials);
     return {
       serverIdentityId: runtimeContext.serverIdentityId,
-      ...(deferHomeIdentity ? { prepareApprovalExecutionOriginContext: async () => ({
+      ...(deferHomeIdentity || !runtimeContext.serverIdentityId ? { prepareApprovalExecutionOriginContext: async () => ({
         serverIdentityId: runtimeContext.serverIdentityId
-          ?? (await enrichApprovalRoutingContext(undefined, credentials)).serverIdentityId,
+          ?? (deferHomeIdentity ? (await enrichApprovalRoutingContext(undefined, credentials)).serverIdentityId : undefined),
       }) } : {}),
       context: await enrichCliActionApprovalContext({
         context, serverIdentityId: runtimeContext.serverIdentityId,
@@ -1747,8 +1747,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       const serverIdentityId = routing ? routing.serverIdentityId : params.serverIdentityId
         ?? (await enrichApprovalRoutingContext(undefined, credentials)).serverIdentityId;
       if (routing?.prepareApprovalExecutionOriginContext) {
-        // This deferred Home fact belongs to this invocation, not the reused
-        // executor of another Action whose eager lookup may have failed.
+        // The deferred or unavailable Home fact belongs to this invocation,
+        // not an executor reused by another Action.
         return createExecutor(credentials, invocationSignal, transcriptFollowLeaseRegistry, sessionMemoryEnabled, serverIdentityId,
           readInputTypeOptions(credentials), approvalLifetime, routeHostChildAction(credentials), routing.prepareApprovalExecutionOriginContext);
       }
