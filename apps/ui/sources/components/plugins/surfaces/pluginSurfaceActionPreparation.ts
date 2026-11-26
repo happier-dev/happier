@@ -7,6 +7,7 @@ import type { PluginUiActionProjection } from '@/sync/domains/plugins/ui/project
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { executeSpokenAction, type SpokenActionTurnOrigin } from '@/voice/tools/executeSpokenAction';
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
+import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { preparePluginActionConfirmation } from './pluginSurfaceFeedback';
 import { clientActionFailure, actionOutcomeUnknownFailure, type PluginSurfaceActionDispatchOutcome } from './actionFailure';
 import type { DispatchPluginSurfaceActionInput, PluginSurfaceActionExecutorContext } from './pluginSurfaceActionDispatch';
@@ -82,7 +83,15 @@ export async function executePreparedPluginSurfaceAction(args: Readonly<{
     const execute: FrontDoorActionExecute = Object.assign(async () => shared('action.invoke', wrapper, context), { confirmed, prepare });
     const result = await executeSpokenAction(execute, 'action.invoke', exact, context, spoken.turnOrigin, spoken.playHostText);
     if (settledOutcome) return settledOutcome;
-    if (!result.ok) return actionOutcomeUnknownFailure(result.errorCode, action, args.normalizedInput) ?? clientActionFailure(result.errorCode);
+    if (!result.ok) {
+        const details = readSafeFailureDetails(result.details);
+        const metadata = { requestId: result.requestId ?? spoken.actionRequestId,
+            effectAttempted: result.effectAttempted, failureCause: result.failureCause, details,
+            retryable: typeof details.retryable === 'boolean' ? details.retryable : undefined,
+            automationNotices: result.automationNotices };
+        return actionOutcomeUnknownFailure(result.errorCode, action, args.normalizedInput, metadata)
+            ?? clientActionFailure(result.errorCode, metadata);
+    }
     const parsed = projectNativeJsonValueForTransport(result.result ?? null);
     return { ok: true, result: parsed };
 }

@@ -10382,6 +10382,30 @@ describe('plugin-surface action branch selection', () => {
         expect(getMachineContributionRegistryProjectionRevision(scope)).toBeGreaterThan(before);
     });
 
+    it('preserves a spoken pre-invocation refusal envelope without invoking the contributed Action', async () => {
+        const { executePreparedPluginSurfaceAction } = await import('./pluginSurfaceActionPreparation');
+        const run = vi.fn(async () => ({ ok: true as const, result: null }));
+        const previousSettings = getStorage().getState().settings;
+        getStorage().setState({ settings: { ...previousSettings,
+            actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: {
+                'action.invoke': { enabled: false },
+            } }),
+        } });
+        onTestFinished(() => getStorage().setState({ settings: previousSettings }));
+        const identity = { pluginId: CALLER_PLUGIN_ID, localId: 'refresh-index' };
+        const outcome = await executePreparedPluginSurfaceAction({
+            identity, action: resolveDaemonTargetAction(identity), normalizedInput: {}, run,
+            input: {
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index', input: {}, invocationSurface: 'voice',
+                spokenActionRequest: { actionRequestId: 'spoken-refusal-request', turnOrigin: 'person' },
+                contributedAction: { machineId: 'machine-1' },
+            },
+        });
+        expect(outcome).toMatchObject({ ok: false, requestId: 'spoken-refusal-request' });
+        expect(run).not.toHaveBeenCalled();
+    });
+
     it('refreshes a stale occurrence refused by the Action schema read before dispatch', async () => {
         const scope = { serverId: 'schema-home', machineId: 'schema-machine' };
         const before = getMachineContributionRegistryProjectionRevision(scope);

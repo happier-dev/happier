@@ -246,6 +246,22 @@ describe('sync.persistSessionTranscriptMessage', () => {
         });
     });
 
+    it.each([
+        { status: 503, expected: 'http_error' },
+        { status: 404, expected: `Session ${HISTORY_SESSION_ID} not found` },
+    ])('retains the hydration refusal on HTTP $status without writing a transcript', async ({ status, expected }) => {
+        const request = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
+            expect(init?.method ?? 'GET').toBe('GET');
+            return Response.json({ error: status === 404 ? 'Session not found' : 'server_unavailable' }, { status });
+        });
+        installRuntimeRequest(request);
+        await expect(sync.persistSessionTranscriptMessage(createTranscriptInput(
+            `voice-refused-${status}`, 'unpersisted question',
+        ))).rejects.toThrow(expected);
+        expect(request).toHaveBeenCalledOnce();
+        expect(readStoredSessionMessages(storage.getState(), HISTORY_SESSION_ID)).toEqual([]);
+    });
+
     it('uses the warm active E2EE key and posts directly without rehydrating the carrier', async () => {
         await activeEncryption.initializeSessions(new Map([[HISTORY_SESSION_ID, null]]));
         storage.getState().applySessions([

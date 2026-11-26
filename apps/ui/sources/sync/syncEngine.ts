@@ -15176,6 +15176,10 @@ class Sync {
                 },
             );
             assertAuthorityCurrent();
+            if (hydration.kind !== 'available'
+                && !(hydration.kind === 'missing' && hydration.cause === 'not_found')) {
+                throwForFailedSessionRouteHydration(hydration);
+            }
             if (
                 hydration.kind !== 'available'
                 || hydration.sessionId !== input.sessionId
