@@ -3,7 +3,6 @@ import 'fake-indexeddb/auto';
 import { afterAll, beforeEach, vi } from 'vitest';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
-import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import type { RenderScreenResult } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary, type SessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
@@ -30,8 +29,11 @@ export async function initializeMachineDetailsRuntimeForTests(): Promise<Session
     vi.resetModules();
     const { installBrowserRuntimeForTests } = await import('@/dev/testkit/harness/browserRuntimeHarness');
     const browser = await installBrowserRuntimeForTests({ url: 'https://machine-route.test' });
-    beforeEach(() => browser.activate());
     const network = await installSessionOpsNetworkBoundary();
+    beforeEach(() => {
+        browser.activate();
+        network.resetRequests();
+    });
     const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
     const locks = installWebLockManagerMock();
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverProfiles');
@@ -56,7 +58,7 @@ export async function arrangeMachineDetailsHomeForTests(
     network: SessionOpsNetworkBoundary,
     options: Readonly<{ serverUrl: string; machines?: readonly Machine[]; sessions?: readonly Session[]; settings?: Partial<Settings> }>,
 ): Promise<MachineDetailsHome> {
-    const { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER} = await import('@happier-dev/protocol/machines/machineStoredContent');
+    const { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
     const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
     const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
     const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
@@ -81,15 +83,7 @@ export async function arrangeMachineDetailsHomeForTests(
         beforeSessionRead: null as (() => Promise<void>) | null,
         beforeRequest: null as ((url: URL) => Promise<void>) | null,
     };
-    const toWire = (machine: Machine): FetchedMachineRow => ({
-        id: machine.id, kind: machine.kind,
-        seq: machine.seq, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
-        active: machine.active, activeAt: machine.activeAt,
-        metadata: encodePlainMachineStoredContent(machine.metadata), metadataVersion: machine.metadataVersion,
-        daemonState: machine.daemonState ? encodePlainMachineStoredContent(machine.daemonState) : null,
-        daemonStateVersion: machine.daemonStateVersion,
-        dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-    });
+    const toWire = (machine: Machine) => createPlainMachineRowFixture({ id: machine.id, accountId: 'machine-viewer', machine });
     network.setHttpResponder(async (input, init) => {
         const url = new URL(String(input));
         await state.beforeRequest?.(url);
@@ -108,6 +102,12 @@ export async function arrangeMachineDetailsHomeForTests(
         if (url.pathname === '/v1/machines') {
             state.machineListRequests += 1;
             return Response.json((state.readMachines ? await state.readMachines() : state.machines).map(toWire));
+        }
+        if (url.origin === new URL(home.serverUrl).origin && url.pathname === '/v1/machines/read-batch' && init?.method === 'POST') {
+            return createMachineReadBatchResponseFixture(init.body, machineId => {
+                const machine = state.machines.find(row => row.id === machineId);
+                return machine ? toWire(machine) : null;
+            });
         }
         const bootstrap = createEmptyAccountBootstrapHttpResponse(url.pathname, init);
         if (bootstrap) return bootstrap;

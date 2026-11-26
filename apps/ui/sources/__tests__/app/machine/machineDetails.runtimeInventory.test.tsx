@@ -194,7 +194,6 @@ afterEach(async () => {
     await standardCleanup();
     await home?.dispose();
     home = null;
-    network.resetRequests();
 });
 
 describe('MachineDetailScreen runtime inventory', () => {
