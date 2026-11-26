@@ -2543,7 +2543,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           />
           {absentRoute.failure === undefined ? null : <ActionFailureDetails code={absentRoute.failure.code}
             detail={absentRoute.failure.detail} requestId={absentRoute.failure.requestId} showReason={false} />}
-        </> : readFailed ? <TriageDetailReadFailure failure={selectedReadFailure} entrySource={openEntry.source}
+        </> : readFailed ? <TriageDetailReadFailure failure={selectedReadFailure}
           retry={completePostMutation} manageSources={manageSourcesFromDetail} />
           : routedRosterFailure !== undefined ? <TriageDetailReadFailure rosterFailure={routedRosterFailure} retry={refreshPage} />
           : <LoadingState title={readTriageDetailReadingLineV1(text, routedIdentity?.kind?.displayName ?? null, routedIdentity?.sourceLabel ?? null)} />}

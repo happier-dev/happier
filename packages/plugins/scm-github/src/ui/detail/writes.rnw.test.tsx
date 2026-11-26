@@ -10,7 +10,7 @@ import type { PluginUiTestkit, PluginUiTestkitExecuteActionInput } from '@happie
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { HAPPIER_MOTION_V1 } from '@happier-dev/plugin-ui/components';
 import { TriageEvidenceDisclosureProvider, TriagePostMutationCompletionProvider,
-  type TriageDetailPrimaryWriteHostV1, type TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
+  type TriageDetailPrimaryWriteHostV1, type TriageDetailPrimaryWriteV1, type TriageDetailStatusOfferV1 } from '@happier-dev/triage-sources/ui';
 import { SessionPullRequestNativeStatusV1Schema, TriageDetailSurfaceInputV1Schema,
   type TriageDetailSurfaceInputV1, type TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
@@ -666,6 +666,22 @@ describe('the mounted GitHub write controls', () => {
     expect(offered.current?.nativeStatus?.kind).toBe('current');
     expect(offered.current?.disabledReason).not.toBe('Reading the current pull request…');
     expect(offered.current?.readiness).toBeUndefined();
+  });
+
+  it('offers the header "reading" while the first status read is out, then the settled status (N28)', async () => {
+    const statuses: Array<TriageDetailStatusOfferV1 | null> = [];
+    let settleRead!: (value: JsonValue) => void;
+    nextOverviewGate = new Promise(resolve => { settleRead = resolve; });
+    await mountDetail({ presentation: 'active', nativeLabel: 'Open' }, 'pull-request', [], {
+      offer: () => undefined, offerStatus: (value) => { statuses.push(value); },
+    });
+    // Still reading is never "not available": the header holds its cells as Reading.
+    expect(statuses.at(-1)).toEqual({ kind: 'reading' });
+    const successfulRead = overviewFixture(TriageDetailSurfaceInputV1Schema.parse(
+      launchInput({ presentation: 'active', nativeLabel: 'Open' }, 'pull-request', [], 'overview'),
+    ));
+    await act(async () => { settleRead(successfulRead); });
+    await vi.waitFor(() => expect(statuses.at(-1)).toMatchObject({ kind: 'current' }));
   });
 
   it('offers an unavailable native failure without inventing a successful value or clock', async () => {

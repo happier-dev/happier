@@ -64,7 +64,10 @@ export type TriageDetailSourceStatusV1 = Readonly<{
   review?: 'reading' | Readonly<{ kind: 'approved' | 'reviewRequired'; people: readonly string[] }>;
 }>;
 
-export type TriageDetailStatusOfferV1 = SessionPullRequestNativeStatusV1 | TriageDetailSourceStatusV1;
+/** The contributor's own status read is still out: the header's cells say "Reading…", never "not available". */
+export type TriageDetailStatusReadingV1 = Readonly<{ kind: 'reading' }>;
+
+export type TriageDetailStatusOfferV1 = SessionPullRequestNativeStatusV1 | TriageDetailSourceStatusV1 | TriageDetailStatusReadingV1;
 
 export type TriageDetailPrimaryWriteHostV1 = Readonly<{
   /** Allows the source's existing actions panel to consume the same offer. */

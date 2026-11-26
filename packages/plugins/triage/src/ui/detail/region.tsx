@@ -3,10 +3,7 @@ import { ActionFailureDetails } from '../ActionFailureDetails.js';
 import { isPluginError, readPluginErrorRequestIdV1, type PluginError } from '@happier-dev/plugin-sdk';
 import { PullRequestFailureDetails } from '../../sessions/pullRequestGlance/PullRequestReadFailure.js';
 
-import { hasRetiredConfiguredSource } from '../../corpus/configuration/readConfiguredSourceRows.js';
-import { renderSourceQualifiedId } from '../../corpus/identity/components.js';
-import { presentRetiredTriageSourceConnection, presentTriageSourceConnectionFailure, SCOPE_OUTSIDE_BINDING_CODE } from '../configuration/sourceConnectionFailure.js';
-import { useTriageDurableAccount } from '../durable/accountDurableState.js';
+import { presentRetiredTriageSourceConnection, presentTriageSourceConnectionFailure } from '../configuration/sourceConnectionFailure.js';
 import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
 import {
   Action,
@@ -698,7 +695,6 @@ function TriageDetailKindMark(props: Readonly<{ header: TriageDetailHeaderV1 }>)
 export function TriageDetailReadFailure(props: Readonly<{
   failure?: PluginError;
   sourceFailure?: TriageSourceFailureV1;
-  entrySource?: TriageListRowV1['entryRef']['source'];
   rosterFailure?: TriageListWindowErrorV1;
   lastReadAtMs?: number | null;
   retry: () => unknown;
@@ -708,27 +704,8 @@ export function TriageDetailReadFailure(props: Readonly<{
   const { locale } = useSurfaceContext();
   const { failure, sourceFailure, rosterFailure, lastReadAtMs } = props;
   const code = sourceFailure?.code ?? failure?.code ?? rosterFailure?.code;
-  const { collections } = useTriageDurableAccount();
-  const sourceQualifiedId = code === SCOPE_OUTSIDE_BINDING_CODE && props.entrySource !== undefined
-    ? renderSourceQualifiedId(props.entrySource) : undefined;
-  const [retiredSource, setRetiredSource] = React.useState<{
-    collections: NonNullable<typeof collections>;
-    sourceQualifiedId: string;
-  } | null>(null);
-  React.useEffect(() => {
-    setRetiredSource(null);
-    if (sourceQualifiedId === undefined || collections === null) return;
-    const controller = new AbortController();
-    void hasRetiredConfiguredSource(collections.sourceInstances, sourceQualifiedId, { signal: controller.signal })
-      .then(retired => {
-        if (retired && !controller.signal.aborted) setRetiredSource({ collections, sourceQualifiedId });
-      }, () => {
-        // The provider's refusal still explains the disconnected entry when the roster cannot be read.
-      });
-    return () => controller.abort();
-  }, [collections, sourceQualifiedId]);
-  const connectionFailure = presentTriageSourceConnectionFailure(code, text,
-    retiredSource?.collections === collections && retiredSource?.sourceQualifiedId === sourceQualifiedId);
+  // One message per failure code, from the one presenter: never a second, later read that rewords it (N29).
+  const connectionFailure = presentTriageSourceConnectionFailure(code, text);
   const refusal = presentInternalTaskReadFailure(code, text);
   const canRetry = (failure?.data.retryable ?? rosterFailure?.retryable) !== false;
   const recovery = canRetry
@@ -1012,8 +989,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   // The header's change facts read the source's own live status offer, the value its write carries: never a second read.
   const detailSourceStatus = sourceStatus?.kind === 'detail' ? sourceStatus : undefined;
   const pullRequestStatus = sourceStatus?.kind === 'current' || sourceStatus?.kind === 'stale' ? sourceStatus.value : null;
-  // A source need not offer live PR status. Only the detail's own pending read can hold these cells open.
-  const statusReading = sourceStatus === null && detail?.kind === 'reading';
+  // A source need not offer live PR status. Only the detail's own pending read, or the source saying its status read is
+  // still out, holds these cells open; "not available" only once that read settled without the fact (N28).
+  const statusReading = sourceStatus?.kind === 'reading' || (sourceStatus === null && detail?.kind === 'reading');
   const detailFailed = readFailure !== undefined || detail?.kind === 'unreachable'
     || detail?.kind === 'refused' || detail?.kind === 'unavailable';
   const header = React.useMemo(() => projectTriageDetailHeaderV1({
@@ -1286,7 +1264,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     const reading = readTriageDetailReadingLineV1(text, header.kindLabel, header.sourceLabel);
     return <Stack style={DETAIL_FILL_STYLE_V1}>
       {readFailure !== undefined ? (
-        <TriageDetailReadFailure sourceFailure={readFailure} entrySource={row.entryRef.source}
+        <TriageDetailReadFailure sourceFailure={readFailure}
           lastReadAtMs={header.lastReadAtMs} retry={completePostMutation} manageSources={props.manageSources} />
       ) : observation === null && detail?.kind !== 'unreachable' ? (
         header.presence === 'absent' ? null : <Stack gap="small">
@@ -1332,7 +1310,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       })() : detail.kind === 'unavailable' ? (
         <EmptyState {...presentRetiredTriageSourceConnection(text)} />
       ) : detail.kind === 'unreachable' ? (
-        <TriageDetailReadFailure failure={detail.failure} entrySource={row.entryRef.source}
+        <TriageDetailReadFailure failure={detail.failure}
           lastReadAtMs={header.lastReadAtMs} retry={detail.retry} manageSources={props.manageSources} />
       ) : detail.kind === 'refused' ? (
         <Banner

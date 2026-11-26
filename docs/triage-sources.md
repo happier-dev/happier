@@ -132,8 +132,9 @@ aggregate lists scan active connections. Retained links and pins can still
 refer to the retired connection. A portable link can be tried on an active
 connection of the same source. If the source returns `scope-outside-binding`,
 detail preserves that code and its request ID in Details and offers Manage
-sources. A retired connection of the same source in the lifecycle roster uses
-the existing retired-connection wording.
+sources. Each code keeps one message: `scope-outside-binding` says the entry's
+source is no longer connected whatever the lifecycle roster holds, and only
+`triage_source_retired` uses the retired-connection wording.
 
 ## Universal Search (0.3 development source)
 

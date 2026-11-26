@@ -660,6 +660,8 @@ function parseThreadResolutionResult(value: unknown): GithubMutationResultV1 | n
   return parsed.success ? parsed.data : null;
 }
 
+const GITHUB_STATUS_READING_V1 = Object.freeze({ kind: 'reading' as const });
+
 /** Source scope/admission effects around the public portable-operation controller. */
 function useGithubPrimaryWrite(input: TriageDetailSurfaceInputV1,
   overview: GithubOverviewControllerV1,
@@ -4586,7 +4588,10 @@ function GithubDetailBody({
     return () => { publishPrimaryWrite(null); };
   }, [publishesPrimaryWrite, primaryWrite, publishPrimaryWrite]);
   // The header's facts read the status in every state; a write is offered only while the pull request is open.
-  const primaryStatus = kindId === 'pull-request' ? primaryController.nativeStatus : null;
+  // While the first overview read is out the header says "Reading…"; only a settled read without status is "not available" (N28).
+  const statusReading = overview.failure === null && overview.value === null;
+  const primaryStatus = kindId !== 'pull-request' ? null
+    : primaryController.nativeStatus ?? (statusReading ? GITHUB_STATUS_READING_V1 : null);
   const publishPrimaryStatus = primaryHost?.offerStatus;
   React.useLayoutEffect(() => {
     if (publishPrimaryStatus === undefined || !publishesPrimaryWrite) return undefined;

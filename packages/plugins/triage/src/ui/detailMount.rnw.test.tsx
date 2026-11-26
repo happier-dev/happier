@@ -1627,7 +1627,7 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.readDetailInputs).toEqual([{ v: 1, ...binding }]);
     });
 
-    it.each([false, true])('opens Manage sources on a cold scope refusal (retired connection=%s)', async retired => {
+    it.each([false, true])('opens Manage sources on a cold scope refusal, one message whatever the roster holds (retired connection=%s)', async retired => {
         const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'historical/repository', entryId: '657' };
         const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
         const requestId = 'scope-outside-binding-request';
@@ -1640,8 +1640,10 @@ describe('opening a row into the source detail', () => {
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
         expect(document.body.textContent).toContain('scope-outside-binding');
         expect(document.body.textContent).toContain(requestId);
-        await vi.waitFor(async () => expect(await shell.getByText(retired ? 'This connection is no longer configured'
-            : 'This entry’s source is no longer connected')).toBeDefined());
+        // One failure code, one message (N29): a retired connection in the roster never rewords it later.
+        await vi.waitFor(async () => expect(await shell.getByText('This entry’s source is no longer connected')).toBeDefined());
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+        expect(document.body.textContent).not.toContain('This connection is no longer configured');
         await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Manage sources' })); });
         await expect(shell.getByText('Configured sources')).resolves.toBeDefined();

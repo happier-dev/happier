@@ -16,9 +16,8 @@ export function presentRetiredTriageSourceConnection(text: PluginTranslate): Rea
 export function presentTriageSourceConnectionFailure(
   code: string | undefined,
   text: PluginTranslate,
-  hasRetiredConnection = false,
 ): Readonly<{ title: string; description?: string }> | undefined {
-  if (code === TRIAGE_SOURCE_RETIRED_CODE || (code === SCOPE_OUTSIDE_BINDING_CODE && hasRetiredConnection)) {
+  if (code === TRIAGE_SOURCE_RETIRED_CODE) {
     return presentRetiredTriageSourceConnection(text);
   }
   if (code === SCOPE_OUTSIDE_BINDING_CODE) {
