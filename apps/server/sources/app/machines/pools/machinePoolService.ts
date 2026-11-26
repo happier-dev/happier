@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
 import { readMachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { serializePrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
-import type { MachinePoolCreateInputV1, MachinePoolDeleteInputV1, MachinePoolDeleteOutputV1, MachinePoolErrorV1, MachinePoolPrivateLabelStoredV1, MachinePoolPrivateViewV1, MachinePoolResolveInputV1, MachinePoolResolveResultV1, MachinePoolUpdateInputV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { MachinePoolCreateInputV1, MachinePoolDeleteInputV1, MachinePoolDeleteOutputV1, MachinePoolDeleteReviewV1, MachinePoolErrorV1, MachinePoolPrivateLabelStoredV1, MachinePoolPrivateViewV1, MachinePoolResolveInputV1, MachinePoolResolveResultV1, MachinePoolUpdateInputV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { acquireAccountChangePublicationLocksInTx, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
@@ -18,7 +18,7 @@ import {
     type MachineDaemonPresenceSocketServer,
 } from "../machineDaemonPresence";
 import { selectMachinePoolCandidate } from "@happier-dev/protocol/machines/pools";
-import { acquireTeamCredentialBrokerPoolAdmissionInTx, clearTeamCredentialBrokerPoolReferencesInTx } from "@/app/teams/credentials/resourceBrokerPoolLifecycle";
+import { acquireTeamCredentialBrokerPoolAdmissionInTx, clearTeamCredentialBrokerPoolReferencesInTx, readTeamCredentialBrokerPoolReferenceSummaryInTx } from "@/app/teams/credentials/resourceBrokerPoolLifecycle";
 import { acquireMachinePoolMutationFenceInTx } from "./machinePoolMutationFence";
 import { validateMachinePoolMembersInTx } from './machinePoolMemberAdmission';
 import { canReadMachinePoolTeamInTx, canSetMachinePoolAudienceInTx, CUSTODIAN_POOL_ACCESS, TEAM_POOL_ACCESS, machinePoolAudience, readableMachinePoolTeamsInTx,
@@ -401,6 +401,24 @@ export async function updateMachinePool(params: Readonly<{
         : { ok: true, value: current };
 }
 
+export async function prepareMachinePoolDelete(params: Readonly<{
+    accountId: string;
+    poolId: string;
+}>): Promise<PoolResult<MachinePoolDeleteReviewV1>> {
+    return await inReadSnapshot(async tx => {
+        if (!await readOwnedPool(tx, params.accountId, params.poolId)) {
+            return { ok: false, error: { code: "pool_not_found" } };
+        }
+        const { witness, assignmentCount, visibleTeamNames } = await readTeamCredentialBrokerPoolReferenceSummaryInTx(tx, {
+            custodianAccountId: params.accountId, poolId: params.poolId,
+        });
+        return { ok: true, value: {
+            witness,
+            ...(assignmentCount > 0 ? { teamCredentialBrokerAssignments: { assignmentCount, visibleTeamNames: [...visibleTeamNames] } } : {}),
+        } };
+    });
+}
+
 export async function deleteMachinePool(params: Readonly<{
     accountId: string;
     input: MachinePoolDeleteInputV1;
@@ -419,6 +437,11 @@ export async function deleteMachinePool(params: Readonly<{
             poolId: current.id,
         })) return { kind: "not_found" as const };
         await recheckAdmission();
+        const expectedBrokerReferencesWitness = params.input.expectedBrokerReferencesWitness;
+        if (expectedBrokerReferencesWitness !== undefined) {
+            const { witness } = await readTeamCredentialBrokerPoolReferenceSummaryInTx(tx, resourceScope);
+            if (witness !== expectedBrokerReferencesWitness) return { kind: "conflict" as const, stored: current };
+        }
         await clearTeamCredentialBrokerPoolReferencesInTx(tx, {
             custodianAccountId: params.accountId,
             poolId: current.id,

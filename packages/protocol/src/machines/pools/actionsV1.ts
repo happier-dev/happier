@@ -12,6 +12,9 @@ import {
   MachinePoolCreateInputV1Schema,
   MachinePoolDeleteInputV1Schema,
   MachinePoolDeleteOutputV1Schema,
+  type MachinePoolDeleteReviewV1,
+  MachinePoolDeleteWireInputV1Schema,
+  MachinePoolDeleteWireOutputV1Schema,
   MachinePoolGetInputV1Schema,
   MachinePoolListInputV1Schema,
   MachinePoolOpenedListOutputV1Schema,
@@ -48,6 +51,7 @@ export const MachinePoolWireInputSchemasV1 = {
   ...MachinePoolActionInputSchemasV1,
   'machines.pools.create': MachinePoolCreateInputV1Schema,
   'machines.pools.update': MachinePoolUpdateInputV1Schema,
+  'machines.pools.delete': MachinePoolDeleteWireInputV1Schema,
 } as const satisfies Record<MachinePoolActionIdV1, z.ZodMiniType>;
 
 export type MachinePoolWireInputV1<TActionId extends MachinePoolActionIdV1 = MachinePoolActionIdV1> =
@@ -110,6 +114,7 @@ export const MachinePoolWireOutputSchemasV1 = {
   'machines.pools.get': MachinePoolPrivateViewV1Schema,
   'machines.pools.create': MachinePoolPrivateViewV1Schema,
   'machines.pools.update': MachinePoolPrivateViewV1Schema,
+  'machines.pools.delete': MachinePoolDeleteWireOutputV1Schema,
 } as const satisfies Record<MachinePoolActionIdV1, z.ZodMiniType>;
 
 export type MachinePoolWireOutputV1<TActionId extends MachinePoolActionIdV1 = MachinePoolActionIdV1> =
@@ -119,7 +124,7 @@ export type MachinePoolWireOutputV1<TActionId extends MachinePoolActionIdV1 = Ma
 export async function openMachinePoolActionOutputV1(
   output: MachinePoolWireOutputV1,
   openPool: (view: MachinePoolPrivateViewV1) => MachinePoolViewV1 | null | Promise<MachinePoolViewV1 | null>,
-): Promise<MachinePoolActionOutputV1 | null> {
+): Promise<MachinePoolActionOutputV1 | MachinePoolDeleteReviewV1 | null> {
   if ('pools' in output) {
     const pools = await Promise.all(output.pools.map(openPool));
     if (pools.some(pool => pool === null)) return null;

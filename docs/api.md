@@ -2859,6 +2859,10 @@ separately observed availability never merge into one field. `availability` is
 either `{ state: 'known', connectedCount, enabledCount }` or `{ state: 'unknown' }`
 when the Home could not observe its Machine sockets.
 
+An authorized delete review includes the number of Team credential broker assignments
+that deletion will clear and the Team names visible to the custodian. The approved
+delete uses the existing `pool_changed` result if the reviewed assignments change.
+
 Create and update accept `audience: { kind: 'private' }` or
 `{ kind: 'team', teamId }`; omission creates a private Pool or preserves the
 existing audience on update. Publishing to a Team requires its administrative

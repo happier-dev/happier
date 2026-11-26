@@ -1,5 +1,5 @@
-import { MachinePoolCreateInputV1Schema, MachinePoolDeleteInputV1Schema, MachinePoolDeleteOutputV1Schema, MachinePoolErrorV1Schema, MachinePoolGetInputV1Schema, MachinePoolListInputV1Schema, MachinePoolListOutputV1Schema, MachinePoolResolveInputV1Schema, MachinePoolResolveResultV1Schema, MachinePoolUpdateInputV1Schema } from '@happier-dev/protocol/machines/pools/v1';
-import { MachinePoolWireOutputSchemasV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
+import { MachinePoolCreateInputV1Schema, MachinePoolErrorV1Schema, MachinePoolGetInputV1Schema, MachinePoolListInputV1Schema, MachinePoolListOutputV1Schema, MachinePoolResolveInputV1Schema, MachinePoolResolveResultV1Schema, MachinePoolUpdateInputV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { MachinePoolWireInputSchemasV1, MachinePoolWireOutputSchemasV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { z } from "zod/mini";
 
 import { createServerFeatureGatePreHandler } from "@/app/features/catalog/serverFeatureGate";
@@ -9,6 +9,7 @@ import {
     deleteMachinePool,
     getMachinePool,
     listMachinePools,
+    prepareMachinePoolDelete,
     resolveMachinePool,
     updateMachinePool,
 } from "@/app/machines/pools/machinePoolService";
@@ -83,10 +84,12 @@ export function registerMachinePoolRoutes(
     app.post(machinePoolActionEndpointPathV1("machines.pools.delete"), {
         preHandler,
         attachValidation: true,
-        schema: { body: MachinePoolDeleteInputV1Schema, response: { 200: MachinePoolDeleteOutputV1Schema, ...errors } },
+        schema: { body: MachinePoolWireInputSchemasV1["machines.pools.delete"], response: { 200: MachinePoolWireOutputSchemasV1["machines.pools.delete"], ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
-        const result = await deleteMachinePool({ accountId: request.userId, input: request.body, io: deps.io });
+        const result = "prepareDelete" in request.body
+            ? await prepareMachinePoolDelete({ accountId: request.userId, poolId: request.body.poolId })
+            : await deleteMachinePool({ accountId: request.userId, input: request.body, io: deps.io });
         return result.ok ? await reply.send(result.value) : await reply.code(statusForError(result.error.code)).send(result.error);
     });
 

@@ -38,6 +38,7 @@ import { TeamInvitationAcceptApprovalPrepareResultV1Schema, TeamInvitationAccept
 import { MachineSetupApplyInputV1Schema, ManagedAcquireInputV1Schema,
   readManagedAcquireAccountSignInReviewV1 } from '../../machines/managed/actionsV1.js';
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
+import { MachinePoolDeleteInputV1Schema, MachinePoolDeleteReviewV1Schema } from '../../machines/pools/v1.js';
 import { parseProviderActionRequestV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../../providers/providerActionsV1.js';
 import { DaemonProviderConnectionsDescribeResponseV1Schema } from '../../rpc/providers.js';
 import { prepareProviderEndpointPolicyReviewFromViewV1, summarizeProviderEndpointPolicyReviewV1 } from '../../providers/connections/endpointPolicyReviewV1.js';
@@ -295,6 +296,26 @@ export async function prepareApprovalRequest(params: Readonly<{
   executeCanonicalAction?: Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentTemplateInstantiation']>>[0]['executeCanonicalAction'];
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
   const spec = getActionSpec(params.actionId);
+  if (params.actionId === 'machines.pools.delete') {
+    if (!params.deps.machinePoolAction) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+    const { poolId, expectedRevision } = MachinePoolDeleteInputV1Schema.parse(params.input);
+    const input = { poolId, expectedRevision };
+    const prepared = await params.deps.machinePoolAction({
+      actionId: 'machines.pools.delete', input: { poolId, prepareDelete: true },
+      context: params.context, signal: params.context.signal,
+    });
+    const failure = readActionFailureEnvelope(prepared);
+    if (failure) return failure;
+    const review = MachinePoolDeleteReviewV1Schema.safeParse(prepared).data;
+    if (!review) return { ok: false, errorCode: 'machine_pool_request_failed', error: 'machine_pool_request_failed' };
+    return {
+      actionArgs: { ...input, expectedBrokerReferencesWitness: review.witness },
+      preview: {
+        actionId: params.actionId, actionArgs: input, summary: buildApprovalPreviewSummary(spec, input),
+        ...(review.teamCredentialBrokerAssignments ? { teamCredentialBrokerAssignments: review.teamCredentialBrokerAssignments } : {}),
+      },
+    };
+  }
   if (params.actionId === PET_IMPORT_ACTION_ID_V1) {
     const input = PetImportInputV1Schema.parse(params.input);
     if (input.source.kind === 'machine' && params.deps.preparePetImport) {

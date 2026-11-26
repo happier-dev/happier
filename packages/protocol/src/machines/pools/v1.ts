@@ -288,6 +288,12 @@ export const MachinePoolGetInputV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type MachinePoolGetInputV1 = z.infer<typeof MachinePoolGetInputV1Schema>;
 
+export const MachinePoolBrokerAssignmentConsequenceV1Schema = lazyZodSchema(() => z.strictObject({
+  assignmentCount: z.number().check(z.int(), z.positive()),
+  visibleTeamNames: z.array(z.string()),
+}));
+export type MachinePoolBrokerAssignmentConsequenceV1 = z.infer<typeof MachinePoolBrokerAssignmentConsequenceV1Schema>;
+
 /**
  * The authoring host supplies the pool ID so a lost response can be reconciled by replaying the
  * same submission: an identical normalized aggregate at that ID returns unchanged, a different one
@@ -334,14 +340,33 @@ export type MachinePoolUpdateActionInputV1 = z.infer<typeof MachinePoolUpdateAct
 export const MachinePoolDeleteInputV1Schema = lazyZodSchema(() => z.strictObject({
   poolId: MachinePoolIdV1Schema,
   expectedRevision: z.number().check(z.int(), z.nonnegative()),
+  expectedBrokerReferencesWitness: z.optional(z.string().check(z.minLength(1))),
 }));
 export type MachinePoolDeleteInputV1 = z.infer<typeof MachinePoolDeleteInputV1Schema>;
+
+export const MachinePoolDeletePreparationInputV1Schema = lazyZodSchema(() => z.strictObject({
+  poolId: MachinePoolIdV1Schema,
+  prepareDelete: z.literal(true),
+}));
+export const MachinePoolDeleteWireInputV1Schema = lazyZodSchema(() => z.union([
+  MachinePoolDeleteInputV1Schema, MachinePoolDeletePreparationInputV1Schema,
+]));
+
+export const MachinePoolDeleteReviewV1Schema = lazyZodSchema(() => z.strictObject({
+  witness: z.string().check(z.minLength(1)),
+  teamCredentialBrokerAssignments: z.optional(MachinePoolBrokerAssignmentConsequenceV1Schema),
+}));
+export type MachinePoolDeleteReviewV1 = z.infer<typeof MachinePoolDeleteReviewV1Schema>;
 
 export const MachinePoolDeleteOutputV1Schema = lazyZodSchema(() => z.strictObject({
   poolId: MachinePoolIdV1Schema,
   deleted: z.literal(true),
 }));
 export type MachinePoolDeleteOutputV1 = z.infer<typeof MachinePoolDeleteOutputV1Schema>;
+
+export const MachinePoolDeleteWireOutputV1Schema = lazyZodSchema(() => z.union([
+  MachinePoolDeleteOutputV1Schema, MachinePoolDeleteReviewV1Schema,
+]));
 
 /**
  * `requestKey` is required: the caller's existing selection identity spreads independent requests

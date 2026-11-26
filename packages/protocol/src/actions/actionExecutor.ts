@@ -4135,6 +4135,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       if (!review) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
       if ('ok' in review) return review;
       if (computeActionReviewDigestV1(actionId, review) !== confirmedReviewDigest) return reviewRefusal(review);
+      if (actionId === 'machines.pools.delete') admittedInput = review.actionArgs;
       const serviceStartReview = readNativeServiceStartApproval(actionId, review.actionArgs, review.preview);
       if (serviceStartReview?.ok === false) return serviceStartReview;
       if (serviceStartReview?.ok) ctx = { ...ctx, nativeServiceStartApproval: serviceStartReview.review };

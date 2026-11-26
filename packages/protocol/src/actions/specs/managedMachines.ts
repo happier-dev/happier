@@ -6,7 +6,7 @@ import { ActionOperationCompletionOutputV1Schema, type ActionCompletionDeclarati
 import { MachineSetupApplyResultV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
 import { ActionOperationAcceptedResultSchema } from '../actionExecutionResult.js';
 import { PrivateLabelStoredV1Schema } from '../../crypto/privateLabelSchemaV1.js';
-import { MachinePoolAudienceV1Schema } from '../../machines/pools/v1.js';
+import { MachinePoolAudienceV1Schema, MachinePoolDeleteWireInputV1Schema } from '../../machines/pools/v1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { MACHINE_POOL_ACTION_IDS_V1, MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
 import { MACHINE_PRESET_HTTP_ACTION_IDS_V1, MACHINE_PRESET_PREPARE_ACTION_ID_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '../../machines/managed/machinePresetActionsV1.js';
@@ -379,6 +379,7 @@ export const MACHINE_POOL_ACTION_SPECS: ActionSpecArrayConcat<readonly [
       serverTransport: {
         method: 'POST',
         path: machinePoolActionEndpointPathV1(actionId),
+        ...(isDelete ? { inputSchema: MachinePoolDeleteWireInputV1Schema } : {}),
       },
     };
   }) satisfies readonly PreNormalizedActionSpec[]),

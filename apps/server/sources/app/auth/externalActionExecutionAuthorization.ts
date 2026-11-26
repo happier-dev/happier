@@ -3146,7 +3146,8 @@ function isAccountActionHttpOperation(actionId: string,
         : actionId === 'deployments.bindings.set' ? DeploymentBindingsSetStorageInputV1Schema : isDiscussionActionIdV1(actionId)
         ? discussionActionHttpWireInputSchemaV1(actionId) : isHomeDomainActionIdV1(actionId)
         ? homeDomainActionHttpWireInputSchemaV1(actionId)
-        : isAccountApiTokenLabelActionIdV1(actionId) ? transport.inputSchema ?? spec.inputSchema : spec.inputSchema;
+        : isAccountApiTokenLabelActionIdV1(actionId) || actionId === 'machines.pools.delete'
+        ? transport.inputSchema ?? spec.inputSchema : spec.inputSchema;
     const parsed = inputSchema.safeParse(input);
     const versioned = !parsed.success && transport.method.toUpperCase() === 'GET'
         && input && typeof input === 'object' && !Array.isArray(input)

@@ -265,6 +265,12 @@ async function actionResponse(url: string, init?: RequestInit): Promise<Response
         if (action === 'create') return Response.json(poolWire(await boundaries.create(boundaries.serverId, input)));
         if (action === 'update') return Response.json(poolWire(await boundaries.update(boundaries.serverId, input)));
         if (action === 'delete') {
+            if (input.prepareDelete === true) {
+                if (!boundaries.pools?.some(view => view.pool.id === input.poolId)) {
+                    return Response.json({ code: 'pool_not_found' }, { status: 404 });
+                }
+                return Response.json({ witness: 'broker-assignment-witness' });
+            }
             await boundaries.remove(boundaries.serverId, input);
             boundaries.pools = boundaries.pools?.filter(view => view.pool.id !== input.poolId) ?? null;
             return Response.json({ poolId: input.poolId, deleted: true });

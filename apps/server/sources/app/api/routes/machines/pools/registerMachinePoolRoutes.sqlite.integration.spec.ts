@@ -394,7 +394,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
         });
     });
 
-    it("settles a lost-response retry of the same create and delete without duplicating durable effects", async () => {
+    it("retries create and keeps a repeated delete opaque without duplicating durable effects", async () => {
         await seedAccounts();
 
         await withPoolRoutes(async (app) => {
@@ -432,8 +432,8 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                     headers,
                     payload: { poolId, expectedRevision: 0 },
                 });
-                expect(deleted.statusCode, `delete attempt ${attempt}`).toBe(200);
-                expect(deleted.json()).toEqual({ poolId, deleted: true });
+                expect(deleted.statusCode, `delete attempt ${attempt}`).toBe(attempt === 0 ? 200 : 404);
+                expect(deleted.json()).toEqual(attempt === 0 ? { poolId, deleted: true } : { code: "pool_not_found" });
             }
             expect(await countOwnerChanges()).toBe(1);
             expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { seq: true } }))
@@ -584,8 +584,8 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                 headers,
                 payload: { poolId, expectedRevision: 0 },
             });
-            expect(destroy.statusCode).toBe(200);
-            expect(destroy.json()).toEqual({ poolId, deleted: true });
+            expect(destroy.statusCode).toBe(404);
+            expect(destroy.json()).toEqual({ code: "pool_not_found" });
 
             expect(await db.machinePool.findUniqueOrThrow({ where: { id: poolId } }))
                 .toMatchObject({ accountId: otherAccountId, name: storedPlainPrivateLabel("Private pool") });

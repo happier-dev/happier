@@ -107,6 +107,7 @@ export type MachinePoolsActionInputById = {
     readonly "machines.pools.delete": {
         poolId: string;
         expectedRevision: number;
+        expectedBrokerReferencesWitness?: string | undefined;
     };
     readonly "machines.pools.resolve": {
         poolId: string;
