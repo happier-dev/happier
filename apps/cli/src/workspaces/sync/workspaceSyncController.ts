@@ -106,6 +106,7 @@ export interface WorkspaceSyncMutagenAdapter {
     definitions: readonly WorkspaceSyncRelationshipV1[],
     signal?: AbortSignal,
     holdPausedRelationshipIds?: ReadonlySet<string>,
+    activeCopyOnceIds?: ReadonlySet<string>,
   ): Promise<readonly WorkspaceSyncStatusV1[]>;
   ensure(definition: WorkspaceSyncRelationshipV1, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1>;
   copyOnce(input: WorkspaceSyncCopyOnceV1, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1>;
@@ -379,6 +380,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
   /** Prepared Action relationships retained until their matching Settings record is published. */
   private readonly transientDefinitions = new Set<string>();
   private readonly copyOperations = new Map<string, WorkspaceSyncCopyOnceV1>();
+  private readonly activeCopyOnceIds = new Set<string>();
   private readonly copyFences = new Map<string, readonly WorkspaceRootOwnershipHandle[]>();
   private readonly copyOwnedFences = new Map<string, readonly WorkspaceRootOwnershipHandle[]>();
   private readonly copyTargetReleases = new Map<string, (reason: 'abort' | 'commit') => Promise<void>>();
@@ -1336,6 +1338,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
   async copyOnce(input: WorkspaceSyncCopyOnceV1, signal?: AbortSignal, ownershipHandles?: readonly WorkspaceRootOwnershipHandle[]): Promise<WorkspaceSyncStatusV1> {
     const valid = WorkspaceSyncCopyOnceV1Schema.parse(input);
     return this.enqueue(valid.operationId, signal, async () => {
+      this.activeCopyOnceIds.add(valid.operationId);
+      try {
       if (valid.controllerMachineId !== this.localMachineId) {
         throw Object.assign(new Error('Workspace sync controller machine is unavailable'), { code: 'controller_unavailable' });
       }
@@ -1407,6 +1411,9 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
           await this.releaseCopyOperation(valid.operationId).catch(reportRefusedRootCleanup);
         }
         throw error;
+      }
+      } finally {
+        this.activeCopyOnceIds.delete(valid.operationId);
       }
     });
   }
@@ -2786,9 +2793,15 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       const recoveryHoldCodes = new Map<string, string>();
       try {
         await this.lifecycle.start();
-        const recoveries = new Map([...this.copyOperations.values()].map((operation) => [operation.operationId, operation]));
-        for (const recovery of await this.adapter.discoverCopyOnceRecoveries()) recoveries.set(recovery.operationId, recovery);
-        for (const recovery of recoveries.values()) await this.recoverCopyOnce(recovery);
+        const recoveries = new Map([...this.copyOperations.values()]
+          .filter((operation) => !this.activeCopyOnceIds.has(operation.operationId))
+          .map((operation) => [operation.operationId, operation]));
+        for (const recovery of await this.adapter.discoverCopyOnceRecoveries()) {
+          if (!this.activeCopyOnceIds.has(recovery.operationId)) recoveries.set(recovery.operationId, recovery);
+        }
+        for (const recovery of recoveries.values()) {
+          if (!this.activeCopyOnceIds.has(recovery.operationId)) await this.recoverCopyOnce(recovery);
+        }
         for (const relationship of activeRelationships) {
           if (failedPreparations.has(relationship.relationshipId)) continue;
           const previousDefinition = stagedPrevious.has(relationship.relationshipId)
@@ -2813,7 +2826,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         }
         existing = new Map((await this.adapter.rehydrate([...desired.values()].filter(
           relationship => !failedPreparations.has(relationship.relationshipId),
-        ), undefined, holdPausedRelationshipIds))
+        ), undefined, holdPausedRelationshipIds, this.activeCopyOnceIds))
           .map((item) => [item.relationshipId, item]));
       } catch (error) {
         await rollbackStaged();

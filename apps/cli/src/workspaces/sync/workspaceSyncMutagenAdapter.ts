@@ -271,6 +271,7 @@ function entryFromChanges(changes: readonly unknown[]): WorkspaceSyncConflictV1[
 
 export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAdapter {
   private readonly definitions = new Map<string, WorkspaceSyncRelationshipV1 | WorkspaceSyncCopyOnceV1>();
+  private readonly activeCopyOnceIds = new Set<string>();
   /** Runtime-only Mutagen identity, discovered from create/list responses and never persisted. */
   private readonly sessionIdentifiers = new Map<string, string>();
   private readonly successfulCycles = new Map<string, number>();
@@ -478,6 +479,8 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
       const generic = item.generic;
       if (generic.labels['external.operation_kind'] !== 'copy_once'
         || generic.labels['external.owner'] !== 'happier-workspace-sync') continue;
+      const activeId = generic.labels['external.relationship_id'] ?? generic.name;
+      if (this.activeCopyOnceIds.has(activeId) || this.activeCopyOnceIds.has(generic.name)) continue;
       const definition = recoverCopyOnceDefinition(generic, await this.listAllPolicyPatterns(generic.identifier, signal));
       if (!definition
         || Object.entries(expectedLabels(definition)).some(([key, label]) => generic.labels[key] !== label)) {
@@ -542,6 +545,7 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     definitions: readonly WorkspaceSyncRelationshipV1[],
     signal?: AbortSignal,
     holdPausedRelationshipIds: ReadonlySet<string> = new Set(),
+    activeCopyOnceIds: ReadonlySet<string> = new Set(),
   ): Promise<readonly WorkspaceSyncStatusV1[]> {
     this.replaceDefinitions(definitions);
     const value = await this.listAllSessions(signal);
@@ -549,6 +553,10 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     for (const item of value) {
       const generic = item.generic;
       const id = generic.labels['external.relationship_id'];
+      if ((id && (this.activeCopyOnceIds.has(id) || activeCopyOnceIds.has(id)))
+        || this.activeCopyOnceIds.has(generic.name) || activeCopyOnceIds.has(generic.name)) {
+        continue;
+      }
       const persistedClaimId = id && this.definitions.has(id)
         ? id
         : this.definitions.has(generic.name) ? generic.name : undefined;
@@ -594,6 +602,8 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
     return results;
   }
   async copyOnce(operation: WorkspaceSyncCopyOnceV1, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1> {
+    this.activeCopyOnceIds.add(operation.operationId);
+    try {
     this.definitions.set(operation.operationId, operation);
     let operationError: unknown;
     let cleanupRequired = false;
@@ -665,6 +675,9 @@ export class WorkspaceSyncMutagenAdapterClient implements WorkspaceSyncMutagenAd
         this.lastCycleObservedAtMs.delete(operation.operationId);
         this.lastCleanSyncAtMs.delete(operation.operationId);
       }
+    }
+    } finally {
+      this.activeCopyOnceIds.delete(operation.operationId);
     }
   }
   async waitForChange(previousStateIndex: string, signal: AbortSignal): Promise<string> {
