@@ -14,6 +14,7 @@ import { ensureWorkspacePackagesBuiltForComponents } from './ensureWorkspacePack
 import { prepareWorkspaceSourceTypecheckProjects, withFiniteTypecheckProjectInputs } from './workspaceSourceTypecheck.mjs';
 import { createTypecheckDiagnosticRun, createTypecheckInputObservation, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier, typecheckFailureDetail, typecheckPartitionFailure } from './typecheckDiagnostics.mjs';
 import {
+  assertTypeScriptCompilationAllowed,
   resolveTypeScriptCliInvocation,
   shouldRouteTypeScriptCliThroughHstack,
   typecheckCompilerOptions,
@@ -40,6 +41,8 @@ for (let index = 0; index < args.length; index += 1) {
   args.splice(index, 2);
   index -= 1;
 }
+
+assertTypeScriptCompilationAllowed(args, process.env);
 
 // Plugin SDK's finite task delegates to its existing prepared compiler script.
 const lifecycleTask = process.env.npm_lifecycle_event === 'typecheck:tests:prepared'

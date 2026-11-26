@@ -375,7 +375,8 @@ async function admitEntryLoads(request, { env, signal, admissionClass }) {
   return await withEntryLoadScratch(env, request.root, async admittedEnv => {
     const child = await spawnEntryLoadCommand({ ...request, projects: request.selected, signal, admissionClass,
       payload: [process.execPath, self, '--entry-load-admitted'],
-      env: { ...admittedEnv, HAPPIER_COMMIT_ENTRY_LOAD_REQUEST: JSON.stringify(request) },
+      env: { ...admittedEnv, HAPPIER_COMMIT_ENTRY_LOAD: request.phase === 'report' ? '' : '1',
+        HAPPIER_COMMIT_ENTRY_LOAD_REQUEST: JSON.stringify(request) },
       stdio: ['ignore', 'pipe', 'inherit'] });
     let stdout = '';
     child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });

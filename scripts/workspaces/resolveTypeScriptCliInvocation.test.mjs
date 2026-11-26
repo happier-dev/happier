@@ -568,3 +568,11 @@ test('checks every requested project sequentially even when source checking fail
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('commit entry loads refuse project compilation before resolving the binary', () => {
+  assert.throws(() => resolveTypeScriptCliInvocation({
+    args: ['-p', 'apps/ui', '--noEmit'],
+    env: { HAPPIER_COMMIT_ENTRY_LOAD: '1' },
+    requireResolve() { assert.fail('a compile must stop before selecting a binary'); },
+  }), { code: 'COMMIT_ENTRY_LOAD_COMPILATION_REFUSED' });
+});

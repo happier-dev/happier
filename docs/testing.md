@@ -725,6 +725,10 @@ same pledge from unreserved memory and CPU. A focused validation may use
 unpledged capacity behind a CPU-blocked head. The head retains its exclusive
 CPU-pressure exception and earns the usual pledge as slots release. The sample exposes head age,
 `reservationDelayMs` and `reservationActive` alongside `reservationKiB`.
+
+The TypeScript launcher refuses package compilation in commit-triggered entry
+loads. The rolling worker owns package typechecks.
+
 Waiters that have waited past their class’s longest recorded successful run
 are served first in arrival order. Once such a waiter is blocked at the head,
 the broker stops admitting smaller jobs until the head fits. Classes with no

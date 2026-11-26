@@ -60,11 +60,20 @@ export function requiresTypeScriptAdmission({ env = process.env, platform = proc
     || env.HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED === '1' || Boolean(env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN));
 }
 
+export function assertTypeScriptCompilationAllowed(args, env) {
+  if (env.HAPPIER_COMMIT_ENTRY_LOAD === '1' && isNativeTypeScriptCompile(args)) {
+    throw Object.assign(new Error('Commit entry loads cannot run TypeScript compilation. Use the rolling worker typecheck.'), {
+      code: 'COMMIT_ENTRY_LOAD_COMPILATION_REFUSED',
+    });
+  }
+}
+
 export function resolveTypeScriptCliInvocation(params) {
   const processExecPath = params.processExecPath ?? process.execPath;
   const requireResolve = params.requireResolve ?? createRequire(import.meta.url).resolve;
   const readFileSyncImpl = params.readFileSyncImpl ?? readFileSync;
   const env = params.env ?? process.env;
+  assertTypeScriptCompilationAllowed(params.args, env);
   const compilerOverride = env.HAPPIER_TYPESCRIPT_COMPILER || 'auto';
   if (!['auto', 'microsoft', 'tsrs'].includes(compilerOverride)) {
     throw new Error('HAPPIER_TYPESCRIPT_COMPILER must be auto, microsoft or tsrs');
