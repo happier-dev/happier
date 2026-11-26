@@ -39,23 +39,15 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
     return typeof value === 'object' && value !== null && typeof (value as Readonly<{ then?: unknown }>).then === 'function';
 }
 
-function normalizedEnvName(value: string): string {
-    return value.toUpperCase();
-}
-
 function assertExactOwnedEnvKeys(
     materialization: AgentProviderBindingMaterializationV1,
     authIsolation: AgentProviderRequirementsV1['authIsolation'],
 ): void {
-    const required = authIsolation.ownedEnvKeys.map(normalizedEnvName);
-    const optional = (authIsolation.optionalOwnedEnvKeys ?? []).map(normalizedEnvName);
-    const declared = new Set([...required, ...optional]);
-    const actual = materialization.env.map((entry) => normalizedEnvName(entry.name));
-    const emitted = new Set(actual);
-    if (declared.size !== required.length + optional.length
-        || emitted.size !== actual.length
-        || required.some((key) => !emitted.has(key))
-        || actual.some((key) => !declared.has(key))) {
+    const required = authIsolation.ownedEnvKeys;
+    const declared = new Set([...required, ...(authIsolation.optionalOwnedEnvKeys ?? [])]);
+    const emitted = new Set(materialization.env.map((entry) => entry.name));
+    if (required.some((key) => !emitted.has(key))
+        || materialization.env.some(({ name }) => !declared.has(name))) {
         throw new Error('Agent provider binding materialization must cover required owned environment keys and only declared optional keys');
     }
 }

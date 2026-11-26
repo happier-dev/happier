@@ -3,6 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { SessionEnvOverlayV1Schema } from './envOverlay.js';
 
 describe('SessionEnvOverlayV1Schema', () => {
+  it('reports a case alias as a duplicate within a precedence source', () => {
+    const result = SessionEnvOverlayV1Schema.safeParse([
+      { name: 'Path', value: 'configured', source: 'provider' },
+      { name: 'PATH', value: null, source: 'provider' },
+    ]);
+    expect(result.error?.issues).toContainEqual(expect.objectContaining({
+      code: 'custom', path: [1, 'name'], params: { reason: 'duplicate_environment_name' },
+    }));
+  });
+
   it('preserves explicit empty values and null unsets as different operations', () => {
     expect(SessionEnvOverlayV1Schema.parse([
       { name: 'PROFILE_VALUE', value: 'configured', source: 'profile' },

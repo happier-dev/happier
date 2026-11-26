@@ -3,7 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { AgentModelOptionValueIdSchema } from '../../models/descriptor.js';
 
 import { ConnectedAccountServiceKeyIngressSchema } from '../../connect/connectedServiceBindings.js';
-import { SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
+import { checkUniqueSessionEnvName, SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
 import { ProviderCredentialFormatKindV1Schema } from '../credentials/v1.js';
 import {
   PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
@@ -92,7 +92,17 @@ export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObj
     ownedEnvKeys: z.array(SessionEnvOverlayEntryV1Schema.shape.name),
     /** Declared session configuration keys emitted only when this binding consumes them. */
     optionalOwnedEnvKeys: z.optional(z.array(SessionEnvOverlayEntryV1Schema.shape.name)),
-  }),
+  }).check(z.superRefine(({ ownedEnvKeys, optionalOwnedEnvKeys }, ctx) => {
+    const seen = new Set<string>();
+    for (const name of ownedEnvKeys) {
+      checkUniqueSessionEnvName(seen, name, ctx, ['ownedEnvKeys'], 'Owned environment keys must be unique');
+    }
+    for (const name of optionalOwnedEnvKeys ?? []) {
+      checkUniqueSessionEnvName(
+        seen, name, ctx, ['optionalOwnedEnvKeys'], 'Optional environment keys must be unique and disjoint from required keys',
+      );
+    }
+  })),
   materialization: z.enum(['spawnEnv', 'engineConfig', 'configFile']),
   applyPolicy: ModelSelectionApplyPolicySchema,
   /** Additional model selections consumed by this Agent's Provider binding adapter. */
@@ -108,13 +118,6 @@ export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObj
   }
   if (new Set(value.authIsolation.suppressConnectedServiceIds).size !== value.authIsolation.suppressConnectedServiceIds.length) {
     ctx.addIssue({ code: 'custom', path: ['authIsolation', 'suppressConnectedServiceIds'], message: 'Suppressed service ids must be unique' });
-  }
-  if (new Set(value.authIsolation.ownedEnvKeys).size !== value.authIsolation.ownedEnvKeys.length) {
-    ctx.addIssue({ code: 'custom', path: ['authIsolation', 'ownedEnvKeys'], message: 'Owned environment keys must be unique' });
-  }
-  const allOwnedEnvKeys = [...value.authIsolation.ownedEnvKeys, ...(value.authIsolation.optionalOwnedEnvKeys ?? [])];
-  if (new Set(allOwnedEnvKeys).size !== allOwnedEnvKeys.length) {
-    ctx.addIssue({ code: 'custom', path: ['authIsolation', 'optionalOwnedEnvKeys'], message: 'Optional environment keys must be unique and disjoint from required keys' });
   }
   const noAuthProtocols = value.credentialSupport.noAuthProtocols;
   if (noAuthProtocols) {

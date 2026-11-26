@@ -55,11 +55,16 @@ describe('provider compatibility contracts', () => {
     }).success).toBe(true);
   });
 
-  it('uses canonical uppercase environment ownership keys so Windows aliases cannot collide', () => {
-    expect(AgentProviderRequirementsV1Schema.safeParse({
-      ...requirements,
-      authIsolation: { ...requirements.authIsolation, ownedEnvKeys: ['PATH', 'Path'] },
-    }).success).toBe(false);
+  it('reports case aliases as duplicate ownership within and across declaration fields', () => {
+    for (const [authIsolation, field] of [
+      [{ ...requirements.authIsolation, ownedEnvKeys: ['Path', 'PATH'] }, 'ownedEnvKeys'],
+      [{ ...requirements.authIsolation, ownedEnvKeys: ['Path'], optionalOwnedEnvKeys: ['PATH'] }, 'optionalOwnedEnvKeys'],
+    ] as const) {
+      const result = AgentProviderRequirementsV1Schema.safeParse({ ...requirements, authIsolation });
+      expect(result.error?.issues).toContainEqual(expect.objectContaining({
+        code: 'custom', path: ['authIsolation', field], params: { reason: 'duplicate_environment_name' },
+      }));
+    }
   });
 
   it('treats header support names as case-insensitive and query support names as case-sensitive', () => {

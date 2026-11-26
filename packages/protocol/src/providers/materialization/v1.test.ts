@@ -14,6 +14,15 @@ const envRow = (name = 'TOKEN', value: string | null = 'secret') => ({
 });
 
 describe('provider binding materialization V1', () => {
+  it('reports a case alias as a duplicate when a set and unset target the same portable name', () => {
+    const result = AgentProviderBindingMaterializationV1Schema.safeParse({
+      v: 1, kind: 'spawnEnv', env: [envRow('Path'), envRow('PATH', null)],
+    });
+    expect(result.error?.issues).toContainEqual(expect.objectContaining({
+      code: 'custom', path: ['env', 1, 'name'], params: { reason: 'duplicate_environment_name' },
+    }));
+  });
+
   it.each([129, 257])('round-trips set and unset for a %i-byte declared name', (length) => {
     const key = 'K'.repeat(length);
     const isolation = AgentProviderRequirementsV1Schema.shape.authIsolation.parse({

@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import { SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
+import { checkUniqueSessionEnvName, SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
 import { AgentProviderRequirementsV1Schema } from '../compatibility/v1.js';
 import { ProviderAdapterBindingKeyV1Schema } from '../sessions/adapterBindingKeyV1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema } from '../ids.js';
@@ -131,10 +131,7 @@ export const ProviderBindingEnvOverlayV1Schema = z.pipe(
   z.array(ProviderEnvEntryV1Schema).check(z.superRefine((entries, ctx) => {
     const seen = new Set<string>();
     entries.forEach(({ name }, index) => {
-      if (seen.has(name)) {
-        ctx.addIssue({ code: 'custom', path: [index, 'name'], message: 'Duplicate provider environment operation' });
-      }
-      seen.add(name);
+      checkUniqueSessionEnvName(seen, name, ctx, [index, 'name'], 'Duplicate provider environment operation');
     });
   })),
 );
