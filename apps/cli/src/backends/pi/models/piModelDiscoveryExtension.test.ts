@@ -48,6 +48,7 @@ async function runDiscovery(mode: string) {
 describe('Pi model discovery extension sink', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it('publishes on the Pi event bus in TUI mode and never writes to the terminal', async () => {
@@ -59,7 +60,6 @@ describe('Pi model discovery extension sink', () => {
     expect(parsePiModelDiscoveryLine(String(busLines[0]))).toEqual({
       models: [{ id: 'grok-4.7', provider: 'xai', name: 'Grok 4.7', reasoning: true }],
     });
-    vi.unstubAllEnvs();
   });
 
   it('keeps the stderr marker in RPC and JSON modes, which the RPC backend and preflight probe read', async () => {
@@ -72,6 +72,5 @@ describe('Pi model discovery extension sink', () => {
       expect(lines, mode).toHaveLength(1);
       expect(parsePiModelDiscoveryLine(lines[0]!.trim()), mode).toMatchObject({ models: [{ id: 'grok-4.7' }] });
     }
-    vi.unstubAllEnvs();
   });
 });
