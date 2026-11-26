@@ -80,6 +80,8 @@ import { InboxDismissRowMenu } from '@/components/inbox/InboxRowMenu';
 import { createArtifactReadBatchHttpResponse, createArtifactStoreBoundary, createPlainArtifactHttpFixture, seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { isArtifactInventoryReady } from '@/sync/domains/artifacts/artifactInventory';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createPluginSurfaceActionFailureError, projectPluginActionFailure } from '@/components/plugins/surfaces/actionFailure';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationAddressKey } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -90,7 +92,7 @@ import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { TRIAGE_PLUGIN } from '@happier-dev/plugins-triage';
 import { REVIEW_TRIAGE_SOURCE_V1, TRIAGE_APP_PAGE_LOCAL_ID_V1, reviewTriageRouteV1,
-    TriageReadAttentionResultV1Schema } from '@happier-dev/triage-protocol/v1';
+    TriageGetResultV1Schema, TriageReadAttentionResultV1Schema } from '@happier-dev/triage-protocol/v1';
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
@@ -110,6 +112,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 const discussionBoundary = vi.hoisted(() => ({ request: vi.fn() }));
 const artifactReadBoundary = vi.hoisted(() => ({ request: vi.fn() }));
+const reviewReadBoundary = vi.hoisted(() => ({ request: vi.fn() }));
 const executionRunBoundary = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), follows: vi.fn(), rules: vi.fn() }));
 let executionRunRelay: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | undefined;
 let artifactStore = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
@@ -1049,6 +1052,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         resourceBoundary.request.mockReset();
         discussionBoundary.request.mockReset().mockResolvedValue(null);
         artifactReadBoundary.request.mockReset().mockResolvedValue(null);
+        reviewReadBoundary.request.mockReset().mockResolvedValue(null);
         artifactStore = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
         executionRunBoundary.list.mockReset().mockResolvedValue({ runs: [] });
         executionRunBoundary.get.mockReset();
@@ -1133,6 +1137,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 }) });
             }
             if (path.startsWith('/v1/discussions')) return discussionBoundary.request(path, init);
+            if (path.startsWith('/v1/reviews/')) return reviewReadBoundary.request(path, init);
             if (path === '/v1/artifacts/read') {
                 const response = await artifactReadBoundary.request(path, init);
                 if (response) return response;
@@ -1857,34 +1862,53 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         } finally { await screen.unmount(); vi.useRealTimers(); }
     });
 
-    it('snoozes actual Review-source attention through its mounted Action, reloads and wakes it exactly once', async () => {
+    it('snoozes Review attention through reload and wake while Session Later and recipient isolation survive a typed unavailable Review', async () => {
         listRuns.mockResolvedValue(page([]));
+        const review = { reviewId: 'review-later', subjectKind: 'comparison', projectSourceId: null,
+            workflowId: null, sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 2,
+            startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 1, needsDecision: 0 } };
+        const needsYou = { reviewId: review.reviewId, roundOrdinal: 2, reason: 'review_needs_you', needsYou: true,
+            requestedVerdict: true, pendingDecisions: false, canSubmitVerdict: true };
+        let reviewAvailable = true;
+        reviewReadBoundary.request.mockImplementation(async (path: string) => {
+            if (path === '/v1/reviews/list') return Response.json({ items: [{ ...review, needsYou }], cursor: null });
+            if (path === '/v1/reviews/get') return reviewAvailable
+                ? Response.json({ review, human: { reviewId: review.reviewId, roundOrdinal: 2, requests: [], verdicts: [], needsYou } })
+                : Response.json({ error: 'review_not_found' }, { status: 404 });
+            throw new Error(`Unexpected Review HTTP read ${path}`);
+        });
+        artifactStore.replaceStoredRow({ id: review.reviewId, ownerAccountId: 'account-a', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2,
+            header: encodePlainArtifactStoredContent({ kind: 'review.v1', v: 1, reviewId: review.reviewId, title: 'Review from its source' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) }) });
+        const instance = { v: 1, instance: { source: REVIEW_TRIAGE_SOURCE_V1,
+            sourceInstanceId: 'f2494c84-85b6-4c0c-a99a-9a36765ed07e' },
+            binding: { purpose: 'reviews', source: 'accountData' }, localInstanceKey: 'reviews',
+            configuration: { v: 1, token: 'happier-reviews-v1' } };
+        const executeHostAction = createFrontDoorActionExecute();
         const source = await createPluginTestkit({ manifest: TRIAGE_PLUGIN.manifest, module: TRIAGE_PLUGIN,
             services: { actions: {
-                // Review facts and selected Artifact headers cross the host Action transport boundary.
-                execute: async (actionId: string) => {
-                    if (actionId === 'reviews.list') return { items: [{ reviewId: 'review-later', subjectKind: 'comparison',
-                        projectSourceId: null, workflowId: null, sourceKind: 'direct', state: 'completed',
-                        currentRoundOrdinal: 2, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2,
-                        counts: { total: 1, needsDecision: 0 }, needsYou: {
-                        reviewId: 'review-later', roundOrdinal: 2, reason: 'review_needs_you', needsYou: true,
-                        requestedVerdict: true, pendingDecisions: false, canSubmitVerdict: true,
-                    } }], cursor: null };
-                    if (actionId === 'artifact.list') return { items: [{ artifactId: 'review-later',
-                        header: { kind: 'review.v1', v: 1, reviewId: 'review-later', title: 'Review from its source' },
-                        headerVersion: 1, ownerAccountId: 'account-a',
-                        access: 'owner', publicAudience: 'none', seq: 1, createdAt: 1, updatedAt: 2 }] };
-                    throw new Error(`Unexpected Review source host Action ${actionId}`);
+                // The plugin host facade retains its canonical typed failure projection; only HTTP facts are substituted.
+                execute: async (actionId: ActionId, input: unknown, options?: { signal?: AbortSignal }) => {
+                    const result = await executeHostAction(actionId, input, { surface: 'ui', signal: options?.signal });
+                    if (!result.ok) throw createPluginSurfaceActionFailureError(projectPluginActionFailure({
+                        code: result.errorCode, message: result.error, failureCause: result.failureCause,
+                        requestId: result.requestId, effectAttempted: result.effectAttempted,
+                    }));
+                    return result.result;
                 },
             } as unknown as import('@happier-dev/plugin-sdk').PluginServices['actions'] } });
         let attention: ReturnType<typeof TriageReadAttentionResultV1Schema.parse>;
         try {
             attention = TriageReadAttentionResultV1Schema.parse(await source.invokeAction('internal/reviews/read-attention-v1', {
-                v: 1, instance: { v: 1, instance: { source: REVIEW_TRIAGE_SOURCE_V1,
-                    sourceInstanceId: 'f2494c84-85b6-4c0c-a99a-9a36765ed07e' },
-                    binding: { purpose: 'reviews', source: 'accountData' }, localInstanceKey: 'reviews',
-                    configuration: { v: 1, token: 'happier-reviews-v1' } },
+                v: 1, instance,
             }));
+            const selected = { v: 1, instance, localRef: { kindId: 'review', collisionScope: 'reviews', entryId: review.reviewId } };
+            expect(TriageGetResultV1Schema.parse(await source.invokeAction('internal/reviews/get-v1', selected)))
+                .toMatchObject({ kind: 'present', snapshot: { title: 'Review from its source' } });
+            reviewAvailable = false;
+            await expect(source.invokeAction('internal/reviews/get-v1', selected)).rejects.toMatchObject({ code: 'review_not_found' });
         } finally { await source.dispose(); }
         expect(attention.kind).toBe('page');
         if (attention.kind !== 'page') throw new Error('Expected Review attention');
@@ -1899,10 +1923,26 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         } });
         const other = createAccountNoticeArtifactFixture({ id: 'other-recipient', ownerAccountId: 'account-b', header: { type: 'decision' } });
         seedArtifacts({ [artifact.id]: artifact, [other.id]: other });
+        const otherStored = structuredClone(artifactStore.read(other.id));
+        const serverId = appliedSnapshot().serverId;
+        const session = createSessionFixture({ id: 'session-later', serverId, active: false });
+        storage.setState({ sessions: { [session.id]: session },
+            sessionListRowsByServerId: { [serverId]: { [session.id]: createSessionListRenderableSessionFixture(session) } },
+            ordinarySessionListMembershipByServerId: { [serverId]: [session.id] } });
         vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
         let screen = await renderModel(<MountedInboxContent />);
         const remindAt = Date.now() + 3_600_000;
         try {
+            expect(model!.sessionCandidates.some(candidate => candidate.sessionId === session.id)).toBe(true);
+            await act(async () => { await model!.setReminder(session, remindAt); });
+            expect(storage.getState().sessionOrganizationAttentionStandingsBySessionKey[buildSessionOrganizationSessionKey(serverId, session.id)])
+                .toMatchObject({ sessionId: session.id, remindAt });
+            expect(model!.workGroups.flatMap(group => group.items)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ kind: 'snoozed', session: expect.objectContaining({ id: session.id }), remindAt }),
+            ]));
+            expect(await readInbox()).toMatchObject({ ok: true, result: { groups: [{ items: [
+                { kind: 'snoozed', sessionId: session.id, remindAt },
+            ] }] } });
             const row = model!.items.find(item => item.focus.id === artifact.id)!;
             const reminder = screen.findAllByType(InboxDismissRowMenu)
                 .find(node => node.props.testID === `inbox.item.${row.key}.dismiss`)!.props.reminder;
@@ -1911,6 +1951,12 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'updates', remindAt });
             expect(decodePlainArtifactStoredContent(artifactStore.read(artifact.id)!.header)).toMatchObject({ remindAt });
             expect(decodePlainArtifactStoredContent(artifactStore.read(other.id)!.header)).not.toHaveProperty('remindAt');
+            expect(artifactStore.read(other.id)).toEqual(otherStored);
+            await act(async () => { await model!.setReminder(session, null); });
+            expect(storage.getState().sessionOrganizationAttentionStandingsBySessionKey[buildSessionOrganizationSessionKey(serverId, session.id)])
+                .toBeUndefined();
+            expect(model!.workGroups.flatMap(group => group.items).filter(item => item.kind === 'snoozed')).toEqual([]);
+            expect(model!.sessionCandidates.some(candidate => candidate.sessionId === session.id)).toBe(true);
             const rescheduledAt = remindAt + 3_600_000;
             await act(async () => { await model!.setAccountNoticeReminder(model!.accountNotices[0]!, rescheduledAt); });
             expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'updates', remindAt: rescheduledAt });
@@ -1935,6 +1981,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             await act(async () => { await model!.setAccountNoticeReminder(model!.accountNotices[0]!, null); });
             expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'needs_you' });
             expect(decodePlainArtifactStoredContent(artifactStore.read(artifact.id)!.header)).not.toHaveProperty('remindAt');
+            expect(artifactStore.read(other.id)).toEqual(otherStored);
         } finally { await screen.unmount(); vi.useRealTimers(); }
     });
 
