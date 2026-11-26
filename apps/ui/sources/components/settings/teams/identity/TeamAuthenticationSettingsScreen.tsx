@@ -28,7 +28,8 @@ import {
 import { TEAM_AUTHENTICATION_SETTINGS } from './teamAuthenticationSettings';
 import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
 import { projectAuthEntryMethodCapabilities } from '@/auth/capabilities/authMethodCapabilities';
-import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
+import { fetchHomeAuthEntry, readHomeAuthEntryRefusal, type HomeAuthEntryFetchResult } from '@/auth/entry/authEntryClient';
+import { describeHomeAuthEntryRefusal } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import {
   isHomeAdministrationAccountChange,
@@ -143,6 +144,7 @@ const AuthorizedAuthenticationContent = React.memo(
       scopeKey: string;
       status: 'loading' | 'ready' | 'unavailable';
       projection: Extract<AuthEntryProjectionV1, { state: 'ready' }> | null;
+      result: HomeAuthEntryFetchResult;
     }> | null>(null);
     const [homeEntryRefresh, setHomeEntryRefresh] = React.useState(0);
     const refreshHomeEntry = React.useCallback(() => {
@@ -173,6 +175,7 @@ const AuthorizedAuthenticationContent = React.memo(
         setHomeEntry((current) => ({
           scopeKey: homeScopeKey,
           status: projection ? 'ready' : 'unavailable',
+          result,
           projection:
             projection ??
             (result.kind === 'unavailable' && current?.scopeKey === homeScopeKey
@@ -218,6 +221,9 @@ const AuthorizedAuthenticationContent = React.memo(
     );
     // The Home's own sign-in methods feed "How members sign in"; when they cannot be read the
     // section says so on one line, beside the policy it affects (DR-13).
+    const homeEntryResult = currentHomeEntry?.result;
+    const homeEntryRefusal = homeEntryResult && readHomeAuthEntryRefusal(homeEntryResult);
+    const homeEntryNotice = homeEntryRefusal ? describeHomeAuthEntryRefusal(homeEntryRefusal) : null;
     const homeMethodsNotice =
       currentHomeEntry?.status === 'unavailable' ? (
         <ItemGroup>
@@ -225,12 +231,13 @@ const AuthorizedAuthenticationContent = React.memo(
             testID="team-authentication-home-methods-unavailable"
             kind="error"
             size="line"
-            title={t('teams.authentication.homeMethodsUnavailable')}
-            action={{
+            title={homeEntryNotice?.title ?? t('teams.authentication.homeMethodsUnavailable')}
+            reason={homeEntryNotice?.reason}
+            action={homeEntryResult?.kind === 'unavailable' && homeEntryResult.retryable ? {
               label: t('common.retry'),
               onPress: refreshHomeEntry,
               testID: 'team-authentication-home-methods-retry',
-            }}
+            } : undefined}
             accessibilitySemantics="alert"
           />
         </ItemGroup>

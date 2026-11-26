@@ -15,7 +15,7 @@ export type AuthEntryFetchResult =
     | Readonly<{ kind: 'ready'; projection: AuthEntryProjectionV1 }>
     | Readonly<{ kind: 'unsupported' }>
     | Readonly<{ kind: 'incompatible' }>
-    | Readonly<{ kind: 'unavailable' }>;
+    | Readonly<{ kind: 'unavailable'; retryable?: true }>;
 
 export type HomeAuthEntryFetchResult = AuthEntryFetchResult;
 
@@ -58,13 +58,24 @@ async function decodeAuthEntryResponse(response: Response): Promise<AuthEntryFet
     if (response.status === 404 || response.status === 405 || response.status === 501) {
         return { kind: 'unsupported' };
     }
-    if (!response.ok) return { kind: 'unavailable' };
+    if (!response.ok) return response.status >= 500 ? { kind: 'unavailable', retryable: true } : { kind: 'unavailable' };
     const raw = await decodeBoundedJsonResponse(response, AUTH_ENTRY_RESPONSE_MAX_UTF8_BYTES_V1);
     if (raw === null) return { kind: 'incompatible' };
     const parsed = AuthEntryProjectionV1Schema.safeParse(raw);
     return parsed.success
         ? { kind: 'ready', projection: parsed.data }
         : { kind: 'incompatible' };
+}
+
+async function readAuthEntry(send: (onIssued: () => void) => Promise<Response>): Promise<AuthEntryFetchResult> {
+    let issued = false;
+    let response: Response;
+    try {
+        response = await send(() => { issued = true; });
+    } catch {
+        return issued ? { kind: 'unavailable', retryable: true } : { kind: 'unavailable' };
+    }
+    return await decodeAuthEntryResponse(response);
 }
 
 export async function fetchAuthEntry(
@@ -95,8 +106,8 @@ export async function fetchAuthEntry(
                 activeRequest: async () => {
                     throw new Error('Auth entry requires an explicit Home target');
                 },
-            }, async (authority) => await decodeAuthEntryResponse(
-                await authority.request('/v1/auth/entry', init),
+            }, async (authority) => await readAuthEntry(
+                (onIssued) => authority.request('/v1/auth/entry', init, { onIssued }),
             ));
         } catch {
             // An exact Account request must never degrade to an anonymous
@@ -116,13 +127,7 @@ export async function fetchAuthEntry(
             ...(input.signal ? { signal: input.signal } : {}),
         })
         : serverFetch;
-    let response: Response;
-    try {
-        response = await request('/v1/auth/entry', init, { includeAuth: false, retry: 'none' });
-    } catch {
-        return { kind: 'unavailable' };
-    }
-    return await decodeAuthEntryResponse(response);
+    return await readAuthEntry((onIssued) => request('/v1/auth/entry', init, { includeAuth: false, retry: 'none', onIssued }));
 }
 
 export async function fetchHomeAuthEntry(

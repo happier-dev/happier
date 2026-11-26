@@ -9,6 +9,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { teamCapabilitiesFixture, teamSummaryFixture, teamIdentityConnectionFixture, teamDirectorySourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import type { HomeAuthEntryRefusal } from '@/auth/entry/authEntryClient';
 import { ManagedGitHubAppsListOutputV1Schema } from '@happier-dev/protocol/identity/githubApps';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
@@ -86,7 +87,9 @@ function answerConnections(items = identityFixture.current.items) {
     }) });
 }
 
-async function renderAuthentication() {
+async function renderAuthentication(entryResponse: Parameters<typeof harness.answer>[2] = {
+    body: AuthEntryProjectionV1Schema.parse({ v: 1, scope: { kind: 'home' }, state: 'ready', actions: [], autoRedirect: null }),
+}) {
     harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({
         archivedAt: teamFixture.canMutate ? null : 1,
         capabilities: teamCapabilitiesFixture({ manageAuthentication: teamFixture.manageAuthentication }),
@@ -95,7 +98,7 @@ async function renderAuthentication() {
     answerConnections();
     harness.answer(serverId, sourcesPath, { body: TeamDirectorySourcePageV1Schema.parse(directoryPage) });
     harness.answer(serverId, githubAppsPath, { body: githubApps });
-    harness.answer(serverId, entryPath, { body: AuthEntryProjectionV1Schema.parse({ v: 1, scope: { kind: 'home' }, state: 'ready', actions: [], autoRedirect: null }) });
+    harness.answer(serverId, entryPath, entryResponse);
     harness.answer(serverId, createPath, { select: input => {
         const request = TeamIdentityConnectionCreateInputV1Schema.parse(input);
         return { body: { connection: teamIdentityConnectionFixture({
@@ -195,6 +198,40 @@ beforeEach(async () => {
 });
 
 describe('TeamAuthenticationSettingsScreen', () => {
+    const homeEntryRefusals = {
+        entry_not_available: { state: 'denied', message: 'welcome.homeSignInRefusedTitle', asksAdmin: true },
+        authentication_policy_unavailable: { state: 'unavailable', message: 'welcome.homeSignInPolicyUnavailableTitle', asksAdmin: true },
+        client_update_required: { state: 'update_required', message: 'welcome.homeSignInClientUpdateTitle', asksAdmin: false },
+        not_account_service: { state: 'denied', message: 'welcome.signInServiceUnsupportedTitle', asksAdmin: false },
+    } satisfies Record<HomeAuthEntryRefusal['reason'], Readonly<{ state: HomeAuthEntryRefusal['state']; message: string; asksAdmin: boolean }>>;
+    it.each(Object.entries(homeEntryRefusals))('shows the exact Home sign-in catalog refusal %s', async (reason, { state, message, asksAdmin }) => {
+        const screen = await renderAuthentication({ body: AuthEntryProjectionV1Schema.parse({
+            v: 1, scope: { kind: 'home' }, state, reason, autoRedirect: null,
+        }) });
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.getTextContent().includes('identityAdministration.providerContactAdmin')).toBe(asksAdmin);
+        expect(screen.findByTestId('team-authentication-home-methods-retry')).toBeNull();
+        expect(harness.requestsFor(entryPath)).toHaveLength(1);
+    });
+
+    it.each([
+        ['HTTP 503', { status: 503, body: { error: 'unavailable' } }],
+        ['transport loss', { dispatchThenFail: true }],
+    ] as const)('allows Retry when fetching the Home sign-in catalog fails with %s', async (_cause, response) => {
+        const screen = await renderAuthentication(response);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-authentication-home-methods-retry')).not.toBeNull());
+        harness.answer(serverId, entryPath, { body: AuthEntryProjectionV1Schema.parse({ v: 1, scope: { kind: 'home' }, state: 'ready', actions: [], autoRedirect: null }) });
+        await screen.pressByTestIdAsync('team-authentication-home-methods-retry');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-authentication-home-methods-unavailable')).toBeNull());
+        expect(harness.requestsFor(entryPath)).toHaveLength(2);
+    });
+
+    it('settles a denied Home sign-in catalog request without Retry', async () => {
+        const screen = await renderAuthentication({ status: 403, body: { error: 'forbidden' } });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-authentication-home-methods-unavailable')).not.toBeNull());
+        expect(screen.findByTestId('team-authentication-home-methods-retry')).toBeNull();
+    });
+
     it('reads each Authentication section once on cold open and return', async () => {
         const page = <TeamAuthenticationSettingsScreen serverId={serverId} teamId="team-1" />;
         const reads = { '/v1/teams/get': 1, [connectionsPath]: 1, [sourcesPath]: 1, [githubAppsPath]: 1, [entryPath]: 1 };
