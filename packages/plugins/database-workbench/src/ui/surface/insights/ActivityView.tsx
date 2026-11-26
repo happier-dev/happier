@@ -349,6 +349,10 @@ export function ActivityView(props: Readonly<{
       />
     );
   }
+  const offlineReason = activity.offline
+    ? translate('plugins.database.activity.machineOffline', 'The database’s machine is offline.')
+    : undefined;
+  if (!available && offlineReason) return <ErrorState kind="unavailable" title={offlineReason} />;
   if (!available && activity.error) {
     return (
       <ErrorState
@@ -367,15 +371,15 @@ export function ActivityView(props: Readonly<{
   }
   return (
     <Stack gap="large" grow>
-      {available && activity.error ? (
+      {available && (offlineReason || activity.error) ? (
         <FreshnessLine
           asOf={available.observedAtMs}
           tone="warning"
-          reason={translate(
+          reason={offlineReason ?? translate(
             'plugins.database.activity.stale',
             'These are the last numbers Happier saw',
           )}
-          action={{
+          action={offlineReason ? undefined : {
             label: translate('plugins.database.retry', 'Try again'),
             onPress: () => void activity.refresh(),
           }}

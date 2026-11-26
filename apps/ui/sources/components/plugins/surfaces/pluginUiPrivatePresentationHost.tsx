@@ -31,6 +31,7 @@ import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanCh
 import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
 import { usePluginUiPeopleDirectory } from './usePluginUiPeopleDirectory';
 import { createDatabaseActivityController } from '@/hooks/databases/activityController';
+import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { createDatabaseStatsLastLook } from '@/sync/domains/databases/lastLook';
 import type { HostDatabaseWorkbench, HostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
 import { DeploymentWorkbenchAccessObserver, DeploymentWorkbenchAccessSettings } from '@/components/projects/deployments/DeploymentWorkbenchAccess';
@@ -422,9 +423,14 @@ function DetailsPaneOpenAsPageIconButton(input: import('@happier-dev/plugin-ui/c
 
 // The workbench keeps its resources for the mounted page. Rebuilding icon or
 // navigation presentation must preserve these direction-independent services.
+const sameActivityMachineReachability = (left: MachinePresenceSummary, right: MachinePresenceSummary) =>
+    left.reachability === right.reachability;
 const DATABASE_WORKBENCH_HOST = Object.freeze({
     useActivityRefreshIntervalMs: function useActivityRefreshIntervalMs() {
         return useSetting('databaseActivityAutoRefreshIntervalMs');
+    },
+    useActivityMachineOffline: function useActivityMachineOffline(serverId, machineId) {
+        return useMachinePresenceSummary(serverId, machineId, undefined, sameActivityMachineReachability).reachability === 'unreachable';
     },
     activityResource: createDatabaseActivityController,
     lastLook: createDatabaseStatsLastLook,

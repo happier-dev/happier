@@ -11,7 +11,7 @@ import * as hostApi from '@happier-dev/plugin-ui/hostApi';
 import { PluginUiPresentationHostProviderInternal } from '../../../../../../packages/plugin-ui/src/presentationHost/context';
 import { createWorkbenchInstance, workbenchTargetKey } from '../../../../../../packages/plugins/database-workbench/src/ui/workbench';
 import { useWorkbenchMount } from '../../../../../../packages/plugins/database-workbench/src/ui/surface/mount';
-import { act, renderHook } from '@/dev/testkit';
+import { act, createMachineFixture, renderHook } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { useDatabaseActivity, WorkbenchProvider } from '../../../../../../packages/plugins/database-workbench/src/ui/hooks';
 import type { WorkbenchClient } from '../../../../../../packages/plugins/database-workbench/src/ui/models';
@@ -128,7 +128,7 @@ describe('mounted database workbench host owners', () => {
         } finally { await mount.unmount(); await surface.dispose(); }
     });
 
-    it('uses the Account cadence in the Workbench Activity hook and makes zero hidden reads', async () => {
+    it('uses the Account cadence for presented Activity and resumes after reconnect and reopen', async () => {
         vi.useFakeTimers();
         const initial = storage.getState();
         const setInterval = (interval: number) => {
@@ -138,6 +138,14 @@ describe('mounted database workbench host owners', () => {
         const host = createPluginUiPrivatePresentationHost(undefined);
         const descriptor = { ...createDatabaseDescriptorV1Fixture(), target };
         const targetKey = workbenchTargetKey(target);
+        const { machineId, serverId } = descriptor.placement;
+        const updatePresence = (active: boolean, id = machineId) => storage.getState().applyMachineActivityUpdates(
+            [{ id, active, activeAt: Date.now() }], { sourceServerId: serverId });
+        storage.getState().applyMachines([machineId, 'neighbor'].map(id => createMachineFixture({
+            id, active: true, activeAt: Date.now(), presenceProtocolVersion: 1,
+        })), false, { sourceServerId: serverId });
+        updatePresence(true);
+        updatePresence(true, 'neighbor');
         const operation = vi.fn<WorkbenchClient['operation']>(async () => ({
             ok: true, operation: 'stats.read',
             observation: { ...observation('1', 1000), group: 'activity', data: [] },
@@ -169,6 +177,16 @@ describe('mounted database workbench host owners', () => {
             expect(operation).toHaveBeenCalledTimes(1);
             await advance(60_000);
             expect(operation).toHaveBeenCalledTimes(6);
+            await act(async () => updatePresence(false, 'neighbor'));
+            await advance(12_000);
+            expect(operation).toHaveBeenCalledTimes(7);
+            await act(async () => updatePresence(false));
+            await act(async () => { await activity.getCurrent().refresh(); });
+            await advance(60_000);
+            expect(operation).toHaveBeenCalledTimes(7);
+            await act(async () => updatePresence(true));
+            await advance(0);
+            expect(operation).toHaveBeenCalledTimes(8);
             await act(async () => setInterval(0));
             await advance(0);
             const beforeManual = operation.mock.calls.length;
@@ -180,6 +198,9 @@ describe('mounted database workbench host owners', () => {
             await act(async () => { await activity.getCurrent().refresh(); });
             await advance(60_000);
             expect(operation).toHaveBeenCalledTimes(beforeManual + 1);
+            await activity.rerender(true);
+            await advance(0);
+            expect(operation).toHaveBeenCalledTimes(beforeManual + 2);
         } finally {
             await activity.unmount();
             instance.close();

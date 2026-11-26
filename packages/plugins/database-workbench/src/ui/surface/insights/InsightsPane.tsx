@@ -177,6 +177,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
                 'Refresh',
               )}
               icon={<Icon name="refresh" />}
+              disabled={tab === 'activity' && activity.offline}
               onPress={
                 tab === 'activity' ? activity.refresh
                   : tab === 'statements' ? statements.stats.refresh

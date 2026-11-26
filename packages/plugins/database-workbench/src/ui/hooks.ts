@@ -290,6 +290,7 @@ export function useStatementsLastLook(targetKey: string, observation: WorkbenchS
 
 const noActivity = { value: null, loading: true, error: null } as const;
 const useManualActivityRefreshInterval = () => 0;
+const useUnknownActivityMachine = () => false;
 type ActivityRead = Extract<DatabaseStatsReadV1, { group: 'activity' }>;
 
 /** Live activity: the host's presented-demand owner refreshes it only while this view is shown. */
@@ -305,20 +306,25 @@ export function useDatabaseActivitySnapshot(targetKey: string, request: Activity
 
 function useRetainedDatabaseActivity(targetKey: string, request: ActivityRead, presented: boolean, intervalMs: number) {
     const instance = useWorkbenchInstance();
-    const resource = useMemo(() => {
+    const useActivityMachineOffline = useHostDatabaseWorkbench()?.useActivityMachineOffline ?? useUnknownActivityMachine;
+    const selected = useMemo(() => {
         if (!presented) return null;
-        try { return instance.activity(targetKey, request); } catch { return null; }
+        try {
+            return { resource: instance.activity(targetKey, request), placement: instance.target(targetKey).placement };
+        } catch { return null; }
         // The request is compared by value.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [instance, targetKey, JSON.stringify(request), presented]);
+    const { resource, placement } = selected ?? {};
+    const offline = useActivityMachineOffline(placement?.serverId, placement?.machineId);
     const subscribe = useCallback((listener: () => void) => resource?.subscribe(listener) ?? (() => undefined), [resource]);
     const get = useCallback(() => resource?.getSnapshot() ?? noActivity, [resource]);
     const snapshot = useSyncExternalStore(subscribe, get, get);
     useEffect(() => {
-        if (!resource || !presented) return;
+        if (!resource || offline) return;
         return resource.retainAutoRefresh({ intervalMs });
-    }, [resource, presented, intervalMs]);
+    }, [resource, offline, intervalMs]);
     return useMemo(() => ({ observation: snapshot.value ?? undefined, loading: snapshot.loading, error: snapshot.error,
-        supported: resource !== null, autoRefreshEnabled: intervalMs > 0, refresh: () => resource?.refresh() }),
-    [snapshot, resource, intervalMs]);
+        supported: resource !== undefined, offline, autoRefreshEnabled: intervalMs > 0 && !offline, refresh: () => resource?.refresh() }),
+    [snapshot, resource, intervalMs, offline]);
 }

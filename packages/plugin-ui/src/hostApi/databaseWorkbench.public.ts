@@ -33,6 +33,8 @@ type EnvironmentAccessPolicy = Extract<DatabaseAccessReadResultV1, { setBy: 'env
 export type HostDatabaseWorkbench = Readonly<{
   /** Account preference for the selected surface's presented Activity demand. */
   useActivityRefreshIntervalMs?(): number;
+  /** The selected Machine's published reachability, only while Activity is presented. */
+  useActivityMachineOffline?(serverId: string | undefined, machineId: string | undefined): boolean;
   activityResource<T>(source: Readonly<{
     read(options: Readonly<{ signal: AbortSignal }>): Promise<T>;
   }>): HostDatabaseActivityResource<T>;
