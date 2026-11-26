@@ -325,11 +325,16 @@ describe('Installed plugins collection', () => {
         // The line names what it holds: the kinds, once.
         expect(text).toContain(t('settingsPlugins.rowSource.bundled'));
         expect(text.split(t('settingsPlugins.surfaces.kinds.scmHostingProviders'))).toHaveLength(2);
+        const includedCount = () => screen.findByTestId('settings.plugins.marketplace.installed:shelf:included')!
+            .findAll((node) => node.props.children === '3');
+        // This summary counts all included plugins, even when their cards live in separate kind shelves.
+        expect(includedCount().length).toBeGreaterThan(0);
 
         await screen.pressByTestIdAsync(INCLUDED_ACTION);
         await measureMountedCollections(screen);
         expect(screen.findByTestId('settings.plugins.marketplace.installed.claude')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.installed.github')).not.toBeNull();
+        expect(includedCount().length).toBeGreaterThan(0);
     });
 
     it('never leaves the closed included line empty: with no kinds known it names what it holds', async () => {

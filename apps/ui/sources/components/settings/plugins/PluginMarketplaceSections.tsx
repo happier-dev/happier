@@ -136,13 +136,13 @@ export function InstalledPluginsSection(props: Readonly<{
     // What ships with Happier waits behind one quiet line; a search or filter opens it, so a match is never hidden.
     const [includedShown, setIncludedShown] = React.useState(false);
     const includedOpen = includedShown || props.filtering === true;
-    const groups = React.useMemo(() => buildInstalledPluginShelves(rows, includedOpen), [rows, includedOpen]);
+    const includedCount = rows.filter((row) => row.group === 'included').length;
+    const groups = React.useMemo(() => buildInstalledPluginShelves(rows, includedOpen, includedCount), [rows, includedOpen, includedCount]);
     const filter = React.useMemo(
         () => (includedOpen ? undefined : (row: InstalledPluginRow) => row.group === 'added'),
         [includedOpen],
     );
     const filtering = props.filtering === true;
-    const includedCount = rows.filter((row) => row.group === 'included').length;
     // A quiet text action on the line, like Browse's "See all": the line is a disclosure, not a button bar.
     const groupAction = React.useCallback((groupKey: string) => (groupKey !== INCLUDED_SHELF || filtering ? null : {
         label: includedShown
@@ -317,16 +317,16 @@ const INCLUDED_NAMES_SHOWN = 3;
  * that line is followed by a shelf per kind (Agents, Machines, Code hosting…) and the included plugins whose
  * kind is not known; with no kinds known at all, those sit under the line itself.
  */
-function buildInstalledPluginShelves(rows: readonly InstalledPluginRow[], includedOpen: boolean) {
+function buildInstalledPluginShelves(rows: readonly InstalledPluginRow[], includedOpen: boolean, includedCount: number) {
     const present = new Set(rows.map((row) => row.shelf));
     const kindShelves = PLUGIN_KIND_SHELF_ORDER.filter((key) => present.has(key));
-    const hasIncluded = rows.some((row) => row.group === 'included');
-    const axis: { key: string; title: string; description?: string }[] = [];
+    const axis: { key: string; title: string; count?: number; description?: string }[] = [];
     if (present.has('added')) axis.push({ key: 'added', title: t('settingsPlugins.surfaces.addedGroup') });
-    if (hasIncluded) {
+    if (includedCount > 0) {
         axis.push({
             key: INCLUDED_SHELF,
             title: t('settingsPlugins.rowSource.bundled'),
+            count: includedCount,
             // Closed, the line still says what it holds: its kinds, or (none known yet) the first few by name.
             description: kindShelves.length > 0
                 ? kindShelves.map(pluginKindShelfTitle).join(' · ')
