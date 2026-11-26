@@ -16,14 +16,18 @@ import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/reviewEngines';
-import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm';
+import { ScmComparisonCaptureOutputSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
+import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 import { createDeferred, createMachineFixture, createPlainMachineRowFixture, createPlainAccountEncryptionCurrentnessFixture, createRenderCommitCounter, createSessionFixture, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { isConcurrentOrdinarySessionListHome, startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } from '@/sync/runtime/orchestration/concurrentSessionCache';
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
-import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -31,6 +35,7 @@ import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resol
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
+import { t } from '@/text';
 import { createPluginActionInputSelectionHostApiHandler } from '@/components/plugins/surfaces/pluginActionInputSelectionHostApi';
 import type { ConnectSheetContentProps } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -56,8 +61,8 @@ import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExe
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRowsListResponseV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1, ProfileTransferRowReadResponseV1Schema } from '@happier-dev/protocol/profiles/profileTransferV1';
-import { applyProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
-import { resetProfileCatalogEngineForTests } from '@/sync/engine/settings/profileCatalogEngine';
+import { applyProfileCatalogSnapshot, getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
+import { refreshProfileCatalog, resetProfileCatalogEngineForTests } from '@/sync/engine/settings/profileCatalogEngine';
 import { applyAcpCatalogSnapshot, beginAcpCatalogLoad, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
 import { resetAcpCatalogEngineForTests } from '@/sync/engine/settings/acpCatalogEngine';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -132,14 +137,14 @@ function capabilityResponse(features: Readonly<{ secretReferenceOverlay: boolean
     }) }, 'tool.executionRuns': {
         ok: true, checkedAt: 1, data: { protocolVersion: 2,
             backends: { claude: { available: true, intents: ['review'], supportsVendorResume: true } }, features: {
-            detachedScope: true, startAndWait: true, ...features,
+            detachedScope: true, startAndWait: true, exactInputResults: true, ...features,
         } },
     } } };
 }
 
 function describeCapabilityResponse(features: Readonly<{ secretReferenceOverlay: boolean; runScopedAgentBindings: boolean }>) {
     return { protocolVersion: 1, capabilities: [{ id: 'tool.executionRuns', kind: 'tool', protocol: {
-        version: 2, available: true, features: { detachedScope: true, startAndWait: true, ...features },
+        version: 2, available: true, features: { detachedScope: true, startAndWait: true, exactInputResults: true, ...features },
     } }], checklists: {} } satisfies CapabilitiesDescribeResponse;
 }
 
@@ -159,12 +164,14 @@ const supportedDescribeCapabilities = describeCapabilityResponse({ secretReferen
 
 /** Home HTTP remains below the real requester admission and resume owners. */
 function installLaunchHomeHttpBoundary(request?: RuntimeFetch) {
+    const sessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
     setRuntimeFetch(createSessionReadBatchFetchBoundary(async (url, init) => {
         const handled = await request?.(url, init);
         if (handled && handled.status !== 404) return handled;
         const inventoryResponse = await reviewInventoryBoundary?.handle(new URL(String(url)), init);
         if (inventoryResponse) return inventoryResponse;
         const path = new URL(String(url)).pathname;
+        if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return Response.json(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
         if (path === managedMachineActionEndpointPathV1('machines.managed.list')) {
             return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
         }
@@ -175,9 +182,11 @@ function installLaunchHomeHttpBoundary(request?: RuntimeFetch) {
         if (path === '/v1/machines/launch-machine') return Response.json({ machine });
         if (path === '/v2/sessions/rejoined-session') {
             const session = storage.getState().sessions['rejoined-session'];
-            return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'rejoined-session',
-                ...(session ? { active: session.active, seq: session.seq, metadata: session.metadata } : {}) }) });
+            return session ? Response.json(createPlainSessionByIdResponseFixture(session))
+                : Response.json({ error: 'Session not found' }, { status: 404 });
         }
+        const sessionResponse = sessionHttp.handle(url, init);
+        if (sessionResponse) return sessionResponse;
         if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
         if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
@@ -195,7 +204,7 @@ function activeProfileCatalog(profile: ReturnType<typeof AIBackendProfileSchema.
             migratedLogicalRevision: 1, inventory: [{ kind: 'account_row', id: profile.id, revision: 1 }] } } };
 }
 
-async function launchFixture(options: Readonly<{ interactive?: boolean }> = {}) {
+async function launchFixture() {
     homeHarness = createHomeGovernanceHarness();
     const serverId = await homeHarness.addHome({ serverUrl: 'https://launch-admission.example.test', name: 'Launch test Home',
         serverIdentityId: 'srv_launch_admission', accountId: boundary.accountId, currentAccount: true, active: false });
@@ -209,14 +218,6 @@ async function launchFixture(options: Readonly<{ interactive?: boolean }> = {}) 
             engineId: 'claude', label: 'Claude', enabled: true, capabilities: { structuredNarration: true },
         })] }),
     });
-    if (options.interactive) {
-        // Mounted pickers consume the secondary Home's Account-owned corpus.
-        // A bare scoped row has no retained Account owner and is correctly retired.
-        await homeHarness.selectHomes([serverId]);
-        startConcurrentSessionCacheSync();
-        mountedConcurrentHome = true;
-        await vi.waitFor(() => expect(isConcurrentOrdinarySessionListHome(home.id)).toBe(true));
-    }
     const requestedServerIds = [home.id];
     const bindingHook = await renderHook(() => useServerCredentialAccountScopeBindings(requestedServerIds));
     const accountLifetime = bindingHook.getCurrent().get(home.id);
@@ -253,6 +254,14 @@ async function launchFixture(options: Readonly<{ interactive?: boolean }> = {}) 
     installLaunchHomeHttpBoundary();
     await publishMachineInventoryForTest(accountLifetime.scope, [machine]);
     return { home, bindingHook, input, session, machine };
+}
+
+/** Configure Home HTTP before the retained Account lifecycle can start catalog reads. */
+async function retainInteractiveLaunchHome(home: Awaited<ReturnType<typeof launchFixture>>['home']) {
+    await homeHarness!.selectHomes([home.profileId]);
+    startConcurrentSessionCacheSync();
+    mountedConcurrentHome = true;
+    await vi.waitFor(() => expect(isConcurrentOrdinarySessionListHome(home.id)).toBe(true));
 }
 
 it('admits an exact detached workspace without resuming or acquiring a Session', async () => {
@@ -393,7 +402,7 @@ describe('real execution Run launch admission', () => {
             = await import('@happier-dev/protocol/actions/externalActionApi');
         const { computeExternalActionRequestEnvelopeDigestV1 }
             = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
-        const { input, home, machine } = await launchFixture({ interactive: true });
+        const { input, home, machine } = await launchFixture();
         const launchSettings = settingsParse({ ...settingsDefaults, experiments: true,
             featureToggles: { 'execution.runs': true } });
         const comparisonId = 'a'.repeat(64);
@@ -401,7 +410,7 @@ describe('real execution Run launch admission', () => {
         const httpStarts: unknown[] = [];
         installLaunchHomeHttpBoundary(async (url, init) => {
             const path = new URL(String(url)).pathname;
-            const artifactResponse = artifacts.handle(path, init);
+            const artifactResponse = artifacts.handle(`${path}${new URL(String(url)).search}`, init);
             if (artifactResponse) return artifactResponse;
             if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(createPlainProjectAccountRowListFixture());
             if (path === '/v1/actions/execution.run.start/execution-authorization') {
@@ -435,6 +444,8 @@ describe('real execution Run launch admission', () => {
             machines: { [machine.id]: { ...machine, activeAt: Date.now() } },
             machineListByServerId: { [home.id]: [{ ...machine, activeAt: Date.now() }] },
         });
+        await retainInteractiveLaunchHome(home);
+        await publishMachineInventoryForTest(input.accountLifetime.scope, [{ ...machine, activeAt: Date.now() }]);
         boundary.rpc.mockImplementation(async request => {
             if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return supportedCapabilities;
             if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return supportedDescribeCapabilities;
@@ -447,6 +458,10 @@ describe('real execution Run launch admission', () => {
             return { error: 'Method not found', errorCode: 'METHOD_NOT_FOUND' };
         });
         const hook = await renderHook(() => useExecutionRunLaunchContext(null, home.id, { machineId: machine.id, cwd: '/work/rejoined' }));
+        await waitForHomeGovernance(async () => { await act(async () => {});
+            expect(hook.getCurrent().machineReachable).toBe(true);
+            expect(hook.getCurrent().exactSettings).not.toBeNull();
+        });
         const { startReviewOfComparison, listReviewEngines, projectReviewWalkthroughEngines } = await import('@/sync/ops/reviews/reviewWalkthrough');
         const { resolveReviewWalkthroughPlan } = await import('@/sync/domains/reviews/reviewWalkthroughPlan');
         const inventory = await listReviewEngines({ sessionId: null, machineId: machine.id, serverId: home.id });
@@ -604,8 +619,9 @@ describe('real execution Run launch admission', () => {
     });
 
     it.each(['Triage host selection', 'Review composition', 'comparison Run form'] as const)('composes %s with real Secret and Team controls, consent and stopped Session resume', async (entry) => {
+        await loadSyncSingletonForTests();
         restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
-        const { input, home, session, machine } = await launchFixture({ interactive: true });
+        const { input, home, session, machine } = await launchFixture();
         const profile = AIBackendProfileSchema.parse({ id: 'review-profile', name: 'Review profile',
             envVarRequirements: [{ name: 'OPENAI_API_KEY', required: true, kind: 'secret' }] });
         const profileCatalog = activeProfileCatalog(profile);
@@ -642,6 +658,8 @@ describe('real execution Run launch admission', () => {
                 identity: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, definitionRevision: 1 } },
         });
         const httpRequests: { path: string; authorization: string | null }[] = [];
+        const comparisonId = 'b'.repeat(64);
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => boundary.accountId, encryptionMode: 'plain' });
         // D23: neither the recipient nor the custodian has experimental consent stored.
         const providerCatalog = ProviderConnectionsCatalogV1Schema.parse(DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1);
         // Actual Home feature, directory and catalog HTTP responses. Exact
@@ -649,6 +667,9 @@ describe('real execution Run launch admission', () => {
         installLaunchHomeHttpBoundary(async (url, init) => {
             const path = new URL(String(url)).pathname;
             httpRequests.push({ path, authorization: new Headers(init?.headers).get('Authorization') });
+            const artifactResponse = artifacts.handle(`${path}${new URL(String(url)).search}`, init);
+            if (artifactResponse) return artifactResponse;
+            if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(createPlainProjectAccountRowListFixture());
             if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
@@ -658,7 +679,6 @@ describe('real execution Run launch admission', () => {
             }));
             if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 1 });
             if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json(profileTransfer);
-            if (path === '/v1/artifacts') return createArtifactListHttpResponse(new URL(String(url)), []);
             if (path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) return Response.json(ProviderConnectionsRowReadResponseV1Schema.parse({
                 status: 'present', revision: 1, content: { t: 'plain', v: providerCatalog },
             }));
@@ -688,11 +708,32 @@ describe('real execution Run launch admission', () => {
             machines: { [machine.id]: { ...machine, activeAt: Date.now() } },
             machineListByServerId: { [home.id]: [{ ...machine, activeAt: Date.now() }] },
         });
+        await retainInteractiveLaunchHome(home);
         await publishMachineInventoryForTest(input.accountLifetime.scope, [{ ...machine, activeAt: Date.now() }]);
-        applyProfileCatalogSnapshot(input.accountLifetime.scope, profileCatalog, true);
+        await refreshProfileCatalog(input.accountLifetime.scope);
+        expect(getProfileCatalogSnapshot(input.accountLifetime.scope)?.catalog,
+            JSON.stringify({ catalog: getProfileCatalogSnapshot(input.accountLifetime.scope)?.catalog,
+                requests: httpRequests.map(request => request.path),
+                governanceRequests: homeHarness!.requests.map(request => request.path) })).toMatchObject({ status: 'ready', source: 'destination' });
         await ensureSessionDraftRepositoryHydrated(input.accountLifetime.scope);
         const readiness = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async (request) => {
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return ScmStatusSnapshotResponseSchema.parse({
+                success: true, snapshot: {
+                    projectKey: `${machine.id}:/work/rejoined`, fetchedAt: 1,
+                    repo: { isRepo: true, rootPath: '/work/rejoined', backendId: 'git', mode: '.git' },
+                    branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+                    capabilities: createScmCapabilities({ readStatus: true }), hasConflicts: false, entries: [],
+                    totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0,
+                        includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+                },
+            });
+            if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return ScmComparisonCaptureOutputSchema.parse({
+                success: true, comparison: { id: comparisonId, source: { kind: 'workingTree' },
+                    repository: { rootPath: '/work/rejoined' }, endpoints: { before: 'HEAD', after: 'workingTree' },
+                    inventory: { state: 'complete', reasons: [], files: [] } },
+                metadata: { source: { kind: 'workingTree' }, sourceKey: comparisonId },
+            });
             if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return supportedCapabilities;
             if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return supportedDescribeCapabilities;
             if (request.method === RPC_METHODS.CAPABILITIES_INVOKE) return { ok: true, result: {
@@ -714,12 +755,13 @@ describe('real execution Run launch admission', () => {
         });
         const shown = createDeferred<Parameters<typeof Modal.show>[0]>();
         const presentations: Parameters<typeof Modal.show>[0][] = [];
+        const modalBoundary = createModalModuleMock({ renderCustomModals: true });
         vi.spyOn(Modal, 'show').mockImplementation((config) => {
             presentations.push(config);
             if (presentations.length === 1) shown.resolve(config);
-            return `launch-modal-${presentations.length}`;
+            return modalBoundary.module.Modal.show(config);
         });
-        vi.spyOn(Modal, 'hide').mockImplementation(() => {});
+        vi.spyOn(Modal, 'hide').mockImplementation(modalBoundary.module.Modal.hide);
         const consent = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
         boundary.sessionRpc.mockImplementation(async request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST
             ? { runs: [] } : { runId: 'review-run', callId: 'review-call', sidechainId: 'review-sidechain' });
@@ -743,18 +785,20 @@ describe('real execution Run launch admission', () => {
                     ...(composition ? { steps: compositionSteps, then: 'report' } : {}) },
             } })).then((result) => { settled = true; return result; }) : null;
         const started = createDeferred<void>();
+        const runStarted = vi.fn();
         const screen = selecting
             ? await (async () => {
-                const config = await shown.promise;
-                return renderScreen(React.createElement(config.component, { ...config.props, onClose: () => {} }));
+                await shown.promise;
+                return renderScreen(React.createElement(modalBoundary.module.ModalProvider));
             })()
             : await renderScreen(React.createElement(SessionInteractiveExecutionRunDraftView, {
                 sessionId: session.id, serverId: home.id, intent: 'review',
                 initialText: 'Review the selected comparison', initialActionInput: { reviewers: [{ kind: 'engine', engineId: 'claude' }] },
                 comparisonReview: { cwd: '/work/rejoined', comparison: { kind: 'workingTree' },
-                    comparisonId: 'captured-comparison', scopeLabel: 'Pending changes',
+                    comparisonId, scopeLabel: 'Pending changes',
                     preselectedEngineIds: ['claude'], defaultWalkthrough: false },
-                onRunStarted: () => { settled = true; started.resolve(); },
+                onRunStarted: runStarted,
+                onStartAccepted: () => { settled = true; started.resolve(); },
             }));
         // Credential selection edits the same Run body before admission; opening it
         // must not create a Run or resume its stopped Session.
@@ -796,12 +840,15 @@ describe('real execution Run launch admission', () => {
             expect(screen.findByTestId(`model-picker-overlay-option-selected-indicator:${sessionModelSelectionKey(teamModel)}`),
                 screen.getTextContent()).not.toBeNull();
         });
-        const submit = () => screen.root.findAll(node => ['session-composer-send', 'new-session-composer-send'].includes(node.props.testID)
+        const submit = () => screen.root.findAll(node => (selecting
+            ? node.props.testID === 'review-start-footer-use-selection'
+            : ['session-composer-send', 'new-session-composer-send'].includes(node.props.testID))
             && typeof node.props.onPress === 'function').at(-1);
         const readinessProbe = await renderHook(() => {
             const context = useExecutionRunLaunchContext(session.id, home.id);
             const launchability = useSessionExecutionRunLaunchability(session.id, context.session, home.id);
             return { settingsReady: context.exactSettings !== null, profileReady: context.profileCatalogReady,
+                profileCatalog: getProfileCatalogSnapshot(input.accountLifetime.scope)?.catalog,
                 machineReachable: context.machineReachable, active: context.session?.active,
                 metadataKeys: Object.keys(context.session?.metadata ?? {}), launchability };
         });
@@ -813,7 +860,9 @@ describe('real execution Run launch admission', () => {
         await act(async () => { submit()?.props.onPress(); });
         if (!composition) {
             await vi.waitFor(() => expect(boundary.rpc.mock.calls.some(([request]) =>
-                request.method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE)).toBe(true));
+                request.method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE), JSON.stringify({
+                    text: screen.getTextContent(), settled, methods: boundary.rpc.mock.calls.map(([request]) => request.method),
+                })).toBe(true));
             expect(settled).toBe(false);
             expect(boundary.sessionRpc.mock.calls.some(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START)).toBe(false);
             expect(boundary.rpc.mock.calls.find(([request]) => request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE)?.[0])
@@ -832,10 +881,13 @@ describe('real execution Run launch admission', () => {
                 resourceId: teamModel.resourceId, expectedResourceRevision: teamModel.expectedResourceRevision },
         };
         if (selecting) {
+            await waitForHomeGovernance(async () => { await act(async () => {});
+                expect(settled, screen.getTextContent()).toBe(true);
+            });
             const selected = await selecting;
             if (composition) {
                 expect(selected).toMatchObject({ kind: 'reviewComposition', input: {
-                    instructions: 'Review the selected comparison', then: 'report',
+                    instructions: t('reviewWalkthrough.dialog.defaultInstructions'), then: 'report',
                     secretReferenceOverlay: credentials.secretReferenceOverlay,
                     steps: [{ ...compositionSteps[0], reviewers: [{ kind: 'engine', engineId: 'claude',
                         teamCredentialModel: teamModel,
@@ -851,9 +903,10 @@ describe('real execution Run launch admission', () => {
             await waitForHomeGovernance(async () => { await act(async () => {}); expect(settled, JSON.stringify({ text: screen.getTextContent(),
                 requests: httpRequests.map(request => request.path), methods: boundary.rpc.mock.calls.map(([request]) => request.method) })).toBe(true); });
             await started.promise;
+            expect(runStarted).not.toHaveBeenCalled();
             expect(boundary.sessionRpc.mock.calls.find(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START)?.[0]).toMatchObject({ sessionId: session.id, serverId: home.id,
                 method: SESSION_RPC_METHODS.EXECUTION_RUN_START, payload: { ...credentials, intent: 'review',
-                    intentInput: { comparisonId: 'captured-comparison' } } });
+                    intentInput: { comparisonId } } });
             expect(JSON.stringify(boundary.sessionRpc.mock.calls)).not.toContain(secret.encryptedValue.value);
         }
         expect(httpRequests.filter((request) => request.path.startsWith('/v1/teams/')))
