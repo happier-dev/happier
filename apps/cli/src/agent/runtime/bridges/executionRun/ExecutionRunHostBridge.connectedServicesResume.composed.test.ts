@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import axios from 'axios';
-import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterAll, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createExecutionRunHostBackendFromConversationRuntime,
   type AgentExecutionRunConversationEventV1, type AgentExecutionRunConversationRuntimeV1, type AgentExecutionRunOpenRequest,
-  type AgentExecutionRunRuntime, type AgentSessionOpenRequest,
+  type AgentExecutionRunRuntime, type AgentRuntimeFactory, type AgentSessionOpenRequest,
   type AgentSessionRuntime, type AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { SessionExecutionRunBrokerAuthorityResponseV1 } from '@happier-dev/protocol';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import type { PluginDaemonModuleNamespace } from '@/plugins/runtime/types';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -36,6 +37,14 @@ import { readLocalConversationVoiceSettings, writeVoiceProviderSettingsConfig } 
 import { createRpcCallError } from '../../../../../../ui/sources/sync/runtime/rpcErrors';
 import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { ReviewModelOutputV1Schema } from '@happier-dev/protocol/reviews/reviewModelOutputV1';
+import { ROBOREV_PLUGIN } from '../../../../../../../packages/plugins/review-panels/src/manifest';
+import selectedNativeReview from '../../../../../../../packages/plugins/review-panels/src/agent/reviews/fixtures/selected-review.json';
+import { resolveReviewFollowUpAvailability } from '../../../../../../ui/sources/components/sessions/reviews/findings/reviewFollowUpAvailability';
+import { resolveExecutionRunRuntimeBackendTarget } from './backendTargets';
+import { resolveExecutionRunRoleV1 } from '@/agent/executionRuns/profiles/review/reviewRole';
 
 // The CLI harness has no native theme runtime. Keep the UI owners real beneath
 // the same canonical platform boundary used by the existing composed Voice tests.
@@ -108,6 +117,168 @@ describe('connected execution-run resume custody', () => {
     else process.env.HAPPIER_HOME_DIR = originalHome;
     reloadConfiguration();
     await rm(directory, { recursive: true, force: true });
+  });
+  it('publishes completed native and resumable Review runRefs consumed by follow-up availability', async () => {
+    let phase = 'fixture';
+    let activeRunId: string | null = null;
+    const providerEvents: string[] = [];
+    const completed = (stdout = ''): PluginProcessResult => ({
+      stdout: new TextEncoder().encode(stdout), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
+      termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+    });
+    const nativeReview = structuredClone(selectedNativeReview);
+    nativeReview.structured_output.findings = [];
+    // Only native process IO is substituted. Actual Roborev activation, profile,
+    // finite runtime, normalization, host controller and terminal publication run below.
+    const run = vi.fn<ExecService['run']>(async ({ args }) => {
+      if (args?.[1] === 'list') return completed('[{"id":3}]');
+      if (args?.[1] === 'show') return completed(JSON.stringify(nativeReview));
+      return completed();
+    });
+    const nativeModule: { activate: typeof ROBOREV_PLUGIN.activate } = { activate(api) {
+      ROBOREV_PLUGIN.activate({ ...api, agents: { register(id, factory, options) {
+        api.agents.register(id, async context => {
+          const runtime = await factory(context);
+          const executionRuns = runtime.executionRuns;
+          if (!executionRuns) throw new Error('Native reviewer omitted its execution-run runtime');
+          return { ...runtime, executionRuns: { ...executionRuns, open(request, runtimeContext) {
+            return executionRuns.open(request, { ...runtimeContext, services: { ...runtimeContext.services,
+              exec: { ...runtimeContext.services.exec, run } } });
+          } } };
+        }, options);
+      } } });
+    } };
+    const resumableReview = ReviewModelOutputV1Schema.parse({ reviewOutcome: 'complete',
+      summary: 'Resumable review complete', overviewMarkdown: 'No findings.', findings: [], questions: [], assumptions: [] });
+    const openConversation = async (): Promise<AgentExecutionRunConversationRuntimeV1> => {
+      let emit: ((event: AgentExecutionRunConversationEventV1) => void) | null = null;
+      return {
+        watch(listener) {
+          providerEvents.push('watch');
+          emit = listener;
+          emit({ kind: 'provider-session-id', providerSessionId: 'review-provider-thread', emittedAtMs: 1 });
+          return { dispose() { emit = null; } };
+        },
+        async send(input) {
+          providerEvents.push('send');
+          emit?.({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery, emittedAtMs: 1 });
+          emit?.({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
+          emit?.({ kind: 'message-delta', turnId: input.delivery.turnId, channel: 'assistant',
+            text: JSON.stringify(resumableReview) });
+          emit?.({ kind: 'turn-complete', turnId: input.delivery.turnId });
+          providerEvents.push('turn-complete');
+          return { status: 'admitted' };
+        },
+        async cancel(input) { return { status: 'requested', turnId: input.turnId }; },
+        async dispose() { emit = null; },
+      };
+    };
+    const createResumableRuntime: AgentRuntimeFactory = () => ({ sessions: {
+      async open() { throw new Error('Detached review does not open a Session'); },
+      executionRunContextV1: { open: request => createExecutionRunHostBackendFromConversationRuntime({ request,
+        readCheckpointId: event => event.kind === 'provider-session-id' ? event.providerSessionId : null,
+        openConversation }), openConversation },
+    } });
+    const resumable = definePlugin({ id: 'test.review-follow-up', version: '0.0.0', displayName: 'Resumable reviewer',
+      entrypoints: { daemon: './daemon.mjs' }, agents: { reviewer: {
+        declaration: { title: 'Resumable reviewer', runtime: { kind: 'custom' }, primary: 'sessions',
+          capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true, workspaceWrites: 'deny',
+            executionRunContext: { versions: [1] } } } },
+        factory: createResumableRuntime,
+        sessionRunnerFactory: { module: './agent-runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
+      } } });
+    // Registry construction performs the real Home Account-plugin census.
+    // Install its HTTP boundary before creating the admitted runtime.
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => { throw new Error('Unexpected fixture Home request'); }));
+    vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected fixture Home request'));
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      const availability = absentAccountPluginAvailabilityHttpResponse(String(url), body);
+      if (availability) return availability;
+      throw new Error('Unexpected fixture Home request');
+    });
+    onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      happyHomeDir: directory,
+      runtimeOptions: { agentIsolation: {
+        requesterIdentity: selectHostRequesterExecutionIdentity({ hostHomeServerIdentityId: 'fixture-home',
+          hostAccountAgent: { accountId: 'fixture-account', custodianAccountId: 'fixture-account',
+            machineId: 'fixture-machine', installationId: 'fixture-installation' } }),
+        read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
+      } },
+      plugins: [
+        { manifest: ROBOREV_PLUGIN.manifest, files: {
+          '.happier-plugin-build/daemon.js': 'export function activate() {}',
+          'resources/review-prompt.md': await readFile(new URL('../../../../../../../packages/plugins/review-panels/resources/review-prompt.md', import.meta.url), 'utf8'),
+        }, instantiateCommittedModule: () => nativeModule },
+        { manifest: resumable.manifest, files: {
+          'agent-runtime.mjs': 'let factory; export function configure(next) { factory = next; } export function createRuntime(context) { return factory(context); }',
+          'daemon.mjs': `import * as leaf from './agent-runtime.mjs';
+            export function activate(api) { api.agents.register('reviewer', leaf.createRuntime, {
+              sessionRunnerFactory: { module: './agent-runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 } }); }
+            export function configureUnitLeaf(factory) { leaf.configure(factory); return { activate }; }`,
+        }, instantiateCommittedModule(module) {
+          if (typeof module.configureUnitLeaf !== 'function') throw new Error('Missing provider fixture leaf');
+          const configured: unknown = module.configureUnitLeaf(createResumableRuntime);
+          if (!configured || typeof configured !== 'object' || !('activate' in configured)) throw new Error('Missing activation');
+          return configured as PluginDaemonModuleNamespace;
+        } },
+      ] });
+    let bridge: ExecutionRunHostBridge | null = null;
+    onTestFailed(() => console.error('Review follow-up fixture', JSON.stringify({ phase, providerEvents,
+      state: bridge && activeRunId ? bridge.getPublic(activeRunId) : null })));
+    try {
+      const engineRegistry = await resolveCliEngineRegistry({ runtimeRegistry: fixture.registry });
+      for (const identity of [{ pluginId: ROBOREV_PLUGIN.manifest.id, localId: 'roborev' },
+        { pluginId: resumable.manifest.id, localId: 'reviewer' }]) {
+        const isNative = identity.pluginId === ROBOREV_PLUGIN.manifest.id;
+        const engine = await engineRegistry.resolveForAgentTarget({ kind: 'agent', identity });
+        expect(engine?.agent.identity, JSON.stringify({
+          diagnostics: engineRegistry.contributions.pluginDiagnosticsByPluginId[identity.pluginId],
+          unavailable: engineRegistry.contributions.unavailablePlugins?.filter(plugin => plugin.pluginId === identity.pluginId),
+        })).toEqual(identity);
+        const backendTarget = resolveExecutionRunRuntimeBackendTarget({ kind: 'agent', identity }, engineRegistry.contributions);
+        if (!backendTarget) throw new Error('Review target was not admitted');
+        const profileCatalog = await engineRegistry.resolveExecutionRunProfileCatalog({
+          resolveAgentIdentity: agentId => engineRegistry.contributions.agentDefinitionsById.get(agentId)?.identity ?? null,
+        });
+        bridge = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: fixture.happyHomeDir,
+          happyHomeDir: fixture.happyHomeDir, resolveAccountSettings: async () => ({}),
+          resolveRunReportPolicy: async () => ({ preset: 'important' }),
+          sendAcp: async () => {},
+          resolveExecutionRunProfileCatalog: () => ({ profileCatalog, engineRegistry }) });
+        const sourceCustody = fixture.registry.readPluginSourceCustody?.(identity.pluginId);
+        if (!sourceCustody) throw new Error('Review source was not admitted');
+        phase = `start:${identity.pluginId}`;
+        const started = await bridge.start({ sessionId: null, intent: 'review', instructions: 'Review uncommitted changes.',
+          backendTarget,
+          // The contributed native profile, rather than a copied request row,
+          // must lower this request to its own ephemeral/streaming defaults.
+          permissionMode: 'read_only', retentionPolicy: 'resumable',
+          runClass: 'bounded', ioMode: 'request_response',
+          resolvedRole: resolveExecutionRunRoleV1({ roleId: 'reviewer', accountRoleOverrides: { status: 'ready', overrides: {} } }),
+          ...(isNative ? { profileId: `${identity.pluginId}/review`, profileSourceCustody: sourceCustody } : {}),
+          intentInput: ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine!.agent.id }],
+            instructions: 'Review uncommitted changes.', scope: 'changes', changeType: 'uncommitted', base: { kind: 'none' } }) });
+        activeRunId = started.runId;
+        phase = `wait:${identity.pluginId}`;
+        await bridge.waitForTerminal(started.runId);
+        phase = `result:${identity.pluginId}`;
+        expect(bridge.getPublic(started.runId), JSON.stringify(bridge.getPublic(started.runId))).toMatchObject({ status: 'succeeded' });
+        // Detached Runs intentionally have no parent Session transcript. Read
+        // the actual terminal metadata retained by finishExecutionRun.
+        const published = ReviewFindingsV2Schema.parse(bridge.getStructuredMeta(started.runId)?.payload);
+        expect(published.runRef).toMatchObject({ runId: started.runId,
+          retentionPolicy: isNative ? 'ephemeral' : 'resumable' });
+        expect(resolveReviewFollowUpAvailability(published.runRef, { sessionId: 'review-owner-session' }))
+          .toMatchObject({ available: !isNative });
+        await bridge.dispose();
+        bridge = null;
+      }
+      expect(run.mock.calls.some(([request]) => request.args?.[0] === 'review')).toBe(true);
+    } finally {
+      await bridge?.dispose();
+      await fixture.dispose();
+    }
   });
   it('attests backend and voice resumes and publishes only their successfully resumed registrations', async () => {
     let intent: 'task' | 'agent' | 'voice_agent' = 'agent';
