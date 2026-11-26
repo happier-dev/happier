@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useState, type ComponentType, type ReactNode } from 'react';
 import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import type { ReviewCommentV1, ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 
@@ -7,6 +7,7 @@ import { CountedDisclosureFrame } from './CountedDisclosureItem.js';
 import { Icon } from './Icon.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
+import type { HappierCountedDisclosureFrameProps } from '../presentation/collection/CountedDisclosure.js';
 import { resolveHappierWorkHost, useHappierWorkTheme, type HappierWorkHost, type HappierWorkTheme } from '../presentation/work/workTheme.js';
 
 /** A projection supplied by the comment owner, never inferred from presentation. */
@@ -37,12 +38,15 @@ export type HappierReviewFindingProps = Readonly<{
   children: ReactNode;
   theme?: HappierWorkTheme;
   host?: HappierWorkHost;
+  /** Native hosts bind their disclosure's motion and accessibility preferences. */
+  Disclosure?: ComponentType<HappierCountedDisclosureFrameProps>;
 }>;
 
 /** The finding's disclosure and decision anatomy, shared by native and contributed Review hosts. */
 export function HappierReviewFinding(props: HappierReviewFindingProps) {
   const theme = useHappierWorkTheme(props.theme);
   const { Text } = resolveHappierWorkHost(props.host);
+  const Disclosure = props.Disclosure ?? CountedDisclosureFrame;
   const [narrow, setNarrow] = useState(false);
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     const width = event.nativeEvent.layout.width;
@@ -75,7 +79,7 @@ export function HappierReviewFinding(props: HappierReviewFindingProps) {
   return (
     <View testID={`review-finding:${props.rowId}`} onLayout={onLayout}
       style={[styles.row, props.divided ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border } : null]}>
-      <CountedDisclosureFrame expanded={props.expanded} onExpandedChange={() => props.onToggleExpanded(props.rowId)}
+      <Disclosure expanded={props.expanded} onExpandedChange={() => props.onToggleExpanded(props.rowId)}
         testID={`review-finding-disclosure:${props.rowId}`} showDivider={false} header={<View style={styles.head}>
         {selection ? (
           <HappierPressable testID={selection.testID} accessibilityRole="checkbox" checked={selection.selected}
@@ -102,7 +106,7 @@ export function HappierReviewFinding(props: HappierReviewFindingProps) {
         {narrow && decisionControl ? <View style={styles.narrowDecision}>{decisionControl}</View> : null}
         {props.children}
       </View>
-      </CountedDisclosureFrame>
+      </Disclosure>
     </View>
   );
 }

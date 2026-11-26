@@ -97,6 +97,7 @@ describe('review composer handoff', () => {
         let sent = false;
         function Session() {
             const [presented, setPresented] = React.useState(true);
+            const surfacePresentation = React.useMemo(() => ({ get: () => presented, subscribe: () => () => {} }), [presented]);
             const { dispatch } = useAppPaneContext();
             refs.pane = useAppPaneScope(scopeId);
             refs.main = usePaneMainColumn();
@@ -112,7 +113,7 @@ describe('review composer handoff', () => {
             }, [dispatch]);
             return <AgentInput value="Keep this draft" onChangeText={() => {}} onSend={() => { sent = true; }}
                 placeholder="Message" autocompleteKinds={[]} autocompleteSuggestions={async () => []}
-                surfacePresented={presented} onComposerFocusRequestChange={request => { refs.requestFocus = request; }} />;
+                surfacePresentation={surfacePresentation} onComposerFocusRequestChange={request => { refs.requestFocus = request; }} />;
         }
         const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><AppPaneScopeHost scopeId={scopeId} arrangement="honour"
             mainColumn={{ hideLabel: 'Hide session', showLabel: 'Show session', identity: { name: 'Session' } }}

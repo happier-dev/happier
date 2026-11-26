@@ -9,6 +9,10 @@ import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { PluginUiPresentationHostProviderInternal } from '../presentationHost/context.js';
 import type { HappierDisclosureMotionDriver } from '../presentation/collection/Disclosure.js';
+import { HappierDisclosure } from '../presentation/collection/Disclosure.js';
+import type { HappierCountedDisclosureFrameProps } from '../presentation/collection/CountedDisclosure.js';
+import { HAPPIER_INSTANT_DISCLOSURE_MOTION } from '../presentation/collection/collectionMotion.js';
+import { resolveHappierWorkTheme, type HappierWorkHost } from '../presentation/work/workTheme.js';
 
 const finding: ReviewFinding = {
   id: 'finding', title: 'Retain the draft', severity: 'high', category: 'correctness',
@@ -24,6 +28,33 @@ function byId(root: Element, id: string) {
 }
 
 describe('public Review finding presentation', () => {
+  it('renders a core finding with its explicit theme, text host and disclosure without a plugin environment', async () => {
+    const environment = projectHappierUiEnvironment(createSurfaceContext());
+    const theme = resolveHappierWorkTheme(environment.theme);
+    const host: HappierWorkHost = { Text: ({ children, testID }) => <span data-testid={testID}>{children}</span> };
+    const Disclosure = (props: HappierCountedDisclosureFrameProps) => (
+      <HappierDisclosure {...props} motion={HAPPIER_INSTANT_DISCLOSURE_MOTION} reducedMotion />
+    );
+    const draw = (expanded: boolean) => (
+      <publicUi.HappierReviewFinding rowId="core" finding={finding} severityLabel="High"
+        theme={theme} host={host} Disclosure={Disclosure} decisionGlyph={<span>Finding</span>}
+        decision={{ value: 'accept', label: 'Accepted' }} expanded={expanded} onToggleExpanded={() => {}}>
+        <span data-testid="core-discussion">The retained discussion</span>
+      </publicUi.HappierReviewFinding>
+    );
+    const mounted = mountThroughReactNativeWeb(draw(false));
+    try {
+      expect(mounted.container.textContent).toContain(finding.title);
+      expect(byId(mounted.container, 'review-finding-decision:core')?.textContent).toBe('Accepted');
+      expect(byId(mounted.container, 'core-discussion')).toBeNull();
+      await mounted.render(draw(true));
+      expect(byId(mounted.container, 'review-finding-toggle:core')?.getAttribute('aria-expanded')).toBe('true');
+      expect(byId(mounted.container, 'core-discussion')?.textContent).toBe('The retained discussion');
+      await mounted.render(draw(false));
+      expect(byId(mounted.container, 'core-discussion')).toBeNull();
+    } finally { mounted.unmount(); }
+  });
+
   it.each([false, true])('settles finding disclosure through host motion without delaying reduced motion (%s)', async reducedMotion => {
     let finishCollapse: (() => void) | undefined;
     // The platform animation driver is the boundary; the real disclosure owns mounting and accessibility.

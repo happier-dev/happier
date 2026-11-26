@@ -10,6 +10,7 @@ import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/App
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
@@ -315,6 +316,7 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
             divided={props.divided}
             theme={workTheme}
             host={WORK_HOST}
+            Disclosure={ExpandableItem}
         >
             <ReviewFindingPageBody {...props} />
             {props.taskControl}
