@@ -1025,6 +1025,8 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Neu erstellen",
     create: ({ platform }) => `${platform} erstellen und verknüpfen`,
     createConsequences: `Erstellt eine Ressource. Es können Anbieterkosten anfallen.`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Erstellt den Dienst ${resourceName} aus ${repository} im Branch ${productionBranch}. Pushes in den Produktionsbranch lösen ein Deployment in Produktion aus.`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `Erstellt den Dienst ${resourceName} aus ${repository} im Branch ${productionBranch}. ${platform} baut den neuesten Commit dieses Branches und führt bei Änderungen ein neues Deployment aus.`,
     reviewMissing: ({ field }) => `Fülle „${field}“ aus, um die Vorschau zu öffnen.`,
     provisioned: "Ressource erstellt; Verknüpfung unvollständig",
     created: "Projekt erstellt und verknüpft",

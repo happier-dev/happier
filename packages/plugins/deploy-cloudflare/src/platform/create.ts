@@ -36,9 +36,11 @@ async function buildsWrite(io: DeploymentContext, accountId: string, path: strin
   } catch (error) {
     const cause = isPluginError(error) ? error.data.failureCause : undefined;
     const nativeErrorCode = cause && 'nativeErrorCode' in cause ? cause.nativeErrorCode : undefined;
-    if (isCloudflareTokenRefusal(cause?.httpStatus, nativeErrorCode)) {
-      throw new PluginError({ code: 'cloudflare_builds_configuration_edit_required', retryable: false,
-        details: { phase: 'link', requiredPermission: workersBuildsEditPermission }, failureCause: cause, effectAttempted: true });
+    if (cause && isCloudflareTokenRefusal(cause.httpStatus, nativeErrorCode)) {
+      const code = 'cloudflare_builds_configuration_edit_required';
+      throw new PluginError({ code, retryable: false,
+        details: { phase: 'link', requiredPermission: workersBuildsEditPermission },
+        failureCause: { ...cause, errorCode: code, requiredPermission: workersBuildsEditPermission }, effectAttempted: true });
     }
     if (method === 'PUT' && cause?.httpStatus === 404
       && (nativeErrorCode === '12000' || nativeErrorCode === '8000008')) {

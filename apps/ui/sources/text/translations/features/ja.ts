@@ -1019,6 +1019,8 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "新規作成",
     create: ({ platform }) => `${platform} を作成してリンク`,
     createConsequences: `リソースを作成します。プロバイダーの料金が発生する場合があります。`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `${repository} の ${productionBranch} ブランチからサービス ${resourceName} を作成します。本番ブランチへのプッシュで本番環境にデプロイされます。`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `${repository} の ${productionBranch} ブランチからサービス ${resourceName} を作成します。${platform} はそのブランチの最新コミットをビルドし、変更時に再デプロイします。`,
     reviewMissing: ({ field }) => `確認するには「${field}」を入力してください。`,
     provisioned: "リソースを作成しました。リンクは未完了です",
     created: "プロジェクトを作成してリンクしました",

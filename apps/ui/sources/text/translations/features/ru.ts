@@ -1023,6 +1023,8 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Создать новый",
     create: ({ platform }) => `Создать и привязать ${platform}`,
     createConsequences: `Создаёт ресурс. Провайдер может взимать плату.`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Создаёт сервис ${resourceName} из репозитория ${repository}, ветка ${productionBranch}. Отправка изменений в ветку продакшена запускает развёртывание в рабочей среде.`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `Создаёт сервис ${resourceName} из репозитория ${repository}, ветка ${productionBranch}. ${platform} собирает последний коммит из этой ветки и повторно развёртывает сервис при её изменении.`,
     reviewMissing: ({ field }) => `Заполните поле «${field}», чтобы перейти к проверке.`,
     provisioned: "Ресурс создан; привязка не завершена",
     created: "Проект создан и привязан",

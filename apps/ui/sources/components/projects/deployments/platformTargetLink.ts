@@ -6,7 +6,7 @@ import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/ac
 import { patchHappierActionInputPath, readHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import {
-  describeDeploymentTargetGitCreateV1,
+  readDeploymentTargetGitCreateReviewV1,
   type DeploymentTargetLinkProviderContentV1,
 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -17,6 +17,7 @@ import type { DeploySuggestionCatalogV1 } from '@happier-dev/protocol/deployment
 import { listDeploymentTargetsFromManifestsV1, readDeploymentTargetDisplayNameV1, readPlatformResourceName, readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
+import { t } from '@/text';
 import type { InputFieldOptionsState } from '@/components/sessions/actions/inputFieldOptionsStore';
 import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
 import { formatContentDigestPrefix } from '@/utils/formatContentDigestPrefix';
@@ -265,12 +266,17 @@ export function readPlatformReviewNotice(value: unknown): string | null {
 /** The declaration owns Git creation semantics; the draft supplies the user-reviewed operands. */
 export function readPlatformGitCreateReview(target: DeploymentPlatformTarget, draft: PlatformTargetProviderCreate): string | null {
   const { resourceName, repository, productionBranch, sourceMethod } = draft;
-  return describeDeploymentTargetGitCreateV1(target.gitSource, target.title, {
+  const review = readDeploymentTargetGitCreateReviewV1(target.gitSource, {
     ...(text(resourceName) ? { resourceName } : {}),
     ...(record(repository) && text(repository.repository) ? { repository: repository.repository } : {}),
     ...(text(productionBranch) ? { productionBranch } : {}),
     ...(sourceMethod === 'upload' || sourceMethod === 'gitIntegration' ? { sourceMethod } : {}),
-  }) ?? null;
+  });
+  if (!review) return null;
+  const { pushesDeployProduction, ...operands } = review;
+  return pushesDeployProduction
+    ? t('projects.deployments.platformLink.gitCreateProductionPush', operands)
+    : t('projects.deployments.platformLink.gitCreateFollowsBranch', { ...operands, platform: target.title });
 }
 
 type PlatformTargetReviewRuntime = Readonly<{

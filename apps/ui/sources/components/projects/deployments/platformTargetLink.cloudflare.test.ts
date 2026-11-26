@@ -9,6 +9,7 @@ import { patchHappierActionInputPath } from '@happier-dev/plugin-ui/presentation
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
+import { describeDeploymentTargetGitCreateV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import {
   applyPlatformFieldPatch,
@@ -130,7 +131,7 @@ it('checks an existing Pages project from the sheet choices through the Pages in
   }
 });
 
-it('keeps the reviewed Workers Builds coordinates when editing the Create form', () => {
+it('keeps the reviewed Workers Builds coordinates and localizes the Create consequence', async () => {
   const platform = cloudflarePlatform('workers');
   const scriptPath = 'providerEnvironment.selection.scriptName';
   const tokenPath = 'providerEnvironment.selection.builds.buildTokenUuid';
@@ -160,6 +161,35 @@ it('keeps the reviewed Workers Builds coordinates when editing the Create form',
   expect(drawn.fields.map(field => field.path)).not.toContain('providerEnvironment.kind');
   expect(readPlatformGitCreateReview(platform, draft)).toContain('Pushes to the production branch deploy Production.');
   expect(readPlatformGitCreateReview(platform, { ...draft, sourceMethod: 'upload' })).toBeNull();
+  const operands = { resourceName: 'example', repository: repository.repository, productionBranch: 'release' };
+  expect(describeDeploymentTargetGitCreateV1(platform.gitSource, platform.title, { ...operands, sourceMethod: 'gitIntegration' }))
+    .toBe('Create service example from octocat/octocat.github.io on branch release. Pushes to the production branch deploy Production.');
+
+  const { getPreferredLanguage, getTranslationValue, preloadTranslations, setPreferredLanguageFromSettings,
+    SUPPORTED_LANGUAGE_CODES, t } = await import('@/text');
+  const previous = getPreferredLanguage();
+  try {
+    const reviews = new Set<string | null>();
+    for (const language of SUPPORTED_LANGUAGE_CODES) {
+      await preloadTranslations(language);
+      setPreferredLanguageFromSettings(language);
+      const key = 'projects.deployments.platformLink.gitCreateProductionPush';
+      expect(getTranslationValue(key, language), language).toBeTypeOf('function');
+      const review = readPlatformGitCreateReview(platform, draft);
+      expect(review).toContain(repository.repository);
+      expect(review).toContain('release');
+      expect(review).toBe(t(key, operands));
+      reviews.add(review);
+
+      const followKey = 'projects.deployments.platformLink.gitCreateFollowsBranch';
+      expect(getTranslationValue(followKey, language), language).toBeTypeOf('function');
+      expect(readPlatformGitCreateReview(platform, { ...draft, sourceMethod: undefined }))
+        .toBe(t(followKey, { ...operands, platform: platform.title }));
+    }
+    expect(reviews.size).toBe(SUPPORTED_LANGUAGE_CODES.length);
+  } finally {
+    setPreferredLanguageFromSettings(previous);
+  }
 });
 
 it('checks an existing Worker from its sheet choices and returns the selected script tag', async () => {

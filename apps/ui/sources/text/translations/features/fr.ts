@@ -1030,6 +1030,8 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Créer un nouveau",
     create: ({ platform }) => `Créer et lier ${platform}`,
     createConsequences: `Crée une ressource. Des frais peuvent être facturés par le fournisseur.`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Crée le service ${resourceName} depuis le dépôt ${repository}, sur la branche ${productionBranch}. Les envois sur la branche de production déclenchent un déploiement en production.`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `Crée le service ${resourceName} depuis le dépôt ${repository}, sur la branche ${productionBranch}. ${platform} compile le dernier commit de cette branche et redéploie à chaque modification.`,
     reviewMissing: ({ field }) => `Renseignez « ${field} » pour accéder à la vérification.`,
     provisioned: "Ressource créée ; liaison incomplète",
     created: "Projet créé et lié",

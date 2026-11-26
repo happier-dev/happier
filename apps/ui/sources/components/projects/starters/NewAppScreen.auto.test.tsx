@@ -474,13 +474,17 @@ it('a refused Stop keeps the run on screen with the refusal and Retry; it never 
   }
 });
 
-it('settles the same Suggest Run after a timed-out wait and refused Stop', async () => {
+it.each(['after a timed-out wait', 'before Start acknowledges'] as const)
+('settles the same Suggest Run when Stop is refused %s', async (when) => {
+  const early = when === 'before Start acknowledges';
+  const startReply = Promise.withResolvers<{ runId: string; callId: string; sidechainId: string }>();
   const settled = terminal({ recommendations: [recommendation] });
   let finished = false;
   const read = vi.fn(async () => finished ? settled : {
     run: { ...settled.run, status: 'running', finishedAtMs: undefined },
   });
   suggestionBoundary({
+    ...(early ? { executionRunStart: () => startReply.promise } : {}),
     executionRunWait: async () => ({ ok: true, status: 'running', disposition: 'observation_timeout',
       runId: 'run_1', timeoutMs: 12_000, observedAtMs: 13_000, deadlineAtMs: 13_000 }),
     executionRunGet: read,
@@ -492,8 +496,14 @@ it('settles the same Suggest Run after a timed-out wait and refused Stop', async
     await screen.pressByTestIdAsync('newApp.continue');
     await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A booking page'));
     await screen.pressByTestIdAsync('newApp.auto.suggest');
-    await waitForHomeGovernance(() => expect(read).toHaveBeenCalledTimes(1));
+    await waitForHomeGovernance(() => expect(calls('execution.run.start')).toHaveLength(1));
+    if (early) expect(read).not.toHaveBeenCalled();
+    else await waitForHomeGovernance(() => expect(read).toHaveBeenCalledTimes(1));
     await screen.pressByTestIdAsync('newApp.auto.stop');
+    if (early) {
+      expect(calls('execution.run.stop')).toHaveLength(0);
+      await act(async () => startReply.resolve({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
+    }
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.stopRefused.retry')).toBeTruthy());
     expect(screen.findByTestId('newApp.auto.working')).toBeTruthy();
 
@@ -504,7 +514,7 @@ it('settles the same Suggest Run after a timed-out wait and refused Stop', async
     const address = { serverId, machineId: 'devbox' };
     finished = true;
     await act(async () => notifyExecutionRunActivity(address, { runId: 'another-run' }));
-    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls.length).toBeLessThanOrEqual(1);
     await act(async () => notifyExecutionRunActivity(address, { runId: 'run_1' }));
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy());
     expect(screen.getTextContent()).toContain(recommendation.title);

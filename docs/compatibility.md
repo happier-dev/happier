@@ -11764,6 +11764,14 @@ or adapter changes. The scoped-clean `../0.2` frontier
 `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no corresponding Action cause
 module.
 
+Unreleased 0.3 Cloudflare Worker Create can retain an acknowledged Worker
+with an unconfirmed Production branch. Its existing Action failure cause can
+carry the public `requiredPermission` label for the classified
+`cloudflare_builds_configuration_edit_required` refusal, alongside HTTP and
+native codes. The UI uses that label in the token reconnect instructions.
+Current Protocol, SDK, daemon and UI readers refresh together under the
+unpublished 0.3 direct cut. Causes without the label remain valid.
+
 The unreleased 0.3 realtime `provider_error` code union also accepts
 `voice_provider_agent_unavailable`. ElevenLabs alone classifies the exact
 observed SDK initialization refusal; the host consumes that reason through

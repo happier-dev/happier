@@ -1010,6 +1010,8 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "新建",
     create: ({ platform }) => `建立並連結 ${platform}`,
     createConsequences: `建立資源。供應商可能收費。`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `從 ${repository} 的 ${productionBranch} 分支建立服務 ${resourceName}。推送至正式分支時會部署到正式環境。`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `從 ${repository} 的 ${productionBranch} 分支建立服務 ${resourceName}。${platform} 會建置該分支的最新提交，並在分支有變更時重新部署。`,
     reviewMissing: ({ field }) => `填寫「${field}」即可檢閱。`,
     provisioned: "資源已建立；連結未完成",
     created: "專案已建立並連結",

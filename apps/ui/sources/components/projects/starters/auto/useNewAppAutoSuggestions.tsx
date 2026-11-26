@@ -21,6 +21,7 @@ import {
   type DeploySuggestionProgress,
   type DeploySuggestionUnavailableMachine,
 } from '@/execution/llmTasks/suggestDeploySetup';
+import type { LlmTaskRunStop } from '@/execution/llmTasks/runLlmTaskInWorkspace';
 import { isUsageLimitedRuntimeIssue, presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { describeAgentReadinessCause } from '@/components/sessions/model/sessionReadinessPresentation';
 import { useDeploymentSuggestionRunner } from '@/components/settings/deployments/DeploySuggestionRunnerSetting';
@@ -37,7 +38,6 @@ import type {
 import { deploySuggestionCardId, deploySuggestionCardIndex, presentDeploySuggestionCard, useDeclaredTargetPlans } from './DeploySuggestionCards';
 
 type Runner = Extract<DeploySuggestionProgress, { kind: 'runner' }>;
-type RunStop = Extract<DeploySuggestionProgress, { kind: 'run' }>['stop'];
 type Phase =
   | Readonly<{ kind: 'describe' }>
   | Readonly<{
@@ -93,8 +93,7 @@ export function useNewAppAutoSuggestions(
     connections: string;
   }> | null>(null);
   const connections = storage((state) => connectionsKey(state.profile.connectedAccountsV4), connectionKeys);
-  // The accepted Run owns Stop, including retries after a refusal.
-  const runStop = React.useRef<RunStop | null>(null);
+  const runStop = React.useRef<LlmTaskRunStop | null>(null);
   const lastRecommendations = React.useRef<Extract<DeploySuggestionOutcome, { kind: 'recommendations' }> | null>(null);
 
   // Stop is a request: the step stays on the Run until its target confirms the stop, and a refusal stays on screen.
@@ -105,11 +104,12 @@ export function useNewAppAutoSuggestions(
     setPhase((current) => (current.kind === 'working' ? { ...current, stop: 'stopping' } : current));
     const requestStop = runStop.current;
     if (!requestStop) {
+      // Only suggestion setup is running. There is no Run to observe yet.
       controller.abort();
       return;
     }
     void requestStop().then((result) => {
-      if (abort.current !== controller) return;
+      if (!result || abort.current !== controller) return;
       if (result.ok) {
         abort.current = null;
         runStop.current = null;
@@ -123,8 +123,12 @@ export function useNewAppAutoSuggestions(
   // Leaving the step or closing the dialog stops a run still going (request_response, ephemeral); its answer, once
   // settled, is kept.
   React.useEffect(() => {
-    if (!params.active) stop();
-  }, [params.active, stop]);
+    if (params.active || !abort.current) return;
+    abort.current.abort();
+    abort.current = null;
+    runStop.current = null;
+    setPhase({ kind: 'describe' });
+  }, [params.active]);
   const mounted = React.useRef(true);
   React.useEffect(() => () => {
     mounted.current = false;
@@ -167,12 +171,12 @@ export function useNewAppAutoSuggestions(
       choice: retryChoice ?? runnerChoice,
       operationTitle: t('newApp.auto.suggest'),
       signal: controller.signal,
+      onStopReady: (requestStop) => {
+        if (abort.current === controller) runStop.current = requestStop;
+      },
       onProgress: (progress) => {
         if (abort.current !== controller) return;
-        if (progress.kind === 'run') {
-          runStop.current = progress.stop;
-          runId = progress.runId;
-        }
+        if (progress.kind === 'run') runId = progress.runId;
         if (controller.signal.aborted) return;
         if (progress.kind === 'runner') runner = progress;
         setPhase((current) =>

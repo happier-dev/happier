@@ -20,17 +20,14 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { getMachineSentenceName, isMachineDisplayHydrating } from '@/utils/sessions/machineDisplayNames';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { readRegisteredStorageState, subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resolveWorkspaceLlmTaskRunner, runLlmTaskInWorkspace, type LlmTaskHostV1 } from './runLlmTaskInWorkspace';
+import { resolveWorkspaceLlmTaskRunner, runLlmTaskInWorkspace, type LlmTaskHostV1, type LlmTaskRunStop } from './runLlmTaskInWorkspace';
 
 const executeAction = createFrontDoorActionExecute();
 
 export type DeploySuggestionProgress =
     | Readonly<{ kind: 'catalog'; counts: Readonly<Record<'starters' | 'apps' | 'targets' | 'machines' | 'stores', number>> }>
     | Readonly<{ kind: 'runner'; machineId: string; label: string; agentTargetKey: string; agentTitle?: string }>
-    /** `stop` asks this accepted Run's own target to stop it again (after a refused Stop); it settles with the Action's result. */
-    | Readonly<{ kind: 'run'; machineId: string; label: string; agentTargetKey: string; agentTitle?: string; runId: string;
-        stop: () => Promise<ActionExecuteResult> }>;
+    | Readonly<{ kind: 'run'; machineId: string; label: string; agentTargetKey: string; agentTitle?: string; runId: string }>;
 
 export type DeploySuggestionUnavailableMachine = Readonly<{
     machineId: string;
@@ -112,6 +109,7 @@ export async function suggestDeploySetup(params: Readonly<{
     /** Contextual title carried onto the underlying execution.run.start operation when surfaced unconsumed. */
     operationTitle?: string;
     onProgress?: (progress: DeploySuggestionProgress) => void;
+    onStopReady?: (stop: LlmTaskRunStop) => void;
     signal?: AbortSignal;
 }>): Promise<DeploySuggestionOutcome> {
     try {
@@ -173,7 +171,8 @@ export async function suggestDeploySetup(params: Readonly<{
                 ...(params.operationTitle ? { operationTitle: params.operationTitle } : {}),
                 intentInput: { input: input.data, resultSchema: zodSchemaToJsonSchemaObject(DeploySuggestionV1Schema, { target: 'draft-7' }) },
                 ...(params.signal ? { signal: params.signal } : {}),
-                onStarted: (runId, stop) => params.onProgress?.({ kind: 'run', ...runner, runId, stop }),
+                ...(params.onStopReady ? { onStopReady: params.onStopReady } : {}),
+                onStarted: (runId) => params.onProgress?.({ kind: 'run', ...runner, runId }),
             });
             if (!run.ok && run.stopRefused) return { kind: 'stopRefused', code: run.errorCode ?? 'execution_run_failed' };
             if (!run.ok) return params.signal?.aborted && run.errorCode === 'cancelled' && !run.runError

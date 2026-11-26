@@ -236,6 +236,8 @@ type KnownActionFailureCauseV1 = Readonly<{
   nativeErrorCode?: string;
   /** Producer-projected public reason code; never raw vendor close prose. */
   nativeErrorReason?: string;
+  /** Public permission name from a classified Cloudflare Builds refusal. */
+  requiredPermission?: 'Workers Builds Configuration (Edit)';
   /** SHA-256 of normalized paths relative to the native runtime user's home. */
   codexLaunchPathIdentity?: z.infer<typeof CodexLaunchPathIdentitySchema>;
   /** Only the requester's refused Team Session start carries these values. */
@@ -257,11 +259,13 @@ export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = l
   errorCode: z.nullable(z.string()),
   nativeErrorCode: z.optional(ActionNativeErrorCodeV1Schema),
   nativeErrorReason: z.optional(ActionNativeErrorCodeV1Schema),
+  requiredPermission: z.optional(z.literal('Workers Builds Configuration (Edit)')),
   codexLaunchPathIdentity: z.optional(CodexLaunchPathIdentitySchema),
   reasoningEffort: z.optional(TeamReasoningEffortRefusalV1Schema),
   diagnostic: z.optional(WorkflowTargetUnavailableDiagnosticV1Schema),
   httpStatus: z.nullable(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
 }).check(z.refine(value => value.reasoningEffort === undefined || value.errorCode === REASONING_EFFORT_NOT_ALLOWED),
+  z.refine(value => value.requiredPermission === undefined || value.errorCode === 'cloudflare_builds_configuration_edit_required'),
   z.refine(value => value.diagnostic === undefined || value.errorCode === 'target_unavailable'),
   z.refine(value => value.codexLaunchPathIdentity === undefined || value.phase === 'codex.app_server_initialize'),
   z.refine(value => readActionErrorCodeV1({ code: value.errorCode }) === value.errorCode || readUnexpectedActionErrorDiagnosticV1({

@@ -106,15 +106,24 @@ export const DeploymentTargetGitSourceV1Schema = lazyZodSchema(() => z.discrimin
     z.strictObject({ guarantee: z.literal('branchHead'), create: z.optional(z.literal('branchHead')) }),
 ]));
 
+type DeploymentTargetGitCreateInputV1 = Readonly<{ resourceName?: string; repository?: string; productionBranch?: string;
+    sourceMethod?: 'upload' | 'gitIntegration' }>;
+
+export function readDeploymentTargetGitCreateReviewV1(source: z.infer<typeof DeploymentTargetGitSourceV1Schema> | undefined,
+    input: DeploymentTargetGitCreateInputV1) {
+    const { resourceName, repository, productionBranch, sourceMethod } = input;
+    if (source?.create !== 'branchHead' || sourceMethod === 'upload' || !resourceName || !repository || !productionBranch) return;
+    return { resourceName, repository, productionBranch, pushesDeployProduction: sourceMethod === 'gitIntegration' };
+}
+
 export function describeDeploymentTargetGitCreateV1(source: z.infer<typeof DeploymentTargetGitSourceV1Schema> | undefined,
-    platform: string, input: Readonly<{ resourceName?: string; repository?: string; productionBranch?: string;
-        sourceMethod?: 'upload' | 'gitIntegration' }>): string | undefined {
-    if (source?.create !== 'branchHead' || input.sourceMethod === 'upload'
-        || !input.resourceName || !input.repository || !input.productionBranch) return;
-    const consequence = input.sourceMethod === 'gitIntegration'
+    platform: string, input: DeploymentTargetGitCreateInputV1): string | undefined {
+    const review = readDeploymentTargetGitCreateReviewV1(source, input);
+    if (!review) return;
+    const consequence = review.pushesDeployProduction
         ? 'Pushes to the production branch deploy Production.'
         : `${platform} builds the latest commit on that branch and redeploys when it changes.`;
-    return `Create service ${input.resourceName} from ${input.repository} on branch ${input.productionBranch}. ${consequence}`;
+    return `Create service ${review.resourceName} from ${review.repository} on branch ${review.productionBranch}. ${consequence}`;
 }
 
 export function deploymentTargetRoleWithNativeSelectorV1(base: PluginJsonSchemaV2, selection: PluginJsonSchemaV2): PluginJsonSchemaV2 {

@@ -15,6 +15,9 @@ import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/exec
 
 const executeAction = createFrontDoorActionExecute();
 
+/** A null result means Start settled without acknowledging a Run to stop. */
+export type LlmTaskRunStop = () => Promise<ActionExecuteResult | null>;
+
 export type LlmTaskRunResult =
     | { ok: true; terminal: ExecutionRunGetResponse }
     | { ok: false; error: string; errorCode?: string; runId?: string; outcome?: 'pending' | 'unknown'; reason?: 'no_ready_agent' | 'no_matching_model'; unavailableAgents?: readonly LlmTaskRunnerUnavailableAgentV1[];
@@ -106,6 +109,8 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
     continueObservationAfterTimeout?: boolean;
     /** Contextual title carried onto the underlying execution.run.start operation when surfaced in Activity/Inbox. */
     operationTitle?: string;
+    /** Publish Stop before dispatch, so a request can wait for the Run acknowledgement. */
+    onStopReady?: (stop: LlmTaskRunStop) => void;
     onStarted?: (runId: string, stop: () => Promise<ActionExecuteResult>) => void;
     signal?: AbortSignal;
     intent: 'task' | 'scm_commit_message';
@@ -133,14 +138,23 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
         });
         return accepted.stop;
     };
+    let acknowledge: ((runId: string | null) => void) | undefined;
+    if (params.onStopReady) {
+        const acknowledgement = new Promise<string | null>(resolve => { acknowledge = resolve; });
+        params.onStopReady(async () => {
+            const runId = accepted.runId ?? await acknowledgement;
+            return runId === null ? null : requestStop(runId);
+        });
+    }
     let abortedStop: Promise<ActionExecuteResult> | undefined;
     const stopOnAbort = () => {
         if (accepted.runId) abortedStop = requestStop(accepted.runId);
     };
     const context: ActionExecutorContext = { ...llmTaskActionContext(params.host),
         ...(params.signal ? { signal: params.signal } : {}),
-        ...(params.onStarted || params.signal || params.operationTitle ? { onExecutionRunStarted: (runId: string) => {
+        ...(params.onStarted || params.onStopReady || params.signal || params.operationTitle ? { onExecutionRunStarted: (runId: string) => {
             accepted.runId = runId;
+            acknowledge?.(runId);
             registerOperationTitle(runId);
             params.onStarted?.(runId, () => requestStop(runId));
             if (params.signal?.aborted) stopOnAbort();
@@ -185,6 +199,7 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
         if (result.ok || (result.runId !== undefined && result.outcome === undefined)) return result;
         return { ...readActionError(stopped), runId: accepted.runId, outcome: 'unknown', stopRefused: true };
     } finally {
+        acknowledge?.(null);
         params.signal?.removeEventListener('abort', stopOnAbort);
     }
 }

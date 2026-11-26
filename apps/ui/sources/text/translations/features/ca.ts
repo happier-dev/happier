@@ -1030,6 +1030,8 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Crea’n un de nou",
     create: ({ platform }) => `Crea i enllaça ${platform}`,
     createConsequences: `Crea un recurs. El proveïdor pot aplicar càrrecs.`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Crea el servei ${resourceName} des del repositori ${repository}, a la branca ${productionBranch}. En enviar canvis a la branca de producció, es despleguen a Producció.`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `Crea el servei ${resourceName} des del repositori ${repository}, a la branca ${productionBranch}. ${platform} compila l’últim commit d’aquesta branca i torna a desplegar quan canvia.`,
     reviewMissing: ({ field }) => `Completa «${field}» per revisar.`,
     provisioned: "Recurs creat; l’enllaç és incomplet",
     created: "Projecte creat i enllaçat",

@@ -176,7 +176,11 @@ it.each([
     expect(result).toMatchObject({
       providerIdentity: { providerResourceId: 'worker-tag' },
       preparedNative: { productionBranchOutcome: { status: 'unconfirmed', requestedBranch: 'main',
-        failureCause: { httpStatus: status, ...(nativeCode === null ? {} : { nativeErrorCode: String(nativeCode) }) } } },
+        failureCause: { httpStatus: status, ...(nativeCode === null ? { errorCode: null } : {
+          nativeErrorCode: String(nativeCode),
+          errorCode: 'cloudflare_builds_configuration_edit_required',
+          requiredPermission: 'Workers Builds Configuration (Edit)',
+        }) } } },
     });
     expect(result).not.toHaveProperty('repositoryAccess.status', 'needsGitAccess');
     expect(paths.filter(path => path.endsWith('/triggers'))).toHaveLength(1);

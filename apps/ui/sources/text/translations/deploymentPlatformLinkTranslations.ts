@@ -26,6 +26,8 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   modeCreate: string;
   create: (params: { platform: string }) => string;
   createConsequences: string;
+  gitCreateProductionPush: (params: { resourceName: string; repository: string; productionBranch: string }) => string;
+  gitCreateFollowsBranch: (params: { resourceName: string; repository: string; productionBranch: string; platform: string }) => string;
   reviewMissing: (params: { field: string }) => string;
   provisioned: string;
   created: string;
@@ -128,6 +130,8 @@ export const deploymentPlatformLinkTranslations = {
     modeCreate: "Create new",
     create: ({ platform }) => `Create and link ${platform}`,
     createConsequences: `Creates a resource. Provider charges may apply.`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Create service ${resourceName} from ${repository} on branch ${productionBranch}. Pushes to the production branch deploy Production.`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `Create service ${resourceName} from ${repository} on branch ${productionBranch}. ${platform} builds the latest commit on that branch and redeploys when it changes.`,
     reviewMissing: ({ field }) => `Complete ${field} to review.`,
     provisioned: "Resource created; linking is incomplete",
     created: "Project created and linked",

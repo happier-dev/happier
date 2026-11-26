@@ -1028,6 +1028,8 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Crear nuevo",
     create: ({ platform }) => `Crear y vincular ${platform}`,
     createConsequences: `Crea un recurso. El proveedor puede aplicar cargos.`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Crea el servicio ${resourceName} desde ${repository}, en la rama ${productionBranch}. Los cambios que envíes a la rama de producción se despliegan en Producción.`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `Crea el servicio ${resourceName} desde ${repository}, en la rama ${productionBranch}. ${platform} compila el último commit de esa rama y vuelve a desplegar cuando cambia.`,
     reviewMissing: ({ field }) => `Completa «${field}» para revisar.`,
     provisioned: "Recurso creado; la vinculación está incompleta",
     created: "Proyecto creado y vinculado",

@@ -1022,6 +1022,8 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Utwórz nowy",
     create: ({ platform }) => `Utwórz i połącz ${platform}`,
     createConsequences: `Tworzy zasób. Dostawca może naliczać opłaty.`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Tworzy usługę ${resourceName} z repozytorium ${repository}, z gałęzi ${productionBranch}. Wypchnięcie zmian do gałęzi produkcyjnej uruchamia wdrożenie na produkcję.`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `Tworzy usługę ${resourceName} z repozytorium ${repository}, z gałęzi ${productionBranch}. ${platform} kompiluje najnowszy commit z tej gałęzi i ponawia wdrożenie przy jej zmianie.`,
     reviewMissing: ({ field }) => `Uzupełnij „${field}”, aby przejść do przeglądu.`,
     provisioned: "Zasób utworzony; łączenie nieukończone",
     created: "Projekt utworzony i połączony",

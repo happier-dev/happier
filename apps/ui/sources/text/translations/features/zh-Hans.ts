@@ -1009,6 +1009,8 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "新建",
     create: ({ platform }) => `创建并关联 ${platform}`,
     createConsequences: `创建资源。提供商可能收费。`,
+    gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `从 ${repository} 的 ${productionBranch} 分支创建服务 ${resourceName}。推送到生产分支时会部署到生产环境。`,
+    gitCreateFollowsBranch: ({ resourceName, repository, productionBranch, platform }) => `从 ${repository} 的 ${productionBranch} 分支创建服务 ${resourceName}。${platform} 会构建该分支的最新提交，并在分支有变更时重新部署。`,
     reviewMissing: ({ field }) => `填写“${field}”后即可审阅。`,
     provisioned: "资源已创建；关联未完成",
     created: "项目已创建并关联",

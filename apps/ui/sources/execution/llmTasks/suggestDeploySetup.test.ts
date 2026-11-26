@@ -86,7 +86,7 @@ it('observes the same Suggest Run after the initial observation times out', asyn
         signal: controller.signal, onProgress: progress });
     try {
         await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
-        expect(progress).toHaveBeenCalledWith(expect.objectContaining({ kind: 'run', runId: 'run_1', stop: expect.any(Function) }));
+        expect(progress).toHaveBeenCalledWith(expect.objectContaining({ kind: 'run', runId: 'run_1' }));
         finished = true;
         notifyExecutionRunActivity(address, { runId: 'another-run' });
         expect(read).toHaveBeenCalledTimes(1);

@@ -80,7 +80,7 @@ it('settles when Account availability arrives between the first read and its res
   }
 });
 
-it.each([false, true, 'git-grant', 'builds-permission', 'branch-set', 'branch-kept', 'branch-unconfirmed'] as const)('finishes an acknowledged created resource by exact association without creating it again; ambiguous create stays uncertain (%s)', async ambiguous => {
+it.each([false, true, 'git-grant', 'builds-permission', 'branch-set', 'branch-kept', 'branch-unconfirmed', 'branch-permission'] as const)('finishes an acknowledged created resource by exact association without creating it again; ambiguous create stays uncertain (%s)', async ambiguous => {
   const pluginId = 'com.example.create-cloud';
   const providerUrl = 'https://console.provider.test/exact-created-beta';
   const browserOpen = vi.fn();
@@ -99,6 +99,13 @@ it.each([false, true, 'git-grant', 'builds-permission', 'branch-set', 'branch-ke
     homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
       id: 'source-app', revision: 1, name: 'App', owner: { kind: 'account', accountId: 'owner' }, audience: [], createdByAccountId: 'owner',
     } } });
+    const branchOutcome = ambiguous === 'branch-set' ? { status: 'set', branch: 'release' }
+      : { status: ambiguous === 'branch-kept' ? 'defaultKept' : 'unconfirmed',
+        ...(ambiguous === 'branch-kept' ? { branch: 'main' } : { previousBranch: 'main' }), requestedBranch: 'release',
+        failureCause: ambiguous === 'branch-permission' ? { phase: 'deployment.cloudflare.link', errorClass: 'Error',
+          errorCode: 'cloudflare_builds_configuration_edit_required', httpStatus: 403, nativeErrorCode: '10000',
+          requiredPermission: 'Workers Builds Configuration (Edit)' }
+          : { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } };
     const creates: unknown[] = [];
     const associations: unknown[] = [];
     await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.targets.link',
@@ -113,10 +120,7 @@ it.each([false, true, 'git-grant', 'builds-permission', 'branch-set', 'branch-ke
             details: { requiredPermission: 'Workers Builds Configuration (Edit)' } };
           if (typeof ambiguous === 'string' && ambiguous.startsWith('branch-')) return { ok: true,
             environmentId: environment.id, revision: 5, targetLinkId: 'created-link', targetLinkRevision: 1,
-            productionBranchOutcome: ambiguous === 'branch-set' ? { status: 'set', branch: 'release' }
-              : { status: ambiguous === 'branch-kept' ? 'defaultKept' : 'unconfirmed',
-                ...(ambiguous === 'branch-kept' ? { branch: 'main' } : { previousBranch: 'main' }), requestedBranch: 'release',
-                failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } } };
+            productionBranchOutcome: branchOutcome };
           if (ambiguous) return { ok: false, error: 'action_outcome_unknown' };
           const { providerCreate, ...intent } = input;
           return { ok: false, error: 'deployment_link_incomplete', recovery: { ...intent, provisioned: true,
@@ -185,16 +189,16 @@ it.each([false, true, 'git-grant', 'builds-permission', 'branch-set', 'branch-ke
         expect(card).toBeDefined();
         expect(card?.props.kind).toBe(ambiguous === 'branch-set' ? 'success' : 'warning');
         expect(card?.props.reason).toContain(ambiguous === 'branch-kept' ? 'main' : 'release');
+        if (ambiguous === 'branch-permission') {
+          expect(card?.props.diagnosticCode).toBe('cloudflare_builds_configuration_edit_required');
+          expect(screen.getTextContent()).toContain('Add Workers Builds Configuration (Edit) to the connected token, then reconnect.');
+        }
       });
       expect(creates).toHaveLength(1);
       expect(screen.findByTestId('project-deployments.platform.create')).toBeNull();
       expect(screen.findByTestId('project-deployments.platform.done')).not.toBeNull();
       const { ActionOperationSnapshotV1Schema } = await import('@happier-dev/protocol/actions/operations/v1');
       const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
-      const branchOutcome = ambiguous === 'branch-set' ? { status: 'set', branch: 'release' }
-        : { status: ambiguous === 'branch-kept' ? 'defaultKept' : 'unconfirmed',
-          ...(ambiguous === 'branch-kept' ? { branch: 'main' } : { previousBranch: 'main' }), requestedBranch: 'release',
-          failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } };
       await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [ActionOperationSnapshotV1Schema.parse({
         version: 1, operationId: `branch-result-${ambiguous}`, requestId: `branch-request-${ambiguous}`, revision: 2,
         actionId: 'deployments.targets.link', state: 'succeeded', title: 'Create runtime target',

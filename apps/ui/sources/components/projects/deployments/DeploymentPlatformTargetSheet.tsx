@@ -738,8 +738,10 @@ export function DeploymentPlatformTargetEditor(
           kind={createdBranchOutcome.status === 'set' ? 'success' : 'warning'}
           title={t('projects.deployments.platformLink.created')}
           reason={createdBranchOutcome.status === 'set' ? t('projects.deployments.platformLink.branchSet', createdBranchOutcome)
-            : createdBranchOutcome.status === 'defaultKept' ? t('projects.deployments.platformLink.branchDefaultKept', createdBranchOutcome)
-              : t('projects.deployments.platformLink.branchUnconfirmed', createdBranchOutcome)}
+            : [createdBranchOutcome.status === 'defaultKept' ? t('projects.deployments.platformLink.branchDefaultKept', createdBranchOutcome)
+              : t('projects.deployments.platformLink.branchUnconfirmed', createdBranchOutcome),
+            readDeploymentConnectionPermissionRemedy(createdBranchOutcome.failureCause.errorCode ?? undefined, createdBranchOutcome.failureCause)]
+              .filter(Boolean).join(' ')}
           {...(createdBranchOutcome.status === 'set' ? {} : { diagnosticCode: createdBranchOutcome.failureCause.errorCode ?? undefined })} />
           : sourceRefusal ? (
           <SurfaceStateCard testID="project-deployments.platform.sourceRefused" size="line" kind="unavailable"
