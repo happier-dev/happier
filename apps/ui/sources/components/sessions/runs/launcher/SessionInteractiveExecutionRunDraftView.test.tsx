@@ -5,7 +5,7 @@ import * as React from 'react';
 import { writeFile } from 'node:fs/promises';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { PluginServices } from '@happier-dev/plugin-sdk';
-import type { AgentExecutionRunEvent, AgentExecutionRunOpenRequest, AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentExecutionRunEvent, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { activate as activateDeepSec, PLUGIN_MANIFEST as DEEPSEC_MANIFEST } from '../../../../../../../packages/plugins/review-deepsec/src/index';
 import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions/sessionConsumptionV1';
@@ -763,10 +763,6 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(block.actionId).toBe('review.start');
         const savedInput = Object.fromEntries(Object.entries(block.input).map(([key, binding]) => {
             if (binding.kind === 'input') return [key, seed.inputValues?.[binding.name]];
-            if (binding.kind === 'input' && key === 'sourceSession') {
-                expect(binding.name).toBe('sourceSession');
-                return [key, seed.inputValues?.sourceSession];
-            }
             if (binding.kind !== 'literal') throw new Error('Expected retained Review input');
             return [key, binding.value];
         }));
@@ -779,7 +775,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(setWorkflowBlockName(seed.draft, block.id, 'Edited Review').blocks[0]?.name).toBe('Edited Review');
         expect(emittedStarts).toEqual([]);
         expect(emittedWorkflowStarts).toEqual([]);
-        expect(home.requests.slice(requestsBeforeSave).filter(request => request.method !== 'GET')).toEqual([]);
+        expect(home.requests.slice(requestsBeforeSave).filter(request => request.method !== 'GET'
+            && !(request.method === 'POST' && request.path === '/v1/plugins/availability/materializations/read'))).toEqual([]);
         expect(input().props.value).toBe('Inspect the current changes');
     });
     it('reports a failed mounted Hunt save to the agent and keeps the visible draft error', async () => {
@@ -1057,19 +1054,53 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
         };
         // This host boundary supplies only process/readiness services; every other service fails visibly.
-        const services = new Proxy({ availability: () => ({ status: 'available' as const }), actions: { execute: unexpected }, exec: {
+        const services: PluginServices = { availability: () => ({ status: 'available' }), exec: {
             run, agentCli: { checkReadiness: async () => ({ launchable: [{ agentId: 'codex' }] }) },
-            systemTools: { resolve: async () => ({ executable: { kind: 'systemTool' as const, id: 'deepsec-cli' }, executablePath: '/native/deepsec' }) },
-        } }, { get: (target, key) => {
-            if (key in target) return Reflect.get(target, key);
-            throw new Error(`Unexpected host service in paid Review: ${String(key)}`);
-        } }) as PluginServices;
+            systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'deepsec-cli' }, executablePath: '/native/deepsec' }) },
+            prepareNativeSocketDirectory: unexpected, withSpawnAdmission: unexpected, spawn: unexpected,
+            get clients(): never { return unexpected(); },
+        },
+            actions: { execute: unexpected, observe: unexpected, executeAdmittedTargetedOperation: unexpected,
+                observeAdmittedTargetedOperation: unexpected, executeWithExecutionOrigin: unexpected,
+                executeAdmittedTargetedOperationWithExecutionOrigin: unexpected },
+            get logger(): never { return unexpected(); },
+            get backgroundServices(): never { return unexpected(); },
+            get storage(): never { return unexpected(); },
+            get settings(): never { return unexpected(); },
+            get secrets(): never { return unexpected(); },
+            get events(): never { return unexpected(); },
+            get http(): never { return unexpected(); },
+            get healthChecks(): never { return unexpected(); },
+            get fs(): never { return unexpected(); },
+            get providers(): never { return unexpected(); },
+            get managedServices(): never { return unexpected(); },
+            get machineProvisioners(): never { return unexpected(); },
+            get deploymentSource(): never { return unexpected(); },
+            get deploymentExecEnv(): never { return unexpected(); },
+            get deploymentTelemetry(): never { return unexpected(); },
+            get sessions(): never { return unexpected(); },
+            get resources(): never { return unexpected(); },
+            get mcp(): never { return unexpected(); },
+            get notifications(): never { return unexpected(); },
+            get connectedAccounts(): never { return unexpected(); },
+            get targetedContributions(): never { return unexpected(); },
+            get interactions(): never { return unexpected(); },
+            get composerContent(): never { return unexpected(); },
+        };
         const signal = new AbortController().signal;
-        const context: AgentRuntimeContext = { plugin: { id: DEEPSEC_MANIFEST.id, version: DEEPSEC_MANIFEST.version },
+        const context: AgentExecutionRunRuntimeContextV1 = { plugin: { id: DEEPSEC_MANIFEST.id, version: DEEPSEC_MANIFEST.version },
             contribution: { id: 'deepsec', qualifiedId: `${DEEPSEC_MANIFEST.id}/agents/deepsec` },
-            surface: 'agent', signal, services, agent: { id: 'deepsec' }, protocols: { acp: { open: unexpected } },
-            ui: { askQuestions: unexpected, confirm: unexpected, notify: unexpected, status: { set: unexpected },
-                widget: { set: unexpected }, title: { set: unexpected }, composer: { replace: unexpected } } };
+            surface: 'agent', invokedAtMs: 1, signal, services, agent: { id: 'deepsec' },
+            protocols: { acp: { open: unexpected, openExecutionRunV1: unexpected } },
+            scope: { kind: 'execution_run', executionRunId: 'paid-review' },
+            executionRun: { id: 'paid-review', services: {
+                get features(): never { return unexpected(); },
+                get hooks(): never { return unexpected(); },
+                get fileFollow(): never { return unexpected(); },
+                get mcp(): never { return unexpected(); },
+                get toolExecution(): never { return unexpected(); },
+            } },
+        };
         const plugin = await createPluginTestkit({ manifest: DEEPSEC_MANIFEST, module: { activate: activateDeepSec } });
         try {
             const factory = plugin.registration('agents', 'deepsec')?.factory;

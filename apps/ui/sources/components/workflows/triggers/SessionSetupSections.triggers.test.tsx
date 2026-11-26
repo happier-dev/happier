@@ -16,6 +16,7 @@ import {
   AutomationStoredWorkflowDefinitionV2Schema} from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import {
   WorkflowTriggerSetV1Schema,
+  WorkflowAttachedTriggerV1Schema,
   type WorkflowAttachedTriggerV1,
   type WorkflowTriggerSetV1,
 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -480,11 +481,11 @@ describe('the Session Info page Automations section', () => {
     // The server's attached-query response owns this Session-to-Project relation.
     // Both real Project-subject definitions remain in details; only the admitted
     // Project attachment is returned for this Session, never an all-Session row.
-    contextAttachmentsBySession.set('session-1', [{ automationId: 'set-1', triggerId: projectHabit.id,
+    contextAttachmentsBySession.set('session-1', [WorkflowAttachedTriggerV1Schema.parse({ automationId: 'set-1', triggerId: projectHabit.id,
       workflowDefinitionId: null, relation: 'context', enabled: true, revision: projectHabit.revision,
       summary: { kind: 'sessionLifecycle', events: ['parentTurnCompleted'] },
       setUpBy: { accountId: 'account-a', displayName: 'Owner' },
-    }]);
+    })]);
     const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
     await settle();
     await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read-only:set-1:project-habit')).not.toBeNull());
@@ -600,7 +601,7 @@ describe('the Session Info page Automations section', () => {
     if (selection.status !== 'ready') throw new Error('Session-bound example required');
     const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
     const definitionId = '11111111-1111-4111-8111-111111111111';
-    workflowHttp.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id: definitionId, isDecrypted: true,
+    workflowHttp.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id: definitionId, isDecrypted: true, title: 'Held daily summary',
       headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
       rawHeader: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
         metadata: { title: 'Held daily summary' } },

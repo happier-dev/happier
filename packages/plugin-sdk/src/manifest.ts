@@ -12,7 +12,7 @@ import type { PluginAvailabilityDescriptor } from './availability.js';
 import type { PluginSecretSourceContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginThemeContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
 export type { PluginThemeContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
-import type { PluginActionDeclaration, PluginActionExecutionV2 } from './definePlugin.js';
+import type { DefinedPluginManifest, PluginActionDeclaration, PluginActionExecutionV2 } from './definePlugin.js';
 export type { PluginAvailabilityDescriptor } from './availability.js';
 export { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { createPluginContributionIdentity as canonicalCreatePluginContributionIdentity, PluginContributionIdentityV1JsonSchema as canonicalPluginContributionIdentityV1JsonSchema, PluginContributionIdentityV1Schema as canonicalPluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -888,6 +888,7 @@ export interface ParsedPluginManifest extends Omit<
  * test exercises. It always reparses through the canonical manifest owner.
  */
 export type PluginTestkitManifest =
+  | DefinedPluginManifest
   | PluginManifest
   | ParsedPluginManifest
   | (Omit<ParsedPluginManifest, 'contributes'> & Readonly<{

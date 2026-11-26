@@ -52,6 +52,39 @@ async function captureHome(home = boundary.serverIds[1]!) {
 }
 
 describe('inline executable participant selection', () => {
+  it('authors a later Review step from the shared Session inventory without replacing the first roster', async () => {
+    const accountLifetime = await captureHome();
+    const home = accountLifetime.scope.serverId;
+    boundary.setRows(home, ['review-step-peer']);
+    const { ReviewStartBody } = await import('@/components/sessions/runs/launcher/ReviewStartBody');
+    const { compileReviewLauncherInput } = await import('@/components/sessions/runs/launcher/reviewLauncherSelection');
+    const { ReviewStartInputSchema } = await import('@happier-dev/protocol/reviews/reviewStart');
+    let draft: Record<string, unknown> = { reviewers: [{ kind: 'engine', engineId: 'claude' }] };
+    function Host() {
+      const [input, setInput] = React.useState(draft);
+      draft = input;
+      return <ReviewStartBody input={input} onChange={setInput} choices={[]} disabled={false}
+        transcriptAvailable walkthrough={false} source={{ enabled: true, sections: [], selectedIds: new Set(),
+          where: { accountLifetime, target: null, machineName: null, testIDPrefix: 'review-test' } }} />;
+    }
+    const screen = await renderScreen(<Host />);
+    await screen.pressByTestIdAsync('review-start-add-step');
+    // Keep the two real step pickers mounted: a choice in the later one must stay there.
+    const laterPeer = () => screen.findByTestId('review-start-step:1')?.findAll(node =>
+      node.props.testID === 'second-opinion.reviewer:review-step-peer' && typeof node.props.onPress === 'function')[0];
+    await vi.waitFor(() => expect(laterPeer()).toBeDefined());
+    const peer = laterPeer();
+    await act(async () => peer!.props.onPress());
+    await act(async () => screen.changeTextByTestId('review-start-step:1:focus', 'Verify security findings'));
+    const parsed = ReviewStartInputSchema.parse(compileReviewLauncherInput(draft, 'Inspect the patch', { serverId: home, sessionId: 'source' }));
+    expect(parsed.steps).toEqual([
+      { kind: 'review', reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Inspect the patch' },
+      { kind: 'verify', reviewers: [{ kind: 'session', session: { serverId: home, sessionId: 'review-step-peer' } }], instructions: 'Verify security findings' },
+    ]);
+    expect(parsed.sourceSession).toBeUndefined();
+    expect(boundary.http.requests.some(request => request.path.includes('/spawn') || request.path.includes('/participants/invite'))).toBe(false);
+    await screen.unmount();
+  });
   it('finds a renamed owner Session by its current title while Browse is open', async () => {
     const accountLifetime = await captureHome();
     const home = accountLifetime.scope.serverId;
