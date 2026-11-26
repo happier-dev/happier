@@ -33,7 +33,8 @@ vi.mock('socket.io-client', async (importOriginal) =>
  *
  * The current Action declaration directly admits the present user's reversible
  * assignment. An explicit Ask-first Account policy still defers that intent to
- * an approval, which must never look like a completed assignment.
+ * an approval, which must never look like a completed assignment. Navigation
+ * cases retain a terminal bearer so their real automation Ask remains pending.
  *
  * The real controller reaches the shared Action front door, which persists an open
  * approval in the Home's stateful Artifact store; the Inbox decides it through the
@@ -50,8 +51,8 @@ vi.mock('@/utils/platform/responsive', async () => {
     return { ...actual, useIsTablet: () => layout.tablet };
 });
 vi.mock('@legendapp/list/react-native', async () => {
-    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
-    return { LegendList: createCapturingLegendListMock({ renderItems: true, renderItemLimit: 20 }).module.LegendList };
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return await createLegendListModuleMock({ renderItems: true, renderItemLimit: 20 });
 });
 // Only the portal/geometry boundary is replaced; selection and approval stay real.
 vi.mock('@/components/ui/popover', async () => {
@@ -79,6 +80,17 @@ vi.mock('@/components/ui/accessibility/announceAccessibilityMessage', () => ({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Evaluate the real App/Sync graph only after installing its transport
+// boundaries, and before case deadlines (cold source transforms can be large).
+await import('@/sync/syncEngine');
+const { SessionResponsibilitySection } = await import('./SessionResponsibilitySection');
+const { useSessionResponsibilityController } = await import('./useSessionResponsibilityController');
+const { useSessionResponsibilityPickerHost } = await import('./useSessionResponsibilityPickerHost');
+const { RetainedPanelSurface } = await import('@/components/ui/panels/RetainedPanelSurface');
+const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 
 const ACCOUNT_ID = 'account-owner';
 const HOME_IDENTITY_ID = 'srv_responsibility_home';
@@ -96,12 +108,16 @@ function summary(accountId: string, firstName: string, username: string) {
  * settings, profile and Session-local scopes together), and the Session row the
  * Home listed for it, assigned to Alice.
  */
-async function addResponsibilityHome(): Promise<string> {
+async function addResponsibilityHome(terminal = false): Promise<string> {
+    // Credential-store boundary for the released terminal Session bearer; the
+    // real credential authority decoder owns its automation classification.
+    const payload = globalThis.btoa(JSON.stringify({ sub: ACCOUNT_ID, session: 'responsibility-terminal' }))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     let serverId = await harness.addHome({
         name: 'Home One',
         serverUrl: 'https://responsibility-home.example',
         accountId: ACCOUNT_ID,
-        currentAccount: true,
+        ...(terminal ? { credentials: { token: `e30.${payload}.signature` } } : { currentAccount: true }),
         serverIdentityId: HOME_IDENTITY_ID,
     });
     const features = createRootLayoutFeaturesResponse({ capabilities: {
@@ -142,6 +158,11 @@ async function addResponsibilityHome(): Promise<string> {
         }),
     });
     serverId = restoredAccount.serverId;
+    if (terminal) {
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        try { expect(account.credentialAuthorityKind).toBe('terminal'); } finally { account.dispose(); }
+    }
     primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
     disposeRestoredAccount = () => restoredAccount.dispose();
     harness.answer(serverId, RESPONSIBILITY_SET_PATH, { body: SetSessionResponsibilityResponseSchema.parse({
@@ -150,6 +171,8 @@ async function addResponsibilityHome(): Promise<string> {
                 responsibleAccount: summary('account-bob', 'Bob', 'bob'),
                 autoFollowed: false,
             }) });
+    // The retained terminal Account bearer uses durable Ask; ordinary Account-app
+    // assignment presses answer the same policy through native confirmation.
     await harness.requireUiApproval(serverId, 'session.responsibility.set');
     // The Home's listing of this Session, written through the exact-Home list
     // row owner the Session cache uses (`concurrentSessionCache`).
@@ -162,10 +185,11 @@ async function addResponsibilityHome(): Promise<string> {
 }
 
 async function renderAssignment(serverId: string) {
-    const { SessionResponsibilitySection } = await import('./SessionResponsibilitySection');
-    const { useSessionResponsibilityController } = await import('./useSessionResponsibilityController');
-    const { useSessionResponsibilityPickerHost } = await import('./useSessionResponsibilityPickerHost');
-    const { RetainedPanelSurface } = await import('@/components/ui/panels/RetainedPanelSurface');
+    function Publication() {
+        const commands = useCurrentUiContextComposedCommands();
+        usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+        return null;
+    }
     const rowNode = { focus: vi.fn(), isConnected: true };
     const scope = { serverId, accountId: ACCOUNT_ID };
     let latest: ReturnType<typeof UseController> | null = null;
@@ -180,20 +204,20 @@ async function renderAssignment(serverId: string) {
             editable: controller.availability === 'editable',
             available: controller.availability === 'editable' || controller.availability === 'read_only',
         });
-        return <>
+        return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}><Publication />
             <RetainedPanelSurface isActive={!pickerHost.compactStepOpen} testID="responsibility-main">
                 <SessionResponsibilitySection controller={controller} pickerHost={pickerHost} />
             </RetainedPanelSurface>
             {pickerHost.compactStep}
-        </>;
+        </CurrentUiContextCommandsProvider>;
     }
-    const screen = await renderScreen(<Mounted />, {
+    const screen = await renderMountedCurrentUiContext(<Mounted />, {
         createNodeMock: (element) => (
             element.props.testID === 'session-responsibility-row' ? rowNode : null
         ),
     });
     const { storage } = await import('@/sync/domains/state/storage');
-    await waitForHomeGovernance(() => expect(latest!.availability, JSON.stringify({
+    await waitForHomeGovernance(() => expect(latest?.availability, JSON.stringify({
         availability: latest?.availability,
         rows: storage.getState().sessionListRowsByServerId,
         requests: harness.requests.map((request) => request.path),
@@ -228,9 +252,9 @@ describe('responsibility assignment awaiting its required confirmation', () => {
         disposeRestoredAccount = null;
     });
 
-    it.each([['compact', false], ['anchored', true]] as const)('returns from the %s picker to an accessible approval and settles once', async (_host, tablet) => {
+    async function openPendingAssignment(tablet: boolean, terminal = false) {
         layout.tablet = tablet;
-        const serverId = await addResponsibilityHome();
+        const serverId = await addResponsibilityHome(terminal);
         const { screen, rowNode, controller } = await renderAssignment(serverId);
 
         if (tablet) {
@@ -247,6 +271,36 @@ describe('responsibility assignment awaiting its required confirmation', () => {
         }
         await screen.pressByTestIdAsync(choice);
         const approval = await storedApproval(serverId, controller);
+        return { serverId, screen, rowNode, controller, approval };
+    }
+
+    it.each([['compact', false], ['anchored', true]] as const)('publishes the %s picker approval only while its Review control is mounted', async (_host, tablet) => {
+        const { serverId, screen, approval } = await openPendingAssignment(tablet, true);
+        expect(screen.findByTestId('session-responsibility-approval')).not.toBeNull();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+        const { t } = await import('@/text');
+        const executor = createDefaultActionExecutor();
+        const readCommands = async () => {
+            const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+            if (!read.ok) throw new Error('Expected responsibility approval context');
+            return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+        };
+        const inventory = await readCommands();
+        expect(inventory.map(command => command.title)).toEqual([t('approvals.title')]);
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+            { commandId: inventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(routerPush).toHaveBeenLastCalledWith(`/inbox/approvals/${approval.id}?serverId=${serverId}`);
+        routerPush.mockClear();
+        await screen.pressByTestIdAsync('session-responsibility-approval');
+        expect(routerPush).toHaveBeenLastCalledWith(`/inbox/approvals/${approval.id}?serverId=${serverId}`);
+        await screen.unmount();
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: inventory[0]!.id }, { surface: 'agent' }))
+            .toMatchObject({ ok: false });
+    });
+
+    it.each([['compact', false], ['anchored', true]] as const)('returns from the %s picker to an accessible approval and settles once', async (_host, tablet) => {
+        const { serverId, screen, rowNode, controller, approval } = await openPendingAssignment(tablet);
         expect(approval.request).toMatchObject({
             status: 'open',
             actionId: 'session.responsibility.set',

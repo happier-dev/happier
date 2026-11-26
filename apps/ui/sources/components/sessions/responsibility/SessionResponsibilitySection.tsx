@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
@@ -108,6 +109,14 @@ export function SessionResponsibilitySection(props: Readonly<{
                 name: responsibleName ?? t('session.responsibilityUnnamedPerson'),
             }));
     }, [controller.availability, responsibleAccountId, responsibleName]);
+    const pendingApproval = controller.pendingApproval;
+    const openApproval = React.useCallback(() => {
+        if (!pendingApproval) return;
+        router.push(`/inbox/approvals/${encodeURIComponent(pendingApproval.artifactId)}?serverId=${encodeURIComponent(pendingApproval.serverId)}`);
+    }, [pendingApproval, router]);
+    useCurrentUiContextLocalCommands(pendingApproval && controller.availability !== 'loading' && controller.availability !== 'unsupported' ? [{
+        key: 'approval.open', title: t('approvals.title'), invoke: openApproval,
+    }] : [], { contextKey: props.testID });
 
     if (controller.availability === 'loading') {
         return (
@@ -177,11 +186,7 @@ export function SessionResponsibilitySection(props: Readonly<{
                     testID="session-responsibility-approval"
                     accessibilityRole="link"
                     accessibilityLiveRegion="polite"
-                    onPress={() => {
-                        const pendingApproval = controller.pendingApproval;
-                        if (!pendingApproval) return;
-                        router.push(`/inbox/approvals/${encodeURIComponent(pendingApproval.artifactId)}?serverId=${encodeURIComponent(pendingApproval.serverId)}`);
-                    }}
+                    onPress={openApproval}
                 >
                     <Text style={[styles.secondary, styles.link]}>{`${t('approvals.title')} · ${t('approvals.status.open')}`}</Text>
                 </Pressable>
