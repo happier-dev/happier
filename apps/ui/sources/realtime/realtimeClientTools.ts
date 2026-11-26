@@ -2,6 +2,7 @@ import {
   createVoiceToolHandlers,
   type VoiceToolHandler,
 } from '@/voice/tools/handlers';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
 import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolPort';
 import {
@@ -22,8 +23,12 @@ type RealtimeClientTools = Readonly<Record<string, VoiceToolHandler>>;
 
 export function createRealtimeClientTools(input: Readonly<{
   currentUiContext?: VoiceCurrentUiToolPort;
+  currentServerId?: string;
+  resolveCurrentSessionAddress?: () => Promise<SessionAddress | null>;
 }> = {}): RealtimeClientTools {
   const allTools = createVoiceToolHandlers({
+    currentServerId: input.currentServerId,
+    resolveCurrentSessionAddress: input.resolveCurrentSessionAddress,
     resolveSessionId: async (explicitSessionId) =>
       await resolveToolSessionId({
         explicitSessionId,
@@ -45,6 +50,8 @@ export function createRealtimeClientTools(input: Readonly<{
  */
 export function createRealtimeReadOnlyClientTools(input: Readonly<{
   currentUiContext?: VoiceCurrentUiToolPort;
+  currentServerId?: string;
+  resolveCurrentSessionAddress?: () => Promise<SessionAddress | null>;
 }> = {}): RealtimeClientTools {
   const allTools = createRealtimeClientTools(input);
   const tools: Record<string, VoiceToolHandler> = {};

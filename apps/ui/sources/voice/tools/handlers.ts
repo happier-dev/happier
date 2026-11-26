@@ -1,3 +1,4 @@
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { CurrentUiContextCommandInvokeInputSchema, getActionSpec, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
 import { parseSessionAwarenessListResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
@@ -5,7 +6,7 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugin
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import type { VoiceAgentHandle } from '@/voice/agent/types';
-import { projectCurrentUiContextActionOutcome, readCurrentUiContextActionReader } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { executeCurrentUiContextAction, projectCurrentUiContextActionOutcome, readCurrentUiContextActionReader } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
@@ -362,7 +363,7 @@ export function createVoiceToolHandlers(
     };
   };
 
-  const actionExecute = createFrontDoorActionExecute(undefined, {
+  const actionExecuteOptions = {
     admittedVoiceSessionAddress: deps.resolveCurrentSessionAddress ?? deps.currentSessionAddress ?? null,
     ...(deps.readVoiceAgentHandle ? {
       readAdmittedVoiceInvocation: () => deps.readVoiceAgentHandle?.()?.actionInvocation,
@@ -401,18 +402,25 @@ export function createVoiceToolHandlers(
     readContributedActionSchemas: async (id, signal) => (
       await readInvocationUiContext()?.readCurrentContributedActionSchemas?.(id, signal) ?? null
     ),
+    uiCurrentContextAction: async request => {
+      const port = readInvocationUiContext();
+      return executeCurrentUiContextAction(request, { execute: actionExecute, context: request.context }, port);
+    },
+    // Runtime/privacy only: the executor owns effective profiled Actions settings.
     isActionEnabled: actionId => isVoiceActionAvailableInState(storage.getState(), actionId),
     readSessionMemoryEnabled: context => {
       const target = normalizeSessionAddress(context.serverId, context.defaultSessionId);
       return target ? readSessionMemoryEnabledV1(readVoiceSessionOwnerMetadataFromState(storage.getState(), target)) : undefined;
     },
-  });
+  } satisfies NonNullable<Parameters<typeof createFrontDoorActionExecute>[1]>;
+  const actionExecute = createFrontDoorActionExecute(undefined, actionExecuteOptions);
 
   const execute = async (
     toolName: string,
     parameters: unknown,
     ctx?: VoiceToolInvocationContext,
     canonicalResult = false,
+    invocationExecute = actionExecute,
   ): Promise<string> => {
     const actionId = VOICE_TOOL_ACTION_ID_BY_TOOL_NAME[toolName];
     if (!actionId) return jsonError('unsupported_action', `unsupported_action:${toolName}`);
@@ -451,7 +459,7 @@ export function createVoiceToolHandlers(
     const serverId = boundAddress?.serverId ?? defaultTarget?.serverId
       ?? (useBoundMemoryProject ? currentAddress?.serverId : null)
       ?? ctx?.serverId ?? capturedTargetServerId ?? (
-      !hasNaturalSessionReference ? deps.currentSessionAddress?.serverId ?? deps.currentServerId : null
+      !hasNaturalSessionReference ? currentAddress?.serverId ?? deps.currentServerId : null
     ) ?? (actionId === 'session.list' ? getActiveServerSnapshot().serverId : null);
     let actionInput = boundAddress ? { ...input, returnToSessionId: boundAddress.sessionId }
       : useAwareness ? { ...input, view: 'awareness' }
@@ -493,7 +501,7 @@ export function createVoiceToolHandlers(
     }
     let res: Awaited<ReturnType<typeof actionExecute>>;
     try {
-      res = await executeSpokenAction(actionExecute, actionId, actionInput, {
+      res = await executeSpokenAction(invocationExecute, actionId, actionInput, {
         surface: 'voice',
         ...(actionId === 'session.spawn_new' ? { onSessionCreationPrepared: (selection: Parameters<typeof readVoiceSpawnAlternative>[0]) => {
           spawnAgentTarget = selection.agentTarget;
@@ -691,7 +699,9 @@ export function createVoiceToolHandlers(
     if (!currentUiContext || !isVoiceActionAvailableInState(storage.getState(), CURRENT_UI_CONTEXT_READ_ACTION_ID)) {
       return jsonError('current_ui_context_unavailable', 'current_ui_context_unavailable');
     }
-    const snapshot = currentUiContext.readCurrentUiContext();
+    const admitted = JSON.parse(await execute(CURRENT_UI_CONTEXT_READ_TOOL_NAME, parameters, context, true)) as ActionExecuteResult;
+    if (admitted.ok !== true) return JSON.stringify(admitted);
+    const snapshot = admitted.result;
     if (!snapshot) return jsonError('current_ui_context_unavailable', 'current_ui_context_unavailable');
     if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
     // The provider owns this descriptor-only DTO. In particular, do not
@@ -715,19 +725,24 @@ export function createVoiceToolHandlers(
     ) {
       return jsonError('current_ui_command_unavailable', 'current_ui_command_unavailable');
     }
-    const outcome = await currentUiContext.invokeCurrentUiCommand({
-      commandId: commandInput.commandId,
-      ...(commandInput.input === undefined ? {} : { input: commandInput.input }),
-      spokenActionRequest: { actionRequestId: resolveVoiceActionRequestId(context) ?? undefined,
-        turnOrigin: context?.turnOrigin, playHostText: deps.playHostText },
-      ...(context?.signal ? { signal: context.signal } : {}),
+    // Retain this invocation's spoken origin and working Session through nested
+    // contributed Actions while the canonical executor admits the command itself.
+    const commandExecute = createFrontDoorActionExecute(undefined, {
+      ...actionExecuteOptions,
+      uiCurrentContextAction: request => executeCurrentUiContextAction(request, undefined, {
+        ...currentUiContext,
+        invokeCurrentUiCommand: command => currentUiContext.invokeCurrentUiCommand!({
+          ...command,
+          spokenActionRequest: { actionRequestId: resolveVoiceActionRequestId(context) ?? undefined,
+            turnOrigin: context?.turnOrigin, playHostText: deps.playHostText,
+            resolveCurrentSessionAddress: deps.resolveCurrentSessionAddress ?? (async () => deps.currentSessionAddress ?? null) },
+        }),
+      }),
     });
-    // The UI bridge intentionally returns only its canonical settlement. Do
-    // not echo the opaque id, private semantic command, command input, or
-    // host diagnostics across the provider boundary.
-    return outcome.ok
-      ? jsonOk(outcome.result === undefined ? undefined : { result: outcome.result })
-      : jsonError(outcome.code, outcome.code);
+    const admitted = JSON.parse(await execute(CURRENT_UI_CONTEXT_COMMAND_INVOKE_TOOL_NAME, commandInput, context, true, commandExecute)) as ActionExecuteResult;
+    return admitted.ok === true
+      ? jsonOk({ result: asPlainObject(admitted.result)?.value })
+      : JSON.stringify(admitted);
   };
 
   const invokeAction = async (
@@ -754,7 +769,8 @@ export function createVoiceToolHandlers(
     const outcome = await currentUiContext.invokeAction({
       action: actionInput.action,
       spokenActionRequest: { actionRequestId: resolveVoiceActionRequestId(context) ?? undefined,
-        turnOrigin: context?.turnOrigin, playHostText: deps.playHostText },
+        turnOrigin: context?.turnOrigin, playHostText: deps.playHostText,
+        resolveCurrentSessionAddress: deps.resolveCurrentSessionAddress ?? (async () => deps.currentSessionAddress ?? null) },
       ...(actionInput.input === undefined ? {} : { input: actionInput.input }),
       ...(context?.signal ? { signal: context.signal } : {}),
     });

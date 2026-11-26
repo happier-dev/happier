@@ -174,6 +174,9 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
      * tools; `voice_assistant` keeps the full Voice-assistant inventory.
      */
     exposure: VoiceHostToolExposure;
+    /** Host-local attempt identity; omitted for remote-assistant provisioning. */
+    controlSessionId?: string;
+    adapterId?: string;
   }>): readonly Readonly<{
     name: string;
     description: string;

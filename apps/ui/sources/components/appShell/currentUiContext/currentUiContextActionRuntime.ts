@@ -117,6 +117,7 @@ export async function executeCurrentUiContextAction(
         | Parameters<NonNullable<ActionExecutorDeps['accountHomeContinuationAction']>>[0]
         | Parameters<NonNullable<ActionExecutorDeps['voiceConversationAction']>>[0],
     hostAction?: PluginSurfaceHostActionBinding,
+    currentUiPort?: CurrentUiContextVoiceToolPort,
 ): Promise<ActionExecuteResult> {
     const surface = PluginActionSurfaceV2Schema.safeParse(request.context.surface);
     // Declared field effects borrow the mounted UI reader, not generic plugin
@@ -124,7 +125,7 @@ export async function executeCurrentUiContextAction(
     const invocationSurface = surface.success
         ? surface.data === 'plugin' ? isVoiceDictationActionId(request.actionId) ? 'ui' : null : surface.data
         : null;
-    const port = invocationSurface ? mountedPortFactory?.(invocationSurface, hostAction) : null;
+    const port = currentUiPort ?? (invocationSurface ? mountedPortFactory?.(invocationSurface, hostAction) : null);
     if (!port || request.context.signal?.aborted) {
         if (request.actionId.startsWith('ui.voice_global.dictation.')) return { ok: true,
             result: { status: 'unavailable', code: 'dictation_field_unmounted' } };
@@ -163,7 +164,7 @@ export async function executeCurrentUiContextAction(
     }
     const errorCode = outcome?.code === 'outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
         : outcome?.errorCode ?? (outcome?.code === 'denied' ? 'permission_denied'
-        : 'unsupported_action');
+        : outcome?.code ?? 'unsupported_action');
     return withActionAutomationNoticesV1({ ok: false, errorCode, error: outcome?.code ?? 'current_ui_command_unavailable' }, outcome?.automationNotices);
 }
 

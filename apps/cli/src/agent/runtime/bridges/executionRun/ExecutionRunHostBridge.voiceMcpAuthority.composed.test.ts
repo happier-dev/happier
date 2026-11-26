@@ -148,14 +148,14 @@ async function openCodePeer(prompt: (text: string) => Promise<string>) {
 afterEach(async () => { resetVoiceSessionStoreForTests(); await homes.reset(); vi.restoreAllMocks(); vi.unstubAllEnvs();
   reloadConfiguration(); resetActiveAccountSettingsSnapshotForTests(); });
 
-it.each(['account-ask', 'bound-off', 'bound-ask', 'bound-unreadable', 'team-tighten', 'team-cannot-waive', 'home-account-ask', 'shared-session-cannot-waive-account-ask', 'shared-session-cannot-waive-account-off', 'shared-off', 'shared-ask', 'cross-home', 'shared-layout1-account-ask', 'shared-layout1-account-off', 'shared-layout1-unrestricted'] as const)(
+it.each(['account-off-bound-ask', 'team-account-off', 'account-ask', 'bound-off', 'bound-ask', 'bound-unreadable', 'team-tighten', 'team-cannot-waive', 'home-account-ask', 'shared-session-cannot-waive-account-ask', 'shared-session-cannot-waive-account-off', 'shared-off', 'shared-ask', 'cross-home', 'shared-layout1-account-ask', 'shared-layout1-account-off', 'shared-layout1-unrestricted'] as const)(
   'uses the bound Voice Session for native Memory discovery and ask-first Save (%s)', async policy => {
   const serverId = await homes.addHome({ name: 'Voice Memory', serverUrl: 'https://voice-memory.test',
     accountId: 'alice', currentAccount: true });
   const actionId = 'memory.remember';
   const shared = policy.startsWith('shared-');
   const sharedLayout1 = policy.startsWith('shared-layout1-');
-  const accountOff = policy === 'shared-session-cannot-waive-account-off' || policy === 'shared-layout1-account-off';
+  const accountOff = policy === 'account-off-bound-ask' || policy === 'team-account-off' || policy === 'shared-session-cannot-waive-account-off' || policy === 'shared-layout1-account-off';
   const waive = policy === 'team-cannot-waive' || policy.startsWith('shared-session-cannot-waive');
   const accountOnly = policy === 'account-ask' || policy === 'home-account-ask';
   const actionsSettingsV1 = { v: 1, actions: { [actionId]: accountOff ? { disabledSurfaces: ['voice'] }
@@ -164,6 +164,7 @@ it.each(['account-ask', 'bound-off', 'bound-ask', 'bound-unreadable', 'team-tigh
     actionsSettingsV1, voice: { ...settingsDefaults.voice, canApproveRequests: false },
   } } } });
   homes.answer(serverId, 'GET /v1/public-shares', { body: { publicShares: [] } });
+  storage.getState().applySettingsLocal({ actionsSettingsV1: accountSettingsParse({ actionsSettingsV1 }).actionsSettingsV1 });
   const carrier = 'cmwec73r300gbmcvijq3b0p9z';
   const targetId = 'cmwec73r300gcmcvijq3b0p9z';
   const turnId = 'memory-turn';
@@ -176,7 +177,7 @@ it.each(['account-ask', 'bound-off', 'bound-ask', 'bound-unreadable', 'team-tigh
   const saveInput = { ref, expectedRevision: { headerVersion: 1, bodyVersion: 1 }, text };
   const target = createSessionFixture({ id: targetId, serverId, ...(shared ? { access: createSessionAccessFixture('edit') } : {}), metadata: { ...createTestMetadata(),
     ...(!accountOnly ? { approvalProfileId: 'bound-profile',
-      approvalProfileTeamOrGroupDerived: policy === 'team-tighten' || policy === 'team-cannot-waive' } : {}),
+      approvalProfileTeamOrGroupDerived: policy === 'team-account-off' || policy === 'team-tighten' || policy === 'team-cannot-waive' } : {}),
     workspaceId: 'project-workspace', work: { memoryEnabled: true, promptStack: [
       { id: 'project.memory', ref, enabled: true, placement: 'system_append' },
     ] } } });
@@ -186,7 +187,7 @@ it.each(['account-ask', 'bound-off', 'bound-ask', 'bound-unreadable', 'team-tigh
   const artifacts = homes.artifacts(serverId);
   if (!accountOnly) {
     const profile = ApprovalProfileArtifactV1Schema.parse({ kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, profile: {
-      name: 'Bound profile', actions: { [actionId]: (policy === 'bound-ask' || policy === 'shared-ask')
+      name: 'Bound profile', actions: { [actionId]: (policy === 'account-off-bound-ask' || policy === 'team-account-off' || policy === 'bound-ask' || policy === 'shared-ask')
         ? { approvalRequiredSurfaces: ['voice'] } : waive ? {} : { disabledSurfaces: ['voice'] } },
       ...(waive ? { approvalWaivedSurfaces: { [actionId]: ['voice'] } } : {}),
     } });
@@ -266,7 +267,7 @@ it.each(['account-ask', 'bound-off', 'bound-ask', 'bound-unreadable', 'team-tigh
     const discover = () => call('action.spec.get', { id: actionId });
     const search = () => call('action.spec.search', { query: 'memory save remember phrase project' });
     const save = () => call(actionId, saveInput);
-    if (policy === 'bound-off' || policy === 'bound-unreadable' || policy === 'team-tighten' || policy === 'shared-off' || accountOff || policy === 'cross-home') {
+    if (policy === 'bound-off' || policy === 'bound-unreadable' || policy === 'team-tighten' || policy === 'shared-off' || (accountOff && policy !== 'account-off-bound-ask') || policy === 'cross-home') {
       expect(await save()).toMatchObject({ isError: true, payload: { errorCode:
         policy === 'bound-unreadable' || policy === 'cross-home' ? 'approval_context_unavailable' : 'action_disabled' } });
       expect(artifacts.list().filter(row => row.id !== ref.artifactId && row.id !== 'bound-profile')).toHaveLength(0);

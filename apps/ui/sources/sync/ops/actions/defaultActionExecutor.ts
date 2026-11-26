@@ -824,6 +824,8 @@ type VoiceActionExecutorBinding = Readonly<{
   /** Optional surface-local policy composed with the canonical Action settings policy. */
   isActionEnabled?: NonNullable<ActionExecutorDeps['isActionEnabled']>;
   readSessionMemoryEnabled?: ActionExecutorDeps['readSessionMemoryEnabled'];
+  /** Attempt-local UI port; policy admission remains in the canonical executor. */
+  uiCurrentContextAction?: ActionExecutorDeps['uiCurrentContextAction'];
   /** Mounted device-setting lifetime guard, evaluated at the admitted persistence boundary. */
   beforeLocalSettingCommit?: () => void;
   /** Optional delivery leaf used by a surface that needs specialized ingress semantics. */
@@ -2600,7 +2602,9 @@ type VoiceActionExecutorBinding = Readonly<{
       const { admittedClientActionId: _parentAction, admittedClientActionParent: _parentCustody, ...ordinaryOptions } = opts ?? {};
       return createDefaultActionExecutor(ordinaryOptions).execute(actionId, input, context);
     },
-    uiCurrentContextAction: (request) => executeCurrentUiContextAction(request, { execute: executor.execute, context: request.context }),
+    uiCurrentContextAction: (request) => opts?.uiCurrentContextAction
+      ? opts.uiCurrentContextAction(request)
+      : executeCurrentUiContextAction(request, { execute: executor.execute, context: request.context }),
     accountHomeContinuationAction: (request) => executeCurrentUiContextAction(request),
     sessionAuthoringOpen: args => openSessionAuthoringDraft(args, accountContext ?? undefined, opts?.sessionAuthoringPresentation),
     sessionSpaceMembershipSet: args => setSessionSpaceMembership(args, accountContext ?? undefined),

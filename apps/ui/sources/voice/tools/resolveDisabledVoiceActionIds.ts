@@ -2,7 +2,6 @@ import { listVoiceActionBlockSpecs, listVoiceToolActionSpecs, type ActionSpec } 
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import type { Settings } from '@/sync/domains/settings/settings';
-import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { isInventoryPrivacyAction } from '@/sync/domains/settings/actionSettingsPolicy';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
@@ -17,8 +16,9 @@ export function isCurrentUiContextVoiceAction(actionId: ActionId): boolean {
 }
 
 /**
- * The single Voice Action availability policy. It feeds new provider catalogs
- * and remains usable by retained Local Voice handlers as settings change.
+ * Voice runtime, feature and privacy availability for catalogs and retained handlers.
+ * Actions-settings enablement belongs to the executor’s effective bound-Session
+ * policy, including Account policy when the conversation has no owned overlay.
  */
 export function isVoiceActionAvailableInState(
   state: Readonly<{ settings?: Readonly<Partial<Settings>> | null }>,
@@ -36,7 +36,7 @@ export function isVoiceActionAvailableInState(
       return false;
     }
   }
-  return isActionEnabledInState(state, actionId, { surface: 'voice' });
+  return true;
 }
 
 export function resolveEnabledVoiceToolActionSpecsFromState(state: Readonly<{ settings?: Readonly<Partial<Settings>> | null }>): readonly ActionSpec[] {

@@ -154,3 +154,65 @@ it('live Voice target policy wins over the stale turn address', async () => {
   expect(JSON.parse(await handlers.action_execute!({ actionId: 'artifact.get', input: { artifactId: 'live-profile' } }, { serverId })))
     .toMatchObject({ ok: false, errorCode: 'action_disabled' });
 });
+
+
+it.each(['direct', 'generic'] as const)('SDK %s reads inherit the live working Session profile and Home policy', async transport => {
+  const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
+  const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+  const serverId = await homes.addHome({ name: 'SDK policy', serverUrl: 'https://sdk-policy.test', accountId: 'alice', currentAccount: true });
+  homes.answer(serverId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {} } } });
+  homes.answer(serverId, 'GET /v1/public-shares', { body: { publicShares: [] } });
+  homes.answer(serverId, 'GET /v2/sessions', { body: { sessions: [], hasNext: false } });
+  const session = createSessionFixture({ id: 'sdk-target', serverId, metadata: { approvalProfileId: 'sdk-profile' } });
+  storage.getState().applySessions([session, createSessionFixture({ id: 'sdk-carrier', serverId })]);
+  homes.answer(serverId, `GET /v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(session) });
+  const profile = ApprovalProfileArtifactV1Schema.parse({ kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, profile: {
+    name: 'SDK Off', actions: { 'session.list': { disabledSurfaces: ['voice'] }, 'action.spec.search': {}, 'machines.list': {}, 'ui.current_context.read': {} },
+  } });
+  await homes.artifacts(serverId).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({ id: 'sdk-profile',
+    dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent(buildApprovalProfileArtifactHeaderV1(profile)),
+    body: encodePlainArtifactStoredContent({ body: JSON.stringify(profile) }),
+  }) });
+  const allowedSession = createSessionFixture({ id: 'sdk-allowed', serverId, metadata: { approvalProfileId: 'sdk-allowed-profile' } });
+  storage.getState().applySessions([allowedSession]);
+  homes.answer(serverId, `GET /v2/sessions/${allowedSession.id}`, { body: createPlainSessionByIdResponseFixture(allowedSession) });
+  const allowedProfile = ApprovalProfileArtifactV1Schema.parse({ kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, profile: {
+    name: 'SDK On', actions: { 'session.list': {} },
+  } });
+  await homes.artifacts(serverId).handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({ id: 'sdk-allowed-profile',
+    dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent(buildApprovalProfileArtifactHeaderV1(allowedProfile)),
+    body: encodePlainArtifactStoredContent({ body: JSON.stringify(allowedProfile) }),
+  }) });
+  const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+  const connection = await restoreServerAccountForTest({ serverUrl: 'https://sdk-policy.test', accountId: 'alice', request: (url, init) => homes.request(url, init) });
+  const bind = (home: boolean, targetSessionId = session.id) => voiceSessionBindingStore.getState().bind({ adapterId: 'sdk-provider', controlSessionId: 'sdk-call',
+    conversationSessionId: 'sdk-carrier', conversationSessionAddress: { serverId, sessionId: 'sdk-carrier' },
+    targetSessionAddress: home ? null : { serverId, sessionId: targetSessionId }, transcriptMode: 'native_session', updatedAt: 1 });
+  bind(false);
+  const lease = createBundledConversationRuntimeHostLease();
+  try {
+    const tools = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant', controlSessionId: 'sdk-call', adapterId: 'sdk-provider' });
+    const tool = tools.find(t => t.name === (transport === 'direct' ? 'listSessions' : 'action_execute'))!;
+    const execute = () => tool.execute(transport === 'direct' ? {} : { actionId: 'session.list', input: {} });
+    const listReadsBefore = homes.requestsFor('/v2/sessions').length;
+    expect(await execute()).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(homes.requestsFor('/v2/sessions')).toHaveLength(listReadsBefore);
+    expect(await tools.find(t => t.name === 'searchActionSpecs')!.execute({ query: 'memory' })).toMatchObject({ ok: true });
+    await homes.setActionPolicy(serverId, 'session.list', 'voice', 'off');
+    bind(false, allowedSession.id);
+    const enabledTools = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant', controlSessionId: 'sdk-call', adapterId: 'sdk-provider' });
+    expect(enabledTools.some(t => t.name === 'listSessions')).toBe(true);
+    const allowed = await execute();
+    expect(allowed, JSON.stringify(allowed)).toMatchObject({ ok: true });
+    const generic = tools.find(t => t.name === 'action_execute')!;
+    storage.setState(current => ({ settings: { ...current.settings, voice: { ...current.settings.voice,
+      privacy: { ...current.settings.voice.privacy, shareDeviceInventory: false, currentUiContextMode: 'off' } } } }));
+    await expect(generic.execute({ actionId: 'machines.list', input: {} })).rejects.toThrow('voice_action_unavailable');
+    await expect(generic.execute({ actionId: 'ui.current_context.read', input: {} })).rejects.toThrow('voice_action_unavailable');
+    storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, voice: false } });
+    await expect(tool.execute(transport === 'direct' ? {} : { actionId: 'session.list', input: {} })).rejects.toThrow('voice_action_unavailable');
+    storage.getState().applySettingsLocal({ featureToggles: { ...storage.getState().settings.featureToggles, voice: true } });
+    bind(true); // The same captured callback resolves actual Home Voice as explicit null.
+    expect(await execute()).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+  } finally { lease.revoke(); voiceSessionBindingStore.getState().unbind('sdk-carrier'); await connection.dispose(); }
+});

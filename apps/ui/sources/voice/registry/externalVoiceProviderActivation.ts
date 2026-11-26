@@ -678,7 +678,7 @@ export function createExternalProtocol(
           if (declaration.execution?.kind !== 'experimental_agent_session_realtime' && !attemptPolicy) {
             const voice = voiceSettingsParse(readVoiceSettingsInput(host.getSettings()));
             const tools = Object.freeze([...host.getRealtimeClientToolDefinitions({
-              exposure: 'voice_assistant',
+              exposure: 'voice_assistant', controlSessionId: prepareInput.controlSessionId, adapterId: providerId,
             })]);
             const serverId = snapshot.targetSessionAddress?.serverId ?? snapshot.voiceHomeServerId;
             if (!serverId || !snapshot.voiceHomeServerId) return { kind: 'declined' as const, code: 'voice_account_operation_unavailable' };
@@ -875,7 +875,7 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
           // the exact catalog admitted before asynchronous preparation.
           const tools = execution
             ? input.host.getRealtimeClientToolDefinitions({
-                exposure: 'current_ui_only',
+                exposure: 'current_ui_only', controlSessionId, adapterId: providerId,
               })
             : attemptPreparationByAttemptId.get(connectionInput.attemptId)?.tools;
           if (!tools) throw activationError('voice_attempt_preparation_unavailable');

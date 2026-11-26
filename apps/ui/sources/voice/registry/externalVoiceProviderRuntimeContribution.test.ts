@@ -2401,9 +2401,9 @@ describe('external Voice provider host composition', () => {
         }),
       ]);
       expect(hostCreateSdkHandleConnection).toHaveBeenCalledTimes(1);
-      expect(getRealtimeClientToolDefinitions).toHaveBeenCalledWith({
+      expect(getRealtimeClientToolDefinitions).toHaveBeenCalledWith(expect.objectContaining({
         exposure: 'current_ui_only',
-      });
+      }));
       expect(fixtureEvents).toContainEqual({
         kind: 'current_ui_context_read',
         entityLabel: 'Packed Voice current context',

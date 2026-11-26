@@ -340,6 +340,19 @@ describe('bundled Conversation runtime host tool projection', () => {
     expect(nativeNavigation.push).not.toHaveBeenCalled();
   });
 
+  it('keeps Home Voice current-UI reads subject to Account Off', async () => {
+    storage.getState().applySettingsLocal({ actionsSettingsV1: { v: 1, actions: {
+      'ui.current_context.read': { enabled: false },
+    } } });
+    const currentUiContext = await mountCurrentUiPort();
+    const lease = createBundledConversationRuntimeHostLease({ currentUiContext });
+    try {
+      const tool = lease.host.getRealtimeClientToolDefinitions({ exposure: 'voice_assistant' })
+        .find(candidate => candidate.name === 'readCurrentUiContext')!;
+      expect(await tool.execute({})).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    } finally { lease.revoke(); }
+  });
+
   it('keeps a direct read bounded to its current host generation', async () => {
     const currentUiContext = await mountCurrentUiPort();
     const lease = createBundledConversationRuntimeHostLease({
@@ -416,7 +429,7 @@ describe('bundled Conversation runtime host tool projection', () => {
         },
       }) as never);
 
-      await expect(tool.execute({ actionId: 'machines.list', input: {} })).rejects.toThrow('voice_action_unavailable');
+      await expect(tool.execute({ actionId: 'machines.list', input: {} })).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
     } finally {
       lease.revoke();
       storage.setState((current) => ({ ...current, settings: previousSettings }) as never);

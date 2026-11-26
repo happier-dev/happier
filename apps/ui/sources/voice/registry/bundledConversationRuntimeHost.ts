@@ -630,7 +630,10 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
         providerConfig: readVoiceProviderSettingsConfig(voice, providerId),
       });
     },
-    getRealtimeClientToolDefinitions({ exposure }) {
+    getRealtimeClientToolDefinitions({ exposure, controlSessionId, adapterId }) {
+      const readBinding = () => controlSessionId
+        ? voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId, adapterId }) : null;
+      const binding = readBinding();
       const enabledSpecs = resolveEnabledVoiceToolActionSpecsFromState(storage.getState());
       // An attached Agent session already owns cross-session, machine, server,
       // activity, and transcript discovery through its canonical tools. Its
@@ -643,6 +646,11 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
       // A direct SDK callback has no response/call identity. It therefore
       // remains strictly read-only; effects use canonical `tool_calls` below.
       const directHandlers = createRealtimeReadOnlyClientTools({
+        currentServerId: binding?.conversationSessionAddress.serverId,
+        resolveCurrentSessionAddress: async () => {
+          const liveBinding = readBinding();
+          return liveBinding ? resolveToolSessionAddress({ binding: liveBinding }) : null;
+        },
         ...(input.currentUiContext ? { currentUiContext: input.currentUiContext } : {}),
       });
       const definitions = actionSpecs.flatMap((spec) => {
