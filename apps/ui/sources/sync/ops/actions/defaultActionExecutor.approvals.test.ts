@@ -505,8 +505,10 @@ describe('createDefaultActionExecutor approvals', () => {
     it.each(['direct', 'admitted run'] as const)('keeps the applied %s Voice receipt and requires a tap for the next decision after the preference changes', async origin => {
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const voiceExecutor = origin === 'direct' ? executor : createDefaultActionExecutor({
-            readAdmittedVoiceInvocation: () => ({ caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' }),
-            admittedVoiceSessionAddress: null,
+            admittedVoiceBinding: {
+                readInvocation: () => ({ caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' }),
+                sessionAddress: null,
+            },
         });
         await seedApproval('voice-live-preference', liveCliConfidentialApproval());
         await seedApproval('voice-live-next', liveCliConfidentialApproval());

@@ -759,12 +759,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
 
 type VoiceActionExecutorBinding = Readonly<{
   /** Working Session from the Voice host, captured or resolved at admission; null means Home Voice. */
-  admittedVoiceSessionAddress: SessionAddress | null | (() => Promise<SessionAddress | null>);
+  sessionAddress: SessionAddress | null | (() => Promise<SessionAddress | null>);
   /** Host-owned Voice Run admission; never read from Action input or remote context. */
-  readAdmittedVoiceInvocation?: () => import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1 | undefined;
-}> | Readonly<{ readAdmittedVoiceInvocation?: undefined; admittedVoiceSessionAddress?: undefined }>;
+  readInvocation?: () => import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1 | undefined;
+}>;
 
   function buildDefaultActionExecutor(opts?: Readonly<{
+  admittedVoiceBinding?: VoiceActionExecutorBinding;
   /** Mounted draft destination; Action policy and draft settlement remain canonical. */
   sessionAuthoringPresentation?: import('@/components/sessions/new/newSessionSeedNavigation').SessionAuthoringPresentation;
   /** A mounted draft invokes its children through the ordinary captured Account executor. */
@@ -933,7 +934,7 @@ type VoiceActionExecutorBinding = Readonly<{
   /** Host-page defaults remain outside Action input and personal persisted copies. */
   resolveWidgetAreaPresets?: Parameters<typeof createWidgetAreaActionDepsV1>[1];
   widgetAreaIsCurrent?: () => boolean;
-  }> & VoiceActionExecutorBinding, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
+  }>, accountContext?: LazyActionAccountContext & { settings: Awaited<ReturnType<LazyActionAccountContext['readSettings']>> }, followReadInputs?: SessionFollowReadInputs): UiProtocolActionExecutor & Readonly<{
     executeNativeManagedAction(actionId: ManagedMachineActionIdV1, input: unknown, context?: ActionExecutorContext, confirmInFlow?: boolean,
       retainedMachine?: ManagedMachineActionOutputV1<'machines.managed.get'>, observeApproval?: boolean): Promise<ActionExecuteResult>;
     readWidgetMovementAdmission(ref: WidgetInstanceRefV1, surface: WidgetSurfaceRefV1, context: ActionExecutorContext): ReturnType<typeof readWidgetEntityMovementAdmission>;
@@ -2433,7 +2434,7 @@ type VoiceActionExecutorBinding = Readonly<{
     readApprovalProfile: accountContext ? id => readBoundApprovalProfile(accountContext, id) : undefined,
     readActionApprovalProfileId: async context => {
       const caller = context.actionCaller;
-      const voiceBinding = context.surface === 'voice' ? opts?.admittedVoiceSessionAddress : null;
+      const voiceBinding = context.surface === 'voice' ? opts?.admittedVoiceBinding?.sessionAddress : null;
       const voiceAddress = typeof voiceBinding === 'function' ? await voiceBinding() : voiceBinding;
       const sessionId = context.surface === 'voice' && voiceBinding !== undefined
         ? voiceAddress?.sessionId : caller?.kind === 'session' ? caller.sessionId : undefined;
@@ -5381,8 +5382,8 @@ type VoiceActionExecutorBinding = Readonly<{
   // caller stamps its own surface and still wins. Without this the surface reaches the catalog
   // gate nullish, which now fails closed (INV-1 / DEC-2).
   const resolveContext = (context: Parameters<typeof executor.execute>[2], input: unknown, actionId?: ActionId): ActionExecutorContext => {
-    const voiceInvocation = opts?.readAdmittedVoiceInvocation?.();
-    const surface = opts?.readAdmittedVoiceInvocation ? voiceInvocation?.surface ?? 'voice' : context?.surface ?? 'ui';
+    const voiceInvocation = opts?.admittedVoiceBinding?.readInvocation?.();
+    const surface = opts?.admittedVoiceBinding?.readInvocation ? voiceInvocation?.surface ?? 'voice' : context?.surface ?? 'ui';
     const installedAuth = getCurrentAuth();
     const credential = accountContext?.credentialAuthorityKind ?? installedAuth?.credentialAuthorityKind ?? 'none';
     const localUiInteraction = !accountContext && credential === 'none'
@@ -5401,7 +5402,7 @@ type VoiceActionExecutorBinding = Readonly<{
       actionId, voiceCanApproveRequests });
     // A fresh Voice Action can use the Run's signed authority only within the
     // Account's current Voice preference. Prepared Actions retain their decision.
-    const authority = opts?.readAdmittedVoiceInvocation
+    const authority = opts?.admittedVoiceBinding?.readInvocation
       ? credential === 'account'
         ? mayVoiceApproveBySpokenConsent(credentialAuthority === 'present_user', voiceInvocation?.authority)
           ? 'present_user' : 'account_automation'

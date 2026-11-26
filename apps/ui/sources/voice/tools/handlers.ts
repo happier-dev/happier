@@ -364,10 +364,12 @@ export function createVoiceToolHandlers(
   };
 
   const actionExecuteOptions = {
-    admittedVoiceSessionAddress: deps.resolveCurrentSessionAddress ?? deps.currentSessionAddress ?? null,
-    ...(deps.readVoiceAgentHandle ? {
-      readAdmittedVoiceInvocation: () => deps.readVoiceAgentHandle?.()?.actionInvocation,
-    } : {}),
+    admittedVoiceBinding: {
+      sessionAddress: deps.resolveCurrentSessionAddress ?? deps.currentSessionAddress ?? null,
+      ...(deps.readVoiceAgentHandle ? {
+        readInvocation: () => deps.readVoiceAgentHandle?.()?.actionInvocation,
+      } : {}),
+    },
     ...(deps.playHostText ? { onBlockingApprovalPending: ({ voiceApprovalGuidance, signal }) =>
       announceVoiceApprovalTap(voiceApprovalGuidance, deps.playHostText, signal) } : {}),
     admitSessionMessageTarget: ({ serverId, sessionId }) => {

@@ -64,7 +64,7 @@ export async function executePreparedPluginSurfaceAction(args: Readonly<{
         },
     };
     const shared = createFrontDoorActionExecute(undefined, {
-        admittedVoiceSessionAddress: spoken.resolveCurrentSessionAddress ?? null,
+        admittedVoiceBinding: { sessionAddress: spoken.resolveCurrentSessionAddress ?? null },
     });
     // This envelope is host-local. It binds the read-back to placement and
     // occurrence as well as operands; only its strict Action input crosses admission.

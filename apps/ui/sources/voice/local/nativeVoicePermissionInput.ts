@@ -44,10 +44,12 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   onResponseSettled: (result: Readonly<{ ok: true; decision: NativePermissionDecision }> | Readonly<{ ok: false; error: unknown }>) => Promise<void>;
 }>): NativeVoicePermissionInput {
   const execute = createFrontDoorActionExecute(undefined, {
-    readAdmittedVoiceInvocation: () => params.readVoiceAgentHandle()?.actionInvocation,
-    admittedVoiceSessionAddress: async () => voiceConversationBindingResolver.resolveByControlSessionId({
-      controlSessionId: params.controlSessionId,
-    })?.targetSessionAddress ?? null,
+    admittedVoiceBinding: {
+      readInvocation: () => params.readVoiceAgentHandle()?.actionInvocation,
+      sessionAddress: async () => voiceConversationBindingResolver.resolveByControlSessionId({
+        controlSessionId: params.controlSessionId,
+      })?.targetSessionAddress ?? null,
+    },
   });
   const readCanApproveRequests = () => mayVoiceApproveBySpokenConsent(
     storage.getState().settings.voice.canApproveRequests,
