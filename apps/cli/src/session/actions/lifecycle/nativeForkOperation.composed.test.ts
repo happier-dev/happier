@@ -22,6 +22,7 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { projectCurrentAgentSessionView } from '@happier-dev/agents';
 
 const machineRpc = vi.hoisted(() => vi.fn());
@@ -129,12 +130,15 @@ describe('admitted native fork', () => {
       accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId: 'session.fork', requestId: 'native-fork-request',
       machineId, installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43),
     } });
-    const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
+    const executor = createActionExecutor({ ...createCliActionDeps({ token: credentials.token, credentials,
       sessionId: parentSessionId, mode: 'plain', ctx: null, serverId: 'home', serverIdentityId: 'home',
       externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: new Uint8Array(32),
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
       machineActionDirectTargetTransport: { machineId, invoke: (method, input, options) => manager.invokeLocal(method, input, options) },
-    }));
+    }), actionAutomations: createActionAutomationPortV1({ accountId: 'fixture-account',
+      // The Home index is a system boundary; selection and admission stay real.
+      seed: async () => ({ v: 1, rows: [] }), settle: async () => {},
+    }) });
     const response = await operations.runActionOperation({ actionId: 'session.fork', input: actionInput,
       context: { surface: 'cli', authority: 'present_user', actionRequestId: 'native-fork-request', defaultSessionId: parentSessionId,
         runtimeAccountId: 'fixture-account', serverId: 'home', serverIdentityId: 'home',
@@ -147,7 +151,8 @@ describe('admitted native fork', () => {
       execute: context => executor.execute('session.fork', actionInput, context) });
     // Claude's current native-fork capability is unsupported. The native owner
     // must decide that; a second observation must not replace it with a conflict.
-    expect(response).toEqual({ ok: false, errorCode: 'INVALID_REQUEST', error: 'Requested fork strategy is not supported' });
+    expect(response).toEqual({ ok: false, errorCode: 'INVALID_REQUEST', error: 'Requested fork strategy is not supported',
+      requestId: 'native-fork-request' });
     expect(unexpectedRequests).toEqual([]);
   });
 });
