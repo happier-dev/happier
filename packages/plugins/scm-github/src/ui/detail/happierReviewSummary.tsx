@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { presentActionFailure } from '@happier-dev/plugin-sdk/ui';
+import { projectPluginActionRejectionV1 } from '@happier-dev/plugin-ui/hostApi';
 import { Stack, usePluginHostApi, useSurfaceContext } from '@happier-dev/plugin-ui';
 import {
   Button,
@@ -58,7 +60,17 @@ function SkippedReviewSummary({ skip }: Readonly<{ skip: GithubReviewSkipV1 }>):
   const editAutomation = React.useCallback(async () => {
     if (automationId === undefined) return;
     try { await host.openResource({ kind: 'automation', automationId }); }
-    catch { await host.notify(text('happier.plugin-ui.action.error.failed', 'The action failed.'), { severity: 'error' }); }
+    catch (error) {
+      const failure = projectPluginActionRejectionV1(error, text);
+      if (failure.status !== 'error' && failure.status !== 'outcomeUnknown') return;
+      const presentation = await presentActionFailure(host, {
+        ok: false, errorCode: failure.code, message: failure.message,
+        ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+      });
+      await host.notify([presentation.reason, presentation.nextStep,
+        ...presentation.technicalDetails.map(detail => `${detail.label}: ${detail.value}`)]
+        .filter(Boolean).join('\n'), { severity: 'error' });
+    }
   }, [automationId, host, text]);
   const actions = reviewAnyway === null && automationId === undefined ? undefined : (
     <>

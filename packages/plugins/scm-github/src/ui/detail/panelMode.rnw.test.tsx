@@ -217,6 +217,8 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
   admittedReview?: () => Readonly<{ reviewId: string; roundOrdinal: number }> | undefined;
   reviewSkip?: JsonValue;
   openedResources?: unknown[];
+  rejectOpenResource?: PluginError;
+  notices?: string[];
   navigation?: Array<PluginUiPageNavigationV1 | null>;
   reads?: string[];
   renderMarkdown?: (input: MarkdownProps) => React.ReactElement;
@@ -281,7 +283,11 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
       adapter: createPluginUiRnwSemanticSurfaceAdapter(options.changedFilesReview === true ? { changedFilesReview: true } : {}),
       launchInput: { ...(launchInput() as Record<string, JsonValue>), ...(options.direct ? {} : { panel: typeof panel === 'string' ? panel : panel() }) } as JsonValue,
       handlers: {
-        openResource: ({ resource }) => { options.openedResources?.push(resource); },
+        openResource: ({ resource }) => {
+          if (options.rejectOpenResource) throw options.rejectOpenResource;
+          options.openedResources?.push(resource);
+        },
+        notify: ({ message }) => { options.notices?.push(message); },
         readResource: async ({ resource }) => {
           // A real host serves the Review's findings window with its detail; these PR fixtures have no findings.
           if (typeof resource !== 'string' && 'hostRead' in resource && resource.hostRead === 'reviews.comments.list') {
@@ -421,6 +427,19 @@ describe('the GitHub detail as Triage panels', () => {
     ['draft', {}, 'It’s a draft, and drafts are skipped under the repository’s review rules.'],
     ['noReviewablePaths', {}, 'Every changed file matches a path ignored under this automation.'],
   ] as const;
+  it('preserves the automation-open refusal code and request ID in the notification', async () => {
+    const notices: string[] = [];
+    const fixture = await mountPanel('overview', {
+      notices,
+      rejectOpenResource: new PluginError({ code: 'permission_denied', details: { requestId: 'automation-open-42' } }),
+      reviewSkip: { headSha: HEAD_REVISION, reason: 'noReviewablePaths', rules: skipRules,
+        occurrence: {}, automationId: 'automation-review-prs' },
+    });
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Edit the automation' })); });
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('permission_denied');
+    expect(notices[0]).toContain('automation-open-42');
+  });
   it.each([false, true])('drops the recorded draft skip once the exact GitHub read reports ready (direct=%s)', async direct => {
     const fixture = await mountPanel('overview', { direct, overview: { ...(overviewAnswer() as Record<string, JsonValue>), draft: false },
       reviewSkip: { headSha: HEAD_REVISION, reason: 'draft', rules: skipRules, occurrence: {} } });
