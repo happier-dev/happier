@@ -26,6 +26,26 @@ it('leads a failed history row with the recorded container cause and recovery', 
     });
 });
 
+it('shows the Machine carrier recovery when a fleet archive restore fails', async () => {
+    const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+    const receipt = createDeploymentReceiptHeaderV1({ state: 'failed' });
+    const failure = {
+        code: 'machine_carrier_unavailable',
+        phase: 'restore' as const,
+        failureCause: {
+            errorClass: 'Error' as const,
+            httpStatus: null,
+            phase: 'daemon.filesystem.copy.source.iroh.tunnel_open',
+            errorCode: 'machine_carrier_unavailable',
+            nativeErrorCode: 'transport-unavailable',
+        },
+    };
+    expect(deploymentHistoryLead(receipt, failure)).toEqual({
+        tone: 'danger',
+        text: readDeploymentRefusalRecoveryV1('machine_carrier_unavailable')?.remedy,
+    });
+});
+
 describe('deploy availability', () => {
     const environment = { capabilities: { deploy: true } } as Parameters<typeof deploymentDeployAvailability>[0]['environment'];
     const link = (targetKind: string) => ({ id: 'link-1', targetKind }) as NonNullable<Parameters<typeof deploymentDeployAvailability>[0]['runtimeTargetLink']>;

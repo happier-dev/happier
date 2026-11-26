@@ -215,8 +215,11 @@ export function deploymentHistoryLead(
   failure: DeploymentReceiptFailureV1 | null | undefined,
 ): Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null {
   if (receipt.state === 'failed' && failure) {
-    const nativeCause = failure.nativeActivation ? readDeploymentRefusalRecovery(failure.code, failure)?.remedy : null;
-    return { tone: 'danger', text: nativeCause ?? deploymentFailureTitle(failure, receipt.operation) };
+    const carrierUnavailable = failure.code === 'machine_carrier_unavailable'
+      || failure.failureCause?.errorCode === 'machine_carrier_unavailable';
+    const remedy = failure.nativeActivation || carrierUnavailable
+      ? readDeploymentRefusalRecovery(failure.code, failure)?.remedy : null;
+    return { tone: 'danger', text: remedy ?? deploymentFailureTitle(failure, receipt.operation) };
   }
   if (receipt.state === 'outcome_unknown' && failure?.code === 'deployment_activation_not_observed') {
     return deploymentStateNotice(receipt.state, failure);
