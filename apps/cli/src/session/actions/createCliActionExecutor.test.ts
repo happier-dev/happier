@@ -1493,7 +1493,7 @@ describe('createCliActionExecutor', () => {
       'action.options.resolve',
       {
         actionId: 'review.start',
-        fieldPath: 'engineIds',
+        fieldPath: 'reviewers',
         sessionId: 'sess-1',
       },
       { surface: 'mcp', defaultSessionId: 'sess-1' },
@@ -1503,16 +1503,11 @@ describe('createCliActionExecutor', () => {
       ok: true,
       result: {
         actionId: 'review.start',
-        fieldPath: 'engineIds',
+        fieldPath: 'reviewers',
         optionsSourceId: 'review.engines.available',
-        options: expect.arrayContaining([
-          expect.objectContaining({ value: 'claude' }),
-          expect.objectContaining({ value: 'codex' }),
-          expect.objectContaining({ value: 'opencode' }),
-          expect.objectContaining({ value: 'coderabbit' }),
-          expect.objectContaining({ value: 'deepsec' }),
+        options: [
           expect.objectContaining({ value: 'agent:happier.agent.custom-acp/custom-acp:definition:review-bot', label: 'Review Bot' }),
-        ]),
+        ],
       },
     });
   });
