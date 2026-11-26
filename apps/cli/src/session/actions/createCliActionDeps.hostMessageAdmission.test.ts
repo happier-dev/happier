@@ -5,6 +5,11 @@ import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGran
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { z } from 'zod/mini';
+import { ArtifactHttpReadV1Schema, type ArtifactHttpReadV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { artifactReadResponse } from '@/testkit/http/artifactHome';
+import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -183,7 +188,7 @@ describe('CLI host Message admission', () => {
       context, serverId: 'foreign-home' })).toMatchObject({ ok: false, error: 'forbidden' });
     expect(writes).toHaveLength(1);
   });
-  it.each([false, true])('admits Voice later-return only through a current person approval (target changed:%s)', async targetChanged => {
+  it.each([false, true])('admits Voice later-return only through a current person approval (origin Machine changed:%s)', async originMachineChanged => {
     const receiverId = 'cmv3voiceapprovalaaaaaaa';
     const returnToSessionId = 'bound-voice-session';
     const localId = 'voice-approved-ask';
@@ -194,19 +199,51 @@ describe('CLI host Message admission', () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null };
     let currentMachineId = machineId;
-    let stored: ApprovalRequest | null = null;
+    const artifacts = new Map<string, ArtifactHttpReadV1>();
+    const readApproval = () => {
+      const artifact = [...artifacts.values()][0];
+      if (!artifact) return null;
+      const body = z.object({ body: z.string() }).parse(decodePlainArtifactStoredContent(artifact.body));
+      return ApprovalRequestV2Schema.parse(JSON.parse(body.body));
+    };
     const writes: unknown[] = [];
     http.get.mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: accountId } };
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (url.includes('/v1/artifacts/')) {
+        const artifact = artifacts.get(new URL(url).pathname.split('/')[3]!);
+        return { status: artifact ? 200 : 404, data: artifact ?? {} };
+      }
       if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
       if (url.endsWith('/messages/reply-capability')) return { status: 200, data: { v: 1, protocolVersions: [1] } };
       if (url.endsWith(`/v2/sessions/${receiverId}`)) return { status: 200, data: { session: createSessionRecordFixture({
         id: receiverId, active: true, encryptionMode: 'plain', machineId: currentMachineId,
         metadata: JSON.stringify({ machineId: currentMachineId }),
       }) } };
+      if (url.endsWith(`/v1/machines/${currentMachineId}`)) return { status: 200, data: {
+        machine: { ...ExternalActionMachineBootstrapV1Schema.parse({ id: currentMachineId, kind: 'persistent',
+          active: true, managedMachineRef: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+          revokedAt: null, replacedByMachineId: null }), presenceProtocolVersion: 1 },
+      } };
       throw new Error(`Unexpected Voice approval HTTP read: ${url}`);
     });
     http.post.mockImplementation(async (url: string, body: unknown) => {
+      if (url.endsWith('/v1/artifacts/read')) return artifactReadResponse(body, id => artifacts.get(id) ?? null);
+      if (new URL(url).pathname.startsWith('/v1/artifacts')) {
+        const mutation = readCarrierMutation(body);
+        const id = typeof mutation.id === 'string' ? mutation.id : new URL(url).pathname.split('/')[3]!;
+        const previous = artifacts.get(id);
+        if (previous) {
+          expect(mutation.expectedHeaderVersion).toBe(previous.headerVersion);
+          expect(mutation.expectedBodyVersion).toBe(previous.bodyVersion);
+        }
+        const version = (previous?.bodyVersion ?? 0) + 1;
+        const artifact = z.object(ArtifactHttpReadV1Schema.shape).parse({ ...previous, ...mutation, id,
+          ownerAccountId: accountId, access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
+          headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version });
+        artifacts.set(id, artifact);
+        return { status: 200, data: { ...artifact, created: !previous, success: true } };
+      }
       if (url.endsWith('/pending')) { writes.push(body); return { status: 200, data: { didWrite: true, terminal: false } }; }
       expect(body).toEqual({ kind: 'release' });
       return { status: 200, data: { v: 1, ok: true, progress: { v: 1, mode: 'return',
@@ -214,41 +251,46 @@ describe('CLI host Message admission', () => {
     });
     const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials,
       machineId, serverId, serverApiUrl: resolveServerHttpBaseUrl(),
-      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId, machineId }) });
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId, machineId: currentMachineId }) });
     const executor = createActionExecutor({
       ...createCliActionDeps({ token, credentials, sessionId: 'daemon-global', mode: 'plain', ctx: null }),
-      // Artifact persistence is the boundary. Approval policy/claim/replay,
-      // Home/target currentness and the actual human-input writer stay real.
-      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'voice-approval' }; },
-      approvalsGet: async () => stored,
-      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      // Home HTTP is the persistence boundary; approval creation, claim and replay stay real.
       isApprovalExecutionOriginCurrent: currentness,
     });
     const input = { sessionId: receiverId, message: 'Return the answer here.', localId, reply: 'return', returnToSessionId };
-    expect(await executor.execute('session.message.send', input, { surface: 'voice', authority: 'account_automation',
+    const approval = await executor.execute('session.message.send', input, { surface: 'voice', authority: 'account_automation',
       actionCaller: { kind: 'host' }, runtimeAccountId: accountId, serverId, serverIdentityId,
-      defaultSessionId: returnToSessionId, defaultSessionMachineId: machineId, actionRequestId: 'voice-call' }))
-      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'voice-approval' } });
+      defaultSessionId: returnToSessionId, defaultSessionMachineId: machineId, actionRequestId: 'voice-call' });
+    const artifactId = [...artifacts.keys()][0];
+    if (!artifactId) throw new Error('Missing persisted Voice approval');
+    expect(approval, JSON.stringify(approval)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId } });
     expect(writes).toEqual([]);
-    expect(stored).toMatchObject({ actionArgs: input, executionOriginV1: {
+    expect(readApproval()).toMatchObject({ actionArgs: input, executionOriginV1: {
       authority: 'account_automation', surface: 'voice', caller: { kind: 'host' },
     } });
-    expect(await executor.execute('approval.request.decide', { artifactId: 'voice-approval', decision: 'approve' }, {
+    const automatedDecision = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
       surface: 'api', authority: 'account_automation', runtimeAccountId: accountId, serverId, serverIdentityId,
       externalActionCredential: { accountId, principalId: 'token', credentialId: 'token',
         grant: { ...API_TOKEN_FULL_GRANT_V1, approve: true } },
-    })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(stored).toMatchObject({ status: 'open' });
+    });
+    expect(automatedDecision, JSON.stringify(automatedDecision)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(readApproval()).toMatchObject({ status: 'open' });
     expect(writes).toEqual([]);
-    if (targetChanged) currentMachineId = 'replacement-machine';
-    const decision = await executor.execute('approval.request.decide', { artifactId: 'voice-approval', decision: 'approve' }, {
+    if (originMachineChanged) currentMachineId = 'replacement-machine';
+    const decision = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
       serverId, serverIdentityId, defaultSessionId: 'a-different-visible-session',
     });
-    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true, result: targetChanged
-      ? { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } }
-      : { status: 'executed', execution: { ok: true, result: { status: 'accepted', localId } } } });
-    expect(writes).toEqual(targetChanged ? [] : [expect.objectContaining({ reply: {
+    if (originMachineChanged) {
+      expect(decision).toEqual({ ok: false, errorCode: 'approval_stale', error: 'approval_stale',
+        effectAttempted: false, details: { reason: 'machine_changed' } });
+      expect(readApproval()).toMatchObject({ status: 'approved', decision: { kind: 'approve', authority: 'present_user' } });
+      expect(readApproval()).not.toHaveProperty('execution');
+    } else {
+      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true,
+        result: { status: 'executed', execution: { ok: true, result: { status: 'accepted', localId } } } });
+    }
+    expect(writes).toEqual(originMachineChanged ? [] : [expect.objectContaining({ reply: {
       mode: 'return', humanOrigin: { sessionId: returnToSessionId },
     }, content: { t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({
       happierInputRequestV1: expect.objectContaining({ caller: { kind: 'host' }, replyIntent: {
@@ -291,7 +333,7 @@ describe('CLI host Message admission', () => {
   it.each([false, true])('admits a human-origin Ask through the Action front door with its exact return destination (structured:%s)', async structured => {
     const receiverId = 'cmv3humanadmissionaaaaaaa';
     const localId = 'human-ask-input';
-    const humanOrigin = { sessionId: 'composer-session' };
+    const humanOrigin = { sessionId: 'cmv3humancomposeraaaaaaaa' };
     let admitted: unknown;
     http.get.mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
@@ -299,6 +341,15 @@ describe('CLI host Message admission', () => {
       if (url.endsWith(`/v2/sessions/${receiverId}`)) return { status: 200, data: { session: createSessionRecordFixture({
         id: receiverId, active: true, encryptionMode: 'plain', machineId: 'machine-1', metadata: JSON.stringify({ machineId: 'machine-1' }),
       }) } };
+      if (url.endsWith(`/v2/sessions/${humanOrigin.sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+        id: humanOrigin.sessionId, active: true, encryptionMode: 'plain', machineId: 'machine-1',
+        metadata: JSON.stringify({ machineId: 'machine-1' }),
+      }) } };
+      if (url.endsWith('/v1/machines/machine-1')) return { status: 200, data: {
+        machine: { ...ExternalActionMachineBootstrapV1Schema.parse({ id: 'machine-1', kind: 'persistent',
+          active: true, managedMachineRef: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+          revokedAt: null, replacedByMachineId: null }), presenceProtocolVersion: 1 },
+      } };
       throw new Error(`Unexpected human Ask HTTP read: ${url}`);
     });
     http.post.mockImplementation(async (url: string, body: unknown) => {
@@ -306,7 +357,7 @@ describe('CLI host Message admission', () => {
       expect(body).toEqual({ kind: 'release' });
       return { status: 200, data: { v: 1, ok: true, progress: { v: 1, mode: 'return', humanOrigin, disposition: 'return_pending' } } };
     });
-    const deps = createCliActionDeps({ token: 'test-account-token', sessionId: 'composer-session', mode: 'plain', ctx: null,
+    const deps = createCliActionDeps({ token: 'test-account-token', sessionId: humanOrigin.sessionId, mode: 'plain', ctx: null,
       credentials: { token: 'test-account-token', encryption: null },
       machineAdmissionTransport: async () => { throw new Error('Human Ask must retain its authenticated Account requester'); } });
     const executor = createActionExecutor(deps);
@@ -314,9 +365,10 @@ describe('CLI host Message admission', () => {
     const input = { sessionId: receiverId, message: '@source Which revision?', localId, reply: 'return', returnToSessionId: humanOrigin.sessionId,
       ...(structured ? { structuredInput } : {}),
       requestedAction: { v: 1, kind: 'enqueue' } };
-    expect(await executor.execute('session.message.send', input, {
+    const accepted = await executor.execute('session.message.send', input, {
       surface: 'ui', authority: 'present_user', serverId: 'home', defaultSessionId: humanOrigin.sessionId,
-    })).toMatchObject({ ok: true, result: { status: 'accepted', localId } });
+    });
+    expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true, result: { status: 'accepted', localId } });
     expect(admitted).toMatchObject({ reply: { mode: 'return', humanOrigin }, content: { t: 'plain', v: {
       meta: { happierInputRequestV1: { producer: 'happierApp', replyIntent: { mode: 'return', humanOrigin } } },
     } } });
@@ -365,7 +417,8 @@ describe('CLI host Message admission', () => {
           encryptionMode: 'plain', machineId: 'machine-1', metadata: JSON.stringify({ machineId: 'machine-1' }) }),
       } };
       if (url.endsWith(`/v2/sessions/${sourceSessionId}`)) return { status: 200, data: {
-        session: createSessionRecordFixture({ id: sourceSessionId, share: null }),
+        session: createSessionRecordFixture({ id: sourceSessionId, share: null, encryptionMode: 'plain',
+          machineId: 'machine-1', metadata: JSON.stringify({ machineId: 'machine-1' }) }),
       } };
       throw new Error('Unexpected host admission HTTP read');
     });
@@ -382,11 +435,12 @@ describe('CLI host Message admission', () => {
         });
       },
     });
-    await expect(sourceAction({ kind: 'action.execute', requestId: 'source-witness',
+    const control = await sourceAction({ kind: 'action.execute', requestId: 'source-witness',
       actionId: 'notifications.notify_me', input: { message: 'Observe the source witness' },
       witness: { turnId: sourceTurnId, inputId: 'session-input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
         agentStartCaller: { kind: 'session', sessionId: sourceSessionId, starterDepth: 0, turnDepth: 0 } },
-    }, { sessionId: sourceSessionId, isCurrent: async () => true })).resolves.toMatchObject({ ok: true });
+    }, { sessionId: sourceSessionId, isCurrent: async () => true });
+    expect(control, JSON.stringify(control)).toMatchObject({ ok: true });
     if (!readWitnessedTurnDepth) throw new Error('The Session witness must install its exact-turn reader');
     const deps = createCliActionDeps({ token: 'test-account-token', sessionId: sourceSessionId, mode: 'plain', ctx: null,
       credentials: { token: 'test-account-token', encryption: null },
