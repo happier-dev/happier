@@ -1721,10 +1721,16 @@ describe('Environment draft Machine Home', () => {
 
   it('a generic provider refusal names the platform and shows its technical cause', async () => {
     const { t } = await import('@/text');
+    const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
     const failureCause = { phase: 'deployment.provider.link', errorClass: 'Error', errorCode: 'unauthorized', httpStatus: 401 };
+    const { reason } = presentActionFailureOutcome({
+      errorCode: 'provider_request_failed', error: 'provider_request_failed', effectAttempted: true, failureCause,
+    }, 'deployment');
+    expect(reason).toBeTruthy();
     await refusePlatformCreateAfterSave('draft-platform-create-unauthorized', failureCause, async screen => {
       const banner = screen.banner();
-      expect(banner?.description).toBe(t('newApp.deploy.plan.platformRefused', { platform: 'Beta runtime' }));
+      expect(banner?.title).toBe(t('newApp.deploy.plan.platformRefusedTitle', { platform: 'Beta runtime' }));
+      expect(banner?.description).toBe(reason);
       expect(banner?.details).toEqual(expect.arrayContaining([
         `${t('approvals.failureTechnicalLabels.causeCode')}: unauthorized`,
       ]));
