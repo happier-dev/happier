@@ -929,8 +929,10 @@ describe('Machine sharing through the canonical controller and sheet', () => {
         try {
             const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
             const base = createMachineFixture({ id: 'machine' });
-            getStorage().getState().applyMachines([{ ...base, metadata: { ...base.metadata!, platform: 'linux',
-                agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } }], true, { sourceServerId: scope.serverId });
+            getStorage().getState().applyMachines([{ ...base, metadata: { ...base.metadata!, platform: 'linux', displayName: 'Devbox',
+                agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' } } }], true, {
+                sourceServerId: scope.serverId, sourceAccountId: scope.accountId,
+            });
             function Surface() {
                 const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
                 return <ShareSheet host={SHARE_SHEET_HOST} model={controller.model} actions={controller.actions}
@@ -961,7 +963,10 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             const title = review.chrome?.title ?? '';
             const message = review.chrome?.kind === 'card' ? review.chrome.subtitle ?? '' : '';
             expect(review.props?.confirmLabel).toBe('Share a machine');
-            expect(title).toContain('Devbox');
+            expect(title).toBe('Share a machine');
+            const reviewScreen = await renderScreen(React.createElement(review.component, { ...review.props, onClose: () => {} }));
+            await vi.waitFor(() => expect(reviewScreen.getTextContent()).toContain('Devbox'));
+            await reviewScreen.unmount();
             expect(message).toContain('Bob');
             expect(message).toContain(t(level === 'admin' ? 'machines.sharing.manage' : 'machines.sharing.use'));
             expect(message).toContain(t('machines.sharing.memberUsersLead', { machine: 'Devbox' }));
