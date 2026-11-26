@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
 import { Typography } from '@/constants/Typography';
 import { pageTitleTypography, usePageTitleMaxLines } from '@/components/ui/layout/pageTitleTypography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -90,6 +91,12 @@ export type PageHeaderProps = Readonly<{
      * pane keeps its title to one line so the header holds its height (the workflow editor, F5).
      */
     titleLines?: 1 | 2;
+    /**
+     * The title is still being read (a Machine whose name has not opened yet): the quiet loading bar stands on the
+     * title's own line box, as wide as `title` drawn there, so nothing moves when the name lands and the word is never
+     * shown. `title` still names the page for the navigation chrome.
+     */
+    titlePending?: boolean;
     /** Identity details under the description (an identifier to copy, a version and machine). */
     details?: React.ReactNode;
     /** Defaults to identity; column places the summary below title and actions at full content width. */
@@ -316,6 +323,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         // The editable title stops where the read-only one does, until the person edits it.
         ? <InlineTextField editor={props.titleEditor} style={stylesheet.titleInput}
             restingLines={props.titleLines ?? titleMaxLines} />
+        : props.titlePending ? <PendingPageTitle title={props.title} />
         // A drawn title keeps each " · " separator with the word before it: a wrapped line never starts with "·".
         : props.title.replaceAll(' · ', '\u00A0· ');
     const titleNode = props.titleLeading != null
@@ -425,6 +433,25 @@ export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrima
     );
 }
 
+/**
+ * A title still being read: the title's own text, unseen, sets the line box, and the loading rows' quiet bar stands on it
+ * (the meta line's pending fact, for the title).
+ */
+function PendingPageTitle(props: Readonly<{ title: string }>) {
+    return (
+        <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={stylesheet.pendingTitle}>
+            <View style={stylesheet.pendingTitleText}>
+                <PageTitleText header={false} style={stylesheet.title}>{props.title}</PageTitleText>
+            </View>
+            <View style={stylesheet.pendingTitleBar}>
+                <SkeletonTitle line="whole" lineHeight={PAGE_TITLE_LINE_HEIGHT} testID="page-header-title-pending" />
+            </View>
+        </View>
+    );
+}
+
+const PAGE_TITLE_LINE_HEIGHT = happierPageTextMetrics('pageTitle').lineHeight;
+
 /** A page title wraps before it ends in an ellipsis, by the one title line rule (`usePageTitleMaxLines`). */
 function PageTitleText(props: Readonly<{
     header: boolean;
@@ -492,6 +519,22 @@ const stylesheet = StyleSheet.create((theme) => ({
     titleLeadingTitle: {
         flexShrink: 1,
         minWidth: 0,
+    },
+    pendingTitle: {
+        position: 'relative',
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+    },
+    pendingTitleText: {
+        opacity: 0,
+    },
+    pendingTitleBar: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        justifyContent: 'center',
     },
     title: {
         ...pageTitleTypography(),

@@ -311,6 +311,38 @@ describe('MachineDetailScreen hydration', () => {
         expect(home.storage.getState().machines['machine-missing']?.metadata?.displayName).toBe('Recovered Machine');
     });
 
+    // A cold page can hold a Machine's row before its details open (a presence update arrived first). Its name is not
+    // known yet, so the header holds the name's and the facts' places, draws no actions, and the tabs and sections wait:
+    // everything lands once, under the name the page keeps (UI refinements ruling 2026-11-26, Machine header at 390).
+    it('holds the identity places and lands tabs, actions and sections once the Machine name opens', async () => {
+        routeParams.current = { id: 'machine-name-opening' };
+        home = await arrangeMachineDetailsHomeForTests(network, { serverUrl: 'https://machine-name-opening.example.test' });
+        deferred = createDeferred<readonly Machine[]>();
+        home.state.readMachines = () => deferred!.promise;
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const named = createMachineFixture({ id: 'machine-name-opening', active: true, activeAt: Date.now(),
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Opened Machine', host: 'opened-host', platform: 'darwin' } });
+        // What a presence update leaves before the Machine's details open: no metadata and no availability verdict yet.
+        const opening: Machine = { ...named, metadata: null, daemonState: null, daemonStateVersion: 0, availability: undefined };
+        home.storage.getState().applyMachines([opening], false, { sourceServerId: getActiveServerSnapshot().serverId });
+        const screen = await home.render(MachineDetailScreen);
+        await vi.waitFor(() => expect(screen.findByTestId('page-header-title-pending'), screen.getTextContent()).not.toBeNull());
+        expect(screen.getTextContent()).not.toContain('Opened Machine');
+        expect(screen.findByTestId('machine-detail-loading')).not.toBeNull();
+        for (const later of ['machine-detail-start-session', 'machine-detail-menu', 'machine-page-tabs', 'machine-overview']) {
+            expect(screen.findByTestId(later), later).toBeNull();
+        }
+        await act(async () => {
+            deferred!.resolve([named]);
+            home!.storage.getState().applyMachines([named], false, { sourceServerId: getActiveServerSnapshot().serverId });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+        });
+        await vi.waitFor(() => expect(screen.findByTestId('page-header-title-pending')).toBeNull());
+        expect(screen.getTextContent()).toContain('Opened Machine');
+        expect(screen.findByTestId('machine-detail-loading')).toBeNull();
+        expect(screen.findByTestId('machine-detail-menu')).not.toBeNull();
+    });
+
     it('retains the page header with not-found after a real successful empty refresh', async () => {
         home = await arrangeMachineDetailsHomeForTests(network, { serverUrl: 'https://machine-hydration-empty.example.test' });
         const screen = await home.render(MachineDetailScreen);

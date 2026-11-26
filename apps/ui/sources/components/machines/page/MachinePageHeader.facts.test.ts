@@ -28,6 +28,22 @@ const access = (displayName: string): AccessibleMachineAccessV1 => ({
 });
 
 describe('machine page header facts', () => {
+  // A Machine's published daemon state opens after its name (its crypto waits behind every Machine's name). Until then
+  // the facts it brings hold their places as pending facts, so the line does not wrap later; once it has opened, a
+  // daemon state without them leaves no place behind.
+  it('holds the places of the daemon-published facts while that state is still opening', () => {
+    const machine = { ...createMachineFixture(), daemonState: null };
+    const opening = composeMachinePageHeaderFacts({ machine, online: true, managedMeta: undefined, replacedByMachineLabel: null,
+      daemonStateOpening: true });
+    expect(opening.filter(fact => fact.pending).map(fact => fact.key)).toEqual(['host-size', 'uptime', 'cli']);
+    const offline = composeMachinePageHeaderFacts({ machine, online: false, managedMeta: undefined, replacedByMachineLabel: null,
+      daemonStateOpening: true });
+    expect(offline.filter(fact => fact.pending).map(fact => fact.key)).toEqual(['host-size', 'cli']);
+    const opened = composeMachinePageHeaderFacts({ machine, online: true, managedMeta: undefined, replacedByMachineLabel: null,
+      daemonStateOpening: false });
+    expect(opened.some(fact => fact.pending)).toBe(false);
+  });
+
   it('keeps generated hosts out of managed identity facts while retaining ordinary machine host facts', () => {
     const machine = createMachineFixture();
     machine.metadata = { ...machine.metadata!, displayName: 'Build box', host: 'lima-generated-host' };

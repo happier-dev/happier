@@ -8,11 +8,13 @@ import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabiliti
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 const UNKNOWN: InstallablesSummary = { status: 'unknown' };
+const LOADING: InstallablesSummary = { status: 'loading' };
 
 /**
  * What the Tools page already read for this machine, counted, for the Machine page's Tools row. It observes the same
  * Account-qualified capabilities cache and daemon-merged registry the Tools page fills and never asks the machine
- * (`enabled: false`, `load: false`): a registry or inventory that was not observed is `unknown`, not an empty tool list.
+ * (`enabled: false`, `load: false`): a registry or inventory that was not observed is `unknown`, not an empty tool list,
+ * and one still being read is `loading`, so the row can wait for its count instead of drawing it late.
  */
 export function useMachineToolsSummary(params: Readonly<{ serverId: string; machineId: string }>): InstallablesSummary {
     const { serverId, machineId } = params;
@@ -28,8 +30,10 @@ export function useMachineToolsSummary(params: Readonly<{ serverId: string; mach
     const projection = useDaemonMergedProjectionInputs({ accountLifetime, machineId, serverId, enabled: true, load: false,
         sections: INSTALLABLES_PROJECTION_SECTIONS });
     const pluginProjection = projection.inputs?.pluginProjectionV2 ?? null;
+    // Without a current Account the registry reader waits for one that may never come: nothing is being read for it.
+    const registryLoading = projection.phase === 'loading' && accountLifetime?.isCurrent() === true;
     return React.useMemo(() => {
-        if (!pluginProjection) return UNKNOWN;
+        if (!pluginProjection) return registryLoading ? LOADING : UNKNOWN;
         return summarizeInstallables(getInstallablesRegistryEntries({ pluginProjection }), state);
-    }, [pluginProjection, state]);
+    }, [pluginProjection, registryLoading, state]);
 }

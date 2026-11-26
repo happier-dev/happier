@@ -10,7 +10,7 @@ import { getInstallablesRegistryEntries } from '@/capabilities/installablesRegis
 const boundary = vi.hoisted(() => ({
     rpc: vi.fn(),
     bindings: new Map<string, unknown>(),
-    projection: { inputs: null as unknown },
+    projection: { inputs: null as unknown, phase: undefined as 'loading' | undefined },
 }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
@@ -21,7 +21,8 @@ vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
     useServerCredentialAccountScopeBindings: () => boundary.bindings,
 }));
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-    useDaemonMergedProjectionInputs: () => ({ phase: boundary.projection.inputs ? 'ready' : 'idle', inputs: boundary.projection.inputs }),
+    useDaemonMergedProjectionInputs: () => ({ phase: boundary.projection.phase ?? (boundary.projection.inputs ? 'ready' : 'idle'),
+        inputs: boundary.projection.inputs }),
 }));
 
 import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -51,7 +52,7 @@ async function seed(machineId: string, response: unknown) {
     await prefetchMachineCapabilities({ machineId, serverId: 'tools-home', request, accountLifetime: account });
 }
 
-afterEach(() => { boundary.rpc.mockReset(); boundary.bindings.clear(); boundary.projection.inputs = null; });
+afterEach(() => { boundary.rpc.mockReset(); boundary.bindings.clear(); boundary.projection.inputs = null; boundary.projection.phase = undefined; });
 
 describe('useMachineToolsSummary', () => {
     it('counts the tools the Tools page already read, without asking the machine', async () => {
@@ -66,6 +67,28 @@ describe('useMachineToolsSummary', () => {
         expect(hook.getCurrent()).toEqual({ status: 'ready', installed: ids.length, ready: ids.length - 1, held: false });
         expect(boundary.rpc.mock.calls.length).toBe(calls);
         await hook.unmount();
+    });
+
+    it('says loading, not unknown, while the registry or the inventory it counts is still being read', async () => {
+        boundary.bindings.set('tools-home', account);
+        boundary.projection.phase = 'loading';
+        const registryReading = await renderHook(() => useMachineToolsSummary({ serverId: 'tools-home', machineId: 'm-reading' }));
+        await flushHookEffects();
+        expect(registryReading.getCurrent()).toEqual({ status: 'loading' });
+        await registryReading.unmount();
+        boundary.projection.phase = undefined;
+        boundary.projection.inputs = { pluginProjectionV2: pluginProjection };
+        let answer: (value: unknown) => void = () => {};
+        boundary.rpc.mockReturnValueOnce(new Promise(resolve => { answer = resolve; }));
+        const inventoryRead = prefetchMachineCapabilities({ machineId: 'm-reading', serverId: 'tools-home', request, accountLifetime: account });
+        const inventoryReading = await renderHook(() => useMachineToolsSummary({ serverId: 'tools-home', machineId: 'm-reading' }));
+        await flushHookEffects();
+        expect(inventoryReading.getCurrent()).toEqual({ status: 'loading' });
+        answer(inventory(new Set()));
+        await inventoryRead;
+        await flushHookEffects();
+        expect(inventoryReading.getCurrent()).toEqual({ status: 'ready', installed: 0, ready: 0, held: false });
+        await inventoryReading.unmount();
     });
 
     it('stays unknown, never zero, until both the registry and the Account\'s inventory were observed', async () => {
@@ -85,5 +108,12 @@ describe('useMachineToolsSummary', () => {
         await flushHookEffects();
         expect(signedOut.getCurrent()).toEqual({ status: 'unknown' });
         await signedOut.unmount();
+        // The registry reader waits for an Account that is not there: that is not a read in flight.
+        boundary.projection.inputs = null;
+        boundary.projection.phase = 'loading';
+        const noAccount = await renderHook(() => useMachineToolsSummary({ serverId: 'tools-home', machineId: 'm-unobserved' }));
+        await flushHookEffects();
+        expect(noAccount.getCurrent()).toEqual({ status: 'unknown' });
+        await noAccount.unmount();
     });
 });

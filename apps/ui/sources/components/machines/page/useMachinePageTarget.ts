@@ -13,7 +13,7 @@ import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/select
 import { sync } from '@/sync/sync';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
-import { getMachineSentenceName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { getMachineSentenceName, isMachineDisplayNamePending, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -87,6 +87,12 @@ export type MachinePageTarget = Readonly<{
     machineName: string;
     /** The name inside page sentences: "this machine" while the machine's details are locked or loading. */
     machineSentenceName: string;
+    /**
+     * The page has no name to show yet: the Machine is still loading, or its details have not opened and this device
+     * never knew its name (`isMachineDisplayNamePending`). The page holds its identity's places and lands its body once
+     * this settles; a name seen once stays shown while details reopen. Absent means settled.
+     */
+    namePending?: boolean;
     /** The page is focusing the Home its link names. */
     isServerSwitching: boolean;
     /** The machine list is being read because the machine is not known yet. */
@@ -184,6 +190,7 @@ export function useMachinePageTarget(view: 'facts' | 'full' = 'full'): MachinePa
     }, [language, machine, naming.listedName, naming.managedName]);
     const machineSentenceName = React.useMemo(() => getMachineSentenceName(machine && { ...machine, managedName: naming.managedName }, machineName),
         [language, machine, machineName, naming.managedName]);
+    const namePending = machine ? isMachineDisplayNamePending({ ...machine, managedName: naming.managedName }) : isHydratingMachine;
     const switchReady = Boolean(machineId) && !isServerSwitching
         && (!requestedServerId || areServerProfileIdentifiersEquivalent(requestedServerId, activeServerId));
 
@@ -196,9 +203,10 @@ export function useMachinePageTarget(view: 'facts' | 'full' = 'full'): MachinePa
         lastSeenAtOnOpen,
         machineName,
         machineSentenceName,
+        namePending,
         isServerSwitching,
         isHydratingMachine,
         switchReady,
     }), [activeServerId, isHydratingMachine, isServerSwitching, machine, lastSeenAtOnOpen, machineId, machineName, machineSentenceName,
-        requestedServerId, serverId, switchReady]);
+        namePending, requestedServerId, serverId, switchReady]);
 }

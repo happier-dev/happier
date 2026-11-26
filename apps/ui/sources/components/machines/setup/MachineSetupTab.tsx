@@ -143,6 +143,10 @@ function MachineSetupRoot(
   const serverIds = React.useMemo(() => [props.serverId], [props.serverId]);
   const [attachMenuOpen, setAttachMenuOpen] = React.useState(false);
   const [signInsSettledFor, settleSignIns] = React.useState<string | null>(null);
+  // Tools, Ask an agent and Sign-ins below it show once the Tools row has its count (or knows there is none to wait
+  // for): a count landing after them would grow the row and move everything under it.
+  const [toolsSettledFor, settleTools] = React.useState<string | null>(null);
+  const toolsSettled = toolsSettledFor === props.machineId;
   const browsePresets = editable && setup.plan !== null && setup.plan.sources.every(source => source.kind === 'direct');
   const locateMissingAddress = editable && setup.failure?.code === 'template_domain_required'
     && (setup.observation?.attachedPresets?.length ?? 0) > 0;
@@ -246,6 +250,7 @@ function MachineSetupRoot(
         serverId={props.serverId}
         machineId={props.machineId}
         onPress={props.onOpenTools}
+        onSummarySettled={settleTools}
       />
     </ItemGroup>
   );
@@ -266,8 +271,8 @@ function MachineSetupRoot(
             {null}
           </ItemGroup>
         )}
-        {toolsSection}
-        {ask}
+        <View style={toolsSettled ? undefined : styles.notYetShown}>{toolsSection}</View>
+        {toolsSettled ? ask : null}
       </View>
     );
   }
@@ -533,14 +538,14 @@ function MachineSetupRoot(
           ) : null}
         </>
       )}
-      {firstLoad ? null : toolsSection}
-      {firstLoad ? null : ask}
+      {firstLoad ? null : <View style={toolsSettled ? undefined : styles.notYetShown}>{toolsSection}</View>}
+      {firstLoad || !toolsSettled ? null : ask}
       {/* Last, below Ask an agent too: which CLIs this Machine has, and so how many rows, is known only once each has
           reported, seconds after everything above has settled. The section reads from the start but shows once its report
           has settled, whole, so neither its rows landing nor Ask an agent's composer settling above it moves anything on
           screen (UI refinements rulings, delta checks 22 and 23). */}
       {firstLoad ? null : (
-        <View style={signInsSettledFor === props.machineId ? undefined : styles.notYetShown}>
+        <View style={toolsSettled && signInsSettledFor === props.machineId ? undefined : styles.notYetShown}>
           <MachineSignInsSection
             serverId={props.serverId}
             machineId={props.machineId}
@@ -1112,13 +1117,24 @@ function AddRecipeMenu(
 }
 
 function ToolsRow(
-  props: Readonly<{ serverId: string; machineId: string; onPress: () => void }>,
+  props: Readonly<{
+    serverId: string;
+    machineId: string;
+    onPress: () => void;
+    /** Once its count is no longer being read (it has one, or nothing is reading one), so the tab can show the row. */
+    onSummarySettled?: (machineId: string) => void;
+  }>,
 ) {
   const { theme } = useUnistyles();
   const summary = useMachineToolsSummary({
     serverId: props.serverId,
     machineId: props.machineId,
   });
+  const settled = summary.status !== 'loading';
+  const { onSummarySettled, machineId } = props;
+  React.useEffect(() => {
+    if (settled) onSummarySettled?.(machineId);
+  }, [machineId, onSummarySettled, settled]);
   return (
     <Item
       testID="machine-setup-tools-row"

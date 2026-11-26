@@ -76,6 +76,7 @@ import { deploymentEnvironmentRoute } from '@/components/projects/deployments/de
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useSessionListRelativeNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useMachinePagePresenceTarget, type MachinePageTarget } from './useMachinePageTarget';
+import { hasCurrentMachineContent } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 const styles = StyleSheet.create(() => ({
@@ -115,6 +116,11 @@ function projectMachineEncryptionFact(machine: Machine): PageHeaderMetaFact | nu
  * Happier created states its power and provider facts instead of a bare "Online". Plan 20's host facts
  * (cores and memory, uptime while online) follow the platform; plan 50 appends keep-awake here.
  */
+/** Representative values for the pending facts' bars: as wide as a typical reading, never shown. */
+const REPRESENTATIVE_HOST = { cores: 16, memoryBytes: 64 * 1024 ** 3 } as const;
+const REPRESENTATIVE_UPTIME = { days: 6, hours: 12 } as const;
+const REPRESENTATIVE_CLI = { version: '0.3.0' } as const;
+
 type MachineRoleEnvironment = Readonly<{ environmentId: string; title: string; projectSourceId: string; roles: readonly string[] }>;
 
 export function composeMachinePageHeaderFacts(input: Readonly<{
@@ -126,6 +132,11 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
     replacedByMachineLabel: string | null;
     /** The machine's published host facts (plan 20): cores and memory, and when it booted. */
     hostFacts?: MachineVitalsHostFactsV1 | null;
+    /**
+     * Its published daemon state is still opening (it opens after the name, behind every Machine's name): the facts it
+     * brings (host size, uptime, CLI version) hold their places as pending facts, so the line does not wrap later.
+     */
+    daemonStateOpening?: boolean;
     /** The Environments that reference this Machine, with their exact roles (lab J13 role chips). */
     roleEnvironments?: readonly MachineRoleEnvironment[];
     /** Opens an Environment a role chip names, when the chip names exactly one. */
@@ -163,6 +174,11 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
     const platform = formatOSPlatform(machine.metadata?.platform);
     const arch = machine.metadata?.arch?.trim();
     if (platform) facts.push({ key: 'platform', text: arch ? t('machineDetailPage.platformFact', { platform, arch }) : platform });
+    if (!input.hostFacts && input.daemonStateOpening) {
+        facts.push({ key: 'host-size', pending: true, text: t('machineVitals.header.coresMemory', {
+            cores: REPRESENTATIVE_HOST.cores, memory: formatMachineBytes(REPRESENTATIVE_HOST.memoryBytes, 'memory') }) });
+        if (input.online) facts.push({ key: 'uptime', pending: true, text: t('machineVitals.header.upDaysHours', REPRESENTATIVE_UPTIME) });
+    }
     if (input.hostFacts) {
         facts.push({ key: 'host-size', testID: 'machine-detail-host-size', text: t('machineVitals.header.coresMemory', {
             cores: resolveMachineCoreCount(input.hostFacts), memory: formatMachineBytes(input.hostFacts.memoryTotalBytes, 'memory'),
@@ -178,6 +194,7 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
     if (encryption) facts.push(encryption);
     const cliVersion = machine.daemonState?.cliVersion;
     if (cliVersion) facts.push({ key: 'cli', text: t('machineDetailPage.cliVersionFact', { version: cliVersion }) });
+    else if (input.daemonStateOpening) facts.push({ key: 'cli', pending: true, text: t('machineDetailPage.cliVersionFact', REPRESENTATIVE_CLI) });
     if (input.replacedByMachineLabel) {
         facts.push({ key: 'replaced', text: t('machineDetailPage.replacedByFact', { machine: input.replacedByMachineLabel }) });
     }
@@ -217,6 +234,10 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     const router = useRouter();
     const target = useMachinePagePresenceTarget(props.target);
     const machine = target.machine;
+    // Until the page has the name it will keep, the header holds its identity's places (the name's line, the facts'
+    // line) and draws no actions: they land with the name, together with the page's body, so nothing moves on arrival.
+    const namePending = target.namePending === true;
+    const identified = machine !== null && !namePending;
     const thisComputerMachineId = useThisComputerMachineId();
     const activeAccountScope = useActiveServerAccountScope();
     const { binding } = useServerCredentialAccountScopeBinding(target.serverId);
@@ -287,16 +308,20 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     const managedPresence = props.managedIdentity?.presence;
     const readOfflineLine = React.useCallback((nowMs: number) => machine
         ? describeMachineRuntimePresence(machine, nowMs, managedPresence, machineAccountScope).label : '', [machine, managedPresence, machineAccountScope]);
-    const meta = React.useMemo(() => machine ? composeMachinePageHeaderFacts({
+    // While the name is opening the facts' line holds its place from the first frame: one pending fact, its bar as wide
+    // as the presence word the line most often starts with, in the real meta text's own line box.
+    const meta = React.useMemo((): PageHeaderMetaFact[] => namePending
+        ? [{ key: 'presence', text: t('machineDetailPage.online'), pending: true }] : machine ? composeMachinePageHeaderFacts({
         machine,
         online: target.online && !runtimePresence?.showStatus,
         managedPowerWord,
         managedMeta: props.managedIdentity?.meta,
         replacedByMachineLabel: replacement.replacedByMachineLabel,
         hostFacts: published?.host ?? null,
+        daemonStateOpening: machine.metadata !== null && !hasCurrentMachineContent(machine),
         roleEnvironments,
         onOpenEnvironment: openRoleEnvironment,
-    }) : [], [language, machine, managedPowerWord, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online, runtimePresence?.showStatus, roleEnvironments, openRoleEnvironment]);
+    }) : [], [language, machine, namePending, managedPowerWord, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online, runtimePresence?.showStatus, roleEnvironments, openRoleEnvironment]);
 
     // Entity-header anatomy: presence in the meta, every machine action in one `⋯`.
     const { onRename, renaming } = props;
@@ -363,8 +388,9 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             markSpan="title"
             // Start session and the rest stay beside the Machine's identity, not folded into a phone's bar menu.
             actionsPlacement="page"
-            title={machine ? machineName : t('machineDetailPage.placeholderTitle')}
-            description={machine && !managedPowerWord && (published || runtimePresence?.showStatus) ? (
+            title={identified ? machineName : t('machineDetailPage.placeholderTitle')}
+            titlePending={namePending}
+            description={identified && machine && !managedPowerWord && (published || runtimePresence?.showStatus) ? (
                 <MachineWorkingCountsProvider>
                     <MachineSentence serverId={target.serverId} machineId={machine.id} attention={published?.attention ?? null}
                         online={target.online && !runtimePresence?.showStatus} readOfflineLine={readOfflineLine}
@@ -384,9 +410,9 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                             context: readSafeFailureDetails(shellFailure.details) }) }} />
             ) : undefined}
             // One header order: the page's controls, its primary (the needs-you action, or Start session), then "⋯".
-            primaryAction={machine && headerPrimary === 'needsYou' && needsYouAction ? needsYouPrimary
-                : machine && headerPrimary === 'startSession' ? startSessionPrimary : undefined}
-            actions={machine ? (
+            primaryAction={identified && headerPrimary === 'needsYou' && needsYouAction ? needsYouPrimary
+                : identified && headerPrimary === 'startSession' ? startSessionPrimary : undefined}
+            actions={identified ? (
                 <View style={styles.actions}>
                     {attachedPresets?.length ? <MachineAttachedPresetsChip serverId={target.serverId} attached={attachedPresets}
                         onPress={() => router.setParams(machinePageTabRouteParams({ id: 'setup' }))} /> : null}
@@ -425,7 +451,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                     ) : null}
                 </View>
             ) : undefined}
-            menu={machine ? <PageHeaderMenu testID="machine-detail-menu" actions={menuActions} /> : undefined}
+            menu={identified ? <PageHeaderMenu testID="machine-detail-menu" actions={menuActions} /> : undefined}
         />
     );
 });

@@ -190,9 +190,10 @@ export function MachinePageScreen() {
             serverId: managedEnrolled.serverId }, door) as never} />;
     }
 
-    if (!machine) {
+    if (!machine || target.namePending) {
         // The page keeps its identity while the machine loads or when it no longer exists: the same
-        // header with a placeholder name, then the state where the sections would be.
+        // header with a placeholder name, then the state where the sections would be. A Machine whose name is still
+        // opening stays here too, so its tabs and sections land once, under the name the page keeps, and nothing moves.
         return (
             <>
                 <Stack.Screen options={screenOptions} />
@@ -200,7 +201,7 @@ export function MachinePageScreen() {
                     {backLine}
                     <MachinePageHeader target={target} managedIdentity={null} renaming={false} onRename={rename.start} tab={tab.entry.id} />
                     <ItemGroup surface="none">
-                        {target.isHydratingMachine ? (
+                        {target.isHydratingMachine || target.namePending ? (
                             <SurfaceStateCard testID="machine-detail-loading" kind="loading" title={t('common.loading')} />
                         ) : (
                             <SurfaceStateCard testID="machine-detail-not-found" kind="unavailable" title={t('machine.notFound')} reason={t('machine.notFoundReason')} />
