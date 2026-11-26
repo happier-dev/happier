@@ -439,36 +439,52 @@ export async function runMachineItemUpdate(
         } catch { /* The shared projection already retains the admitted job's failure. */ }
         return;
     }
-    setRecord(serverId, item.id, { status: 'running' });
-
     const subject = item.subject;
+    if (subject.kind === 'happier-cli') {
+        setRecord(serverId, item.id, { status: 'running' });
+        try {
+            await runRemoteCliUpdate(scope, item.id, machineId, context.lastUpdateSignature ?? '');
+        } catch {
+            setRecord(serverId, item.id, { status: 'failed', message: t('updates.row.failedGeneric') });
+            return { supported: false, reason: 'error' };
+        } finally {
+            await refreshMachineUpdateFacts(serverId, machineId, { accountScope: scope });
+        }
+        return;
+    }
+    const entry = subject.kind === 'installable'
+        ? getInstallablesRegistryEntries().find(candidate => candidate.key === subject.key)
+        : undefined;
+    if (!entry) {
+        setRecord(serverId, item.id, { status: 'failed', message: t('updates.row.failedGeneric') });
+        return;
+    }
+    return observeMachineToolItemUpdate(item.id, scope, machineId, () =>
+        machineCapabilitiesInvoke(machineId, { id: entry.capabilityId, method: 'upgrade' },
+            { ...scope, timeoutMs: INSTALL_INVOKE_TIMEOUT_MS }));
+}
+
+/** Project an admitted Tool invocation into the Updates row. */
+export async function observeMachineToolItemUpdate(
+    itemId: string,
+    scope: ServerAccountScope,
+    machineId: string,
+    invoke: () => Promise<MachineCapabilitiesInvokeResult>,
+): Promise<MachineCapabilitiesInvokeResult> {
+    const serverId = scope.serverId;
+    setRecord(serverId, itemId, { status: 'running' });
     let completed: 'finished' | 'alreadyCurrent' | null = null;
     try {
-        if (subject.kind === 'happier-cli') {
-            await runRemoteCliUpdate(scope, item.id, machineId, context.lastUpdateSignature ?? '');
-            return;
-        }
-
-        const request = subject.kind === 'installable'
-                ? (() => {
-                    const entry = getInstallablesRegistryEntries().find((candidate) => candidate.key === subject.key);
-                    return entry ? { id: entry.capabilityId, method: 'upgrade' } : null;
-                })()
-                : null;
-        if (!request) {
-            setRecord(serverId, item.id, { status: 'failed', message: t('updates.row.failedGeneric') });
-            return;
-        }
-        const result = await machineCapabilitiesInvoke(machineId, request, { ...scope, timeoutMs: INSTALL_INVOKE_TIMEOUT_MS });
+        const result = await invoke();
         if (!result.supported) {
-            setRecord(serverId, item.id, {
+            setRecord(serverId, itemId, {
                 status: 'failed',
                 message: result.reason === 'not-supported' ? t('deps.installNotSupported') : t('updates.row.failedGeneric'),
             });
             return result;
         }
         if (!result.response.ok) {
-            setRecord(serverId, item.id, {
+            setRecord(serverId, itemId, {
                 status: 'failed',
                 message: readRuntimeSentence(result.response.error.message) ?? describeInstallFailure(result.response.error.code),
                 logPath: typeof result.response.logPath === 'string' ? result.response.logPath : null,
@@ -483,13 +499,13 @@ export async function runMachineItemUpdate(
         completed = 'finished';
         return result;
     } catch (error) {
-        setRecord(serverId, item.id, { status: 'failed', message: t('updates.row.failedGeneric') });
+        setRecord(serverId, itemId, { status: 'failed', message: t('updates.row.failedGeneric') });
         return { supported: false, reason: 'error' };
     } finally {
         await refreshMachineUpdateFacts(serverId, machineId, { accountScope: scope });
         if (completed) {
-            setRecord(serverId, item.id, { status: completed });
-            if (completed === 'finished') recordUpdateCompleted(scope, item.id);
+            setRecord(serverId, itemId, { status: completed });
+            if (completed === 'finished') recordUpdateCompleted(scope, itemId);
         }
     }
 }

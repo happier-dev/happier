@@ -27,7 +27,7 @@ import { getMachineCapabilitiesCacheState, prefetchMachineCapabilities } from '@
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readCurrentMachineUpdateItem } from '@/updates/updatesActionRuntime';
-import { runMachineItemUpdate } from '@/updates/machineUpdateRuns';
+import { observeMachineToolItemUpdate } from '@/updates/machineUpdateRuns';
 import { machineStopDaemon, machineUpdateMetadata } from '@/sync/ops/machines';
 import { machineRevokeWithProviderCleanup, machineReplaceInAccount, machineClearReplacementFromAccount } from '@/sync/ops/machineAccount';
 import { storage } from '@/sync/domains/state/storage';
@@ -90,12 +90,12 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                 const request = MachineCapabilityInstallInputSchema.parse(input);
                 const item = request.method === 'upgrade' ? readCurrentMachineUpdateItem(scope, request.machineId,
                     { kind: 'installable', capabilityId: request.capabilityId }) : null;
-                if (item) {
-                    if (item.action.kind !== 'run') return { ok: false, errorCode: 'update_target_unavailable', error: 'update_target_unavailable' };
-                    return await runMachineItemUpdate(item, { scope }) ?? { ok: false, errorCode: 'update_target_unavailable', error: 'update_target_unavailable' };
-                }
-                return machineCapabilitiesInvoke(request.machineId, { id: request.capabilityId, method: request.method },
+                const invoke = () => machineCapabilitiesInvoke(request.machineId, { id: request.capabilityId, method: request.method },
                     { serverId, accountId: scope.accountId, timeoutMs: 5 * 60_000, signal: context.signal });
+                const result = item?.action.kind === 'run'
+                    ? await observeMachineToolItemUpdate(item.id, scope, request.machineId, invoke)
+                    : await invoke();
+                return result;
             }
             if (actionId === 'machines.remove') return machineRevokeWithProviderCleanup(input.machineId, scope);
             if (actionId === 'machines.replacement.set' || actionId === 'machines.replacement.clear') {

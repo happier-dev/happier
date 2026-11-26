@@ -224,6 +224,33 @@ describe('Updates Actions through current UI update owners', () => {
             running: false, errorMessage: 'Update failed.', logPath: '/logs/update.log',
         });
     });
+    it('settles an approved Tool upgrade through the daemon when the mounted row has changed', async () => {
+        const { scope, replaceItems } = await installOwner();
+        const helper: UpdateItem = { ...cli, id: 'studio:installable:gh', subject: { kind: 'installable', key: 'gh' },
+            state: 'upToDate', action: { kind: 'none' } };
+        replaceItems([helper]);
+        const executor = createDefaultActionExecutor();
+        const actionInput = { machineId: 'studio', capabilityId: 'dep.gh', method: 'upgrade' };
+        const artifactId = await createUiApprovalRequest({ serverId: scope.serverId, actionId: 'machines.capabilities.install',
+            actionInput, actionRequestId: 'updates-helper-stale-row' });
+        const decide = { artifactId, decision: 'approve' };
+        const context = { surface: 'ui' as const, serverId: scope.serverId, expectedAccountId: scope.accountId };
+        const agent = { ...context, surface: 'agent', authority: 'account_automation' } as const;
+        expect(await executor.execute('machines.capabilities.install', actionInput, { ...agent, expectedAccountId: 'other' }))
+            .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+        expect(starts()).toEqual([]);
+        expect(await executor.execute('approval.request.decide', decide, context)).toMatchObject({
+            ok: true, result: { status: 'executed', execution: { ok: true, result: { supported: true, response: { ok: true } } } },
+        });
+        expect(starts().map(([request]) => request.payload)).toEqual([{ id: 'dep.gh', method: 'upgrade' }]);
+        await homes.setActionPolicy(scope.serverId, 'machines.capabilities.install', 'agent', 'allowed');
+        expect(await executor.execute('machines.capabilities.install', actionInput, agent)).toMatchObject({
+            ok: true, result: { supported: true, response: { ok: true } },
+        });
+        expect(starts().map(([request]) => request.payload)).toEqual([
+            { id: 'dep.gh', method: 'upgrade' }, { id: 'dep.gh', method: 'upgrade' },
+        ]);
+    });
     it('keeps an explicit update proposal free of effects, then replays its exact target through the existing remote updater', async () => {
         const { scope } = await installOwner();
         const executor = createDefaultActionExecutor();
