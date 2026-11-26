@@ -4,6 +4,7 @@ import { ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifa
 import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
+import { ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1, type ActionAutomationNoticeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { buildAgentsById } from '@/plugins/projection/registry/projection/v2';
 import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -509,6 +510,9 @@ type CliActionExecutorTestOverrides = Pick<
   | 'token' | 'credentials'
 >;
 
+const unavailableAutomationNotices = [{ code: 'action_automations_not_checked',
+  reason: ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 }] satisfies ActionAutomationNoticeV1[];
+
 function createPlainExecutor(extra: CliActionExecutorTestOverrides = {}) {
   return createCliActionExecutor({
     token: 'token',
@@ -937,18 +941,12 @@ describe('createCliActionExecutor', () => {
         optionsSourceId: 'execution.backends.enabled',
       },
     });
-    expect((result as any).result.options).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          value: 'agent:happier.agent.claude/claude',
-          label: expect.any(String),
-        }),
+    expect(result).toMatchObject({ ok: true, result: { options: [
         expect.objectContaining({
           value: 'agent:happier.agent.custom-acp/custom-acp:definition:review-bot',
           label: 'Review Bot',
         }),
-      ]),
-    );
+      ] } });
     expect((result as any).result.options).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1405,12 +1403,7 @@ describe('createCliActionExecutor', () => {
     expect(result).toMatchObject({
       ok: true,
       result: {
-        items: expect.arrayContaining([
-          expect.objectContaining({
-            targetKey: 'agent:happier.agent.pi/pi',
-            agentId: 'pi',
-            enabled: true,
-          }),
+        items: [
           expect.objectContaining({
             targetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review-bot',
             label: 'Review Bot',
@@ -1422,7 +1415,7 @@ describe('createCliActionExecutor', () => {
             description: 'Disabled review backend',
             enabled: false,
           }),
-        ]),
+        ],
       },
     });
   });
@@ -1756,6 +1749,7 @@ describe('createCliActionExecutor', () => {
       ok: false,
       errorCode: 'approval_origin_unavailable',
       error: 'approval_origin_unavailable',
+      automationNotices: unavailableAutomationNotices,
     });
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
@@ -1794,7 +1788,7 @@ describe('createCliActionExecutor', () => {
       { surface: 'rpc', authority: 'present_user', defaultSessionId: 'sess-1' },
     );
 
-    expect(result).toEqual({ ok: true, result: { ok: true } });
+    expect(result).toEqual({ ok: true, result: { ok: true }, automationNotices: unavailableAutomationNotices });
     expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
       method: 'sess-1:session.permission.respond',
       request: {
@@ -1844,7 +1838,7 @@ describe('createCliActionExecutor', () => {
       { surface: 'rpc', authority: 'present_user', defaultSessionId: 'sess-1' },
     );
 
-    expect(result).toEqual({ ok: true, result: { ok: true } });
+    expect(result).toEqual({ ok: true, result: { ok: true }, automationNotices: unavailableAutomationNotices });
     // Parse the real Action producer's wire payload with the runtime's strict consumer.
     expect(SessionPermissionRespondRpcParamsV1Schema.parse(callSessionRpc.mock.calls.at(-1)?.[0].request)).toMatchObject({
       approved: true,
@@ -2058,7 +2052,7 @@ describe('createCliActionExecutor', () => {
       initialTriggers: [{ target: { kind: 'workflow', ref: 'builtin:missing-workflow' },
         trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
     }), { surface: 'cli', defaultSessionId: 'sess-1' });
-    expect(result).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { type: 'error', code: 'target_unavailable', retryable: false } });
+    expect(result).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { type: 'error', code: 'target_unavailable', retryable: false }, automationNotices: unavailableAutomationNotices });
     expect(spawnMachineSession).not.toHaveBeenCalled();
   });
 
@@ -2109,7 +2103,7 @@ describe('createCliActionExecutor', () => {
 
     expect(result).toEqual(abort
       ? { ok: false, errorCode: 'cancelled', error: expect.any(String), details: { outcome: 'unknown' } }
-      : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { type: 'error', code: 'target_unavailable', retryable: false } });
+      : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { type: 'error', code: 'target_unavailable', retryable: false }, automationNotices: unavailableAutomationNotices });
     expect(latestSessionSpawnRequest).toMatchObject({ directory: '/repo/.dev/worktree/initial-trigger' });
     const compensations = callMachineRpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.SCM_WORKTREE_REMOVE);
     expect(compensations).toEqual([]);
@@ -2144,7 +2138,7 @@ describe('createCliActionExecutor', () => {
       ? { ok: false, errorCode: 'cancelled',
         error: 'Action wait was cancelled; the Action may still be running and its outcome is unknown.',
         details: { outcome: 'unknown' } }
-      : { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' } });
+      : { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' }, automationNotices: unavailableAutomationNotices });
     expect(latestSessionSpawnRequest).toMatchObject({ directory: '/repo/.dev/worktree/uncertain',
       sessionCreationCorrespondence: { recipe: { checkout: { baseRef: 'main', branchName: 'feature/actual' } } },
     });
@@ -2249,7 +2243,7 @@ describe('createCliActionExecutor', () => {
     });
   });
 
-  it('keeps a public RPC accepted-pending spawn retryable without an action request id', async () => {
+  it('settles a cancelled public RPC wait without stopping its accepted spawn', async () => {
     const executor = createPlainExecutor();
     const controller = new AbortController();
     const handlers = new Map<string, RpcHandler>();
@@ -2294,9 +2288,9 @@ describe('createCliActionExecutor', () => {
     controller.abort(new Error('public caller retired after accepted submission'));
 
     await expect(pending).resolves.toEqual({
-      type: 'pending',
-      retryWithSameCreationKey: true,
-      outcome: 'unknown',
+      ok: false,
+      errorCode: 'cancelled',
+      error: 'Action wait was cancelled; the Action may still be running and its outcome is unknown.',
     });
     const spawnCall = callMachineRpc.mock.calls.find(
       ([call]) => call.method === RPC_METHODS.SPAWN_HAPPY_SESSION,
@@ -3032,6 +3026,7 @@ describe('createCliActionExecutor', () => {
     expect(result).toEqual({
       ok: true,
       result: { status: 'accepted', localId: 'local-1' },
+      automationNotices: unavailableAutomationNotices,
     });
     expect(sendSessionMessage).toHaveBeenCalledWith(expect.objectContaining({
       credentials: expect.objectContaining({ token: 'token' }),
