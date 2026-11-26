@@ -221,6 +221,25 @@ happier daemon uninstall
 
 On Windows, `happier daemon service paths` prints the Scheduled Task name and wrapper path.
 
+## Forward machine environment variables
+
+In development builds, new sessions use `PLAYWRIGHT_BROWSERS_PATH` from the
+daemon's environment when it is set. To share a custom cache, configure the
+same path when installing the browsers and starting the daemon. Use an
+absolute path writable by the account running Playwright.
+
+For additional variables, set `HAPPIER_SESSION_FORWARD_ENV` to a
+comma-separated list of names and set their values in the daemon's environment.
+Explicit Profile and session values take precedence.
+
+```dotenv
+HAPPIER_SESSION_FORWARD_ENV=MY_TOOL_CACHE_DIR
+MY_TOOL_CACHE_DIR=/home/your-user/.cache/my-tool
+```
+
+Restart the daemon after changing its environment. New sessions and their tools
+can read the values you forward.
+
 ## Headless authentication (no TTY)
 
 On headless servers (or anywhere you don’t have an interactive TTY), use:

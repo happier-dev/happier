@@ -14043,6 +14043,11 @@ next@16.1.7:
     "@next/swc-win32-x64-msvc" "16.1.7"
     sharp "^0.34.4"
 
+nitro-core@0.37.2:
+  version "0.37.2"
+  resolved "https://registry.yarnpkg.com/nitro-core/-/nitro-core-0.37.2.tgz#5886030db1028869767dec5c142e38f0e58ae964"
+  integrity sha512-dhagikz9VXXzfidRH/vPNJfYWPmTBArDOo9wE/wEqeERU9C8uRWz9YccOyNUOvADccPAZq319yzhDMoJ9excSQ==
+
 node-abi@^3.3.0, node-abi@^3.73.0:
   version "3.87.0"
   resolved "https://registry.npmjs.org/node-abi/-/node-abi-3.87.0.tgz"
@@ -15606,10 +15611,12 @@ react-native-mmkv@^3.3.3:
   resolved "https://registry.npmjs.org/react-native-mmkv/-/react-native-mmkv-3.3.3.tgz"
   integrity sha512-GMsfOmNzx0p5+CtrCFRVtpOOMYNJXuksBVARSQrCFaZwjUyHJdQzcN900GGaFFNTxw2fs8s5Xje//RDKj9+PZA==
 
-react-native-nitro-modules@0.37.1:
-  version "0.37.1"
-  resolved "https://registry.yarnpkg.com/react-native-nitro-modules/-/react-native-nitro-modules-0.37.1.tgz#368bda3038ebe796b219d98e0a364f9166e2cc7c"
-  integrity sha512-KpW6EQVQ/bfegpCGxN9Be+ndvsfj56t4IESEvCASu9gWpJa/NDfHpIeIwCOvZQ3eXmLEj6YD4wCLqcC1FJPr2w==
+react-native-nitro-modules@0.37.2:
+  version "0.37.2"
+  resolved "https://registry.yarnpkg.com/react-native-nitro-modules/-/react-native-nitro-modules-0.37.2.tgz#fa224c44b2e63c6de2ac5db53361c0bed5b4e596"
+  integrity sha512-Odnrq/p6/q0R01qZlkqeXu9VHHMuGEnZZmyxMvehEu6QiACNHhBCmAHgyBDqOSo9Lb3G0TscFAT+HG0uxsR/GA==
+  dependencies:
+    nitro-core "0.37.2"
 
 react-native-purchases-ui@10.15.1:
   version "10.15.1"

@@ -10,7 +10,7 @@ vi.mock('node:os', async (importOriginal) => {
   return { ...actual, getPriority: vi.fn(() => 0) };
 });
 
-import { buildHostedRunnerSpawnConfig, buildTmuxSpawnConfig } from './spawnConfig';
+import { buildHostedRunnerSpawnConfig, buildTmuxSpawnConfig, buildTmuxWindowEnv } from './spawnConfig';
 
 describe('tmux session resource policy', () => {
   const originalPlatform = process.platform;
@@ -38,6 +38,16 @@ describe('tmux session resource policy', () => {
     expect(config.commandTokens).toEqual(expect.arrayContaining([
       'codex', '--happy-starting-mode', 'local', '--started-by', 'daemon',
     ]));
+  });
+
+  it('uses the current cache paths and masks absent paths from a long-lived tmux server', () => {
+    const daemonEnv = { PLAYWRIGHT_BROWSERS_PATH: '/daemon/browsers', XDG_CACHE_HOME: '/daemon/cache' };
+    expect(buildTmuxWindowEnv(daemonEnv, {})).toMatchObject(daemonEnv);
+    expect(buildTmuxWindowEnv(daemonEnv, { PLAYWRIGHT_BROWSERS_PATH: '/profile/browsers' })).toMatchObject({
+      PLAYWRIGHT_BROWSERS_PATH: '/profile/browsers',
+      XDG_CACHE_HOME: '/daemon/cache',
+    });
+    expect(buildTmuxWindowEnv({}, {})).toMatchObject({ PLAYWRIGHT_BROWSERS_PATH: '', XDG_CACHE_HOME: '' });
   });
 
   it('passes the complete prepared child environment to a Herdr-hosted runner', async () => {
