@@ -1639,10 +1639,13 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                             await subscription?.dispose();
                         }
                     }
+                    if (runCreationContinuation) {
+                        // Environment Setup can change enrollment while awaiting its effects.
+                        enrolled = await client.row('current', client.correlation(admission.machine));
+                        client.assertConnection(enrolled);
+                    }
                 }
                 if (runCreationContinuation) {
-                    enrolled = await client.row('current', client.correlation(admission.machine));
-                    client.assertConnection(enrolled);
                     if (!enrolled.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
                     await runCreationContinuation({ machine: enrolled,
                         projectFiles: hydrator.readPresetDefinition(enrolled)?.projectFiles });

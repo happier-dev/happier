@@ -5839,13 +5839,14 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
             target: { kind: 'machine' as const, machineId: controller.machineId },
             input: WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'saved', definitionId: 'definition-1',
                 revision: { headerVersion: 1, bodyVersion: 1 } } }) };
-        const nativeCalls: string[] = [], admissions: unknown[] = [];
+        const nativeCalls: string[] = [], admissions: unknown[] = [], currentReads: unknown[] = [];
         const native = nativeFixture({ privateNative: true, reconciliation: true,
             nativeRoleResults: { acquire: { kind: 'unknown', recovery: { reference: runId, reason: 'response-lost' } } },
             onNativeRole: role => { nativeCalls.push(role); } });
         let retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'unsubmitted' });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             const path = String(url);
+            if (path.endsWith('/current')) currentReads.push(body);
             if (path.endsWith('/admit')) {
                 admissions.push(body);
                 return { status: 200, data: { machine: retained, replayed: admissions.length > 1 } };
@@ -5900,6 +5901,7 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
         retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'bound',
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} },
             enrolledMachineId: 'enrolled-workflow-guest', observation: { observedAt: 1, availability: 'present', power: 'running' } });
+        currentReads.length = 0;
         const retry = await attempt('reviewed-acquire-retry');
         expect(await Promise.race([started.then(() => 'continuation'), retry.work.then(() => 'settled')])).toBe('continuation');
         expect(await retry.operations.handlers.getV2({ operationId: 'reviewed-acquire-retry:operation' }))
@@ -5907,6 +5909,7 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
         release();
         await expect(retry.work).resolves.toMatchObject({ managedId: retained.id });
         expect(continued).toBe(1);
+        expect(currentReads).toEqual([expect.objectContaining({ managedId: retained.id, requestId: runId })]);
         expect(nativeCalls).toEqual(['acquire']);
         expect(admissions).toEqual([1, 2].map(() => ({ input: acquisition, requestId: runId, continuationPresent: true, originalActionEnvelope })));
     });
