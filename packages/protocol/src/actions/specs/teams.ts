@@ -888,7 +888,8 @@ function createTeamActionSpecs(): TeamActionSpecs {
   }),
   homeDomainActionRow({
     id: 'teams.archive', approval: {result: 'required',flow: 'deferred'},
-    irreversible: true,
+    // A manager restores an archived Team, so it confirms by default without "This can't be undone."
+    approvalPolicy: { uiConfirmation: 'policy' },
     mcp: true,
     title: 'Archive Team',
     description: 'Archive a Team, ending ordinary member access until it is restored. Waiting invitations are permanently revoked.',

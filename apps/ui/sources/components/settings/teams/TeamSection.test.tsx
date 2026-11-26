@@ -110,13 +110,16 @@ describe('TeamSection Account binding', () => {
 
     afterEach(() => standardCleanup());
 
+    // One message per state: a Team this link cannot open (stale, malformed, or not the viewer's) says so in its
+    // title and leads to Teams; only a real role refusal says the role does not include it.
     it.each([
-        { status: 400, code: 'invalid_team_input', message: 'teams.errors.invalidTeamLink', action: 'teams.title' },
-        { status: 404, code: 'team_not_found', message: 'teams.errors.notFound', action: 'teams.title' },
-        { status: 404, code: 'teams_unavailable', message: 'teams.unavailable.disabled', action: null },
-        { status: 503, code: 'team_authentication_unavailable', message: 'teams.credentials.externalApi.authenticationUnavailable', action: null },
-        { status: 503, code: null, message: 'teams.errors.loadFailed', action: 'teams.unavailable.retry' },
-    ])('presents the Team read refusal $code with only a working next step', async ({ status, code, message, action }) => {
+        { status: 400, code: 'invalid_team_input', title: 'teams.errors.notFound', message: 'teams.errors.invalidTeamLink', action: 'teams.title' },
+        { status: 404, code: 'team_not_found', title: 'teams.errors.notFound', message: null, action: 'teams.title' },
+        { status: 403, code: 'team_forbidden', title: 'teams.denied.title', message: 'errors.permissionDenied', action: null },
+        { status: 404, code: 'teams_unavailable', title: 'teams.unavailable.title', message: 'teams.unavailable.disabled', action: null },
+        { status: 503, code: 'team_authentication_unavailable', title: 'teams.unavailable.title', message: 'teams.credentials.externalApi.authenticationUnavailable', action: null },
+        { status: 503, code: null, title: 'teams.unavailable.title', message: 'teams.errors.loadFailed', action: 'teams.unavailable.retry' },
+    ])('presents the Team read refusal $code with only a working next step', async ({ status, code, title, message, action }) => {
         const serverId = await addTeamHome();
         harness.answer(serverId, TEAM_GET_PATH, { status, body: code ? { error: code } : {} });
         const screen = await renderScreen(<TeamSection serverId={serverId} teamId="team-1">
@@ -125,7 +128,9 @@ describe('TeamSection Account binding', () => {
 
         const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
         const findNotice = () => screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'team-unavailable');
-        await waitForHomeGovernance(() => expect(findNotice()?.props.reason).toContain(message));
+        await waitForHomeGovernance(() => expect(findNotice()).toBeDefined());
+        expect(findNotice()?.props.title).toBe(title);
+        expect(findNotice()?.props.reason ?? null).toBe(message);
         expect(findNotice()?.props.action?.label ?? null).toBe(action);
         expect(screen.findByTestId('team-section-child-probe')).toBeNull();
     });

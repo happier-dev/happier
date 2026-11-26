@@ -625,24 +625,34 @@ describe('the Authentication page while its Team is read', () => {
         ['teams.authentication.directory.section', 'teams.authentication.directory.overviewSubtitle'],
     ];
 
-    it('draws every section from the first frame when nothing of the Team is known: both policy rows in their segmented shape, and the held "+"s', async () => {
+    it('draws only the sections every viewer has when the viewer\'s role is not known yet: no manager section and no "+"', async () => {
         const screen = await heldAuthentication({ directoryRow: null });
-        expect(sections(screen)).toEqual(PAGE_SECTIONS);
+        // A member reached by link must not first see the managers' page: Sign-in connections and both "+"s wait
+        // until the role is known.
+        expect(sections(screen)).toEqual(PAGE_SECTIONS.filter(([title]) => title !== 'teams.authentication.connectionsSection'));
         // Every Team has both policy rows: they stand as segmented rows with nothing chosen yet, read-only.
         for (const testID of ['team-admission-mode', 'team-authentication-policy-mode']) {
             const row = screen.findAllByType(Item).find((node) => node.props.testID === testID);
             expect(row?.props).toMatchObject({ disabled: true, accessoryLayout: 'stacked', subtitle: 'common.loading' });
             expect(row?.props.rightElement).toBeTruthy();
         }
-        // Connections and the directory each wait on one quiet line, beside the section "+" they will have.
+        // The directory waits on one quiet line.
         expect(screen.findAllByType(ItemLoadStateRows)).toHaveLength(0);
-        expect(stateLine(screen, 'team-authentication-loading')).toBeDefined();
         expect(stateLine(screen, 'team-authentication-directory-loading')).toBeDefined();
-        // Each quiet line stands over its empty line's own box (that line drawn unseen), so an empty answer moves nothing.
-        expect(stateLine(screen, 'team-authentication-empty')?.title).toBe('teams.authentication.empty');
-        expect(stateLine(screen, 'team-authentication-directory')?.title).toBe('teams.authentication.directory.empty');
-        expect(screen.findByTestId('team-authentication-add-connection')).not.toBeNull();
-        expect(screen.findByTestId('team-authentication-directory-add')).not.toBeNull();
+        expect(stateLine(screen, 'team-authentication-loading')).toBeUndefined();
+        expect(screen.findByTestId('team-authentication-add-connection')).toBeNull();
+        expect(screen.findByTestId('team-authentication-directory-add')).toBeNull();
+    });
+
+    it('reserves a known member\'s read-only page from the Teams row, never the managers\' affordances', async () => {
+        const screen = await heldAuthentication({ directoryRow: {
+            directoryMembership: null, capabilities: teamCapabilitiesFixture({ manageAuthentication: false }),
+        } });
+        expect(screen.findByTestId('team-authentication-forbidden')).not.toBeNull();
+        expect(sections(screen).map(([title]) => title)).not.toContain('teams.authentication.connectionsSection');
+        expect(screen.findByTestId('team-authentication-add-connection')).toBeNull();
+        expect(screen.findByTestId('team-authentication-directory-add')).toBeNull();
+        expect(screen.findHostByTestId('team-authentication-fact-admission')).not.toBeNull();
     });
 
     it('keeps one mounted policy row and the known directory line from the reserve through the live page', async () => {

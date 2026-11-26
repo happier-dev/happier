@@ -877,7 +877,8 @@ type AuthenticationLoadingKnown = Parameters<
  * The page's sections while the Team is read (lab `tsAuth-L`), each with its title and description from the first
  * frame. When the Teams directory already holds this Team's row, the sections that row decides are drawn from it as
  * they will stand (read-only until the Team answers): who can join and how members sign in, or a member's facts.
- * What the row does not say is reserved: one row per section, or the connections the policy names.
+ * What the row does not say is reserved: one row per section, or the connections the policy names. Without the row
+ * the viewer's role is unknown, so only the sections every viewer has are drawn.
  */
 function AuthenticationLoading(known: AuthenticationLoadingKnown) {
   const team = known.row;
@@ -918,19 +919,11 @@ function AuthenticationLoading(known: AuthenticationLoadingKnown) {
             { id: 'restricted', label: t('teams.authentication.policy.acceptedRestricted') },
           ]} />
       </ItemGroup>
-      <ItemGroup
-        title={t('teams.authentication.connectionsSection')}
-        description={t('teams.authentication.connectionsDescription')}
-        action={<HeldSectionAction kind="connection" />}
-      >
-        <ReservedShape shape={<ConnectionsEmptyLine />}>
-          <QuietLoadingLine testID="team-authentication-loading" />
-        </ReservedShape>
-      </ItemGroup>
+      {/* The viewer's role is not known yet: only the sections every viewer has. A manager's Sign-in connections
+          and its "+"s wait for the role, so a member never first sees what only managers can change. */}
       <ItemGroup
         title={t('teams.authentication.directory.section')}
         description={t('teams.authentication.directory.overviewSubtitle')}
-        action={<HeldSectionAction kind="directory" />}
       >
         <ReservedShape shape={<DirectoryEmptyLine />}>
           <QuietLoadingLine testID="team-authentication-directory-loading" />

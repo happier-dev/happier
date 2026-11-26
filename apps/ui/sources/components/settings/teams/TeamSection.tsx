@@ -310,14 +310,16 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         // `forbidden`/`unauthorized` are the Home's settled answers about this
         // Account and `unsupported` is its settled answer about itself. None of
         // them is offered a retry that would ask the same question again.
+        // A Team this link cannot open (stale, malformed, or one the viewer is not in) is one state: its title says
+        // the Team is not available and Teams is the way on; the role title stays for a real role refusal.
         const denied = state.error.kind === 'forbidden' || state.error.kind === 'unauthorized';
         const invalidLink = state.error.code === 'invalid_team_input';
         const openTeams = invalidLink || state.error.code === 'team_not_found';
         return conditionPage(
             <TeamStateCard
-                kind={denied ? 'unavailable' : 'error'}
-                title={denied ? t('teams.denied.title') : t('teams.unavailable.title')}
-                body={invalidLink ? t('teams.errors.invalidTeamLink') : teamReadFailureLabel(state.error)}
+                kind={denied || openTeams ? 'unavailable' : 'error'}
+                title={openTeams ? t('teams.errors.notFound') : denied ? t('teams.denied.title') : t('teams.unavailable.title')}
+                body={invalidLink ? t('teams.errors.invalidTeamLink') : openTeams ? undefined : teamReadFailureLabel(state.error)}
                 action={openTeams
                     ? { label: t('teams.title'), onPress: () => router.push(teamsDirectoryPath()) }
                     : readFailureAction(state.error, { onPress: refresh })}

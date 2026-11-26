@@ -536,6 +536,19 @@ describe('Home and Teams Action family', () => {
     }
   });
 
+  // `irreversible` is what the confirmation says as "This can't be undone." A Team or Group archive is restored
+  // by a manager, so it confirms as a danger Action without that claim; removals nothing restores keep it.
+  it('declares only unrestorable Team removals irreversible', () => {
+    for (const actionId of ['teams.archive', 'teams.groups.archive'] as const) {
+      expect(getActionSpec(actionId).irreversible, actionId).toBeUndefined();
+      expect(getActionSpec(actionId).safety, actionId).toBe('danger');
+    }
+    for (const actionId of ['teams.invitations.revoke', 'teams.credentials.delete', 'teams.identity.connections.remove',
+      'teams.directory.sources.remove'] as const) {
+      expect(getActionSpec(actionId).irreversible, actionId).toBe(true);
+    }
+  });
+
   /**
    * Placement and authority belong to each domain owner. Lane 01's governance
    * and Team transactions are Account-placed; the shared transport family also
