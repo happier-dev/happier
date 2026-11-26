@@ -1,7 +1,7 @@
 import { machineSetupApplyTargetFromPlanV1, MachineSetupPlanResultV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupApplyInputV1Schema,
     type MachineSetupAppChildV1, type MachineSetupApplyInputV1, type MachineSetupCombinedPlanResultV1,
     type MachineSetupPlanResultV1, type MachineSetupPlanInputV1, type MachineSetupPlanUnavailableTargetV1, type MachineSetupSourceApplyV1,
-    type MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+    type MachineSetupPlanReviewV1, type MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { type MachineSetupSourceV1, reviewMachineSetupSourceChangeV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupReviewedStepV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -53,6 +53,56 @@ export type MachineSetupPreparedApply = Readonly<{
 export type MachineSetupPreparedRemove = (Omit<Extract<MachineSetupPreparedApply, { ok: true }>, 'input'> & Readonly<{
     input: MachineSetupRemoveInputV1;
 }>) | ActionExecuteFailure;
+
+/** The Plan facts that address every script its Apply runs. */
+export type MachineSetupPlanScriptReviewFacts = Readonly<{
+    steps?: readonly MachineSetupReviewedStepV1[];
+    presetUpdateEffects?: MachineSetupPlanReviewV1['presetUpdateEffects'];
+}>;
+
+/**
+ * The one Review projection of the scripts a Plan runs, over this viewer's opened copies, in run order. Opened
+ * copies keep only their running scripts; a copy this viewer cannot open is named by its native step label, never
+ * treated as empty. A Plan without addresses is reviewable only when every copy is opened: all their scripts show.
+ */
+export function reviewMachineSetupPlanScripts(review: MachineSetupPlanScriptReviewFacts | undefined,
+    presentations: readonly ManagedMachineSetupSourcePresentationV1[], requireAddresses: boolean,
+): Readonly<{ ok: true; presentations: readonly ManagedMachineSetupSourcePresentationV1[]; scripts?: readonly MachineSetupReviewScript[] }>
+    | ActionExecuteFailure {
+    const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+    const effects = review?.presetUpdateEffects;
+    if (!effects) return requireAddresses || presentations.some(entry => entry.kind !== 'opened')
+        ? fail('plan_changed') : { ok: true, presentations };
+    const steps = effects.scripts.length ? review?.steps?.slice(-effects.scripts.length) ?? [] : [];
+    const indicesBySource = new Map<number, Set<number>>();
+    const scripts: MachineSetupReviewScript[] = [];
+    for (const [index, { sourceIndex, scriptIndex }] of effects.scripts.entries()) {
+        const presentation = presentations[sourceIndex];
+        const body = presentation?.kind === 'opened' ? presentation.source.setup.scripts?.[scriptIndex]?.body : undefined;
+        if (presentation?.kind === 'opened' && !body) return fail('managed_response_invalid');
+        if (body) {
+            const indices = indicesBySource.get(sourceIndex) ?? new Set<number>();
+            indices.add(scriptIndex);
+            indicesBySource.set(sourceIndex, indices);
+            scripts.push({ body });
+            continue;
+        }
+        const step = steps.length === effects.scripts.length ? steps[index] : undefined;
+        if (!step) return fail('managed_response_invalid');
+        scripts.push({ label: step.label });
+    }
+    if (effects.toolchain && !presentations.some(entry => entry.kind === 'opened' && entry.source.setup.toolchain))
+        return fail('managed_response_invalid');
+    return { ok: true, scripts, presentations: presentations.map((entry, sourceIndex) => {
+        if (entry.kind !== 'opened') return entry;
+        const { scripts: sourceScripts, toolchain, ...setup } = entry.source.setup;
+        const indices = indicesBySource.get(sourceIndex);
+        return { ...entry, source: { ...entry.source, setup: { ...setup,
+            ...(effects.toolchain && toolchain ? { toolchain } : {}),
+            ...(indices && sourceScripts ? { scripts: sourceScripts.filter((_script, scriptIndex) => indices.has(scriptIndex)) } : {}),
+        } } };
+    }) };
+}
 
 /** One effects-Plan/result admission for preset Use and direct Software, before any Apply. */
 export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
@@ -121,44 +171,10 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
             signal: params.context.signal,
         });
         if (!current()) return fail('continuation_retired');
-        // The receiving Plan addresses every script Apply runs; Review shows exactly those, in run order.
-        // A Plan without addresses is reviewable only when every copy is opened: all their scripts are shown.
-        const scriptEffects = plan.review?.presetUpdateEffects;
-        if (!scriptEffects && (expected.candidatePreset !== undefined || presentations.some(entry => entry.kind !== 'opened')))
-            return fail('plan_changed');
-        let reviewedScripts: MachineSetupReviewScript[] | undefined;
-        if (scriptEffects) {
-            const scriptSteps = scriptEffects.scripts.length ? plan.review?.steps?.slice(-scriptEffects.scripts.length) ?? [] : [];
-            const scriptIndicesBySource = new Map<number, Set<number>>();
-            reviewedScripts = [];
-            for (const [index, { sourceIndex, scriptIndex }] of scriptEffects.scripts.entries()) {
-                const presentation = presentations[sourceIndex];
-                const body = presentation?.kind === 'opened' ? presentation.source.setup.scripts?.[scriptIndex]?.body : undefined;
-                if (presentation?.kind === 'opened' && !body) return fail('managed_response_invalid');
-                if (body) {
-                    const indices = scriptIndicesBySource.get(sourceIndex) ?? new Set<number>();
-                    indices.add(scriptIndex);
-                    scriptIndicesBySource.set(sourceIndex, indices);
-                    reviewedScripts.push({ body });
-                    continue;
-                }
-                // A copy this viewer cannot open still runs: name it as its native step, never treat it as empty.
-                const step = scriptSteps.length === scriptEffects.scripts.length ? scriptSteps[index] : undefined;
-                if (!step) return fail('managed_response_invalid');
-                reviewedScripts.push({ label: step.label });
-            }
-            if (scriptEffects.toolchain && !presentations.some(entry => entry.kind === 'opened' && entry.source.setup.toolchain))
-                return fail('managed_response_invalid');
-            presentations = presentations.map((entry, sourceIndex) => {
-                if (entry.kind !== 'opened') return entry;
-                const { scripts, toolchain, ...setup } = entry.source.setup;
-                const indices = scriptIndicesBySource.get(sourceIndex);
-                return { ...entry, source: { ...entry.source, setup: { ...setup,
-                    ...(scriptEffects.toolchain && toolchain ? { toolchain } : {}),
-                    ...(indices && scripts ? { scripts: scripts.filter((_script, scriptIndex) => indices.has(scriptIndex)) } : {}),
-                } } };
-            });
-        }
+        const scriptReview = reviewMachineSetupPlanScripts(plan.review, presentations, expected.candidatePreset !== undefined);
+        if (!scriptReview.ok) return scriptReview;
+        presentations = scriptReview.presentations;
+        const reviewedScripts = scriptReview.scripts;
         admitted.push({ ...machineSetupApplyTargetFromPlanV1(expected, plan),
             ...(expected.preset ? { preset: expected.preset } : {}) });
         facts.push({ homeId: expected.homeId, machineId: expected.machineId, support: effects.data.support,

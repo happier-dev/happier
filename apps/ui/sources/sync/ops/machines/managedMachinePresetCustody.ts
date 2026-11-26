@@ -56,7 +56,8 @@ export type ManagedMachinePresetReadCustodyV1 = Readonly<{
 
 export type ManagedMachineSetupSourcePresentationV1 = ManagedOpaqueSetupSourcePresentationV1;
 
-function presentUnresolvedMachineSetupSources(
+/** A Plan or Apply input without opened projections: local source copies open, opaque copies stay unavailable. */
+export function presentUnresolvedMachineSetupSources(
     sources: MachineSetupSourceApplyV1,
 ): readonly ManagedMachineSetupSourcePresentationV1[] {
     return sources.map((source) => {

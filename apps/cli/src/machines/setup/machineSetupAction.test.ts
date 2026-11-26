@@ -11,6 +11,8 @@ import { createNativeSoftwareInstallFixture, osStore } from '@/testkit/machines/
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
 import { createMachineSetupPlanAction } from './machineSetupAction';
+import { createCombinedMachineSetupActionDeps } from './composeMachineSetup';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { readFile } from 'node:fs/promises';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
 import { hydrateManagedOpaqueSetupSourcePresentationsV1 } from '@happier-dev/cli-common/machines/managed';
@@ -706,6 +708,18 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(plan.resolvedSources?.slice(0, 2)).toEqual([null, null]);
     const reviewed = plan.review?.presetUpdateEffects?.scripts;
     expect(reviewed).toEqual([{ sourceIndex: 1, scriptIndex: 1 }, { sourceIndex: 2, scriptIndex: 0 }]);
+
+    // An agent-requested Apply is previewed at admission: its approval names the same executing scripts.
+    const input = { ...target, targets: [machineSetupApplyTargetFromPlanV1(target, plan)] };
+    const approval = await createCombinedMachineSetupActionDeps({ readDeps: createUnavailableActionTransportDeps,
+      targetPlan: fixture.machineSetupPlan, readHostFacts: async () => ({ machines: [{ machineId: target.machineId, online: true }] }),
+      orchestrationDirectory: '/review', startCombined: async () => { throw new Error('Preparation cannot start work'); },
+      waitForRun: async () => { throw new Error('Preparation cannot wait for work'); },
+      readInvocations: async () => { throw new Error('Preparation cannot read child results'); },
+    }).prepareMachineSetupApply!({ input, context: fixture.context('machines.setup.apply', 'agent-apply-review') });
+    expect(approval).toMatchObject({ input, preview: { kind: 'machineSetup', scripts: [{ targetIndex: 0,
+      homeId: target.homeId, machineId: target.machineId,
+      review: { steps: plan.review?.steps, presetUpdateEffects: plan.review?.presetUpdateEffects } }] } });
 
     expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, plan),
       context: fixture.context('machines.setup.apply', 'source-change-apply') })).toMatchObject({ operationId: expect.any(String) });

@@ -152,6 +152,9 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
     const nativeLeaf = await isNativeMachineSetupApply(input, context, host.readDeps);
     const appReviews: (AppReview & Readonly<{ targetIndex: number; homeId: string; machineId: string }>)[] = [];
     const appDeployments: (AppObservation & Readonly<{ targetIndex: number; homeId: string; machineId: string }>)[] = [];
+    // The target Plan's own script review, so the approval shows exactly the scripts this Apply runs.
+    const scripts: Readonly<{ targetIndex: number; homeId: string; machineId: string;
+      review: Pick<MachineSetupPlanReviewV1, 'steps' | 'presetUpdateEffects'> }>[] = [];
     for (const [targetIndex, target] of input.targets.entries()) {
       if (context.signal?.aborted) return failure('cancelled');
       let exclusions = target.exclusions ?? [];
@@ -173,6 +176,9 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
           || requestedExclusions !== undefined && !sameStrictJsonValue(observed.data.exclusions, requestedExclusions)) return failure('plan_changed');
         exclusions = observed.data.exclusions;
         observedPlan = observed.data;
+        const review = observedPlan.review;
+        if (review?.presetUpdateEffects) scripts.push({ targetIndex, homeId: target.homeId, machineId: target.machineId,
+          review: { ...(review.steps ? { steps: review.steps } : {}), presetUpdateEffects: review.presetUpdateEffects } });
       }
       if (opaqueSources) {
         // The target owns private source opening and native review. An already
@@ -221,6 +227,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
     return { input, host: selected, preview: { kind: 'machineSetup', host: projectNativeJsonValueForTransport(selected.review),
       targets: projectNativeJsonValueForTransport(input.targets), appReviews: projectNativeJsonValueForTransport(appReviews),
       appDeployments: projectNativeJsonValueForTransport(appDeployments),
+      scripts: projectNativeJsonValueForTransport(scripts),
       childCount: buildMachineSetupWorkflow(input).blocks.length } };
   }) satisfies Preparation;
   return {

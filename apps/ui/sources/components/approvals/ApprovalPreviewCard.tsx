@@ -8,6 +8,11 @@ import { MachineSetupApplyInputV1Schema, MachineSetupRemoveInputV1Schema } from 
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupChangeGroupRow } from '@/components/settings/machines/managed/MachineSetupChangeGroupRow';
 import { groupMachineSetupChanges } from '@/components/settings/machines/managed/machineSetupReviewChanges';
+import { reviewMachineSetupPlanScripts, type MachineSetupPlanScriptReviewFacts,
+    type MachineSetupTargetSourcePresentations } from '@/components/settings/machines/managed/machineSetupReview';
+import { presentUnresolvedMachineSetupSources } from '@/sync/ops/machines/managedMachinePresetCustody';
+import { MachineSetupReviewedStepV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
+import { TEAM_SETUP_RUN_ACTION_ID_V1, TeamSetupBatchInputV1Schema } from '@happier-dev/protocol/teams';
 import { presentActionApproval, readActionApprovalSubject, readApprovalPreviewSummary, type ApprovalSummaryInput } from './actionApprovalPresentation';
 import { readSettledSessionTeamApproval, type SettledSessionTeamApproval } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { useApprovalPrincipalName } from './approvalPrincipalReading';
@@ -34,7 +39,7 @@ export const ApprovalPreviewCard = React.memo(function ApprovalPreviewCard(props
         <MachineAdminAccessPreview request={props.request} serverId={props.serverId ?? null} />
         <ApprovalPreviewSummary {...props} />
         {props.request?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && <SpawnTeamCredentialSources preview={props.preview} />}
-        <MachineSetupRecipePreview request={props.request} serverId={props.serverId ?? null} />
+        <MachineSetupRecipePreview request={props.request} preview={props.preview} serverId={props.serverId ?? null} />
     </>;
 });
 
@@ -69,7 +74,7 @@ export const ApprovalPreviewFacts = React.memo(function ApprovalPreviewFacts(pro
             ? <SpawnTeamCredentialDefaultsNotice /> : null}
         {props.request?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && <SpawnTeamCredentialSources preview={props.preview} />}
         <MachineAdminAccessPreview request={props.request} serverId={props.serverId ?? null} />
-        <MachineSetupRecipePreview request={props.request} serverId={props.serverId ?? null} />
+        <MachineSetupRecipePreview request={props.request} preview={props.preview} serverId={props.serverId ?? null} />
     </>;
 });
 
@@ -87,11 +92,16 @@ function SpawnTeamCredentialDefaultsNotice() {
         title={t('actionConfirmations.spawnWithoutTeamCredentialDefaults')} />;
 }
 
-/** Only the reviewed effect Plans are executable here; source copies stay review context. */
+/** Apply runs its effect Plans and its sources' scripts; Remove carries sources only as review context. */
 function readMachineSetupRecipeTargets(request?: ApprovalSummaryInput) {
     if (request?.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1) {
         const parsed = MachineSetupApplyInputV1Schema.safeParse(request.actionArgs);
-        return parsed.success ? parsed.data.targets.map(target => ({ ...target, sources: [] })) : [];
+        return parsed.success ? parsed.data.targets : [];
+    }
+    // A Team setup batch runs the same Machine Apply as its first child.
+    if (request?.actionId === TEAM_SETUP_RUN_ACTION_ID_V1) {
+        const parsed = TeamSetupBatchInputV1Schema.safeParse(request.actionArgs);
+        return parsed.success ? parsed.data.machine?.targets ?? [] : [];
     }
     if (request?.actionId === MACHINE_SETUP_REMOVE_ACTION_ID_V1) {
         const parsed = MachineSetupRemoveInputV1Schema.safeParse(request.actionArgs);
@@ -100,13 +110,44 @@ function readMachineSetupRecipeTargets(request?: ApprovalSummaryInput) {
     return [];
 }
 
+/**
+ * The admitting host's preview carries each target Plan's script review; the shared Setup Review owner projects it
+ * over the copies this viewer can open. Scripts it cannot place read as not known, never as no change.
+ */
+function readMachineSetupApprovalScripts(targets: ReturnType<typeof readMachineSetupRecipeTargets>, preview: unknown) {
+    const reviews = Array.isArray(readRecord(preview).scripts) ? readRecord(preview).scripts as unknown[] : [];
+    return targets.flatMap((target, targetIndex): MachineSetupTargetSourcePresentations[] => {
+        if (!('recipePlans' in target)) return [];
+        const entry = reviews.map(readRecord).find(candidate => candidate.targetIndex === targetIndex
+            && candidate.homeId === target.homeId && candidate.machineId === target.machineId);
+        const review = readMachineSetupPlanScriptReviewFacts(entry?.review);
+        const presentations = presentUnresolvedMachineSetupSources(target.sources);
+        const reviewed = reviewMachineSetupPlanScripts(review, presentations, false);
+        return [{ homeId: target.homeId, machineId: target.machineId, ...(reviewed.ok
+            ? { sources: reviewed.presentations, ...(reviewed.scripts ? { scripts: reviewed.scripts } : {}) }
+            : { sources: presentations, scripts: [{ label: t('machinePresets.setup.review.unknown') }] }) }];
+    });
+}
+
+function readMachineSetupPlanScriptReviewFacts(value: unknown): MachineSetupPlanScriptReviewFacts | undefined {
+    const record = readRecord(value);
+    const effects = readRecord(record.presetUpdateEffects);
+    const addresses = Array.isArray(effects.scripts) ? effects.scripts.map(readRecord) : null;
+    if (typeof effects.toolchain !== 'boolean' || !addresses || addresses.some(address =>
+        !Number.isInteger(address.sourceIndex) || !Number.isInteger(address.scriptIndex))) return undefined;
+    const steps = Array.isArray(record.steps) ? record.steps.map(step => MachineSetupReviewedStepV1Schema.safeParse(step)) : [];
+    return { presetUpdateEffects: { toolchain: effects.toolchain,
+        scripts: addresses.map(address => ({ sourceIndex: address.sourceIndex as number, scriptIndex: address.scriptIndex as number })) },
+        steps: steps.flatMap(step => step.success ? [step.data] : []) };
+}
+
 /** The same change groups the Setup tab's review shows (P-M6), so an agent's setup reads the same everywhere. */
-function MachineSetupRecipePreview(props: Readonly<{ request?: ApprovalSummaryInput; serverId: string | null }>) {
+function MachineSetupRecipePreview(props: Readonly<{ request?: ApprovalSummaryInput; preview: unknown; serverId: string | null }>) {
     const targets = readMachineSetupRecipeTargets(props.request);
     const machines = useMachineListForServer(props.serverId ?? '', targets.length > 0 && props.serverId !== null);
     const nameOf = React.useCallback((machineId: string) =>
         getMachineDisplayName(machines?.find(machine => machine.id === machineId)) ?? t('common.unknown'), [machines]);
-    const groups = groupMachineSetupChanges(targets);
+    const groups = groupMachineSetupChanges(targets, readMachineSetupApprovalScripts(targets, props.preview));
     return groups.length > 0 ? <>{groups.map(group => (
         <MachineSetupChangeGroupRow key={group.kind} group={group} testID={`approvals.preview.${group.kind}`}
             nameOf={nameOf} targetCount={targets.length} />

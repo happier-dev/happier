@@ -51,6 +51,37 @@ describe('ApprovalPreviewCard reviewed Machine scripts', () => {
         await screen.unmount();
     });
 
+    it('shows exactly the scripts the admitted Plan runs, naming a retained copy it cannot open', async () => {
+        const actionArgs = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'vps', targets: [{
+            homeId: 'home', machineId: 'vps', desiredRevision: 4, recipePlans: [], sources: [
+                { kind: 'accountPresetOpaque', presetId: 'retained', presetRevision: 1, contentEncryptionMode: 'e2ee' },
+                { kind: 'direct', setup: { scripts: [{ body: 'echo already-done' }, { body: 'printf TEAM' }] } },
+            ] }] });
+        // The host's admission preview carries the target Plan's own script review.
+        const review = { steps: [{ planIndex: 0, stepId: 'script:1', label: 'Script 2' }, { planIndex: 0, stepId: 'script:3', label: 'Script 4' }],
+            presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 1 }, { sourceIndex: 1, scriptIndex: 1 }] } };
+        const screen = await renderScreen(<ApprovalPreviewCard
+            preview={{ kind: 'machineSetup', summary: 'Review setup', scripts: [{ targetIndex: 0, homeId: 'home', machineId: 'vps', review }] }}
+            request={{ actionId: 'machines.setup.apply', actionArgs }} />);
+        expect(screen.getTextContent()).toContain('Script 2');
+        expect(screen.getTextContent()).toContain('$ printf TEAM');
+        expect(screen.getTextContent()).not.toContain('already-done');
+        await screen.unmount();
+    });
+
+    it('says a Team setup batch runs scripts it cannot show instead of showing no change', async () => {
+        const machine = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'vps', targets: [{
+            homeId: 'home', machineId: 'vps', desiredRevision: 4, recipePlans: [], sources: [
+                { kind: 'accountPresetOpaque', presetId: 'team-tools', presetRevision: 1, contentEncryptionMode: 'e2ee' },
+                { kind: 'direct', setup: { scripts: [{ body: 'printf DIRECT' }] } },
+            ] }] });
+        const screen = await renderScreen(<ApprovalPreviewCard preview={{ summary: 'Review Team setup' }}
+            request={{ actionId: 'teams.setup.run', actionArgs: { serverId: 'home', homeId: 'home', machineId: 'vps', machine, repositories: [] } }} />);
+        expect(screen.findByTestId('approvals.preview.commands')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('printf DIRECT');
+        await screen.unmount();
+    });
+
     it('does not present an invalid setup payload as a reviewed script', async () => {
         const screen = await renderScreen(<ApprovalPreviewCard preview={{ summary: 'Review setup' }}
             request={{ actionId: 'machines.setup.apply', actionArgs: { recipePlans: [{ plan }] } }} />);
