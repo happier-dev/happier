@@ -244,6 +244,7 @@ const VoiceGlanceBody = React.memo(function VoiceGlanceBody(
         readAloud={reading?.readAloud}
         turn={model}
         dismissInHostMenu={props.presentation === 'companion'}
+        narrow={props.presentation === 'companion'}
         testID={`${props.testID}-transport`}
       />
     </View>

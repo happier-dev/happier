@@ -69,6 +69,10 @@ export type VoiceMomentsTranslation = Readonly<{
     continuedOn: (params: Readonly<{ device: string }>) => string;
     continuedElsewhere: string;
     continuedHere: string;
+    /** The transcript row when Voice moves to another Session: only where it is now. */
+    nowTalkingTo: (params: Readonly<{ title: string }>) => string;
+    nowTalkingToAnother: string;
+    notTalkingToSession: string;
     spokenTurn: string;
     spokenAloud: string;
     /** The account-wide Voice a conversation belongs to, in a Voice conversation's header. */
@@ -145,6 +149,9 @@ export const voiceMomentsTranslationsEnglish = { en: {
         continuedOn: ({ device }) => `Continued on ${device}`,
         continuedElsewhere: 'Continued on another device',
         continuedHere: 'Continued on this device',
+        nowTalkingTo: ({ title }) => `Now talking to ${title}`,
+        nowTalkingToAnother: 'Now talking to another session',
+        notTalkingToSession: 'Not talking to a session',
         spokenTurn: 'Spoken',
         spokenAloud: 'Spoken aloud',
         globalVoice: 'Global Voice',

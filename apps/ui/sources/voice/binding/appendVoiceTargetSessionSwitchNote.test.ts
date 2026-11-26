@@ -46,18 +46,22 @@ describe('appendVoiceTargetSessionSwitchNote', () => {
     it('projects a generic note when summary sharing is disabled', () => {
         publishPrivacy(false);
         appendVoiceTargetSessionSwitchNote({ conversationSessionId, previousTargetSessionAddress, targetSessionAddress });
-        expect(readNote()).toBe('Target session changed from the previous session to the current session');
+        expect(readNote()).toBe('Now talking to another session');
         expect(readNote()).not.toContain('Private summary');
+    });
+    it('projects one short row naming only the new target', () => {
+        appendVoiceTargetSessionSwitchNote({ conversationSessionId, previousTargetSessionAddress, targetSessionAddress });
+        expect(readNote()).not.toContain('Private summary A');
     });
     it('projects shared session summaries through the canonical note reader', () => {
         appendVoiceTargetSessionSwitchNote({ conversationSessionId, previousTargetSessionAddress, targetSessionAddress });
-        expect(readNote()).toBe('Target session changed from Private summary A to Private summary B');
+        expect(readNote()).toBe('Now talking to Private summary B');
     });
     it('redacts paths in summary labels before projecting the note', () => {
         publishPrivacy(true, false);
         publishSessions('Editing /Users/alice/SecretRepo/src/a.ts', 'Reviewing /Users/alice/SecretRepo/src/b.ts');
         appendVoiceTargetSessionSwitchNote({ conversationSessionId, previousTargetSessionAddress, targetSessionAddress });
-        expect(readNote()).toBe('Target session changed from Editing <path_redacted> to Reviewing <path_redacted>');
+        expect(readNote()).toBe('Now talking to Reviewing <path_redacted>');
     });
     it('does not disclose lookup names when summary sharing is disabled', () => {
         publishPrivacy(false);
@@ -72,7 +76,11 @@ describe('appendVoiceTargetSessionSwitchNote', () => {
             { type: 'session', sessionId: 's2', serverId: activeServerId, serverName: 'Active' },
         ] } });
         appendVoiceTargetSessionSwitchNote({ conversationSessionId, previousTargetSessionAddress, targetSessionAddress });
-        expect(readNote()).toBe('Target session changed from the previous session to the current session');
+        expect(readNote()).toBe('Now talking to another session');
+    });
+    it('says no session is in focus when the target is cleared', () => {
+        appendVoiceTargetSessionSwitchNote({ conversationSessionId, previousTargetSessionAddress, targetSessionAddress: null });
+        expect(readNote()).toBe('Not talking to a session');
     });
     it('treats raw session-id labels as unresolved', () => {
         publishPrivacy(false);
@@ -83,6 +91,6 @@ describe('appendVoiceTargetSessionSwitchNote', () => {
                 metadata: { ...fixtureMetadata, path: '', name: 's2' } }),
         } });
         appendVoiceTargetSessionSwitchNote({ conversationSessionId, previousTargetSessionAddress, targetSessionAddress });
-        expect(readNote()).toBe('Target session changed from the previous session to the current session');
+        expect(readNote()).toBe('Now talking to another session');
     });
 });

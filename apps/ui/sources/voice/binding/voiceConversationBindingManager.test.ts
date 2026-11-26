@@ -127,8 +127,8 @@ describe('binding manager with real binding and persistence owners', () => {
         await manager.ensureBound({ ...input, requestedTargetSessionId: 's2' });
         expect(await persistedBinding()).toMatchObject({ targetSessionAddress: address('s2') });
         expect(notes()).toHaveLength(1);
-        expect(notes()[0]?.text).toContain('Previous project');
         expect(notes()[0]?.text).toContain('Next project');
+        expect(notes()[0]?.text).not.toContain('Previous project');
     });
 
     it('updates tracked target while preserving the same conversation', async () => {

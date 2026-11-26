@@ -314,25 +314,28 @@ describe('VoiceGlance', () => {
         expect(voice.onToggleMute).toHaveBeenCalledTimes(1);
     });
 
-    it('names Mute (and Unmute, the muted call\'s one way back) at the Companion\'s width; the row wraps instead', async () => {
+    it('names Mute (and Unmute, the muted call\'s one way back) at the Companion\'s width', async () => {
         const voice = attempt();
-        const measure = (width: number) => act(async () => {
-            screen?.findByTestId('voice-glance-transport')?.props.onLayout?.({ nativeEvent: { layout: { width, height: 26 } } });
-        });
         screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="companion" />);
         expect(screen.getTextContent()).toContain(t('voicePresence.mute'));
         expect(screen.getTextContent()).toContain(t('voicePresence.end'));
         screen.pressByTestId('voice-glance-transport-mute');
         expect(voice.onToggleMute).toHaveBeenCalledTimes(1);
-        await measure(232);
-        expect(screen.getTextContent()).toContain(t('voicePresence.mute'));
-        await screen.unmount();
+    });
 
-        const muted = { ...voice, muted: true, canCommitInput: true, commitInputLabel: 'Send now', onCommitInput: vi.fn() };
+    it('keeps Unmute · Send now · End on one row in the Companion: End steps down to its well, the popover keeps its word', async () => {
+        const muted = { ...attempt(), muted: true, canCommitInput: true, commitInputLabel: 'Send now', onCommitInput: vi.fn() };
         screen = await renderScreen(<VoiceGlance model={surface(muted, { canBargeIn: false })} presentation="companion" />);
-        await measure(232);
         expect(screen.getTextContent()).toContain(t('voicePresence.unmute'));
+        expect(screen.getTextContent()).toContain('Send now');
+        expect(screen.getTextContent()).not.toContain(t('voicePresence.end'));
+        expect(screen.findByTestId('voice-glance-transport-end')?.props.accessibilityLabel).toBe(t('voiceAssistant.endVoice'));
+        screen.pressByTestId('voice-glance-transport-end');
+        expect(muted.onToggle).toHaveBeenCalledTimes(1);
         expect(screen.getTextContent()).not.toMatch(/voicePresence\./);
+        await screen.unmount();
+        screen = await renderScreen(<VoiceGlance model={surface(muted, { canBargeIn: false })} presentation="popover" />);
+        expect(screen.getTextContent()).toContain(t('voicePresence.end'));
     });
 
     it('keeps the phone sheet to one readable row when the reading Stop joins Mute, Send and End', async () => {
