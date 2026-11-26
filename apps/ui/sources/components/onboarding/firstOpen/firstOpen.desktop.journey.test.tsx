@@ -30,7 +30,7 @@ it('paints and acknowledges the presenter during main boot, then builds the iner
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     const events = new Map<string, number>();
     const frame = { x: 0, y: 0, width: 1440, height: 900 };
-    const placement = { overlayFrame: frame, windowRect: { x: 250, y: 80, width: 940, height: 740 }, cursor: null };
+    const placement = { overlayFrame: frame, windowRect: { x: 250, y: 80, width: 940, height: 540 }, cursor: null };
     const host = createDesktopHostInternals(({ command, args }) => {
         if (command === 'desktop_first_open_overlay_subscribed') return placement;
         if (command === 'plugin:event|listen' && typeof args.event === 'string' && typeof args.handler === 'number') {
@@ -56,7 +56,8 @@ it('paints and acknowledges the presenter during main boot, then builds the iner
     const draw = vi.fn();
     const restoreGraphics = installFirstOpenWebGraphics(frame.width, frame.height, draw);
     const welcome = {
-        heading: { title: 'Set up Happier', subtitle: 'Welcome' },
+        retention: { kind: 'summary', summary: 'Stored for 30 days' },
+        heading: { title: 'Set up Happier', subtitle: 'Welcome', compact: { title: 'Set up Happier', subtitle: 'Compact Welcome' } },
         doors: [{ index: 0, display: { title: 'Start', testID: 'welcome-primary-start', primary: true } }],
         quietWays: [], notices: [],
         selfHosting: { display: { testID: 'welcome-self-hosting', title: 'Run your own Home' } },
@@ -83,6 +84,8 @@ it('paints and acknowledges the presenter during main boot, then builds the iner
             ...placement, epoch: performance.timeOrigin + performance.now(), welcome,
         }));
         expect(box.textContent).toContain('Set up Happier');
+        expect(box.textContent).toContain('Compact Welcome');
+        expect(box.querySelector('[data-testid="unauth-shell-welcome-footer"] [data-testid="welcome-retention"]')).not.toBeNull();
         const door = box.querySelector('[data-testid="welcome-primary-start"]');
         expect(door?.closest('[inert]')?.getAttribute('aria-hidden')).toBe('true');
         expect(door?.getAttribute('aria-disabled')).toBe('true');

@@ -1325,9 +1325,11 @@ fn create_main_window_for_startup(
         })
         .build()?;
     configure_main_window(app, &window);
-    let unsaved = crate::window_sizing::configure_main_window(app, &window, crate::window_sizing::InitialWindowVisibility::Hidden)?;
-    if let Some(first_open) = first_open.filter(|_| unsaved) {
-        let candidate = crate::first_open::prepare(&window, first_open.supports_overlay);
+    let first_launch_frame = crate::window_sizing::configure_main_window(app, &window, crate::window_sizing::InitialWindowVisibility::Hidden)?;
+    if let (Some(first_open), Some(frame)) = (first_open, first_launch_frame) {
+        // The sizing owner already applied this frame. Hidden GTK windows may still report
+        // their pre-layout outer size until the compositor configures them.
+        let candidate = crate::first_open::prepare(&window, frame, first_open.supports_overlay);
         if let Some(script) = crate::web_runtime_config::build_first_open_candidate_script(candidate) {
             if let Err(error) = window.eval(&script) {
                 log::info!("Could not publish the opening candidate: {error}");

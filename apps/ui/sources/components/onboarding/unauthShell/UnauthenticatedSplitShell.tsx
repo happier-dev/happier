@@ -54,6 +54,8 @@ export type UnauthenticatedSplitShellProps = Readonly<{
 
     /** The opening replica is sized to the destination inside the larger presenter window. */
     frameWidth?: number;
+    /** An opening presenter supplies the canvas behind its full-screen atmosphere. */
+    transparentCanvas?: boolean;
     testID?: string;
 }>;
 
@@ -87,7 +89,8 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
     const measureColumn = presentation !== 'fullBleed';
     const planetState = props.isWelcomeStep ? 'welcome' : 'deep';
     return (
-        <View ref={fieldHost} collapsable={false} testID={props.testID ?? 'unauth-shell'} style={styles.root} onTouchEnd={onTouchEnd}>
+        <View ref={fieldHost} collapsable={false} testID={props.testID ?? 'unauth-shell'}
+            style={[styles.root, !props.transparentCanvas && styles.canvas]} onTouchEnd={onTouchEnd}>
             <WelcomeAtmosphere
                 state={planetState}
                 stepId={props.stepId}
@@ -128,6 +131,8 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
+    },
+    canvas: {
         backgroundColor: theme.colors.background.canvas,
     },
 }));

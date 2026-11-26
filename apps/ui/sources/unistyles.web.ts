@@ -1,5 +1,6 @@
 import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
 
+import { resolveDesktopWindowContext } from './desktop/window/isDesktopAuxiliaryWindowContext';
 import { loadThemeRuntimeLocalState } from './sync/domains/state/persistence';
 import {
     resolveThemeRuntimeStartupThemes,
@@ -41,9 +42,7 @@ StyleSheet.configure({
     themes: appThemes,
 });
 
-const setRootBackgroundColor = () => {
-    UnistylesRuntime.setRootViewBackgroundColor(startupThemes.backgroundColor);
-};
-
-setRootBackgroundColor();
+UnistylesRuntime.setRootViewBackgroundColor(
+    resolveDesktopWindowContext().role === 'presenter' ? 'transparent' : startupThemes.backgroundColor,
+);
 initializeThemeRuntimeAppearance({ ...themeRuntimeLocalState, style: themeStyleSelectionFromSurfaceFinish(themeRuntimeLocalState) }, appThemes);

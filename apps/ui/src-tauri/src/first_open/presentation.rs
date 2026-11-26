@@ -69,13 +69,12 @@ impl FirstOpenState {
     }
 }
 
-fn placement(main: &WebviewWindow) -> Result<(Placement, f64), String> {
+fn placement(main: &WebviewWindow, mut window_rect: WindowFrame) -> Result<(Placement, f64), String> {
     let monitor = main.current_monitor().map_err(|error| error.to_string())?
         .or(main.primary_monitor().map_err(|error| error.to_string())?)
         .ok_or("the main window has no monitor")?;
     let overlay_frame = window_sizing::monitor_work_area(&monitor);
     let scale = monitor.scale_factor();
-    let mut window_rect = window_sizing::window_frame(main)?;
     window_rect.x -= overlay_frame.x;
     window_rect.y -= overlay_frame.y;
     let cursor = main.app_handle().cursor_position().ok().and_then(|position| {
@@ -91,6 +90,7 @@ fn create_overlay(app: &AppHandle, placement: &Placement, scale: f64) -> Result<
     let overlay = WebviewWindowBuilder::new(app, OVERLAY, WebviewUrl::App("/desktop/opening".into()))
         .visible(false).focused(false).transparent(true).decorations(false)
         .resizable(false).shadow(false).skip_taskbar(true).always_on_top(true)
+        .background_color(tauri::window::Color(0, 0, 0, 0))
         .build().map_err(|error| error.to_string())?;
     let result = (|| {
         let position = tauri::LogicalPosition::new(frame.x, frame.y).to_physical::<i32>(scale);
@@ -106,6 +106,23 @@ fn create_overlay(app: &AppHandle, placement: &Placement, scale: f64) -> Result<
                 keyboard_on_request: true, level: Some(objc2_app_kit::NSFloatingWindowLevel as i64),
                 collection_behavior: tauri_nspanel::CollectionBehavior::new(),
             })?;
+            overlay.with_webview(|webview| unsafe {
+                let native: &objc2_app_kit::NSWindow = &*webview.ns_window().cast();
+                let view: &objc2::runtime::AnyObject = &*webview.inner().cast();
+                let background: objc2::rc::Retained<objc2::runtime::AnyObject> =
+                    objc2::msg_send![native, backgroundColor];
+                let background_alpha: f64 = objc2::msg_send![&*background, alphaComponent];
+                let draws: objc2::rc::Retained<objc2::runtime::AnyObject> = objc2::msg_send![view,
+                    valueForKey: &*objc2_foundation::NSString::from_str("drawsBackground")];
+                let draws_background: bool = objc2::msg_send![&*draws, boolValue];
+                let under_page: objc2::rc::Retained<objc2::runtime::AnyObject> =
+                    objc2::msg_send![view, underPageBackgroundColor];
+                let under_page_alpha: f64 = objc2::msg_send![&*under_page, alphaComponent];
+                log::info!(
+                    "first_open: presenter backing isOpaque={} backgroundAlpha={background_alpha} drawsBackground={draws_background} underPageAlpha={under_page_alpha}",
+                    native.isOpaque(),
+                );
+            }).map_err(|error| error.to_string())?;
         }
         #[cfg(target_os = "linux")]
         {
@@ -176,12 +193,12 @@ fn observe_overlay_process(app: &AppHandle, webview: tauri::webview::PlatformWeb
 }
 
 /// Called once on cold startup, after sizing has restored or computed the main frame.
-pub(crate) fn prepare(main: &WebviewWindow, supports_overlay: bool) -> Candidate {
+pub(crate) fn prepare(main: &WebviewWindow, frame: WindowFrame, supports_overlay: bool) -> Candidate {
     if !supports_overlay { return Candidate::InApp; }
     let app = main.app_handle();
     #[cfg(target_os = "linux")]
     if !desktop_panel::allows_positioned_transparency(main) { return Candidate::InApp; }
-    match placement(main).and_then(|(placement, scale)| {
+    match placement(main, frame).and_then(|(placement, scale)| {
         create_overlay(app, &placement, scale)?;
         let state = app.state::<FirstOpenState>();
         *state.0.lock().unwrap() = Opening { handoff: Handoff::prepare(), placement: Some(placement) };
@@ -336,12 +353,50 @@ fn reveal_main(app: &AppHandle, request: MainWindowRevealRequest) -> Result<(), 
     window_chrome::reveal_main_window(app, &main, request).map_err(|error| error.to_string())
 }
 
+fn log_welcome_bounds(window: &WebviewWindow) {
+    let label = window.label().to_owned();
+    // Compare window-local CSS bounds. The replica lives at a desktop offset in its presenter.
+    let script = r#"(() => {
+        const byId = (node, id) => node.querySelector('[data-testid="' + id + '"]');
+        const pane = byId(document, 'unauth-shell-workflow-pane');
+        const column = pane && byId(pane, 'welcome-decision-panel');
+        if (!column) return null;
+        const frame = pane.closest('[inert]') || document.documentElement;
+        const origin = frame.getBoundingClientRect();
+        const bounds = node => {
+            if (!node) return null;
+            const {x, y, width, height} = node.getBoundingClientRect();
+            return [x - origin.x, y - origin.y, width, height];
+        };
+        return {
+            size: [origin.width, origin.height],
+            heading: Array.from(column.querySelectorAll('[role="heading"], h1, h2'), bounds),
+            doors: bounds(byId(column, 'welcome-doors')),
+            retention: bounds(byId(pane, 'welcome-retention')),
+            corner: bounds(byId(pane, 'unauth-shell-corner')),
+            footer: bounds(byId(pane, 'unauth-shell-welcome-footer')),
+            wordmark: bounds(byId(pane, 'welcome-mobile-wordmark')),
+        };
+    })()"#;
+    if let Err(error) = window.eval_with_callback(script, move |bounds| {
+        log::info!("first_open: Welcome bounds {label} {bounds}");
+    }) {
+        log::info!("first_open: Welcome bounds unavailable for {}: {error}", window.label());
+    }
+}
+
 #[tauri::command]
 pub async fn desktop_first_open_swap(window: WebviewWindow) -> Result<(), String> {
     ensure_caller(&window, OVERLAY)?;
     let app = window.app_handle();
     if app.state::<FirstOpenState>().0.lock().unwrap().handoff.swap() {
+        log_welcome_bounds(&window);
         let result = reveal_main(app, MainWindowRevealRequest::App);
+        if result.is_ok() {
+            if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                log_welcome_bounds(&main);
+            }
+        }
         notify_main(app, Host::Settled { outcome: Settlement::after_swap(result.is_ok()) });
         app.state::<FirstOpenState>().mark(format_args!("swap"));
         result?;

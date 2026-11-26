@@ -879,7 +879,7 @@ pub(crate) fn configure_main_window(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
     initial_visibility: InitialWindowVisibility,
-) -> tauri::Result<bool> {
+) -> tauri::Result<Option<WindowFrame>> {
     let state_path = resolve_state_path_handle(app)?;
     let mode_path = resolve_mode_path_handle(app)?;
     let persisted = app.state::<WindowSizingState>().frames.saved(&state_path);
@@ -922,7 +922,7 @@ pub(crate) fn configure_main_window(
     present_initial_main_window(initial_visibility, || {
         let _ = window.show();
     });
-    Ok(persisted.is_none())
+    Ok(persisted.is_none().then_some(normal))
 }
 
 #[cfg(desktop)]

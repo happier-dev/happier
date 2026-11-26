@@ -88,6 +88,26 @@ describe('unistyles overlay background bootstrap', () => {
         expect(setBackgroundColorAsyncMock).not.toHaveBeenCalled();
     });
 
+    it('keeps the first-open desktop document transparent from web theme startup', async () => {
+        platformBoundary.os = 'web';
+        windowStub.location.href = 'http://localhost/desktop/opening';
+        windowStub.location.pathname = '/desktop/opening';
+        vi.stubGlobal('isTauri', true);
+
+        await import('./unistyles.web');
+
+        expect(setRootViewBackgroundColorMock).toHaveBeenLastCalledWith('transparent');
+    });
+
+    it('keeps the main window themed from web theme startup', async () => {
+        platformBoundary.os = 'web';
+        vi.stubGlobal('isTauri', true);
+
+        await import('./unistyles.web');
+
+        expect(setRootViewBackgroundColorMock).toHaveBeenLastCalledWith('#F5F5F5');
+    });
+
     it('uses an explicit initial theme for adaptive preferences instead of native adaptive theme registration', async () => {
         loadThemePreferenceMock.mockReturnValue('adaptive');
         appearanceGetColorSchemeMock.mockReturnValue('dark');
