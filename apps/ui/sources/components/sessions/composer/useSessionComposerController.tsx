@@ -7476,10 +7476,9 @@ export function useSessionComposerController({
                             // retry therefore dispatches the first exact nested
                             // input rather than an edited composer projection.
                             if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
-                            const { disposition, result } = await continueSessionWithArmedAgent(prepared, {
-                                signal: callerSignal,
-                                isCurrent: () => outboundAccountLifetime.isCurrent(),
-                                onBeforeTransitionDispatch: () => inSessionAgentPicker.recordArmedContinuationSubmission({
+                            const issuedSubmission = existingSubmission?.localId === destination.localId
+                                ? existingSubmission
+                                : {
                                     localId: destination.localId,
                                     input: transitionInput,
                                     currentness: {
@@ -7492,7 +7491,11 @@ export function useSessionComposerController({
                                         nextPromptPermissionModeMutationId: semanticDraftSnapshot.repositoryCurrentness
                                             .mutationIds['extensions.happier.nextPromptPermissionModeV1'],
                                     },
-                                }),
+                                };
+                            const { disposition, result } = await continueSessionWithArmedAgent(prepared, {
+                                signal: callerSignal,
+                                isCurrent: () => outboundAccountLifetime.isCurrent(),
+                                onBeforeTransitionDispatch: () => inSessionAgentPicker.recordArmedContinuationSubmission(issuedSubmission),
                             });
                             if (!outboundAccountLifetime.isCurrent() || callerSignal.aborted) return { status: 'rejected' };
                             if (result === null) {
@@ -7510,7 +7513,9 @@ export function useSessionComposerController({
                             // Where canonical admission also clears the draft, keep
                             // the nested snapshot through the next effect so the one
                             // compare-clear owner can consume it before the arm goes.
-                            if (disposition.arm === 'clear' && disposition.draft !== 'clear') {
+                            if (result.type === 'rejected') {
+                                inSessionAgentPicker.clearArmedContinuationSubmissionIfCurrent(issuedSubmission, disposition.arm);
+                            } else if (disposition.arm === 'clear' && disposition.draft !== 'clear') {
                                 inSessionAgentPicker.clearArmedContinuation();
                             }
                             // The outcome itself is recorded, not its rendering: the

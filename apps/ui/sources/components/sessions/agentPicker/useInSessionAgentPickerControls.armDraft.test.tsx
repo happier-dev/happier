@@ -624,6 +624,28 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         ]);
     });
 
+    it('keeps the armed choice editable after the refused submission is released', async () => {
+        const hook = await renderControls();
+        await armTarget(hook, 'agent:happier.agent.codex/codex');
+        const localId = hook.getCurrent().armedContinuationLocalId;
+        const submission = SessionArmedAgentContinuationSubmissionSchema.parse({
+            localId,
+            input: { localId, text: 'Keep this message', meta: {} },
+            currentness: { text: 'Keep this message', mentions: [], composerAttachments: [], attachmentDraftIds: [] },
+        });
+        await act(async () => {
+            expect(hook.getCurrent().recordArmedContinuationSubmission(submission)).toBe(true);
+        });
+        await act(async () => {
+            expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission, 'keep')).toBe(true);
+        });
+
+        expect(readPersistedArm()?.intent).toEqual(armedIntentFor('codex'));
+        expect(readPersistedArm()?.submission).toBeUndefined();
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(hook.getCurrent().armedContinuationSubmission).toBeNull();
+    });
+
     it('leaves a newer arm alone when custody consumes the submission it replaced', async () => {
         const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
         await armTarget(hook, 'agent:happier.agent.codex/codex');

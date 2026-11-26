@@ -751,6 +751,10 @@ wire input remains frozen on retries; this does not promise frozen effective per
 admission path. The released `cli-v0.2.14` contract and the coordinator's post-stop metadata-sealing
 test establish this compatibility boundary.
 
+A definitive transition refusal with `sourceEffect: 'none'` releases the matching issued submission.
+The person can edit the draft and the armed choice and try again. An uncertain outcome retains the
+issued snapshot for reconciliation.
+
 Supporting CLI admission honors the explicit canonical input intent after cutover. Once canonical
 input custody is observed, `Sync.publishNextPromptPermissionModeAfterAdmission` applies the existing
 `next_prompt` publication policy shared with ordinary sends. It publishes the admitted frozen intent

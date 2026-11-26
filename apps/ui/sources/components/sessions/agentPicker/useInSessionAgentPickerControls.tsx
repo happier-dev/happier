@@ -397,7 +397,10 @@ export type InSessionAgentPickerControls = Readonly<{
     armedContinuationSubmissionIntent: ArmedAgentContinuation['intent'] | null;
     clearArmedContinuation: () => void;
     /** Spends the matching live and persisted submission once canonical custody consumes it. */
-    clearArmedContinuationSubmissionIfCurrent: (submission: SessionArmedAgentContinuationSubmission) => boolean;
+    clearArmedContinuationSubmissionIfCurrent: (
+        submission: SessionArmedAgentContinuationSubmission,
+        armDisposition?: 'clear' | 'keep',
+    ) => boolean;
     /**
      * Captures the exact canonical user-message request before the transition
      * RPC leaves this process. The existing arm remains the one persisted owner.
@@ -708,21 +711,28 @@ export function useInSessionAgentPickerControls(
 
     const clearArmedContinuationSubmissionIfCurrent = React.useCallback((
         expected: SessionArmedAgentContinuationSubmission,
+        armDisposition: 'clear' | 'keep' = 'clear',
     ): boolean => {
         if (!accountScopeIsCurrent()) return false;
-        // Custody spends both projections, even before target metadata arrives.
-        // Ordinary disarming retains submitted custody; this owner consumes only
-        // the exact snapshot and preserves any newer choice.
+        // Settle the exact issued submission in both projections. A definitive
+        // refusal releases the input snapshot so the choice can still be edited.
         const persisted = draftSessionId === null
             ? undefined
             : readPersistedArmedContinuation(accountScope, draftSessionId);
         const persistedMatches = isSameArmedContinuationSubmission(persisted?.submission, expected);
         const liveMatches = isSameArmedContinuationSubmission(armed?.submission, expected);
         if (!persistedMatches && !liveMatches) return false;
-        if (persistedMatches && draftSessionId !== null) {
-            writePersistedArmedContinuation(accountScope, draftSessionId, null);
+        const settle = (current: ArmedAgentContinuation): ArmedAgentContinuation | null => {
+            if (armDisposition === 'clear') return null;
+            const { submission: _submission, ...choice } = current;
+            return choice;
+        };
+        if (persistedMatches && persisted && draftSessionId !== null) {
+            writePersistedArmedContinuation(accountScope, draftSessionId, settle(persisted));
         }
-        setArmed((current) => isSameArmedContinuationSubmission(current?.submission, expected) ? null : current);
+        setArmed((current) => current && isSameArmedContinuationSubmission(current.submission, expected)
+            ? settle(current)
+            : current);
         return true;
     }, [accountScope, accountScopeIsCurrent, armed?.submission, draftSessionId]);
 
