@@ -13,7 +13,8 @@ import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
-import { readSessionOwnerLocality, type tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveSessionInputTargetMachineId } from './sessionInputAdmissionIdentity';
 import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import type { StoredCredentials } from '@/persistence';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -52,8 +53,7 @@ export async function readSessionReadiness(input: Readonly<{
   authorization?: ExternalActionExecutionAuthorizationV1;
 }>): Promise<SessionReadinessV1> {
   const { session, metadata, awareness } = input;
-  const locality = readSessionOwnerLocality({ metadata, rawSession: session });
-  const machineId = locality?.machineId;
+  const machineId = resolveSessionInputTargetMachineId({ decryptedMetadata: metadata, rawSession: session });
   let machine: SessionReadinessV1['machine'] = machineId ? { status: 'unknown', machineId } : null;
   let agent: SessionReadinessAgentV1 | null = null;
   let machineUnknownReason: SessionReadinessV1['reason'];
