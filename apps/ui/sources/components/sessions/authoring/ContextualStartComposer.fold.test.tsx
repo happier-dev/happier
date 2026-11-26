@@ -1,6 +1,9 @@
 import * as React from 'react';
+import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { TextInput, View } from 'react-native';
 import { renderScreen } from '@/dev/testkit';
+import { dispatchEscapeToLayerStack, ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from '@/keyboard/escape';
 import {
   SelectionList,
   type SelectionListOption,
@@ -93,6 +96,30 @@ function shownIds(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
 }
 
 describe('ContextualStartComposerBody Who list (lab flows `ask`)', () => {
+  it('closes an inline agent recipe before its enclosing Start draft and preserves the chosen reviewer', async () => {
+    function Draft() {
+      const [open, setOpen] = React.useState(true);
+      const layer = useEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.modal,
+        allowEditableTarget: true, onEscape: () => setOpen(false) });
+      const model = useContextualStartComposer(source({ models: 1, sessions: 0, bots: 0, selected: ['model:0'] }), ADMISSIBLE);
+      return <EscapeLayerProvider layer={layer}>{open ? <View testID="start-draft">
+        <ContextualStartComposerBody model={model} details={new Map([
+          ['model:0', () => <TextInput testID="inline-model-recipe" value="chosen-model" />],
+        ])} />
+      </View> : null}</EscapeLayerProvider>;
+    }
+    const screen = await renderScreen(<Draft />);
+    await screen.pressByTestIdAsync('contextual-start-change:model:0');
+    expect(screen.findByTestId('inline-model-recipe')).toBeTruthy();
+    await act(async () => { dispatchEscapeToLayerStack({ key: 'Escape', target: { tagName: 'INPUT' } }); });
+    expect(screen.findByTestId('start-draft')).toBeTruthy();
+    expect(screen.findByTestId('inline-model-recipe')).toBeNull();
+    expect(shownIds(screen)).toEqual(['model:0']);
+    await act(async () => { dispatchEscapeToLayerStack({ key: 'Escape', target: { tagName: 'INPUT' } }); });
+    expect(screen.findByTestId('start-draft')).toBeNull();
+    await screen.unmount();
+  });
+
   it('keeps selected dynamic people editable beside a selected Session', async () => {
     function MixedWho() {
       const [aliceSelected, setAliceSelected] = React.useState(true);

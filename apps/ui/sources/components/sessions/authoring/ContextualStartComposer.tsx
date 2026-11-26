@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_MENU_ROW_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
@@ -28,6 +28,7 @@ import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentat
 import { useDetailsTabPresentationField } from '@/components/appShell/panes/details/workspace/detailsTabLifetime';
 import { resolveExecutableModelParticipantDisplay, useExecutableParticipantLabels } from './useExecutableParticipantLabel';
 import { t } from '@/text';
+import { ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from '@/keyboard/escape';
 
 type WhoInput = Parameters<typeof useExecutableParticipantSections>[0];
 export type ContextualStartComposerInput = WhoInput & Readonly<{
@@ -199,6 +200,12 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
     const { participants } = source;
     const busy = !source.enabled || source.busy === true;
     const [detailId, setDetailId] = React.useState<string | null>(null);
+    const detailLayer = useEscapeLayer({
+        enabled: Platform.OS === 'web' && detailId !== null && details?.has(detailId) === true,
+        priority: ESCAPE_LAYER_PRIORITIES.inputEditing,
+        allowEditableTarget: true,
+        onEscape: () => setDetailId(null),
+    });
     const [accessoryOpen, setAccessoryOpen] = React.useState(false);
     const accessoryAnchorRef = React.useRef<View | null>(null);
     const closeAccessory = React.useCallback(() => setAccessoryOpen(false), []);
@@ -416,7 +423,7 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
             </View>
             {/* Add and Change open the recipe here, under the list; it never covers the form. */}
             {editor}
-            {detailId ? details?.get(detailId)?.() : null}
+            {detailId ? <EscapeLayerProvider layer={detailLayer}>{details?.get(detailId)?.()}</EscapeLayerProvider> : null}
             {/* Its menu stands on the shared anchored popover's own surface, hanging from the field. */}
             {whoAccessory ? <AgentInputContentPopover open={accessoryOpen} anchorRef={accessoryAnchorRef} anchor="field"
                 testID="contextual-start-who-accessory.popover" onRequestClose={closeAccessory}
