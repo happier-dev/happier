@@ -27,6 +27,17 @@ try {
     throw new Error('Deploy dispatch did not return a workflow run ID');
   }
   console.log(`Waiting for hosted deployment: https://github.com/${repository}/actions/runs/${response.workflow_run_id}`);
+  // The returned run can 404 briefly before it is readable (release run 45662976860). Wait for it;
+  // any other lookup error fails, and the calling job's timeout bounds the wait.
+  for (;;) {
+    try {
+      execFileSync('gh', ['api', `repos/${repository}/actions/runs/${response.workflow_run_id}`], { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] });
+      break;
+    } catch (error) {
+      if (!/HTTP 404|Not Found/.test(String(error.stderr ?? ''))) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2_000);
+    }
+  }
   execFileSync('gh', ['run', 'watch', String(response.workflow_run_id), '--repo', repository, '--exit-status'], { stdio: 'inherit' });
 } catch (error) {
   console.error(error.message);

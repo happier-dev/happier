@@ -256,15 +256,15 @@ describe('MarkdownView (tables)', () => {
         const idCell = cellStyle('22');
         const notesHeader = cellStyle('Notes');
         const notesCell = cellStyle(prose);
-        expect(idCell.flexBasis).toBe(idHeader.flexBasis);
+        expect(idCell.width).toBe(idHeader.width);
         expect(idCell.minWidth).toBe(idHeader.minWidth);
-        expect(notesCell.flexBasis).toBe(notesHeader.flexBasis);
+        expect(notesCell.width).toBe(notesHeader.width);
         expect(notesCell.minWidth).toBe(notesHeader.minWidth);
         // Short column never shrinks; prose column shrinks down to its floor.
         expect(idCell.flexShrink).toBe(0);
-        expect(idCell.minWidth).toBe(idCell.flexBasis);
+        expect(idCell.minWidth).toBe(idCell.width);
         expect(notesCell.flexShrink as number).toBeGreaterThan(0);
-        expect(notesCell.minWidth as number).toBeLessThan(notesCell.flexBasis as number);
+        expect(notesCell.minWidth as number).toBeLessThan(notesCell.width as number);
 
         const scrollView = screen.findAllByType('ScrollView' as any)[0]!;
         const contentStyle = flattenTestStyle(scrollView.props.contentContainerStyle);
@@ -273,7 +273,7 @@ describe('MarkdownView (tables)', () => {
 
         const frameStyle = flattenTestStyle(findNearestHostParent(findNearestHostParent(scrollView))?.props?.style);
         expect(frameStyle.maxWidth).toBe('100%');
-        expect(frameStyle.width as number).toBeGreaterThanOrEqual((idCell.flexBasis as number) + (notesCell.flexBasis as number));
+        expect(frameStyle.width as number).toBeGreaterThanOrEqual((idCell.width as number) + (notesCell.width as number));
     }, 60_000);
 
     it('copies the table as CSV, quoting cells that contain commas, quotes or line breaks', async () => {

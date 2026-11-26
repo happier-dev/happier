@@ -334,7 +334,7 @@ test('npm-e2e-smoke includes a second CLI machine smoke', async () => {
 
   const runnerPath = join(smokeDir, 'run.sh');
   const runnerRaw = await readFile(runnerPath, 'utf8');
-  assert.match(runnerRaw, /run\s+--rm\s+--no-deps\s+cli2/, 'expected runner to execute cli2 smoke');
+  assert.match(runnerRaw, /run\s+--rm\s+--no-deps\s+(?:-e\s+\S+\s+)*cli2\b/, 'expected runner to execute cli2 smoke');
 });
 
 test('npm-e2e-smoke runner rebuilds cli images to avoid stale scripts', async () => {

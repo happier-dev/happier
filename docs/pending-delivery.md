@@ -47,8 +47,8 @@ itself does not establish provider acceptance of that follow-up.
 `decideSessionMessageDelivery` owns the requested action for ordinary composer
 sends. With a Pending-capable CLI, the `agent_queue` and `server_pending`
 values of `sessionMessageSendMode` take the same durable Pending path, so the
-settings screen exposes one choice (**Add it to the current turn**, **Wait until
-the turn ends**, **Stop the turn and send**) through
+settings screen exposes one choice (**Steer into the current turn**, **Queue
+until the turn ends**, **Interrupt and send**) through
 `resolveSessionBusySendBehavior` / `getSessionBusySendBehaviorSettings` in
 `submitMode.ts`. It writes the two existing keys, so older clients keep reading
 them. A `steer_immediately` busy policy durably enqueues `steer_if_active` when

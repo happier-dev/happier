@@ -66,6 +66,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
     const injected: string[] = [];
     const accepted: string[] = [];
     const observed: string[] = [];
+    const visible: RawJSONLines[] = [];
     const thinking: boolean[] = [];
     const terminalReasons: string[] = [];
     let interrupts = 0;
@@ -80,7 +81,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       },
       interruptActiveTurn: async () => { interrupts += 1; },
       onProviderAcceptancePending: (batch) => { discovery.recordAcceptedPrompt({
-        message: batch.message, deliveryIdentity: { localIds: batch.userMessageLocalIds },
+        message: batch.message, deliveryIdentity: { localIds: batch.userMessageLocalIds }, suppressTranscriptEcho: true,
       }); },
       onPromptAccepted: (batch) => {
         discovery.consumeAcceptedPromptByBatch(batch);
@@ -95,9 +96,12 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
     });
     const bridge = createClaudeUnifiedTranscriptBridge({
       sessionId, transcriptPath, workingDirectory: dir,
-      onMessage: () => undefined,
+      onMessage: (message) => {
+        if (!discovery.consumeAcceptedPromptTranscriptEcho(message)) visible.push(message);
+      },
       onTranscriptMessage: (message) => {
         const match = discovery.findMatchingTranscript([message]);
+        if (match) discovery.reserveAcceptedPromptTranscriptEcho(match);
         if (match) confirmation = arbiter.confirmPromptAcceptedByProviderIf((batch) => (
           doesClaudeUnifiedPromptBatchMatchAcceptedTranscript({ batch, match })
         ));
@@ -136,6 +140,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       await arbiter.drainWhenSafe();
       await arbiter.drainWhenSafe();
       expect(accepted).toEqual(['follow-up']);
+      expect(visible.map(message => message.uuid)).not.toContain('follow-up-echo');
       expect(injected).toEqual(['Follow up after interrupt']);
       expect(interrupts).toBe(1);
     } finally { lifecycle.dispose(); await bridge.dispose(); await arbiter.dispose(); }

@@ -46,6 +46,18 @@ test("Dockerfile deps stages copy the shared yarn-install-with-retry helper from
   }
 });
 
+test("Dockerfile dependency stages skip the unavailable ONNX Runtime CUDA download", () => {
+  // Release run 45662976860: deps-alpine-build's install failed on a 404 for onnxruntime's GPU archive.
+  const raw = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  for (const marker of [
+    "FROM node:${NODE_VERSION}-alpine AS deps-alpine",
+    "FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS deps-alpine-build",
+    "FROM node:${NODE_VERSION} AS deps-debian",
+  ]) {
+    assert.match(extractStageSection(raw, marker), /^ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip$/m, marker);
+  }
+});
+
 test("Dockerfile installs UI postinstall assets only in web dependency stages", () => {
   const dockerfilePath = path.join(repoRoot, "Dockerfile");
   const raw = fs.readFileSync(dockerfilePath, "utf8");

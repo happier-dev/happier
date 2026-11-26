@@ -4,6 +4,7 @@ import { speakWithLocalTtsProvider } from '@/voice/backends/tts/runtime';
 import { patchLocalVoiceState, resolveLocalVoiceError } from '@/voice/local/localVoiceState';
 import { stopReadAloud } from '@/voice/local/readAloudState';
 import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
+import { resolveStreamingTtsChunkChars } from '@/voice/output/TtsChunker';
 import { toSpeechText, type SpeechTextContext } from '@/voice/output/speechText';
 
 /**
@@ -19,12 +20,11 @@ export async function speakAssistantText(params: {
   networkTimeoutMs: number;
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
   onSpeaking: () => void;
-  /** Live voice replies take over from a message being read aloud; read-aloud itself opts out. */
-  takeOverReadAloud?: boolean;
+  purpose?: 'read-aloud';
 }): Promise<boolean> {
   const spoken = toSpeechText(params.text, params.speechTextContext);
   if (!spoken) return true;
-  if (params.takeOverReadAloud !== false) stopReadAloud();
+  if (params.purpose !== 'read-aloud') stopReadAloud();
 
   const { config } = resolveLocalVoiceAdapterSettings(params.settings);
 
@@ -34,6 +34,9 @@ export async function speakAssistantText(params: {
     providerLabel = tts.provider;
     await speakWithLocalTtsProvider({
       text: spoken,
+      readAloudChunkChars: params.purpose === 'read-aloud'
+        ? resolveStreamingTtsChunkChars(config?.streaming?.ttsChunkChars)
+        : undefined,
       settings: params.settings,
       tts,
       networkTimeoutMs: params.networkTimeoutMs,

@@ -5739,7 +5739,7 @@ deps: {
 	                waitingForRuntimeActivityNotice: 'Esperant que acabi l’activitat del runtime',
 	                runtimeActivityUnknownNotice: 'Esperant l’estat d’activitat del runtime',
 	                waitingForRuntimeNotice: 'Esperant que el runtime es torni a connectar',
-	                steerUnavailableWaitingForTurnNotice: 'Ara no pot entrar en aquest torn · s’enviarà quan acabi',
+	                steerUnavailableWaitingForTurnNotice: 'Ara no es pot inserir en aquest torn · s’enviarà quan acabi',
 	                nonSteerableNotice: 'El torn actual no pot acceptar direcció després d’aquest canvi de mode. S’executarà després, o fes servir Envia ara per interrompre.',
 	                steerBlockedTerminalDraftNotice: 'En espera: un esborrany al compositor del terminal bloqueja l\'entrega. Esborra\'l al terminal o interromp el torn.',
 	                clearTerminalComposer: {
@@ -8149,11 +8149,11 @@ settingsSession: {
                 title: 'Enviament de missatges',
                 footer: 'Tria què passa quan envies un missatge mentre l’agent treballa.',
                 busySend: {
-                  addToTurnTitle: 'Afegeix-lo al torn actual',
+                  addToTurnTitle: 'Insereix al torn actual',
                   addToTurnSubtitle: 'L’agent el llegeix de seguida i continua treballant, com si escrivissis al seu terminal. Si no pot acceptar-lo a mig torn, el missatge espera a Pendents fins que acabi el torn.',
-                  waitForTurnTitle: 'Espera que acabi el torn',
+                  waitForTurnTitle: 'Posa a la cua fins que acabi el torn',
                   waitForTurnSubtitle: 'Deixa el missatge a Pendents, on el pots editar o reordenar, i envia’l quan acabi el torn.',
-                  interruptTitle: 'Atura el torn i envia',
+                  interruptTitle: 'Interromp i envia',
                   interruptSubtitle: 'Atura el que fa l’agent i envia el missatge de seguida.',
                 },
                 inactiveSessionsTitle: 'Sessions inactives',

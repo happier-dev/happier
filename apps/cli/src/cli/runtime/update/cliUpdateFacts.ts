@@ -1,8 +1,7 @@
-import { realpathSync } from 'node:fs';
-
 import type { CliInstallSource, CliUpdateFacts } from '@happier-dev/protocol';
 import {
   describeHappierCliOrigin,
+  doesCliLauncherUseInstallation,
   type HappierCliOrigin,
   readInstalledVersionMarkersSync,
   readLastCliUpdateResult,
@@ -16,21 +15,11 @@ import { configuration } from '@/configuration';
 
 import packageJson from '../../../../package.json';
 
-function comparablePath(path: string, platform: NodeJS.Platform): string {
-  let resolved = path;
-  try {
-    resolved = realpathSync(path);
-  } catch {
-    // A path that does not resolve is compared as given.
-  }
-  const normalized = resolved.replace(/\\/g, '/').replace(/\/+$/, '');
-  return platform === 'win32' ? normalized.toLowerCase() : normalized;
-}
-
 /**
  * Where the running CLI came from. `managed` only when this process runs a version the managed
- * install of its own ring recorded (`current.version` present and the executable inside that
- * install's `versions/`) — the install the one update transaction can replace and restore.
+ * install of its own ring recorded (`current.version` present and the canonical launcher owner
+ * matches the executable to that install, including its home bin shortcuts) — the install the
+ * one update transaction can replace and restore.
  */
 function resolveRunningCliInstallSource(params: Readonly<{
   homeDir: string;
@@ -46,8 +35,10 @@ function resolveRunningCliInstallSource(params: Readonly<{
     processEnv: { HAPPIER_HOME_DIR: params.homeDir },
   });
   const { currentVersionId } = readInstalledVersionMarkersSync(layout);
-  const versionsDir = `${comparablePath(layout.versionsDir, params.platform)}/`;
-  if (currentVersionId && comparablePath(params.execPath, params.platform).startsWith(versionsDir)) {
+  if (currentVersionId && doesCliLauncherUseInstallation({
+    launcher: [params.execPath],
+    installationRoots: [layout.installRoot],
+  })) {
     return { installSource: 'managed', packageManagerCommand: null };
   }
   const origin = resolveRunningCliPackageManagerOrigin(params);
@@ -91,11 +82,9 @@ export function resolveRunningCliPackageManagerOrigin(params: Readonly<{
  * version, the ring-filtered cached daily check, the install source with the exact command that
  * updates it, whether its daemon can run the update itself, and the last update outcome.
  *
- * `canUpdateRemotely` is false on Windows: the daemon-started updater must outlive the service
- * restart, which systemd (`KillMode=process`) and launchd (`AbandonProcessGroup`) allow for a
- * detached child, but the Windows update path stops the payload's processes with `taskkill /T`
- * (which ends the updater, a descendant of the daemon) and Task Scheduler's handling of a detached
- * descendant across `/End` is unverified.
+ * Windows remains manual-only: its updater must survive stopping the daemon's process tree,
+ * and a remote launcher has not been validated across that service restart. systemd
+ * (`KillMode=process`) and launchd (`AbandonProcessGroup`) leave a detached child running.
  */
 export function readCliUpdateFacts(params: Readonly<{
   homeDir: string;

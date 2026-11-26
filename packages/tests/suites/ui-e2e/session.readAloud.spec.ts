@@ -55,7 +55,7 @@ test.describe('ui e2e: transcript read aloud', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('hides unavailable readout and keeps Stop usable after navigating away', async ({ page }) => {
+  test('reads a transcript message and keeps Stop usable after navigating away', async ({ page }) => {
     test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('Missing owned server/UI fixture');
     const diagnostics = collectBrowserDiagnostics({ page });
@@ -100,7 +100,8 @@ test.describe('ui e2e: transcript read aloud', () => {
       const secret = Buffer.from(credentials.secret, 'base64url');
       const { sessionId } = await createSessionWithCiphertexts({ baseUrl: server.baseUrl, token: credentials.token,
         metadataCiphertextBase64: encryptLegacyBase64({ path: '/tmp/read-aloud-fixture', host: 'read-aloud-fixture' }, secret) });
-      const text = 'Read this fixture message aloud.';
+      const firstSentence = 'Read this fixture message aloud.';
+      const text = [firstSentence, 'This part of the transcript waits for the next synthesis request. '.repeat(4).trim()].join(' ');
       await postEncryptedUiTextMessage({ baseUrl: server.baseUrl, token: credentials.token, secret, sessionId, text });
       const transcriptUrl = `${uiBaseUrl}/session/${sessionId}?happier_hmr=0`;
       await gotoDomContentLoadedWithRetries(page, transcriptUrl);
@@ -149,6 +150,29 @@ test.describe('ui e2e: transcript read aloud', () => {
       await expect.poll(() => page.evaluate(() => (globalThis as typeof globalThis & {
         __readAloudSpeechBoundary?: { cancelled: number };
       }).__readAloudSpeechBoundary?.cancelled)).toBeGreaterThan(cancelledBeforeStop);
+
+      // Boundary: a compatible speech service whose first audio response remains pending.
+      const requests: string[] = [];
+      const speechBaseUrl = 'https://read-aloud.example.test';
+      await page.route(`${speechBaseUrl}/v1/audio/speech`, async route => {
+        const headers = {
+          'access-control-allow-origin': '*',
+          'access-control-allow-methods': 'POST, OPTIONS',
+          'access-control-allow-headers': 'content-type',
+        };
+        if (route.request().method() === 'OPTIONS') {
+          await route.fulfill({ status: 204, headers });
+          return;
+        }
+        requests.push(route.request().postDataJSON().input);
+      });
+      await configure({ provider: 'openai_compat', openaiCompat: { baseUrl: speechBaseUrl } });
+      await page.getByText(text, { exact: true }).hover();
+      await speak.click();
+      await expect.poll(() => requests).toEqual([firstSentence]);
+      await expect(speak).toHaveAttribute('aria-label', 'Stop reading aloud');
+      await speak.click();
+      await expect(speak).toHaveAttribute('aria-label', 'Read aloud');
     } catch (error) {
       throw appendBrowserDiagnostics(error, diagnostics());
     }
