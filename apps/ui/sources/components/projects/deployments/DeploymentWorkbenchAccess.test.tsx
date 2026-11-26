@@ -79,11 +79,14 @@ it('loads the access sheet policy once and refreshes only on the selected Enviro
         inventory: homes.requests.filter(request => request.path.split('?')[0] === '/v1/deployments/environments').length,
     });
     let dataAgentAccess = environment.dataAgentAccess;
+    let dataEditorMode = environment.dataEditorMode;
+    let editData = false;
+    const onEditingAllowed = vi.fn();
     let revision = environment.revision;
     await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
         header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: content.name }, body: JSON.stringify(content) });
     homes.answer(serverId, path, { select: () => ({ body: { ok: true,
-        environment: { ...environment, revision, dataAgentAccess }, targetLinks: [] } }) });
+        environment: { ...environment, revision, dataAgentAccess, dataEditorMode, capabilities: { ...environment.capabilities, editData } }, targetLinks: [] } }) });
     const beforeOpen = readCounts();
     const commits = vi.fn();
     const screen = await renderAccountScreen(<PluginUiHostPresentationScope
@@ -96,11 +99,13 @@ it('loads the access sheet policy once and refreshes only on the selected Enviro
                     deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'postgres', database: 'main' }}
                 policy={{ setBy: 'environment', serverId, environmentId: environment.id, expectedRevision: revision,
                     access: { canRead: true, canWrite: false, reason: 'database_not_an_editor' } }}
+                onEditingAllowed={onEditingAllowed}
             />
         </React.Profiler>
     </PluginUiHostPresentationScope>);
     try {
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(deploymentDatabaseAgentLevelLabel('read')));
+        expect(onEditingAllowed).not.toHaveBeenCalled();
         expect(readCounts()).toEqual({ detail: beforeOpen.detail + 1, content: beforeOpen.content + 1, inventory: beforeOpen.inventory });
         const open = readCounts();
         commits.mockClear();
@@ -111,10 +116,13 @@ it('loads the access sheet policy once and refreshes only on the selected Enviro
         expect(commits).not.toHaveBeenCalled();
 
         dataAgentAccess = 'none';
+        dataEditorMode = 'managers';
+        editData = true;
         revision++;
         const change = buildDeploymentAccountChangeV1({ projectSourceId: environment.projectSourceId, environmentId: environment.id, revision });
         await act(async () => publishHomeAccountChange(serverId, [change.entityId], { changeKinds: ['account'] }));
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(deploymentDatabaseAgentLevelLabel('none')));
+        expect(onEditingAllowed).toHaveBeenCalledOnce();
         expect({ requests: readCounts(), reactCommits: commits.mock.calls.length }).toEqual({
             requests: { ...open, detail: open.detail + 1, content: open.content + 1 }, reactCommits: 1,
         });

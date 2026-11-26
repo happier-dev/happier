@@ -275,30 +275,23 @@ export function StagedReview(
   const refusal = draft.outcome?.kind === 'refused' ? draft.outcome : undefined;
   const execution = refusal && 'execution' in refusal ? refusal.execution : undefined;
   const refusalCode = refusal && 'failure' in refusal ? refusal.failure.code : execution?.code;
-  // A setup refusal stands until the host says its setup settled.
-  const [configuredFor, setConfiguredFor] = React.useState<typeof refusal>(undefined);
+  // The host reports when this refusal has been resolved.
+  const [recoveredFor, setRecoveredFor] = React.useState<typeof refusal>(undefined);
   const refusalRef = React.useRef(refusal);
   refusalRef.current = refusal;
-  const onConfigured = React.useCallback(() => setConfiguredFor(refusalRef.current), []);
+  const onConfigured = React.useCallback(() => setRecoveredFor(refusalRef.current), []);
   const writeSetup = target && (refusalCode === 'write_role_setup_required' || refusalCode === 'write_connection_setup_required')
     ? host?.renderWriteSetup?.({ target, code: refusalCode, onConfigured }) : null;
-  // A policy refusal stands until an access read after it says the person can edit. That read follows the existing
-  // Environment access update (the host's observer), as the rail's access word does; nothing polls.
   const policyRefusal = refusalCode !== undefined && POLICY_REFUSALS.has(refusalCode);
-  const access = useDatabaseAccess(props.targetKey, policyRefusal);
-  const [accessAtRefusal, setAccessAtRefusal] = React.useState<Readonly<{ refusal: typeof refusal; value: typeof access.value }> | null>(null);
+  const policyLifted = policyRefusal && recoveredFor === refusal;
+  const refusalStands = writeSetup != null ? recoveredFor !== refusal : policyRefusal && !policyLifted;
+  const access = useDatabaseAccess(props.targetKey, false);
   const { refresh: refreshAccess } = access;
-  // Only a new refusal takes a new basis; later access values are compared with it.
-  const accessValueRef = React.useRef(access.value);
-  accessValueRef.current = access.value;
+  // Resolve the policy owner's address on refusal, including after an earlier Access read failed.
   React.useEffect(() => {
-    if (!refusal || !policyRefusal) return;
-    setAccessAtRefusal({ refusal, value: accessValueRef.current });
-    refreshAccess();
-  }, [refusal, policyRefusal, refreshAccess]);
-  const policyLifted = policyRefusal && accessAtRefusal !== null && accessAtRefusal.refusal === refusal
-    && access.value !== accessAtRefusal.value && access.value?.access.canWrite === true;
-  const refusalStands = refusal !== undefined && (writeSetup != null ? configuredFor !== refusal : policyRefusal && !policyLifted);
+    if (policyRefusal) refreshAccess();
+  }, [policyRefusal, refusal, refreshAccess]);
+  const onEditingAllowed = React.useCallback(() => setRecoveredFor(refusal), [refusal]);
   const policy = access.value?.setBy === 'environment' ? access.value : null;
   const engineIsMysql = descriptor.engine === 'mysql';
   const total = draft.counts.edits + draft.counts.inserts + draft.counts.removals;
@@ -396,7 +389,7 @@ export function StagedReview(
       {refusalStands && policyRefusal && policy && target ? host?.renderEnvironmentAccessObserver?.({
         target, environment: descriptor.origin.environment, policyEnvironmentId: policy.environmentId, onChanged: refreshAccess,
       }) : null}
-      {refusalStands && policyRefusal && policy && target ? host?.renderEnvironmentAccessSettings?.({ target, policy }) : null}
+      {refusalStands && policyRefusal && policy && target ? host?.renderEnvironmentAccessSettings?.({ target, policy, onEditingAllowed }) : null}
       {descriptor.endpointTrust === 'encrypted_unverified'
         ? <Text tone="secondary" value={translateUnverifiedServerNotice(translate)} />
         : null}

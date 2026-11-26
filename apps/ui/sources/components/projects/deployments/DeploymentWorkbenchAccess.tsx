@@ -65,7 +65,7 @@ export function DeploymentWorkbenchAccessObserver({ target, environment, policyE
  * are. A manager's way forward opens the Environment's settings; anyone else learns whom to ask.
  * Access Read supplied the policy owner address, including the template when a Preview is selected.
  */
-export function DeploymentWorkbenchAccessSettings({ target, policy, scope }:
+export function DeploymentWorkbenchAccessSettings({ target, policy, onEditingAllowed, scope }:
     AccessSettingsInput & Readonly<{ scope: DeploymentWorkbenchPresentationScope }>) {
     const router = useRouter();
     const { projectSourceId } = target.environment;
@@ -76,6 +76,10 @@ export function DeploymentWorkbenchAccessSettings({ target, policy, scope }:
     const record = useDeploymentEnvironmentRecord(controller, environmentId, presented);
     const environment = record.snapshot.value?.environment;
     const copy = 'projects.deployments.settingsSections.databaseAccess';
+    const canEdit = environment?.capabilities.editData === true;
+    React.useEffect(() => {
+        if (canEdit) onEditingAllowed?.();
+    }, [canEdit, onEditingAllowed]);
     if (!environment) {
         return record.snapshot.status === 'unavailable' ? <ErrorState layout="line" kind="unavailable"
             title={t('common.unavailable')} details={record.snapshot.failure?.code}

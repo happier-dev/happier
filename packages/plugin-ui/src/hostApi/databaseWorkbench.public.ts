@@ -46,7 +46,12 @@ export type HostDatabaseWorkbench = Readonly<{
     policyEnvironmentId?: string;
     onChanged(): void;
   }>): ReactNode;
-  renderEnvironmentAccessSettings?(input: Readonly<{ target: DeploymentDatabaseTarget; policy: EnvironmentAccessPolicy }>): ReactNode;
+  renderEnvironmentAccessSettings?(input: Readonly<{
+    target: DeploymentDatabaseTarget;
+    policy: EnvironmentAccessPolicy;
+    /** The subscribed Environment record now permits this person to edit. */
+    onEditingAllowed?(): void;
+  }>): ReactNode;
   renderProductionBackup?(target: DeploymentDatabaseTarget): ReactNode;
   renderWriteSetup?(input: Readonly<{
     target: DeploymentDatabaseTarget;

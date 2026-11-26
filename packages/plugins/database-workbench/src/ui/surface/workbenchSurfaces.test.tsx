@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, Profiler } from 'react';
+import { act, Profiler, useEffect, useSyncExternalStore } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
     DATABASE_ACCESS_READ_ACTION_ID_V1,
@@ -1234,20 +1234,34 @@ describe('Database workbench surfaces', () => {
     const body = JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] });
     const digest = `sha256:${computeSha256HexDigest(body)}`;
     const readAccess = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
-    let canWrite = false;
+    const reason = 'Database editing is off for this Environment.';
+    let canEdit = false;
+    const policyListeners = new Set<() => void>();
+    const subscribe = (listener: () => void) => {
+      policyListeners.add(listener);
+      return () => { policyListeners.delete(listener); };
+    };
+    function EnvironmentAccess({ onEditingAllowed }: { onEditingAllowed?: () => void }) {
+      const currentCanEdit = useSyncExternalStore(subscribe, () => canEdit);
+      useEffect(() => {
+        if (currentCanEdit) onEditingAllowed?.();
+      }, [currentCanEdit, onEditingAllowed]);
+      return <Button title="Open Environment settings" onPress={() => {}} />;
+    }
     const daemon = daemonAnswers([connected], true);
     const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => request.action !== readAccess ? daemon(request)
       : projectNativeJsonValueForTransport({ setBy: 'environment', serverId: 'home', environmentId: 'env', expectedRevision: 2,
-        access: { canRead: true, canWrite, ...(canWrite ? {} : { reason: code }) } }));
-    const write = vi.fn(async () => ({ ok: false as const, errorCode: code, error: code }));
+        access: { canRead: true, canWrite: false, reason: code } }));
+    const write = vi.fn(async (_request: Parameters<Parameters<typeof createPluginUiActionControlTestHost>[0]>[0]) => canEdit
+      ? { ok: true as const, result: { ok: true, operation: 'edits.apply', status: 'committed', inserted: '1', updated: '0', deleted: '0' } }
+      : { ok: false as const, errorCode: code, error: code });
     const control = createPluginUiActionControlTestHost(write);
-    let publish: (() => void) | undefined;
-    const settingsFor = vi.fn();
     const databaseWorkbench = {
       activityResource: () => { throw new Error('Unexpected Activity demand'); },
       lastLook: () => { throw new Error('Unexpected Last Look demand'); },
-      renderEnvironmentAccessObserver: ({ onChanged }: { onChanged: () => void }) => { publish = onChanged; return null; },
-      renderEnvironmentAccessSettings: (input: unknown) => { settingsFor(input); return <Button title="Open Environment settings" onPress={() => {}} />; },
+      renderEnvironmentAccessSettings: ({ onEditingAllowed }: { target: unknown; onEditingAllowed?: () => void }) => (
+        <EnvironmentAccess onEditingAllowed={onEditingAllowed} />
+      ),
     };
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: `refusal-${code}`, mountNonce: `refusal-${code}` },
@@ -1263,7 +1277,7 @@ describe('Database workbench surfaces', () => {
         pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
       handlers: { ...connectionResourceHandlers(), executeAction, actionControl: control.handler,
-        async presentActionFailure() { return { reason: 'Database editing is off for this Environment.', nextStep: null, technicalDetails: [] }; },
+        async presentActionFailure() { return { reason, nextStep: null, technicalDetails: [] }; },
         async watchResource() { return { digest }; },
         async readResource() { return { contentType: 'application/json', digest, bytes: new TextEncoder().encode(body) }; },
       },
@@ -1280,15 +1294,24 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       // The refusal's recovery is the way forward; Apply would refuse again, so it steps back.
       expect(await fixture.getByRole('button', { name: 'Open Environment settings' })).toBeTruthy();
-      expect(settingsFor).toHaveBeenLastCalledWith({ target, policy: expect.objectContaining({ setBy: 'environment', environmentId: 'env' }) });
+      expect(await fixture.getByText(reason)).toBeTruthy();
       expect(control.presentation('Apply 1 change')?.variant).toBe('secondary');
-      // The manager's change arrives through the existing Environment access update; nothing polls.
-      canWrite = true;
-      await act(async () => { publish?.(); });
-      await settle(20);
-      expect(control.presentation('Apply 1 change')?.variant).toBe('primary');
+      const accessReads = () => executeAction.mock.calls.filter(([request]) => request.action === readAccess).length;
+      const readsBeforeSave = accessReads();
+      // Settings publishes the saved capability to the same Review while the earlier Action result stays held.
+      await act(async () => {
+        canEdit = true;
+        for (const listener of policyListeners) listener();
+      });
+      expect(await fixture.queryByText(reason)).toBeUndefined();
       expect(await fixture.queryByRole('button', { name: 'Open Environment settings' })).toBeUndefined();
+      expect(control.presentation('Apply 1 change')?.variant).toBe('primary');
+      expect(accessReads()).toBe(readsBeforeSave);
+      expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
       expect(write).toHaveBeenCalledTimes(1);
+      await act(async () => control.press('Apply 1 change'));
+      expect(write.mock.calls[1]?.[0].input).toEqual(write.mock.calls[0]?.[0].input);
+      expect(await fixture.queryByRole('heading', { name: 'Review 1 change' })).toBeUndefined();
     } finally { await fixture.dispose(); }
   });
 
