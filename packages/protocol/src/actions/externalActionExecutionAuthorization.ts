@@ -1,5 +1,5 @@
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
-import { SESSION_SPAWN_NEW_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1, readWorkspaceSyncSeedProofKindV1 } from './actionIds.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 export { bindScmRefineSavedSessionV1, verifyScmRefineSavedSessionV1, isScmRefineInputPurposeV1,
@@ -375,7 +375,7 @@ function machineRpcRequestBytes(request: MachineRpcRequest, payloadProof?: Reado
     throw new TypeError('Unsupported external Action Machine carrier');
   }
   if (request.workspaceSyncSeedRouting !== undefined && (event !== SOCKET_RPC_EVENTS.CALL
-    || request.effectActionId !== 'projects.open' && !isWorkspaceSyncRelationshipWriteActionId(request.effectActionId)
+    || !readWorkspaceSyncSeedProofKindV1(request.effectActionId)
     || !request.method.endsWith(`:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`)
     || request.workspaceSyncSourceRouting !== undefined || request.workspaceSyncSourceWriterTargetRouting !== undefined)) {
     throw new TypeError('Seed routing requires the exact admitted workspace export preparation carrier');

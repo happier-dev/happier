@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { isWorkspaceSyncRelationshipWriteActionId } from '../../actions/actionIds.js';
+import { readWorkspaceSyncSeedProofKindV1 } from '../../actions/actionIds.js';
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -217,10 +217,9 @@ export const MachineInstallationProofPayloadV1Schema: z.ZodMiniType<MachineInsta
             && !admission.workspaceSyncSourceWriterTargetRouting && !admission.workspaceSyncSeedRouting) {
             ctx.addIssue({ code: 'custom', message: 'Retained source execution requires an exact source workspace purpose' });
         }
+        const seedProof = readWorkspaceSyncSeedProofKindV1(admission.callerInputAuthorization?.binding.actionId);
         if (admission.workspaceSyncSeedRouting && (!admission.method?.endsWith(`:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`)
-            || !admission.callerInputAuthorization
-            || (isWorkspaceSyncRelationshipWriteActionId(admission.callerInputAuthorization.binding.actionId)
-                ? admission.workspaceSyncSourceExecution !== undefined : !admission.workspaceSyncSourceExecution)
+            || !seedProof || (seedProof === 'project_source') !== (admission.workspaceSyncSourceExecution !== undefined)
             || admission.workspaceSyncSourceRouting || admission.workspaceSyncTargetRouting || admission.workspaceSyncSourceWriterTargetRouting
             || admission.custodySubjectAccountId || admission.managedTarget || admission.managedIdleDecision)) {
             ctx.addIssue({ code: 'custom', message: 'Seed preparation requires only its exact admitted workspace proof' });

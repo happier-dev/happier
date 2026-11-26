@@ -15,7 +15,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import * as z from 'zod/mini';
 import { isProjectWorkspaceSyncPreparationActionV1, isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
-import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { readWorkspaceSyncSeedProofKindV1 } from '@happier-dev/protocol/actions/actionIds';
 import { buildRequesterTargetPhaseContext, projectRequesterStandingAdmission } from './requesterTargetPhaseContext';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readReviewedExternalActionInput } from '@/api/externalActionExecutionAuthorization';
@@ -966,7 +966,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           ...(request.exclusionCandidates ? { exclusionCandidates: request.exclusionCandidates } : {}),
         };
         const seedActionId = request.context?.callerInputAuthorization?.binding.actionId;
-        const seedContext = (seedActionId === 'projects.open' || isWorkspaceSyncRelationshipWriteActionId(seedActionId ?? ''))
+        const seedContext = readWorkspaceSyncSeedProofKindV1(seedActionId) !== undefined
           && request.context?.workspaceSyncSourceWriterTargetRouting !== undefined ? request.context : undefined;
         const { result: preparedRaw, tunnel: issuedTunnel } = seedContext
           ? input.callWorkspaceSeedExport

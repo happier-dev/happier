@@ -191,6 +191,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_PREPARE_ACTION_ID_V1, DEPLOYMENT_SUGGESTION_ACTION_IDS_V1, DEPLOYMENT_TARGET_CHECK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
+import { isProjectWorkspaceSyncOpenActionV1 } from './projectActionIdsV1.js';
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './specs/machineConnectionActionIdsV1.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './specs/localDaemonServiceActionIdsV1.js';
 import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
@@ -1254,6 +1255,13 @@ export function isSessionListActionId(value: unknown): value is 'session.list' {
 /** The closed Action family sharing relationship creation and destination approval. */
 export function isWorkspaceSyncRelationshipWriteActionId(value: unknown): value is 'workspace.sync.relationship.create' | 'workspace.sync.relationship.replace' {
   return value === 'workspace.sync.relationship.create' || value === 'workspace.sync.relationship.replace';
+}
+
+/** Seed proof shape only. The Home and SOURCE still verify the admitted operands. */
+export function readWorkspaceSyncSeedProofKindV1(actionId: string | undefined): 'writer_target' | 'project_source' | undefined {
+  if (actionId === SESSION_HANDOFF_ACTION_ID_V1 || isWorkspaceSyncRelationshipWriteActionId(actionId)) return 'writer_target';
+  if (isProjectWorkspaceSyncOpenActionV1(actionId)) return 'project_source';
+  return undefined;
 }
 
 /**

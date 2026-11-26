@@ -3,8 +3,11 @@ import { MACHINE_RPC_ROUTE_POLICIES } from '@happier-dev/protocol/machines/peer/
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipCreateRpcRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { WorkspaceSyncSeedRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import {
   authorizeMachineRpcRequest,
+  doesWorkspaceSyncSeedRootMatchRouting,
   type MachineRpcAdmissionBoundary,
 } from './machineRpcAuthorization';
 
@@ -158,5 +161,71 @@ describe('Use guest own work on an isolation-off Machine', () => {
     expect(await admit('keep_synced', false, 'use', 'existing-link')).toEqual({ ok: true });
     // Manage keeps its existing native placement.
     expect(await admit('keep_synced', true, 'manage')).toMatchObject({ ok: true });
+  });
+
+  it('admits a Use guest session.handoff Git seed only into the guest own Machine and refuses foreign targets', () => {
+    const buildSeed = (
+      targetCustodian: string,
+      sourceRole: 'use' | 'manage' = 'use',
+      sourceCustodian = 'owner',
+      bindingRole: 'use' | 'manage' | 'omit' = sourceRole,
+    ) => {
+      const sourceAdmission = { ...guest, custodianAccountId: sourceCustodian, role: sourceRole };
+      const targetAdmission = {
+        actorAccountId: 'guest', custodianAccountId: targetCustodian,
+        machineId: 'target-machine', installationId: 'target-installation',
+        role: targetCustodian === 'guest' ? 'manage' as const : 'use' as const,
+        encryptionMode: 'plain' as const,
+      };
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+        v: 1, token: 'handoff-root',
+        binding: {
+          accountId: 'guest', custodianAccountId: sourceCustodian,
+          ...(bindingRole !== 'omit' ? { admittedMachineRole: bindingRole } : {}),
+          authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+          serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+          actionId: 'session.handoff', requestId: 'handoff-op', requestEnvelopeDigest: 'A'.repeat(43),
+          target: { kind: 'machine', machineId: 'machine' },
+          handoffAdmission: { sessionId: 'guest-session', sourceMachineId: 'machine', sourceInstallationId: 'installation', targetMachineId: 'target-machine', targetInstallationId: 'target-installation' },
+        },
+      });
+      const source = {
+        v: 1 as const, phase: 'prepare' as const, operationId: 'handoff-op', accountServerId: 'home',
+        sourceSessionId: 'guest-session', sourceMachineId: 'machine', sourceRootPath: '/repo',
+        sourceContext: { machineAdmission: sourceAdmission, callerAuthority: 'present_user' as const },
+      };
+      const targetPhase = {
+        v: 1 as const, phase: 'prepare' as const, operationId: 'handoff-op', accountServerId: 'home',
+        targetMachineId: 'target-machine', targetRootPath: '/guest/repo',
+      };
+      const seed = WorkspaceSyncSeedRoutingV1Schema.parse({
+        v: 1,
+        sourceWriterTarget: {
+          v: 1, source,
+          sourceWriter: { machineId: 'machine', installationId: 'installation' },
+          target: targetPhase,
+        },
+        target: {
+          ...targetPhase,
+          targetContext: { machineAdmission: targetAdmission, callerAuthority: 'present_user' as const },
+        },
+      });
+      return { authorization, seed };
+    };
+    const own = buildSeed('guest');
+    expect(doesWorkspaceSyncSeedRootMatchRouting(own.authorization, own.seed, undefined, 'handoff-op')).toBe(true);
+    // Rejects unexpected sourceExecution packet on writer_target proof.
+    expect(doesWorkspaceSyncSeedRootMatchRouting(own.authorization, own.seed, {} as never, 'handoff-op')).toBe(false);
+    // Cross-Account Use guest targeting another person's Machine is refused.
+    const foreign = buildSeed('other-owner');
+    expect(doesWorkspaceSyncSeedRootMatchRouting(foreign.authorization, foreign.seed, undefined, 'handoff-op')).toBe(false);
+    // Cross-Account Manage grantee keeps existing admission.
+    const manage = buildSeed('other-owner', 'manage', 'owner', 'manage');
+    expect(doesWorkspaceSyncSeedRootMatchRouting(manage.authorization, manage.seed, undefined, 'handoff-op')).toBe(true);
+    // Forging sourceContext.machineAdmission.role = manage on a Use-guest (or omitted-role cross-Account) root is refused.
+    const forgedFromUse = buildSeed('other-owner', 'manage', 'owner', 'use');
+    expect(doesWorkspaceSyncSeedRootMatchRouting(forgedFromUse.authorization, forgedFromUse.seed, undefined, 'handoff-op')).toBe(false);
+    const forgedWithoutBindingRole = buildSeed('other-owner', 'manage', 'owner', 'omit');
+    expect(doesWorkspaceSyncSeedRootMatchRouting(forgedWithoutBindingRole.authorization, forgedWithoutBindingRole.seed, undefined, 'handoff-op')).toBe(false);
   });
 });

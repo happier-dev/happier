@@ -86,7 +86,7 @@ import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1
 import { isProjectCheckoutRemovalActionIdV1, PROJECT_PREPARE_ACTION_ID_V1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1, isProjectSetupSetChildActionIdV1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
-import { isProjectAccountRowActionIdV1, isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isProjectAccountRowActionIdV1, isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, readWorkspaceSyncSeedProofKindV1, SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveManagedSessionDefaultsTeamId } from '@happier-dev/protocol/teams/managedDefaults';
 import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema,
@@ -5634,6 +5634,13 @@ export async function verifyWorkspaceSyncSeedKeyCustody(input: Readonly<{
     if (method !== `${sourceWriter.machineId}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`
         || signer.machineId !== targetAdmission.machineId || signer.installationId !== targetAdmission.installationId
         || signer.custodianAccountId !== targetAdmission.custodianAccountId) return false;
+    // A handoff seed spends the one currentness decision for its writer and chosen TARGET.
+    if (authorization.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1) {
+        if (sourceExecution) return false;
+        const admitted = await readCurrentWorkspaceSyncSeedAuthorization(authorization, input.routing, undefined);
+        return !!admitted && admitted.physicalTarget.machineId === signer.machineId
+            && admitted.physicalTarget.installationId === signer.installationId;
+    }
     const root = await readWorkspaceSyncProjectSourceBinding(authorization, source);
     if (!root || sourceAdmission.actorAccountId !== root.binding.accountId
         || !matchesWorkspaceSyncWriterTargetOperands(root.binding, routing, sourceExecution)) return false;
@@ -5660,10 +5667,19 @@ export async function readCurrentWorkspaceSyncSeedAuthorization(
     execution: WorkspaceSyncSourceExecutionV1 | undefined,
     resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
 ): Promise<Awaited<ReturnType<typeof readCurrentWorkspaceSyncHandoffWriterTarget>>> {
-    if (authorization.binding.actionId !== 'projects.open' && !isWorkspaceSyncRelationshipWriteActionId(authorization.binding.actionId)
-        || routing.target.phase !== 'prepare') return null;
-    return readCurrentWorkspaceSyncHandoffWriterTarget(authorization, routing.sourceWriterTarget, resolveCurrentSessionMachine,
+    if (!readWorkspaceSyncSeedProofKindV1(authorization.binding.actionId) || routing.target.phase !== 'prepare') return null;
+    const admitted = await readCurrentWorkspaceSyncHandoffWriterTarget(authorization, routing.sourceWriterTarget, resolveCurrentSessionMachine,
         { routing: routing.target }, execution);
+    if (!admitted) return null;
+    // A cross-Account Use guest's Git handoff seed is admitted only into a target Machine owned by the guest's own Account.
+    if (authorization.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1
+        && admitted.verified.binding.custodianAccountId !== admitted.verified.binding.accountId
+        && admitted.verified.binding.admittedMachineRole !== 'manage'
+        && (admitted.target.custodianAccountId !== admitted.verified.binding.accountId
+            || admitted.physicalTarget.custodianAccountId !== admitted.verified.binding.accountId)) {
+        return null;
+    }
+    return admitted;
 }
 
 export async function verifyExternalActionMachineRpcExecution(

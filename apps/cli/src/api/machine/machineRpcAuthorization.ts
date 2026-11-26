@@ -7,7 +7,7 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { TargetedActionRpcRequestV1Schema, listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
-import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isWorkspaceSyncRelationshipWriteActionId, readWorkspaceSyncSeedProofKindV1, SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import {
   RPC_ERROR_CODES,
   RPC_ERROR_MESSAGES,
@@ -294,6 +294,7 @@ export function doesWorkspaceSyncSourceRootMatchRouting(
     admission.installationId === binding.installationId &&
     admission.actorAccountId === binding.accountId &&
     admission.custodianAccountId === binding.custodianAccountId &&
+    ((binding.admittedMachineRole ?? (binding.custodianAccountId === binding.accountId ? 'manage' : 'use')) === 'manage' || admission.role === 'use') &&
     binding.target.kind === 'machine' &&
     binding.target.machineId === binding.machineId &&
     source.sourceMachineId === handoff.sourceMachineId &&
@@ -505,9 +506,17 @@ export function doesWorkspaceSyncSeedRootMatchRouting(
       seed.sourceWriterTarget,
     )) return false;
   const relationshipWrite = isWorkspaceSyncRelationshipWriteActionId(authorization.binding.actionId);
+  const seedProof = readWorkspaceSyncSeedProofKindV1(authorization.binding.actionId);
+  if (!seedProof) return false;
   if (operationId !== undefined && operationId !== seed.sourceWriterTarget.source.operationId
       && !(relationshipWrite && operationId === deriveWorkspaceSyncRelationshipId(seed.sourceWriterTarget.source.operationId))) return false;
-  if (relationshipWrite) return execution === undefined;
+  if (authorization.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1
+      && authorization.binding.custodianAccountId !== authorization.binding.accountId
+      && authorization.binding.admittedMachineRole !== 'manage'
+      && seed.target.targetContext.machineAdmission.custodianAccountId !== authorization.binding.accountId) {
+    return false;
+  }
+  if (seedProof === 'writer_target') return execution === undefined;
   return (
     isProjectWorkspaceSyncOpenActionV1(authorization.binding.actionId) && !!execution &&
     execution.method ===

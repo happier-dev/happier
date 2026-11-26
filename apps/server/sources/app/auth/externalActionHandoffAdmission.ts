@@ -41,7 +41,7 @@ export async function readAdmittedExternalActionHandoffMachineInTx(
 /** The admitted scope owner supplies captured installation identity when present; this reader never re-admits grants. */
 export async function readAdmittedExternalActionMachineInTx(
     reader: Tx,
-    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'machineId' | 'custodianAccountId'>,
+    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'machineId' | 'custodianAccountId' | 'admittedMachineRole'>,
     machineId: string,
     installationId: string | undefined,
     retained?: SocketRpcMachineAdmissionContextV1,
@@ -52,14 +52,18 @@ export async function readAdmittedExternalActionMachineInTx(
         account: { select: { encryptionMode: true } },
     }) }).then(decodeMachineStoredContent);
     const mode = machine && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
+    const boundRole = machine && machineId === binding.machineId
+        ? binding.admittedMachineRole ?? (machine.accountId === binding.accountId ? 'manage' : 'use')
+        : undefined;
     if (!machine?.installationId || installationId !== undefined && machine.installationId !== installationId
         || classifyMachineAvailabilityState(machine) !== 'available'
         || !mode || mode.status !== 'ready' || !resourceContentMatchesMode(machine, mode.mode)
         || machineId === binding.machineId && machine.accountId !== binding.custodianAccountId
         || retained && (retained.machineId !== machineId || retained.installationId !== installationId
             || retained.actorAccountId !== binding.accountId || retained.custodianAccountId !== machine.accountId
-            || retained.encryptionMode !== mode.mode)) return null;
+            || retained.encryptionMode !== mode.mode
+            || boundRole === 'use' && retained.role !== 'use')) return null;
     return { kind: 'admitted', actorAccountId: binding.accountId, custodianAccountId: machine.accountId,
         machineId, installationId: machine.installationId, encryptionMode: mode.mode,
-        role: retained?.role ?? (machine.accountId === binding.accountId ? 'manage' : 'use') };
+        role: boundRole === 'use' ? 'use' : retained?.role ?? boundRole ?? (machine.accountId === binding.accountId ? 'manage' : 'use') };
 }
