@@ -1,4 +1,4 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentHeaderV1, WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
@@ -49,8 +49,9 @@ export async function readPreviewCloseWorkflowForHost(host: PreviewCloseWorkflow
                         const input = DeploymentDeployActionInputV1Schema.parse(execution.input);
                         if (input.serverId !== header.serverId || input.environmentId !== header.id
                             || input.targetLinkId !== header.runtimeTargetLinkId) continue;
-                        // An approval hold records the request before any deployment effect or receipt exists.
-                        if (invocation.index.lifecycle === 'waiting_for_approval') continue;
+                        // Settlement retains the approval request unless the Deploy captured preview cleanup.
+                        if (invocation.index.lifecycle === 'waiting_for_approval'
+                            || ActionApprovalRequestCreatedResultSchema.safeParse(output).success) continue;
                         const result = DeploymentReceiptResultV1Schema.parse(output);
                         if (result.ok && 'state' in result && result.state === 'succeeded'
                             && result.environmentId === header.id && result.previewCleanup) nativeCleanup = result.previewCleanup;
