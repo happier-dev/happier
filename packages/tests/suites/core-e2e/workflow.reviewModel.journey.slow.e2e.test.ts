@@ -725,12 +725,38 @@ else {
     const stoppedCommands: { args: string[] }[] = (await readFile(panelAuditPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     expect(stoppedCommands.at(-1)).toMatchObject({ args: ['daemon', 'stop'] });
   });
-  it('F1 reads once and delivers ordinary transcript input to Agent, Session/bot and model reviewers through native output', async () => {
+  it('F1 reads once and delivers a transcript-only false test-success claim beside the captured diff to Agent, Session/bot and model reviewers', async () => {
     await writeFinMuseExecutable({ binDir: join(dirname(auditPath), 'bin'), recordingPath, auditPath, perProcessAudit: true });
-    await nativeReply({ summary: 'The review observed the source Session claim.', reviewOutcome: 'complete', findings: [{
-      id: 'source-claim', title: 'Verify the source Session claim', severity: 'medium', category: 'correctness',
-      filePath: 'README.md', startLine: 1, summary: sourceClaim,
-    }] });
+    const baseline = 'export function charge(amount: number) { return amount; }\n';
+    const broken = 'export function charge(amount: number) { return 0; }\n';
+    await writeFile(join(machine.workspaceDir, 'billing.ts'), baseline);
+    execGit(machine.workspaceDir, ['add', 'billing.ts']);
+    execGit(machine.workspaceDir, ['commit', '-m', 'test: establish billing before transcript review']);
+    await writeFile(join(machine.workspaceDir, 'billing.ts'), broken);
+    const captured = ScmComparisonCaptureOutputSchema.parse(await act('scm.diffSummary.capture', {
+      cwd: machine.workspaceDir, source: { kind: 'workingTree', area: 'both' },
+    }));
+    if (!captured.success) throw new Error(captured.errorCode);
+    expect(captured.comparison.inventory.files).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'billing.ts' })]));
+    const testSuccessClaim = 'All tests passed.';
+    const skippedTests = 'I skipped the test command; no tests ran.';
+    for (const message of [skippedTests, testSuccessClaim]) {
+      await postEncryptedSessionMessage({ baseUrl: fixture!.server.baseUrl, token: owner.auth.token,
+        sessionId: sourceSessionId, secret: owner.auth.accountSigningSeed, messageRole: 'agent',
+        payload: { role: 'agent', content: { type: 'acp', agentId: 'muse', data: { type: 'message', message } } },
+      });
+    }
+    expect(JSON.stringify(captured.comparison)).not.toContain(testSuccessClaim);
+    expect(baseline + broken).not.toContain(testSuccessClaim);
+    const claimFinding = { id: 'source-claim', title: 'Test success is unsupported by the transcript',
+      severity: 'medium', category: 'correctness', summary: sourceClaim,
+      evidence: `${skippedTests} Then: ${testSuccessClaim}` };
+    const diffFinding = { id: 'lost-charge', title: 'Billing drops the charge amount', severity: 'high', category: 'correctness',
+      filePath: 'billing.ts', startLine: 1, summary: 'Returning zero discards every positive charge amount.', evidence: broken.trim() };
+    // Model judgment is substituted only at the native executable. The admitted
+    // evidence and both findings traverse real runtime and persistence owners.
+    await nativeReply({ summary: 'A transcript-only test claim and a defect in the selected diff.',
+      reviewOutcome: 'complete', findings: [claimFinding, diffFinding] });
     const launch = { executionTarget: machine.target, directory: { kind: 'path' as const, path: machine.workspaceDir },
       agentTarget: muse, permissionMode: 'read-only' as const,
       modelSelection: { v: 1 as const, ref: { agentTargetKey: 'agent:happier.agent.muse/muse', providerConnectionId: null, modelId }, updatedAt: 0 },
@@ -741,6 +767,7 @@ else {
       session: { serverId: ui!.serverId, sessionId: session.sessionId } });
     if (!bot) throw new Error('The Bot display choice did not normalize to its Session');
     const started = await act('review.start', { target: { kind: 'detached' }, cwd: machine.workspaceDir,
+      comparisonId: captured.comparison.id, selectedPaths: ['billing.ts'],
       sourceSession: { sessionId: sourceSessionId, serverId: ui!.serverId },
       instructions: 'Review the change and verify the source Session claim.', reviewCommentAuthorIntent: 'open',
       reviewers: [{ kind: 'engine', engineId: 'muse', modelId, includeSessionTranscript: true },
@@ -756,7 +783,20 @@ else {
     const audits = await Promise.all(paths.map(name => readMuseMspProcessAudit(join(dirname(auditPath), name))));
     const received = audits.flatMap(audit => audit.turnInputs).filter(input => JSON.stringify(input).includes(sourceClaim));
     expect(received).toHaveLength(3);
-    for (const input of received) expect(JSON.stringify(input)).toContain('Session transcript (complete coverage)');
+    for (const input of received) {
+      const ordinaryInput = JSON.stringify(input);
+      expect(ordinaryInput).toContain('Session transcript (complete coverage)');
+      expect(ordinaryInput).toContain(testSuccessClaim);
+      expect(ordinaryInput).toContain(skippedTests);
+      expect(ordinaryInput).toContain(captured.comparison.id);
+      expect(ordinaryInput).toContain('billing.ts');
+    }
+    // Native ReviewProfile includes retained patch bytes. Session/model steps
+    // receive the captured index and open its evidence lazily.
+    expect(received.some(input => {
+      const ordinaryInput = JSON.stringify(input);
+      return ordinaryInput.includes(baseline.trim()) && ordinaryInput.includes(broken.trim());
+    })).toBe(true);
     const history = WorkflowInvocationListResultV1Schema.parse(await act('workflow.run.invocations.list', {
       runId: admitted.workflow.runId, includeContent: true,
     }));
@@ -770,9 +810,14 @@ else {
       materialization: expect.objectContaining({ kind: 'complete' }),
     }))));
     const detail = ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId: admitted.reviewRound.reviewId }));
-    expect(detail.review).toMatchObject({ state: 'completed', counts: { total: 1 } });
+    expect(detail.review).toMatchObject({ state: 'completed', counts: { total: 2 } });
     const findings = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId: admitted.reviewRound.reviewId }));
-    expect(JSON.stringify(findings.items)).toContain(sourceClaim);
+    expect(findings.items).toHaveLength(2);
+    expect(findings.items.map(item => item.finding)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: claimFinding.title, summary: claimFinding.summary, evidence: claimFinding.evidence }),
+      expect.objectContaining({ title: diffFinding.title, filePath: 'billing.ts', startLine: 1,
+        summary: diffFinding.summary, evidence: diffFinding.evidence }),
+    ]));
   });
   it('F1 refuses an inaccessible source Session before launching a reviewer', async () => {
     const other = await fixture!.createAccount('source-owner');
