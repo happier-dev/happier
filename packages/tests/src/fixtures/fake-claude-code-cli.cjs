@@ -1017,7 +1017,11 @@ async function runSdkStreamUntilEof() {
         {
           type: 'text',
           text: JSON.stringify({
+            reviewOutcome: 'complete',
             summary: `FAKE_REVIEW_SUMMARY_${turn}`,
+            overviewMarkdown: 'Synthetic native Review fixture.',
+            questions: [],
+            assumptions: [],
             findings: [
               {
                 id: `f_${turn}_1`,

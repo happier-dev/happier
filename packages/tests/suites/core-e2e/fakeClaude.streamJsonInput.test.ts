@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { ReviewModelOutputV1Schema } from '@happier-dev/protocol/reviews/reviewModelOutputV1';
 
 import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 
@@ -22,6 +23,25 @@ function parseJsonLines(raw: string): any[] {
 }
 
 describe('fake Claude CLI fixture', () => {
+  it('emits the current native Review model contract from the review scenario', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-review-'));
+    try {
+      const fixture = await createIsolatedFakeClaudeControlShim({ testDir: dir,
+        captureEnvironmentKeys: [], logFullStdin: false, scenario: 'review-json' });
+      const input = JSON.stringify({ type: 'message', message: { role: 'user',
+        content: [{ type: 'text', text: 'Review this fixture.' }] } });
+      const result = spawnSync(process.execPath, [fixture.executablePath,
+        '--output-format', 'stream-json', '--input-format', 'stream-json'], {
+        cwd: dir, env: process.env, input: `${input}\n`, encoding: 'utf8',
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const assistant = parseJsonLines(result.stdout).find(event => event.type === 'assistant');
+      const review = ReviewModelOutputV1Schema.parse(JSON.parse(assistant?.message?.content[0]?.text));
+      expect(review).toMatchObject({ reviewOutcome: 'complete', questions: [], assumptions: [],
+        findings: [expect.objectContaining({ filePath: 'README.md' })] });
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('keeps runtime-continuity controls inside the child shim and gives each launch its own identity', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-continuity-shim-'));
     try {
