@@ -15,6 +15,9 @@ import * as machineRpcTransport from '@/session/transport/rpc/machineRpc';
 import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerAction';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { createInstalledMachineRpcFixture } from '@/testkit/apiMachineTransport';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1, ProjectSetupConsentFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { createProjectDefinitionAction } from '@/rpc/handlers/projectDefinitions';
@@ -75,6 +78,7 @@ import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/sett
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { reloadConfiguration } from '@/configuration';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
@@ -281,31 +285,36 @@ describe('authenticated finite Project Action owner', () => {
             handlers.set(method, (request, ingress) => handler(request as TRequest, ingress));
         } };
         let invocationApprovalRequired = false;
-        registerProjectFiniteRpcHandlers(registrar, { serverId: runtimeProfileId, machineId: 'machine',
-            runtime: async ingress => {
-                if (!ingress.callerInputAuthorization) return runtime;
-                const { credentials: _credentials, ...signedRuntime } = runtime;
-                return { ...signedRuntime, accountAuthorization: ingress.callerInputAuthorization };
-            },
-            createActionExecutor: async (current, ingress) => {
-                const credentials = current.accountAuthorization
-                    ? readRequesterAccountActionContext(current.accountAuthorization)?.credentials : current.credentials;
-                if (!credentials) throw new Error('Expected the fixture requester credentials');
-                const { createCliActionExecutorHarness } = await import('@/session/actions/createCliActionExecutorHarness');
-                return createCliActionExecutorHarness({ token: credentials.token,
-                credentials, mode: 'plain', ctx: null, sessionId: 'fixture-session', serverId: current.serverId, serverHttpBaseUrl: current.serverHttpBaseUrl,
+        const createReceiverExecutor = async (current: ProjectFiniteActionRuntime, ingress: RpcHandlerContext) => {
+            const credentials = current.accountAuthorization
+                ? readRequesterAccountActionContext(current.accountAuthorization)?.credentials : current.credentials;
+            if (!credentials) throw new Error('Expected the fixture requester credentials');
+            const { createCliActionExecutorHarness } = await import('@/session/actions/createCliActionExecutorHarness');
+            return createCliActionExecutorHarness({ token: credentials.token,
+                credentials, mode: 'plain', ctx: null, sessionId: 'fixture-session', serverId: current.serverId,
+                serverIdentityId: homeId, serverHttpBaseUrl: current.serverHttpBaseUrl,
                 actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
                     actions: invocationApprovalRequired ? { 'projects.script.run': { approvalRequiredSurfaces: ['rpc', 'api'] } } : {},
                     ...(invocationApprovalRequired ? {} : { approvalWaivedSurfaces: actionSettings().approvalWaivedSurfaces }),
                 }) },
-                }, { runActionOperation: operationRuntime.runActionOperation,
-                    machinePoolAction: createAccountServerActionDeps({ token: credentials.token, credentials,
+            }, { runActionOperation: operationRuntime.runActionOperation,
+                machinePoolAction: createAccountServerActionDeps({ token: credentials.token, credentials,
                     serverId: current.serverId, serverHttpBaseUrl: current.serverHttpBaseUrl, serverIdentityId: homeId,
                     externalActionMachineInstallationId: 'installation',
                     externalActionMachineRequestPrivateKey: receivingInstallation.secretKey }).machinePoolAction,
-                    projectAction: createFiniteActionWithCapturedRequester(current, ingress) }).executor;
-            },
-        });
+                projectAction: createFiniteActionWithCapturedRequester(current, ingress),
+            }).executor;
+        };
+        const registerReceiver = (currentRegistrar: RpcHandlerRegistrar, receiverRuntime: ProjectFiniteActionRuntime = runtime) =>
+            registerProjectFiniteRpcHandlers(currentRegistrar, { serverId: runtimeProfileId, machineId: 'machine',
+                runtime: async ingress => {
+                    if (!ingress.callerInputAuthorization) return receiverRuntime;
+                    const { credentials: _credentials, ...signedRuntime } = receiverRuntime;
+                    return { ...signedRuntime, accountAuthorization: ingress.callerInputAuthorization };
+                },
+                createActionExecutor: createReceiverExecutor,
+            });
+        registerReceiver(registrar);
         let rpcRequestSequence = 0;
         const rpcInvoke = (actionId: 'projects.prepare' | 'projects.script.run' | 'projects.compute.exec', input: unknown, ingress?: RpcHandlerContext) =>
             handlers.get(PROJECT_FINITE_ACTION_RPC_METHODS_V1[actionId])!(input, ingress
@@ -340,6 +349,7 @@ describe('authenticated finite Project Action owner', () => {
             source: { ...context.machineAdmission, machineId: sourceMachineId, installationId },
         });
         return { root, runtime, terminalSessions, context, address, workspaceRefs, relationships, invoke, rpcInvoke, spawned, firstSpawn, operationRuntime, workspaceExecutionConfig, get, post, homeSourceAdmission, receivingInstallation, allowAdHoc: () => { allowAdHoc = true; },
+            registerReceiver, createReceiverExecutor,
             observeMemory: (observation: ProjectWorkerMemoryObservation) => { availableMemory = observation; },
             setToolExecutable: (path: string) => { nativeExecutablePath = path; }, refuseAdmission: () => { accepting = false; },
             setToolRelativeExecutable: (path: string) => { nativeExecutableRelativePath = path; },
@@ -706,12 +716,7 @@ describe('authenticated finite Project Action owner', () => {
             try {
                 scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: profileId });
                 reloadConfiguration();
-                const serverUrl = 'https://home.example';
-                const profile = { id: profileId, name: 'Finite Home', serverUrl, webappUrl: serverUrl,
-                    createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
-                    homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: serverId, canonicalServerUrl: serverUrl,
-                        revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }) };
-                await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: { [profileId]: profile } }));
+                const profile = await seedTestServerProfile({ id: profileId, homeId: serverId, serverUrl: 'https://home.example' });
                 const h = await harness(undefined, null, 'machine', ownerToken, profileId, serverId);
                 h.waiveSetupApproval();
                 expect.soft(await inspectProjectSetupFromRuntime({ runtime: h.runtime, ingress: h.context,
@@ -727,7 +732,7 @@ describe('authenticated finite Project Action owner', () => {
                     .toMatchObject({ operation: { state: 'accepted' } });
                 await expect.poll(() => h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation-2')?.state).toBe('succeeded');
                 expect(await h.rpcInvoke('projects.prepare', { workspace: { ...h.address, serverId: 'wrong-home' }, phase: 'setup' }))
-                    .toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+                    .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
                 const worker = await harness(portableNativeManifest, null, 'source-machine', ownerToken, profileId, serverId);
                 const target = await worker.addWorkerTarget();
                 const previousGet = worker.get.getMockImplementation()!;
@@ -1434,13 +1439,56 @@ describe('authenticated finite Project Action owner', () => {
                 }
                 expect(h.spawned).toEqual([]);
             } else {
-                const result = await createFiniteActionWithCapturedRequester(runtime, ingress)({ actionId, input: { workspace: h.address,
-                    selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } },
+                const input = { workspace: h.address,
+                    selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } } as const;
+                let result: unknown;
+                if (change === 'current') {
+                    // The real RPC admission verifies the Use requester before the finite receiver runs.
+                    const installed = h.context.machineAdmission!;
+                    const installation = h.receivingInstallation;
+                    const method = PROJECT_FINITE_ACTION_RPC_METHODS_V1[actionId];
+                    const sealed = sealExternalActionRequesterAccountContextV1({ authorization, credentials: { token: 'bob' },
+                        purpose: { kind: 'machine_rpc', method, params: input }, installationPublicKey: installation.publicKey,
+                        randomBytes: nacl.randomBytes });
+                    const rpc = createInstalledMachineRpcFixture(installed.machineId, {
+                        authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+                            machineId: installed.machineId, resolveInstallationId: () => installed.installationId,
+                            resolveHomeServerIdentityId: async () => 'stable-home', resolveCustodianAccountId: async () => 'owner',
+                            verifyMachineAdmission: request => readMachineRpcAdmissionCurrent({ ...request,
+                                privateKey: installation.secretKey, daemonToken: 'owner', serverHttpBaseUrl: runtime.serverHttpBaseUrl }),
+                        }, source),
+                        prepareRequesterAccountContext: ({ purpose, authorization: root, signal }) => prepareRequesterAccountActionContext({
+                            purpose: purpose ?? { kind: 'external_action' }, authorization: root, signal, machineId: installed.machineId,
+                            installationId: installed.installationId, installationPrivateKey: installation.secretKey,
+                            serverId: runtime.serverId, serverIdentityId: 'stable-home', serverHttpBaseUrl: runtime.serverHttpBaseUrl,
+                            isCurrent: () => verifyExternalActionExecutionAuthorizationCurrent({ authorization: root,
+                                effectActionId: actionId, target: root.binding.target, installationId: installed.installationId,
+                                privateKey: installation.secretKey, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }),
+                            createExecutor: requester => ({ execute: async (receivedActionId, receivedInput, context) => {
+                                if (!context?.signal || !context.machineAdmission || !context.verifyMachineAdmissionCurrent) {
+                                    throw new Error('Expected admitted socket context');
+                                }
+                                const receiverIngress: RpcHandlerContext = { ...context, signal: context.signal,
+                                    transportRequestId: context.actionRequestId, callerInputAuthorization: requester.authorization };
+                                const executor = await h.createReceiverExecutor({ ...runtime,
+                                    accountAuthorization: requester.authorization, isCurrent: requester.isCustodyCurrent }, receiverIngress);
+                                return executor.execute(receivedActionId, receivedInput, context);
+                            } }),
+                        }),
+                    });
+                    h.registerReceiver(rpc, runtime);
+                    result = await rpc.handleRequest({ method: `${installed.machineId}:${method}`,
+                        requestId: 'request', params: input, callerAuthority: 'account_automation',
+                        callerInputAuthorization: sealed, callerInputConstraints: ingress.callerInputConstraints,
+                        machineAdmission: { ...ingress.machineAdmission!, role: 'use' } }, undefined, 'authenticated_home_socket');
+                } else result = await createFiniteActionWithCapturedRequester(runtime, ingress)({ actionId, input,
                     context: { serverId: 'home', authority: 'account_automation', actionRequestId: 'request', surface: 'agent',
                         actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: {
                             'projects.prepare': ['agent', 'rpc', 'api'],
                         } }) } });
-                expect(result, JSON.stringify(result)).toMatchObject({ operation: { scope: { accountId: 'bob' } } });
+                expect(result, JSON.stringify(result)).toMatchObject({ operation: { operationId: 'operation',
+                    scope: { accountId: 'bob', machineId: 'machine' } } });
+                expect(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')).toBeNull();
                 expect(ProjectCommandActionOutputV1Schema.safeParse(result).success).toBe(true);
                 if (change !== 'current') {
                     const terminal = await Promise.race([
@@ -1454,7 +1502,9 @@ describe('authenticated finite Project Action owner', () => {
                     return;
                 }
                 expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'bob', machineId: 'machine' }, 'operation'))
-                    .toMatchObject({ state: 'failed', error: { errorCode: 'agent_isolation_unavailable' } });
+                    .toMatchObject({ state: 'failed', scope: { accountId: 'bob', machineId: 'machine' },
+                        error: { errorCode: 'agent_isolation_unavailable' } });
+                expect(h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')).toBeNull();
                 expect(h.spawned).toEqual([]);
                 return;
             }

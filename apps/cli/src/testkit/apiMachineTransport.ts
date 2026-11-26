@@ -2,6 +2,7 @@ import { vi } from 'vitest';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { RpcHandlerConfig } from '@/api/rpc/types';
 import type { MachineActionDirectTargetTransport } from '@/session/actions/cliActionDeps/types';
 import { createApiSessionSocketStub } from './backends/apiSessionSocketHarness';
 
@@ -45,9 +46,16 @@ export function bindApiMachineSocketSequenceMock(
     });
 }
 
+/** Bind the RPC namespace and the physical receiver to the same installed Machine. */
+export function createInstalledMachineRpcFixture(machineId: string,
+    admission: Pick<RpcHandlerConfig, 'authorizeRequest' | 'prepareRequesterAccountContext'> = {},
+) {
+    return new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId, encryptionMode: 'plain', ...admission });
+}
+
 /** Machine socket subscriptions and shutdown are the bootstrap transport boundary. */
 export function createApiMachineTransportFixture() {
-    const roleRpcHandlerManager = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain' });
+    const roleRpcHandlerManager = createInstalledMachineRpcFixture('machine');
     return {
         onUpdate: vi.fn<ApiMachineClient['onUpdate']>(() => () => {}),
         onAccountSettingsVersionHint: vi.fn<ApiMachineClient['onAccountSettingsVersionHint']>(() => () => {}),
