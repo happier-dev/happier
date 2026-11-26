@@ -163,7 +163,8 @@ export function describeLocalServiceActionFailure(input: LocalServiceFailureDesc
         title: copy.title,
         ...(recovery ? { recovery } : {}),
         // The Browser wrapper and this surface use the same refusal copy. Services adds the name when needed.
-        body: input.failure?.errorCode === 'runtime_action_disabled' && input.reasonCode === 'browser_view_unavailable'
+        body: isLocalServiceActionRefusedByPolicy(input.reasonCode)
+            || (input.failure?.errorCode === 'runtime_action_disabled' && input.reasonCode === 'browser_view_unavailable')
             ? copy.body : presentation.reason,
         details: [
             ...(input.serviceName && failure?.cause === 'port_in_use' && failure.port !== undefined
