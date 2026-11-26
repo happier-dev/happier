@@ -8,6 +8,8 @@ import { REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '@happier-dev/proto
 import { reviewReviewerIdForSelectionV1, type ReviewEngineReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowInvocationListResultV1Schema, WorkflowRunGetResultV1Schema, WorkflowRunListResultV1Schema, WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { REPOSITORY_REVIEW_WORKFLOW_V1 } from '@happier-dev/protocol/workflows/builtins/repositoryReview';
+import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { readReviewWorkflowStartActionResultV1, ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import { ReviewEngineInventorySchema } from '@happier-dev/protocol/reviews/reviewEngines';
 import { ReviewGetResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
@@ -343,16 +345,32 @@ else {
     const saved = WorkflowDefinitionCreateResultV1Schema.parse(await act('workflow.definition.create', {
       definitionId: randomUUID(), metadata: { title: 'Repository security Hunt' }, definition: REPOSITORY_REVIEW_WORKFLOW_V1,
     }));
-    const started = WorkflowRunStartResultV1Schema.parse(await act('workflow.run.start', {
-      runId: randomUUID(), executionTarget: { kind: 'detached_run' },
-      source: { kind: 'saved', definitionId: saved.definitionId, revision: saved.revision },
-      inputs: { cwd: machine.workspaceDir, instructions,
-        reviewers: [{ kind: 'engine', engineId: 'muse', modelId,
-          sessionConfigOptionOverrides: { v: 1, updatedAt: 0,
-            overrides: { reasoning_effort: { value: 'minimal', updatedAt: 0 } } } }],
-      },
+    const inputs = { cwd: machine.workspaceDir, instructions,
+      reviewers: [{ kind: 'engine', engineId: 'muse', modelId,
+        sessionConfigOptionOverrides: { v: 1, updatedAt: 0,
+          overrides: { reasoning_effort: { value: 'minimal', updatedAt: 0 } } } }],
+    };
+    const scheduled = WorkflowTriggerWriteResultV1Schema.parse(await act('workflow.trigger.add', {
+      workflow: saved.definitionId, inputs,
+      project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
+      // An annual schedule stays dormant; Run now invokes its real occurrence
+      // owner without waiting for a wall-clock tick or adding another scheduler.
+      trigger: { kind: 'schedule', enabled: true,
+        schedule: { kind: 'cron', scheduleExpr: '0 0 1 1 *', everyMs: null, timezone: 'UTC' } },
     }));
-    const runId = started.run.id;
+    const occurrence = AutomationV3RunMutationResponseSchema.parse(await act('workflow.trigger.run_now', {
+      automationId: scheduled.set.automationId,
+    }));
+    expect(occurrence.run.automationId).toBe(scheduled.set.automationId);
+    let runId: string | undefined;
+    await waitFor(async () => {
+      const history = WorkflowRunListResultV1Schema.parse(await act('workflow.run.list', {
+        automationId: scheduled.set.automationId,
+      }));
+      runId = history.runs.find(run => run.id === occurrence.run.id)?.id;
+      return runId !== undefined;
+    }, { timeoutMs: 60_000, failFast: true, context: 'The saved Hunt schedule publishes its explicit occurrence' });
+    if (!runId) throw new Error('The scheduled Hunt has no ordinary Workflow run');
     expect(await act('workflow.run.wait', { runId, conditions: ['terminal'] }))
       .toMatchObject({ observation: 'terminal', run: { state: 'succeeded' } });
     const history = WorkflowInvocationListResultV1Schema.parse(await act('workflow.run.invocations.list', { runId, includeContent: true }));
