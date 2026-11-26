@@ -32,7 +32,7 @@ import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collection
 import { COLLECTION_SPACE_ENABLEMENT_SETTING_KEYS_V1 } from '@happier-dev/protocol/collections/spaces/collectionSpaceEnablementV1';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { UniversalSearchRuntimeProvider, type UniversalSearchRuntime } from '@/components/appShell/search/UniversalSearchRuntimeContext';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ResourceSpaceMembershipMutationV1Schema } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
 import { ReviewListRequestV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
@@ -84,6 +84,58 @@ describe('reviewRowFact', () => {
 });
 
 describe('/reviews live host', () => {
+    it.each(['list', 'detail', 'summary'] as const)('keeps the %s content beside Home offline recovery until normal Retry succeeds', async (surface) => {
+        const serverUrl = 'https://review-offline.example';
+        const serverId = await homes.addHome({ serverUrl, name: 'Review offline', accountId: 'alice', currentAccount: true });
+        homes.answer(serverId, '/v1/machines', { body: [] });
+        const reviewId = 'retained-offline-review';
+        const review = {
+            reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+            state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2,
+            counts: { total: 1, needsDecision: 1 }, needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you',
+                needsYou: true, requestedVerdict: false, pendingDecisions: true, canSubmitVerdict: true },
+        } satisfies ReviewListResponseV1['items'][number];
+        homes.answer(serverId, 'POST /v1/reviews/list', { body: { items: [review], cursor: null } });
+        const { needsYou, ...metadata } = review;
+        homes.answer(serverId, 'POST /v1/reviews/get', { body: { review: metadata, human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [], needsYou } } });
+        homes.answer(serverId, 'POST /v1/reviews/comments', { body: { items: [], cursor: null } });
+        homes.artifacts(serverId).replaceStoredRow({ id: reviewId, ownerAccountId: 'alice', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1,
+            createdAt: 1, updatedAt: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId, title: 'Retained Review' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) }) });
+        const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homes.request, requestOwnsReachabilityProbes: true, configureSocket: configureConnectedServerSocketBoundary });
+        await sync.awaitBootstrapForegroundAcquisition();
+        const { ReviewDetailHost } = await import('./detail/ReviewDetailHost');
+        const { ReviewSummaryHost } = await import('./summary/ReviewSummaryHost');
+        const artifact = { id: reviewId, sourceServerId: serverId, title: 'Retained Review', isDecrypted: true,
+            header: { kind: REVIEW_ARTIFACT_KIND_V1, v: 1 as const, reviewId, title: 'Retained Review' },
+            body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+            ownerAccountId: 'alice', access: 'owner' as const, storageMode: 'plain' as const, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const screen = await renderScreen(surface === 'list' ? <ReviewsListHost />
+            : surface === 'detail' ? <ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />
+            : <ReviewSummaryHost reviewId={reviewId} />);
+        const expectContent = () => surface === 'list'
+            ? expect(screen.findHostByTestId(`reviews:row:${reviewId}`)).not.toBeNull()
+            : surface === 'summary' ? expect(screen.findByTestId('review-summary')).not.toBeNull()
+            : expect(screen.getTextContent()).toContain('Retained Review');
+        try {
+            if (surface === 'list') await reportCollectionLayout(screen, 'reviews:list');
+            await vi.waitFor(expectContent);
+            const { retryActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+            // The same physical HTTP boundary as an offline browser's normal connection-menu Retry.
+            homes.answer(serverId, '/v1/auth/ping', { select: () => { throw new TypeError('Failed to fetch'); } });
+            await act(async () => { await retryActiveServerConnection(); });
+            await vi.waitFor(() => expect(storage.getState().endpointStatus).toBe('offline'));
+            expect(screen.findByTestId('home-unreachable')).not.toBeNull();
+            expectContent();
+            homes.answer(serverId, '/v1/auth/ping', { body: {} });
+            await screen.pressByTestIdAsync('home-unreachable-retry');
+            await vi.waitFor(() => expect({ endpoint: storage.getState().endpointStatus, socket: storage.getState().socketStatus }).toEqual({ endpoint: 'online', socket: 'connected' }));
+            expect(screen.findByTestId('home-unreachable')).toBeNull();
+            expectContent();
+        } finally { await screen.unmount(); await connection.dispose(); }
+    });
     it('opens actionable Reviews after Home arrival without a second toolbar or automatic page drain', async () => {
         const section = findHomeHubBuiltinSection('reviews');
         expect(section, 'Home registers the Reviews consumer').not.toBeNull();

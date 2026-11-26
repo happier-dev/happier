@@ -16,6 +16,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { CollectionSearchToggle } from '@/components/ui/lists/collection/CollectionList';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
+import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -155,10 +156,12 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
                 title={t('reviewWalkthrough.collection.columnEmpty')} />
             // Start a review, and the all-sessions review habit set up in place (lab list-empty, LE3).
             : <ReviewsEmptyInvitation iconName={REVIEWS_GLYPH} startReview={scope ? startReview : undefined} />)} /></ReviewRowActionsContext.Provider>;
+    const homeNotice = surface === 'hub' ? null : <HomeReachabilityGate variant="line" presentation="inline"
+        relevantServerIds={scope ? [scope.serverId] : []}>{null}</HomeReachabilityGate>;
     if (surface !== 'home') return <CoreCollectionScope>
-        {list.items?.length ? failure : null}{collection}
+        {homeNotice}{list.items?.length ? failure : null}{collection}
     </CoreCollectionScope>;
-    return <ReviewsCollectionPage view={view} failure={failure}
+    return <ReviewsCollectionPage view={view} failure={failure} homeNotice={homeNotice}
         startReview={scope && list.items?.length ? startReview : undefined}>{collection}</ReviewsCollectionPage>;
 }
 
@@ -167,8 +170,8 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
  * title and purpose; a phone recomposes (lab list-home-390): the saved view is the page title, with search and Start a
  * review beside it and the spaces on their own line, all on the page's text edge.
  */
-function ReviewsCollectionPage({ view, failure, children, startReview }: Readonly<{
-    view: ReviewsCollectionView; failure: React.ReactNode; children: React.ReactNode; startReview?: () => void;
+function ReviewsCollectionPage({ view, failure, homeNotice, children, startReview }: Readonly<{
+    view: ReviewsCollectionView; failure: React.ReactNode; homeNotice: React.ReactNode; children: React.ReactNode; startReview?: () => void;
 }>): React.ReactElement {
     const phone = useViewportClass() === 'compact';
     const header = useReviewsSpaceHeader(view, 'reviews-space', phone ? 'page' : 'section');
@@ -201,6 +204,7 @@ function ReviewsCollectionPage({ view, failure, children, startReview }: Readonl
             </View> : null}
             {header.conditionRow ? <View style={styles.stripLine}>{header.conditionRow}</View> : null}
             {header.overlays}
+            {homeNotice}
             {view.list.items?.length ? failure : null}
             {children}
         </PageContentColumn>

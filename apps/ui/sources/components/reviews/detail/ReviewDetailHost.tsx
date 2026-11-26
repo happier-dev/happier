@@ -26,6 +26,7 @@ import { formatCodeCommitShortOid } from '@/components/projects/files/code/codeE
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { useReviewDetail } from '../useReviewDetail';
+import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { ReviewReadFailure } from '../ReviewReadFailure';
 import { useReviewHumanActions } from '../useReviewHumanActions';
 import { useReviewHistory } from '../useReviewHistory';
@@ -294,6 +295,11 @@ export function ReviewDetailHost(props: Readonly<{
   const artifactScope = useActiveServerAccountScope(artifact.sourceServerId ?? null);
   const detail = useReviewDetail(artifact.id, { scope: artifactScope });
   const scope = detail.scope;
+  const homeNotice = <HomeReachabilityGate variant="line" presentation="inline"
+    relevantServerIds={artifactScope ? [artifactScope.serverId] : []}>
+    {detail.error ? <ReviewReadFailure testID="review-detail:metadata-failure" size="line"
+      failure={detail.error} onRetry={detail.refresh} /> : null}
+  </HomeReachabilityGate>;
   const review = detail.data?.review ?? null;
   const human = detail.data?.human ?? null;
   const lastOrdinal = record?.rounds.at(-1)?.ordinal ?? 1;
@@ -545,6 +551,7 @@ export function ReviewDetailHost(props: Readonly<{
       <View style={{ flex: 1 }}>
         {canEdit && scope ? <ReviewFindingTaskProjectionDemand scope={scope} /> : null}
         <ItemList testID="review-detail:finding-page" pageColumn="wide">
+          {homeNotice}
           <PageHeader title={row.finding.title} alwaysShowTitle navigationTitle={t('detailsSurface.review.title')}
             testID="review-detail:finding-page:header"
             kicker={joinHappierFacts(reviewSeverityLabel(row.finding.severity),
@@ -619,16 +626,14 @@ export function ReviewDetailHost(props: Readonly<{
         label={unfinishedReviewers.length === 1 ? t('reviewWalkthrough.detail.retryReviewer', { name: unfinishedReviewers[0]!.name })
           : t('reviewWalkthrough.detail.retryUnfinished', { count: unfinishedReviewers.length })}
         onPress={() => newRound.retry?.(unfinishedReviewers)} /> : null}
-      notice={detail.error || (scope && ((newRound.approval.approvalPending && newRound.approval.approvalId)
-        || (humanActions.approval.approvalPending && humanActions.approval.approvalId))) ? <>
-        {detail.error ? <ReviewReadFailure testID="review-detail:metadata-failure" size="line"
-          failure={detail.error} onRetry={detail.refresh} /> : null}
+      notice={<>
+        {homeNotice}
         {scope && newRound.approval.approvalPending && newRound.approval.approvalId ? <ActionApprovalPendingNotice
         testID="review-detail:new-round-approval" message={t('approvals.title')}
         onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
         {humanActions.approval.approvalPending && humanActions.approval.approvalId && scope ? <ActionApprovalPendingNotice
           testID="review-detail:people-approval" message={t('approvals.title')}
-          onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(humanActions.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}</> : null}
+          onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(humanActions.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}</>}
       menu={[...(canSubmit && implementAction ? [{ id: 'implement', testID: 'review-detail:implement-menu', title: implementAction.title,
         disabled: implementAction.disabled, onSelect: implementFindings }] : []),
         ...(newRoundAction && primaryAction !== newRoundAction ? [{ id: 'new-round', testID: 'review-detail:new-round',

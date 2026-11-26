@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { useReviewDetail } from '../useReviewDetail';
@@ -22,14 +23,18 @@ export function ReviewSummaryHost(props: Readonly<{
     const detail = useReviewDetail(props.reviewId, { scope: props.scope });
     const glance = projectReviewGlance(undefined, detail.data?.review ?? null,
         { needsYou: detail.data?.human.needsYou, workflowFailureCode: props.workflowFailureCode });
-    if (!glance) return detail.error
-        ? <ReviewReadFailure failure={detail.error} onRetry={detail.refresh} />
-        : <SurfaceStateCard kind="loading" title={t('common.loading')} />;
+    const relevantServerIds = detail.scope ? [detail.scope.serverId] : [];
+    if (!glance) return <HomeReachabilityGate variant="line" relevantServerIds={relevantServerIds}>
+        {detail.error ? <ReviewReadFailure failure={detail.error} onRetry={detail.refresh} />
+            : <SurfaceStateCard kind="loading" title={t('common.loading')} />}
+    </HomeReachabilityGate>;
     return <>
         <ReviewSummary subject={props.subject ?? null} glance={glance} rows={props.rows ?? []}
             more={props.more} reviewers={props.reviewers ?? []}
             {...(props.onOpenReview ? { onOpenReview: props.onOpenReview } : {})} footerAction={props.footerAction} />
-        {detail.error ? <ReviewReadFailure testID="review-summary:retry" size="line"
-            failure={detail.error} onRetry={detail.refresh} /> : null}
+        <HomeReachabilityGate variant="line" presentation="inline" relevantServerIds={relevantServerIds}>
+            {detail.error ? <ReviewReadFailure testID="review-summary:retry" size="line"
+                failure={detail.error} onRetry={detail.refresh} /> : null}
+        </HomeReachabilityGate>
     </>;
 }
