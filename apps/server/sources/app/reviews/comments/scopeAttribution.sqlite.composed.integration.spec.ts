@@ -35,10 +35,14 @@ import type { ExecutionRunState } from '../../../../../cli/src/agent/runtime/bri
 import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '../../../../../ui/sources/components/sessions/files/views/sessionFilesViewTestkit';
 import { standardCleanup } from '../../../../../ui/sources/dev/testkit';
 import type { DecryptedArtifact } from '../../../../../ui/sources/sync/domains/artifacts/artifactTypes';
+import { createCapturingFlatListMock, createCapturingSectionListMock } from '../../../../../ui/sources/dev/testkit/mocks/virtualizedList';
 
 // Native/Expo rendering and the socket transport are the existing system boundaries.
 // Normalization, signed comment Actions, HTTP routes, SQLite and detail projections stay real.
 installSessionFilesViewBoundaries({ platformOS: 'web', reactNativeOverrides: {
+    // The native recyclers are absent from Test Renderer; collection projection and rows stay real.
+    ...createCapturingFlatListMock().module,
+    ...createCapturingSectionListMock().module,
     useWindowDimensions: () => ({ width: 1440, height: 1000, scale: 1, fontScale: 1 }),
 } });
 await prepareSessionFilesViewTestkit();
@@ -686,6 +690,188 @@ it('retains reviewer omission explanations, partial coverage and question states
                     expect(screen.getTextContent()).not.toContain(modelOutput.questions[2]!.text);
                 } finally { await screen.unmount(); }
             } finally { await fixture.dispose(); }
+        });
+    }, { authentication: 'real' });
+});
+
+it('carries an actual Session start through Reviews, a human decision and a cold Session summary', async () => {
+    const { ExecutionRunStartRequestSchema } = await import('@happier-dev/protocol/execution/runs/startRequest');
+    const { ReviewRoundBindingV1Schema } = await import('@happier-dev/protocol/reviews/reviewArtifactV1');
+    const { readReviewStartActionResultV1 } = await import('@happier-dev/protocol/actions/specs/executionRunCompletion');
+    const { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } = await import('@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1');
+    const { ReviewProfile } = await import('../../../../../cli/src/agent/executionRuns/profiles/review/ReviewProfile');
+    const { finishExecutionRun } = await import('../../../../../cli/src/agent/runtime/bridges/executionRun/finishExecutionRun');
+    const { projectExecutionRunPublicState } = await import('../../../../../cli/src/agent/runtime/bridges/executionRun/publicState');
+    const { ReviewListRequestV1Schema } = await import('@happier-dev/protocol/reviews/reviewListV1');
+    const { RPC_METHODS, SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } = await import('../../../../../ui/sources/dev/testkit/fixtures/executionRunCapabilitiesDescribe');
+    const { createSessionReadBatchFetchBoundary } = await import('../../../../../ui/sources/dev/testkit/harness/sessionReadBatchHttpBoundary');
+    const { createPlainV2SessionRecordFixture } = await import('../../../../../ui/sources/dev/testkit/fixtures/sessionFixtures');
+    const { reportCollectionLayout } = await import('../../../../../ui/sources/dev/testkit/harness/collectionLayoutHarness');
+    const { PluginSurfaceFocusEligibilityProvider } = await import('../../../../../ui/sources/components/ui/presentation/PluginSurfaceFocusEligibility');
+    const { ReviewsListHost } = await import('../../../../../ui/sources/components/reviews/ReviewsListHost');
+    const { ArtifactDetailScreen } = await import('../../../../../ui/sources/app/(app)/artifacts/[id]');
+    const { ReviewFindingsMessageCard } = await import('../../../../../ui/sources/components/sessions/reviews/messages/ReviewFindingsMessageCard');
+    const { AppSessionTranscriptSourceProvider } = await import('../../../../../ui/sources/components/sessions/transcript/source/appSessionTranscriptSource');
+    const { ReviewSummary } = await import('../../../../../ui/sources/components/reviews/summary/ReviewSummary');
+    const { ReviewSummaryHost } = await import('../../../../../ui/sources/components/reviews/summary/ReviewSummaryHost');
+    const { reviewListKey, retireReviewList, getReviewListSnapshot } = await import('../../../../../ui/sources/sync/store/domains/reviews/list');
+    const { reviewDetailKey, retireReviewDetail, getReviewDetailSnapshot } = await import('../../../../../ui/sources/sync/store/domains/reviews/detail');
+    const { resetReviewRunCommentsForTests } = await import('../../../../../ui/sources/sync/domains/reviews/comments/reviewRunComments');
+    const { useRouter } = await import('expo-router');
+    const account = await db.account.upsert({ where: { id: 'alice' }, update: {}, create: { id: 'alice', encryptionMode: 'plain' } });
+    const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+    const machineId = randomUUID(), installationId = randomUUID(), sessionId = randomUUID(), keyPair = tweetnacl.sign.keyPair();
+    await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+    await db.session.create({ data: { id: sessionId, accountId: account.id, tag: sessionId,
+        metadata: '{}', encryptionMode: 'plain', seq: 7 } });
+    await withAuthenticatedTestApp(app => {
+        registerReviewCommentRoutes(app); registerReviewReadRoutes(app); artifactsRoutes(app); registerAccountEncryptionRoutes(app);
+    }, async app => {
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        await runWithServerHttpBaseUrl(origin, async () => {
+            const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(
+                createCredentialedAccountArtifactStore({ token, encryption: null })));
+            const starts: ExecutionRunState[] = [];
+            const executor = createActionExecutor({
+                ...createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }),
+                reviewRecords: () => records,
+                // Only daemon inventory/protocol/start RPCs cross the process boundary; admission stays real.
+                reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex', enabled: true,
+                    capabilities: { structuredNarration: true } }] }),
+                executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: machineId }),
+                executionRunStart: async (sourceSessionId, input) => {
+                    const request = ExecutionRunStartRequestSchema.parse(input);
+                    const backendTarget = resolveExecutionRunRuntimeBackendTarget(request.backendTarget);
+                    if (!backendTarget) throw new Error('Missing admitted reviewer target');
+                    const run: ExecutionRunState = { runId: randomUUID(), callId: randomUUID(), sidechainId: randomUUID(),
+                        sessionId: sourceSessionId, depth: 0, intent: 'review',
+                        backendId: resolveExecutionRunRuntimeBackendId(backendTarget), backendTarget,
+                        instructions: request.instructions ?? '', permissionMode: request.permissionMode,
+                        retentionPolicy: request.retentionPolicy, runClass: request.runClass, ioMode: request.ioMode,
+                        status: 'running', startedAtMs: Date.now(), intentInput: request.intentInput };
+                    starts.push(run);
+                    return { runId: run.runId, callId: run.callId, sidechainId: run.sidechainId };
+                },
+            });
+            const started = await executor.execute('review.start', { sessionId, scope: 'repository',
+                instructions: 'Review connection cleanup.', reviewers: [{ kind: 'engine', engineId: 'codex' }] }, {
+                surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true, defaultSessionId: sessionId,
+                callerPermissionMode: 'read-only', sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+                agentStartContext: { caller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+                    baseline: { machineId, directory: harness.baseDir }, roles: {}, ledSubtreeSessionIds: [],
+                    workDepthLimit: 4, callerPermissionCeiling: 'read-only' },
+            });
+            expect(started, JSON.stringify(started)).toMatchObject({ ok: true });
+            if (!started.ok) throw new Error(started.error);
+            const receipt = readReviewStartActionResultV1(started.result, { reviewers: [{ kind: 'engine', engineId: 'codex' }] });
+            if (receipt.kind !== 'native') throw new Error('Expected native Review admission');
+            const binding = ReviewRoundBindingV1Schema.parse(receipt.reviewRound);
+            expect(starts).toHaveLength(1);
+            const run = starts[0]!;
+            const execute = createCliReviewCommentActionExecutorFromCredentials({ credentials: { token, encryption: null },
+                resolvePrincipalSigningContext: async () => ({ machineId, installationId,
+                    privateKeyBase64Url: Buffer.from(keyPair.secretKey).toString('base64url') }) });
+            const comments = createReviewRunCommentService({ cwd: harness.baseDir,
+                scope: { workspace: { machineId, path: harness.baseDir } }, execute, reviewRecords: records });
+            const completion = ReviewProfile.onBoundedComplete({ start: run, finishedAtMs: Date.now(),
+                rawText: JSON.stringify({ reviewOutcome: 'complete', summary: 'Connection cleanup needs a decision.', findings: [{
+                    id: 'cleanup', title: 'Reconnect retains a closed subscription', severity: 'high', category: 'correctness',
+                    summary: 'Release the subscription before reconnecting.', filePath: 'connection.ts', startLine: 8,
+                }] }) });
+            expect(completion.status).toBe('succeeded');
+            const runs = new Map([[run.runId, run]]);
+            expect(await finishExecutionRun({ runId: run.runId,
+                next: { status: 'succeeded', summary: completion.summary, finishedAtMs: Date.now() },
+                toolResult: { output: completion.toolResultOutput, meta: completion.toolResultMeta }, structuredMeta: completion.structuredMeta,
+                runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
+                enqueueMarkerWrite: async (_id, write) => { await write(); }, terminalMarkerWritePromises: new Map(), reviewComments: comments })).toBe(true);
+            const completed = runs.get(run.runId)!;
+            const published = ReviewFindingsV2Schema.parse(completed.structuredMeta?.payload);
+            const finding = published.findings[0]!;
+            expect(finding.comment).toMatchObject({ reviewId: binding.reviewId });
+            const commentId = finding.comment!.id;
+            const listInputs: ReturnType<typeof ReviewListRequestV1Schema.parse>[] = [];
+            const reads: string[] = [];
+            const serverIdentityId = await getOrCreateServerIdentityId();
+            const openFixture = () => createSessionFilesViewFixture({ serverUrl: origin, credentials: { token }, sessionId, machineId,
+                serverIdentityId, rpc: request => {
+                    if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+                    if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET)
+                        return { run: projectExecutionRunPublicState(completed), reviewFindings: published };
+                    return undefined;
+                }, request: createSessionReadBatchFetchBoundary(async (url, init) => {
+                    const path = new URL(String(url)).pathname;
+                    if (path.startsWith('/v1/reviews/') || path.startsWith('/v1/artifacts') || path.startsWith('/v1/account/encryption')) {
+                        reads.push(path);
+                        if (path === '/v1/reviews/list') listInputs.push(ReviewListRequestV1Schema.parse(JSON.parse(String(init?.body))));
+                        return fetch(url, init);
+                    }
+                    if (path === `/v2/sessions/${sessionId}`) return Response.json({ session: createPlainV2SessionRecordFixture({
+                        id: sessionId, metadata: { path: harness.baseDir, host: 'test', machineId },
+                    }) });
+                    return undefined;
+                }) });
+            let fixture = await openFixture();
+            const router = useRouter();
+            const listElement = React.createElement(PluginSurfaceFocusEligibilityProvider, { active: true, presentationActive: true,
+                children: React.createElement(ReviewsListHost, { surface: 'column' }) });
+            const openList = async () => {
+                const screen = await fixture.render(listElement);
+                await reportCollectionLayout(screen, 'reviews:column');
+                await vi.waitFor(() => expect(screen.findHostByTestId(`reviews:column:row:${binding.reviewId}`),
+                    `${screen.getTextContent()}\n${JSON.stringify(listInputs)}`).not.toBeNull());
+                return screen;
+            };
+            try {
+                const list = await openList();
+                try {
+                    await list.pressByTestIdAsync(`reviews:column:row:${binding.reviewId}`);
+                    expect(decodeURIComponent(String(vi.mocked(router.push).mock.calls.at(-1)?.[0]))).toContain(`/artifacts/${binding.reviewId}`);
+                } finally { await list.unmount(); }
+                // The route owns its real Artifact subscription; no body is seeded into the host.
+                router.setParams({ id: binding.reviewId, thread: commentId });
+                const detail = await fixture.render(React.createElement(ArtifactDetailScreen));
+                try {
+                    await vi.waitFor(() => expect(detail.findHostByTestId(`review-finding:${commentId}`),
+                        detail.getTextContent()).not.toBeNull());
+                    await detail.pressByTestIdAsync(`review-finding-triage:${commentId}:reject`);
+                    await vi.waitFor(async () => expect(await db.reviewComment.findUnique({ where: { id: commentId } }))
+                        .toMatchObject({ reviewId: binding.reviewId, state: 'dismissed', reviewTriageStatus: 'reject' }));
+                } finally { await detail.unmount(); }
+                const saved = ReviewCommentGetResponseV1Schema.parse(await execute('reviews.comments.get', {
+                    reviewId: binding.reviewId, commentId })).comment;
+                expect(saved.transitions.at(-1)).toMatchObject({ transitionedBy: { kind: 'user', userId: account.id }, reviewTriageStatus: 'reject' });
+                const scope = { serverId: fixture.scope.serverId, accountId: account.id };
+                const listKey = reviewListKey(scope, listInputs.at(-1)!);
+                await fixture.dispose(); standardCleanup(); resetReviewRunCommentsForTests();
+                retireReviewList(listKey); retireReviewDetail(reviewDetailKey(scope, binding.reviewId));
+                expect(getReviewListSnapshot(listKey).items).toBeNull();
+                expect(getReviewDetailSnapshot(reviewDetailKey(scope, binding.reviewId)).data).toBeNull();
+                reads.length = 0;
+                fixture = await openFixture();
+                const reloaded = await openList();
+                try {
+                    expect(getReviewListSnapshot(listKey).items?.find(row => row.reviewId === binding.reviewId))
+                        .toMatchObject({ sourceSessionId: sessionId, sourceSessionSeq: 7, counts: { total: 1, needsDecision: 0 } });
+                } finally { await reloaded.unmount(); }
+                const card = await fixture.render(React.createElement(AppSessionTranscriptSourceProvider, { sessionId, serverId: fixture.scope.serverId,
+                    children: React.createElement(ReviewFindingsMessageCard, { sessionId, serverId: fixture.scope.serverId,
+                        payload: published, canSendMessages: false }) }));
+                try {
+                    await vi.waitFor(() => expect(card.tree.root.findByType(ReviewSummary).props.rows)
+                        .toContainEqual(expect.objectContaining({ rowId: finding.id, decision: 'reject' })));
+                    expect(card.tree.root.findByType(ReviewSummaryHost).props.reviewId).toBe(binding.reviewId);
+                    expect(card.getTextContent()).toContain(finding.title);
+                    await card.pressByTestIdAsync('review-summary:open');
+                    expect(decodeURIComponent(String(vi.mocked(router.push).mock.calls.at(-1)?.[0]))).toContain(`/artifacts/${binding.reviewId}`);
+                    expect(reads).toContain('/v1/reviews/list');
+                    expect(reads).toContain('/v1/reviews/get');
+                    expect(reads).toContain('/v1/reviews/comments');
+                } finally { await card.unmount(); }
+                expect(ReviewCommentGetResponseV1Schema.parse(await execute('reviews.comments.get', {
+                    reviewId: binding.reviewId, commentId })).comment).toEqual(saved);
+            } finally { standardCleanup(); await fixture.dispose(); }
         });
     }, { authentication: 'real' });
 });
