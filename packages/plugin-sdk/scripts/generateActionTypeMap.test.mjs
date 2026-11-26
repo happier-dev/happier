@@ -93,7 +93,7 @@ test('approval reads derive sanitized requester attribution instead of opaque JS
   assert.ok(list.members.some(member => member.name.text === 'items'));
 });
 
-test('Action DTO metadata helpers respect caller arguments and shadowed mutable locals', async () => {
+test('Action DTO derivation follows re-exported specs and respects metadata helper scope', async () => {
   const repoRoot = process.cwd();
   const actions = resolve(repoRoot, 'packages/protocol/src/actions');
   const inputSnapshot = captureActionSchemaInputs(repoRoot);
@@ -101,16 +101,23 @@ test('Action DTO metadata helpers respect caller arguments and shadowed mutable 
     export const ACTION_ID_FAMILIES_V1 = { fixture: ['fixture.read'] } as const;
   `);
   inputSnapshot.set(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
-  inputSnapshot.set(resolve(actions, 'actionSpecs.ts'), `
+  inputSnapshot.set(resolve(actions, 'specs/catalog.ts'), `
+    export { FIXTURE_ACTION_SPECS } from './fixture.js';
+  `);
+  inputSnapshot.set(resolve(actions, 'specs/fixture.ts'), `
     import { z } from 'zod/mini';
     throw new Error('Catalog source must not execute');
     const metadata = { id: 'fixture.read' } as const;
     function identity<const T>(metadata: T) { return metadata; }
-    export const ACTION_SPECS = [{
+    export const FIXTURE_ACTION_SPECS = [{
       ...identity(metadata),
       inputSchema: z.object({ value: z.string() }),
       outputSchema: z.boolean(),
     }] as const;
+  `);
+  inputSnapshot.set(resolve(actions, 'actionSpecs.ts'), `
+    import { FIXTURE_ACTION_SPECS } from './specs/catalog.js';
+    export const ACTION_SPECS = [...FIXTURE_ACTION_SPECS] as const;
     function readActionSpec(id: string) {
       let spec: unknown;
       return spec;

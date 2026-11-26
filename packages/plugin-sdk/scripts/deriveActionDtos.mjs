@@ -225,15 +225,17 @@ function selectSchemaRows(protocol, keys, readSource) {
   };
   visitType(source(actionPath));
   // Literal Action rows supply the remaining canonical definitions. Follow
-  // only the registry's imported spec-array owners, including composed family
-  // owners, not arbitrary files.
+  // the registry's named spec-array imports and re-exports to their owners.
   const specPaths = new Set();
   const addImportedSpecOwners = path => {
     if (specPaths.has(path)) return;
     specPaths.add(path);
     for (const node of source(path).statements) {
-      if (ts.isImportDeclaration(node) && node.moduleSpecifier.text.startsWith('.') && node.importClause?.namedBindings
-        && ts.isNamedImports(node.importClause.namedBindings) && node.importClause.namedBindings.elements.some(n => /ACTION_SPECS(?:_V\d+)?$/u.test((n.propertyName ?? n.name).text))) {
+      const bindings = ts.isImportDeclaration(node) ? node.importClause?.namedBindings
+        : ts.isExportDeclaration(node) ? node.exportClause : undefined;
+      if (bindings && (ts.isNamedImports(bindings) || ts.isNamedExports(bindings))
+        && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text.startsWith('.')
+        && bindings.elements.some(n => /ACTION_SPECS(?:_V\d+)?$/u.test((n.propertyName ?? n.name).text))) {
         addImportedSpecOwners(resolve(dirname(path), node.moduleSpecifier.text.replace(/\.js$/u, '.ts')));
       }
     }
