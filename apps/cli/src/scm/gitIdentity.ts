@@ -1,6 +1,6 @@
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { ScmGitIdentity, ScmGitIdentityResolution } from '@happier-dev/protocol/scm/gitIdentity';
+import { ScmGitIdentitySchema, type ScmGitIdentity, type ScmGitIdentityResolution } from '@happier-dev/protocol/scm/gitIdentity';
 import type { ScmCommandInput, ScmCommandRunner } from './runtime';
 
 export type GitIdentityResolution = ScmGitIdentityResolution & Readonly<{
@@ -33,19 +33,21 @@ export async function resolveGitIdentity(input: Readonly<{
   const name = values.get('user.name');
   const email = values.get('user.email');
   // Decision B: an explicit complete repository identity wins over the person.
-  const repository = name && email ? { name, email } : null;
+  const parsedRepository = name && email && ![name, email].some(value => /\p{Cc}/u.test(value))
+    ? ScmGitIdentitySchema.safeParse({ name, email }) : undefined;
+  const repository = parsedRepository?.success ? parsedRepository.data : null;
   const identity = repository ?? input.person;
   const environment = {
     GIT_AUTHOR_NAME: identity?.name ?? '', GIT_AUTHOR_EMAIL: identity?.email ?? '',
     GIT_COMMITTER_NAME: identity?.name ?? '', GIT_COMMITTER_EMAIL: identity?.email ?? '',
   };
-  // An Agent can change repositories. Keep repository identity in Git config on that path.
-  // Empty names/emails for a guest without an identity preserve Git's refusal.
+  // The guest overlay follows the Agent into other repositories and keeps
+  // Git from falling back to the Machine identity. Empty values make Git refuse.
   return {
     source: repository ? 'repository' : input.person ? 'person' : 'none',
     identity,
     environment,
-    processEnvironment: repository ? {} : environment,
+    processEnvironment: repository && input.isCustodian ? {} : environment,
   };
 }
 

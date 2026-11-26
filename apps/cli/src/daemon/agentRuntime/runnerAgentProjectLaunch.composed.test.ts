@@ -485,16 +485,28 @@ it('prepares a fresh zero-step native Project through installed Session custody 
 });
 
 const guestGitIdentity = { name: 'Guest Person', email: 'guest@example.test' };
+const guestRepositoryGitIdentity = { name: 'Guest Repository', email: 'repo@example.test' };
 
 it.each([
-  { label: 'guest on a shared Machine', custodian: false, repository: false, person: guestGitIdentity,
+  { label: 'guest on a shared Machine', custodian: false, person: guestGitIdentity,
     expected: 'Guest Person <guest@example.test>' },
-  { label: 'Machine custodian', custodian: true, repository: false, person: null,
-    expected: 'Machine Person <machine@example.test>' },
-  { label: 'guest in a repository with its own identity', custodian: false, repository: true, person: guestGitIdentity,
-    expected: 'Repository Person <repo@example.test>' },
-  { label: 'guest without an identity', custodian: false, repository: false, person: null, expected: null },
-])('prepares the Git environment for $label', async ({ custodian, repository, person, expected }) => {
+  { label: 'guest in a repository with its own identity', custodian: false, repository: guestRepositoryGitIdentity,
+    person: guestGitIdentity, expected: 'Guest Repository <repo@example.test>',
+    secondRepositoryExpected: 'Guest Repository <repo@example.test>' },
+  { label: 'Machine custodian in a repository with its own identity', custodian: true,
+    repository: guestRepositoryGitIdentity, person: null, expected: 'Guest Repository <repo@example.test>',
+    secondRepositoryExpected: 'Machine Person <machine@example.test>' },
+  { label: 'guest in a repository with a multiline identity', custodian: false,
+    repository: { ...guestRepositoryGitIdentity, name: 'Invalid\nName' }, person: guestGitIdentity,
+    expected: 'Guest Person <guest@example.test>' },
+  { label: 'guest in a repository with a control character in its identity', custodian: false,
+    repository: { ...guestRepositoryGitIdentity, name: 'Invalid\tName' }, person: guestGitIdentity,
+    expected: 'Guest Person <guest@example.test>' },
+  { label: 'guest in a repository with an identity containing brackets', custodian: false,
+    repository: { ...guestRepositoryGitIdentity, email: '<repo@example.test>' }, person: guestGitIdentity,
+    expected: 'Guest Person <guest@example.test>' },
+  { label: 'guest without an identity', custodian: false, person: null, expected: null },
+])('prepares the Git environment for $label', async ({ custodian, repository, person, expected, secondRepositoryExpected }) => {
   const h = await harness({
     boundRequester: true,
     machineAccess: { custodianAccountId: custodian ? 'requester' : 'custodian', role: 'manage' },
@@ -502,24 +514,25 @@ it.each([
   });
   const global = join(h.cwd, 'machine.gitconfig');
   await writeFile(global, '[user]\nname = Machine Person\nemail = machine@example.test\n');
-  const git = (args: string[], environment: Readonly<Record<string, string>> = {}) => execFileSync('git', args, {
-    cwd: h.cwd, stdio: 'pipe', encoding: 'utf8',
+  const git = (args: string[], environment: Readonly<Record<string, string>> = {}, cwd = h.cwd) => execFileSync('git', args, {
+    cwd, stdio: 'pipe', encoding: 'utf8',
     env: { ...environment, PATH: process.env.PATH, GIT_CONFIG_GLOBAL: global, GIT_CONFIG_NOSYSTEM: '1' },
   });
   git(['init']);
   if (repository) {
-    git(['config', '--local', 'user.name', 'Repository Person']);
-    git(['config', '--local', 'user.email', 'repo@example.test']);
+    git(['config', '--local', 'user.name', repository.name]);
+    git(['config', '--local', 'user.email', repository.email]);
   }
   const launch = await h.launch();
   try {
-    const identityEnvironment = Object.fromEntries(Object.entries(launch.env).filter(
-      ([key]) => /^GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)$/.test(key),
-    ));
-    expect(identityEnvironment).toEqual(custodian || repository ? {} : {
-      GIT_AUTHOR_NAME: person?.name ?? '', GIT_AUTHOR_EMAIL: person?.email ?? '',
-      GIT_COMMITTER_NAME: person?.name ?? '', GIT_COMMITTER_EMAIL: person?.email ?? '',
-    });
+    if (secondRepositoryExpected) {
+      const secondRepository = join(h.cwd, '..', 'second-repository');
+      await mkdir(secondRepository);
+      git(['init'], {}, secondRepository);
+      git(['commit', '--allow-empty', '-m', 'Identity probe'], launch.env, secondRepository);
+      expect(git(['log', '-1', '--format=%an <%ae>%n%cn <%ce>'], {}, secondRepository).trim())
+        .toBe([secondRepositoryExpected, secondRepositoryExpected].join('\n'));
+    }
     for (const variable of ['GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT']) {
       if (expected) expect(git(['var', variable], launch.env)).toContain(expected);
       else expect(() => git(['var', variable], launch.env)).toThrow(/empty ident/i);

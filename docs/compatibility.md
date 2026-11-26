@@ -21,7 +21,7 @@ a guest. Identity objects are closed. Earlier requests without the field remain
 readable; the setting defaults to null. The inspected 0.2 frontier
 `ba3670d22d5bb36b0c92f4bd627ef790f0ce03de` has no Git identity preference.
 
-SCM's `resolveGitIdentity` owns repository-local identity, then person identity,
+SCM's `resolveGitIdentity` owns valid repository-local identity, then person identity,
 then native Git resolution for the verified custodian, then none. Other people
 never inherit the Machine's global/system identity. Missing commit identity
 retains `COMMIT_IDENTITY_REQUIRED`. Amend and cherry-pick preserve their original

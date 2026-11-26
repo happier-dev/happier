@@ -8,12 +8,14 @@ the host uses the admitted workspace runner to resolve Git identity once and
 applies the result to the final process environment. The same resolver owns the
 precedence for SCM commands.
 
-A repository-local or worktree-local identity at the launch directory leaves
-the Agent's Git environment alone, as does native fallback for the custodian.
-A personal identity sets the Git author and committer variables. A guest with
-no identity gets empty author and committer variables so Git refuses to use the
-Machine's default identity. These variables apply to the life of the Agent
-process, including commands it runs in a second repository.
+A guest's Git author and committer variables use the launch repository's valid
+local or worktree identity, followed by the requester's personal identity if the
+repository identity is absent or invalid. With neither identity, the variables
+are empty and Git refuses to commit. The guest's overlay stays in effect when
+the Agent runs Git in a different repository, where it can override that
+repository's configuration. For the Machine custodian, Git handles repository
+identity and native fallback directly. The custodian's personal identity supplies
+the overlay when configured and there is no valid repository identity.
 
 ## Project launch environment composition (0.3 development)
 
