@@ -78,6 +78,7 @@ const common = { placements: [], requiredAuthority: 'account_automation',
 function createSessionCapabilitiesActionSpecsV1() {
   return [
   { ...common, id: 'sessions.spawn.capabilities.preview', title: 'Preview session capabilities', safety: 'safe', sideEffectClass: 'read',
+    description: 'Preview the selected Machine’s session capabilities. If preview returns machine_unreachable, ask the person to reconnect the selected Machine before trying again. If it returns invalid_input, ask the person to correct the Machine, Agent or directory selection before trying again.',
     executionPlacement: 'machine', surfaces: { ...common.surfaces, voice: true },
     bindings: { mcpToolName: 'sessions_spawn_capabilities_preview', rpcMethod: 'sessions.spawn.capabilities.preview',
       voiceClientToolName: 'previewSpawnCapabilities' },

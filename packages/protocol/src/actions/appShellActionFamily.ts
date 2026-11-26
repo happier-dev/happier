@@ -221,7 +221,7 @@ function createAppShellActionSpecs() {
     title: 'Set an Inbox reminder',
     description: 'Set or clear the reminder on a private Inbox notice in the invoking Account.',
     safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'account',
-    placements: [], bindings: { mcpToolName: 'inbox_notice_reminder_set' },
+    placements: [], bindings: { mcpToolName: 'inbox_notice_reminder_set', voiceClientToolName: 'inbox_notice_reminder_set' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     cli: { acceptsServerId: true, commands: [{ path: ['inbox', 'notice', 'reminder', 'set'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
