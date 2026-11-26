@@ -3,7 +3,9 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createDeferred, renderScreen } from '@/dev/testkit';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import type { AuthCredentials as Credentials } from '@/auth/storage/tokenStorage';
@@ -71,8 +73,14 @@ function openedDraft() {
 }
 
 beforeEach(async () => {
-  home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-ask.test', accountId: 'account-a' }],
-    route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+  home = await serveActionHomes({
+    homes: [{ key: 'a', serverUrl: 'https://usage-ask.test', accountId: 'account-a' }],
+    route: ({ accountId, method, path }) => {
+      if (path === '/v1/kv/bulk') return Response.json({ values: [] });
+      if (accountId !== 'account-a' || path !== AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return undefined;
+      return createEmptyAccountBootstrapHttpResponse(path, { method }) ?? undefined;
+    },
+  });
   scope = { serverId: home.homes.a!.id, accountId: 'account-a' };
   const { TokenStorage } = await import('@/auth/storage/tokenStorage');
   credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
