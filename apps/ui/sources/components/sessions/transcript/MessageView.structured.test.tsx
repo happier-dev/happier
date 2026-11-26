@@ -182,6 +182,9 @@ afterEach(async () => {
 });
 
 async function serveStructuredSubmitHome(route?: (request: ServedHomeRequest) => Response | undefined) {
+    // Recipient input uses Account pending delivery, with its access projection read by the real Action.
+    const session = createSessionFixture({ id: 's1', accessLevel: 'edit', active: true, activeAt: Date.now(), pendingVersion: 2 });
+    const sessionHttp = createSessionMetadataHttpBoundary(() => ({ s1: session }));
     const served = await serveActionHomes({
         homes: [{ key: 'review', serverUrl: 'https://structured-review.test', accountId: 'account-1', currentAccount: true,
             settings: { sessionMessageSendMode: 'server_pending' } }],
@@ -197,13 +200,13 @@ async function serveStructuredSubmitHome(route?: (request: ServedHomeRequest) =>
                     ? currentPendingEnqueueAck({ body: JSON.stringify(request.body) })
                     : Response.json({ pending: [], discarded: [] });
             }
-            return route?.(request);
+            const sessionResponse = sessionHttp.handle(request.url, { method: request.method,
+                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+            return sessionResponse ?? route?.(request);
         },
     });
     disposeReviewHome = served.dispose;
-    getStorage().setState({ sessions: { s1: createSessionFixture({
-        id: 's1', serverId: served.homes.review!.id, active: true, activeAt: Date.now(), pendingVersion: 2,
-    }) } });
+    getStorage().setState({ sessions: { s1: { ...session, serverId: served.homes.review!.id } } });
     return served;
 }
 
@@ -455,6 +458,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             v: 1,
             kind: 'pluginSession',
             pluginId: 'acme.preview',
+            displayNameSnapshot: 'Preview integration',
             contributionLocalId: 'inbound',
             surface: 'unspecified',
         } as const;
@@ -550,9 +554,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         );
 
         for (const [id, label] of [
-            ['plugin-ordinary', 'From plugin acme.preview'],
-            ['plugin-structured', 'From plugin acme.preview'],
-            ['legacy-plugin', 'From plugin example.channels'],
+            ['plugin-ordinary', 'From Preview integration'],
+            ['plugin-structured', 'From Preview integration'],
+            ['legacy-plugin', 'From an integration'],
         ]) {
             const attribution = screen.findByTestId(`transcript-plugin-attribution:${id}`);
             expect(attribution).not.toBeNull();
@@ -561,6 +565,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             expect(attribution?.props.numberOfLines).toBe(1);
             expect(attribution?.props.ellipsizeMode).toBe('tail');
             expect(attribution?.props.children).toBe(label);
+            expect(attribution?.props.accessibilityLabel).not.toMatch(/acme\.preview|example\.channels/);
         }
         expect(screen.findByTestId('transcript-plugin-attribution:no-provenance')).toBeNull();
         expect(screen.findByTestId('transcript-plugin-attribution:malformed-provenance')).toBeNull();
@@ -573,6 +578,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             id: string,
             externalActor: Readonly<{ kind: 'human' | 'bot'; displayNameSnapshot?: string }>,
             contentProvenance: 'original' | 'forwarded' | 'viaBot',
+            displayNameSnapshot?: string,
         ) => ({
             kind: 'user-text',
             id,
@@ -584,6 +590,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
                     v: 1,
                     kind: 'pluginSession',
                     pluginId: 'happier.channels',
+                    ...(displayNameSnapshot ? { displayNameSnapshot } : {}),
                     contributionLocalId: 'inbound',
                     surface: 'unspecified',
                     sourceRef: 'channels:binding:binding-1',
@@ -594,8 +601,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             },
         }) satisfies UserTextMessage;
         const messages = [
-            external('external-named', { kind: 'human', displayNameSnapshot: 'Ada Lovelace' }, 'original'),
-            external('external-forwarded', { kind: 'human', displayNameSnapshot: 'Ada Lovelace' }, 'forwarded'),
+            external('external-named', { kind: 'human', displayNameSnapshot: 'Ada Lovelace' }, 'original', 'Team updates'),
+            external('external-forwarded', { kind: 'human', displayNameSnapshot: 'Ada Lovelace' }, 'forwarded', 'Team updates'),
             external('external-anonymous-person', { kind: 'human' }, 'original'),
             external('external-anonymous-bot', { kind: 'bot' }, 'viaBot'),
         ];
@@ -614,16 +621,17 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         );
 
         for (const [id, label] of [
-            ['external-named', 'From Ada Lovelace via plugin happier.channels'],
+            ['external-named', 'From Ada Lovelace via Team updates'],
             // Forwarding changes WHO wrote the message. Rendering the plain
             // "From <sender>" byline for it would state something false.
-            ['external-forwarded', 'Forwarded by Ada Lovelace via plugin happier.channels'],
-            ['external-anonymous-person', 'From an external sender via plugin happier.channels'],
-            ['external-anonymous-bot', 'From an external bot via plugin happier.channels'],
+            ['external-forwarded', 'Forwarded by Ada Lovelace via Team updates'],
+            ['external-anonymous-person', 'From an external sender via an integration'],
+            ['external-anonymous-bot', 'From an external bot via an integration'],
         ]) {
             const attribution = screen.findByTestId(`transcript-plugin-attribution:${id}`);
             expect(attribution?.props.accessibilityLabel).toBe(label);
             expect(attribution?.props.children).toBe(label);
+            expect(attribution?.props.accessibilityLabel).not.toMatch(/happier\.channels|channels:binding:binding-1/);
         }
     });
 
@@ -1692,7 +1700,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(submitMessageSpy.mock.calls[0]?.[0]).toBe('s1');
         expect(String(submitMessageSpy.mock.calls[0]?.[1] ?? '')).toContain('@happier/plan.adopt');
         await expect(submitMessageSpy.mock.results[0]!.value).resolves.toMatchObject({
-            type: 'wake_pending', persistence: 'pending', wake: { attempted: false, state: 'not_needed' },
+            type: 'success', persistence: 'pending', wake: { attempted: false, state: 'not_needed' },
         });
         const writes = served.requests.filter(request => (
             request.path === '/v2/sessions/s1/pending' && request.method === 'POST'
@@ -1712,16 +1720,9 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             findingId: 'f1',
             reviewTriageStatus: undefined,
         };
-        // Recipient input belongs to Account pending delivery; the Session read supplies
-        // its actual access projection to the Action instead of inferring it from the row.
-        const session = createSessionFixture({ id: 's1', accessLevel: 'edit', active: true, pendingVersion: 2 });
-        const sessionHttp = createSessionMetadataHttpBoundary(() => ({ s1: session }));
         // HTTP owns retained state here; the mounted card, comment repository, and Action
         // executor stay real, including the CAS request and final pending-message transport.
         const served = await serveStructuredSubmitHome((request) => {
-            const sessionResponse = sessionHttp.handle(request.url, { method: request.method,
-                ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
-            if (sessionResponse) return sessionResponse;
             if (request.path === '/v1/reviews/comments' && request.method === 'GET') {
                 return Response.json({ items: [storePlainReviewCommentFixture(comment)], cursor: null });
             }
@@ -1740,7 +1741,6 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
             return undefined;
         });
         const scope = { serverId: served.homes.review!.id, accountId: 'account-1' };
-        getStorage().getState().applySessions([{ ...session, serverId: scope.serverId }]);
 
         const message = {
             kind: 'tool-call',
