@@ -9,6 +9,8 @@ import { setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { observeReviewList } from './list';
+import { getReviewListSnapshot, reviewListKey } from '@/sync/store/domains/reviews/list';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -26,6 +28,56 @@ function detail(reviewId: string, needsDecision = 0): ReviewGetResponseV1 {
 }
 
 describe('demanded Review detail through the real Action and Account transport', () => {
+    it('coalesces a comment burst for two mounted detail and list readers into one read plus one trailing read', async () => {
+        const serverId = await homes.addHome({ serverUrl: 'https://review-comment-burst.example', name: 'Review burst', accountId: 'alice' });
+        await setActiveServerId(serverId, { scope: 'device' });
+        const scope = { serverId, accountId: 'alice' };
+        const input = { limit: 2 };
+        const counts = { detail: 0, list: 0 };
+        let needsDecision = 3;
+        let held: Promise<void> = Promise.resolve();
+        homes.answer(serverId, 'POST /v1/reviews/get', { select: async () => {
+            counts.detail += 1;
+            const body = detail('selected', needsDecision);
+            await held;
+            return { body };
+        } });
+        homes.answer(serverId, 'POST /v1/reviews/list', { select: async () => {
+            counts.list += 1;
+            const value = detail('selected', needsDecision);
+            const body = { items: [{ ...value.review, needsYou: value.human.needsYou }], cursor: null };
+            await held;
+            return { body };
+        } });
+        const releases = [observeReviewDetail(scope, 'selected'), observeReviewDetail(scope, 'selected'),
+            observeReviewList(scope, input), observeReviewList(scope, input)];
+        let finishRead = () => {};
+        try {
+            await waitForHomeGovernance(() => {
+                expect(getReviewDetailSnapshot(reviewDetailKey(scope, 'selected')).status).toBe('ready');
+                expect(getReviewListSnapshot(reviewListKey(scope, input)).status).toBe('ready');
+            });
+            expect(counts).toEqual({ detail: 1, list: 1 });
+            held = new Promise<void>(resolve => { finishRead = resolve; });
+            const wake = (revision: number) => publishHomeAccountChange(serverId, ['selected'], {
+                changeKinds: ['artifact'], feedPageConsumed: true,
+                artifactKinds: [deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 })],
+                reviewCommentChanges: [{ reviewId: 'selected', commentId: 'finding', serverRevision: revision, state: 'open' }],
+            });
+            wake(2);
+            await waitForHomeGovernance(() => expect(counts).toEqual({ detail: 2, list: 2 }));
+            needsDecision = 0;
+            for (let revision = 3; revision <= 22; revision += 1) wake(revision);
+            expect(counts).toEqual({ detail: 2, list: 2 });
+            finishRead();
+            await waitForHomeGovernance(() => {
+                expect(getReviewDetailSnapshot(reviewDetailKey(scope, 'selected')).data?.review.counts.needsDecision).toBe(0);
+                expect(getReviewListSnapshot(reviewListKey(scope, input)).items?.[0]?.counts.needsDecision).toBe(0);
+            });
+            expect(counts).toEqual({ detail: 3, list: 3 });
+        } finally { finishRead(); releases.forEach(release => release()); }
+    });
+
     it('opens the Review record only while a consumer demands it, sharing metadata with the summary', async () => {
         const serverId = await homes.addHome({ serverUrl: 'https://review-record.example', name: 'Review record', accountId: 'alice' });
         await setActiveServerId(serverId, { scope: 'device' });
