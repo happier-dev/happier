@@ -22,6 +22,7 @@ export function runHeartbeatWrappedCommand(params: {
     detached: boolean;
   };
   defaultTimeoutMs?: number | null;
+  afterChildExit?: () => Promise<void>;
   resolveExitCode: (result: {
     child: unknown;
     ok: true;

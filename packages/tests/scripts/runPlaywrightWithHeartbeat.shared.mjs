@@ -181,6 +181,17 @@ export async function runHeartbeatWrappedCommand(params) {
     };
   }
 
+  let cleanup;
+  const finishOwnedCleanup = () => cleanup ??= (async () => {
+    try {
+      await params.afterChildExit?.();
+      return true;
+    } catch (error) {
+      console.error('[tests] owned resource cleanup failed', error);
+      return false;
+    }
+  })();
+
   const result = await runManagedChildCommand({
     command: params.command,
     args: params.args,
@@ -208,11 +219,13 @@ export async function runHeartbeatWrappedCommand(params) {
     },
     onParentDeath: async () => {
       clearHeartbeat();
+      await finishOwnedCleanup();
       process.exit(1);
     },
   });
 
   clearHeartbeat();
+  const cleanupSucceeded = await finishOwnedCleanup();
 
   if (result.ok && result.timedOut === true && wrapperTimeoutMs !== null) {
     await writeTimeoutArtifact(params, wrapperTimeoutMs, process.env);
@@ -235,7 +248,8 @@ export async function runHeartbeatWrappedCommand(params) {
     process.exit(1);
   }
 
-  const exitCode = result.timedOut === true ? 124 : params.resolveExitCode(result);
+  const childExitCode = result.timedOut === true ? 124 : params.resolveExitCode(result);
+  const exitCode = childExitCode || (cleanupSucceeded ? 0 : 1);
   const finalMemory = params.diagnosticPath ? await readCgroupMemorySnapshot() : null;
   const oomKillDelta = resolveOomKillDelta(initialMemory, finalMemory);
   if (params.diagnosticPath) {

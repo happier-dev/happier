@@ -17,9 +17,8 @@ import { DATABASE_PLUGIN_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentUpdateResultV1Schema,
-    DeploymentReceiptGetResultV1Schema, DeploymentDataSizeResultV1Schema, DeploymentTeardownResultV1Schema,
+    DeploymentReceiptGetResultV1Schema, DeploymentDataSizeResultV1Schema,
     DeploymentReceiptResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentTeardownPreviewV1Schema } from '@happier-dev/protocol/deployments/deploymentTeardownVolumesV1';
 import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
@@ -43,6 +42,7 @@ import { createCredentialedAccountArtifactStore } from '../../../../apps/cli/src
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startDatabaseWorkbenchFixture } from '../../src/testkit/databaseWorkbench';
+import { trackDatabaseWorkbenchDeployments } from '../../src/testkit/databaseWorkbenchDeployments';
 import { repoRootDir } from '../../src/testkit/paths';
 import { readEncryptedAccountSettingsV2OrEmpty, upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
 
@@ -73,13 +73,9 @@ it('loads Channels terminal attention from the R6 entry order', async () => {
 it('R6 preserves native backup verification and isolated restore-drill outcomes with typed semantic SQL', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-dbw-recovery-'));
     const fixture = await startDatabaseWorkbenchFixture({ testDir });
-    let owner: Awaited<ReturnType<typeof fixture.createAccount>> | undefined;
-    let environmentId: string | undefined;
-    let targetLinkId: string | undefined;
-    const fixtureTargets: Array<{ environmentId: string; targetLinkId: string }> = [];
-    const nativeProjects = new Set<string>();
-    try {
-        owner = await fixture.createAccount('recovery-owner');
+    const deployments = trackDatabaseWorkbenchDeployments(fixture, testDir);
+    await deployments.run(async () => {
+        const owner = await fixture.createAccount('recovery-owner');
         // G2 starts before Connect, Project creation, Environment creation or deploy.
         expect(await owner.execute('machines.list', { serverId: fixture.serverId }))
             .toMatchObject({ ok: true, result: { items: [] } });
@@ -162,13 +158,11 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
             const current = DeploymentEnvironmentGetResultV1Schema.parse(read.result);
             if (!current.ok) throw new Error(`R6 setup created Environment read failed (${current.error})`);
             if (!current.environment.runtimeTargetLinkId) throw new Error('R6 setup Environment omitted its first runtime target');
-            const placement = { environmentId: environment.environmentId, targetLinkId: current.environment.runtimeTargetLinkId };
-            fixtureTargets.push(placement);
-            return placement;
+            return { environmentId: environment.environmentId, targetLinkId: current.environment.runtimeTargetLinkId };
         }
         const environment = await createEnvironment('R6 recovery source');
-        environmentId = environment.environmentId;
-        targetLinkId = environment.targetLinkId;
+        const { environmentId, targetLinkId } = environment;
+        const recordedProject = await deployments.recordInitialDeploy(owner, environment);
 
         const serving = await owner.executeReviewed('deployments.deploy', { serverId: fixture.serverId, environmentId,
             targetLinkId }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
@@ -203,7 +197,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         const content = DeploymentContentV1Schema.parse(JSON.parse(artifact.body));
         const project = content.ownServer?.approvedInputBasis.physicalProjectName;
         if (!project) throw new Error('R6 setup receipt omitted its admitted native project');
-        nativeProjects.add(project);
+        expect(project).toBe(recordedProject);
         const container = (await execute('docker', ['ps', '--quiet', '--filter', `label=com.docker.compose.project=${project}`,
             '--filter', 'label=com.docker.compose.service=database'])).stdout.trim();
         if (!container || /\s/u.test(container)) throw new Error('R6 setup must identify exactly one selected database container');
@@ -405,6 +399,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         // a no-op restore cannot satisfy the recovery assertion.
         const drill = await createEnvironment('R6 isolated recovery drill');
         expect(drill.environmentId).not.toBe(environmentId);
+        const recordedDrillProject = await deployments.recordInitialDeploy(owner, drill);
         const drillDeploy = await account.executeReviewed('deployments.deploy', { serverId: fixture.serverId, ...drill },
             { presentUserConfirmation: { actionId: 'deployments.deploy' } });
         if (!drillDeploy.ok) throw new Error(`R6 drill native deploy refused (${drillDeploy.errorCode})`);
@@ -477,7 +472,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
             if (!artifact || typeof artifact.body !== 'string') throw new Error('R6 drill receipt content unavailable');
             const project = DeploymentContentV1Schema.parse(JSON.parse(artifact.body)).ownServer?.approvedInputBasis.physicalProjectName;
             if (!project) throw new Error('R6 drill receipt omitted native project');
-            nativeProjects.add(project);
+            expect(project).toBe(recordedDrillProject);
             expect((await execute('docker', ['ps', '--quiet', '--filter', `label=com.docker.compose.project=${project}`])).stdout.trim(),
                 'R6 always-run cleanup must stop all isolated services').toBe('');
         }
@@ -550,37 +545,5 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         expect(DatabaseOperationResultV1Schema.parse(reenabledRead.result)).toMatchObject({ ok: true,
             results: [{ rows: [{ cells: [{ type: 'text', value: marker }, { type: 'null' },
                 { type: 'text', value: '' }, { type: 'integer', value: '9007199254740993' }] }] }] });
-    } finally {
-        try {
-            const account = owner;
-            const failures: unknown[] = [];
-            if (account) {
-                for (const placement of fixtureTargets.reverse()) {
-                    try {
-                        const target = { serverId: fixture.serverId, ...placement, reason: 'manual' };
-                        const preview = await account.execute('deployments.teardown', { ...target, mode: 'preview' });
-                        if (!preview.ok) throw new Error(`R6 fixture teardown preview refused (${preview.errorCode})`);
-                        const inventory = DeploymentTeardownPreviewV1Schema.parse(preview.result);
-                        const removed = await account.executeReviewed('deployments.teardown', { ...target,
-                            volumes: inventory.volumes.map(({ name }) => ({ name, disposition: 'delete', confirmation: name })) },
-                        { presentUserConfirmation: { actionId: 'deployments.teardown' } });
-                        if (!removed.ok) throw new Error(`R6 fixture native cleanup refused (${removed.errorCode})`);
-                        expect(DeploymentTeardownResultV1Schema.parse(removed.result)).toMatchObject({ ok: true, state: 'succeeded' });
-                        const volumes = await execute('docker', ['volume', 'ls', '--format', '{{.Name}}']);
-                        const nativeNames = new Set(volumes.stdout.split(/\r?\n/u));
-                        expect(inventory.volumes.filter(({ name }) => nativeNames.has(name)).map(({ name }) => name),
-                            'R6 teardown must remove the reviewed volumes').toEqual([]);
-                    } catch (error) { failures.push(error); }
-                }
-            }
-            if (failures.length) throw new AggregateError(failures, 'R6 native fixture cleanup failed');
-            for (const project of nativeProjects) {
-                const filter = `label=com.docker.compose.project=${project}`;
-                expect((await execute('docker', ['ps', '--all', '--quiet', '--filter', filter])).stdout.trim(),
-                    'R6 teardown must remove stopped and running fixture containers').toBe('');
-                expect((await execute('docker', ['network', 'ls', '--quiet', '--filter', filter])).stdout.trim(),
-                    'R6 teardown must remove fixture networks').toBe('');
-            }
-        } finally { await fixture.stop(); }
-    }
+    });
 }, 0);

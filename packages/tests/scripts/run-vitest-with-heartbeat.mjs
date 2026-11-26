@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +12,8 @@ import {
 } from './vitestPathArgs.mjs';
 
 import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPnpmCommand.mjs';
+
+import { cleanupRecordedDatabaseWorkbenchProjects, DBW_COMPOSE_CLEANUP_DIR } from './databaseWorkbenchComposeCleanup.mjs';
 
 const testsPackageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -106,8 +110,14 @@ const childArgs = [
 ];
 const invocation = resolvePnpmCommandInvocation(childArgs, { npmExecPath: '' });
 
+const composeCleanupDir = await mkdtemp(resolve(tmpdir(), 'happier-dbw-compose-cleanup-'));
+
 await runHeartbeatWrappedCommand({
   toolName: 'vitest',
+  async afterChildExit() {
+    await cleanupRecordedDatabaseWorkbenchProjects(composeCleanupDir);
+    await rm(composeCleanupDir, { recursive: true });
+  },
   runLogBaseDir: resolve(repoRoot, '.project/logs/e2e'),
   config: normalizedConfig,
   diagnosticPath,
@@ -118,6 +128,7 @@ await runHeartbeatWrappedCommand({
     env: {
       ...process.env,
       HAPPIER_CI_DIAGNOSTIC_PATH: diagnosticPath,
+      [DBW_COMPOSE_CLEANUP_DIR]: composeCleanupDir,
     },
     cwd: testsPackageRoot,
     ...(invocation.windowsVerbatimArguments

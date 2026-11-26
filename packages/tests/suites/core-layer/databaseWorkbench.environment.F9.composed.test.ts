@@ -41,6 +41,7 @@ import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID } from '../
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 import { startDatabaseWorkbenchFixture } from '../../src/testkit/databaseWorkbench';
+import { trackDatabaseWorkbenchDeployments } from '../../src/testkit/databaseWorkbenchDeployments';
 import { repoRootDir } from '../../src/testkit/paths';
 
 const run = promisify(execFile);
@@ -69,7 +70,8 @@ it('P4 F9: an owner Workflow describes the selected native database', async () =
       }
     },
   });
-  try {
+  const deployments = trackDatabaseWorkbenchDeployments(fixture, testDir);
+  await deployments.run(async () => {
     const owner = await fixture.createAccount('f9-owner');
     const ownerAccountId = readAccountIdFromToken(owner.credentials.token);
     const ownerEncryption = owner.credentials.encryption;
@@ -209,6 +211,7 @@ it('P4 F9: an owner Workflow describes the selected native database', async () =
     const targetLinkId = initial.runtimeTargetLinkId;
     if (!targetLinkId)
       throw new Error('F9 setup Environment omitted its runtime target');
+    const recordedProject = await deployments.recordInitialDeploy(owner, { environmentId: address.environmentId, targetLinkId });
     const deployed = DeploymentReceiptResultV1Schema.parse(
       await reviewed('deployments.deploy', { ...address, targetLinkId }, true),
     );
@@ -235,6 +238,7 @@ it('P4 F9: an owner Workflow describes the selected native database', async () =
       .ownServer?.approvedInputBasis.physicalProjectName;
     if (!project)
       throw new Error('F9 setup receipt omitted its native project');
+    expect(project).toBe(recordedProject);
     const container = (
       await run('docker', [
         'ps',
@@ -474,7 +478,5 @@ it('P4 F9: an owner Workflow describes the selected native database', async () =
     expect(await observeRun(async () => WorkflowActionOutputSchemasV1['workflow.run.list'].parse(
       await asPerson('workflow.run.list', { runId }),
     ).runs)).toMatchObject({ code: 'database_agent_access_none', step: 'failed' });
-  } finally {
-    await fixture.stop();
-  }
+  });
 }, 1_200_000);
