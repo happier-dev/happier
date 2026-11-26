@@ -304,8 +304,7 @@ jobs:
           test ! -e .candidate-source
           mkdir .candidate-source
           tar -xzf "$RUNNER_TEMP/docker-source-candidate/docker-source.tar.gz" -C .candidate-source
-          test -f .candidate-source/Dockerfile
-          test -f .candidate-source/docker/dev-box/Dockerfile
+          test -f .candidate-source/.dockerignore
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130

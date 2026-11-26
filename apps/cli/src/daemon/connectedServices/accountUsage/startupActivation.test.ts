@@ -60,10 +60,10 @@ function createActivation() {
 describe('provider-account usage startup activation', () => {
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-  it('constructs and starts quota policy only after real inventory hydration', async () => {
+  it('starts quota policy only after real inventory hydration', async () => {
     const h = createActivation();
     await expect(activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration(h.input)).resolves.toMatchObject({ status: 'active' });
-    expect(h.order).toEqual(['ready', 'hydrate', 'create', 'schedule', 'loop']);
+    expect(h.order).toEqual(['create', 'ready', 'hydrate', 'schedule', 'loop']);
     expect(h.refreshSources).toEqual([{ serviceId: 'openai-codex', profileId: 'work', bindingKind: 'profile' }]);
   });
 
@@ -174,7 +174,7 @@ describe('provider-account usage startup activation', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('cancels a pending retry on shutdown without creating a coordinator or leaking timers', async () => {
+  it('cancels a pending retry on shutdown without activating automation or leaking timers', async () => {
     vi.useFakeTimers();
     const h = createActivation();
     h.listProfiles.mockRejectedValue(Object.assign(new Error('server restarting'), { status: 503 }));

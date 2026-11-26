@@ -3,7 +3,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join, resolve } from 'node:path';
+import { StopSessionResultSchema } from '@happier-dev/protocol';
 
+import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
 import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
@@ -334,7 +336,10 @@ function createDaemonEnv(params: ProviderEnvParams): NodeJS.ProcessEnv {
   };
 }
 
-async function startWakeHarness(params: { testDir: string }): Promise<RunningWakeHarness> {
+async function startWakeHarness(params: {
+  testDir: string;
+  accountSettings?: Readonly<Record<string, unknown>>;
+}): Promise<RunningWakeHarness> {
   const server = await startServerLight({ testDir: params.testDir, dbProvider: 'sqlite' });
   const auth = await createTestAuth(server.baseUrl);
 
@@ -347,6 +352,14 @@ async function startWakeHarness(params: { testDir: string }): Promise<RunningWak
 
   const secret = Uint8Array.from(randomBytes(32));
   await seedCliAuthForServer({ cliHome: daemonHomeDir, serverUrl: server.baseUrl, token: auth.token, secret });
+  if (params.accountSettings) {
+    await upsertEncryptedAccountSettingsV2({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      secret,
+      settings: params.accountSettings,
+    });
+  }
 
   const fakeClaudePath = fakeClaudeFixturePath();
   const fakeClaudeLogPath = resolve(join(params.testDir, 'fake-claude.jsonl'));
@@ -423,14 +436,14 @@ async function spawnProviderSession(params: {
 }
 
 async function stopSession(params: { harness: RunningWakeHarness; sessionId: string }): Promise<void> {
-  const res = await daemonControlPostJson<{ success: boolean }>({
+  const res = await daemonControlPostJson<unknown>({
     port: params.harness.daemon.state.httpPort,
     path: '/stop-session',
     controlToken: params.harness.daemon.state.controlToken,
     body: { sessionId: params.sessionId },
   });
   expect(res.status).toBe(200);
-  expect(res.data.success).toBe(true);
+  expect(['stopped', 'requested']).toContain(StopSessionResultSchema.parse(res.data).status);
 
   await waitFor(async () => {
     const snap = await fetchSessionV2(params.harness.server.baseUrl, params.harness.authToken, params.sessionId);
@@ -577,7 +590,6 @@ async function assertWakePromptProcessedExactlyOnce(params: {
   prompt: string;
   afterSeqStart: number;
   fakeClaudeEventType?: FakeClaudePromptEventType;
-  assistantSubstring?: string;
 }): Promise<void> {
   await assertWakePromptProcessedOccurrenceCount({
     ...params,
@@ -593,7 +605,6 @@ async function assertWakePromptProcessedOccurrenceCount(params: {
   afterSeqStart: number;
   expectedOccurrences: number;
   fakeClaudeEventType?: FakeClaudePromptEventType;
-  assistantSubstring?: string;
 }): Promise<void> {
   await waitForProviderPromptText({
     harness: params.harness,
@@ -607,7 +618,7 @@ async function assertWakePromptProcessedOccurrenceCount(params: {
     token: params.harness.authToken,
     sessionId: params.sessionId,
     secret: params.harness.secret,
-    requiredSubstring: params.assistantSubstring ?? params.providerCase.assistantSubstring,
+    requiredSubstring: params.providerCase.assistantSubstring,
     afterSeqStart: params.afterSeqStart,
     timeoutMs: 120_000,
   });
@@ -696,14 +707,21 @@ describe('wake/resume: first message processed', () => {
 
   it('processes a multiline attachment-scaffold wake prompt exactly once through fake Claude', async () => {
     const testDir = run.testDir('wake-first-message-fake-claude-multiline-attachment-scaffold');
-    const harness = await startWakeHarness({ testDir });
+    const accountSettings = {
+      claudeRemoteAgentSdkEnabled: false,
+      claudeUnifiedTerminalEnabled: true,
+      claudeUnifiedTerminalHost: 'auto',
+      claudeUnifiedTerminalResumeChoice: 'resume_full_session',
+    } as const;
+    const harness = await startWakeHarness({ testDir, accountSettings });
     server = harness.server;
     daemon = harness.daemon;
 
-    const providerCase = WAKE_PROVIDER_CASES.find((item) =>
+    const baseProviderCase = WAKE_PROVIDER_CASES.find((item) =>
       item.backend === 'fake-claude' && item.submitPath === 'pending_queue'
     );
-    if (!providerCase) throw new Error('Missing fake Claude pending-queue wake provider case');
+    if (!baseProviderCase) throw new Error('Missing fake Claude pending-queue wake provider case');
+    const providerCase = { ...baseProviderCase, assistantSubstring: 'FAKE_CLAUDE_LOCAL_OK_' };
 
     const sessionId = await spawnProviderSession({ harness, agentId: 'claude' });
     const baselinePrompt = `E2E_WAKE_BASELINE_MULTILINE_${randomBytes(8).toString('hex')}`;
@@ -737,12 +755,7 @@ describe('wake/resume: first message processed', () => {
       sessionId,
       prompt: wakePrompt,
       submitPath: 'pending_queue',
-      meta: {
-        claudeRemoteAgentSdkEnabled: false,
-        claudeUnifiedTerminalEnabled: true,
-        claudeUnifiedTerminalHost: 'auto',
-        claudeUnifiedTerminalResumeChoice: 'resume_full_session',
-      },
+      meta: accountSettings,
     });
 
     const resumedSessionId = await spawnProviderSession({
@@ -759,7 +772,6 @@ describe('wake/resume: first message processed', () => {
       prompt: wakePrompt,
       afterSeqStart: beforeWakeSeq,
       fakeClaudeEventType: 'local_stdin_turn_completed',
-      assistantSubstring: 'FAKE_CLAUDE_LOCAL_OK_',
     });
 
     await stopSession({ harness, sessionId });
@@ -773,12 +785,7 @@ describe('wake/resume: first message processed', () => {
       sessionId,
       prompt: wakePrompt,
       submitPath: 'pending_queue',
-      meta: {
-        claudeRemoteAgentSdkEnabled: false,
-        claudeUnifiedTerminalEnabled: true,
-        claudeUnifiedTerminalHost: 'auto',
-        claudeUnifiedTerminalResumeChoice: 'resume_full_session',
-      },
+      meta: accountSettings,
     });
 
     const resumedAgainSessionId = await spawnProviderSession({
@@ -796,7 +803,6 @@ describe('wake/resume: first message processed', () => {
       afterSeqStart: beforeSecondSeq,
       expectedOccurrences: 2,
       fakeClaudeEventType: 'local_stdin_turn_completed',
-      assistantSubstring: 'FAKE_CLAUDE_LOCAL_OK_',
     });
   }, 900_000);
 });

@@ -2158,7 +2158,16 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
       unregisterInFlightSteerAvailabilityRefresh =
         opts.registerInFlightSteerAvailabilityRefresh?.(steerWiring.refreshAvailability) ?? null;
       const arbiter = createClaudeUnifiedInputArbiter<Mode>({
-        injectPrompt: promptInjector.injectPrompt,
+        injectPrompt: async (batch, options) => {
+          // The provider can echo the prompt before the terminal write returns.
+          if (batch.origin.kind !== 'goal_control') recordPromptAcceptanceCorrelation(batch);
+          const result = await promptInjector.injectPrompt(batch, options);
+          if (result.status === 'deferred' || (result.status === 'failed' && result.duplicateRisk === 'none')) {
+            acceptedPromptTranscriptDiscovery.forgetRetiredPromptByBatch(batch);
+            promptAcceptanceCorrelationRecordedBatches.delete(batch);
+          }
+          return result;
+        },
         injectionRetryLimit: configuration.claudeUnifiedTerminalInjectionRetryLimit,
         injectionRetryBaseDelayMs: configuration.claudeUnifiedTerminalInjectionRetryBaseDelayMs,
         evaluateInFlightSteer: steerWiring.evaluateInFlightSteer,
@@ -2202,9 +2211,6 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             return;
           }
           return await notifyTerminalInjectionFailure('[unified]: failed to surface Claude unified terminal injection failure (non-fatal)');
-        },
-        onProviderAcceptancePending: (batch, _acceptance, observedAtMs) => {
-          recordPromptAcceptanceCorrelation(batch, observedAtMs);
         },
         onPromptInjected: async (batch, acceptance) => {
           steerWiring.observeInjectedPrompt(batch, acceptance);
@@ -2367,13 +2373,11 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
       const promptAcceptanceCorrelationRecordedBatches = new WeakSet<object>();
       const recordPromptAcceptanceCorrelation = (
         batch: ClaudeUnifiedPromptBatch<Mode>,
-        acceptedAtMs?: number | undefined,
       ): void => {
         if (promptAcceptanceCorrelationRecordedBatches.has(batch)) return;
         promptAcceptanceCorrelationRecordedBatches.add(batch);
         acceptedPromptTranscriptDiscovery.recordAcceptedPrompt({
           message: batch.message,
-          ...(acceptedAtMs === undefined ? {} : { acceptedAtMs }),
           deliveryIdentity: {
             localIds: batch.userMessageLocalIds ?? [],
             userMessageSeq: batch.maxUserMessageSeq ?? null,
