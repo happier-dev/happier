@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
@@ -101,6 +102,15 @@ const TeamStateCard = React.memo(function TeamStateCard(props: Readonly<{
         />
     );
 });
+
+function TeamApprovalBanner(props: React.ComponentProps<typeof AttentionBanner> & Readonly<{
+    action: NonNullable<React.ComponentProps<typeof AttentionBanner>['action']>;
+}>) {
+    useCurrentUiContextLocalCommands([{
+        key: 'approval.review.open', title: props.action.label, invoke: props.action.onPress,
+    }], { contextKey: props.testID });
+    return <AttentionBanner {...props} />;
+}
 
 /**
  * The one place a Team destination decides how its Team's condition is shown.
@@ -369,7 +379,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         <>
             {embedded || props.childRendersHeader ? null : props.renderHeader ? props.renderHeader(context) : renderPlainHeader(props.renderHeaderActions?.(context))}
             {approvalId ? (
-                <AttentionBanner
+                <TeamApprovalBanner
                     testID="team-approval"
                     tone="neutral"
                     title={t('approvals.title')}

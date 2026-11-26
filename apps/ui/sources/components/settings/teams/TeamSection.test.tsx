@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Keep this shell test independent from unrelated generated plugin artifacts.
 // These are the same canonical testkit owners re-exported by `@/dev/testkit`,
@@ -76,7 +76,8 @@ async function openTeamRenameApproval(serverId: string, requestId: string): Prom
 
 let nextMountId = 0;
 const renderedContexts: TeamSectionContext[] = [];
-let TeamSection: typeof import('./TeamSection')['TeamSection'];
+// Collect the real module after installing Home boundaries, outside fixture deadlines.
+const { TeamSection } = await import('./TeamSection');
 
 function ChildProbe(props: Readonly<{ context: TeamSectionContext }>) {
     const [mountId] = React.useState(() => ++nextMountId);
@@ -89,10 +90,6 @@ function ChildProbe(props: Readonly<{ context: TeamSectionContext }>) {
 }
 
 describe('TeamSection Account binding', () => {
-    beforeAll(async () => {
-        ({ TeamSection } = await import('./TeamSection'));
-    }, 120_000);
-
     afterAll(() => {
         standardCleanup();
     });
@@ -112,6 +109,76 @@ describe('TeamSection Account binding', () => {
 
     // One message per state: a Team this link cannot open (stale, malformed, or not the viewer's) says so in its
     // title and leads to Teams; only a real role refusal says the role does not include it.
+    it('publishes only its visible approval navigation and retires the address after settlement', async () => {
+        const serverId = await addTeamHome();
+        await harness.switchAccount(serverId, ACCOUNT_ID, { currentAccount: true });
+        await harness.selectHomes([serverId]);
+        const home = harness.findByServerUrl('https://team-section.example');
+        if (!home?.token) throw new Error('Expected the Team Home credentials');
+        const { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } =
+            await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        installDisconnectedServerSocketBoundary();
+        const connection = await restoreServerAccountForTest({
+            serverUrl: home.serverUrl, accountId: ACCOUNT_ID, credentials: { token: home.token },
+            request: (input, init) => harness.request(input, init),
+        });
+        try {
+            const artifactId = await openTeamRenameApproval(serverId, 'team-mounted-review');
+            const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+            const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+            const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+            const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+            const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+            const { router } = await import('expo-router');
+            const { t } = await import('@/text');
+            function Publication() {
+                const commands = useCurrentUiContextComposedCommands();
+                const enrichment = React.useMemo(() => ({ commands }), [commands]);
+                usePublishCurrentUiContext(enrichment);
+                return null;
+            }
+            const screen = await renderMountedCurrentUiContext(
+                <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+                    <Publication />
+                    <TeamSection serverId={serverId} teamId="team-1">
+                        {(context) => <ChildProbe context={context} />}
+                    </TeamSection>
+                </CurrentUiContextCommandsProvider>,
+            );
+            await waitForHomeGovernance(() => expect(screen.findByTestId('team-section-child-probe')).not.toBeNull());
+            await act(async () => renderedContexts.at(-1)!.requestApproval(artifactId));
+            await waitForHomeGovernance(() => expect(screen.findByTestId('team-approval')).not.toBeNull());
+            const executor = createDefaultActionExecutor();
+            const commands = async () => {
+                const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+                if (!read.ok) throw new Error('Expected Team approval context');
+                return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+            };
+            const inventory = await commands();
+            expect(inventory.map(command => command.title)).toEqual([t('approvals.details')]);
+            const review = inventory[0]!;
+            vi.mocked(router.push).mockClear();
+            const path = `/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(serverId)}`;
+            await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+                { commandId: review.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+            expect(router.push).toHaveBeenLastCalledWith(path);
+            const banner = screen.findAllByType(AttentionBanner).find(node => node.props.testID === 'team-approval')!;
+            await act(async () => banner.props.action.onPress());
+            expect(router.push).toHaveBeenCalledTimes(2);
+            expect(router.push).toHaveBeenLastCalledWith(path);
+            expect(harness.requestsFor(TEAM_UPDATE_PATH)).toEqual([]);
+            await expect(decideApprovalAsInbox(serverId, artifactId, 'reject')).resolves.toMatchObject({ ok: true });
+            await waitForHomeGovernance(() => expect(screen.findByTestId('team-approval')).toBeNull());
+            expect(await commands()).toEqual([]);
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: review.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: false });
+            expect(router.push).toHaveBeenCalledTimes(2);
+            await screen.unmount();
+        } finally { await connection.dispose(); }
+    });
+
     it.each([
         { status: 400, code: 'invalid_team_input', title: 'teams.errors.notFound', message: 'teams.errors.invalidTeamLink', action: 'teams.title' },
         { status: 404, code: 'team_not_found', title: 'teams.errors.notFound', message: null, action: 'teams.title' },

@@ -7,6 +7,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
@@ -110,6 +111,14 @@ function useSavedSecretRecipientReadiness(input: Readonly<{
     }, [accountId, attempt, input.resourceId, input.revision, serverId]);
     const reload = React.useCallback(() => setAttempt((value) => value + 1), []);
     return { state, reload };
+}
+
+function SavedSecretApprovalOpenButton(props: Readonly<{ onPress: () => void }>) {
+    const title = t('approvals.title');
+    useCurrentUiContextLocalCommands([{
+        key: 'approval.review.open', title, invoke: props.onPress,
+    }], { contextKey: 'saved-secret-access-approval' });
+    return <RoundButton size="small" display="secondary" title={title} onPress={props.onPress} />;
 }
 
 export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEditor(props: Readonly<{
@@ -354,7 +363,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                     <Text accessibilityLiveRegion="polite" style={[styles.notice, styles.grow, { color: theme.colors.text.secondary }]}>
                         {t('secrets.catalog.approvalPending')}
                     </Text>
-                    <RoundButton size="small" display="secondary" title={t('approvals.title')} onPress={props.onOpenApproval} />
+                    <SavedSecretApprovalOpenButton onPress={props.onOpenApproval} />
                 </View>
             ) : null}
             <SavedSecretShareSheet

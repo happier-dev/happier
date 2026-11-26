@@ -90,6 +90,58 @@ const grantWrites = () => home!.mutations.filter(request => request.path === sav
 const promotionWrites = () => home!.mutations.filter(request => request.path === savedSecretPromotePath);
 
 describe('SavedSecretAccessEditor', () => {
+    it('publishes only its visible approval navigation and retires the address when the link disappears', async () => {
+        const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+        const { t } = await import('@/text');
+        const onOpenApproval = vi.fn();
+        function Publication() {
+            const commands = useCurrentUiContextComposedCommands();
+            const enrichment = React.useMemo(() => ({ commands }), [commands]);
+            usePublishCurrentUiContext(enrichment);
+            return null;
+        }
+        function Surface({ visible }: { visible: boolean }) {
+            return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+                <Publication />
+                <SavedSecretAccessEditor target={{ kind: 'shared', entry }} scope={testScope}
+                    approvalId={visible ? 'approval-1' : null} onOpenApproval={onOpenApproval}
+                    onClose={() => {}} onSaved={async () => {}} />
+            </CurrentUiContextCommandsProvider>;
+        }
+        const screen = await renderMountedCurrentUiContext(<Surface visible />);
+        const executor = createDefaultActionExecutor();
+        const commands = async () => {
+            const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+            if (!read.ok) throw new Error('Expected Saved Secret approval context');
+            return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+        };
+        expect(screen.findByTestId('saved-secret-access-approval')).not.toBeNull();
+        const inventory = await commands();
+        expect(inventory.map(command => command.title)).toEqual([t('approvals.title')]);
+        const review = inventory[0]!;
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+            { commandId: review.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(onOpenApproval).toHaveBeenCalledTimes(1);
+        const button = screen.findAllByType(RoundButton).find(node => node.props.title === t('approvals.title'))!;
+        await act(async () => { invokeTestInstanceHandler(button, 'onPress'); });
+        expect(onOpenApproval).toHaveBeenCalledTimes(2);
+        expect(home!.mutations).toEqual([]);
+        await screen.update(<Surface visible={false} />);
+        expect(screen.findByTestId('saved-secret-access-approval')).toBeNull();
+        expect(await commands()).toEqual([]);
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: review.id }, { surface: 'agent' }))
+            .toMatchObject({ ok: false });
+        expect(onOpenApproval).toHaveBeenCalledTimes(2);
+        await screen.unmount();
+    });
+
     it.each(['external', 'value'] as const)('discloses vault metadata before granting Team access even with a %s catalog descriptor', async storageKind => {
         const source = { kind: 'external' as const,
             contribution: { pluginId: 'happier.secret-source.onepassword', localId: 'onepassword' },
