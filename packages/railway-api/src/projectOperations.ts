@@ -18,6 +18,10 @@ const choice = defineProtocolObject({ id: text, name: text }, open);
 const choices = defineProtocolArray(choice);
 const optionalText = defineProtocolUnion([text, defineProtocolLiteral(null)]);
 const pageInfo = defineProtocolObject({ endCursor: optionalText, hasNextPage: boolean }, open);
+const createdProject = defineProtocolObject({
+  id: text, name: text, workspaceId: text, baseEnvironment: choice,
+}, open);
+const createdEnvironment = defineProtocolObject({ id: text, name: text, projectId: text }, open);
 const connection = defineProtocolObject({
   edges: defineProtocolArray(defineProtocolObject({ node: choice }, open)),
   pageInfo,
@@ -49,7 +53,6 @@ const grantedProjectWorkspaces = defineProtocolArray(defineProtocolObject({
 const port = defineProtocolNumber({ integer: true, minimum: 1, maximum: 65535 });
 const tcpProxies = defineProtocolArray(defineProtocolObject({ domain: text, proxyPort: port, applicationPort: port }, open));
 const connectionFields = 'edges { node { id name } } pageInfo { hasNextPage endCursor }';
-
 const deleteService = `mutation DeleteServiceInstance($id: String!, $environmentId: String!) {
   serviceDelete(id: $id, environmentId: $environmentId)
 }`;
@@ -109,6 +112,26 @@ function readAccountProjectsCursor(cursor: string) {
 /** On-demand project inventory and non-replacing variable updates for Railway consumers. */
 export function createRailwayProjectOperations(request: typeof fetch, signal?: AbortSignal) {
   const graphql = createRailwayGraphqlClient(request, signal);
+
+  async function createProject(input: Readonly<{ name: string; workspaceId: string }>) {
+    const data = await graphql(`mutation($input: ProjectCreateInput!) {
+      projectCreate(input: $input) { id name workspaceId baseEnvironment { id name } }
+    }`, { input });
+    const parsed = createdProject.safeParse(data.projectCreate);
+    if (!parsed.success || parsed.data.workspaceId !== input.workspaceId) throw new NativeError('railway_invalid_response');
+    const { id, name, baseEnvironment } = parsed.data;
+    return { project: { id, name }, environment: baseEnvironment };
+  }
+
+  async function createEnvironment(input: Readonly<{ name: string; projectId: string }>) {
+    const data = await graphql(`mutation($input: EnvironmentCreateInput!) {
+      environmentCreate(input: $input) { id name projectId }
+    }`, { input });
+    const parsed = createdEnvironment.safeParse(data.environmentCreate);
+    if (!parsed.success || parsed.data.projectId !== input.projectId) throw new NativeError('railway_invalid_response');
+    const { id, name } = parsed.data;
+    return { id, name };
+  }
 
   async function listPages(readPage: (after: string | null) => Promise<Page>): Promise<Choice[]> {
     const choices: Choice[] = [];
@@ -273,6 +296,8 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
   }
 
   return {
+    createProject,
+    createEnvironment,
     deleteServiceInstance,
     listProjects: (workspaceId?: string) => listPages(after => readProjectsPage(after, workspaceId)),
     readProjectsPage,

@@ -26,6 +26,8 @@ import { useFirstConnection } from './useFirstConnection';
 import { Text } from '@/components/ui/text/Text';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import { useRailwayScopeChoices } from './useRailwayScopeChoices';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { randomUUID } from '@/platform/randomUUID';
@@ -119,9 +121,10 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
   const inspectedService = adoption && canLink ? provider.providerIdentity.providerResourceId : null;
   const nextCursor = isRecord(value) && typeof value.nextCursor === 'string' ? value.nextCursor : null;
   const reset = () => { setResults({}); setError(null); setBound(false); setReplace([]); setCursors([]); setFieldCursors({}); setRequestKey(randomUUID()); };
-  const patch = (next: Record<string, unknown>) => {
+  const patch = (next: Record<string, unknown>, createdScope = false) => {
     const patched = applyPlatformFieldPatch(fields, seeded, next);
-    setValues(patched.values); setError(null); setBound(false); setReplace([]); setCursors([]); setFieldCursors({});
+    setValues(createdScope ? { ...patched.values, ...next } : patched.values);
+    setError(null); setBound(false); setReplace([]); setCursors([]); setFieldCursors({});
     if (adoption) {
       setResults(current => ({ 'projects.provision': current['projects.provision']! }));
       return;
@@ -243,6 +246,7 @@ export function DeploymentManagedDataSheet(props: DeploymentManagedDataInput & C
           onChange={next => { setAccount(next?.kind === 'account' ? next.account : null); reset(); }} /> : null}
         {/* The operation's fields read the provider through its account: they follow the first Connect. */}
         {needsConnect ? null : <ManagedDataActionFields fields={editableFields} operation={operation} input={seeded} draft={draft}
+          declarations={state.status === 'ready' ? state.declarations : undefined} account={!props.linked && !adoption ? account : null}
           serviceRefresh={adoption !== null}
           lifetime={props.lifetime} busy={busy} editable={!busy && !partial} onPatch={patch}
           cursors={fieldCursors} setCursors={setFieldCursors} />}
@@ -306,8 +310,10 @@ function ManagedDataFirstConnection(props: Readonly<{ target: ManagedDataTarget;
 function ManagedDataActionFields(props: Readonly<{
   fields: readonly EffectiveActionInputField[]; operation: ManagedDataOperation;
   input: Record<string, unknown>; draft: Record<string, unknown> | null;
+  declarations: readonly Readonly<{ manifest: PluginPortableReleaseManifestV1 }>[] | undefined;
+  account: QualifiedConnectedAccountRef | null;
   lifetime: ServerAccountScopeLifetime; busy: boolean; editable: boolean; serviceRefresh?: boolean;
-  onPatch: (patch: Record<string, unknown>) => void;
+  onPatch: (patch: Record<string, unknown>, createdScope?: boolean) => void;
   cursors: Readonly<Record<string, readonly string[]>>;
   setCursors: React.Dispatch<React.SetStateAction<Readonly<Record<string, readonly string[]>>>>;
 }>) {
@@ -315,10 +321,17 @@ function ManagedDataActionFields(props: Readonly<{
     ...(props.cursors[field.path]?.at(-1) ? { cursor: props.cursors[field.path]!.at(-1) } : {}) }));
   const options = useInputFieldOptions({ requests, enabled: props.draft !== null,
     serverId: props.lifetime.scope.serverId, accountLifetime: props.lifetime });
+  const scopeChoices = useRailwayScopeChoices({
+    declarations: props.declarations, lifetime: props.lifetime, account: props.draft ? props.account : null,
+    fields: resolveEffectiveActionInputFields(props.operation, props.input, { includeHidden: true }),
+    values: props.input, onCreated: created => props.onPatch(created, true),
+  });
+  const resolveOptions = scopeChoices.withCreatedChoices(options.resolveOptions);
   return <>{props.fields.map(field => <React.Fragment key={field.path}>
     <Item title={field.title ?? field.path} showChevron={false} accessoryLayout={field.widget === 'json' ? 'stacked' : 'adaptive'}
       rightElement={<ActionInputFields fields={[field]} input={props.input} editable={props.editable} busy={props.busy} frame="none"
-        resolveFieldOptions={options.resolveOptions} onPatch={props.onPatch} resolveFieldTestID={entry => `managed-data.field:${entry.path}`} />} />
+        resolveFieldOptions={resolveOptions} resolveChoiceAction={scopeChoices.choiceAction}
+        onPatch={props.onPatch} resolveFieldTestID={entry => `managed-data.field:${entry.path}`} />} />
     {props.cursors[field.path]?.length ? <Item title={t('projects.deployments.pagePrevious')} disabled={props.busy}
       onPress={() => props.setCursors(current => ({ ...current, [field.path]: (current[field.path] ?? []).slice(0, -1) }))} /> : null}
     {options.state(field).nextCursor ? <Item title={t('projects.deployments.pageNext')} disabled={props.busy}
@@ -373,8 +386,13 @@ export function DeploymentManagedDataProvisionEditor(props: Readonly<{
       declaration={{ ...operation.credential, title: t('projects.deployments.platformLink.connection'), required: true }}
       onChange={next => { setAccount(next?.kind === 'account' ? next.account : null); setCursors({}); }} />
     <ManagedDataActionFields fields={fields} operation={operation} input={seeded} draft={draft} lifetime={props.lifetime}
+      declarations={state.declarations} account={account}
       busy={props.disabled === true} editable={!props.disabled} cursors={cursors} setCursors={setCursors}
-      onPatch={patch => { setValues(applyPlatformFieldPatch(fields, seeded, patch).values); setCursors({}); }} />
+      onPatch={(patch, createdScope) => {
+        const { values } = applyPlatformFieldPatch(fields, seeded, patch);
+        setValues(createdScope ? { ...values, ...patch } : values);
+        setCursors({});
+      }} />
   </>;
 }
 

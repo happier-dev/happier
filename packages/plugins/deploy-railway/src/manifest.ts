@@ -2,6 +2,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { railwayHostAccess, railwayIdentity } from './platform/account.js';
 import { railwaySelectorSchema } from './platform/coordinates.js';
 import { coreActions, railwayLinkContentSchema } from './platform/coreActions.js';
+import { railwayScopeCreateActions } from './platform/createScope.js';
 import { domainActions } from './platform/domains.js';
 import { buildLogsAction, runtimeLogsAction } from './platform/logs.js';
 import { optionsAction, optionsInputTypes, optionsResources } from './platform/options.js';
@@ -17,7 +18,7 @@ export const plugin = definePlugin({
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...optionsResources },
   inputTypes: optionsInputTypes,
-  actions: { ...coreActions, ...domainActions, ...variableActions, 'target-options-read': optionsAction,
+  actions: { ...coreActions, ...railwayScopeCreateActions, ...domainActions, ...variableActions, 'target-options-read': optionsAction,
     'build-logs-read': buildLogsAction, 'runtime-logs-read': runtimeLogsAction },
   deploymentTargets: { runtime: {
     role: 'runtime', targetKind: 'railway', title: 'Railway', icon: 'server-outline',

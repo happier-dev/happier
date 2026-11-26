@@ -36,6 +36,7 @@ import { InputTypePickerHostProvider } from './InputTypePickerHostProvider';
 export type ActionFieldOption = ActionInputOption;
 
 const FIELD_STYLE = { marginTop: 10 } as const;
+const CHOICE_ACTION_VALUE = { kind: 'choice-action' } as const;
 
 /** Compatibility names for existing core callers; algorithms live in plugin-ui presentation. */
 export const getValueAtPath = readHappierActionInputPath;
@@ -115,6 +116,7 @@ export function ActionInputFields(props: Readonly<{
     /** Submission state projected by the form lifecycle owner. */
     busy?: boolean;
     resolveFieldOptions: ResolveSessionActionFieldOptions;
+    resolveChoiceAction?: (field: EffectiveActionInputField) => Readonly<{ label: string; run: () => void }> | undefined;
     onPatch: (patch: Record<string, unknown>) => void;
     resolveFieldTestID?: (field: EffectiveActionInputField) => string | undefined;
     /** `none`: an enclosing row already names the field, so the control draws no label of its own. */
@@ -153,7 +155,10 @@ export function ActionInputFields(props: Readonly<{
                     : undefined;
                 const selectedValues = widget === 'multiselect' && Array.isArray(selection)
                     ? selection : (selection === undefined ? [] : [selection]);
-                const options: readonly HappierSelectOption<ActionInputOptionValue>[] = choices
+                const choiceAction = widget === 'select' && !field.allowCustomValue
+                    && (optionState === undefined || optionState.status === 'ready')
+                    ? props.resolveChoiceAction?.(field) : undefined;
+                const options: HappierSelectOption<ActionInputOptionValue>[] = choices
                     ? props.resolveFieldOptions(field).map((option) => ({
                         ...option,
                         accessibilityLabel: props.getChipAccessibilityLabel?.({
@@ -163,6 +168,7 @@ export function ActionInputFields(props: Readonly<{
                         }),
                     }))
                     : [];
+                if (choiceAction) options.push({ label: choiceAction.label, value: CHOICE_ACTION_VALUE });
                 const toggleLabel = widget === 'boolean'
                     ? props.getChipAccessibilityLabel?.({
                         field,
@@ -193,7 +199,10 @@ export function ActionInputFields(props: Readonly<{
                         // An unframed field stands on its host's line (a Workflow binding): its first field keeps that line's top edge.
                         {...(props.frame === 'none' && index === 0 ? {} : { style: FIELD_STYLE })}
                         theme={presentationTheme}
-                        onChange={(next) => props.onPatch(patchHappierActionInputPath(props.input, path, next))}
+                        onChange={(next) => {
+                            if (choiceAction && next === CHOICE_ACTION_VALUE) choiceAction.run();
+                            else props.onPatch(patchHappierActionInputPath(props.input, path, next));
+                        }}
                     />
                 );
             })}

@@ -39,3 +39,22 @@ it('checks paged scoped inventory before settling removal', async () => {
   await expect(project.observeServiceAbsent(selection)).resolves.toBe(false);
   expect(requests.map(({ variables }) => variables.after)).toEqual([null, 'second']);
 });
+
+it('creates a project in the selected workspace and returns its default environment', async () => {
+  const { project, requests } = vendor(() => ({ projectCreate: { id: 'project', name: 'Orders', workspaceId: 'workspace',
+    baseEnvironment: { id: 'production', name: 'production' } } }));
+  await expect(project.createProject({ name: 'Orders', workspaceId: 'workspace' })).resolves.toEqual({
+    project: { id: 'project', name: 'Orders' }, environment: { id: 'production', name: 'production' },
+  });
+  expect(requests).toEqual([expect.objectContaining({ query: expect.stringContaining('projectCreate'),
+    variables: { input: { name: 'Orders', workspaceId: 'workspace' } } })]);
+});
+
+it('creates an environment in the selected project', async () => {
+  const { project, requests } = vendor(() => ({ environmentCreate: { id: 'staging', name: 'Staging', projectId: 'project' } }));
+  await expect(project.createEnvironment({ name: 'Staging', projectId: 'project' })).resolves.toEqual({
+    id: 'staging', name: 'Staging',
+  });
+  expect(requests).toEqual([expect.objectContaining({ query: expect.stringContaining('environmentCreate'),
+    variables: { input: { name: 'Staging', projectId: 'project' } } })]);
+});

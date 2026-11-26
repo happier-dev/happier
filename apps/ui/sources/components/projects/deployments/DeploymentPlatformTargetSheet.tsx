@@ -87,6 +87,7 @@ import {
   drawPlatformFields,
 } from './platformTargetLink';
 import { managedDataTargets } from './managedData';
+import { useRailwayScopeChoices } from './useRailwayScopeChoices';
 
 type Actions = ReturnType<typeof createDeploymentActions>;
 type ProductionBranchOutcome = NonNullable<Extract<Awaited<ReturnType<Actions['link']>>, { ok: true }>['productionBranchOutcome']>;
@@ -435,8 +436,15 @@ export function DeploymentPlatformTargetEditor(
     serverId: props.lifetime.scope.serverId,
     accountLifetime: props.lifetime,
   });
+  const scopeChoices = useRailwayScopeChoices({
+    declarations: platformsState.status === 'ready' ? platformsState.declarations : undefined,
+    lifetime: props.lifetime, account: draft ? account : null, fields: effectiveFields, values,
+    onCreated: (created) => patch(created, true),
+  });
+  const resolveOptions = scopeChoices.withCreatedChoices(options.resolveOptions);
   // One failed read is said once, at the sheet; an optional choice this target has nothing for is not drawn.
-  const drawn = drawPlatformFields(fields, values, (field) => options.state(field), (field) => (cursors[field.path]?.length ?? 0) > 0);
+  const drawn = drawPlatformFields(fields, values, (field) => options.state(field),
+    (field) => (cursors[field.path]?.length ?? 0) > 0, (field) => scopeChoices.choiceAction(field) !== undefined);
   const visibleFields = usesDraftBranch ? drawn.fields.filter(field => field.path !== 'productionBranch') : drawn.fields;
   const optionRefusal = drawn.failure;
   const optionRecovery = optionRefusal && readDeploymentRefusalRecovery(optionRefusal.code, optionRefusal);
@@ -465,9 +473,9 @@ export function DeploymentPlatformTargetEditor(
     setCursors({});
     resetFrom();
   };
-  const patch = (next: Record<string, unknown>) => {
+  const patch = (next: Record<string, unknown>, createdScope = false) => {
     const { values: kept, changedIndex: changed } = applyPlatformFieldPatch(effectiveFields, values, next);
-    setValues(kept);
+    setValues(createdScope ? { ...kept, ...next } : kept);
     setCursors((current) =>
       changed === -1
         ? current
@@ -882,7 +890,8 @@ export function DeploymentPlatformTargetEditor(
                               editable={busy === null && !reviewingCreate}
                               busy={busy !== null}
                               frame="none"
-                              resolveFieldOptions={options.resolveOptions}
+                              resolveFieldOptions={resolveOptions}
+                              resolveChoiceAction={scopeChoices.choiceAction}
                               resolveFieldTestID={(entry) =>
                                 `project-deployments.platform.field:${entry.path}`
                               }

@@ -6,7 +6,7 @@ import { RAILWAY_PROJECT_KEY, createRailwayProjectOperations } from '@happier-de
 import { ACCOUNT_PURPOSE, projectRailwayFailure, railwayAccountAction, railwayIdentity, railwayRequest } from './account.js';
 import { railwayRoleInput } from './coordinates.js';
 
-const paths = ['providerAccountId', 'railwayEnvironmentId', 'providerEnvironment'] as const;
+const paths = ['providerAccountId', 'railwayEnvironmentId', 'providerEnvironment', 'workspaceId'] as const;
 const base = railwayRoleInput(DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema).properties!;
 const id = { type: 'string', minLength: 1 } as const;
 const actionId = 'target-options-read';
@@ -29,6 +29,9 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
   });
   const choices = () => createRailwayProjectOperations(railwayRequest(context), context.signal);
   try {
+    if (input.fieldPath === 'workspaceId') {
+      return projectPage({ choices: await choices().listGrantedWorkspaces(), nextCursor: null });
+    }
     if (input.fieldPath === paths[0]) {
       const material = await context.services.connectedAccounts.materialize(ACCOUNT_PURPOSE,
         { kind: 'environment', keys: [RAILWAY_PROJECT_KEY] }, { signal: context.signal });
@@ -84,6 +87,8 @@ export const optionsResources = {
 const types = ['railway-project', 'railway-environment', 'railway-service'] as const;
 const titles = ['Railway project', 'Railway environment', 'Railway service'] as const;
 export const optionsInputTypes = {
+  'railway-workspace': { title: 'Railway workspace', semantic: 'railway-workspace', valueSchema: id,
+    options: { resource: 'target-options' } },
   [types[0]]: { title: titles[0], semantic: types[0], valueSchema: id, options: { resource: 'target-options' } },
   [types[1]]: { title: titles[1], semantic: types[1], valueSchema: id, options: { resource: 'target-options' } },
   [types[2]]: { title: titles[2], semantic: types[2], valueSchema: base.providerEnvironment!, options: { resource: 'target-options' } },

@@ -28,6 +28,22 @@ function effectiveField(
     };
 }
 
+it('runs a create choice in an empty project picker without writing it into the draft', async () => {
+    const field = effectiveField({ path: 'projectId', title: 'Railway project', widget: 'select', optionsSourceId: 'railway.projects' });
+    const create = vi.fn();
+    const patch = vi.fn();
+    const screen = await renderScreen(<ActionInputFields fields={[field]} input={{}} editable
+        resolveFieldOptions={Object.assign(() => [], { state: () => ({ status: 'ready' as const, options: [] }) })}
+        resolveChoiceAction={() => ({ label: 'Create Railway project', run: create })}
+        onPatch={patch} />);
+    await openChoices(screen, 'Railway project');
+    const entry = choiceRow(screen, 'Create Railway project');
+    expect(entry).toBeDefined();
+    await pressTestInstanceAsync(entry);
+    expect(create).toHaveBeenCalledOnce();
+    expect(patch).not.toHaveBeenCalled();
+});
+
 
 /** The compact choice field names its reading and opens its rows in place; open it, then find a row by label. */
 async function openChoices(screen: Awaited<ReturnType<typeof renderScreen>>, title: string) {

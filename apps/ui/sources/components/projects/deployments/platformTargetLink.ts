@@ -395,6 +395,7 @@ export function drawPlatformFields<Field extends EffectiveActionInputField>(
   values: Readonly<Record<string, unknown>>,
   choicesOf: (field: Field) => PlatformFieldChoices,
   paged: (field: Field) => boolean,
+  hasChoiceAction: (field: Field) => boolean = () => false,
 ): Readonly<{ fields: readonly Field[]; failure: Readonly<{ code: string; field: Field; diagnostic?: InputFieldOptionsState['diagnostic'] }> | null; canCheck: boolean }> {
   const drawn: Field[] = [];
   // Check reads the provider for the chosen project: a failed choices read or no choice at all can only fail again.
@@ -405,6 +406,10 @@ export function drawPlatformFields<Field extends EffectiveActionInputField>(
     if (choices.status === 'failed') return { fields: drawn, failure: {
       code: choices.errorCode ?? 'unknown_error', field, ...(choices.diagnostic ? { diagnostic: choices.diagnostic } : {}),
     }, canCheck: false };
+    if (hasChoiceAction(field)) {
+      drawn.push(field);
+      continue;
+    }
     const value = readHappierActionInputPath(values as Record<string, unknown>, field.path);
     if (field.required && !field.allowCustomValue && (field.widget === 'select' || field.widget === 'multiselect')
       && value === undefined && choices.status === 'ready' && choices.options.length === 0

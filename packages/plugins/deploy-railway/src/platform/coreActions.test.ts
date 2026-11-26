@@ -183,3 +183,20 @@ it('creates the Git-connected service in one mutation using the selected branch'
     environmentId: coordinates.environmentId, name: 'Backend', source: { repo: repository.repository },
     branch: 'feature/backend' } });
 }));
+
+it('creates a reviewed project and returns the project and default environment as picker choices', () =>
+  withVendor(() => ({ data: { projectCreate: { id: 'orders', name: 'Orders', workspaceId: 'team',
+    baseEnvironment: { id: 'production', name: 'production' } } } }), async (kit, requests) => {
+    const { credentialRef, credentialPrincipal } = base;
+    await expect(kit.invokeAction('project-create', { credentialRef, credentialPrincipal, name: 'Orders', workspaceId: 'team' }))
+      .resolves.toEqual({ project: { id: 'orders', name: 'Orders' }, environment: { id: 'production', name: 'production' } });
+    expect(requests.map(request => request.variables)).toEqual([{ input: { name: 'Orders', workspaceId: 'team' } }]);
+  }));
+
+it('preserves a Railway project limit refusal without exposing vendor prose', () =>
+  withVendor(() => ({ errors: [{ message: 'Private vendor details', extensions: { code: 'PROJECT_LIMIT_REACHED' } }] }),
+    async (kit) => {
+      const { credentialRef, credentialPrincipal } = base;
+      await expect(kit.invokeAction('project-create', { credentialRef, credentialPrincipal, name: 'Orders', workspaceId: 'team' }))
+        .rejects.toMatchObject({ code: 'railway_plan_limit', data: { retryable: false } });
+    }));

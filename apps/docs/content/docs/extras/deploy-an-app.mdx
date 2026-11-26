@@ -75,7 +75,16 @@ Fresh sign-in and existing-project deployment still need live validation.
 ## Deploy a GitHub app to Railway
 
 In unreleased 0.3 development source, choose Railway in **Where it runs** to create a service from a
-GitHub repository and branch or link an existing Railway service. When you create
+GitHub repository and branch or link an existing Railway service. Select your
+Railway Connected Account, project, and environment, then choose an existing
+service or create one. To start with a new project, choose **Create Railway project**
+in the project picker, select a workspace, and approve the request. Happier
+selects the new project and its default environment. Use **Create Railway
+environment** in the environment picker to add another environment to that
+project. Both Actions require approval for you and for agents. Railway billing
+may apply.
+
+When you create
 a service, Railway builds the latest commit on the selected branch and
 automatically deploys later pushes to that branch. On a linked service,
 **Deploy** sends the exact commit you review. Push that commit to the configured

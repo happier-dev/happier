@@ -15,6 +15,9 @@ import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/sett
 import { ProjectDeploymentsView } from '@/components/projects/deployments/ProjectDeploymentsBody';
 import { createTelemetryCaptureFixtureInvoke, TelemetryCaptureFixtureProvider } from '@/dev/testkit/fixtures/telemetryCaptureFixtures';
 import { showDeploymentDispositionSheet, type DeploymentDispositionSheetInput } from '@/components/projects/deployments/DeploymentDispositionSheet';
+import { deploymentSheetStyles, showDeploymentSheet } from '@/components/projects/deployments/deploymentSheet';
+import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
+import { View } from 'react-native';
 import { HappyError } from '@/utils/errors/errors';
 import { useAllMachines } from '@/sync/store/hooks';
 import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -776,6 +779,26 @@ function useSpecimenRemoval(removal: string | undefined) {
   }, [removal]);
 }
 
+function RailwayProjectPickerSpecimen() {
+  const [input, setInput] = React.useState<Record<string, unknown>>({ projectId: 'storefront' });
+  return <View style={deploymentSheetStyles.body}>
+    <ActionInputFields
+      fields={[{ path: 'projectId', title: 'Railway project', widget: 'select', visible: true, required: true, disabled: false }]}
+      input={input}
+      editable
+      resolveFieldTestID={() => 'railway-project-picker-specimen'}
+      resolveFieldOptions={() => [
+        { value: 'storefront', label: 'Storefront' },
+        { value: 'orders', label: 'Order processing' },
+        { value: 'catalog', label: 'Product catalog' },
+        { value: 'support', label: 'Customer support' },
+      ]}
+      resolveChoiceAction={() => ({ label: 'Create Railway project', run: () => {} })}
+      onPatch={setInput}
+    />
+  </View>;
+}
+
 /** A Home/Account that stays current for the specimen's lifetime, so the Variables draft is editable. */
 const SPECIMEN_LIFETIME = {
   scope: { serverId: 'home', accountId: ACCOUNT },
@@ -788,6 +811,11 @@ export function DeploymentsSpecimen(
     restore?: string; preview?: string; removal?: string; telemetry?: string }>,
 ) {
   useSpecimenRemoval(props.removal);
+  React.useEffect(() => {
+    if (props.state !== 'railway-project-picker') return;
+    showDeploymentSheet({ component: RailwayProjectPickerSpecimen, props: {}, title: 'Choose a Railway project',
+      testID: 'project-deployments.railway-project-picker.specimen' });
+  }, [props.state]);
   // A real Machine of the signed-in Account: `?machine=` names one, else the longest name (the hardest wrap).
   const wanted = props.machine?.toLowerCase() ?? null;
   const machineId = useAllMachines((machines) => {

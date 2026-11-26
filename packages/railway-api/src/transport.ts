@@ -24,7 +24,8 @@ function readGraphqlErrorCode(errors: unknown): string | undefined {
   for (const error of errors) {
     if (error === null || typeof error !== 'object' || !('extensions' in error)) continue;
     const extensions: unknown = error.extensions;
-    if (extensions && typeof extensions === 'object' && 'code' in extensions && extensions.code === 'INTERNAL_SERVER_ERROR') {
+    if (extensions && typeof extensions === 'object' && 'code' in extensions && typeof extensions.code === 'string'
+      && /^(?:INTERNAL_SERVER_ERROR|PROJECT_LIMIT_REACHED|ENVIRONMENT_LIMIT_REACHED|ALREADY_EXISTS|CONFLICT|FORBIDDEN|UNAUTHENTICATED)$/.test(extensions.code)) {
       return extensions.code;
     }
   }

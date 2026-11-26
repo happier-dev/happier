@@ -716,6 +716,13 @@ be on the published branch. Deploy submits that exact SHA. [Railway Manage
 Services](https://docs.railway.com/integrations/api/manage-services) · [Railway
 GitHub autodeploys](https://docs.railway.com/deployments/github-autodeploys)
 
+The Railway project picker offers **Create Railway project**. Choose a workspace,
+name the project, and approve creation. The project and its default environment
+are selected from Railway's response. The environment picker can also create
+an environment in the selected project. Agents use the same approval-required
+plugin Actions, `happier.deploy.railway/actions/project-create` and
+`happier.deploy.railway/actions/environment-create`. Railway billing may apply.
+
 The protected Link and receipt carry provider coordinates as
 `providerEnvironment: { kind: 'native', selection }`. Each deployment target
 declares its closed `nativeSelectorSchema`. Protocol composes that schema into
