@@ -9,6 +9,7 @@ import type {
 import { registerCurrentSessionUiBinding } from '@/session/presentation/currentSessionUiBindings';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 
@@ -62,6 +63,8 @@ describe('CLI current-Session presentation Action producer', () => {
       sessionId: 'session-a',
       mode: 'plain',
       ctx: null,
+      rawSession: createSessionRecordFixture({ id: 'session-a', encryptionMode: 'plain',
+        metadata: JSON.stringify({ machineId: 'presentation-machine', path: '/workspace' }) }),
     });
     const requiredDirectActionIds = ['session.presentation.apply'] as const;
     const bridge = createActionToolExecutorBridge({
@@ -89,6 +92,7 @@ describe('CLI current-Session presentation Action producer', () => {
     })).resolves.toEqual({
       ok: true,
       result: { status: 'applied', revision: 'host-a:3' },
+      automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
     });
     expect(present).toHaveBeenCalledWith({
       operationId: 'tool-call-a',
@@ -107,6 +111,8 @@ describe('CLI current-Session presentation Action producer', () => {
       sessionId: 'session-a',
       mode: 'plain',
       ctx: null,
+      rawSession: createSessionRecordFixture({ id: 'session-a', encryptionMode: 'plain',
+        metadata: JSON.stringify({ machineId: 'presentation-machine', path: '/workspace' }) }),
     });
     const signal = new AbortController().signal;
 
@@ -121,6 +127,7 @@ describe('CLI current-Session presentation Action producer', () => {
     })).resolves.toEqual({
       ok: true,
       result: { status: 'applied', revision: 'host-a:3' },
+      automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
     });
 
     expect(present).toHaveBeenCalledWith({
@@ -140,6 +147,8 @@ describe('CLI current-Session presentation Action producer', () => {
       sessionId: 'session-a',
       mode: 'plain',
       ctx: null,
+      rawSession: createSessionRecordFixture({ id: 'session-a', encryptionMode: 'plain',
+        metadata: JSON.stringify({ machineId: 'presentation-machine', path: '/workspace' }) }),
     });
 
     await expect(harness.executor.execute('session.presentation.apply', {
@@ -185,6 +194,8 @@ describe('CLI current-Session presentation Action producer', () => {
       sessionId: 'session-a',
       mode: 'plain',
       ctx: null,
+      rawSession: createSessionRecordFixture({ id: 'session-a', encryptionMode: 'plain',
+        metadata: JSON.stringify({ machineId: 'presentation-machine', path: '/workspace' }) }),
     });
 
     await expect(harness.executor.execute('session.presentation.apply', {
