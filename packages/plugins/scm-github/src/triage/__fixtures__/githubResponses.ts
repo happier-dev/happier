@@ -31,7 +31,7 @@ function repositoryObject(input: Readonly<{
   id: number;
   owner: string;
   name: string;
-}>): JsonRecord {
+}>) {
   return Object.freeze({
     id: input.id,
     node_id: 'R_kgDOsynthetic',
@@ -46,13 +46,13 @@ function repositoryObject(input: Readonly<{
   });
 }
 
-export const GITHUB_REPOSITORY_RESPONSE: JsonRecord = repositoryObject({
+export const GITHUB_REPOSITORY_RESPONSE = repositoryObject({
   id: REPOSITORY_ID,
   owner: OWNER,
   name: REPOSITORY,
 });
 
-export const GITHUB_OTHER_REPOSITORY_RESPONSE: JsonRecord = repositoryObject({
+export const GITHUB_OTHER_REPOSITORY_RESPONSE = repositoryObject({
   id: OTHER_REPOSITORY_ID,
   owner: OWNER,
   name: OTHER_REPOSITORY,
