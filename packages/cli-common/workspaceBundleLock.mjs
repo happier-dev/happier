@@ -827,7 +827,11 @@ function assertWorkspaceLockMayWait(options, lockPath, snapshot) {
   const admitted = options.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED === '0'
     || process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED === '0';
   if (options.wait !== false && !admitted) return;
-  const error = new Error(`${admitted ? 'HSTACK_WORKSPACE_ADMISSION_ORDER: ' : ''}Workspace publication lease is busy: ${lockPath} (${describeLockOwner(snapshot, Date.now())})`);
+  const nowMs = Date.now();
+  const elapsedMs = snapshot.owner?.createdAtMs == null
+    ? 'unknown'
+    : Math.max(0, nowMs - snapshot.owner.createdAtMs);
+  const error = new Error(`${admitted ? 'HSTACK_WORKSPACE_ADMISSION_ORDER: ' : ''}Workspace publication lease is busy: ${lockPath} (${describeLockOwner(snapshot, nowMs)} elapsedMs=${elapsedMs})`);
   error.code = WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE;
   throw error;
 }

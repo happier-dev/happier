@@ -193,7 +193,7 @@ test('finite UI typecheck prepares only the workspace closure of its referenced 
 });
 
 
-test('overlapping finite app checks keep their foreign declaration membership through compilation', async t => {
+test('a second finite app check is refused while the first holds its project inputs', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-typecheck-overlap-'));
   const ui = join(root, 'apps/ui');
   const cli = join(root, 'apps/cli');
@@ -241,8 +241,10 @@ test('overlapping finite app checks keep their foreign declaration membership th
   }
   t.after(() => rm(root, { recursive: true, force: true }));
   await installUiTypecheckFixtureDependencies(t, ui);
+  const rollingState = join(root, 'rolling-state');
   const env = { ...buildNativeAdmissionFixtureEnv(), CI: 'true', HAPPIER_TYPECHECK_DISPATCHED: '1',
-    HAPPIER_STACK_CANONICAL_HOME_DIR: root, HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' };
+    HAPPIER_STACK_CANONICAL_HOME_DIR: root, HAPPIER_TYPESCRIPT_COMPILER: 'microsoft',
+    HAPPIER_COMMIT_TYPECHECK_DIR: rollingState };
   delete env.HAPPIER_DEV_TARGET_EXECUTION;
   delete env.HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED;
   const runner = fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url));
@@ -284,6 +286,7 @@ test('overlapping finite app checks keep their foreign declaration membership th
   const first = child('ui', preload);
   const current = observe(first, line => line.startsWith('[typescript] starting '));
   let next;
+  let waiting;
   try {
     const firstCompiler = await current.ready;
     assert.ok(firstCompiler, firstCompiler ? undefined : (await current.done).output);
@@ -292,11 +295,25 @@ test('overlapping finite app checks keep their foreign declaration membership th
     const other = child('cli');
     other.stdin.end();
     next = observe(other, line => line.includes('waiting for finite project inputs'));
-    await next.ready;
+    waiting = await next.ready;
   } finally {
     first.stdin.end();
   }
   const [firstResult, secondResult] = await Promise.all([current.done, next?.done]);
-  assert.equal(secondResult.status, 0, secondResult.output);
+  assert.equal(waiting, undefined, 'the second invocation queued for the finite project inputs');
+  assert.equal(secondResult.status, 1, secondResult.output);
+  assert.match(secondResult.output, /\[typecheck-failure\] project-input-admission:EWORKSPACEBUNDLELOCKBUSY/);
+  const detail = /^\[typecheck-failure-detail\] (.+)$/m.exec(secondResult.output);
+  assert.ok(detail, secondResult.output);
+  const { message } = JSON.parse(detail[1]);
+  assert.ok(message.includes(`pid=${first.pid} `), message);
+  assert.match(message, /elapsedMs=\d+/);
+  assert.ok(message.includes(join(rollingState, 'verdicts.log')), message);
+  assert.doesNotMatch(secondResult.output, /\[typescript\] starting /);
   assert.equal(firstResult.status, 0, firstResult.output);
+
+  const retry = child('cli');
+  retry.stdin.end();
+  const retryResult = await observe(retry, () => false).done;
+  assert.equal(retryResult.status, 0, retryResult.output);
 });

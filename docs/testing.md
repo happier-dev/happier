@@ -1926,9 +1926,11 @@ JavaScript; consumers release that custody before checking. Producer self import
 still resolve to source. Finite checks retain their internal declaration partitions
 and cross-app private-alias project references, which check producers under their own
 options. Finite checks hold the workspace's project-input lock from derivation
-through the last compiler. The lock also covers partition maintenance commands,
-so a second invocation cannot replace the first invocation's selected foreign
-file lists or declaration outputs. Separate checkouts have separate locks.
+through the last compiler. The lock also covers partition maintenance commands.
+A second invocation at the same checkout exits immediately with the holder PID,
+lease elapsed time and rolling `verdicts.log` path. Use those rolling verdicts for
+current HEAD. For a private verdict, use a fixed checkout on a host with no other
+finite typecheck running. Separate checkouts have separate project-input locks.
 Source discovery for those references still follows authored implementations.
 Explicit declaration aliases retain their authored targets. Consumer strictness and
 diagnostics remain intact; the compiler boundary removes foreign implementation

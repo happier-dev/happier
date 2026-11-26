@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/paths/paths.mjs';
@@ -5,7 +6,7 @@ import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { packageNameOfSpecifier, readWorkspacePackages, SOURCE_CONDITION, workspaceSourceCompilerPaths } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { typecheckCompilerOptions } from './resolveTypeScriptCliInvocation.mjs';
 import { resolvePackageDeclarationTarget } from './packageBuildOutputTargets.mjs';
-import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
+import { WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 
 export function resolveTypecheckCacheDirectory(packageDir, cacheSuffix = '', purpose = 'tsc') {
   const repoRoot = coerceHappyMonorepoRootFromPath(packageDir);
@@ -17,25 +18,32 @@ export function resolveTypecheckCacheDirectory(packageDir, cacheSuffix = '', pur
     : resolve(packageDir, `node_modules/.cache/tsc${cacheSuffix}`);
 }
 
-export function withFiniteTypecheckProjectInputs(directory, check, { signal } = {}) {
+export async function withFiniteTypecheckProjectInputs(directory, check, { signal } = {}) {
   const root = coerceHappyMonorepoRootFromPath(directory);
   if (!root) return check();
   const lockPath = resolve(resolveTypecheckCacheDirectory(root, '', 'finite'), 'projects.lock');
-  let reportedWait = false;
-  return withWorkspaceBundleLock(async ({ assertOwned }) => {
-    const result = await check();
-    assertOwned();
-    return result;
-  }, {
-    lockPath,
-    signal,
-    timeoutMs: null,
-    onWait() {
-      if (reportedWait) return;
-      reportedWait = true;
-      process.stderr.write('[typescript] waiting for finite project inputs\n');
-    },
-  });
+  let acquired = false;
+  try {
+    return await withWorkspaceBundleLock(async ({ assertOwned }) => {
+      acquired = true;
+      const result = await check();
+      assertOwned();
+      return result;
+    }, { lockPath, signal, wait: false });
+  } catch (error) {
+    if (!acquired && error?.code === WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) {
+      const { commitPackageTypecheckStateDir } = await import('./commitPackageTypecheck.mjs');
+      let state;
+      try {
+        state = commitPackageTypecheckStateDir(root);
+      } catch {
+        // A projected source tree can lack a Git common directory.
+        state = resolve(homedir(), '.happier-stack/cache/commit-typecheck/*');
+      }
+      error.message += `. Read rolling HEAD verdicts at ${resolve(state, 'verdicts.log')}`;
+    }
+    throw error;
+  }
 }
 
 export async function readWorkspaceTypecheckSources(directory) {
