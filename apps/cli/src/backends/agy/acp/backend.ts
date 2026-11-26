@@ -3,12 +3,14 @@ import { createCatalogDefinedAcpBackend, type CatalogDefinedAcpBackendOptions } 
 import { createAgyBackgroundContinuationSource } from './agyBackgroundContinuationSource';
 import { resolveAgyAcpLaunch, resolveAgyMachineProfileDir } from './agyAcpLaunch';
 import { importLegacyAgyConversation } from './agyConversationStore';
+import { agySessionModelAdapter } from './modelControls';
 
 export type AgyAcpBackendOptions = CatalogDefinedAcpBackendOptions;
 
 export async function createAgyAcpBackend(options: AgyAcpBackendOptions): Promise<AgentBackend> {
   return createCatalogDefinedAcpBackend('agy', {
     ...options,
+    sessionModelAdapter: agySessionModelAdapter,
     launch: async ({ loadSessionId, resolveDefaultLaunch }) => {
       const command = resolveDefaultLaunch();
       const env = { ...process.env, ...options.env };

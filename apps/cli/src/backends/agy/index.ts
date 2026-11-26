@@ -30,6 +30,7 @@ export const agent = {
   getAcpBackendFactory: async () => {
     return async (opts) => ({ backend: await createAgyAcpBackend(opts as AgyAcpBackendOptions) });
   },
+  getAcpRuntimeSessionModelAdapter: async () => (await import('./acp/modelControls')).agyAcpRuntimeSessionModelAdapter,
   getDaemonSpawnHooks: async () => agyDaemonSpawnHooks,
   getCloudConnectTarget: async () => (await import('./cloud/connect')).agyCloudConnect,
   getPreflightSessionControlsProbeAdapter: async () => ({ connectedServiceAuth: 'materialized-env' as const }),
