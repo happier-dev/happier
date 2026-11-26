@@ -2944,6 +2944,7 @@ export const fr: TranslationStructure = {
   },
 
   common: {
+    preview: 'Aperçu',
     apply: "Appliquer",
     hide: "Masquer",
     stop: "Arrêter",

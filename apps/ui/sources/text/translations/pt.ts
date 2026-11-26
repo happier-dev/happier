@@ -3150,6 +3150,7 @@ export const pt: TranslationStructure = {
   },
 
   common: {
+    preview: 'Pré-visualizar',
     apply: "Aplicar",
     hide: "Ocultar",
     stop: "Parar",

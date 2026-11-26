@@ -3464,6 +3464,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
       common: {
+        preview: '預覽',
         notChecked: "未檢查",
         apply: "套用",
         hide: "隱藏",

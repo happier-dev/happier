@@ -2915,6 +2915,7 @@ export const zhHans: TranslationStructure = {
   },
 
   common: {
+    preview: '预览',
     apply: "应用",
     hide: "隐藏",
     stop: "停止",

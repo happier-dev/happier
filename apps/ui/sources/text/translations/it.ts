@@ -2930,6 +2930,7 @@ export const it: TranslationStructure = {
   },
 
   common: {
+    preview: 'Anteprima',
     apply: "Applica",
     hide: "Nascondi",
     stop: "Interrompi",

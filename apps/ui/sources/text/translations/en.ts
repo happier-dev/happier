@@ -3113,6 +3113,7 @@ const enWebCryptoGate = {
 };
 
 const enCommon = {
+  preview: 'Preview',
   apply: "Apply",
   hide: "Hide",
   stop: "Stop",

@@ -2956,6 +2956,7 @@ export const ru: TranslationStructure = {
   },
 
   common: {
+    preview: 'Предпросмотр',
     apply: "Применить",
     hide: "Скрыть",
     stop: "Остановить",

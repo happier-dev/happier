@@ -2940,6 +2940,7 @@ export const ca: TranslationStructure = {
     },
 
     common: {
+        preview: 'Previsualitza',
         apply: "Aplica",
         hide: "Amaga",
         stop: "Atura",

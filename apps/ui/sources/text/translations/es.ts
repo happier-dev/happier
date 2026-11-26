@@ -3117,6 +3117,7 @@ export const es: TranslationStructure = {
   },
 
   common: {
+    preview: 'Vista previa',
     apply: "Aplicar",
     hide: "Ocultar",
     stop: "Detener",

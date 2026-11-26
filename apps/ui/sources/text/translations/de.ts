@@ -2784,6 +2784,7 @@ export const de: TranslationStructure = {
     },
 
 	    common: {
+        preview: 'Vorschau',
         apply: "Anwenden",
         hide: "Ausblenden",
         stop: "Stoppen",

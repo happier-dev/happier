@@ -3096,6 +3096,7 @@ export const ja: TranslationStructure = {
   },
 
   common: {
+    preview: 'プレビュー',
     apply: "適用",
     hide: "非表示",
     stop: "停止",

@@ -2953,6 +2953,7 @@ export const pl: TranslationStructure = {
   },
 
   common: {
+    preview: 'Podgląd',
     apply: "Zastosuj",
     hide: "Ukryj",
     stop: "Zatrzymaj",
