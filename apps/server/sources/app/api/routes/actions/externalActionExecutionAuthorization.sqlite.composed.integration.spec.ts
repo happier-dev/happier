@@ -7600,17 +7600,23 @@ describe("external Action execution authorization", () => {
             // Only the Socket.IO transport is simulated; Home signing, Run
             // assignment, Session access and production relay wiring stay real.
             const delivered = vi.fn(async (_event: string, _request: unknown) => ({ updated: true }));
-            const receiver = { id: 'workflow-role-receiver', data: { clientType: 'session-scoped', sessionId: session.id,
-                machineId: targetMachine.id, verifiedMachineInstallationId: targetMachine.installationId },
-                timeout: () => ({ emitWithAck: delivered }) };
+            const receiver = createFakeSocket({ id: 'workflow-role-receiver',
+                data: { clientType: 'session-scoped', userId: fixture.account.id, sessionId: session.id,
+                    machineId: targetMachine.id, verifiedMachineInstallationId: targetMachine.installationId },
+                timeout: () => ({ emitWithAck: delivered }) });
             qualifyCurrentAccountStoredContentSocket(receiver);
+            const presence = createSessionPublisherPresence();
+            expect(await presence.registerPublisher({ socket: receiver,
+                binding: { accountId: fixture.account.id, machineId: targetMachine.id, sessionId: session.id },
+                completeActivitySnapshot: { state: 'active', activeCount: 1 } })).toMatchObject({ status: 'registered' });
             const io = createSocketRoomDiscoveryHarness(async room => room === receiver.id
+                || room === getAccountSessionSocketRoom(fixture.account.id, session.id)
                 || room === `rpc:${fixture.account.id}:${method}` ? [receiver] : []);
             const socket = Object.assign(createFakeSocket({ id: 'workflow-role-sender', data: { clientType: 'machine-scoped', userId: fixture.account.id,
                 machineId: fixture.machine.id, verifiedMachineInstallationId: fixture.machine.installationId,
                 authTokenKind: 'terminal', authAuthority: 'account_automation' } }), { handshake: { auth: { token } } });
             qualifyCurrentAccountStoredContentSocket(socket);
-            registerSocketRpcHandlers({ userId: fixture.account.id, socket: socket as unknown as Socket, io });
+            registerSocketRpcHandlers({ userId: fixture.account.id, socket: socket as unknown as Socket, io, sessionPublisherPresence: presence });
             const callback = vi.fn();
             await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method, requestId, params,
                 externalActionExecution: execution }, callback);
@@ -16109,6 +16115,7 @@ describe("external Action execution authorization", () => {
         const input = { actionId: 'workflow.run.start', actionArgs, summary: 'Start reviewed Workflow', createdBy: { surface: 'cli' } };
         const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, routes => {
             artifactsRoutes(routes);
+            registerAutomationActionIndexRoutes(routes);
             startSocket(routes);
         });
         try {
@@ -16181,7 +16188,11 @@ describe("external Action execution authorization", () => {
                     prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: { machineId, directory, checkoutRootPath: directory } } }),
                 });
                 let executionAttempts = 0;
+                const { actionAutomations } = createCliActionDeps({ token, credentials, sessionId: 'cli-global',
+                    mode: 'plain', ctx: null, serverId, serverIdentityId: homeId, serverHttpBaseUrl,
+                    runtimeActionMachineId: machineId });
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...artifacts,
+                    actionAutomations,
                     isApprovalExecutionOriginCurrent: current,
                     prepareApprovalExecutionAuthorization: async ({ authorization: retained }) => {
                         const requester = await admitRequesterAccountActionContext({ authorization: retained, credentials,

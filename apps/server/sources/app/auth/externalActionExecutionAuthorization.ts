@@ -1223,7 +1223,7 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     workspaceSyncSeedAdmission?: WorkspaceSyncSeedAdmission;
     /** The router selects the publisher and relays Home-admitted aborts as ordinary Session writes. */
     sessionRpcTarget?: Readonly<
-        { sessionId: string; machineId: string; homeAdmittedAbort?: never }
+        { sessionId: string; machineId?: string; homeAdmittedAbort?: never }
         | { sessionId: string; machineId?: never; homeAdmittedAbort: true }
     >;
     /** One private acquisition admission; HTTP authentication consumes its typed result. */
@@ -6134,12 +6134,16 @@ export async function verifyExternalActionMachineRpcExecution(
         && request.method.slice(separator + 1) === sessionRule.method
         && (request.event === undefined || request.event === SOCKET_RPC_EVENTS.CALL)
         ? request.method.slice(0, separator) : null;
-    const scopedSessionId = separator > 0 && request.method.slice(0, separator) !== binding.machineId
+    const workflowSessionTarget = 'authentication' in binding && binding.workflowActionOrigin && binding.target.kind === 'session'
+        ? binding.target : null;
+    const scopedSessionId = !workflowSessionTarget && separator > 0 && request.method.slice(0, separator) !== binding.machineId
         && sessionRule?.routeToSessionOwnerDaemon
         && (binding.actionId === execution.effectActionId || nestedRunStartPurpose)
         && resolveMachineRpcExternalActionEffectV1(sessionRule.method, binding) === execution.effectActionId
         ? request.method.slice(0, separator) : null;
+    // The assigned Run executor signs the effect. Home selects the publisher of the signed Session.
     const sessionRpcTarget = abortSessionId ? { sessionId: abortSessionId, homeAdmittedAbort: true as const }
+        : workflowSessionTarget && sessionRule?.routeToSessionOwnerDaemon ? { sessionId: workflowSessionTarget.sessionId }
         : scopedSessionId ? { sessionId: scopedSessionId, machineId: binding.machineId } : null;
     const isTransitionRoot = binding.actionId === 'session.agent.transition';
     const transitionPurpose = isTransitionRoot && isSessionAgentTransitionRpcPurpose(binding, execution, request);
@@ -6212,8 +6216,7 @@ export async function verifyExternalActionMachineRpcExecution(
         && resolveMachineRpcExternalActionEffectV1(request.method.slice(separator + 1), binding,
             { machineId: binding.machineId, installationId: binding.installationId }) !== execution.effectActionId) return null;
     if ('authentication' in binding || binding.handoffContinuation || binding.handoffPreflight) {
-        const workflowSessionTarget = binding.workflowActionOrigin && binding.target.kind === 'session' ? binding.target : null;
-        const prefix = `${sessionRpcTarget?.sessionId ?? workflowSessionTarget?.sessionId ?? binding.machineId}:`;
+        const prefix = `${workflowSessionTarget?.sessionId ?? sessionRpcTarget?.sessionId ?? binding.machineId}:`;
         const method = managedGuestActivity && guestMethod ? guestMethod
             : request.method.startsWith(prefix) ? request.method.slice(prefix.length) : request.method;
         // Pending admission has its own signed socket event, not a Machine RPC
