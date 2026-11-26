@@ -862,6 +862,13 @@ export const SessionArchiveActionResultV1Schema = lazyZodSchema(() => z.strictOb
 }));
 export type SessionArchiveActionResultV1 = z.infer<typeof SessionArchiveActionResultV1Schema>;
 
+/** Home deletion may settle while the offline Machine retains its managed files. */
+export const SessionDeleteResultSchema = lazyZodSchema(() => z.strictObject({
+  success: z.literal(true),
+  filesNotRemoved: z.optional(z.strictObject({ machineId: z.string().check(z.minLength(1)) })),
+}));
+export type SessionDeleteResult = z.infer<typeof SessionDeleteResultSchema>;
+
 export const SessionUnarchiveResultSchema = lazyZodSchema(() => z.looseObject({
   sessionId: z.string().check(z.minLength(1)),
   archivedAt: z.null(),

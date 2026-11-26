@@ -14879,7 +14879,8 @@ const sessionDirectoryRecoveryTranslations = { pt: {
         title: ({ machine }) => `A pasta privada desta conversa já não está em ${machine}.`,
         body: 'Podes continuar numa pasta nova e vazia. O histórico da conversa ficará aqui, mas os ficheiros locais da pasta antiga não serão restaurados.',
         continue: 'Continuar numa pasta nova', notNow: 'Agora não',
-        offlineDelete: ({ machine }) => `A pasta privada em ${machine} será removida quando essa máquina voltar a estar online.`,
+        offlineDelete: ({ machine }) => `A pasta privada em ${machine} será mantida até você removê-la em Armazenamento.`,
+        filesNotRemoved: ({ machine }) => `Os arquivos em ${machine} não foram removidos.`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "pt">;
 
 return { sessionDirectoryRecoveryTranslations };

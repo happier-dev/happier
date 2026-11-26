@@ -5,7 +5,8 @@ export const en = {
     body: 'You can continue in a fresh, empty folder. Your chat history will stay here, but local files from the old folder will not be restored.',
     continue: 'Continue in a fresh folder',
     notNow: 'Not now',
-    offlineDelete: ({ machine }: { machine: string }) => `Its private folder on ${machine} will be removed when that machine is next online.`,
+    offlineDelete: ({ machine }: { machine: string }) => `Its private folder on ${machine} will stay until you remove it from Storage.`,
+    filesNotRemoved: ({ machine }: { machine: string }) => `Files on ${machine} were not removed.`,
 };
 
 

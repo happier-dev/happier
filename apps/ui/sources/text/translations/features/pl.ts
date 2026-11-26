@@ -14915,7 +14915,8 @@ const sessionDirectoryRecoveryTranslations = { pl: {
         title: ({ machine }) => `Prywatnego folderu tego czatu nie ma już na ${machine}.`,
         body: 'Możesz kontynuować w nowym, pustym folderze. Historia czatu pozostanie tutaj, ale lokalne pliki ze starego folderu nie zostaną przywrócone.',
         continue: 'Kontynuuj w nowym folderze', notNow: 'Nie teraz',
-        offlineDelete: ({ machine }) => `Prywatny folder na ${machine} zostanie usunięty, gdy ta maszyna ponownie będzie online.`,
+        offlineDelete: ({ machine }) => `Prywatny folder na ${machine} pozostanie, dopóki nie usuniesz go z Pamięci.`,
+        filesNotRemoved: ({ machine }) => `Pliki na ${machine} nie zostały usunięte.`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "pl">;
 
 return { sessionDirectoryRecoveryTranslations };

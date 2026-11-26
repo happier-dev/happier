@@ -14784,7 +14784,8 @@ const sessionDirectoryRecoveryTranslations = { es: {
         title: ({ machine }) => `La carpeta privada de este chat ya no está en ${machine}.`,
         body: 'Puedes continuar en una carpeta nueva y vacía. El historial del chat se conservará aquí, pero no se restaurarán los archivos locales de la carpeta anterior.',
         continue: 'Continuar en una carpeta nueva', notNow: 'Ahora no',
-        offlineDelete: ({ machine }) => `Su carpeta privada en ${machine} se eliminará cuando esa máquina vuelva a estar en línea.`,
+        offlineDelete: ({ machine }) => `Su carpeta privada en ${machine} se conservará hasta que la elimines desde Almacenamiento.`,
+        filesNotRemoved: ({ machine }) => `Los archivos de ${machine} no se han eliminado.`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "es">;
 
 return { sessionDirectoryRecoveryTranslations };

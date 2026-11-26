@@ -472,13 +472,6 @@ export function createManagedSessionDirectories(input: Readonly<{
       return removals;
     }, async dispose(): Promise<void> { await Promise.all(effects.map(effect => effect.dispose())); } };
   };
-  const retryPendingRemovals = async ({ stopSession }: Readonly<{ stopSession: StopSession }>) => {
-    const records = (await listRecords({ includeTrashed: true })).filter(record => record.pendingRemoval === true);
-    for (const sessionId of new Set(records.flatMap(record => record.sessionId ? [record.sessionId] : []))) {
-      await removeSessionRecords(sessionId, records.filter(record => record.sessionId === sessionId), stopSession);
-    }
-    for (const record of records) if (record.sessionId === null) await removeAllocation(record.allocationId);
-  };
   const allocateForHandoff = async (request: Readonly<{ operationId: string; sessionId: string }>) => {
     const target = prepareForHandoff(request);
     const proposed: ManagedSessionDirectoryRecord = {
@@ -636,6 +629,6 @@ export function createManagedSessionDirectories(input: Readonly<{
   };
   return { prepareForCreation, materializeForFreshSpawn, prepareSeed, bind, listRecords, resolveForSession, removeForSession, prepareForSessionDeletion, removeAllocation,
     retireToTrash, reinstateFromTrash, discardFromTrash,
-    retryPendingRemovals, allocateForHandoff, commitHandoff, abortHandoff, rollbackFreshSpawn, prepareForSpawn };
+    allocateForHandoff, commitHandoff, abortHandoff, rollbackFreshSpawn, prepareForSpawn };
 }
 export type ManagedSessionDirectories = ReturnType<typeof createManagedSessionDirectories>;

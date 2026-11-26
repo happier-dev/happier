@@ -14773,7 +14773,8 @@ const sessionDirectoryRecoveryTranslations = { 'zh-Hant': {
         title: ({ machine }) => `此聊天的專用資料夾已不在 ${machine} 上。`,
         body: '你可以在一個新的空資料夾中繼續。聊天記錄會保留在這裡，但舊資料夾中的本機檔案不會復原。',
         continue: '在新資料夾中繼續', notNow: '暫時不要',
-        offlineDelete: ({ machine }) => `${machine} 上的專用資料夾將在該機器下次上線時刪除。`,
+        offlineDelete: ({ machine }) => `${machine} 上的專用資料夾將保留，直到你從「儲存空間」將其刪除。`,
+        filesNotRemoved: ({ machine }) => `${machine} 上的檔案未被刪除。`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "zh-Hant">;
 
 return { sessionDirectoryRecoveryTranslations };

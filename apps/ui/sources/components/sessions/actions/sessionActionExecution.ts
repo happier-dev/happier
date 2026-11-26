@@ -9,6 +9,10 @@ import { readSessionBotV1, type SessionBotV1 } from '@happier-dev/protocol/sessi
 import { announceBotMarkerAccepted } from '@/components/sessions/bots/botMarkerFeedback';
 import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { readArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
 import { describeArtifactQuota } from '@/components/artifacts/ArtifactQuotaNotice';
 import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
@@ -31,7 +35,7 @@ import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/se
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
-import { SessionArchiveActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionArchiveActionResultV1Schema, SessionDeleteResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import type { CurrentUiContextCommandInvocation, CurrentUiContextMountedCommandExecution } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { archiveSessionReports } from './confirmSessionArchive';
@@ -157,6 +161,10 @@ function readSessionLifecycleActionOutcome(
     if (actionId === 'session.archive') {
         const archived = SessionArchiveActionResultV1Schema.safeParse(result);
         return archived.success ? archived.data : { success: false, code: 'invalid_action_output', message: 'invalid_action_output' };
+    }
+    if (isProjectCheckoutRemovalActionIdV1(actionId)) {
+        const deleted = SessionDeleteResultSchema.safeParse(result);
+        return deleted.success ? deleted.data : { success: false, code: 'invalid_action_output', message: 'invalid_action_output' };
     }
     if (!result || typeof result !== 'object' || !('success' in result) || typeof result.success !== 'boolean') {
         return { success: false, code: 'invalid_action_output', message: 'invalid_action_output' };
@@ -535,6 +543,29 @@ export async function executeSessionAction(params: Readonly<{
                 }
             }
             throwIfFailed(result, t('sessionInfo.failedToDeleteSession'));
+            if (result?.filesNotRemoved) {
+                const { machineId } = result.filesNotRemoved;
+                const serverId = params.target.serverId;
+                const state = getStorage().getState();
+                const heldMachine = state.machines[machineId];
+                const machine = resolveExactServerScopedMachine({
+                    machineId, serverId, activeServerId: getActiveServerSnapshot().serverId,
+                    activeMachines: heldMachine ? [heldMachine] : [],
+                    machineListByServerId: state.machineListByServerId,
+                    machineListStatusByServerId: state.machineListStatusByServerId,
+                });
+                publishPresentationNotice({
+                    key: `session-delete:${serverId}:${params.target.sessionId}`,
+                    severity: 'info',
+                    message: t('sessionDirectoryRecovery.filesNotRemoved', {
+                        machine: getMachineDisplayName(machine ?? { id: machineId, absence: 'unlisted' }),
+                    }),
+                    action: {
+                        label: t('machineStorage.tab'),
+                        run: () => router.push(machinePageHref({ door: 'rail', target: { machineId, serverId }, tab: { id: 'storage' } }) as never),
+                    },
+                });
+            }
             return;
         }
         case SESSION_ACTION_PIN_ID:

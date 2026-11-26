@@ -14833,7 +14833,8 @@ const sessionDirectoryRecoveryTranslations = { ja: {
         title: ({ machine }) => `このチャットの専用フォルダーは ${machine} にありません。`,
         body: '新しい空のフォルダーで続行できます。チャット履歴はここに残りますが、以前のフォルダーのローカルファイルは復元されません。',
         continue: '新しいフォルダーで続行', notNow: '今はしない',
-        offlineDelete: ({ machine }) => `${machine} の専用フォルダーは、そのマシンが次にオンラインになったときに削除されます。`,
+        offlineDelete: ({ machine }) => `${machine} の専用フォルダーは、ストレージから削除するまで残ります。`,
+        filesNotRemoved: ({ machine }) => `${machine} のファイルは削除されませんでした。`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "ja">;
 
 return { sessionDirectoryRecoveryTranslations };

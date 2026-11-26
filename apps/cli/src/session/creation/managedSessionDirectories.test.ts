@@ -483,8 +483,8 @@ describe('managed session directory ownership', () => {
     expect(await owner.listRecords()).toMatchObject([{ pendingRemoval: true }]);
   });
 
-  it('retains locked removals without a local retry policy and recovers through the next owner attempt', async () => {
-    const { activeServerDir, owner } = await fixture();
+  it('retains locked removals without a local retry policy', async () => {
+    const { owner } = await fixture();
     const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: 'tag' });
     await owner.bind({ allocationId: allocation.allocationId, sessionId: 'a' });
     await writeFile(join(allocation.directory, 'keep'), 'locked-session-data');
@@ -501,27 +501,6 @@ describe('managed session directory ownership', () => {
     expect(removalOptions).toEqual([{ recursive: true, force: true }]);
     expect(await owner.listRecords()).toMatchObject([{ pendingRemoval: true }]);
     expect(await readFile(join(allocation.directory, 'keep'), 'utf8')).toBe('locked-session-data');
-    vi.mocked(fs.rm).mockReset();
-    const restarted = createManagedSessionDirectories({ activeServerDir });
-    await restarted.retryPendingRemovals({ stopSession: async () => ({ status: 'not_found' }) });
-    expect(await restarted.listRecords()).toEqual([]);
-    await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('retries only recorded removals, preserving a later bound allocation after access is restored', async () => {
-    const { owner } = await fixture();
-    const old = await owner.materializeForFreshSpawn({ sessionCreationTag: 'old' });
-    await owner.bind({ allocationId: old.allocationId, sessionId: 'a' });
-    await owner.removeForSession({ sessionId: 'a', stopSession: async () => { throw new Error('stop incomplete'); } });
-    await expect(access(old.directory)).resolves.toBeUndefined();
-    expect(await owner.listRecords()).toMatchObject([{ allocationId: old.allocationId, pendingRemoval: true }]);
-    const current = await owner.allocateForHandoff({ operationId: 'access-restored', sessionId: 'a' });
-    await owner.commitHandoff({ operationId: 'access-restored', sessionId: 'a' });
-    await writeFile(join(current.directory, 'keep'), 'current-session-data');
-    await owner.retryPendingRemovals({ stopSession: async () => ({ status: 'stopped' }) });
-    expect(await readFile(join(current.directory, 'keep'), 'utf8')).toBe('current-session-data');
-    expect(await owner.listRecords()).toMatchObject([{ allocationId: current.allocationId }]);
-    await expect(access(old.directory)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('does not settle removal when pending cleanup cannot be recorded', async () => {

@@ -84,15 +84,15 @@ describe('session action presentation', () => {
             }
         }
     });
-    it('discloses deferred cleanup for an offline managed session without exposing its private path', () => {
+    it('discloses retained files for an offline managed session without exposing its private path', () => {
         const input = {
             defaultWarning: 'delete session',
-            offlineManagedWarning: 'cleanup waits for reconnect',
+            offlineManagedWarning: t('sessionDirectoryRecovery.offlineDelete', { machine: 'Work computer' }),
             machineOnline: false,
         };
         const metadata = { path: '/private/session-root', sessionDirectoryV1: { v: 1, kind: 'managed' } };
         const warning = resolveSessionDeleteWarning({ ...input, metadata });
-        expect(warning).toBe('delete session\n\ncleanup waits for reconnect');
+        expect(warning).toBe('delete session\n\nIts private folder on Work computer will stay until you remove it from Storage.');
         expect(warning).not.toContain(metadata.path);
         expect(resolveSessionDeleteWarning({ ...input, metadata: {} })).toBe(input.defaultWarning);
         expect(resolveSessionDeleteWarning({ ...input, metadata, machineOnline: true })).toBe(input.defaultWarning);

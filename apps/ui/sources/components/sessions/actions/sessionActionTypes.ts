@@ -4,7 +4,7 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import type { SessionStopRecovery } from '@/sync/ops/sessionStopContract';
 import type { SessionArchiveOperation } from '@/sync/domains/session/listing/sessionArchiveState';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
-import type { SessionArchiveActionResultV1, SessionStopOutcome } from '@happier-dev/protocol/sessions/control/contract';
+import type { SessionArchiveActionResultV1, SessionDeleteResult, SessionStopOutcome } from '@happier-dev/protocol/sessions/control/contract';
 import type { SESSION_ACTION_CLEAR_STATUS_ID } from './sessionActionIds';
 
 export type SessionActionSurface =
@@ -108,6 +108,7 @@ export type SessionActionOperationResult = Readonly<{
     details?: unknown;
     recovery?: SessionStopRecovery;
     stopOutcome?: SessionStopOutcome;
+    filesNotRemoved?: SessionDeleteResult['filesNotRemoved'];
     reports?: SessionArchiveActionResultV1['reports'];
     reportsError?: SessionArchiveActionResultV1['reportsError'];
 }>;

@@ -3162,6 +3162,9 @@ export type SessionControlActionResultById = {
     };
     readonly "session.delete": {
         success: true;
+        filesNotRemoved?: undefined | {
+            machineId: string;
+        };
     };
     readonly "session.section.set": {
         entityKind: 'workflow';

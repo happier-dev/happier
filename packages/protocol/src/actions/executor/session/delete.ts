@@ -1,8 +1,16 @@
+import { readSessionDirectoryKind } from '../../../sessions/metadata/sessionDirectoryV1.js';
+import { SessionDeleteResultSchema } from '../../../sessions/control/contract.js';
 import { readSessionStopConfirmationFailure } from './stopConfirmation.js';
 import type { AdmittedActionInputById } from '../../actionSpecs.js';
 import { ActionExecuteResultSchema } from '../../actionExecutionResult.js';
 import { completeActionResult } from '../resultProjection.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
+
+/** Only recorded managed files warrant an offline deletion disclosure. Home refusals pass through. */
+export function completeOfflineSessionDelete(result: ActionExecuteResult, machineId: string, metadata: unknown): ActionExecuteResult {
+  if (!result.ok || readSessionDirectoryKind(metadata) !== 'managed') return result;
+  return { ...result, result: { ...SessionDeleteResultSchema.parse(result.result), filesNotRemoved: { machineId } } };
+}
 
 /** Native cleanup retains the extant Session; Home authorizes its final deletion. */
 export async function executeSessionDelete(params: Readonly<{

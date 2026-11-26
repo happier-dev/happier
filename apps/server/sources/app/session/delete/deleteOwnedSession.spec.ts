@@ -55,6 +55,7 @@ const findSessionDrafts = vi.fn(async () => []);
 function createTx() {
     return {
             ...inTxPostgresControlStatementMock,
+            simpleCache: { findUnique: async () => null },
             session: {
                 findFirst,
                 findUnique: findSession,
@@ -215,6 +216,9 @@ describe('deleteOwnedSession', () => {
         });
 
         expect(ok).toEqual({ ok: false, error: 'not-found' });
+        expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: 's1', accountId: 'owner' }),
+        }));
         expect(deleteSession).not.toHaveBeenCalled();
     });
 

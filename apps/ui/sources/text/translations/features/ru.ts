@@ -14916,7 +14916,8 @@ const sessionDirectoryRecoveryTranslations = { ru: {
         title: ({ machine }) => `Личной папки этого чата больше нет на ${machine}.`,
         body: 'Можно продолжить в новой пустой папке. История чата останется здесь, но локальные файлы из прежней папки не будут восстановлены.',
         continue: 'Продолжить в новой папке', notNow: 'Не сейчас',
-        offlineDelete: ({ machine }) => `Личная папка на ${machine} будет удалена, когда эта машина снова появится в сети.`,
+        offlineDelete: ({ machine }) => `Личная папка на ${machine} останется, пока вы не удалите её в разделе «Хранилище».`,
+        filesNotRemoved: ({ machine }) => `Файлы на ${machine} не были удалены.`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "ru">;
 
 return { sessionDirectoryRecoveryTranslations };

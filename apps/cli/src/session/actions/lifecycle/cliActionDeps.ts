@@ -1,3 +1,6 @@
+import { completeOfflineSessionDelete } from '@happier-dev/protocol/actions/executor/session/delete';
+import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
+import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import type { ResolvedSessionTransport } from '../cliActionDeps/types';
 import type { CliActionDepsParams, CurrentMachineControlIdentity } from '../cliActionDeps/types';
 import { rejectUndispatchedSessionAgentTransition } from '@happier-dev/protocol/sessions/agentTransitionEffectStage';
@@ -82,6 +85,13 @@ export function createCliSessionLifecycleActionDeps(
       if (direct?.machineId === machineId) {
         if (!direct.sessionDelete) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
         return direct.sessionDelete({ input: { ...input, sessionId: transport.sessionId }, context, deleteFromHome, sessionMetadata: metadata });
+      }
+      const [machine] = await listCurrentAccountMachines({ token: params.token, credentials: params.credentials,
+        ...(authorization ? { authorization } : {}), effectActionId: 'session.delete',
+        serverHttpBaseUrl: params.serverHttpBaseUrl, projection: 'hostFacts', machineIds: [machineId],
+        ...(context.signal ? { signal: context.signal } : {}) });
+      if (machine && !isMachineReachableV1({ machine })) {
+        return completeOfflineSessionDelete(await deleteFromHome(), machineId, metadata);
       }
       return readMachineActionRpcResult(await callMachineAction({
         machineId, method: SESSION_RPC_METHODS.SESSION_DELETE, request: { ...input, sessionId: transport.sessionId },

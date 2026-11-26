@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getActionSpec } from '../../actionSpecs.js';
 import { executeSessionDelete } from './delete.js';
 import type { ActionExecuteResult } from '../types.js';
 
@@ -27,4 +28,9 @@ describe('Session delete result ownership', () => {
     });
     expect(result).toEqual({ ok: true, result: { success: true } });
   });
+});
+
+it('retains the offline deletion fact through the public output contract', () => {
+  const result = { success: true, filesNotRemoved: { machineId: 'offline-machine' } };
+  expect(getActionSpec('session.delete').outputSchema.parse(result)).toEqual(result);
 });

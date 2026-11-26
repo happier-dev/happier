@@ -14904,7 +14904,8 @@ const sessionDirectoryRecoveryTranslations = { fr: {
         title: ({ machine }) => `Le dossier privé de ce chat n’est plus sur ${machine}.`,
         body: 'Tu peux continuer dans un nouveau dossier vide. Ton historique restera ici, mais les fichiers locaux de l’ancien dossier ne seront pas restaurés.',
         continue: 'Continuer dans un nouveau dossier', notNow: 'Pas maintenant',
-        offlineDelete: ({ machine }) => `Son dossier privé sur ${machine} sera supprimé quand cette machine sera de nouveau en ligne.`,
+        offlineDelete: ({ machine }) => `Son dossier privé sur ${machine} restera en place jusqu’à sa suppression depuis Stockage.`,
+        filesNotRemoved: ({ machine }) => `Les fichiers sur ${machine} n’ont pas été supprimés.`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "fr">;
 
 return { sessionDirectoryRecoveryTranslations };

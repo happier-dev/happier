@@ -2794,6 +2794,54 @@ describe('default Action executor mode and catalog contracts', () => {
       scope: storage.getState().profileScope })).toBeNull();
     expect(deleteRequests).toBe(1);
   });
+  it.each([false, true])('deletes on Home when the Machine is known offline; managed=%s', async managed => {
+    const sessionId = 'known-offline-delete';
+    installSession(sessionId, { machineId: 'machine-a', ...(managed ? { sessionDirectoryV1: { v: 1, kind: 'managed' } } : {}) }, serverId, 1);
+    const machine = createMachineFixture({ id: 'machine-a', active: false, activeAt: Date.now(), presenceProtocolVersion: 1,
+      storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    const machineRow = createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice', machine });
+    homes.answer(serverId, '/v1/machines', { body: [machineRow] });
+    homes.answer(serverId, '/v1/machines?includeRevoked=true', { body: [machineRow] });
+    homes.answer(serverId, '/v1/machines/machine-a', { body: { machine: machineRow } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+    const { resolveMachineReachability } = await import('@/sync/domains/machines/reachability/machineReachability');
+    expect(resolveMachineReachability({ serverId, accountId: 'alice' }, storage.getState().machines['machine-a']!)).toBe('unreachable');
+    homes.answer(serverId, `/v1/sessions/${sessionId}`, { body: { success: true } });
+    const { executeSessionLifecycleAction } = await import('@/components/sessions/actions/sessionActionExecution');
+    const result = await executeSessionLifecycleAction('session.delete', sessionId, { serverId, confirmed: true });
+    expect(result).toEqual({ success: true, ...(managed ? { filesNotRemoved: { machineId: 'machine-a' } } : {}) });
+    expect(homes.requestsFor(`/v1/sessions/${sessionId}`).filter(request => request.method === 'DELETE')).toHaveLength(1);
+    expect(homes.requestsFor('/v1/actions/session.delete')).toHaveLength(0);
+  });
+
+  it.each([false, true])('shows one stayed-files notice only for a managed own Session on a guest Machine; managed=%s', async managed => {
+    const sessionId = 'offline-guest-notice';
+    installSession(sessionId, { machineId: 'machine-a', ...(managed ? { sessionDirectoryV1: { v: 1, kind: 'managed' } } : {}) }, serverId, 1);
+    const machine = createMachineFixture({ id: 'machine-a', active: false, activeAt: Date.now(), presenceProtocolVersion: 1,
+      storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      access: { custodian: { accountId: 'another-person', displayName: 'Host owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } });
+    const machineRow = createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice', machine });
+    homes.answer(serverId, '/v1/machines', { body: [machineRow] });
+    homes.answer(serverId, '/v1/machines?includeRevoked=true', { body: [machineRow] });
+    homes.answer(serverId, '/v1/machines/machine-a', { body: { machine: machineRow } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+    const { resolveMachineReachability } = await import('@/sync/domains/machines/reachability/machineReachability');
+    expect(resolveMachineReachability({ serverId, accountId: 'alice' }, storage.getState().machines['machine-a']!)).toBe('unreachable');
+    homes.answer(serverId, `/v1/sessions/${sessionId}`, { body: { success: true } });
+    const { executeSessionAction } = await import('@/components/sessions/actions/sessionActionExecution');
+    const { createSessionActionTarget } = await import('@/components/sessions/actions/sessionActionContext');
+    const { readPresentationNotices } = await import('@/components/sessions/presentation/presentationNotices');
+    const before = readPresentationNotices();
+    await executeSessionAction({ actionId: 'ui.session.delete',
+      target: createSessionActionTarget({ session: storage.getState().sessions[sessionId]!, serverId, currentUserId: 'alice', isConnected: false }),
+      context: { confirmed: true } });
+    const added = readPresentationNotices().filter(notice => !before.includes(notice));
+    expect(added).toHaveLength(managed ? 1 : 0);
+    if (managed) expect(added[0]?.action).toEqual(expect.objectContaining({ run: expect.any(Function) }));
+    expect(homes.requestsFor(`/v1/sessions/${sessionId}`).filter(request => request.method === 'DELETE')).toHaveLength(1);
+    expect(homes.requestsFor('/v1/actions/session.delete')).toHaveLength(0);
+  });
+
   it('presents the Home’s offline Machine refusal when deleting a stopped Session', async () => {
     const sessionId = 'offline-delete-session';
     const metadata = { machineId: 'machine-a', path: '/repo', host: 'tester.local', flavor: 'codex' };

@@ -14885,7 +14885,8 @@ const sessionDirectoryRecoveryTranslations = { ca: {
         title: ({ machine }) => `La carpeta privada d’aquest xat ja no és a ${machine}.`,
         body: 'Pots continuar en una carpeta nova i buida. L’historial del xat es conservarà aquí, però no es restauraran els fitxers locals de la carpeta anterior.',
         continue: 'Continua en una carpeta nova', notNow: 'Ara no',
-        offlineDelete: ({ machine }) => `La seva carpeta privada a ${machine} s’eliminarà quan la màquina torni a estar en línia.`,
+        offlineDelete: ({ machine }) => `La seva carpeta privada a ${machine} es conservarà fins que l’eliminis des d’Emmagatzematge.`,
+        filesNotRemoved: ({ machine }) => `No s’han eliminat els fitxers de ${machine}.`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "ca">;
 
 return { sessionDirectoryRecoveryTranslations };

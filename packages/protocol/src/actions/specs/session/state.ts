@@ -7,7 +7,7 @@ import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { parseQualifiedPluginActionId } from '../../../plugins/actions/qualifiedActionId.js';
 import { SessionTargetV1Schema, SessionTargetPreviewV1Schema, withSessionTargetFanoutResultV1, type SessionTargetV1 } from '../../sessionTargetV1.js';
 import { SessionCoordinatorEnableInputV1Schema, SessionCoordinatorEnableResultV1Schema } from '../../../sessions/follow/sessionCoordinatorActionsV1.js';
-import { SessionStatusActionResultV1Schema, SessionArchiveActionInputV1Schema, SessionArchiveActionResultV1Schema } from '../../../sessions/control/contract.js';
+import { SessionStatusActionResultV1Schema, SessionArchiveActionInputV1Schema, SessionArchiveActionResultV1Schema, SessionDeleteResultSchema } from '../../../sessions/control/contract.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../../connect/connectedAccountPurposeIdentity.js';
 import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../../../connect/connectedAccountPurposeBindings.js';
 import { SessionModelMutationExpectedV1Schema, SessionModelSetResultV1Schema } from '../../../sessions/control/modelTransitionV1.js';
@@ -492,7 +492,7 @@ function createSessionStateActionSpecs() {
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     serverTransport: { method: 'DELETE', path: '/v1/sessions/:sessionId' },
     inputSchema: SessionDeleteInputSchema,
-    outputSchema: lazyZodSchema(() => z.strictObject({ success: z.literal(true) })),
+    outputSchema: SessionDeleteResultSchema,
     inputHints: { description: 'Use sessionId for a session, or machineId and runId for stopped detached conversation history.', title: 'Delete a session', fields: [
       { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text' },
       { path: 'skipCleanup', title: 'Remove without cleanup', widget: 'boolean' },

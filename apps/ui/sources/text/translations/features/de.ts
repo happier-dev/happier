@@ -14889,7 +14889,8 @@ const sessionDirectoryRecoveryTranslations = { de: {
         title: ({ machine }) => `Der private Ordner dieses Chats ist nicht mehr auf ${machine}.`,
         body: 'Du kannst in einem neuen, leeren Ordner fortfahren. Dein Chatverlauf bleibt hier erhalten, lokale Dateien aus dem alten Ordner werden jedoch nicht wiederhergestellt.',
         continue: 'In einem neuen Ordner fortfahren', notNow: 'Nicht jetzt',
-        offlineDelete: ({ machine }) => `Der private Ordner auf ${machine} wird gelöscht, sobald der Rechner wieder online ist.`,
+        offlineDelete: ({ machine }) => `Der private Ordner auf ${machine} bleibt erhalten, bis du ihn unter Speicher entfernst.`,
+        filesNotRemoved: ({ machine }) => `Die Dateien auf ${machine} wurden nicht entfernt.`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "de">;
 
 return { sessionDirectoryRecoveryTranslations };

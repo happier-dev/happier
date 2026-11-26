@@ -526,6 +526,30 @@ describe('CLI Session target composition', () => {
     return { deps, get, session, credentials, records, patchedSessionIds };
   }
 
+  it.each([
+    { surface: 'cli', managed: true, denied: false }, { surface: 'agent', managed: true, denied: false },
+    { surface: 'cli', managed: false, denied: false }, { surface: 'cli', managed: true, denied: true },
+  ] as const)('deletes a managed Session on Home while its shared Machine is offline ($surface; managed=$managed; denied=$denied)', async ({ surface, managed, denied }) => {
+    const { deps, get, credentials, session } = setup(null);
+    session.ownerMetadata = createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: {
+      path: '/repo', host: 'host', machineId: 'machine-selected', ...(managed ? { sessionDirectoryV1: { v: 1, kind: 'managed' } as const } : {}),
+    } });
+    const read = get.getMockImplementation()!;
+    get.mockImplementation(async (url, config) => String(url).endsWith('/v1/machines/machine-selected')
+      ? { status: 200, data: { machine: { id: 'machine-selected', active: false, activeAt: 0,
+        kind: 'persistent', managedMachineRef: null, revokedAt: null, replacedByMachineId: null,
+        access: { custodian: { accountId: 'someone-else', displayName: 'Host owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } } } }
+      : read(url, config));
+    const requests = vi.spyOn(axios, 'request').mockResolvedValue(denied ? { status: 403, data: { error: 'forbidden' } } : { status: 200, data: { success: true } });
+    const homeDeps = createAccountServerActionDeps({ token: credentials.token, credentials,
+      serverId: context.serverId, serverIdentityId: context.serverId, serverHttpBaseUrl: home });
+    const result = await executeSessionDelete({ input: { sessionId }, context: { ...context, surface },
+      deps: { ...deps, homeDomainAction: homeDeps.homeDomainAction }, isDeferredApprovalResult: () => false });
+    if (denied) expect(result).toMatchObject({ ok: false });
+    else expect(result).toEqual({ ok: true, result: { success: true, ...(managed ? { filesNotRemoved: { machineId: 'machine-selected' } } : {}) } });
+    expect(requests.mock.calls.map(([request]) => [request.method, request.url])).toEqual([['DELETE', `${home}/v1/sessions/${sessionId}`]]);
+  });
+
   it.each(['plain', 'e2ee'] as const)('recovers an absent admitted native Delete without resolving another Session tag (%s)', async mode => {
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(37));
     const signer = { privateKey: keys.secretKey, installationId: 'delete-installation',

@@ -14773,7 +14773,8 @@ const sessionDirectoryRecoveryTranslations = { 'zh-Hans': {
         title: ({ machine }) => `此聊天的专用文件夹已不在 ${machine} 上。`,
         body: '你可以在一个新的空文件夹中继续。聊天记录会保留在这里，但旧文件夹中的本地文件不会恢复。',
         continue: '在新文件夹中继续', notNow: '暂时不',
-        offlineDelete: ({ machine }) => `${machine} 上的专用文件夹将在该机器下次上线时删除。`,
+        offlineDelete: ({ machine }) => `${machine} 上的专用文件夹将保留，直到你从“存储”中将其删除。`,
+        filesNotRemoved: ({ machine }) => `${machine} 上的文件未被删除。`,
     } } satisfies Pick<Record<import('../../_all').SupportedLanguage, typeof en>, "zh-Hans">;
 
 return { sessionDirectoryRecoveryTranslations };
