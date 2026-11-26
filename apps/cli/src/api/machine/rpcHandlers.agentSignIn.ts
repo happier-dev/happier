@@ -34,8 +34,10 @@ async function resolveNativeSignInScope(
       ? await deps.resolveHostHomeServerIdentityId(context.signal).catch(() => null)
       : context.callerInputAuthorization?.binding.serverIdentityId ?? null;
     const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home });
-    return resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => deps?.agentIsolation?.read() }) === 'person'
-      ? 'machineOwner' : undefined;
+    try {
+      return resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => deps?.agentIsolation?.read() }) === 'person'
+        ? 'machineOwner' : undefined;
+    } catch { return undefined; /* An unread isolation policy reports no scope. */ }
   }
   if (role !== 'use' || deps?.agentIsolation && !snapshot) return undefined;
   const placement = resolveMachineAgentExecutionPlacementV1({ policy: snapshot ?? { enabled: false }, platform: process.platform });

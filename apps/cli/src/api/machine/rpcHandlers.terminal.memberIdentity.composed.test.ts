@@ -25,6 +25,7 @@ import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/instal
 import { createAgentIsolationMemberPreparationBoundary, runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { buildAgentIsolationProvisioningSteps, deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { readAgentIsolationMemberBindingForAccount, writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
+import { readAgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
 import { AGENT_LAUNCH_TERMINAL_ACCEPTED, AGENT_LAUNCH_TERMINAL_READY, readAgentLaunchFrame, type AgentLaunchPayload } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { createInstalledProjectFiniteRuntime } from '@/daemon/startup/createInstalledProjectFiniteRuntime';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
@@ -183,7 +184,7 @@ class NativePty implements PtyProcess {
   waitForSettlement() { return this.settled; }
 }
 
-async function fixture(options: Readonly<{ cold?: true; finite?: true; setup?: true; nativePackageScript?: true; requesterAsk?: true; ownerAgent?: true; accountId?: 'member-a' | 'requester'; isolationEnabled?: boolean; legacy?: true; acceptedWorkspace?: false }> = {}) {
+async function fixture(options: Readonly<{ cold?: true; finite?: true; setup?: true; nativePackageScript?: true; requesterAsk?: true; ownerAgent?: true; accountId?: 'member-a' | 'requester'; isolationEnabled?: boolean; legacy?: true; acceptedWorkspace?: false; policyUnread?: true }> = {}) {
   const accountId = options.accountId ?? 'member-a';
   const isolationEnabled = options.isolationEnabled ?? true;
   const actionId = options.finite ? 'projects.script.run' : 'machines.terminal.open';
@@ -215,8 +216,11 @@ async function fixture(options: Readonly<{ cold?: true; finite?: true; setup?: t
   });
   let preparation: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
   let finite: ReturnType<typeof createInstalledProjectFiniteRuntime> | undefined;
+  // Machine registration not settled yet: the daemon's real snapshot producer reads no Machine content.
+  const unread = options.policyUnread ? readAgentIsolationSnapshot({ metadata: { status: 'locked' }, daemonState: null,
+    runtimeId: undefined, platform: 'linux' }) : undefined;
   const agentIsolation = { managedHappierBinaryPath: '/opt/happier/cli/current/happier',
-    read: () => ({ enabled: isolationEnabled, ...(options.legacy ? {} : { memberProvisioning: 'linuxUsersV1' as const }),
+    read: () => unread ? { ...unread, workspaceRoots: nativeOs.home ? [nativeOs.home.workspaceRoot] : [] } : ({ enabled: isolationEnabled, ...(options.legacy ? {} : { memberProvisioning: 'linuxUsersV1' as const }),
       status: isolationEnabled && !options.ownerAgent ? { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' as const }
         : { kind: 'disabled' as const }, workspaceRoots: [...(nativeOs.home ? [nativeOs.home.workspaceRoot] : []),
           ...(nativeOs.sharedHome ? [nativeOs.sharedHome] : [])] }),
@@ -424,6 +428,32 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     expect(f.processes[0]?.params.file).toMatch(/(?:^|[/\\])gh(?:\.exe)?$/u);
     expect(f.processes[0]?.params.args).toEqual(['auth', 'login', '--git-protocol', 'https', '--web']);
     expect(f.processes[0]?.frames).toEqual([]);
+  });
+
+  it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])('refuses a guest terminal through %s while the isolation policy is unread, as Session launch does, and starts nothing', async method => {
+    const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.scm.forge.github'] } });
+    onTestFinished(() => plugins.dispose());
+    const guest = await fixture({ policyUnread: true, acceptedWorkspace: false });
+    const login = { terminalKey: 'provider-login:gh', launch: { kind: 'agent_login', agentId: 'happier.scm.forge.github/gh', launchId: 'device_code' } };
+    for (const input of [login, { terminalKey: 'machine-shell' }]) {
+      const refused = await guest.invokeInstalledTerminal(method, input);
+      // Session launch's refusal for an unread policy: retryable "still starting", never "Manage required".
+      expect(refused).toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+      expect(JSON.stringify(refused)).toContain('metadata_unavailable');
+    }
+    expect(guest.processes).toEqual([]);
+  });
+
+  it('opens the owner terminal while the isolation policy is unread', async () => {
+    const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.scm.forge.github'] } });
+    onTestFinished(() => plugins.dispose());
+    const owner = await fixture({ accountId: 'requester', policyUnread: true, acceptedWorkspace: false });
+    expect(await owner.invokeInstalledTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'custodian-provider-login:gh',
+      launch: { kind: 'agent_login', agentId: 'happier.scm.forge.github/gh' } })).toMatchObject({ ok: true, terminalId: expect.any(String) });
+    expect(owner.processes).toHaveLength(1);
+    expect(owner.processes[0]?.frames).toEqual([]);
   });
 
   it('opens member Agent CLI sign-in with the CLI installed in the member home, not the daemon environment', async () => {

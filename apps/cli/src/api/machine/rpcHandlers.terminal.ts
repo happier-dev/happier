@@ -259,6 +259,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       platform: params.deps?.platform,
     });
 
+  // The placement owner refuses an unread isolation policy with Session launch's typed cause.
+  const placeTerminal = (identity: HostRequesterExecutionIdentity, context?: RpcHandlerContext) => {
+    try { return { ok: true as const, placement: resolveTerminalPlacement(identity, context) }; }
+    catch (error) { if (!isPluginError(error)) throw error; return { ok: false as const, error }; }
+  };
+
   const resolveMachineShellAvailability = async (context?: RpcHandlerContext,
     selectedIdentity?: HostRequesterExecutionIdentity): Promise<DaemonTerminalShellAvailabilityV1> => {
     const admission = context?.machineAdmission;
@@ -267,7 +273,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const identity = resolvedRequester.identity;
     if (identity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
     const memberRequester = resolveHostRequesterAgentExecutionIdentity(identity);
-    const placement = resolveTerminalPlacement(identity, context);
+    const placed = placeTerminal(identity, context);
+    if (!placed.ok) return unavailableIdentityTransport(placed.error);
+    const { placement } = placed;
     if (admission.role !== 'manage') {
       if (identity.kind !== 'isolated' || placement !== 'member') {
         return { ok: false, errorCode: 'machine_manage_required', error: 'machine_manage_required' };
@@ -456,8 +464,8 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     if (!terminal) return context?.machineAdmission
       ? !context.signal.aborted
       : !params.deps?.requiredSessionId;
-    if (requesterIdentity?.kind === 'isolated'
-      && resolveTerminalPlacement(requesterIdentity, context) !== 'daemon') {
+    const placed = requesterIdentity?.kind === 'isolated' ? placeTerminal(requesterIdentity, context) : undefined;
+    if (requesterIdentity?.kind === 'isolated' && (!placed?.ok || placed.placement !== 'daemon')) {
       const nativeIdentity = manager.getNativeExecutionIdentity?.(terminalId);
       if (!nativeIdentity) return false;
       try {
@@ -837,8 +845,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     }
     const resolvedRequester = await resolveRequesterIdentity(context);
     const { identity: requesterIdentity, homeServerIdentityId } = resolvedRequester;
-    const placement = resolveTerminalPlacement(requesterIdentity, context);
     if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
+    const placed = placeTerminal(requesterIdentity, context);
+    if (!placed.ok) return { ok: false as const, ...normalizeActionExecutorThrownError(placed.error) };
+    const { placement } = placed;
     if (parsed.data.launch?.kind === 'service_shell') {
       // Service-native admission owns the shell's execution identity. A Session
       // acting for another Account cannot borrow that identity for separation.
@@ -1035,8 +1045,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     }
     const resolvedRequester = await resolveRequesterIdentity(context);
     const { identity: requesterIdentity, homeServerIdentityId } = resolvedRequester;
-    const placement = resolveTerminalPlacement(requesterIdentity, context);
     if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
+    const placed = placeTerminal(requesterIdentity, context);
+    if (!placed.ok) return { ok: false as const, ...normalizeActionExecutorThrownError(placed.error) };
+    const { placement } = placed;
     if (parsed.data.launch?.kind === 'service_shell') {
       if (requesterIdentity.kind === 'isolated' && requesterIdentity.separationRequired) return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.restart', homeServerIdentityId);

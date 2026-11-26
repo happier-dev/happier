@@ -340,16 +340,22 @@ export function isUnqualifiedSharedAgentIsolationStatus(status: HostAgentIsolati
         && !status.setup && !status.prerequisite && !status.probeFailure;
 }
 
-/** A terminal opened by a person with full Machine control uses their person placement. */
+/** A terminal opened by a person with full Machine control uses their person placement.
+ * Anyone else's terminal is placed only by a read policy: an unread one throws
+ * the same retryable refusal Session launch returns, never a guessed placement. */
 export function resolveHostRequesterTerminalPlacementForHost(input: Readonly<{
     identity: HostRequesterExecutionIdentity;
-    readPolicy: () => Pick<HostAgentIsolationLaunchSnapshot, 'enabled' | 'memberProvisioning'> | undefined;
+    readPolicy: () => (Pick<HostAgentIsolationLaunchSnapshot, 'enabled' | 'memberProvisioning'>
+        & Partial<Pick<HostAgentIsolationLaunchSnapshot, 'status'>>) | undefined;
     platform?: NodeJS.Platform;
 }>): 'person' | 'daemon' | 'sharedAgent' | 'member' | undefined {
     if (input.identity.kind === 'owner_person') return 'person';
     if (input.identity.kind === 'unknown') return undefined;
+    const snapshot = input.readPolicy();
+    if (snapshot?.status && isHostAgentIsolationPolicyUnread({ status: snapshot.status }))
+        refuseIsolationNotReady(snapshot.status, 'agent_isolation_unavailable', 'terminal');
     return resolveHostRequesterAgentPlacementForHost({
-        identity: input.identity, snapshot: input.readPolicy(), platform: input.platform,
+        identity: input.identity, snapshot, platform: input.platform,
     });
 }
 
