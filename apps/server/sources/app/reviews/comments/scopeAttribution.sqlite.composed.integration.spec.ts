@@ -553,3 +553,119 @@ it('opens one persisted finding from PR, Inbox and Review across Sessions and ro
         });
     }, { authentication: 'real' });
 });
+
+it('retains reviewer omission explanations, partial coverage and question states from publication through detail and an unavailable refresh', async () => {
+    const { act } = await import('react-test-renderer');
+    const { ReviewModelOutputV1Schema } = await import('@happier-dev/protocol/reviews/reviewModelOutputV1');
+    const { RPC_METHODS, SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { projectExecutionRunPublicState } = await import('../../../../../cli/src/agent/runtime/bridges/executionRun/publicState');
+    const { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } = await import('../../../../../ui/sources/dev/testkit/fixtures/executionRunCapabilitiesDescribe');
+    const { createSessionReadBatchFetchBoundary } = await import('../../../../../ui/sources/dev/testkit/harness/sessionReadBatchHttpBoundary');
+    const { createPlainV2SessionRecordFixture } = await import('../../../../../ui/sources/dev/testkit/fixtures/sessionFixtures');
+    const { notifyExecutionRunActivityFromUpdate } = await import('../../../../../ui/sources/sync/runtime/executionRuns/executionRunActivityBus');
+    const { ArtifactView } = await import('../../../../../ui/sources/components/artifacts/ArtifactView');
+    const account = await db.account.upsert({ where: { id: 'alice' }, update: {}, create: { id: 'alice', encryptionMode: 'plain' } });
+    const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+    const machineId = 'm1', installationId = randomUUID(), sessionId = randomUUID(), keyPair = tweetnacl.sign.keyPair();
+    await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+    await db.session.create({ data: { id: sessionId, accountId: account.id, tag: sessionId, metadata: '{}', encryptionMode: 'plain' } });
+    // The external reviewer reports omissions in its existing narrative contract; the host
+    // must retain that disclosure rather than infer counts or equate an empty list with clean coverage.
+    const explanation = 'Unchanged findings and style nits were withheld. Outside-scope issues were not posted. Coverage is partial because generated files could not be inspected.';
+    const modelOutput = ReviewModelOutputV1Schema.parse({ reviewOutcome: 'partial', summary: 'Incomplete coverage',
+        overviewMarkdown: explanation, findings: [{ id: 'retained-finding', title: 'Retained supported finding',
+            summary: 'Keep the supported evidence.', severity: 'high', category: 'correctness', filePath: 'connection.ts', startLine: 8 }],
+        questions: [{ id: 'open-question', text: 'Which generated sources should be reviewed?', status: 'open' },
+            { id: 'answered-question', text: 'The build target was clarified.', status: 'answered' },
+            { id: 'superseded-question', text: 'Obsolete scope question.', status: 'superseded' }], assumptions: [] });
+    await withAuthenticatedTestApp(app => {
+        registerReviewCommentRoutes(app); registerReviewReadRoutes(app); artifactsRoutes(app); registerAccountEncryptionRoutes(app);
+    }, async app => {
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        await runWithServerHttpBaseUrl(origin, async () => {
+            const artifacts = createCredentialedAccountArtifactStore({ token, encryption: null });
+            const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(artifacts));
+            const reviewId = randomUUID();
+            const binding = await records.start({ reviewId, title: 'Reviewer coverage disclosure', subjectKind: 'repository',
+                sourceKind: 'direct', reviewerIds: ['reviewer'], startedAt: Date.now() });
+            const runId = randomUUID();
+            const run: ExecutionRunState = { runId, callId: runId, sidechainId: runId, sessionId, depth: 0, intent: 'review',
+                backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review.',
+                permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+                status: 'running', startedAtMs: Date.now(),
+                intentInput: { reviewRound: binding, reviewReviewerId: 'reviewer', reviewRoundSettlement: 'execution' } };
+            const normalized = normalizeStrictJsonReviewOutput({ ...run, finishedAtMs: Date.now(), rawText: JSON.stringify(modelOutput) });
+            expect(normalized.status).toBe('succeeded');
+            const execute = createCliReviewCommentActionExecutorFromCredentials({ credentials: { token, encryption: null },
+                resolvePrincipalSigningContext: async () => ({ machineId, installationId,
+                    privateKeyBase64Url: Buffer.from(keyPair.secretKey).toString('base64url') }) });
+            const comments = createReviewRunCommentService({ cwd: harness.baseDir,
+                scope: { workspace: { machineId, path: harness.baseDir } }, execute, reviewRecords: records });
+            const publication = await materializeReviewFindings({ run, toolResult: { output: normalized.toolResultOutput },
+                structuredMeta: normalized.structuredMeta, expectFindings: true, reviewComments: comments });
+            expect(publication.materialization).toMatchObject({ status: 'materialized', failures: [] });
+            const finding = publication.materialization?.comments[0]?.comment;
+            if (!finding) throw new Error('Supported finding was not published');
+            const completed: ExecutionRunState = { ...run, status: 'succeeded', finishedAtMs: Date.now(),
+                structuredMeta: publication.structuredMeta };
+            await comments.settleRound(completed);
+            const published = ReviewFindingsV2Schema.parse(publication.structuredMeta?.payload);
+            expect(published).toMatchObject({ reviewOutcome: 'partial', overviewMarkdown: explanation,
+                questions: modelOutput.questions });
+            expect(await records.read(reviewId)).toMatchObject({ rounds: [{ state: 'partial',
+                runs: [{ kind: 'execution', machineId, sessionId, runId }] }] });
+            expect(await db.reviewComment.count({ where: { reviewId } })).toBe(1);
+            let unavailable = false;
+            const fixture = await createSessionFilesViewFixture({ serverUrl: origin, credentials: { token }, sessionId,
+                serverIdentityId: await getOrCreateServerIdentityId(), rpc: request => {
+                    if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+                    if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) {
+                        if (unavailable) return { ok: false, errorCode: 'execution_run_target_unavailable', error: 'Disconnected' };
+                        return { run: projectExecutionRunPublicState(completed), reviewFindings: published };
+                    }
+                    return undefined;
+                }, request: createSessionReadBatchFetchBoundary(async (url, init) => {
+                    const path = new URL(String(url)).pathname;
+                    if (path.startsWith('/v1/reviews/') || path.startsWith('/v1/artifacts') || path.startsWith('/v1/account/encryption'))
+                        return fetch(url, init);
+                    if (path === `/v2/sessions/${sessionId}`) return Response.json({ session: createPlainV2SessionRecordFixture({
+                        id: sessionId, metadata: { path: harness.baseDir, host: 'test', machineId },
+                    }) });
+                    return undefined;
+                }) });
+            try {
+                const row = await artifacts.read(reviewId);
+                if (!row || typeof row.body !== 'string') throw new Error('Persisted Review unavailable');
+                const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId,
+                    title: 'Reviewer coverage disclosure', isDecrypted: true,
+                    header: { ...row.header, title: 'Reviewer coverage disclosure' }, body: row.body,
+                    ownerAccountId: account.id, access: 'owner', storageMode: 'plain',
+                    headerVersion: row.revision.headerVersion, bodyVersion: row.revision.bodyVersion,
+                    seq: 1, createdAt: 1, updatedAt: 1 };
+                const screen = await fixture.render(React.createElement(ArtifactView, {
+                    artifactId: reviewId, artifact, presentation: 'page',
+                }));
+                try {
+                    // Control: real signed publication, SQL and artifact HTTP already reach the
+                    // mounted detail before checking the narrative that its run reader dropped.
+                    await vi.waitFor(() => expect(screen.findByTestId(`review-finding:${finding.id}`), screen.getTextContent()).not.toBeNull());
+                    await vi.waitFor(() => expect(screen.getTextContent()).toContain(modelOutput.questions[0]!.text));
+                    expect(screen.getTextContent()).toContain(modelOutput.questions[1]!.text);
+                    expect(screen.getTextContent()).not.toContain(modelOutput.questions[2]!.text);
+                    expect(screen.findByTestId('review-detail:quality')).not.toBeNull();
+                    expect(screen.getTextContent()).toContain(explanation);
+                    unavailable = true;
+                    await act(async () => notifyExecutionRunActivityFromUpdate(fixture.scope.serverId, {
+                        type: 'execution-run-updated', sessionId, run: { runId },
+                    }));
+                    await vi.waitFor(() => expect(screen.findByTestId('review-detail:questions-unavailable')).not.toBeNull());
+                    expect(screen.getTextContent()).toContain(explanation);
+                    expect(screen.findByTestId(`review-finding:${finding.id}`)).not.toBeNull();
+                    expect(screen.getTextContent()).toContain(modelOutput.questions[0]!.text);
+                    expect(screen.getTextContent()).toContain(modelOutput.questions[1]!.text);
+                    expect(screen.getTextContent()).not.toContain(modelOutput.questions[2]!.text);
+                } finally { await screen.unmount(); }
+            } finally { await fixture.dispose(); }
+        });
+    }, { authentication: 'real' });
+});

@@ -16,6 +16,7 @@ import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAcc
 import type { ReviewFindingsMember } from '../finding/useReviewFindingsModel';
 
 type Reference = Extract<ReviewRunReferenceV1, { kind: 'execution' }>;
+type ReviewRunMember = ReviewFindingsMember & Readonly<{ overviewMarkdown: string }>;
 export type ReviewQuestionRunsUnavailableReason = 'temporarily_unavailable' | 'run_missing' | 'read_failed';
 export type ReviewQuestionRunsState =
     | Readonly<{ kind: 'loading' | 'no_questions' | 'ready' }>
@@ -24,7 +25,7 @@ export type ReviewQuestionRunsState =
 type Read = Readonly<{
     key: string;
     runId: string;
-    member: ReviewFindingsMember | null;
+    member: ReviewRunMember | null;
     /** The reviewer run's public state (who ran it, on which model, how it ended), last known on a failed read. */
     run: ExecutionRunPublicState | null;
     /** How many findings its retained result holds; `null` when it published none. */
@@ -43,7 +44,7 @@ function readUnavailableReason(error: unknown): ReviewQuestionRunsUnavailableRea
 }
 const EMPTY_RUNS: readonly ReviewRunReferenceV1[] = Object.freeze([]);
 const EMPTY_READS: readonly Read[] = Object.freeze([]);
-const EMPTY_MEMBERS: readonly ReviewFindingsMember[] = Object.freeze([]);
+const EMPTY_MEMBERS: readonly ReviewRunMember[] = Object.freeze([]);
 const EMPTY_RUN_READS: ReadonlyMap<string, ReviewRoundRunRead> = new Map();
 const EMPTY_COMMENTS: ReviewFindingsMember['commentByFindingId'] = new Map();
 const referenceKey = (reference: Reference) => JSON.stringify([reference.machineId, reference.sessionId ?? null, reference.runId]);
@@ -84,11 +85,12 @@ export function useReviewQuestionRuns(params: Readonly<{
                             signal: controller.signal, parseResult: value => ExecutionRunGetResponseSchema.parse(value) });
                         const payload = response.reviewFindings;
                         const normalized = payload ? normalizeReviewFindingsMessagePayload(payload) : null;
-                        const member: ReviewFindingsMember | null = normalized ? {
+                        const member: ReviewRunMember | null = normalized ? {
                             runId: reference.runId, backendId: normalized.runRef.backendId,
                             reviewerLabel: resolveExecutionRunBackendLabel(response.run.backendTarget) ?? normalized.runRef.backendId,
                             sessionId: reference.sessionId ?? null,
                             followUp: resolveReviewFollowUpAvailability(normalized.runRef, { sessionId: reference.sessionId ?? null }),
+                            overviewMarkdown: normalized.overviewMarkdown,
                             questions: normalized.questions, assumptions: normalized.assumptions,
                             findings: normalized.findings, commentByFindingId: EMPTY_COMMENTS, originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {},
                         } : null;

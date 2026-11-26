@@ -15,6 +15,7 @@ import type { ReviewHumanActionStateV1, ReviewVerdictKindV1 } from '@happier-dev
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { useSharePrincipalNames } from '@/components/sharing/sharePrincipalNames';
 import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -658,6 +659,12 @@ export function ReviewDetailHost(props: Readonly<{
           .map(request => ({ principal: request.principal, required: request.required }))}
         onCancel={() => setPeopleOpen(false)} onSubmit={savePeople} /> : null}
       {activeTab === 'findings' ? <>
+        {questionRuns.members.map(member => member.overviewMarkdown.trim() ? <ItemGroup key={member.runId}
+          title={member.reviewerLabel} surface="none">
+          <View style={{ paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() }}>
+            <MarkdownView markdown={member.overviewMarkdown} agentTexMath />
+          </View>
+        </ItemGroup> : null)}
         {comments.status === 'idle' || comments.status === 'loading' ? <ReviewFindingsLoading />
           : findings.rows.length > 0 ? <ReviewFindingsList rows={findingListRows}
               selection={canEdit ? { selectedRowIds: selectedFindingIds, onToggle: toggleSelection, disabled: bulkBusy,
