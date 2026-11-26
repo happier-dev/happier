@@ -1630,6 +1630,7 @@ describe('configured action execution through the shared Session owner', () => {
         { delivery: 'send', exhausted: false, outcome: 'accepted', requester: 'agent' },
         { delivery: 'send', exhausted: false, outcome: 'held', requester: 'agent' },
         { delivery: 'send', exhausted: false, outcome: 'accepted', noWatch: true },
+        { delivery: 'send', exhausted: false, outcome: 'accepted', noWatch: true, watchReadUnavailable: true },
         { delivery: 'send', exhausted: false, outcome: 'uncertain', noWatch: true },
         { delivery: 'send', exhausted: false, outcome: 'held', noWatch: true, otherForge: true, requester: 'agent' },
     ] as const)('verifies an existing PR checkout before $delivery ($requester $exhausted $outcome, no Watch: $noWatch)', async (scenario) => {
@@ -1645,6 +1646,7 @@ describe('configured action execution through the shared Session owner', () => {
             : 'https://github.com/example/repository/pull/17' });
         const watchRequests: JsonValue[] = [];
         let hasWatch = !noWatch || otherForge;
+        let watchReadUnavailable = 'watchReadUnavailable' in scenario;
         const directRequests: JsonValue[] = [];
         const boundaryFailures: unknown[] = [];
         const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
@@ -1678,7 +1680,10 @@ describe('configured action execution through the shared Session owner', () => {
                         watchRequests.push(value);
                         try {
                             const request = SessionPullRequestWatchInputV1Schema.parse(value);
-                            if (request.kind === 'get') return hasWatch ? watchState : { ...watchState, bindings: [] };
+                            if (request.kind === 'get') {
+                                if (watchReadUnavailable) return { kind: 'unavailable', sessionId: 'session-a', reason: 'unavailable' };
+                                return hasWatch ? watchState : { ...watchState, bindings: [] };
+                            }
                             expect(request).toMatchObject({ kind: 'deliverConfiguredFix',
                                 sessionId: 'session-a', bindingId: 'bound-pr', expectedRevision: 7,
                                 expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha,
@@ -1785,6 +1790,16 @@ describe('configured action execution through the shared Session owner', () => {
             ui: host, signal, sessionTargetsV1: { targets: [address] },
         } as unknown as TestAccountActionContext);
         expect(boundaryFailures).toEqual([]);
+        if (watchReadUnavailable) {
+            expect(directRequests).toHaveLength(0);
+            if (!('recovery' in result) || !result.recovery) throw new Error('Missing original input recovery');
+            watchReadUnavailable = false;
+            expect(await handler(parseHandoffInput({ ...input, resumeStart: result.recovery }), {
+                ui: host, signal, sessionTargetsV1: { targets: [address] },
+            } as unknown as TestAccountActionContext)).toMatchObject({ handoff: { kind: 'sendResult', result: { status: 'accepted' } } });
+            expect(directRequests).toHaveLength(1);
+            return;
+        }
         if (fromAgent) expect(result).toMatchObject({ handoff: { kind: 'sendResult' } });
         if (delivery === 'send' && !noWatch) expect(watchRequests).toHaveLength(2);
         if (noWatch && outcome === 'uncertain') {

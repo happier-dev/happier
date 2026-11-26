@@ -402,6 +402,7 @@ export async function runTriageConfiguredHandoffV1(
                         ...(forgeEvidence === undefined ? {} : { forgeEvidence }) } } } };
     }
     const invocation = custody.state.input;
+    const isConfiguredPullRequestFix = input.task === 'fix' && primary?.workflowSubject === 'pullRequest';
     let deliveryFailure: TriageSessionDeliveryFailureDetailV1 | undefined;
     let configuredFixWatchBindingId = retained?.state.configuredFixWatchBindingId;
     let effectPhase: 'create' | 'link' | 'send' = invocation.destination.kind === 'new' ? 'create' : 'link';
@@ -416,7 +417,7 @@ export async function runTriageConfiguredHandoffV1(
         if (id === 'session.message.send') effectPhase = 'send';
         const dispatchSessionAction = () => host.executeAction(id, value as unknown as JsonValue, { ...executionOptions, signal: options.signal });
         let result: unknown;
-        if (id === 'session.message.send' && input.task === 'fix' && primary?.workflowSubject === 'pullRequest') {
+        if (id === 'session.message.send' && isConfiguredPullRequestFix) {
             const unavailableFix = () => new PluginError({ code: 'triage_configured_fix_unavailable',
                 message: 'Retain this Fix input and retry when its original delivery target is available.', retryable: true });
             if (!knownSession || !reviewWorkspacePreparation
@@ -504,12 +505,18 @@ export async function runTriageConfiguredHandoffV1(
     }
     if (result.type === 'rejected' || result.type === 'workspacePreparationFailed') return targetUnavailable('session_start_refused', result.reason);
     const session = { serverId: custody.state.serverId, sessionId: result.sessionId };
-    if (result.type === 'linkPending' || result.delivery === 'outcomeUnknown') return finish({ kind: 'uncertain',
-        phase: result.type === 'linkPending' ? 'link' : 'send', session }, { ...custody,
-        state: { ...custody.state, pending: { phase: result.type === 'linkPending' ? 'linkPending' : 'openPending',
-            sessionId: result.sessionId, disposition: result.disposition }, uncertainPhase: result.type === 'linkPending' ? 'link' : 'send',
-            ...(deliveryFailure === undefined ? {} : { detail: deliveryFailure }),
-            ...(configuredFixWatchBindingId === undefined ? {} : { configuredFixWatchBindingId }) } });
+    if (result.type === 'linkPending' || result.delivery === 'outcomeUnknown') {
+        const phase = result.type === 'linkPending' ? 'link' : 'send';
+        // A failed Watch read leaves the input ready to retry. No delivery owner
+        // has been selected, so it cannot have accepted the input.
+        const preDispatch = phase === 'send' && isConfiguredPullRequestFix && configuredFixWatchBindingId === undefined;
+        return finish({ kind: 'uncertain', phase, session }, { ...custody,
+            state: { ...custody.state, pending: { phase: result.type === 'linkPending' ? 'linkPending' : 'openPending',
+                sessionId: result.sessionId, disposition: result.disposition },
+                ...(preDispatch ? {} : { uncertainPhase: phase }),
+                ...(deliveryFailure === undefined ? {} : { detail: deliveryFailure }),
+                ...(configuredFixWatchBindingId === undefined ? {} : { configuredFixWatchBindingId }) } });
+    }
     if (result.deliveryResult === undefined) return finish({ kind: 'uncertain', phase: 'send', session }, custody);
     return finish({ kind: 'sendResult', session, result: SessionMessageSendResultV1ProtocolSchema.parse(result.deliveryResult) });
 }
