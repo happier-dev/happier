@@ -18,10 +18,11 @@ export function ReviewPersonRequirementControl(props: Readonly<{
         checked={props.required} disabled={props.disabled}
         onPress={() => props.onChange(!props.required)} style={styles.control}>
         <SelectionCheckGlyph state={props.required ? 'checked' : 'unchecked'} size="compact" />
-        <Text variant="meta">{t(props.required ? 'reviewWalkthrough.detail.required' : 'reviewWalkthrough.detail.optional')}</Text>
+        <Text variant="meta" style={styles.label}>{t(props.required ? 'reviewWalkthrough.detail.required' : 'reviewWalkthrough.detail.optional')}</Text>
     </HappierPressable>;
 }
 
 const styles = StyleSheet.create(theme => ({
     control: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+    label: { color: theme.colors.text.primary },
 }));
