@@ -3934,14 +3934,11 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       }
       preparedHostReviewedChildren = { children: describeTeamSetupBatch(setup) };
     }
-    if (!existingAdmission && spec.hostReviewedChildren) {
-      const children = typeof spec.hostReviewedChildren === 'function'
+    const declaredHostReviewedChildren = !existingAdmission && spec.hostReviewedChildren
+      ? typeof spec.hostReviewedChildren === 'function'
         ? spec.hostReviewedChildren(admittedInput)
-        : spec.hostReviewedChildren;
-      if (children.length > 0) {
-        preparedHostReviewedChildren = { ...preparedHostReviewedChildren, children: [...(preparedHostReviewedChildren?.children ?? []), ...children] };
-      }
-    }
+        : spec.hostReviewedChildren
+      : undefined;
     // Confirm binds the admitted intent. Trusted preparation can add resolved
     // revisions/content without asking the person to approve that same intent again.
     const nativeConfirmation = !existingAdmission && !sharedRequesterRequest
@@ -3961,6 +3958,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       admitCredentialScope: (id, context, input) => admitCredentialScope(id, context, input, true),
       reviewAdmitted: nativeReview !== null,
       ...(preparedHostReviewedChildren ? { prepared: preparedHostReviewedChildren } : {}),
+      ...(declaredHostReviewedChildren?.length ? { declaredChildren: declaredHostReviewedChildren } : {}),
       approvalScopeAdmission: scopeAdmission,
       ...(existingAdmission ? { existing: existingAdmission } : {}), approvalReplay: options?.approvalReplay === true,
       isSameHome: (left, right) => isSameHome(left, right, ctx) });
