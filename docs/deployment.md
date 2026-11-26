@@ -3128,6 +3128,10 @@ and command; ordinary diagnostics, application bytes and separate build/runtime
 source progress remain unchanged. Cleanup removes only unchanged
 manifest leaves and that pinned log under the source-root and native storage deletion
 fence, preserving mounted paths, modified application files, shared data and other runtime bytes.
+After a successful settlement, the native Compose runtime removes images and
+exited containers of releases outside the Environment’s serving, rollback, and
+in-flight set. It removes only Happier’s exact image tags and leaves volumes and
+other workloads alone.
 The latest attempt's operation log remains available for investigation even when
 its failed release's source and images expire. Once another attempt becomes latest,
 the older log follows the existing active and retained-release policy.

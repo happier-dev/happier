@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, symlink, writ
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { OwnServerDeploymentInputBasisV1Schema, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
+import { OwnServerDeploymentInputBasisV1Schema, type DeploymentReceiptDetailV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { configuration } from '@/configuration';
@@ -12,7 +12,8 @@ import * as installationStore from '@/daemon/identity/store';
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
-import { resolveDeploymentSourcePathForHost, resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './paths';
+import { resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
+import { resolveDeploymentSourcePathForHost, resolveOwnServerDeploymentEnvironmentInstanceIdForHost, resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerSourceRetention, projectOwnServerDeploymentRetention, pruneOwnServerDeploymentSource } from './releaseRetention';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
@@ -36,6 +37,88 @@ function retentionRecords() {
         members: link.members.map(({ machineId, installationId }) => ({ machineId, installationId })) });
     return { environment, link, receipt, approvedInputBasis };
 }
+
+it('keeps the serving image and History rollback window after successive native settlements', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-release-images-'));
+    const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
+    const originalSettingsFile = Object.getOwnPropertyDescriptor(configuration, 'settingsFile')!;
+    const { environment, link, receipt: initial } = retentionRecords();
+    const history: DeploymentReceiptDetailV1[] = [];
+    const imageIds: string[] = [];
+    const departedProjects: string[] = [];
+    let receipt = initial;
+    try {
+        const tools = await createOwnServerDockerBoundary(join(root, 'tools'));
+        vi.stubEnv('PATH', `${join(root, 'tools')}${delimiter}${process.env.PATH ?? ''}`);
+        Object.defineProperty(configuration, 'happyHomeDir', { configurable: true, value: root });
+        Object.defineProperty(configuration, 'settingsFile', { configurable: true, value: join(root, 'settings.json') });
+        const profile = await addServerProfile({ name: 'home', serverUrl: 'https://home.test', webappUrl: 'https://home.test' });
+        await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact', descriptor: {
+            v: 1, homeServerIdentityId: 'srv_retention_home', canonicalServerUrl: profile.serverUrl, revision: 1,
+            endpoints: [{ kind: 'https', url: profile.serverUrl }],
+        } });
+        vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1, createdAt: 1,
+            installationId: 'installation-a', publicKey: 'installed-public-key', privateKey: 'unused-by-retention' });
+        const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
+            serverId: 'home', environmentId: environment.environment.id });
+        await mkdir(identity.deploymentRoot, { recursive: true });
+        const credentials = { token: 'unused-by-retention', encryption: null };
+        const host: OwnServerDeploymentTargetHostInput = {
+            credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+            async readEnvironment() { return structuredClone(environment); },
+            async readReceipt() { return structuredClone(receipt); },
+            async readRetentionHeaders() {
+                return structuredClone({ environment: environment.environment, deployment: receipt.deployment, link });
+            },
+            async *readBuildHistory() { for (const row of history) yield structuredClone(row); },
+            async writeTransition() { throw new Error('Terminal retention has no receipt writer'); },
+            runtime: createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home',
+                serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
+                resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const),
+                async acquirePluginRuntimeRegistryLease() { throw new Error('Retention has no plugin/source/secret acquisition'); } }),
+        };
+        const retention = createOwnServerSourceRetention(host);
+        const windowSize = environment.content.retainPreviousDeployments;
+        for (let index = 0; index < windowSize + 4; index++) {
+            receipt = structuredClone(initial);
+            const deploymentId = `release-${index}`;
+            receipt.deployment = { ...receipt.deployment, id: deploymentId, requestedAtMs: index + 1 };
+            receipt.content.images = [await tools.registerImage('app', deploymentId)];
+            receipt.content.machineResults = receipt.content.machineResults.map(row => ({ ...row, currentDeploymentId: deploymentId }));
+            receipt.deployment = { ...receipt.deployment, environmentId: environment.environment.id, targetLinkId: link.id };
+            history.push(receipt);
+            link.activeDeploymentId = deploymentId;
+            const image = receipt.content.images[0]!;
+            const refs = resolveNativeComposeDeploymentImageReferences({ environmentInstanceId: identity.environmentInstanceId,
+                deploymentId, image });
+            imageIds.push(await tools.setImagePruneState(image.configDigest, { repoTags: [refs.ownedTag, refs.activationRef], repoDigests: [] }));
+            const expiredIndex = index - windowSize - 1;
+            if (expiredIndex >= 0) {
+                const project = resolveNativeComposeCandidateProjectName(identity.projectName, history[expiredIndex]!.deployment.id);
+                await tools.setImageContainerReference(imageIds[expiredIndex]!, 'exited', project);
+                departedProjects.push(project);
+            }
+            const request: OwnServerDeploymentRequest = { actionId: 'deployments.deploy',
+                input: { serverId: 'home', environmentId: environment.environment.id, targetLinkId: link.id,
+                    expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision,
+                    requestKey: receipt.deployment.requestKey, contentArtifactId: receipt.deployment.contentArtifactId,
+                    contentHeaderVersion: receipt.deployment.contentHeaderVersion, contentBodyVersion: receipt.deployment.contentBodyVersion },
+                receipt: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
+                    deploymentId, deploymentRevision: receipt.deployment.revision, state: 'succeeded' },
+                context: { operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } };
+            expect(await retention.retain({ request, machineId: 'machine-a', installationId: 'installation-a',
+                settledTargetLinkRevision: link.revision, settledDeploymentRevision: receipt.deployment.revision,
+                activeDeploymentId: deploymentId })).toMatchObject({ ok: true });
+            expect([...(await tools.readPruneImageIds())].sort()).toEqual(imageIds.slice(-windowSize - 1).sort());
+            for (const project of departedProjects) expect(await tools.readContainerIds(project)).toEqual([]);
+        }
+    } finally {
+        vi.restoreAllMocks(); vi.unstubAllEnvs();
+        Object.defineProperty(configuration, 'happyHomeDir', originalHome);
+        Object.defineProperty(configuration, 'settingsFile', originalSettingsFile);
+        await rm(root, { recursive: true, force: true });
+    }
+});
 
 it('applies retention zero, one and greater while keeping the uniform and unsettled predecessor sources', () => {
     const { environment, link, receipt, approvedInputBasis } = retentionRecords();
@@ -201,7 +284,9 @@ it('admits retention once across unrelated edits and refuses a changed active re
         await expect(readFile(join(sourceRoot, 'input-255'))).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(readFile(join(logRoot, '.happier/deploy.log'))).rejects.toMatchObject({ code: 'ENOENT' });
         expect(await readFile(join(logRoot, '.happier/foreign'), 'utf8')).toBe('foreign bytes');
-        expect((await tools.readInvocations()).filter(value => value.args[0] === 'ps')).toHaveLength(1);
+        const listings = (await tools.readInvocations()).filter(value => value.args[0] === 'ps');
+        expect(listings.filter(value => value.args.includes('status=exited'))).toHaveLength(1);
+        expect(listings.filter(value => !value.args.includes('status=exited'))).toHaveLength(1);
         await writeSources();
         await machineNativeEffectAdmission.run({ operation: { operationId: 'other-activation', kind: 'deployments.deploy' },
             keys: [{ kind: 'dockerEngine', dockerEndpoint: 's0-docker-engine' }] }, async () => {

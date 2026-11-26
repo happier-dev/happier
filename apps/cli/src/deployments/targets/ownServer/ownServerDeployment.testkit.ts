@@ -773,6 +773,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     const filters = args.flatMap((arg, index) => arg === '--filter' ? [args[index + 1]] : []);
     const rows = [...state.containers, ...(state.nativeCaddy && filters.some(filter => filter.startsWith('network=')) ? [state.nativeCaddy] : [])];
     write(rows.filter(row => (args.includes('--all') || row.State.Status === 'running' || row.State.Running === true) && filters.every(filter => {
+        if (filter.startsWith('status=')) return row.State.Status === filter.slice('status='.length);
         if (filter.startsWith('volume=')) return row.Mounts.some(mount => mount.Name === filter.slice('volume='.length));
         if (filter.startsWith('id=')) return row.Id === filter.slice('id='.length);
         if (filter.startsWith('network=')) return Object.entries(row.NetworkSettings.Networks).some(([name, attachment]) =>
@@ -781,7 +782,8 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         const separator = label.indexOf('=');
         return separator < 0 ? Object.hasOwn(row.Config.Labels, label)
             : row.Config.Labels[label.slice(0, separator)] === label.slice(separator + 1);
-    })).map(row => row.Id).join('\n'));
+    })).map(row => args.at(-1).includes('.Label "com.docker.compose.project"')
+        ? row.Id + ' ' + row.Config.Labels['com.docker.compose.project'] : row.Id).join('\n'));
 } else if (args[0] === 'volume' && args[1] === 'create') {
     const name = args.at(-1);
     if (state.volumes.some(row => row.name === name)) throw new Error('fixture_volume_already_exists');
@@ -1000,12 +1002,16 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
         async readFailures(): Promise<readonly Readonly<{ command: string; operation?: string; errorClass: string; fixtureCode?: string }>[]> {
             return (await readFile(failuresPath, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
         },
-        async setImageContainerReference(nativeId: string, stateKind: 'running' | 'exited' | null) {
+        async setImageContainerReference(nativeId: string, stateKind: 'running' | 'exited' | null, composeProject?: string) {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: Array<{ Id: string; Image: string;
-                State: { Status: string }; Config: { Labels: Record<string, string>; Env: string[] } }> };
-            const id = `prune-container-${nativeId.slice('sha256:'.length)}`;
+                State: { Status: string }; Config: { Labels: Record<string, string>; Env: string[] };
+                Mounts?: []; NetworkSettings?: { Ports: object; Networks: object } }> };
+            const id = composeProject ? createHash('sha256').update(composeProject + nativeId).digest('hex')
+                : `prune-container-${nativeId.slice('sha256:'.length)}`;
             state.containers = state.containers.filter(container => container.Id !== id);
-            if (stateKind) state.containers.push({ Id: id, Image: nativeId, State: { Status: stateKind }, Config: { Labels: {}, Env: [] } });
+            if (stateKind) state.containers.push({ Id: id, Image: nativeId, State: { Status: stateKind },
+                Config: { Labels: composeProject ? { 'com.docker.compose.project': composeProject, 'com.docker.compose.service': 'app' } : {}, Env: [] },
+                Mounts: [], NetworkSettings: { Ports: {}, Networks: {} } });
             await writeState(state);
         },
         async setPruneEngineId(engineId: string) {

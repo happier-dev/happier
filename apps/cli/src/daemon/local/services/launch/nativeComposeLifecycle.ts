@@ -223,20 +223,22 @@ function record(value: unknown): value is Record<string, unknown> {
 /** Exact P30 generation witness only: labels validate custody, never discover deletion targets. */
 export async function removeWitnessedContainers(input: Readonly<{ ids: readonly string[]; project: string; services?: readonly string[];
     stopWithNativeGrace?: true;
+    exitedOnly?: true;
     run(args: readonly string[]): Promise<Readonly<{ exitCode: number | null; stdout: string }>> }>): Promise<boolean> {
     if (!input.ids.length || new Set(input.ids).size !== input.ids.length || input.ids.some(id => !/^[a-f0-9]{64}$/u.test(id))) return false;
     const before = await input.run(['inspect', '--type', 'container', ...input.ids]);
     const witnessed = before.exitCode === 0 ? containers(before.stdout, input.project) : null;
     if (!witnessed || witnessed.length !== input.ids.length
         || witnessed.some(row => !input.ids.includes(row.id)
-            || input.services !== undefined && !input.services.includes(row.service))) return false;
+            || input.services !== undefined && !input.services.includes(row.service)
+            || input.exitedOnly && row.state !== 'exited')) return false;
     if (input.stopWithNativeGrace) {
         // Omit --timeout: Docker owns the configured per-container StopTimeout.
         const stopped = await input.run(['container', 'stop', ...input.ids]);
         if (stopped.exitCode !== 0) return false;
     }
     // Non-force removal itself refuses a still-running/uncertain incumbent.
-    const removed = await input.run(['container', 'rm', ...(input.stopWithNativeGrace ? [] : ['--force']), ...witnessed.map(row => row.id)]);
+    const removed = await input.run(['container', 'rm', ...((input.stopWithNativeGrace || input.exitedOnly) ? [] : ['--force']), ...witnessed.map(row => row.id)]);
     if (removed.exitCode !== 0) return false;
     // A missing-id inspect and an unavailable engine can both emit [] with
     // exit 1. Only a successful native listing proves these exact ids absent.
@@ -245,6 +247,30 @@ export async function removeWitnessedContainers(input: Readonly<{ ids: readonly 
     if (after.exitCode !== 0) return false;
     const remaining = after.stdout.trim() ? after.stdout.trim().split('\n') : [];
     return remaining.every(id => /^[a-f0-9]{64}$/u.test(id) && !input.ids.includes(id));
+}
+
+/** Only receipt-owned, retired generations may supply containers for non-force removal. */
+export async function removeNativeComposeExitedDeploymentContainers(input: Readonly<{
+    projects: ReadonlySet<string>;
+    run: Parameters<typeof removeWitnessedContainers>[0]['run'];
+}>): Promise<'container_observation_unavailable' | 'container_removal_failed' | null> {
+    const listed = await input.run(['ps', '--all', '--no-trunc', '--filter', 'status=exited', '--filter',
+        'label=com.docker.compose.project', '--format', '{{.ID}} {{.Label "com.docker.compose.project"}}']);
+    if (listed.exitCode !== 0) return 'container_observation_unavailable';
+    const witnessed = new Map<string, string[]>();
+    for (const line of listed.stdout.trim().split(/\r?\n/u).filter(Boolean)) {
+        const [id, project] = line.split(' ');
+        if (!project || !input.projects.has(project)) continue;
+        if (!id || !/^[a-f0-9]{64}$/u.test(id)) return 'container_observation_unavailable';
+        const ids = witnessed.get(project) ?? [];
+        ids.push(id);
+        witnessed.set(project, ids);
+    }
+    let failure: 'container_removal_failed' | null = null;
+    for (const [project, ids] of witnessed) {
+        if (!await removeWitnessedContainers({ project, ids, exitedOnly: true, run: input.run })) failure = 'container_removal_failed';
+    }
+    return failure;
 }
 
 async function removeWitnessedProjectResources(input: Parameters<typeof removeWitnessedContainers>[0]): Promise<boolean> {

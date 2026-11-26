@@ -7,7 +7,10 @@ import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/s
 import { createNativeComposeIncumbentBindReader } from '@/daemon/local/services/launch/nativeComposeSharedData';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
+import { readNativeComposeDeploymentImageReferences, removeNativeComposeDeploymentImageReferences,
+    resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
+import { removeNativeComposeExitedDeploymentContainers,
+    resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { removeStoragePath, readStoragePathIdentity } from '@/storage/trash/removeStoragePath';
 import { resolveContainedWorkspaceMaterializationPath } from '@/scm/workspace/workspaceMaterializationSafety';
@@ -85,13 +88,15 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
                 ...resolveNativeComposeDeploymentImageReferences({ environmentInstanceId,
                     deploymentId: receipt.deployment.id, image }),
             }))) };
-    const expiredImages: readonly OwnServerDeploymentImageReference[] = input.receipts
-        .filter(receipt => !protectedIds.has(receipt.deployment.id) && isDeploymentSettledV1(receipt.deployment.state))
+    const expired = input.receipts.filter(receipt => !protectedIds.has(receipt.deployment.id)
+        && isDeploymentSettledV1(receipt.deployment.state));
+    const expiredImages: readonly OwnServerDeploymentImageReference[] = expired
         .flatMap(receipt => receipt.content.images.map(image => ({ deploymentId: receipt.deployment.id, image,
             ...resolveNativeComposeDeploymentImageReferences({ environmentInstanceId,
                 deploymentId: receipt.deployment.id, image }),
         })));
-    return { imageProtection, expiredImages, retainedPreviousDeploymentIds: previous.map(receipt => receipt.id),
+    return { imageProtection, expiredImages, expiredDeploymentIds: expired.map(receipt => receipt.deployment.id),
+        retainedPreviousDeploymentIds: previous.map(receipt => receipt.id),
         expiredSources: input.receipts.flatMap(receipt => receipt.content.ownServer?.sources ?? [])
         .filter(source => source.role === 'build' ? !unsettledIds.has(source.deploymentId) : !protectedIds.has(source.deploymentId)),
         expiredLogs: input.receipts.filter(receipt => !protectedIds.has(receipt.deployment.id) && receipt.deployment.id !== latest?.deployment.id)
@@ -193,7 +198,7 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
     return { async retain(input: OwnServerDeploymentRetentionRequest) {
         if (input.machineId !== host.machineId || !host.runtime.acquireRetention || !host.readBuildHistory || !host.readRetentionHeaders) return refuse('unsupported_action');
         const snapshot = await read(input);
-        const { environmentInstanceId, homeServerIdentityId } = await resolveOwnServerDeploymentIdentityForHost({
+        const { environmentInstanceId, homeServerIdentityId, projectName } = await resolveOwnServerDeploymentIdentityForHost({
             happierHomeDir: configuration.happyHomeDir, serverId: host.serverId, environmentId: snapshot.environment.environment.id });
         const recheck = async () => {
             const current = await host.readRetentionHeaders!({ environmentId: input.request.input.environmentId,
@@ -212,7 +217,15 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
         const sources = expired.expiredSources
             .filter(source => source.machineId === input.machineId && source.installationId === input.installationId);
         const logs = expired.expiredLogs.filter(({ log }) => log.machineId === input.machineId && log.installationId === input.installationId);
-        if (sources.length || logs.length) {
+        const retiredProjects = new Set(expired.expiredDeploymentIds.map(id => resolveNativeComposeCandidateProjectName(projectName, id)));
+        const retiredImageReferences = new Set(expired.expiredImages.flatMap(({ ownedTag, activationRef }) => [ownedTag, activationRef]));
+        if (expired.imageProtection.status === 'complete') {
+            for (const { ownedTag, activationRef } of expired.imageProtection.images) {
+                retiredImageReferences.delete(ownedTag);
+                retiredImageReferences.delete(activationRef);
+            }
+        } else retiredImageReferences.clear();
+        if (sources.length || logs.length || retiredProjects.size || retiredImageReferences.size) {
             const runtime = await host.runtime.acquireRetention(input, recheck);
             try {
                 const run = async (args: readonly string[]) => {
@@ -236,7 +249,16 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                 await machineNativeEffectAdmission.run({ operation: { operationId: snapshot.receipt.deployment.actionOperationId,
                     kind: input.request.actionId, ...(input.request.context.signal ? { signal: input.request.context.signal } : {}) },
                     keys: [{ kind: 'dockerEngine', dockerEndpoint: engine.id }], settleNative: runtime.settleNative }, async () => {
-                    const nativeBindSources = await createNativeComposeIncumbentBindReader({ projectName: '', run }).bindSources();
+                    const containerWarning = retiredProjects.size ? await removeNativeComposeExitedDeploymentContainers({ projects: retiredProjects, run }) : null;
+                    if (containerWarning) logger.infoFile('[Deployment] Expired containers were kept', { code: containerWarning });
+                    if (retiredImageReferences.size) {
+                        const present = await readNativeComposeDeploymentImageReferences(environmentInstanceId, run);
+                        const imageWarning = present === null ? 'image_observation_unavailable'
+                            : await removeNativeComposeDeploymentImageReferences(present.filter(reference => retiredImageReferences.has(reference)), run);
+                        if (imageWarning) logger.infoFile('[Deployment] Expired images were kept', { code: imageWarning });
+                    }
+                    const nativeBindSources = sources.length || logs.length
+                        ? await createNativeComposeIncumbentBindReader({ projectName: '', run }).bindSources() : [];
                     for (const source of sources) {
                         const result = await pruneOwnServerDeploymentSource({ deploymentRoot: runtime.deploymentRoot,
                             environmentInstanceId, source, nativeBindSources,

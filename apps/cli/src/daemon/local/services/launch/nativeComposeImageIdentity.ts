@@ -255,6 +255,17 @@ export async function readNativeComposeDeploymentImageReferences(environmentInst
     return [...new Set(references)];
 }
 
+/** Remove only exact Environment-owned aliases, preserving other aliases and parent layers. */
+export async function removeNativeComposeDeploymentImageReferences(
+    references: readonly string[], run: Parameters<typeof readNativeComposeDeploymentImageReferences>[1],
+): Promise<'image_removal_failed' | null> {
+    let failure: 'image_removal_failed' | null = null;
+    for (const reference of references) {
+        if ((await run(['image', 'rm', '--no-prune', reference])).exitCode !== 0) failure = 'image_removal_failed';
+    }
+    return failure;
+}
+
 /** Build/export custody exists before the native CONFIG digest is known. */
 export function resolveNativeComposeDeploymentOwnedImageTag(input: Readonly<{
     environmentInstanceId: string; deploymentId: string; service: string; platform: string;
