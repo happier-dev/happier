@@ -3,6 +3,7 @@ import { decodeBase64, defineProtocolLiteral, defineProtocolObject, defineProtoc
 import { normalizePluginUiSubPathV1 } from '@happier-dev/plugin-sdk/ui';
 import type { WorkbenchLocation } from '../models.js';
 import { workbenchTargetKey } from '../../targetIdentity.js';
+import { databaseOriginName } from './engines.js';
 
 export const WorkbenchModeSchema = defineProtocolUnion([
   defineProtocolLiteral('data'),
@@ -65,7 +66,7 @@ export function encodeWorkbenchPageSubPath(
 ): string {
   const prefix = `~run-on/${placement.serverId}/${placement.machineId}/${placement.installationId}/`;
   // Managed read setup may refuse before the demand can return a descriptor.
-  const display = target.kind === 'managed_deployment' ? { engine, label, origin: origin.label } : undefined;
+  const display = target.kind === 'managed_deployment' ? { engine, label, origin: databaseOriginName(origin) } : undefined;
   return encodeWorkbenchSubPath(location, target, display, prefix);
 }
 

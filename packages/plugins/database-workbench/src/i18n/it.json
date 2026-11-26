@@ -104,6 +104,6 @@
   "plugins.database.insights.workflowUnavailable": "Impossibile aprire l’editor dei flussi di lavoro.",
   "plugins.database.refresh": "Aggiorna",
   "plugins.database.retry": "Riprova",
-  "plugins.database.readSetup.editingOff": "Creare un accesso modifica il database, quindi serve la modifica del database. Usa un accesso in sola lettura che hai già oppure chiedi a un responsabile dell’ambiente di attivare la modifica.",
+  "plugins.database.readSetup.editingOff": "Usa un accesso in sola lettura che hai già oppure chiedi a un responsabile dell’ambiente di attivare la modifica del database.",
   "plugins.database.readSetup.recovery": "L’accesso in sola lettura {role} è stato creato e salvato, ma Workbench non è riuscito a usarlo. Usa questo accesso per completare la configurazione."
 }

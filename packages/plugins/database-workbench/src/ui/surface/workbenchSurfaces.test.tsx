@@ -610,8 +610,10 @@ describe('Database workbench surfaces', () => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
         targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway-data', contributionId: engine },
         platformProjectId: 'project', branchId: 'branch', database: 'railway' } as const;
-    const connected = { ...descriptor, target, engine, label: 'Billing', origin: { label: 'Railway' } };
-    const identity = `${engineName} · Billing · Railway`;
+    const connected = { ...descriptor, target, engine, label: 'Billing',
+      origin: { label: 'Railway', environmentName: 'Orders API Production', environment: 'production' as const } };
+    // The rail's facts line: the engine and the Environment, never the database name the description already says.
+    const identity = `${engineName} · Orders API Production`;
     const openSurface = vi.fn<PluginUiHostApi['openSurface']>().mockResolvedValue(undefined);
     await openWorkbenchPage({ openSurface }, connected);
     const [, , options] = openSurface.mock.calls[0]!;

@@ -104,6 +104,6 @@
   "plugins.database.insights.workflowUnavailable": "Nie udało się otworzyć edytora przepływu pracy.",
   "plugins.database.refresh": "Odśwież",
   "plugins.database.retry": "Spróbuj ponownie",
-  "plugins.database.readSetup.editingOff": "Utworzenie loginu zmienia bazę danych, więc wymaga włączonej edycji bazy danych. Użyj istniejącego loginu tylko do odczytu albo poproś menedżera środowiska o włączenie edycji.",
+  "plugins.database.readSetup.editingOff": "Użyj istniejącego loginu tylko do odczytu albo poproś menedżera środowiska o włączenie edycji bazy danych.",
   "plugins.database.readSetup.recovery": "Login tylko do odczytu {role} został utworzony i zapisany, ale Workbench nie mógł zacząć go używać. Użyj tego loginu, aby dokończyć konfigurację."
 }

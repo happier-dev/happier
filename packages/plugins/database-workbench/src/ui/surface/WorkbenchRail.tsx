@@ -31,7 +31,7 @@ import { sameRelation } from '../location.js';
 import { workbenchTargetKey } from '../workbench.js';
 import { approxRowsLabel } from './sizes.js';
 import { CatalogueReadFailure } from './CatalogueReadFailure.js';
-import { databaseEngineName } from './engines.js';
+import { databaseEngineName, databaseOriginName } from './engines.js';
 import { CataloguePagination } from './CataloguePagination.js';
 import { NavigationList } from '@happier-dev/plugin-ui/components';
 
@@ -182,9 +182,9 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
   </Stack>;
 }
 
-/** One fact line under the name: engine and where it came from, the same facts the Dev servers row shows. */
-export function databaseFacts(descriptor: DatabaseDescriptorV1): string {
-  return [databaseEngineName(descriptor.engine), descriptor.origin.label]
+/** One fact line under the name: engine and where it lives, the same facts the Dev servers row and read setup show. */
+export function databaseFacts(descriptor: Readonly<Pick<DatabaseDescriptorV1, 'engine' | 'origin'>>): string {
+  return [databaseEngineName(descriptor.engine), databaseOriginName(descriptor.origin)]
     .filter(Boolean)
     .join(' · ');
 }

@@ -1693,7 +1693,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.confirmAttach": "Usar este utilizador",
   "plugins.database.readSetup.create": "Criar um utilizador com acesso só de leitura",
   "plugins.database.readSetup.description": "Escolha um utilizador com acesso só de leitura a {database} para poder consultar as tabelas.",
-  "plugins.database.readSetup.editingOff": "Criar um login altera o banco de dados, então é preciso que a edição do banco de dados esteja ativada. Use um login somente leitura que você já tenha ou peça a um gestor do ambiente para ativar a edição.",
+  "plugins.database.readSetup.editingOff": "Use um login somente leitura que você já tenha ou peça a um gestor do ambiente para ativar a edição do banco de dados.",
   "plugins.database.readSetup.pending": "A aguardar aprovação.",
   "plugins.database.readSetup.recovery": "O login somente leitura {role} foi criado e salvo, mas o Workbench não conseguiu começar a usá-lo. Use esse login para concluir a configuração.",
   "plugins.database.readSetup.review": "Rever o utilizador com acesso só de leitura",

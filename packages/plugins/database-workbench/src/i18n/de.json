@@ -104,6 +104,6 @@
   "plugins.database.insights.workflowUnavailable": "Der Workflow-Editor konnte nicht geöffnet werden.",
   "plugins.database.refresh": "Aktualisieren",
   "plugins.database.retry": "Erneut versuchen",
-  "plugins.database.readSetup.editingOff": "Das Erstellen eines Logins ändert die Datenbank und erfordert daher die Datenbankbearbeitung. Verwende ein vorhandenes Nur-Lese-Login oder bitte eine verantwortliche Person der Umgebung, die Bearbeitung zu aktivieren.",
+  "plugins.database.readSetup.editingOff": "Verwende ein vorhandenes Nur-Lese-Login oder bitte eine verantwortliche Person der Umgebung, die Datenbankbearbeitung zu aktivieren.",
   "plugins.database.readSetup.recovery": "Das Nur-Lese-Login {role} wurde erstellt und gespeichert, aber Workbench konnte es nicht verwenden. Verwende dieses Login, um die Einrichtung abzuschließen."
 }

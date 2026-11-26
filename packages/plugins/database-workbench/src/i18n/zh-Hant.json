@@ -104,6 +104,6 @@
   "plugins.database.insights.workflowUnavailable": "無法開啟工作流程編輯器。",
   "plugins.database.refresh": "重新整理",
   "plugins.database.retry": "重試",
-  "plugins.database.readSetup.editingOff": "建立登入會變更資料庫，因此需要開啟資料庫編輯。請使用現有的唯讀登入，或請環境管理員開啟編輯。",
+  "plugins.database.readSetup.editingOff": "請使用現有的唯讀登入，或請環境管理員開啟資料庫編輯。",
   "plugins.database.readSetup.recovery": "唯讀登入 {role} 已建立並儲存，但 Workbench 無法開始使用。請使用此登入完成設定。"
 }

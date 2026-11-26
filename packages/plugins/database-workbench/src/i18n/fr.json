@@ -104,6 +104,6 @@
   "plugins.database.insights.workflowUnavailable": "Impossible d’ouvrir l’éditeur de flux de travail.",
   "plugins.database.refresh": "Actualiser",
   "plugins.database.retry": "Réessayer",
-  "plugins.database.readSetup.editingOff": "Créer un identifiant modifie la base de données : la modification de la base doit donc être activée. Utilisez un identifiant en lecture seule existant, ou demandez à un responsable de l’environnement d’activer la modification.",
+  "plugins.database.readSetup.editingOff": "Utilisez un identifiant en lecture seule existant, ou demandez à un responsable de l’environnement d’activer la modification de la base de données.",
   "plugins.database.readSetup.recovery": "L’identifiant en lecture seule {role} a été créé et enregistré, mais Workbench n’a pas pu commencer à l’utiliser. Utilisez cet identifiant pour terminer la configuration."
 }

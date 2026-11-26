@@ -123,8 +123,10 @@ function railwayTarget(engine: 'postgresql' | 'mysql'): DatabaseManagedDeploymen
     database: 'railway',
   };
 }
+// The display facts a Workbench open carries for a managed database: engine, name and its Environment.
 function railwayPath(engine: 'postgresql' | 'mysql'): string {
-  return 'target/' + encodeBase64(new TextEncoder().encode(JSON.stringify(railwayTarget(engine))), 'base64url');
+  const display = { engine, label: 'railway', origin: 'Billing staging' };
+  return 'target/' + encodeBase64(new TextEncoder().encode(JSON.stringify({ target: railwayTarget(engine), display })), 'base64url');
 }
 const CREATE_READ_ACCESS = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
 const READ_ACCESS = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);

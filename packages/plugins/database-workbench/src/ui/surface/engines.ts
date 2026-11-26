@@ -8,3 +8,8 @@ const ENGINE_NAMES: Readonly<Record<string, string>> = {
 export function databaseEngineName(engine: string): string {
   return ENGINE_NAMES[engine] ?? engine;
 }
+
+/** Where a database lives, as people name it: its admitted Environment when the origin names only the managed provider. */
+export function databaseOriginName(origin: Readonly<{ label: string; environmentName?: string }>): string {
+  return origin.environmentName ?? origin.label;
+}

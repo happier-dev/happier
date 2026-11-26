@@ -1693,7 +1693,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.confirmAttach": "Diesen Zugang verwenden",
   "plugins.database.readSetup.create": "Nur-Lese-Zugang erstellen",
   "plugins.database.readSetup.description": "Wähle einen Nur-Lese-Zugang für {database}, damit du die Tabellen durchsuchen kannst.",
-  "plugins.database.readSetup.editingOff": "Das Erstellen eines Logins ändert die Datenbank und erfordert daher die Datenbankbearbeitung. Verwende ein vorhandenes Nur-Lese-Login oder bitte eine verantwortliche Person der Umgebung, die Bearbeitung zu aktivieren.",
+  "plugins.database.readSetup.editingOff": "Verwende ein vorhandenes Nur-Lese-Login oder bitte eine verantwortliche Person der Umgebung, die Datenbankbearbeitung zu aktivieren.",
   "plugins.database.readSetup.pending": "Warten auf Genehmigung.",
   "plugins.database.readSetup.recovery": "Das Nur-Lese-Login {role} wurde erstellt und gespeichert, aber Workbench konnte es nicht verwenden. Verwende dieses Login, um die Einrichtung abzuschließen.",
   "plugins.database.readSetup.review": "Nur-Lese-Zugang prüfen",

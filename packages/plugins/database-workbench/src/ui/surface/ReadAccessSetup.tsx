@@ -14,8 +14,8 @@ import { Action, Button, CodeBlock, ErrorState, PageHeader, Row, ScrollArea, Sta
 import { SavedSecretChoiceList, type SavedSecretChoiceSelection } from '@happier-dev/plugin-ui/components';
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { translateUnverifiedServerNotice } from './connectionCopy.js';
-import { databaseEngineName } from './engines.js';
 import type { WorkbenchTargetDisplay } from './subPath.js';
+import { databaseFacts } from './WorkbenchRail.js';
 
 const attachAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
 const createAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
@@ -34,9 +34,8 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
     | Readonly<{ kind: 'failure'; execution: PluginActionExecution; recovery: SavedSecretChoiceSelection | null }>
     | null
   >(null);
-  const identity = display
-    ? [databaseEngineName(display.engine), display.label, display.origin].filter(Boolean).join(' · ')
-    : undefined;
+  // The rail's facts line; the description already names the database.
+  const identity = display ? databaseFacts({ engine: display.engine, origin: { label: display.origin } }) : undefined;
   const title = t('plugins.database.readSetup.title', 'Set up read-only access');
   const attachTitle = t('plugins.database.readSetup.attach', 'Use existing read-only login');
   const createTitle = t('plugins.database.readSetup.create', 'Create read-only login');
@@ -88,9 +87,10 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
     : notice?.kind === 'failure' ? <Action.Failure execution={notice.execution} />
     : notice?.kind === 'unexpected' ? <ErrorState layout="line" title={notice.text} /> : undefined;
   if (!attaching && !review) {
-    return <SurfaceState kind="unavailable" size="page" title={title}
+    // A prerequisite on a reachable database: its mark, not the unavailable kind's offline glyph.
+    return <SurfaceState kind="unavailable" icon="database" size="page" title={title}
       description={editingOff
-        ? t('plugins.database.readSetup.editingOff', 'Creating a login changes the database, so it needs database editing. Use a read-only login you already have, or ask an Environment manager to turn editing on.')
+        ? t('plugins.database.readSetup.editingOff', 'Use a read-only login you already have, or ask an Environment manager to turn on database editing.')
         : t('plugins.database.readSetup.description', 'Choose a read-only login for {database} so you can browse its tables.', { database: target.database })}
       note={identity}
       body={failure}

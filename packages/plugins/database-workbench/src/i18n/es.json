@@ -104,6 +104,6 @@
   "plugins.database.insights.workflowUnavailable": "No se pudo abrir el editor de flujos de trabajo.",
   "plugins.database.refresh": "Actualizar",
   "plugins.database.retry": "Volver a intentar",
-  "plugins.database.readSetup.editingOff": "Crear un inicio de sesión modifica la base de datos, así que necesita la edición de la base de datos. Usa un inicio de sesión de solo lectura que ya tengas o pide a un responsable del entorno que active la edición.",
+  "plugins.database.readSetup.editingOff": "Usa un inicio de sesión de solo lectura que ya tengas o pide a un responsable del entorno que active la edición de la base de datos.",
   "plugins.database.readSetup.recovery": "Se creó y guardó el inicio de sesión de solo lectura {role}, pero Workbench no pudo empezar a usarlo. Usa ese inicio de sesión para terminar la configuración."
 }

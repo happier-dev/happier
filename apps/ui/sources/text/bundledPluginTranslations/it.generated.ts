@@ -1693,7 +1693,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.confirmAttach": "Usa questo utente",
   "plugins.database.readSetup.create": "Crea un utente con accesso in sola lettura",
   "plugins.database.readSetup.description": "Scegli un utente con accesso in sola lettura a {database} per esplorarne le tabelle.",
-  "plugins.database.readSetup.editingOff": "Creare un accesso modifica il database, quindi serve la modifica del database. Usa un accesso in sola lettura che hai già oppure chiedi a un responsabile dell’ambiente di attivare la modifica.",
+  "plugins.database.readSetup.editingOff": "Usa un accesso in sola lettura che hai già oppure chiedi a un responsabile dell’ambiente di attivare la modifica del database.",
   "plugins.database.readSetup.pending": "In attesa di approvazione.",
   "plugins.database.readSetup.recovery": "L’accesso in sola lettura {role} è stato creato e salvato, ma Workbench non è riuscito a usarlo. Usa questo accesso per completare la configurazione.",
   "plugins.database.readSetup.review": "Verifica l’utente con accesso in sola lettura",
