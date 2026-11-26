@@ -280,9 +280,9 @@ it('shows authorized Hunt history counts without inheriting another Review human
                 scope: { workspace: { machineId, path: harness.baseDir } }, execute });
             const read = async (reviewId: string, commentId: string) => ReviewCommentGetResponseV1Schema.parse(
                 await execute('reviews.comments.get', { reviewId, commentId })).comment;
-            const persist = async (findings: typeof repeated[], workflow = workflowId) => {
+            const persist = async (findings: typeof repeated[], workflow = workflowId, ports = { records, comments }) => {
                 const reviewId = randomUUID(), runId = randomUUID();
-                const binding = await records.start({ reviewId, title: 'Security sweep', subjectKind: 'repository',
+                const binding = await ports.records.start({ reviewId, title: 'Security sweep', subjectKind: 'repository',
                     sourceKind: 'workflow', workflowId: workflow, workflowRunId: runId, reviewerIds: ['reviewer'], startedAt: Date.now() });
                 const run: ExecutionRunState = { runId, callId: runId, sidechainId: runId, sessionId: null, depth: 0,
                     intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
@@ -293,9 +293,9 @@ it('shows authorized Hunt history counts without inheriting another Review human
                     rawText: JSON.stringify({ summary: 'Reviewed.', reviewOutcome: 'complete', findings }) });
                 expect(normalized.status).toBe('succeeded');
                 const payload = ReviewFindingsV2Schema.parse(normalized.structuredMeta?.payload);
-                const result = await comments.materialize({ run, findings: payload.findings, reviewedFingerprint: null, review: binding });
+                const result = await ports.comments.materialize({ run, findings: payload.findings, reviewedFingerprint: null, review: binding });
                 expect(result).toMatchObject({ status: 'materialized', failures: [] });
-                await records.settle({ ...binding, outcome: 'completed', finishedAt: Date.now(), runs: [{ kind: 'workflow', runId }] });
+                await ports.records.settle({ ...binding, outcome: 'completed', finishedAt: Date.now(), runs: [{ kind: 'workflow', runId }] });
                 return { reviewId, runId, result };
             };
             await persist([repeated]);
@@ -307,11 +307,31 @@ it('shows authorized Hunt history counts without inheriting another Review human
             expect(closed).toMatchObject({ state: 'dismissed', reviewTriageStatus: 'reject' });
             // Same identity on a different Hunt cannot inflate this Hunt's counts.
             await persist([repeated, fresh], randomUUID());
+            // An unshared Review on this exact Hunt also cannot contribute identities,
+            // counts or a previous decision to the reader's authorized history.
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const outsiderToken = await createAccountTokenForTests(outsider.id, { kind: 'account', authority: 'present_user' });
+            const outsiderMachineId = randomUUID(), outsiderInstallationId = randomUUID(), outsiderKeys = tweetnacl.sign.keyPair();
+            await createTrustedMachineInstallation({ accountId: outsider.id, machineId: outsiderMachineId,
+                installationId: outsiderInstallationId, keyPair: outsiderKeys });
+            const outsiderArtifacts = createCredentialedAccountArtifactStore({ token: outsiderToken, encryption: null });
+            const outsiderExecute = createCliReviewCommentActionExecutorFromCredentials({
+                credentials: { token: outsiderToken, encryption: null },
+                resolvePrincipalSigningContext: async () => ({ machineId: outsiderMachineId,
+                    installationId: outsiderInstallationId, privateKeyBase64Url: Buffer.from(outsiderKeys.secretKey).toString('base64url') }) });
+            const privateReview = await persist([repeated, fresh], workflowId, {
+                records: createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(outsiderArtifacts)),
+                comments: createReviewRunCommentService({ cwd: harness.baseDir,
+                    scope: { workspace: { machineId: outsiderMachineId, path: harness.baseDir } }, execute: outsiderExecute }),
+            });
             const current = await persist([repeated, stillOpen, fresh]);
             const currentFinding = await read(current.reviewId, current.result.comments.find(row => row.findingId === repeated.id)!.comment.id);
             const openFinding = await read(current.reviewId, current.result.comments.find(row => row.findingId === stillOpen.id)!.comment.id);
             const freshFinding = await read(current.reviewId, current.result.comments.find(row => row.findingId === fresh.id)!.comment.id);
             const reader = createActionExecutor(createAccountServerActionDeps({ token, serverId: origin, serverHttpBaseUrl: origin }));
+            expect(await reader.execute('review.get', { reviewId: privateReview.reviewId },
+                { surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true }))
+                .toMatchObject({ ok: false, errorCode: 'review_not_found' });
             const result = await reader.execute('review.history.list', { workflowId, reviewId: current.reviewId },
                 { surface: 'cli', authority: 'present_user', serverId: origin, bypassApprovals: true });
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
