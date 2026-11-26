@@ -3,6 +3,7 @@ import {
   type ProviderPromptDispatchSession,
 } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
 import type { ReplaySeedSettlementResultV1 } from '@/agent/runtime/replaySeed/replaySeedV1';
+import { resolveTrustedSessionAttachmentFilePaths } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import type { EnhancedMode } from '@/backends/claude/loop';
 import { parseSpecialCommand } from '@happier-dev/protocol';
 import { parseCheckpointsCommand, parseRewindCommand } from '@/backends/claude/remote/agentSdk/claudeAgentSdkSlashCommands';
@@ -10,6 +11,7 @@ import { parseCheckpointsCommand, parseRewindCommand } from '@/backends/claude/r
 /** Claude's single adapter from a raw queued message to the exact provider prompt. */
 export async function resolveClaudeQueuedPromptForDispatch(params: Readonly<{
   sessionClient: ProviderPromptDispatchSession;
+  sessionDirectory: string;
   batch: Readonly<{
     message: string;
     providerPromptMeta?: unknown;
@@ -38,8 +40,18 @@ export async function resolveClaudeQueuedPromptForDispatch(params: Readonly<{
     refreshMetadataBeforeRead: !params.didBootstrap,
   });
 
+  const uploads = localCommand ? [] : [...await resolveTrustedSessionAttachmentFilePaths({
+    cwd: params.sessionDirectory,
+    metadata: params.batch.providerPromptMeta,
+  })];
+  const message = uploads.length === 0 ? resolution.providerPrompt
+    : `${resolution.providerPrompt}
+
+Use these absolute paths to read the uploaded files:
+${uploads.map((path) => JSON.stringify(path)).join('\n')}`;
+
   return {
-    message: resolution.providerPrompt,
+    message,
     didBootstrap: true,
     seedApplied: resolution.seedApplied,
     settleReplaySeedOnProviderAcceptance: resolution.settleReplaySeedOnProviderAcceptance,

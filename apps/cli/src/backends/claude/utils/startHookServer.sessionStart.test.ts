@@ -27,7 +27,7 @@ async function runSessionForwarder(params: {
   hookEventName: string;
   secretFile?: string;
   body: unknown;
-}): Promise<{ code: number | null; stdout: string; stderr: string }> {
+}): Promise<{ code: number | null; stderr: string }> {
   const scriptPath = resolve(process.cwd(), 'scripts', 'session_hook_forwarder.cjs');
   const args = [scriptPath, String(params.port), params.hookEventName];
   if (params.secretFile) {
@@ -36,16 +36,13 @@ async function runSessionForwarder(params: {
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, args, {
       cwd: process.cwd(),
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['pipe', 'ignore', 'pipe'],
     });
     let stderr = '';
-    let stdout = '';
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { stdout += chunk; });
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => { stderr += chunk; });
     child.on('error', reject);
-    child.on('close', (code) => resolvePromise({ code, stdout, stderr }));
+    child.on('close', (code) => resolvePromise({ code, stderr }));
     child.stdin.end(JSON.stringify(params.body));
   });
 }
@@ -155,42 +152,6 @@ describe('startHookServer (/hook/session-start authentication, A5-MED-2)', () =>
     expect(onSessionHook).toHaveBeenCalledWith('via-forwarder', expect.objectContaining({
       hook_event_name: 'SessionStart',
     }));
-  });
-
-  it('returns attachment paths relative to the launch workspace to Claude after its cwd changes', async () => {
-    const sessionWorkingDirectory = resolve('project with spaces');
-    const server = await startHookServer({ onSessionHook: vi.fn(), sessionWorkingDirectory });
-    servers.push(server);
-    const path = '.happier/uploads/messages/message-1/12345678-image.png';
-    const customPath = 'custom uploads/messages/message-1/1234abcd-diagram (2).pdf';
-    const multilineNamePath = '.happier/uploads/messages/message-1/1234abcd-plot_final.png';
-    const result = await runSessionForwarder({
-      port: server.port,
-      hookEventName: 'UserPromptSubmit',
-      body: {
-        session_id: 'with-attachment',
-        cwd: join(sessionWorkingDirectory, 'nested'),
-        prompt: [
-          'Please look at this.',
-          '',
-          'Attachments: open and analyze these files before answering.',
-          '[attachments]',
-          `- ${multilineNamePath} (plot\nfinal.png, image/png, 22 bytes)`,
-          `- ${path} (image.png, image/png, 22 bytes)`,
-          `- ${customPath} (diagram (2).pdf, application/pdf, 80 bytes)`,
-          '- ../outside/messages/message-1/1234abcd-private.txt (private.txt, text/plain, 80 bytes)',
-          '[/attachments]',
-        ].join('\r\n'),
-      },
-    });
-
-    expect(result.code).toBe(0);
-    const { hookSpecificOutput } = JSON.parse(result.stdout);
-    expect(hookSpecificOutput.hookEventName).toBe('UserPromptSubmit');
-    expect(hookSpecificOutput.additionalContext).toContain(JSON.stringify(resolve(sessionWorkingDirectory, path)));
-    expect(hookSpecificOutput.additionalContext).toContain(JSON.stringify(resolve(sessionWorkingDirectory, customPath)));
-    expect(hookSpecificOutput.additionalContext).toContain(JSON.stringify(resolve(sessionWorkingDirectory, multilineNamePath)));
-    expect(hookSpecificOutput.additionalContext).not.toContain('private.txt');
   });
 
   it('makes non-2xx hook delivery visible through a nonzero command exit', async () => {
