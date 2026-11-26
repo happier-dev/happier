@@ -117,7 +117,7 @@ describe('decodeVoiceAssistantActions', () => {
     const input = [
       {
         t: 'startReview',
-        args: { engineIds: ['claude'], instructions: 'Review the repo.', changeType: 'committed', base: { kind: 'none' } },
+        args: { reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review the repo.', changeType: 'committed', base: { kind: 'none' } },
       },
     ];
 
@@ -127,13 +127,14 @@ describe('decodeVoiceAssistantActions', () => {
       {
         t: 'startReview',
         args: {
-          engineIds: ['claude'],
+          reviewers: [{ kind: 'engine', engineId: 'claude' }],
           instructions: 'Review the repo.',
           changeType: 'committed',
           base: { kind: 'none' },
           engines: {},
           permissionMode: 'read_only',
           reviewCommentAuthorIntent: 'propose',
+          scope: 'changes',
         },
       },
     ]);
