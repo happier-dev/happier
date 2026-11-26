@@ -969,7 +969,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Confirmer la connexion de la machine",
         confirm: "Confirmer la connexion",
-        consequence: "Une fois créée, tu confirmes sa connexion dans T’attend.",
+        consequence: "Une fois créée, elle se connecte à ton compte.",
         consequenceTitle: "Connexion au compte",
         expired: "L’approbation de connexion a expiré. Relance la configuration pour la redemander.",
         notWaiting: "Elle a déjà reçu une réponse ou a expiré.",

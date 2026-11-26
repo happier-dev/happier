@@ -32,6 +32,8 @@ import type { AccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { randomUUID } from 'node:crypto';
+import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import type { ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 import { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
@@ -40,7 +42,8 @@ import { isFilesystemActionId } from '@happier-dev/protocol/actions/filesystemAc
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readExternalActionBindingAuthority, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { prepareOriginalAccountPresetAcquire, projectExternalActionRequesterHttpAuthorization, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
+import { executeOriginalAccountRequesterOperation, prepareOriginalAccountPresetAcquire, projectExternalActionRequesterHttpAuthorization, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
+import { answerAdmittedManagedAcquireSignIn } from '@/machines/managed/installationResponse';
 import { ManagedMachineActionIdV1Schema, isManagedRetainedControlInvocation } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveManagedControlControllerTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_LIST_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -185,12 +188,30 @@ export function createCliActionHost(params: CliActionExecutorParams):
         if (deliver) {
           // The managed effect owner carries a typed failure envelope unchanged.
           const result = await deliver();
+          if (result.ok) answerAdmittedAcquireSignIn(request.input, result.result, context);
           return result.ok ? result.result : result;
         }
       }
-      return await hostManagedMachineAction(request);
+      const result = await hostManagedMachineAction(request);
+      if (request.actionId === MANAGED_ACQUIRE_ACTION_ID_V1) answerAdmittedAcquireSignIn(request.input, result, context);
+      return result;
     }
     : hostManagedMachineAction;
+  // Owner ruling 2026-11-26: the approval of this Account's own acquire, or its "allow" setting,
+  // covers signing the new guest in. This daemon answers that one question with its own sign-in.
+  function answerAdmittedAcquireSignIn(input: unknown, result: unknown, context: ActionExecutorContext): void {
+    const credentials = params.credentials;
+    const serverIdentityId = params.serverIdentityId ?? context.serverIdentityId;
+    const root = context.externalActionExecutionAuthorization?.binding;
+    // A relayed acquire another Account admitted is that Account's to answer, never this daemon's.
+    if (!credentials || !params.serverId || !serverIdentityId || root && root.accountId !== readAccountIdFromToken(credentials.token)) return;
+    const serverUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+    void answerAdmittedManagedAcquireSignIn({ credentials, serverId: params.serverId, serverIdentityId, serverUrl,
+      acquireInput: input, acquireResult: result,
+      readOperation: operation => executeOriginalAccountRequesterOperation({ operation, credentials, serverIdentityId,
+        serverHttpBaseUrl: serverUrl, requestId: randomUUID(), authority: 'account_automation', isCurrent: params.isCredentialCurrent }),
+    }).catch(error => logger.warn('[managed] Following the admitted acquire sign-in failed', error));
+  }
   const personalSavedSecretActionExecute = params.personalSavedSecretActionExecute ?? (params.credentials && accountServerActionPorts.homeDomainAction
     ? createCliPersonalSavedSecretActionExecute({ credentials: params.credentials, home: accountServerActionPorts.homeDomainAction,
       operationContext: params.savedSecretOperationContext, serverHttpBaseUrl: params.serverHttpBaseUrl, isCredentialCurrent: params.isCredentialCurrent }) : undefined);

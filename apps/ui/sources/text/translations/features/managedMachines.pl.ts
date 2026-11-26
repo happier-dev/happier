@@ -970,7 +970,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Potwierdź logowanie maszyny",
         confirm: "Potwierdź logowanie",
-        consequence: "Po utworzeniu potwierdzasz jej logowanie w sekcji Czeka na ciebie.",
+        consequence: "Po utworzeniu loguje się na twoje konto.",
         consequenceTitle: "Logowanie na konto",
         expired: "Zgoda na logowanie wygasła. Ponów konfigurację, aby poprosić ponownie.",
         notWaiting: "Zostało już obsłużone albo wygasło.",

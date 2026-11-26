@@ -1,5 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '../../actions/executor/types.js';
-import type { ActionOperationGetV1Response } from '../../actions/operations/v1.js';
+import type { ActionOperationGetV1Response, ManagedMachineBootstrapPromptV1 } from '../../actions/operations/v1.js';
 import type { CapabilitiesInvokeResponse } from '../../capabilities/index.js';
 import type { ManagedMachineV1 } from './managedMachineV1.js';
 import { ManagedTerminalPairingContextV1Schema, projectManagedEnrollmentCorrelationV1,
@@ -16,6 +16,12 @@ export type ManagedInstallationAnsweringClient = Readonly<{
     accountId: string;
     homeId: string | null | undefined;
     accountAuthority: boolean;
+    /**
+     * The acquire this client's own executor admitted. Its approval, or the person's "allow" setting, already
+     * covers signing the new guest into the person's Account, so this client answers only that operation's
+     * sign-in question, and nothing else.
+     */
+    admittedAcquire?: Readonly<{ homeId: string; managedId: string; operationId: string }>;
     assertCurrent(): void;
     readMachine(input: InstallationInput, signal?: AbortSignal): Promise<Readonly<{
         originalMachine: ManagedMachineV1; machine: ManagedMachineV1 | undefined;
@@ -26,12 +32,28 @@ export type ManagedInstallationAnsweringClient = Readonly<{
     approvePairing(pairing: Pairing, signal?: AbortSignal): Promise<string | undefined>;
 }>;
 
+type SignInPrompt = Extract<ManagedMachineBootstrapPromptV1, { kind: 'auth.approveRemoteProvisioning' }>;
+
+/** An admitted Create or acquire already includes signing the guest into the requester's Account. */
+export function approveManagedMachineEnrollment<T>(input: Readonly<{
+    prompt: SignInPrompt;
+    correlation: Readonly<{ homeId: string; managedId: string; serverId: string; operationId: string; taskId: string }>;
+    respond: (input: Readonly<{ homeId: string; managedId: string; serverId: string; operationId: string; taskId: string;
+        purpose: 'approve'; prompt: SignInPrompt; approved: true }>) => Promise<T>;
+}>): Promise<T> {
+    return input.respond({ ...input.correlation, purpose: 'approve', prompt: input.prompt, approved: true });
+}
+
 /** Answer the current resource's exact question without transferring client custody to a daemon. */
 export async function respondToManagedInstallation(input: InstallationInput, context: ActionExecutorContext,
     client: ManagedInstallationAnsweringClient) {
     const fail = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
     const signal = context.signal;
     client.assertCurrent();
+    const admitted = client.admittedAcquire;
+    if (admitted && (input.purpose !== 'approve' || input.prompt.kind !== 'auth.approveRemoteProvisioning'
+        || admitted.homeId !== input.homeId || admitted.managedId !== input.managedId
+        || admitted.operationId !== input.operationId)) return fail('action_account_scope_changed');
     if (context.expectedAccountId && context.expectedAccountId !== client.accountId
         || context.runtimeAccountId && context.runtimeAccountId !== client.accountId) return fail('action_account_scope_changed');
     if (!client.homeId || client.homeId !== input.homeId) return fail('server_target_mismatch');
@@ -46,7 +68,7 @@ export async function respondToManagedInstallation(input: InstallationInput, con
     if ((machine.enrollmentAccountId ?? machine.custodianAccountId) !== machine.custodianAccountId) {
         // A managed creation purpose is not a controller Machine grant. Home and the
         // installed runner check the exact current row/request/operation/task instead.
-        if (machine.enrollmentAccountId !== client.accountId || !client.accountAuthority) return fail('action_account_scope_changed');
+        if (machine.enrollmentAccountId !== client.accountId || !(client.accountAuthority || admitted)) return fail('action_account_scope_changed');
         const binding = projectManagedEnrollmentCorrelationV1(originalMachine, {
             homeId: input.homeId, managedId: input.managedId, operationId: input.operationId,
             taskId: input.taskId, controller, resource: machine.resource,
@@ -78,6 +100,8 @@ export async function respondToManagedInstallation(input: InstallationInput, con
         if (!result.ok) return fail(result.error.code ?? 'managed_request_failed');
         return { taskId: input.taskId };
     }
+    // The custodian's controller signs its own guest in; an admitted acquire answers nothing here.
+    if (admitted) return fail('action_account_scope_changed');
     const found = await client.readOperation(controller.machineId, input.operationId, signal);
     client.assertCurrent();
     if (found.kind !== 'found' || found.operation.scope.accountId !== client.accountId

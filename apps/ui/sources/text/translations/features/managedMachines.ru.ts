@@ -970,7 +970,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Подтвердите вход машины",
         confirm: "Подтвердить вход",
-        consequence: "Когда она будет создана, вы подтвердите её вход в разделе «Ждёт вас».",
+        consequence: "После создания она войдёт в ваш аккаунт.",
         consequenceTitle: "Вход в аккаунт",
         expired: "Срок подтверждения входа истёк. Повторите настройку, чтобы запросить снова.",
         notWaiting: "На него уже ответили, или срок истёк.",

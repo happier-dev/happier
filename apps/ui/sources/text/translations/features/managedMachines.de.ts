@@ -969,7 +969,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Anmeldung der Maschine bestätigen",
         confirm: "Anmeldung bestätigen",
-        consequence: "Sobald sie erstellt ist, bestätigst du ihre Anmeldung unter Braucht dich.",
+        consequence: "Sobald sie erstellt ist, meldet sie sich bei deinem Konto an.",
         consequenceTitle: "Kontoanmeldung",
         expired: "Die Anmeldefreigabe ist abgelaufen. Wiederhole die Einrichtung, um erneut zu fragen.",
         notWaiting: "Sie wurde schon beantwortet oder ist abgelaufen.",

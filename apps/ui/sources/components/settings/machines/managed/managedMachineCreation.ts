@@ -11,7 +11,8 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
 import type { SessionAgentUpdateNoticeV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1, type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { approveManagedMachineEnrollment } from '@happier-dev/protocol/machines/managed/installationResponse';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import {
@@ -91,16 +92,6 @@ export function isManagedMachineEnrollmentRequester(
     accountId: string | undefined,
 ): boolean {
     return accountId !== undefined && machine.enrollmentAccountId === accountId && machine.custodianAccountId !== accountId;
-}
-
-/** Admitted Create already includes signing the guest into the requester's Account. */
-export function approveManagedMachineEnrollment<T>(input: Readonly<{
-    prompt: Extract<ManagedMachineBootstrapPromptV1, { kind: 'auth.approveRemoteProvisioning' }>;
-    correlation: Readonly<{ homeId: string; managedId: string; serverId: string; operationId: string; taskId: string }>;
-    respond: (input: Readonly<{ homeId: string; managedId: string; serverId: string; operationId: string; taskId: string;
-        purpose: 'approve'; prompt: Extract<ManagedMachineBootstrapPromptV1, { kind: 'auth.approveRemoteProvisioning' }>; approved: true }>) => Promise<T>;
-}>): Promise<T> {
-    return input.respond({ ...input.correlation, purpose: 'approve', prompt: input.prompt, approved: true });
 }
 
 /** Explicit Run/Send joins managed creation, then reads the actual enrolled target. */

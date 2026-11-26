@@ -969,7 +969,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "マシンのサインインを確認",
         confirm: "サインインを確認",
-        consequence: "作成後、「対応が必要」でサインインを確認します。",
+        consequence: "作成後、あなたのアカウントにサインインします。",
         consequenceTitle: "アカウントへのサインイン",
         expired: "サインインの承認の期限が切れました。もう一度依頼するにはセットアップを再試行してください。",
         notWaiting: "すでに応答済みか、期限切れです。",

@@ -981,7 +981,7 @@ export const managedMachinesEn = {
     machineSignIn: {
         inboxTitle: "Confirm machine sign-in",
         confirm: "Confirm sign-in",
-        consequence: "Once it’s created, you confirm its sign-in in Needs you.",
+        consequence: "Once it’s created, it signs into your Account.",
         consequenceTitle: "Account sign-in",
         expired: "Sign-in approval expired. Retry setup to ask again.",
         notWaiting: "It was already answered or has expired.",

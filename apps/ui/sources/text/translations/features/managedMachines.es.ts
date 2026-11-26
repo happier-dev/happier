@@ -969,7 +969,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Confirma el inicio de sesión de la máquina",
         confirm: "Confirmar inicio de sesión",
-        consequence: "Una vez creada, confirmas su inicio de sesión en Te necesita.",
+        consequence: "Una vez creada, inicia sesión en tu cuenta.",
         consequenceTitle: "Inicio de sesión en la cuenta",
         expired: "La aprobación del inicio de sesión caducó. Reintenta la configuración para pedirla de nuevo.",
         notWaiting: "Ya se respondió o caducó.",

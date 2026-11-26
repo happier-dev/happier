@@ -969,7 +969,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "確認機器登入",
         confirm: "確認登入",
-        consequence: "建立後，你在「需要你」中確認它的登入。",
+        consequence: "建立後，它會登入你的帳戶。",
         consequenceTitle: "帳戶登入",
         expired: "登入核准已過期。重試設定以再次請求。",
         notWaiting: "已被處理或已過期。",

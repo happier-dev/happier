@@ -3990,6 +3990,21 @@ The CLI refreshes its approval route over the authenticated Home connection
 that admitted the Action. Pairing verifies the selected carrier against that
 Home’s current descriptor before sending the response.
 
+An acquire that the requester's own daemon admits needs no second confirmation
+(owner ruling 2026-11-26). The person's approval of that acquire, or their
+"allow" setting for it, covers signing the guest into their Account. After the
+effect returns the accepted operation, the daemon follows that one operation
+and answers its `auth.approveRemoteProvisioning` question. It answers through
+`answerAdmittedManagedAcquireSignIn` in
+`apps/cli/src/machines/managed/installationResponse.ts`, using its own sign-in and
+data key. `respondToManagedInstallation` takes the admitted
+`{ homeId, managedId, operationId }` as `admittedAcquire` and refuses any other
+operation, row, question or Account. It also refuses the custodian's own row,
+because that controller signs its own guest in. The owner's controller receives
+only the answer. Every other installation question stays with the person. If the
+daemon restarts while following, the question expires visibly and Retry setup
+asks again.
+
 The same `CAPABILITIES_INVOKE` / `tool.systemTasks/respond`
 transport carries a transient result, not an Action operation or task observation.
 Home checks the current creation, authenticated requester, controller installation

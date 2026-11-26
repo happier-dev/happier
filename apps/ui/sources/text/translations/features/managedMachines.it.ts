@@ -969,7 +969,7 @@ export const managedMachines: ManagedMachinesTranslations = {
     machineSignIn: {
         inboxTitle: "Conferma l’accesso della macchina",
         confirm: "Conferma accesso",
-        consequence: "Una volta creata, confermi il suo accesso in Ti aspetta.",
+        consequence: "Una volta creata, accede al tuo account.",
         consequenceTitle: "Accesso all’account",
         expired: "L’approvazione dell’accesso è scaduta. Riprova la configurazione per richiederla di nuovo.",
         notWaiting: "Ha già ricevuto risposta o è scaduto.",

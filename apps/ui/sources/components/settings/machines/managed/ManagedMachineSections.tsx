@@ -1,4 +1,5 @@
-import { approveManagedMachineEnrollment, isManagedMachineEnrollmentRequester } from './managedMachineCreation';
+import { isManagedMachineEnrollmentRequester } from './managedMachineCreation';
+import { approveManagedMachineEnrollment } from '@happier-dev/protocol/machines/managed/installationResponse';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';

@@ -2,7 +2,6 @@ import * as React from 'react';
 import {
     buildInboxMachineSignInItems, type InboxMachineSignInItem, type InboxMachineSignInTarget,
 } from '@/components/inbox/inboxItems';
-import { approveManagedMachineEnrollment } from '@/components/settings/machines/managed/managedMachineCreation';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -14,6 +13,7 @@ import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { MANAGED_GET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { approveManagedMachineEnrollment } from '@happier-dev/protocol/machines/managed/installationResponse';
 import {
     MANAGED_MACHINE_SIGN_IN_OCCURRENCE_ENTITY_PREFIX_V1, MANAGED_MACHINE_SIGN_IN_OCCURRENCES_PATH_V1,
     ManagedGetActionOutputV1Schema, ManagedMachineSignInOccurrencesV1Schema, unwrapManagedMachineReadV1,
