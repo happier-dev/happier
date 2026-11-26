@@ -1131,7 +1131,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const launchProfilesDeps = createCliLaunchProfilesActionDeps(params, { artifactCallerContext, projectAccountAdmission, roleArtifactStore });
   const { sessionModelUnarm, sessionModelSet } = createCliSessionModelActionDeps(params, { projectHomeId, resolveServerRequestHeaders });
   const agentCatalogDeps = createCliAgentCatalogActionDeps(params, { todoHomeBaseUrl });
-  const { sessionOpen, sessionFork, sessionContinueWithReplay, sessionRollback, checkpointCodeRollback, sessionCheckpoint, sessionRestore, sessionContinuationInspect, sessionAgentTransition, sessionArchiveSet } = createCliSessionLifecycleActionDeps(params, { callMachineAction, callResolvedSessionRpc, normalizeStringValue, notSupported, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport,
+  const { sessionDelete, sessionOpen, sessionFork, sessionContinueWithReplay, sessionRollback, checkpointCodeRollback, sessionCheckpoint, sessionRestore, sessionContinuationInspect, sessionAgentTransition, sessionArchiveSet } = createCliSessionLifecycleActionDeps(params, { callMachineAction, callResolvedSessionRpc, normalizeStringValue, notSupported, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport,
     sessionStop: input => (readEffectiveDeps?.() ?? actionDeps).sessionStop!(input),
   });
   const { sessionHandoffTargetReplacementApprovalPreflight, sessionHandoffStart, sessionHandoffStatusGet, sessionHandoffPrepareTargetResume, sessionWorkspaceReturn } = createCliSessionHandoffActionDeps(params, { callMachineAction, notSupported, resolveTransportForSession });
@@ -1808,6 +1808,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     promptBundleUpdate: promptsDeps.promptBundleUpdate,
     promptRegistryInstall: promptsDeps.promptRegistryInstall,
     sessionOpen,
+    sessionDelete,
     sessionFork,
     sessionContinueWithReplay,
     sessionRollback,
