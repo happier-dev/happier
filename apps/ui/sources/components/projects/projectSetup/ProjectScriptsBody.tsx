@@ -227,6 +227,7 @@ export function ProjectScriptsBody({
     : (read && 'error' in read && read.error ? (
     <SurfaceStateCard
       kind="unavailable"
+      replacesContent={presentation === 'widget' && !('value' in read)}
       size={'value' in read ? 'line' : undefined}
       title={t('projects.widgets.scriptsUnavailable')}
       diagnosticCode={read.error}
@@ -672,7 +673,9 @@ function DeclaredScripts(
           </ItemGroup>
         ) : null}
         {scripts.length === 0 ? (
-          <WidgetGlanceRow variant="fact" title={t('projects.scripts.noScripts')} testID={`${props.testID}.empty`} />
+          hasSetup ? <WidgetGlanceRow variant="fact" title={t('projects.scripts.noScripts')} testID={`${props.testID}.empty`} /> : (
+            <SurfaceStateCard kind="empty" replacesContent title={t('projects.scripts.noScripts')} testID={`${props.testID}.empty`} />
+          )
         ) : scripts.map(([name, declaration]) => (
           <DeclaredScriptRow
             key={name}

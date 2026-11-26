@@ -132,6 +132,22 @@ describe('checkout reachability', () => {
         expect(body.getTextContent()).not.toContain(t('common.retry'));
         await body.unmount();
     });
+    it('uses the outage scene when a widget owns the checkout notice', async () => {
+        const { SurfaceStateSizeProvider } = await import('@/components/ui/surfaces/surfaceStateSize');
+        const { WidgetFrameBodyRowsContext } = await import('@/components/widgets/frame/widgetFrameBody');
+        const reachability = { unreachable: true, machineName: 'devbox', lastSeenAt: null, announced: false,
+            runtime: { online: false, status: 'offline' as const, label: '', nextAction: 'retry' as const, showStatus: true } };
+        const screen = await renderScreen(
+            <SurfaceStateSizeProvider size="pane" actions="quiet">
+                <WidgetFrameBodyRowsContext.Provider value={2}>
+                    <CheckoutUnreachableState reachability={reachability} testID="project-code" />
+                </WidgetFrameBodyRowsContext.Provider>
+            </SurfaceStateSizeProvider>,
+        );
+        expect(screen.findByTestId('project-code-scene')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('surfaceState.tryAgain'));
+    });
+
     it('an unannounced offline checkout is the shared out-of-reach state: when it was seen, what returns, and Try again', async () => {
         const lastSeenAt = Date.now() - 3 * 60 * 60 * 1000;
         const reachability = { unreachable: true, machineName: 'leeroy-mbp', lastSeenAt, announced: false,

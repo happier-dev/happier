@@ -58,10 +58,11 @@ export const ChangesGlanceView = React.memo(function ChangesGlanceView(props: Re
     let body: WidgetFrameBody;
     if (state.kind === 'loading') {
         body = { kind: 'loading', accessibilityLabel: t('widgetGlances.changesLoading') };
-    } else if (state.kind === 'notRepo') {
-        body = { kind: 'content', children: <Text style={styles.quiet}>{t('widgetGlances.notARepo')}</Text> };
-    } else if (!state.summary.hasAnyChanges) {
-        body = { kind: 'content', children: <Text style={styles.quiet}>{t('widgetGlances.noChanges')}</Text> };
+    } else if (state.kind === 'notRepo' || !state.summary.hasAnyChanges) {
+        body = {
+            kind: 'empty',
+            title: t(state.kind === 'notRepo' ? 'widgetGlances.notARepo' : 'widgetGlances.noChanges'),
+        };
     } else {
         const summary = state.summary;
         // A compact glance names the first change; a tall viewport can retain every file.

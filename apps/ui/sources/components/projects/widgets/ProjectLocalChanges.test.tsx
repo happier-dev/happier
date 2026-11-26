@@ -27,6 +27,7 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
 import { HOME_WIDGET_BODY_ROWS } from '@/components/widgets/frame/WidgetFrame';
+import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 
 let disposeActionLoader: (() => void) | undefined;
 let projectInspection: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>;
@@ -40,7 +41,7 @@ beforeAll(async () => {
         installationId: 'project-test-installation', actionId: 'projects.inspect', tokenEpoch: 0, requesterInvocation: 'none',
         execute: () => ({
             definition: boundary.manifestPresent ? { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(
-                JSON.stringify({ version: 1, scripts: { build: { source: { kind: 'command', command: 'make build' } } } })) }
+                JSON.stringify({ version: 1, scripts: boundary.scriptsPresent ? { build: { source: { kind: 'command', command: 'make build' } } } : {} })) }
                 : { basis: { kind: 'absent' }, document: null },
             detection: { entries: [{ usage: 'script', source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' } }],
                 toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
@@ -68,7 +69,7 @@ beforeAll(async () => {
 afterAll(() => disposeActionLoader?.());
 
 const boundary = vi.hoisted(() => ({ navigate: vi.fn(), denied: false, confirmDiscard: false, confirmPush: false, rootReadme: false,
-    manifestPresent: true,
+    manifestPresent: true, scriptsPresent: true,
     alerts: [] as unknown[][],
     pathname: '/', routeParams: {} as Record<string, string | string[] | undefined>, writes: [] as { method: string; params: unknown }[],
     snapshotReads: [] as unknown[], directoryReads: [] as unknown[] }));
@@ -216,6 +217,7 @@ beforeEach(async () => {
     boundary.confirmPush = false;
     boundary.rootReadme = false;
     boundary.manifestPresent = true;
+    boundary.scriptsPresent = true;
     boundary.pathname = '/';
     boundary.routeParams = {};
     resetActiveReviewFilesForTests();
@@ -244,11 +246,13 @@ async function mount(rootPath = '/repo', id: 'project_changes' | 'project_checko
     const screen = await renderScreen(<runtime.Wrapper><DestinationInstanceHost tabId="project-local-changes"
         ref={{ kind: 'project', params: routeParams }} pathname={boundary.pathname} focused visible
         navigation={{ push: boundary.navigate, replace: boundary.navigate, back: () => {}, setParams: () => {} }}>
-        <WidgetPresentationProvider value={options.tall ? TALL_PRESENTATION : undefined}>
-            <ProjectBuiltinWidgetBody id={id}
-                checkout={checkout}
-                workspace={workspaceAddressFromRefV2(checkout)} testID="local-changes" />
-        </WidgetPresentationProvider>
+        <SurfaceStateSizeProvider size="pane" actions="quiet">
+            <WidgetPresentationProvider value={options.tall ? TALL_PRESENTATION : undefined}>
+                <ProjectBuiltinWidgetBody id={id}
+                    checkout={checkout}
+                    workspace={workspaceAddressFromRefV2(checkout)} testID="local-changes" />
+            </WidgetPresentationProvider>
+        </SurfaceStateSizeProvider>
     </DestinationInstanceHost></runtime.Wrapper>);
     await vi.waitFor(async () => {
         await flushHookEffects();
@@ -260,7 +264,8 @@ async function mount(rootPath = '/repo', id: 'project_changes' | 'project_checko
         } else if (id === 'project_scripts') {
             const failure = screen.findAllByType(SurfaceStateCard).find(node => node.props.kind === 'unavailable');
             if (failure) throw new Error(`Fixture Scripts inspection failed: ${failure.props.diagnosticCode}`);
-            expect(screen.findHostByTestId(boundary.manifestPresent ? 'local-changes.script:build' : 'local-changes.setup')).not.toBeNull();
+            const mountedContent = !boundary.manifestPresent ? 'setup' : boundary.scriptsPresent ? 'script:build' : 'empty';
+            expect(screen.findHostByTestId(`local-changes.${mountedContent}`)).not.toBeNull();
         } else if (id === 'project_readme') {
             const workspaceCacheKey = tryBuildWorkspaceCacheKey(workspaceScopeFromProject(checkout, rootPath));
             if (!workspaceCacheKey) throw new Error('Exact fixture scope missing');
@@ -782,12 +787,17 @@ describe('Project Local Changes', () => {
         const { WidgetFrameBodyRowsContext } = await import('@/components/widgets/frame/widgetFrameBody');
         const machine = { serverId: runtime.serverId, machineId: 'm1' };
         // A side-area or stacked widget has a frame but no size presentation (lab p-overview HOME).
+        const card = (
+            <SurfaceStateSizeProvider size="pane" actions="quiet">
+                <WidgetFrameBodyRowsContext.Provider value={0}>
+                    <ProjectBuiltinWidgetBody id="project_code"
+                        checkout={{ serverId: runtime.serverId, id: 'wr_1', machineId: 'm1', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 }}
+                        workspace={{ serverId: runtime.serverId, workspaceId: 'wr_1', machineId: 'm1', rootPath: '/repo' }} testID="project_code" />
+                </WidgetFrameBodyRowsContext.Provider>
+            </SurfaceStateSizeProvider>
+        );
         const screen = await renderScreen(<runtime.Wrapper><CheckoutReachabilityScope scope={machine}>
-            <WidgetFrameBodyRowsContext.Provider value={0}>
-                <ProjectBuiltinWidgetBody id="project_code"
-                    checkout={{ serverId: runtime.serverId, id: 'wr_1', machineId: 'm1', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 }}
-                    workspace={{ serverId: runtime.serverId, workspaceId: 'wr_1', machineId: 'm1', rootPath: '/repo' }} testID="project_code" />
-            </WidgetFrameBodyRowsContext.Provider>
+            {card}
         </CheckoutReachabilityScope></runtime.Wrapper>);
         await flushHookEffects({ cycles: 12 });
         // Its page tools (filter, create, Project | All files) live on the Code page, not in the card.
@@ -795,6 +805,13 @@ describe('Project Local Changes', () => {
         expect(ids.filter(id => /^(workspace-)?repository-tree-(visibility|all-files|toggle-details)/.test(id))).toEqual([]);
         // A never-listed folder draws no empty sheet: the card says in one line when it shows (owner P1 11-15).
         expect(screen.findHostByTestId('project_code-unreachable')).not.toBeNull();
+        expect(screen.findHostByTestId('project_code-unreachable-scene')).toBeNull();
+
+        // On a Board the card is the first surface to announce the offline checkout.
+        await screen.update(<runtime.Wrapper>{card}</runtime.Wrapper>);
+        await flushHookEffects({ cycles: 12 });
+        expect(screen.findHostByTestId('project_code-unreachable-scene')).not.toBeNull();
+        expect(screen.findHostByTestId('project_code-offline')).toBeNull();
     });
     it('summarizes Local changes in the Overview column: one files row, one push row and one commit box (lab p-overview HOME)', async () => {
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true }, scmCommitStrategy: 'atomic' });
@@ -853,6 +870,11 @@ describe('Project Local Changes', () => {
         expect(detected.findHostByTestId('local-changes.found')).not.toBeNull();
         expect(detected.findHostByTestId('local-changes.detected:0')).toBeNull();
         expect(storage.getState().sessions).toEqual({});
+    });
+    it('shows a scene for an empty Scripts widget', async () => {
+        boundary.scriptsPresent = false;
+        const screen = await mount('/repo', 'project_scripts');
+        expect(screen.findHostByTestId('local-changes.empty-scene')).not.toBeNull();
     });
     it('opens ordinary editable setup authoring from Scripts without executing the scripts', async () => {
         boundary.manifestPresent = false;
@@ -1052,6 +1074,7 @@ describe('Project Local Changes', () => {
         expect(denied.findHostByTestId('local-changes-clean')).toBeNull();
         expect(denied.findHostByTestId('local-changes-files')).toBeNull();
         expect(denied.findHostByTestId('local-changes-error')).not.toBeNull();
+        expect(denied.findHostByTestId('local-changes-error-scene')).not.toBeNull();
         expect(storage.getState().getWorkspaceScmSnapshotError(scope)).toMatchObject({
             errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, message: 'Denied',
         });

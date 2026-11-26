@@ -85,7 +85,7 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
         return controls.error ? (
             <SurfaceStateCard
                 testID={`${testID}-error`}
-                size="line"
+                replacesContent
                 kind="error"
                 title={t('projects.localChanges.unavailable')}
                 diagnosticCode={controls.error.errorCode ?? controls.error.message}
@@ -100,7 +100,7 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
     if (snapshot.repo.isRepo === false) {
         return <View style={styles.body}>
             {staleSnapshotNotice}
-            <SurfaceStateCard testID={`${testID}-not-repo`} size="line" kind="empty" title={t('files.notRepo')} />
+            <SurfaceStateCard testID={`${testID}-not-repo`} replacesContent kind="empty" title={t('files.notRepo')} />
         </View>;
     }
 

@@ -4,6 +4,7 @@ import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import type { ScmWorkingEntry, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { LocalServiceInventoryRow } from '@/sync/domains/local/services/inventory/store';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
@@ -49,6 +50,17 @@ afterEach(() => {
 });
 
 describe('Sized agent plan', () => {
+    it('shows whole-body scenes for an empty Plan and Changes in a Board card', async () => {
+        const screen = await renderScreen(
+            <SurfaceStateSizeProvider size="details" actions="quiet">
+                <SessionAgentPlanCard plan={null} agentLabel="Codex" activity="idle" presentation="body" testID="board-plan" />
+                <ChangesGlanceView testID="board-changes" frameStyle="plain" presentation="body" state={{ kind: 'notRepo' }} />
+            </SurfaceStateSizeProvider>,
+        );
+        expect.soft(screen.findByTestId('board-plan-empty-scene')).toBeTruthy();
+        expect.soft(screen.findByTestId('board-changes.empty-scene')).toBeTruthy();
+    });
+
     it('retains every media Changes glance row without its line counts', () => {
         const files = ['a.pdf', 'b.png', 'c.mp4', 'd.mp3', 'e.dat', 'f.ts'].map(path => {
             const file = entry(path, 'modified', 12, 4);

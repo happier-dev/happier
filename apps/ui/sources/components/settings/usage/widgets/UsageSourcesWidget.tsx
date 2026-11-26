@@ -80,14 +80,13 @@ export function UsageSourcesWidget(
   useWidgetFrameBodyCaption(t('usage.board.sources.foundCaption'));
   const inventory = React.useMemo(() => UsageSourceInventoryScopeSchema.safeParse(props.input), [props.input]);
   if (!inventory.success) return <SurfaceStateCard testID={`${props.testID}.invalid`} kind="unavailable"
-    layout="inline" size="line" title={t('usage.board.page.queryInvalidTitle')} reason={t('usage.board.page.queryInvalidReason')} />;
+    replacesContent title={t('usage.board.page.queryInvalidTitle')} reason={t('usage.board.page.queryInvalidReason')} />;
   if (!lifetime)
     return (
       <SurfaceStateCard
         testID={`${props.testID}.unavailable`}
         kind="unavailable"
-        layout="inline"
-        size="line"
+        replacesContent
         title={t('usage.board.page.signedOutTitle')}
       />
     );
@@ -187,7 +186,7 @@ export function UsageSourcesMachines(
   if (machines.length === 0 && props.machines.length === 0 && inventoryStatus !== 'idle') {
     return inventoryStatus === 'loading'
       ? <ItemLoadStateRows state={{ kind: 'loading' }} testID={`${props.testID}.loading`} />
-      : <SurfaceStateCard testID={`${props.testID}.unavailable`} kind="unavailable" layout="inline" size="line"
+      : <SurfaceStateCard testID={`${props.testID}.unavailable`} kind="unavailable" replacesContent
           title={t('sidebarFooter.availableWhenHomeAnswers')} />;
   }
   if (machines.length === 0)
@@ -195,7 +194,8 @@ export function UsageSourcesMachines(
       <SurfaceStateCard
         testID={`${props.testID}.empty`}
         kind="empty"
-        layout="inline"
+        replacesContent
+        scene={props.machines.length === 0 ? 'noMachines' : undefined}
         title={t(props.machines.length ? 'usage.board.sources.emptyScopedTitle' : 'usage.board.sources.noMachinesTitle')}
         reason={t(props.machines.length ? 'usage.board.sources.emptyScopedReason' : 'usage.board.sources.noMachinesReason')}
       />

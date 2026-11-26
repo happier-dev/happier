@@ -21,6 +21,7 @@ import { UsageSourcesMachines, projectUsageSourcesMachines } from './UsageSource
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageBodySettledReportContext } from './usageBodyHeightMemory';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { act } from 'react-test-renderer';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
@@ -35,12 +36,17 @@ import type { Modal } from '@/modal';
 
 it('does not call a failed Machine census an empty fleet', async () => {
   getStorage().setState({ machineListStatusByServerId: { home: 'error' } });
-  const screen = await renderScreen(<UsageSourcesMachines lifetime={lifetime} serverId="home"
-    testID="sources" input={{ agents: [], machines: [], sources: [] }} machines={[]} />);
+  const screen = await renderScreen(
+    <SurfaceStateSizeProvider size="pane" actions="quiet">
+      <UsageSourcesMachines lifetime={lifetime} serverId="home"
+        testID="sources" input={{ agents: [], machines: [], sources: [] }} machines={[]} />
+    </SurfaceStateSizeProvider>,
+  );
   expect(screen.getTextContent()).not.toContain('usage.board.sources.noMachinesTitle');
-  expect(screen.findByTestId('sources.unavailable')).toBeTruthy();
+  expect(screen.findByTestId('sources.unavailable-scene')).toBeTruthy();
   await act(async () => { getStorage().setState({ machineListStatusByServerId: { home: 'idle' } }); });
   expect(screen.getTextContent()).toContain('usage.board.sources.noMachinesTitle');
+  expect(screen.findByTestId('sources.empty-scene')).toBeTruthy();
   expect(screen.findByTestId('sources.unavailable')).toBeFalsy();
   await screen.unmount();
 });

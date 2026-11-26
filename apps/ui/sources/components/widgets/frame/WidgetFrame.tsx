@@ -66,7 +66,7 @@ export type WidgetFrameBody =
     | Readonly<{ kind: 'content'; children: React.ReactNode }>
     /** First load only: a widget with last-known rows shows them while it refreshes. */
     | Readonly<{ kind: 'loading'; accessibilityLabel: string }>
-    | Readonly<{ kind: 'empty'; title: string; reason: string; iconName?: IconName; action?: SurfaceStateAction;
+    | Readonly<{ kind: 'empty'; title: string; reason?: string; iconName?: IconName; action?: SurfaceStateAction;
         /** The Daybreak scene (A5) drawn in the glyph's place where the centred state has room for it. */
         scene?: HappierSceneInput }>
     | Readonly<{

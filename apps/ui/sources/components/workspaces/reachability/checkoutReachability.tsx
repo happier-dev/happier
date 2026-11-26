@@ -93,7 +93,6 @@ export function CheckoutUnreachableState(
   }>,
 ) {
   const { reachability } = props;
-  // Inside a widget it is the widget's one quiet line; elsewhere the container sizes it.
   const widget = useIsWidgetFrameBody();
   if (reachability.announced) {
     // A body of its own says what it waits for; a widget or a section among siblings says, in the same one
@@ -118,11 +117,13 @@ export function CheckoutUnreachableState(
         props.returns ?? null,
       ].filter(Boolean).join(' ') || undefined
     : props.returns;
+  const replacesContent = widget && !props.silent && props.size !== 'line';
   return (
     <SurfaceStateCard
       testID={props.testID ?? 'checkout-unreachable'}
       kind="unavailable"
-      size={props.size ?? (widget ? 'line' : undefined)}
+      replacesContent={replacesContent}
+      size={props.size ?? (widget && !replacesContent ? 'line' : undefined)}
       iconName="wifi-slash"
       scene="homeOffline"
       title={describeCheckoutUnreachable(reachability)}

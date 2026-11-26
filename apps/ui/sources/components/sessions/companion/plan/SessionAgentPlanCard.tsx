@@ -156,7 +156,7 @@ export const SessionAgentPlanCard = React.memo(function SessionAgentPlanCard(pro
                     </>
                 ) : (
                     <SurfaceStateCard
-                        size="line"
+                        replacesContent
                         kind="empty"
                         testID={`${props.testID}-empty`}
                         title={t('sessionCompanion.plan.emptyTitle')}

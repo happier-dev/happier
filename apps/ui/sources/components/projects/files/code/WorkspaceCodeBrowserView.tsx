@@ -225,7 +225,9 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
         testID={`${testID}-history-stale`} asOf={null}
         reason={t('projects.code.historyChanged')}
         action={{ label: t('common.retry'), onPress: refreshHistory }} /> : null;
-    const reachabilityLine = reachability.unreachable && !reachability.announced
+    // A widget that has never listed this folder has no table to show beside an outage notice.
+    const waitingWithNothing = widget && location.kind === 'folder' && reachability.unreachable && entryCount === null;
+    const reachabilityLine = reachability.unreachable && !reachability.announced && !waitingWithNothing
         ? <CheckoutReachabilityLine scope={props.scope} testID={`${testID}-offline`} /> : null;
     // An unborn repository with nothing in it yet: the page invites the first commit instead of an empty table.
     const emptyRepository = available && location.kind === 'folder' && location.path === '' && entryData?.key === demandKey && entryData.loaded && entryCount === 0 && history?.current.kind === 'none';
@@ -233,6 +235,7 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
         <SurfaceStateCard
             testID={`${testID}-empty-repository`}
             kind="empty"
+            replacesContent={widget}
             iconName="code"
             title={t('projects.code.emptyRepositoryTitle', { name: props.rootLabel })}
             reason={t('projects.code.emptyRepositoryBody')}
@@ -295,11 +298,8 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
                 onRefreshScm={props.history === undefined ? refreshHistory : undefined}
             />
     );
-    // Nothing was ever listed and the machine isn't answering: no empty sheet is drawn around nothing. Under a
-    // page that says why, the widget says in one line when it shows (owner P1 11-15); otherwise its own line does.
-    const waitingWithNothing = reachability.unreachable && entryCount === null;
-    const body = location.kind === 'folder' ? (widget ? (waitingWithNothing ? (reachability.announced
-        ? <CheckoutUnreachableState reachability={reachability} silent testID={`${testID}-unreachable`} /> : null) : (
+    const body = location.kind === 'folder' ? (widget ? (waitingWithNothing
+        ? <CheckoutUnreachableState reachability={reachability} silent={reachability.announced} testID={`${testID}-unreachable`} /> : (
         <GlassSurface surfaceGroup="card" nested finishRole="card" testID={`${testID}-table`} style={[sheetStyle, styles.fileSheet]} onLayout={onTableLayout}>
             {folderBrowser}
         </GlassSurface>
