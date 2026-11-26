@@ -760,7 +760,7 @@ function createPromptRuntime(
     async open(request) {
       sessionId = request.sessionId;
       await opts.onProvisionRuntime?.(request.kind === 'resume' ? { resumeRuntimeId: request.providerSessionId } : {});
-      return externalSession;
+      return { ...externalSession, functionToolsDelivered: Boolean(request.functionTools?.length) };
     },
     executionRunContextV1: {
       async openConversation(request) {
@@ -4052,7 +4052,8 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     let entered = false;
     let disposed = false;
     let sequence = 0;
-    const externalRuntime: AgentRuntime = { sessions: { async open() { return {
+    const externalRuntime: AgentRuntime = { sessions: { async open(request) { return {
+      functionToolsDelivered: Boolean(request.functionTools?.length),
       watch(value) { listener = value; return { dispose() { listener = undefined; } }; },
       async send(request) {
         listener?.({ kind: 'input-accepted', sessionId: 'session-parent', sequence: sequence++, emittedAtMs: 1,
