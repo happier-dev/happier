@@ -4,6 +4,7 @@ import { MachineSetupApplyInputV1Schema, MachineSetupRemoveInputV1Schema } from 
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installApprovalCommonModuleMocks } from './approvalsTestHelpers';
+import recordedAgentApply from './ApprovalPreviewCard.machineSetupRecorded.json';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const routerHandle = vi.hoisted(() => ({ current: null as null | { spies: { push: { mock: { calls: unknown[][] } } } } }));
@@ -61,11 +62,22 @@ describe('ApprovalPreviewCard reviewed Machine scripts', () => {
         const review = { steps: [{ planIndex: 0, stepId: 'script:1', label: 'Script 2' }, { planIndex: 0, stepId: 'script:3', label: 'Script 4' }],
             presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 1 }, { sourceIndex: 1, scriptIndex: 1 }] } };
         const screen = await renderScreen(<ApprovalPreviewCard
-            preview={{ kind: 'machineSetup', summary: 'Review setup', scripts: [{ targetIndex: 0, homeId: 'home', machineId: 'vps', review }] }}
+            preview={{ summary: 'Review setup', deploymentReview: { kind: 'machineSetup', scripts: [{ targetIndex: 0, homeId: 'home', machineId: 'vps', review }] } }}
             request={{ actionId: 'machines.setup.apply', actionArgs }} />);
         expect(screen.getTextContent()).toContain('Script 2');
         expect(screen.getTextContent()).toContain('$ printf TEAM');
         expect(screen.getTextContent()).not.toContain('already-done');
+        await screen.unmount();
+    });
+
+    it('reads the recorded agent Apply approval: every script the Plan runs, from its deployment review', async () => {
+        // Exact `approval.request.get` request fields from a live standalone-MCP Apply (TS-QA-AGENT-3, cut 6b16c88d6aa).
+        const screen = await renderScreen(<ApprovalPreviewCard preview={recordedAgentApply.preview}
+            request={{ actionId: recordedAgentApply.actionId, actionArgs: recordedAgentApply.actionArgs }} />);
+        const text = screen.getTextContent();
+        expect(recordedAgentApply.preview.deploymentReview.scripts[0]?.review.steps).toHaveLength(33);
+        for (let index = 1; index <= 33; index++) expect(text).toContain(`Script ${index}`);
+        expect(text).not.toContain('Not known');
         await screen.unmount();
     });
 

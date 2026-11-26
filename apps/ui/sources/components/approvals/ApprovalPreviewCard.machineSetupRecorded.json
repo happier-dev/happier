@@ -1,0 +1,1216 @@
+{
+  "actionId": "machines.setup.apply",
+  "actionArgs": {
+    "homeId": "srv_pyJ5PcM5HdqKtw6bpO91yIye2s5URoev",
+    "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9",
+    "targets": [
+      {
+        "homeId": "srv_pyJ5PcM5HdqKtw6bpO91yIye2s5URoev",
+        "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9",
+        "sources": [
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "6468cc14-1082-45c8-9335-36167cdaa389",
+            "presetRevision": 1,
+            "setupRevision": 1,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "860091fe-a501-44cc-a909-c3ea927cd60e",
+            "presetRevision": 16,
+            "setupRevision": 10,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "278f6c7a-bf3c-4a3d-b80c-76f41edb35e8",
+            "presetRevision": 1,
+            "setupRevision": 1,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "70cc0650-1a86-4df6-9949-580619300557",
+            "presetRevision": 1,
+            "setupRevision": 1,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "5797209f-3a2c-4ab8-b35e-acd524dba097",
+            "presetRevision": 3,
+            "setupRevision": 2,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "175cf137-a625-4c3c-88d9-a7b3a066cc2d",
+            "presetRevision": 1,
+            "setupRevision": 1,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "fb0d6300-9eef-41fa-8e86-f4f1c63abc04",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "853eb906-1953-493e-9ad2-3b3e8f9ffb5d",
+            "presetRevision": 1,
+            "setupRevision": 1,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "42eafe1f-1bfe-439d-a3e3-1fddc19b699c",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "5d6a5243-8402-442e-a94a-09ffa6bbf605",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "dd23cf69-6db7-4038-9b0e-bbbe89cd169f",
+            "presetRevision": 1,
+            "setupRevision": 1,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "a86f5b3b-5188-4323-9253-bad1805ef201",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "3089ae4d-0e31-4674-a0ee-8147787d7aca",
+            "presetRevision": 1,
+            "setupRevision": 1,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "1fd67474-0222-43e9-878a-5be927b504ac",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "dbbde630-00d6-4053-8bad-eec1f85b6911",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "6f7fa7d0-b632-461f-9525-7994f2e9ad88",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "2c68bdbd-fe93-4b93-90fa-5368916d42ff",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "332e6cd1-b98f-40f8-b282-afc2ded9cd59",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "a1fdc2dc-a90b-4932-871b-a6b291f83d95",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "2c833d69-9aa6-478f-8642-373d7865c4c2",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "62da9616-3791-44cd-9bb1-5305fee726bd",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "99d619a6-2b9f-4ab7-8d68-bac6bffa88b9",
+            "presetRevision": 0,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "accountPresetOpaque",
+            "presetId": "0a63c714-3100-47db-9a1b-386862c9612d",
+            "presetRevision": 1,
+            "setupRevision": 0,
+            "contentEncryptionMode": "e2ee"
+          },
+          {
+            "kind": "direct",
+            "setup": {}
+          }
+        ],
+        "desiredRevision": 64,
+        "recipePlans": [],
+        "preset": {
+          "id": "0a63c714-3100-47db-9a1b-386862c9612d",
+          "revision": 1,
+          "name": "cut50-hunt finite tools"
+        },
+        "exclusions": [],
+        "appChildren": [
+          {
+            "sourceIndex": 8,
+            "itemIndex": 0,
+            "actionId": "machines.agents.install",
+            "input": {
+              "agentId": "pi",
+              "intent": "install",
+              "consent": {
+                "vendorRecipe": true
+              },
+              "waitForTerminal": true,
+              "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9"
+            }
+          },
+          {
+            "sourceIndex": 13,
+            "itemIndex": 0,
+            "actionId": "machines.agents.install",
+            "input": {
+              "agentId": "auggie",
+              "intent": "install",
+              "consent": {
+                "vendorRecipe": true
+              },
+              "waitForTerminal": true,
+              "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9"
+            }
+          },
+          {
+            "sourceIndex": 15,
+            "itemIndex": 0,
+            "actionId": "machines.agents.install",
+            "input": {
+              "agentId": "gemini",
+              "intent": "install",
+              "consent": {
+                "vendorRecipe": true
+              },
+              "waitForTerminal": true,
+              "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "preview": {
+    "actionId": "machines.setup.apply",
+    "actionArgs": {
+      "homeId": "srv_pyJ5PcM5HdqKtw6bpO91yIye2s5URoev",
+      "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9",
+      "targets": [
+        {
+          "homeId": "srv_pyJ5PcM5HdqKtw6bpO91yIye2s5URoev",
+          "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9",
+          "sources": [
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "6468cc14-1082-45c8-9335-36167cdaa389",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "860091fe-a501-44cc-a909-c3ea927cd60e",
+              "presetRevision": 16,
+              "setupRevision": 10,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "278f6c7a-bf3c-4a3d-b80c-76f41edb35e8",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "70cc0650-1a86-4df6-9949-580619300557",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "5797209f-3a2c-4ab8-b35e-acd524dba097",
+              "presetRevision": 3,
+              "setupRevision": 2,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "175cf137-a625-4c3c-88d9-a7b3a066cc2d",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "fb0d6300-9eef-41fa-8e86-f4f1c63abc04",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "853eb906-1953-493e-9ad2-3b3e8f9ffb5d",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "42eafe1f-1bfe-439d-a3e3-1fddc19b699c",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "5d6a5243-8402-442e-a94a-09ffa6bbf605",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "dd23cf69-6db7-4038-9b0e-bbbe89cd169f",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "a86f5b3b-5188-4323-9253-bad1805ef201",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "3089ae4d-0e31-4674-a0ee-8147787d7aca",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "1fd67474-0222-43e9-878a-5be927b504ac",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "dbbde630-00d6-4053-8bad-eec1f85b6911",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "6f7fa7d0-b632-461f-9525-7994f2e9ad88",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "2c68bdbd-fe93-4b93-90fa-5368916d42ff",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "332e6cd1-b98f-40f8-b282-afc2ded9cd59",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "a1fdc2dc-a90b-4932-871b-a6b291f83d95",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "2c833d69-9aa6-478f-8642-373d7865c4c2",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "62da9616-3791-44cd-9bb1-5305fee726bd",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "99d619a6-2b9f-4ab7-8d68-bac6bffa88b9",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "0a63c714-3100-47db-9a1b-386862c9612d",
+              "presetRevision": 1,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "direct",
+              "setup": {}
+            }
+          ],
+          "desiredRevision": 64,
+          "recipePlans": [],
+          "preset": {
+            "id": "0a63c714-3100-47db-9a1b-386862c9612d",
+            "revision": 1,
+            "name": "cut50-hunt finite tools"
+          },
+          "exclusions": [],
+          "appChildren": [
+            {
+              "sourceIndex": 8,
+              "itemIndex": 0,
+              "actionId": "machines.agents.install",
+              "input": {
+                "agentId": "pi",
+                "intent": "install",
+                "consent": {
+                  "vendorRecipe": true
+                },
+                "waitForTerminal": true,
+                "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9"
+              }
+            },
+            {
+              "sourceIndex": 13,
+              "itemIndex": 0,
+              "actionId": "machines.agents.install",
+              "input": {
+                "agentId": "auggie",
+                "intent": "install",
+                "consent": {
+                  "vendorRecipe": true
+                },
+                "waitForTerminal": true,
+                "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9"
+              }
+            },
+            {
+              "sourceIndex": 15,
+              "itemIndex": 0,
+              "actionId": "machines.agents.install",
+              "input": {
+                "agentId": "gemini",
+                "intent": "install",
+                "consent": {
+                  "vendorRecipe": true
+                },
+                "waitForTerminal": true,
+                "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "summary": "Apply machine setup.",
+    "deploymentReview": {
+      "kind": "machineSetup",
+      "host": {
+        "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9",
+        "machines": [
+          {
+            "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9",
+            "online": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "homeId": "srv_pyJ5PcM5HdqKtw6bpO91yIye2s5URoev",
+          "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9",
+          "sources": [
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "6468cc14-1082-45c8-9335-36167cdaa389",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "860091fe-a501-44cc-a909-c3ea927cd60e",
+              "presetRevision": 16,
+              "setupRevision": 10,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "278f6c7a-bf3c-4a3d-b80c-76f41edb35e8",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "70cc0650-1a86-4df6-9949-580619300557",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "5797209f-3a2c-4ab8-b35e-acd524dba097",
+              "presetRevision": 3,
+              "setupRevision": 2,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "175cf137-a625-4c3c-88d9-a7b3a066cc2d",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "fb0d6300-9eef-41fa-8e86-f4f1c63abc04",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "853eb906-1953-493e-9ad2-3b3e8f9ffb5d",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "42eafe1f-1bfe-439d-a3e3-1fddc19b699c",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "5d6a5243-8402-442e-a94a-09ffa6bbf605",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "dd23cf69-6db7-4038-9b0e-bbbe89cd169f",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "a86f5b3b-5188-4323-9253-bad1805ef201",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "3089ae4d-0e31-4674-a0ee-8147787d7aca",
+              "presetRevision": 1,
+              "setupRevision": 1,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "1fd67474-0222-43e9-878a-5be927b504ac",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "dbbde630-00d6-4053-8bad-eec1f85b6911",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "6f7fa7d0-b632-461f-9525-7994f2e9ad88",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "2c68bdbd-fe93-4b93-90fa-5368916d42ff",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "332e6cd1-b98f-40f8-b282-afc2ded9cd59",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "a1fdc2dc-a90b-4932-871b-a6b291f83d95",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "2c833d69-9aa6-478f-8642-373d7865c4c2",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "62da9616-3791-44cd-9bb1-5305fee726bd",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "99d619a6-2b9f-4ab7-8d68-bac6bffa88b9",
+              "presetRevision": 0,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "accountPresetOpaque",
+              "presetId": "0a63c714-3100-47db-9a1b-386862c9612d",
+              "presetRevision": 1,
+              "setupRevision": 0,
+              "contentEncryptionMode": "e2ee"
+            },
+            {
+              "kind": "direct",
+              "setup": {}
+            }
+          ],
+          "desiredRevision": 64,
+          "recipePlans": [],
+          "preset": {
+            "id": "0a63c714-3100-47db-9a1b-386862c9612d",
+            "revision": 1,
+            "name": "cut50-hunt finite tools"
+          },
+          "exclusions": [],
+          "appChildren": [
+            {
+              "sourceIndex": 8,
+              "itemIndex": 0,
+              "actionId": "machines.agents.install",
+              "input": {
+                "agentId": "pi",
+                "intent": "install",
+                "consent": {
+                  "vendorRecipe": true
+                },
+                "waitForTerminal": true,
+                "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9"
+              }
+            },
+            {
+              "sourceIndex": 13,
+              "itemIndex": 0,
+              "actionId": "machines.agents.install",
+              "input": {
+                "agentId": "auggie",
+                "intent": "install",
+                "consent": {
+                  "vendorRecipe": true
+                },
+                "waitForTerminal": true,
+                "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9"
+              }
+            },
+            {
+              "sourceIndex": 15,
+              "itemIndex": 0,
+              "actionId": "machines.agents.install",
+              "input": {
+                "agentId": "gemini",
+                "intent": "install",
+                "consent": {
+                  "vendorRecipe": true
+                },
+                "waitForTerminal": true,
+                "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9"
+              }
+            }
+          ]
+        }
+      ],
+      "appReviews": [],
+      "appDeployments": [],
+      "scripts": [
+        {
+          "targetIndex": 0,
+          "homeId": "srv_pyJ5PcM5HdqKtw6bpO91yIye2s5URoev",
+          "machineId": "287c69cd-8ede-471e-9628-34e5bee141d9",
+          "review": {
+            "steps": [
+              {
+                "planIndex": 0,
+                "stepId": "script:0",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 1
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:1",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 2
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:2",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 3
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:3",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 4
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:4",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 5
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:5",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 6
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:6",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 7
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:7",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 8
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:8",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 9
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:9",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 10
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:10",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 11
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:11",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 12
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:12",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 13
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:13",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 14
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:14",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 15
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:15",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 16
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:16",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 17
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:17",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 18
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:18",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 19
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:19",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 20
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:20",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 21
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:21",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 22
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:22",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 23
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:23",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 24
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:24",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 25
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:25",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 26
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:26",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 27
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:27",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 28
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:28",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 29
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:29",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 30
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:30",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 31
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:31",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 32
+                  }
+                }
+              },
+              {
+                "planIndex": 0,
+                "stepId": "script:32",
+                "label": {
+                  "key": "machinePresets.setup.scriptNumbered",
+                  "fallback": "Script {index}",
+                  "params": {
+                    "index": 33
+                  }
+                }
+              }
+            ],
+            "presetUpdateEffects": {
+              "toolchain": false,
+              "scripts": [
+                {
+                  "sourceIndex": 0,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 1,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 2,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 3,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 4,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 5,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 6,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 7,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 8,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 8,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 9,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 9,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 10,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 10,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 11,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 11,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 12,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 12,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 13,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 14,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 14,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 15,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 15,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 16,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 16,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 17,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 17,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 18,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 18,
+                  "scriptIndex": 1
+                },
+                {
+                  "sourceIndex": 19,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 20,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 21,
+                  "scriptIndex": 0
+                },
+                {
+                  "sourceIndex": 22,
+                  "scriptIndex": 0
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "childCount": 4
+    }
+  }
+}

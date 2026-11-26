@@ -115,7 +115,9 @@ function readMachineSetupRecipeTargets(request?: ApprovalSummaryInput) {
  * over the copies this viewer can open. Scripts it cannot place read as not known, never as no change.
  */
 function readMachineSetupApprovalScripts(targets: ReturnType<typeof readMachineSetupRecipeTargets>, preview: unknown) {
-    const reviews = Array.isArray(readRecord(preview).scripts) ? readRecord(preview).scripts as unknown[] : [];
+    // The host's prepared review reaches the approval as `request.preview.deploymentReview`.
+    const scripts = readRecord(readRecord(preview).deploymentReview).scripts;
+    const reviews = Array.isArray(scripts) ? scripts as unknown[] : [];
     return targets.flatMap((target, targetIndex): MachineSetupTargetSourcePresentations[] => {
         if (!('recipePlans' in target)) return [];
         const entry = reviews.map(readRecord).find(candidate => candidate.targetIndex === targetIndex
