@@ -1,6 +1,6 @@
 import { writeAcpTestAgentScript } from './subprocessHarness';
 
-export function writeProviderTurnAgent(directory: string): string {
+export function writeProviderTurnAgent(directory: string, options: Readonly<{ settleToolDuringPrompt?: boolean; nativeBackground?: boolean }> = {}): string {
     return writeAcpTestAgentScript({
         dir: directory, fileName: 'provider-turns.mjs',
         source: `
@@ -30,6 +30,7 @@ export function writeProviderTurnAgent(directory: string): string {
                     }
                     if (message.method === 'initialize') ok(message.id, {
                         protocolVersion: 1, authMethods: [],
+                        agentInfo: { name: 'fixture', version: '1.5.14' },
                         agentCapabilities: { loadSession: true, sessionCapabilities: { close: {}, fork: {} } },
                     });
                     else if (message.method === 'session/new' || message.method === 'session/fork') ok(message.id, { sessionId: 'owned' });
@@ -59,9 +60,23 @@ export function writeProviderTurnAgent(directory: string): string {
                     else if (message.method === 'session/prompt') {
                         const id = turn++ + ':background';
                         notify({ sessionUpdate: 'tool_call', toolCallId: id, title: 'Bash', kind: 'execute', status: 'in_progress', rawInput: { command: 'fixture' } });
-                        notify({ sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed', rawOutput: 'started' });
+                        if (${options.settleToolDuringPrompt !== false}) {
+                            notify({ sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed', rawOutput: 'started' });
+                        }
+                        if (${options.nativeBackground === true}) setTimeout(() => {
+                            notify({ sessionUpdate: 'tool_call_update', toolCallId: id, status: 'failed', rawOutput: 'background command failed' });
+                            notify({ sessionUpdate: 'tool_call', toolCallId: 'nested', title: 'Bash', kind: 'execute', status: 'pending' });
+                            notify({ sessionUpdate: 'tool_call_update', toolCallId: 'nested', status: 'in_progress',
+                                rawInput: { CommandLine: 'echo nested', WaitMsBeforeAsync: 500 } });
+                            notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'AFTER_BACKGROUND' } });
+                            notify({ sessionUpdate: 'usage_update', used: 10, size: 100 });
+                        }, 40);
+
                         notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'FOREGROUND' } });
                         ok(message.id, { stopReason: 'end_turn' });
+                    } else if (message.method === 'test/finish-nested') {
+                        notify({ sessionUpdate: 'tool_call_update', toolCallId: 'nested', status: 'completed', rawOutput: 'nested finished' });
+                        ok(message.id, {});
                     } else if (message.method === 'test/late') {
                         notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'LATE_FOREGROUND' } });
                         ok(message.id, {});
@@ -70,7 +85,8 @@ export function writeProviderTurnAgent(directory: string): string {
                         send({ jsonrpc: '2.0', id: 'permission', method: 'session/request_permission', params: {
                             sessionId: message.params.sessionId ?? 'owned',
                             toolCall: { toolCallId: message.params.toolCallId, title: 'Bash', kind: 'execute', rawInput: { command: 'fixture' } },
-                            options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'deny', kind: 'reject_once', name: 'Deny' }],
+                            options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'deny', kind: 'reject_once', name: 'Deny' },
+                                ...(message.params.reusable ? [{ optionId: 'always', kind: 'allow_always', name: 'Always allow' }] : [])],
                         } });
                     } else if (message.method === 'test/elicitation') {
                         awaiting.set('elicitation', message.id);

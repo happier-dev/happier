@@ -49,6 +49,8 @@ export type AcpPermissionCallContext = Readonly<{
    * must fail closed rather than inherit mutable Session mode.
    */
   causalPermissionAuthority?: AcpPermissionCausalAuthority | null;
+  /** Host-only explicit approval for an active native request with no attributable input. */
+  requireExplicitApproval?: true;
   /** Host-private current caller mode; the original admitted ceiling remains immutable. */
   callerPermissionMode?: string | null;
 }>;

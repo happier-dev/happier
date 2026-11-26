@@ -2811,25 +2811,53 @@ that attributed classification through the existing daemon recovery reporter. Re
 persistence and native-account failures do not initiate connected-account recovery. The daemon
 remains the recovery owner; explicit auth-refresh requests share its existing report path.
 The same declaration enables the host's existing backoff recovery control with its shared defaults;
-providers do not declare environment-variable names for that host policy. Antigravity's diagnostic
-is pinned to ACP server 1.3.0. An optional `auth.setupFailure` declaration matches the provider's
+providers do not declare environment-variable names for that host policy. An optional
+`auth.setupFailure` declaration matches the provider's
 numeric request code and exact error-data reason before the ACP peer strips arbitrary provider data.
 The canonical request failure log retains only the numeric code and `authenticationSetupFailure: true`
-for that match; generic missing authentication remains distinct. Antigravity declares the pinned
-onboarding failure match. Its plugin-owned runtime selects ACP authentication per launch:
-a nonempty materialized `GEMINI_API_KEY` selects `gemini-api-key`; Google OAuth,
-native-import and native-login launches select `oauth-personal`. Sessions and finite Runs
-share the SDK `auth.selectMethod` contract; missing credentials remain a provider refusal.
-Its existing ACP output-diagnostic codec also marks the exact Gemini invalid-API-key
-assistant response as a failed Session turn or finite Run, retaining the native text.
-Quoted diagnostics remain ordinary output; this does not assert a native Agent sign-in refusal.
-This describes development behavior, not released availability.
+for that match; generic missing authentication remains distinct.
 
-In development, Antigravity declares `connectedAccountLaunch.environmentUnsetUses` for
-`AGY_ACP_CCPA_BASE_URL` and `AGY_ACP_CCPA_PROJECT`, bound to its `model_upstream` purpose.
-The shared selected-purpose projection supplies the existing launch environment-removal channel,
-so connected authentication excludes inherited endpoint/project overrides. Native launches retain
-those customizations; unrelated Google and tool environment values remain available.
+Antigravity runs one runtime in 0.3 development: Google's `agy acp`. The plugin's
+`resolveAntigravityLaunch` (`packages/plugins/antigravity/src/agent/runtime/factory.ts`) is the
+single launch decision for create, resume and finite Runs. Machine sign-in strips
+`AGY_CLI_FORCE_FILE_TOKEN_STORAGE` through the launch environment's unset list and passes a
+user-set `GEMINI_HOME` as `--gemini-dir`, because agy ignores that variable. A selected Connected
+Account (Google OAuth or a Gemini API key) runs `agy acp --gemini-dir <materialized home>
+--app-data-dir antigravity-cli` with the variable set to `1`; the auth selector, which the host
+calls after `initialize` and before any Session exists, refuses such a launch when the
+negotiated `agentInfo.version` is older than 1.5.18 or unknown. Without the variable an empty
+profile silently uses the machine keyring login, and a Windows refresh moves the profile token
+into Credential Manager. API-key launches authenticate explicitly with `gemini-api-key` and
+need a private home (`nativeHome.purposes`), because agy records the method in the profile and a
+later OAuth launch of that profile then fails authentication. The materializer writes only the
+native token file `antigravity-cli/antigravity-oauth-token` through the codec shared with
+native-login import, keeping a newer native refresh of the same grant. Shared state links
+`antigravity-cli/{conversations,brain,annotations}`; `antigravity-cli/settings.json` (trusted
+workspaces) is copied. Its output-diagnostic codec marks agy 1.5.18's rendered invalid-API-key
+executor error as a failed turn. Usage-limit, `TOS_VIOLATION` and `VALIDATION_REQUIRED`
+classification await captured native samples.
+
+Native agy advertises family models in its `model` config option and effort in
+`thought_level`. The definition declares `modelConfigOptionId: 'model'`, so the host projects
+family models with the effort option. Its `resolveModelUpdate` maps a saved effort-suffixed id
+from agy's flat list (for example `gemini-4-neon-medium`) to the advertised family plus a
+`configOptions` effort; the host admits that id as the family and applies each config option
+through `session/set_config_option`.
+
+Conversations written by the retired 1.3.0 server (`antigravity-acp/conversations/<id>.db`,
+`.meta`, `brain/<id>`) remain readable. Before a native resume, the factory copies one that is
+absent from the launch profile's native store from the launch profile's or the machine
+profile's legacy store, without overwriting or removing anything; agy then loads it under the
+same id. The legacy directories stay declared state entries so resume reachability and
+cross-home import still see them.
+
+The native Session's provider-turn source interprets live ACP tool and usage updates.
+It delegates tool projection and turn publication to the shared ACP host. Running tools
+keep their original card, and the host requires a one-time approval when resumed work
+has no identifiable prompt authority. Versions before 1.5.15 can detach timed commands.
+The source reads the peer's negotiated version and keeps ordinary commands blocking on
+newer or unidentified peers. Finite Runs keep their single-turn contract. These behaviors
+are in development.
 
 `createPublicAcpSession` is the single configuration owner for create, resume,
 fork and live updates. It resolves the merged native-mode override before the

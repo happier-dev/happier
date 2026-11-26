@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createAntigravityBackgroundContinuation } from '../../../../../../../packages/plugins/antigravity/src/agent/runtime/backgroundContinuation';
 import type { AgentAcpProviderTurnSourceHost, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { TestInteractions, type TestInteractionRequester } from '@/agent/acp/testkit/interactionsFixture';
 import { writeProviderTurnAgent } from '../../testkit/providerTurnAgent';
@@ -12,7 +13,9 @@ describe('public ACP provider continuation', () => {
       const events: AgentSessionRuntimeEvent[] = [];
       const requestInteraction = vi.fn<TestInteractionRequester>(async request => {
         if (request.kind === 'questions') throw new Error('Unexpected questions');
-        return { requestId: 'fixture-interaction', kind: request.kind, status: 'approved' };
+        return { requestId: 'fixture-interaction', kind: request.kind, status: 'approved',
+          ...(request.kind === 'approval' && request.nativeChoices
+            ? { nativeChoice: { requirementId: request.nativeChoices.requirementId, choiceId: 'allow' } } : {}) };
       });
       const script = writeProviderTurnAgent(directory);
       const dependencies: PublicAcpComposerDependencies = {
@@ -79,7 +82,12 @@ async function withPublicContinuation(run: (fixture: {
   requestInteraction: ReturnType<typeof vi.fn>;
   setCatchUp(handler: () => Promise<void>): void;
   listen(handler: (event: AgentSessionRuntimeEvent) => Promise<void>): void;
-}) => Promise<void>, adapter: PublicAcpAwaitableAdapter = {}) {
+}) => Promise<void>, adapter: PublicAcpAwaitableAdapter = {}, fixtureOptions?: Parameters<typeof writeProviderTurnAgent>[1],
+sourceOptions?: Readonly<{
+  claimLiveUpdate?(update: Readonly<Record<string, unknown>>): boolean;
+  hasUnattributedWork?(): boolean;
+  onForegroundTurnFinished?(): readonly string[];
+}>) {
   await withTempDir('public-continuation-lifetime-', async directory => {
     let host: AgentAcpProviderTurnSourceHost | undefined;
     let catchUp = async () => {};
@@ -87,15 +95,17 @@ async function withPublicContinuation(run: (fixture: {
     let listener: ((event: AgentSessionRuntimeEvent) => Promise<void>) | undefined;
     const requestInteraction = vi.fn<TestInteractionRequester>(async request => {
         if (request.kind === 'questions') throw new Error('Unexpected questions');
-        return { requestId: 'fixture-interaction', kind: request.kind, status: 'approved' };
+        return { requestId: 'fixture-interaction', kind: request.kind, status: 'approved',
+          ...(request.kind === 'approval' && request.nativeChoices
+            ? { nativeChoice: { requirementId: request.nativeChoices.requirementId, choiceId: 'allow' } } : {}) };
       });
     const runtime = await createPublicAcpSessionFromAwaitableAdapter({ kind: 'create', sessionId: 'public', cwd: directory }, {
       transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture' } },
-      providerTurnSource: async value => { host = value; return { catchUp: () => catchUp(), dispose() {} }; },
+      providerTurnSource: async value => { host = value; return { ...sourceOptions, catchUp: () => catchUp(), dispose() {} }; },
     }, {
       pluginId: 'fixture', agentId: 'fixture', signal: new AbortController().signal, isCurrent: () => true,
       systemTools: { resolve: async () => ({ toolId: 'fixture', launch: {
-        kind: 'binary', executablePath: process.execPath, args: [writeProviderTurnAgent(directory)],
+        kind: 'binary', executablePath: process.execPath, args: [writeProviderTurnAgent(directory, fixtureOptions)],
       } }) }, interactions: new TestInteractions(requestInteraction),
       media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
       models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
@@ -110,6 +120,91 @@ async function withPublicContinuation(run: (fixture: {
     } finally { subscription.dispose(); await runtime.dispose(); }
   });
 }
+
+it('settles a background tool on its originating turn during a provider continuation', async () => {
+  await withPublicContinuation(async ({ host, events }) => {
+    const sink = host.beginContinuation({ id: 'task', turnId: '1' });
+    if (!sink) throw new Error('Missing provider continuation');
+    await sink.update({
+      sessionUpdate: 'tool_call_update', toolCallId: '0:background', status: 'failed',
+      rawOutput: 'background result',
+    });
+    await sink.finish({ kind: 'completed' });
+
+    expect(events.filter(event => event.kind === 'tool-result' && event.toolCallId === '0:background'))
+      .toEqual([expect.objectContaining({ turnId: 'parent', isError: true, output: expect.objectContaining({ output: 'background result' }) })]);
+    expect(events.filter(event => event.kind === 'tool-call' && event.toolCallId === '0:background'))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ turnId: 'parent' })]));
+    expect(events.some(event => event.kind === 'tool-call' && event.toolCallId === '0:background' && event.turnId !== 'parent'))
+      .toBe(false);
+  }, {}, { settleToolDuringPrompt: false }, { onForegroundTurnFinished: () => ['0:background'] });
+});
+
+it('routes autonomous live updates through the admitted provider turn and presents approval only for that request', async () => {
+  let deliver: ((update: Readonly<Record<string, unknown>>) => Promise<void>) | undefined;
+  await withPublicContinuation(async ({ runtime, host, events, requestInteraction }) => {
+    const sink = host.beginContinuation({ id: 'task', turnId: '1' });
+    if (!sink) throw new Error('Missing provider continuation');
+    deliver = sink.update;
+    await runtime.requestExtension('test/late', {});
+    await expect.poll(() => events.some(event => event.kind === 'message-delta' && event.text === 'LATE_FOREGROUND')).toBe(true);
+    await expect(runtime.requestExtension('test/permission', { toolCallId: '1:late', reusable: true }))
+      .resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } });
+    expect(requestInteraction).toHaveBeenCalledWith(expect.objectContaining({ allowSessionPersistence: false,
+      nativeChoices: expect.objectContaining({ choices: [
+        expect.objectContaining({ id: 'allow', scope: 'once' }), expect.objectContaining({ id: 'deny', scope: 'once' }),
+      ] }),
+    }), expect.objectContaining({ permissionContext: expect.objectContaining({
+      causalPermissionAuthority: null, requireExplicitApproval: true,
+    }) }));
+    await sink.finish({ kind: 'completed' });
+  }, {}, undefined, {
+    hasUnattributedWork: () => true,
+    claimLiveUpdate(update) {
+      if (!deliver || update.sessionUpdate !== 'agent_message_chunk') return false;
+      void deliver(update);
+      return true;
+    },
+  });
+});
+
+it('projects an Antigravity background failure and resumed output through the same ACP lifecycle', async () => {
+  await withTempDir('public-antigravity-continuation-', async directory => {
+    const runtime = await createPublicAcpSession({ kind: 'create', sessionId: 'public', cwd: directory }, {
+      transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture' } },
+      providerTurnSource: createAntigravityBackgroundContinuation({ settleMs: 20, stallMs: 1000 }),
+    }, {
+      pluginId: 'fixture', agentId: 'antigravity', signal: new AbortController().signal, isCurrent: () => true,
+      systemTools: { resolve: async () => ({ toolId: 'fixture', launch: {
+        kind: 'binary', executablePath: process.execPath, args: [writeProviderTurnAgent(directory, {
+          settleToolDuringPrompt: false, nativeBackground: true,
+        })],
+      } }) }, interactions: new TestInteractions(async () => { throw new Error('Unexpected interaction'); }),
+      media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
+      models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
+    });
+    const events: AgentSessionRuntimeEvent[] = [];
+    const subscription = runtime.watch(event => events.push(event));
+    try {
+      await runtime.send({ inputIds: ['input-parent'], input: { text: 'first' }, delivery: { kind: 'newTurn', turnId: 'parent' },
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } });
+      await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId !== 'parent'), { timeout: 500 }).toBe(true);
+      expect(events).toContainEqual(expect.objectContaining({ kind: 'tool-result', turnId: 'parent',
+        toolCallId: '0:background', isError: true }));
+      expect(events).toContainEqual(expect.objectContaining({
+        kind: 'turn-start', startedBy: 'provider', causedByTurnId: 'parent', continuationId: '0:background',
+      }));
+      expect(events).toContainEqual(expect.objectContaining({ kind: 'message-delta', text: 'AFTER_BACKGROUND' }));
+      expect(events.filter(event => event.kind === 'tool-result' && event.toolCallId === '0:background')).toHaveLength(1);
+      const nested = events.find(event => event.kind === 'tool-call' && event.toolCallId === 'nested');
+      if (!nested || nested.kind !== 'tool-call') throw new Error('Missing nested Antigravity command');
+      expect(events.some(event => event.kind === 'tool-result' && event.toolCallId === 'nested')).toBe(false);
+      await runtime.requestExtension('test/finish-nested', {});
+      await expect.poll(() => events.filter(event => event.kind === 'tool-result' && event.toolCallId === 'nested'))
+        .toEqual([expect.objectContaining({ turnId: nested.turnId, output: expect.objectContaining({ output: 'nested finished' }) })]);
+    } finally { subscription.dispose(); await runtime.dispose(); }
+  });
+});
 
 it('uses the awaitable plugin invocation for a native permission request', async () => {
   await withPublicContinuation(async ({ runtime, host, events, requestInteraction }) => {

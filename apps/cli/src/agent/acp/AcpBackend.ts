@@ -187,6 +187,8 @@ export type AcpSessionModelAdapter = Readonly<{
   }>) => Readonly<{
     modelId: string;
     requestMeta?: Readonly<Record<string, unknown>>;
+    /** Advertised config options applied after the model, e.g. an effort a retired model id encoded. */
+    configOptions?: Readonly<Record<string, string>>;
   }> | null | undefined;
 }>;
 
@@ -461,6 +463,7 @@ export class AcpBackend implements CatalogAcpBackend {
   private closeNetworkTransport: (() => void) | null = null;
   private acpSessionId: string | null = null;
   private acceptsImageInput = false;
+  private negotiatedAgentVersion: string | undefined;
   private negotiatedSessionCapabilities: AcpNegotiatedSessionCapabilities = Object.freeze({
     loadSession: false,
     listSessions: false,
@@ -622,6 +625,7 @@ export class AcpBackend implements CatalogAcpBackend {
         followJournal: options.providerJournalFollower,
         isDisposed: () => this.disposed,
         foregroundActive: () => !this.providerTurns?.isActive() && this.waitingForResponse && !this.isCurrentTurnGenerationClosed(),
+        agentVersion: () => this.negotiatedAgentVersion,
         canBegin: () => !this.waitingForResponse && this.rawPromptRequest === null && this.providerCancellation === null,
         begin: () => {
           this.turnGeneration++;
@@ -645,13 +649,21 @@ export class AcpBackend implements CatalogAcpBackend {
           const value = AgentRuntimeJsonValueV1Schema.parse(update);
           if (!asRecord(value) || !['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'plan', 'usage_update']
             .includes(String(update.sessionUpdate))) throw new Error('Invalid provider continuation update');
-          await this.handleSessionUpdate({ sessionId: this.acpSessionId!, update } as SessionNotification, true);
+          await this.handleSessionUpdate({ sessionId: this.acpSessionId!, update } as SessionNotification, 'provider');
         },
-        finish: async outcome => {
+        releaseClaimedUpdates: async updates => {
+          const sessionId = this.acpSessionId;
+          if (!sessionId) return;
+          for (const update of updates) {
+            if (this.acpSessionId !== sessionId || !this.waitingForResponse || this.isCurrentTurnGenerationClosed()) break;
+            await this.handleSessionUpdate({ sessionId, update } as SessionNotification, 'released');
+          }
+        },
+        finish: async (outcome, options) => {
           if (outcome.kind === 'failed') this.failPendingResponseWait(createCompletionEvidenceError(outcome, 'Provider continuation failed'));
           else this.finalizeTurnOutcome(outcome.kind === 'cancelled'
             ? { kind: 'aborted', stopReason: 'cancelled' }
-            : { kind: 'completed', stopReason: 'end_turn' });
+            : { kind: 'completed', stopReason: 'end_turn' }, options?.retainToolCallIds);
         },
         fail: error => {
           this.failPendingResponseWait(error);
@@ -807,6 +819,7 @@ export class AcpBackend implements CatalogAcpBackend {
     this.sessionHolderAdoption = null;
     this.adoptingHeldAgent = false;
     this.acceptsImageInput = false;
+    this.negotiatedAgentVersion = undefined;
     this.negotiatedSessionCapabilities = Object.freeze({
       loadSession: false,
       listSessions: false,
@@ -1181,6 +1194,7 @@ export class AcpBackend implements CatalogAcpBackend {
         return {
           scope,
           isCurrent,
+          ...(admitted && this.providerTurns?.hasUnattributedWork() ? { requireExplicitApproval: true as const } : {}),
           cancel: async (failure) => {
             if (scope !== 'turn' || !isCurrent()) return;
             // Check ownership before atomically failing and cancelling this exact prompt.
@@ -1220,9 +1234,10 @@ export class AcpBackend implements CatalogAcpBackend {
                 }
               };
               assertCurrent();
-              return { assertCurrent };
+              return { assertCurrent, ...(this.providerTurns?.hasUnattributedWork()
+                ? { requireExplicitApproval: true as const } : {}) };
             }
-          return undefined;
+            return undefined;
           },
         })
       );
@@ -1309,6 +1324,8 @@ export class AcpBackend implements CatalogAcpBackend {
 
     logger.debug(`[AcpBackend] Initialize completed`);
 
+    const agentInfo = asRecord((initResponse as InitializeResponse).agentInfo);
+    this.negotiatedAgentVersion = typeof agentInfo?.version === 'string' ? agentInfo.version : undefined;
     const agentCapabilities = asRecord((initResponse as InitializeResponse).agentCapabilities);
     // The SDK response came from JSON-RPC; keep opaque extension leaves for plugin codecs.
     this.agentCapabilities = agentCapabilities as JsonValue;
@@ -1331,6 +1348,7 @@ export class AcpBackend implements CatalogAcpBackend {
       ? await this.options.authSelector(Object.freeze({
           advertisedMethodIds,
           initializeMetadata: readBoundedInitializeMetadata(initResponse),
+          agentVersion: this.negotiatedAgentVersion ?? null,
         }))
       : staticAuthMethodId
         ? { methodId: staticAuthMethodId, ...(this.options.authMeta ? { metadata: this.options.authMeta } : {}) }
@@ -1869,8 +1887,12 @@ export class AcpBackend implements CatalogAcpBackend {
   }
 
   /** Normalize updates through shared publishers, excluding competing ACP prompt output while a journal continuation owns the turn. */
-  private async handleSessionUpdate(params: SessionNotification, providerTurn = false): Promise<void> {
-    if (this.providerTurns?.isActive() && !providerTurn && isPromptTurnSessionUpdate(params.update)) return;
+  private async handleSessionUpdate(params: SessionNotification, source: 'live' | 'provider' | 'released' = 'live'): Promise<void> {
+    if (source === 'live' && !this.replayCapture && params.sessionId === this.acpSessionId && this.providerTurns) {
+      const update = asRecord(params.update);
+      if (update && await this.providerTurns.claimLiveUpdate(update)) return;
+    }
+    if (this.providerTurns?.isActive() && source !== 'provider' && isPromptTurnSessionUpdate(params.update)) return;
     const raw = asRecord(params) ?? {};
     const filteredNotification = (() => {
       if (this.replayCapture) return params;
@@ -1889,7 +1911,7 @@ export class AcpBackend implements CatalogAcpBackend {
           dropClosedTurnUpdates
           && sessionUpdateType === 'tool_call_update'
           && typeof record?.toolCallId === 'string'
-          && this.toolCalls.readCall(record.toolCallId) !== null;
+          && this.toolCalls.hasRetainedCall(record.toolCallId);
         if (dropClosedTurnUpdates && isPromptTurnSessionUpdate(update) && !isRetainedClosedTurnToolUpdate) {
           continue;
         }
@@ -2302,8 +2324,9 @@ export class AcpBackend implements CatalogAcpBackend {
   private clearActiveToolCallStateForTerminalTurn(
     reason: string,
     status: 'completed' | 'failed' | 'cancelled' = 'failed',
+    retainToolCallIds?: readonly string[],
   ): void {
-    this.toolCalls.terminalizeTurn(status);
+    this.toolCalls.terminalizeTurn(status, retainToolCallIds);
     logger.debug(`[AcpBackend] Terminalized active tool state after ${reason}`);
   }
 
@@ -2336,7 +2359,13 @@ export class AcpBackend implements CatalogAcpBackend {
   }
 
   /** Close the current generation and its pending permissions before resolving the public composer's completion waiter. */
-  private finalizeTurnOutcome(outcome: AcpTurnOutcome): void {
+  private finalizeTurnOutcome(outcome: AcpTurnOutcome, retainToolCallIds?: readonly string[]): void {
+    if (this.providerTurns && !this.providerTurns.isActive()) {
+      const foregroundOutcome = outcome.kind === 'completed'
+        ? { kind: 'completed' as const }
+        : outcome.kind === 'aborted' ? { kind: 'cancelled' as const } : { kind: 'failed' as const };
+      retainToolCallIds = this.providerTurns.onForegroundTurnFinished(foregroundOutcome);
+    }
     this.clearTurnTimers();
     this.clearResponseCompletionTimeout();
     if (this.postPromptCompletionIdleTimeout) {
@@ -2367,6 +2396,7 @@ export class AcpBackend implements CatalogAcpBackend {
         : outcome.kind === 'aborted' || outcome.kind === 'unknown'
           ? 'cancelled'
           : 'failed',
+      outcome.kind === 'completed' ? retainToolCallIds : undefined,
     );
     this.closeCurrentTurnGeneration();
     this.waitingForResponse = false;
@@ -3044,11 +3074,14 @@ export class AcpBackend implements CatalogAcpBackend {
       modelState: this.sessionModelState,
     });
     // Resolve once before catalog admission so a native restart refusal reaches
-    // the host. A codec result alone does not admit an unlisted model.
+    // the host. A codec result alone does not admit an unlisted model; a retired
+    // id it maps onto an advertised model is admitted as that model.
+    const isAdvertised = (id: string) => this.sessionModelState!.availableModels.some(model => model.id === id);
     if (selection && !selection.allowUnlisted
       && this.sessionModelState && this.sessionModelState.availableModels.length > 0
       && normalizedModelId !== this.sessionModelState.currentModelId
-      && !this.sessionModelState.availableModels.some(model => model.id === normalizedModelId)) {
+      && !isAdvertised(normalizedModelId)
+      && !(resolvedUpdate?.configOptions && isAdvertised(resolvedUpdate.modelId))) {
       throw new PluginError({ code: 'acp_model_not_available',
         message: 'The requested model is not advertised by this Agent.' });
     }
@@ -3063,7 +3096,14 @@ export class AcpBackend implements CatalogAcpBackend {
         modelConfigOptionId,
         providerModelId,
       );
+      for (const [configId, valueId] of Object.entries(resolvedUpdate?.configOptions ?? {})) {
+        await this.setSessionConfigOption(normalizedSessionId, configId, valueId);
+      }
       return;
+    }
+    if (resolvedUpdate?.configOptions) {
+      throw new PluginError({ code: 'acp_model_not_available',
+        message: 'This Agent does not advertise a model config option for the requested model.' });
     }
 
     const response = await this.connection.peer.setSessionModelLegacy({

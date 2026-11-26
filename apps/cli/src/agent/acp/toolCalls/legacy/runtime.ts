@@ -198,13 +198,17 @@ export class LegacyAcpToolRuntime {
         this.permissionWaiting.delete(call.localId);
     }
 
-    terminalizeTurn(status: Extract<AcpToolLifecycleStatus, 'completed' | 'failed' | 'cancelled'>): void {
+    terminalizeTurn(
+        status: Extract<AcpToolLifecycleStatus, 'completed' | 'failed' | 'cancelled'>,
+        retainToolCallIds?: readonly string[],
+    ): void {
         const wasActive = this.activeCalls().length > 0;
         const emissions = this.accumulator.terminalizeTurn({
             sessionId: this.options.sessionId(),
             turnId: this.options.turnId(),
             sidechainId: this.options.sidechainId,
             status,
+            retainToolCallIds,
             revision: this.nextRevision(),
             observedAtMs: Date.now(),
         });
@@ -221,6 +225,14 @@ export class LegacyAcpToolRuntime {
             turnId: this.options.turnId(),
             sidechainId: this.options.sidechainId,
         });
+    }
+
+    hasRetainedCall(toolCallId: string): boolean {
+        return this.accumulator.findNewestRetainedTurnId({
+            sessionId: this.options.sessionId(),
+            sidechainId: this.options.sidechainId,
+            toolCallId,
+        }) !== null;
     }
 
     readCall(toolCallId: string): MergedAcpToolCall | null {
@@ -274,7 +286,7 @@ export class LegacyAcpToolRuntime {
 
     private publish(emission: AcpToolAccumulatorEmission): void {
         if (emission.kind === 'ignored') return;
-        this.options.emit(projectLegacyAcpToolCallMessage(emission.call));
+        this.options.emit(projectLegacyAcpToolCallMessage(emission.call, emission.kind === 'late-enrichment'));
         if (emission.kind !== 'progress' && emission.publishResult && emission.result) {
             const value = readLegacyAcpToolResultValue(emission.result);
             const callKind = emission.call.kind ?? null;

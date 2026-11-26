@@ -12,7 +12,7 @@ describe('Antigravity plugin activation', () => {
     expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
       'agents',
       'connectedAccountDescriptors',
-      'managedDependencies',
+      'resources',
       'systemTools',
     ]);
     expect(await import('./manifest.js')).toEqual(expect.objectContaining({
@@ -32,16 +32,14 @@ describe('Antigravity plugin activation', () => {
       });
       const registration = fixture.registration('agents', 'antigravity');
 
-      // The declarative ACP runtime is the sole session owner: no plugin-side session
-      // factory, runner-factory locator, spawn hook, or preflight control may exist.
-      expect(registration?.factory).toBeUndefined();
-      expect(registration?.sessionRunnerFactory).toBeUndefined();
+      // The provider factory composes host ACP over native `agy acp`; no spawn hook,
+      // preflight control or CLI session command competes with it.
+      expect(registration?.factory).toEqual(expect.any(Function));
       expect(registration?.daemonSpawnHooks).toBeUndefined();
       expect(registration?.preflightSessionControls).toBeUndefined();
       expect(registration?.cliSessionCommand).toBeUndefined();
       expect(fixture.registration('hooks', 'resolve-prerequisites')).toBeUndefined();
 
-      expect(registration?.terminal).toEqual({ resolveLaunch: expect.any(Function) });
       expect(Object.keys(registration?.externalSessions ?? {}).sort()).toEqual([
         'listCandidates',
         'pageTranscript',
@@ -88,7 +86,10 @@ describe('Antigravity plugin activation', () => {
       module: { activate },
     });
     try {
-      const terminal = fixture.registration('agents', 'antigravity')?.terminal;
+      const factory = fixture.registration('agents', 'antigravity')?.factory;
+      const runtime = await factory?.({ plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+        agent: { id: 'antigravity' }, signal: new AbortController().signal });
+      const terminal = runtime?.surfaces?.terminal;
       if (!terminal) throw new Error('Expected the Antigravity terminal surface.');
 
       const launch = terminal.resolveLaunch({

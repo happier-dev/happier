@@ -248,7 +248,7 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
     expect(acquisitions).toBe(1);
   });
 
-  it('consumes the Antigravity producer declaration for connected overrides while preserving a subsequent native launch', async () => {
+  it('consumes the Antigravity producer declaration for connected file-token storage while preserving a subsequent native launch', async () => {
     const agentId = 'antigravity';
     const declaration = PluginAgentContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.agents?.[0]);
     const identity = { pluginId: PLUGIN_MANIFEST.id, localId: agentId };
@@ -283,7 +283,6 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
       identity, richDefinition: { definition: declaration }, catalogEntry,
     }]]) };
     const inheritedEnvironment = {
-      AGY_ACP_CCPA_BASE_URL: 'https://custom.example', AGY_ACP_CCPA_PROJECT: 'native-project',
       GOOGLE_APPLICATION_CREDENTIALS: '/native/application.json', SHELL: '/bin/zsh',
     };
     const launch = async (source: 'connected' | 'native') => {
@@ -300,7 +299,7 @@ describe('materializeQualifiedConnectedAccountLaunchUses', () => {
       return { ...stripUnsetEnvironmentVariables(inheritedEnvironment, materialized.unsetEnvKeys), ...materialized.env };
     };
     expect(await launch('connected')).toEqual({
-      AGY_ACP_FORCE_FILE_STORAGE: '1', GOOGLE_APPLICATION_CREDENTIALS: '/native/application.json', SHELL: '/bin/zsh',
+      AGY_CLI_FORCE_FILE_TOKEN_STORAGE: '1', GOOGLE_APPLICATION_CREDENTIALS: '/native/application.json', SHELL: '/bin/zsh',
     });
     expect(await launch('native')).toEqual(inheritedEnvironment);
   });

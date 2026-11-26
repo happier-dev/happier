@@ -56,6 +56,8 @@ export interface ToolCallMessage {
   callId: ToolCallId;
   /** Stable bounded transcript identity for revision-capable producers. */
   localId?: string;
+  /** This observation enriches an existing call after the ACP accumulator settled it. */
+  lateUpdate?: true;
 }
 
 /**
@@ -67,6 +69,8 @@ export interface ToolResultMessage {
   toolName?: string;
   result: unknown;
   callId: ToolCallId;
+  /** Stable identity of the originating call, for tools that can outlive their turn. */
+  callLocalId?: string;
   /** Stable bounded transcript identity, domain-separated from the call identity. */
   localId?: string;
   isError?: boolean;

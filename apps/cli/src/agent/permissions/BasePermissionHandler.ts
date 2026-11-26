@@ -806,7 +806,8 @@ export abstract class BasePermissionHandler {
         const context = this.requestCoordinator.getResponseContext(requestId);
         const pending = this.pendingRequests.get(requestId);
         const currentDecision = pending?.resolveCurrentPermissionDecision?.();
-        if (!context || !pending?.coordinatorManaged || !this.isApprovalReviewerEnabled() || context.source === HAPPIER_ACTION_REQUEST_SOURCE
+        if (!context || !pending?.coordinatorManaged || pending.causalPermissionContext?.requireExplicitApproval
+            || !this.isApprovalReviewerEnabled() || context.source === HAPPIER_ACTION_REQUEST_SOURCE
             || context.kind === 'user_action' || resolveAgentRequestKind(context.toolName, context.kind) !== 'permission'
             || currentDecision?.decision === 'denied' || currentDecision?.decision === 'abort') return 'escalate';
         // Public permission sources may carry non-JSON records. Admit a strict,

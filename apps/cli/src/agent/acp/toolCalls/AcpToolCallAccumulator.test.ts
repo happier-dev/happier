@@ -159,6 +159,26 @@ describe('AcpToolCallAccumulator', () => {
         expect(accumulator.activeSize).toBe(0);
     });
 
+    it('keeps only witnessed running background calls open when their turn completes', () => {
+        const accumulator = new AcpToolCallAccumulator();
+        accumulator.observe(observation(1, { status: 'in_progress' }));
+        accumulator.observe(observation(2, { status: 'pending' }, { toolCallId: 'pending' }));
+
+        accumulator.terminalizeTurn({
+            sessionId: 'session-1', turnId: 'turn-1', status: 'completed',
+            revision: 3, observedAtMs: 1_003, retainToolCallIds: ['call-1', 'pending'],
+        });
+
+        expect(accumulator.listActiveCalls({ sessionId: 'session-1', turnId: 'turn-1' }))
+            .toMatchObject([{ toolCallId: 'call-1', status: 'running' }]);
+        expect(accumulator.findNewestRetainedTurnId({ sessionId: 'session-1', sidechainId: null, toolCallId: 'call-1' }))
+            .toBe('turn-1');
+        expect(accumulator.observe(observation(4, { status: 'failed', rawOutput: 'command failed' })))
+            .toMatchObject({ kind: 'terminal', result: { isError: true, rawOutput: 'command failed' } });
+        expect(accumulator.observe(observation(5, { status: 'in_progress' }, { toolCallId: 'unwitnessed' })))
+            .toEqual({ kind: 'ignored', reason: 'closed-beyond-tombstone' });
+    });
+
     it('rejects stale and duplicate observations without downgrading merged state', () => {
         const accumulator = new AcpToolCallAccumulator();
         accumulator.observe(observation(2, {

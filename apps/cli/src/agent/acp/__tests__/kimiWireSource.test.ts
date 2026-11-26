@@ -17,6 +17,7 @@ describe('Kimi wire source parent identity', () => {
         signal: new AbortController().signal,
         followJournal: async () => { throw new Error('Missing state must fail before following'); },
         registerContinuation: () => false, beginContinuation: () => null, releaseToolCalls() {}, fail() {},
+        async releaseClaimedUpdates() { throw new Error('Kimi does not claim live updates'); },
       };
       await expect(createKimiWireSource()(host)).rejects.toMatchObject({
         code: 'provider_session_state_unavailable_for_resume',
@@ -185,6 +186,7 @@ describe('Kimi journal integrity', () => {
       sessionId, cwd: directory, env: { KIMI_CODE_HOME: directory }, signal: lifetime.signal,
       followJournal: input => follow({ providerSessionId: sessionId, signal: lifetime.signal }, input),
       registerContinuation: vi.fn(() => true), beginContinuation: vi.fn(() => null), releaseToolCalls: vi.fn(), fail,
+      async releaseClaimedUpdates() { throw new Error('Kimi does not claim live updates'); },
     } satisfies AgentAcpProviderTurnSourceHost;
     return { index, entry, journal, host, fail };
   }

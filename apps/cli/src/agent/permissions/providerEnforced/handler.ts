@@ -228,6 +228,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     context?: AcpPermissionCallContext,
   ): PermissionResult | null {
     const decision = this.resolveImmediateDecision(toolCallId, toolName, input, context);
+    if (context?.requireExplicitApproval && decision?.decision !== 'denied' && decision?.decision !== 'abort') return null;
     return resolveNativePermissionImmediateDecision(decision, context?.nativeChoices);
   }
 
@@ -314,7 +315,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     // A question always needs an answer, never an automatic tool/session grant.
     if (!context?.nativeChoices && isAgentStructuredQuestionRequest({ toolName, source: context?.source })) return null;
     const immediate = this.getImmediateDecision(toolCallId, toolName, input, context);
-    if (immediate) return immediate;
+    if (immediate || context?.requireExplicitApproval) return immediate;
 
     const effective = resolveCausalPermissionMode({
       currentPermissionMode: this.currentPermissionMode,

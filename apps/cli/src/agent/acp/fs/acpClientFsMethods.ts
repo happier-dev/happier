@@ -61,7 +61,7 @@ export function buildInitializeRequest(params: {
 export function createAcpClientFsMethods(params: {
   cwd: string;
   permissionHandler?: AcpPermissionHandler;
-  beforeRequest?: (sessionId: string) => Promise<void | Readonly<{ assertCurrent(): void }>>;
+  beforeRequest?: (sessionId: string) => Promise<void | Readonly<{ assertCurrent(): void; requireExplicitApproval?: true }>>;
 }): Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'> {
   const rootResolved = resolve(params.cwd);
   const rootRealPromise = fs.realpath(rootResolved).catch(() => rootResolved);
@@ -171,13 +171,19 @@ export function createAcpClientFsMethods(params: {
       path: targetPath,
       bytes: Buffer.byteLength(req.content, 'utf8'),
     };
-    const permissionContext = { origin: 'host_acp_fs_write' as const };
+    const permissionContext = {
+      origin: 'host_acp_fs_write' as const,
+      ...(owner?.requireExplicitApproval ? { requireExplicitApproval: true as const } : {}),
+    };
     const isApproved = (decision: string): boolean => (
       decision === 'approved'
-      || decision === 'approved_for_session'
-      || decision === 'approved_execpolicy_amendment'
+      || (!owner?.requireExplicitApproval
+        && (decision === 'approved_for_session' || decision === 'approved_execpolicy_amendment'))
     );
 
+    if (owner?.requireExplicitApproval && !params.permissionHandler) {
+      throw new Error(`Permission denied for writeTextFile (${toolCallId})`);
+    }
     if (params.permissionHandler) {
       const result = await params.permissionHandler.handleToolCall(
         toolCallId,

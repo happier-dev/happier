@@ -45,6 +45,7 @@ export class AcpToolCallAccumulator {
         this.assertObservation(observation);
         const identity = createAcpToolIdentity(observation);
         const tombstone = this.tombstones.get(identity.correlationKey);
+        const record = tombstone?.record ?? this.active.get(identity.correlationKey);
         const allSidechainsTurnKey = createAcpTurnIdentity({
             sessionId: observation.sessionId,
             turnId: observation.turnId,
@@ -52,11 +53,10 @@ export class AcpToolCallAccumulator {
         const exactSidechainTurnKey = createAcpTurnIdentity(observation);
         if (
             (this.closedTurns.has(allSidechainsTurnKey) || this.closedTurns.has(exactSidechainTurnKey))
-            && tombstone === undefined
+            && record === undefined
         ) {
             return Object.freeze({ kind: 'ignored', reason: 'closed-beyond-tombstone' });
         }
-        const record = tombstone?.record ?? this.active.get(identity.correlationKey);
         if (record && observation.revision <= record.revision) {
             return Object.freeze({ kind: 'ignored', reason: 'stale' });
         }
@@ -99,7 +99,10 @@ export class AcpToolCallAccumulator {
                 && record.turnId === input.turnId
                 && (input.sidechainId === undefined || record.sidechainId === input.sidechainId));
 
+        const retained = input.status === 'completed' && input.retainToolCallIds
+            ? new Set(input.retainToolCallIds) : null;
         for (const record of records) {
+            if (record.status === 'running' && retained?.has(record.toolCallId)) continue;
             const revision = Math.max(input.revision, record.revision + 1);
             const emission = this.observe({
                 sessionId: record.sessionId,
@@ -130,7 +133,7 @@ export class AcpToolCallAccumulator {
     }
 
     /**
-     * Finds the newest retained terminal observation for an opaque provider call ID.
+     * Finds the newest retained observation for an opaque provider call ID.
      *
      * ACP tool updates do not carry a turn ID. The runtime uses this retained lookup only
      * for `tool_call_update`, after preferring an active current-turn record, so a newly
@@ -142,24 +145,16 @@ export class AcpToolCallAccumulator {
         toolCallId: string;
     }>): string | null {
         let newest: Tombstone | null = null;
-        for (const tombstone of this.tombstones.values()) {
-            const record = tombstone.record;
-            if (
-                record.sessionId !== input.sessionId
-                || record.sidechainId !== input.sidechainId
-                || record.toolCallId !== input.toolCallId
-            ) {
-                continue;
-            }
-            if (
-                newest === null
-                || tombstone.finalizedAtMs > newest.finalizedAtMs
-                || (
-                    tombstone.finalizedAtMs === newest.finalizedAtMs
-                    && record.revision > newest.record.revision
-                )
-            ) {
-                newest = tombstone;
+        for (const records of [this.tombstones.values(), this.active.values()]) {
+            for (const entry of records) {
+                const record = 'record' in entry ? entry.record : entry;
+                if (record.sessionId !== input.sessionId || record.sidechainId !== input.sidechainId
+                    || record.toolCallId !== input.toolCallId) continue;
+                const finalizedAtMs = 'record' in entry ? entry.finalizedAtMs : record.observedAtMs;
+                if (newest === null || finalizedAtMs > newest.finalizedAtMs
+                    || (finalizedAtMs === newest.finalizedAtMs && record.revision > newest.record.revision)) {
+                    newest = { record, finalizedAtMs };
+                }
             }
         }
         return newest?.record.turnId ?? null;

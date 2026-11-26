@@ -2,6 +2,8 @@ import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigrav
 import { parseConnectedAccountTokenEndpointFailure, type ConnectedAccountAuthenticationContext, type ConnectedAccountAuthenticationModeRuntime, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readAntigravityQuota } from './quota.js';
 import type { readAgyNativeCredential } from './nativeCredentials.js';
+import { decodeAgyNativeCliCredential, encodeAgyNativeCliCredential } from './nativeTokenFile.js';
+import { ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV, ANTIGRAVITY_NATIVE_TOKEN_FILE } from '../agent/install/cliRuntime.js';
 import { discoverAntigravityProject } from './projectDiscovery.js';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
@@ -11,8 +13,6 @@ type CredentialReader = Parameters<ConnectedAccountRuntime['status']>[0]['creden
 type CredentialStore = ConnectedAccountAuthenticationContext['attemptCredentials'];
 type Tokens = Readonly<{ accessToken: string; refreshToken: string; expiresAtMs: number | null; scopes: readonly string[]; providerAccountId: string; providerEmail: string }>;
 const profile = ANTIGRAVITY_OAUTH_PROFILE;
-const tokenFileId = 'antigravity-acp/acp_token.json';
-const settingsFileId = 'antigravity-acp/settings.json';
 
 function usesOauthCredentials(modeId: string) { return modeId === 'oauth-personal' || modeId === 'native-import'; }
 function diagnostic(code: string, message: string,
@@ -224,8 +224,8 @@ export function createAntigravityConnectedAccountRuntime(readNativeCredential?: 
       return { kind: 'httpHeaders', headers, facts, ...(Number.isSafeInteger(expiry) && expiry > 0 ? { expiresAt: expiry } : {}) };
     }
     if (request.kind === 'environment') {
-      if (request.keys.some((key) => key !== 'AGY_ACP_FORCE_FILE_STORAGE' && key !== ANTIGRAVITY_CREDENTIAL_ENV_KEY)) throw new Error('Antigravity personal OAuth cannot materialize an unrelated environment key.');
-      const env: Record<string, string> = request.keys.includes('AGY_ACP_FORCE_FILE_STORAGE') ? { AGY_ACP_FORCE_FILE_STORAGE: '1' } : {};
+      if (request.keys.some((key) => key !== ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV && key !== ANTIGRAVITY_CREDENTIAL_ENV_KEY)) throw new Error('Antigravity personal OAuth cannot materialize an unrelated environment key.');
+      const env: Record<string, string> = request.keys.includes(ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV) ? { [ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV]: '1' } : {};
       if (request.keys.includes(ANTIGRAVITY_CREDENTIAL_ENV_KEY)) {
         const access = await read(context.credentials, 'accessToken', options), projectId = await read(context.credentials, 'projectId', options);
         if (!access || !projectId) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Antigravity access and project credentials are unavailable; reconnect the account.' });
@@ -236,16 +236,21 @@ export function createAntigravityConnectedAccountRuntime(readNativeCredential?: 
     }
     if (request.kind !== 'files') throw new Error('Antigravity personal OAuth requires native file materialization.');
     const files: Record<string, Uint8Array> = {};
-    if (request.fileIds.includes(tokenFileId)) {
+    if (request.fileIds.includes(ANTIGRAVITY_NATIVE_TOKEN_FILE)) {
       const accessToken = await read(context.credentials, 'accessToken', options), refreshToken = await read(context.credentials, 'refreshToken', options);
       if (!accessToken || !refreshToken) throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'Antigravity OAuth credentials are unavailable.' });
-      const expiry = Number(await read(context.credentials, 'expiresAtMs', options)), projectId = await read(context.credentials, 'projectId', options);
-      files[tokenFileId] = new TextEncoder().encode(JSON.stringify({ token: accessToken, refresh_token: refreshToken, client_id: profile.clientId, client_secret: profile.clientSecret,
-        token_uri: profile.tokenUrl, scopes: await scopes(context.credentials, options), ...(projectId ? { project_id: projectId } : {}),
-        ...(Number.isFinite(expiry) && expiry > 0 ? { expiry: new Date(expiry).toISOString() } : {}),
-      }));
+      const expiry = Number(await read(context.credentials, 'expiresAtMs', options));
+      const expiresAt = Number.isFinite(expiry) && expiry > 0 ? expiry : null;
+      // Native agy refreshes this file in place. Keep its newer access token for the
+      // same grant instead of rewinding the profile to the stored one.
+      const existingBytes = options?.existingFiles?.[ANTIGRAVITY_NATIVE_TOKEN_FILE];
+      const existing = decodeAgyNativeCliCredential(existingBytes);
+      files[ANTIGRAVITY_NATIVE_TOKEN_FILE] = existingBytes && existing?.refreshToken === refreshToken && existing.accessToken
+        && existing.expiresAt !== null && (expiresAt === null || existing.expiresAt > expiresAt)
+        ? existingBytes
+        : encodeAgyNativeCliCredential({ accessToken, refreshToken, expiresAt,
+          email: await read(context.credentials, 'providerEmail', options) || null, nowMs: Date.now() });
     }
-    if (request.fileIds.includes(settingsFileId)) files[settingsFileId] = new TextEncoder().encode(JSON.stringify({ auth: { type: 'oauth-personal' } }));
     return { kind: 'files', files };
   },
   };

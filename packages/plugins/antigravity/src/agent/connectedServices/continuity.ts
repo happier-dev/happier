@@ -1,14 +1,12 @@
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { GEMINI_API_KEY_ENV } from '@happier-dev/plugins-gemini/connected-account-service';
 
+import { ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV, ANTIGRAVITY_NATIVE_TOKEN_FILE } from '../install/cliRuntime.js';
+
 export const antigravityConnectedAccountLaunch: AgentConnectedAccountLaunchContributionV1 = {
   environmentUses: [
-    { purpose: 'model_upstream', environmentKey: 'AGY_ACP_FORCE_FILE_STORAGE' },
+    { purpose: 'model_upstream', environmentKey: ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV },
     { purpose: 'gemini-api-key', environmentKey: GEMINI_API_KEY_ENV },
-  ],
-  environmentUnsetUses: [
-    { purpose: 'model_upstream', environmentKey: 'AGY_ACP_CCPA_BASE_URL' },
-    { purpose: 'model_upstream', environmentKey: 'AGY_ACP_CCPA_PROJECT' },
   ],
   stateSharingDescriptor: {
     nativeHome: {
@@ -16,6 +14,9 @@ export const antigravityConnectedAccountLaunch: AgentConnectedAccountLaunchContr
       defaultRelativePath: '.gemini',
       materializedDirectoryName: 'gemini-home',
       groupHome: 'selectedAccount',
+      // Gemini API-key authentication records its method in the profile, so a
+      // key-only launch still gets a private home.
+      purposes: ['gemini-api-key'],
     },
     providerSupportStatus: 'supported',
     config: {
@@ -25,21 +26,28 @@ export const antigravityConnectedAccountLaunch: AgentConnectedAccountLaunchContr
         { path: 'antigravity-cli/skills', mode: 'linked_or_copied' },
         { path: 'config/hooks.json', mode: 'linked_or_copied' },
         { path: 'config/mcp_config.json', mode: 'linked_or_copied' },
-        { path: 'antigravity-acp/trusted_workspaces.json', mode: 'copied' },
+        // Holds native `trustedWorkspaces`.
+        { path: 'antigravity-cli/settings.json', mode: 'copied' },
       ],
     },
     state: {
       supported: true, modes: ['isolated', 'shared'],
       entries: [
-        { path: 'antigravity-acp/conversations', mode: 'linked', createIfMissing: 'directory' },
-        { path: 'antigravity-acp/brain', mode: 'linked', createIfMissing: 'directory' },
+        { path: 'antigravity-cli/conversations', mode: 'linked', createIfMissing: 'directory' },
+        { path: 'antigravity-cli/brain', mode: 'linked', createIfMissing: 'directory' },
+        // Conversation titles; without it a shared conversation lists with another title.
+        { path: 'antigravity-cli/annotations', mode: 'linked', createIfMissing: 'directory' },
+        // Retired-server store kept only so its conversations stay reachable until a
+        // resume adopts them into the native store; never created for new homes.
+        { path: 'antigravity-acp/conversations', mode: 'linked' },
+        { path: 'antigravity-acp/brain', mode: 'linked' },
       ],
       sharedStatePrivacyRiskAcknowledgementRequired: true,
       symlinkUnavailableDegradePolicy: 'block_continuity',
     },
     authIsolation: {
       mode: 'materialized_home',
-      secretEntries: ['antigravity-acp/acp_token.json', 'antigravity-acp/acp_business_token.json', 'antigravity-acp/settings.json'],
+      secretEntries: [ANTIGRAVITY_NATIVE_TOKEN_FILE],
     },
   },
   switchContinuity: {
@@ -61,9 +69,11 @@ export const antigravityConnectedAccountLaunch: AgentConnectedAccountLaunchContr
         return { status: 'unavailable', retryable: true, reason: 'agy_provider_outcome_pending' };
       },
       async verifyProviderOutcome({ selections, outcome }) {
-        // The host checks this evidence against the registered runtime epoch.
-        // Process startup alone cannot prove the selected account is usable.
-        if (outcome.kind !== 'provider_activity' || outcome.event !== 'assistant_message_end') {
+        // The launch, not model output, binds the account: the runtime epoch's
+        // agy runs with file-only token storage (agy >= 1.5.18, checked before
+        // any Session opens) in a profile holding only this credential. Any
+        // provider activity of that registered epoch therefore proves it.
+        if (outcome.kind !== 'provider_activity') {
           return { status: 'unavailable', reason: 'agy_provider_activity_required' };
         }
         const selection = selections.length === 1 ? selections[0] : undefined;
@@ -98,17 +108,19 @@ export const antigravityConnectedAccountLaunch: AgentConnectedAccountLaunchContr
       if (!id || id === '.' || id === '..' || /[\\/]/u.test(id)) {
         return { ok: false, reason: 'agy_session_state_not_found' };
       }
-      const required = await sessionFiles.verifyDeclaredPaths({ paths: [
-        { path: `antigravity-acp/conversations/${id}.db`, kind: 'file' },
-        { path: `antigravity-acp/conversations/${id}.meta`, kind: 'json_object' },
-        { path: `antigravity-acp/brain/${id}`, kind: 'directory' },
-      ] });
-      if (!required.found) return { ok: false, reason: 'agy_session_state_not_found' };
-      const trajectory = await sessionFiles.findDeclaredCandidate({
-        includeNativeSessionId: false,
-        matchesCandidate: ({ fileName }) => fileName === `${id}.db`,
-      });
-      return trajectory.found ? { ok: true } : { ok: false, reason: 'agy_session_state_not_found' };
+      // The conversation database proves the session; its brain and metadata are
+      // carried with it when present so cross-home imports keep them.
+      const reachable = async (store: 'antigravity-cli' | 'antigravity-acp') => {
+        const db = { path: `${store}/conversations/${id}.db`, kind: 'file' as const };
+        const brain = { path: `${store}/brain/${id}`, kind: 'directory' as const };
+        const companions = store === 'antigravity-acp'
+          ? [{ path: `${store}/conversations/${id}.meta`, kind: 'json_object' as const }, brain] : [brain];
+        if ((await sessionFiles.verifyDeclaredPaths({ paths: [db, ...companions] })).found) return true;
+        return (await sessionFiles.verifyDeclaredPaths({ paths: [db] })).found;
+      };
+      if (await reachable('antigravity-cli')) return { ok: true };
+      // A retired-server conversation is adopted into the native store at launch.
+      return await reachable('antigravity-acp') ? { ok: true } : { ok: false, reason: 'agy_session_state_not_found' };
     },
   },
 };

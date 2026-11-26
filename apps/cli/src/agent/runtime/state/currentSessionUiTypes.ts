@@ -57,6 +57,7 @@ export type HostSessionInteractionOptions = Readonly<{
         /** Immutable authority carried from the exact admitted input, if any. */
         causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1 | null;
         callerPermissionMode?: string | null;
+        requireExplicitApproval?: true;
     }>;
 }>;
 

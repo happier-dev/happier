@@ -12,7 +12,7 @@ export function createPublicProviderTurns<Parent extends Readonly<{ turnId: stri
   canBegin(): boolean;
   flush?(): Promise<void>;
   publish(event: PublicProviderTurnEvidence): void;
-  begin(input: Readonly<{ parent: Parent; continuationId: string; agentTurnId: string }>): void;
+  begin(input: Readonly<{ agentTurnId: string; cause?: { parent: Parent; continuationId: string } }>): void;
 }>): Readonly<{ capture(toolCallId: string, parent: Parent): void; lifecycle: AcpProviderTurnLifecycle }> {
   const parents = new Map<string, Parent | null>();
   const tasks = new Map<string, Parent | null>();
@@ -59,10 +59,16 @@ export function createPublicProviderTurns<Parent extends Readonly<{ turnId: stri
       },
       /** Consume registered parent metadata only when the composer is idle, preserving its admitted policy for the descendant. */
       beginContinuation({ id, turnId }) {
+        if (!params.isCurrent() || !params.canBegin() || !readNonBlankOpaqueIdentifier(turnId)) return false;
+        if (id === undefined) {
+          if (tasks.size === 0) return false;
+          params.begin({ agentTurnId: turnId });
+          return true;
+        }
         const parent = tasks.get(id);
-        if (!params.isCurrent() || !params.canBegin() || !parent || !readNonBlankOpaqueIdentifier(turnId)) return false;
+        if (!parent) return false;
         tasks.set(id, null);
-        params.begin({ parent, continuationId: id, agentTurnId: turnId });
+        params.begin({ cause: { parent, continuationId: id }, agentTurnId: turnId });
         return true;
       },
       releaseToolCalls,

@@ -88,6 +88,8 @@ export type AgentAcpRuntimeOptions = Readonly<{
 export type AgentAcpAuthenticationContext = Readonly<{
   advertisedMethodIds: readonly string[];
   initializeMetadata: Readonly<Record<string, JsonValue>> | null;
+  /** `initialize` agentInfo.version; selection runs before any Session is created or loaded. */
+  agentVersion?: string | null;
 }>;
 
 export type AgentAcpAuthenticationSelection = Readonly<{
@@ -167,6 +169,12 @@ export type AgentAcpModelControls = Readonly<{
     | Readonly<{
         modelId: string;
         requestMeta?: Readonly<Record<string, JsonValue>>;
+        /**
+         * Advertised ACP config options the host applies after selecting `modelId`
+         * through `session/set_config_option`, for a retired id that also encoded
+         * one (for example an effort suffix). Admits that id as `modelId`.
+         */
+        configOptions?: Readonly<Record<string, string>>;
       }>
     | null
     | undefined;

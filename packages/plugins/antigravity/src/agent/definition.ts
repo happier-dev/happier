@@ -7,10 +7,8 @@ import { antigravityConnectedAccountLaunch } from './connectedServices/continuit
 
 export const AGENT_STATE_SHARING_DESCRIPTOR = antigravityConnectedAccountLaunch.stateSharingDescriptor;
 
-// The ACP agent declaration carries no static model fallback: Happier ACP
-// sessions run the managed `agy_acp_server`, whose models are negotiated on the
-// live ACP session. Interactive `agy` CLI model output is a separate identity
-// and is never borrowed as a default here.
+// Models are negotiated by native `agy acp` when the Session opens; there is
+// no static fallback catalog.
 export const AGENT_DEFINITION = Object.freeze({
   id: ANTIGRAVITY_AGENT_ID,
   acpRegistryIds: ['antigravity-acp'] as const,
@@ -36,9 +34,8 @@ export const AGENT_DEFINITION = Object.freeze({
       topology: 'exclusive',
       attachStrategy: 'terminal_host',
     },
-    // The declarative ACP runtime passes Happier's session MCP descriptors to
-    // `agy_acp_server`. Keep support experimental until an authenticated live
-    // Antigravity session has exercised a Happier-provided MCP tool end to end.
+    // Keep Happier-provided MCP tools experimental until an authenticated
+    // Antigravity Session exercises them end to end.
     tools: { delivery: 'native_mcp', support: 'experimental' },
   },
   settingsBackendId: ANTIGRAVITY_BACKEND_ID,

@@ -100,6 +100,7 @@ export type AcpToolAccumulatorEmission =
     | Readonly<{ kind: 'ignored'; reason: 'duplicate' | 'stale' | 'closed-beyond-tombstone' }>;
 
 export type TerminalizeAcpToolTurnInput = Readonly<{
+    retainToolCallIds?: readonly string[];
     sessionId: string;
     turnId: string;
     sidechainId?: string | null;

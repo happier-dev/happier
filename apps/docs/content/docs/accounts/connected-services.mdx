@@ -287,11 +287,13 @@ Account. Sign in with Google through the existing paste-code flow, label each
 account, and choose an account or pool for Antigravity. Gemini credentials are
 separate; connecting the same Google identity to both requires separate sign-ins.
 
-Selected-account launches keep token and authentication settings private while
-inheriting the configured skills, hooks and MCP settings. The default shared-state
-policy links only ACP conversation and artifact directories, so account changes
+Selected-account launches run the same `agy acp` as machine sign-in, in a private
+profile that holds only that account's token, while inheriting the configured
+skills, hooks, MCP settings and trusted workspaces. They need `agy` 1.5.18 or newer.
+The default shared-state policy links only the `agy` conversation, artifact and
+title directories, so switching between accounts or back to the machine's sign-in
 can use the same history. Choosing isolated state, or being unable to establish
-shared links, prevents cross-account resume before cutover. Account-selected discovery
+shared links, prevents cross-account resume. Account-selected discovery
 probes use temporary isolated conversation state without changing the saved sharing
 policy. With machine-local authentication, successful ACP discovery can leave empty
 conversations in the native history.
@@ -301,7 +303,7 @@ copies of the same conversation are preserved as separate files. Antigravity
 continues to load the native shared copy under the original conversation ID; the
 imported `.happier-import-*` copy is not automatically merged or selected.
 
-Each ACP process needs its own restart to consume changed credentials. Account
+Each `agy acp` process needs its own restart to consume changed credentials. Account
 usage comes from Google's selected-account quota response; the context indicator
 uses ACP turn usage. These are different measurements. Sign-in, refresh, quota
 attribution and A→B→A resume still require authenticated validation, including
@@ -311,9 +313,9 @@ OAuth client and Google's internal quota API, which Google can change or block.
 [Google's FAQ](https://www.antigravity.google/docs/faq/) says third-party access
 can lead to account suspension or termination, and consumer-plan account rotation
 is unsupported. This development integration does not establish Google approval
-or an exception for Happier's use of the official ACP server.
+or an exception for Happier's use of `agy`.
 
-See [Antigravity](/agents/antigravity) for the managed ACP/native CLI boundary.
+See [Antigravity](/agents/antigravity) for setup and what Happier can drive.
 
 ## Continuing after a usage limit in 0.3 development
 

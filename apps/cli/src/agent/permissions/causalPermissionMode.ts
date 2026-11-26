@@ -8,7 +8,7 @@ import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime
 export type CausalPermissionModeResolution =
   | Readonly<{
       ok: true;
-      authority: 'legacy' | 'admittedSessionInputV1';
+      authority: 'legacy' | 'admittedSessionInputV1' | 'unattributedNativeApproval';
       effectiveMode: PermissionMode;
       sourceAuthority?: NonNullable<SessionInputCausalPermissionAuthorityV1['sourceAuthority']>;
     }>
@@ -28,6 +28,16 @@ export function resolveCausalPermissionMode(params: Readonly<{
   supportedModes?: readonly string[];
 }>): CausalPermissionModeResolution {
   const context = params.context;
+  if (context?.requireExplicitApproval) {
+    const resolved = resolveEffectivePermissionMode({
+      currentMode: params.currentPermissionMode,
+      admittedPermissionCeiling: 'default',
+      supportedModes: params.supportedModes,
+    });
+    return resolved.ok
+      ? { ok: true, authority: 'unattributedNativeApproval', effectiveMode: resolved.effectiveMode }
+      : { ok: false, reason: resolved.reason };
+  }
   // An agent action is causally bound only when the host stamps this own
   // field. Its value may be null/undefined at a broken or first-turn seam;
   // that is non-authorizing rather than a legacy operation.

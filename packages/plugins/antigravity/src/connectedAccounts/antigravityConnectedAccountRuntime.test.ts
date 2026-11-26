@@ -9,6 +9,7 @@ import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { ANTIGRAVITY_AGENT_ID } from '../agent/install/cliRuntime.js';
 import { ANTIGRAVITY_CREDENTIAL_ENV_KEY } from './antigravityConnectedAccountRuntime.js';
+import { decodeAgyNativeCliCredential, encodeAgyNativeCliCredential } from './nativeTokenFile.js';
 import { GEMINI_CONNECTED_ACCOUNT_SERVICE, GEMINI_API_KEY_ENV } from '@happier-dev/plugins-gemini/connected-account-service';
 import { antigravityConnectedAccountLaunch } from '../agent/connectedServices/continuity.js';
 
@@ -60,7 +61,7 @@ describe('Antigravity qualified Connected Account', () => {
   it.each([
     { kind: 'httpHeaders', origin: 'https://daily-cloudcode-pa.googleapis.com', headerNames: ['authorization'] },
     { kind: 'environment', keys: [ANTIGRAVITY_CREDENTIAL_ENV_KEY] },
-    { kind: 'files', fileIds: ['antigravity-acp/acp_token.json'] },
+    { kind: 'files', fileIds: ['antigravity-cli/antigravity-oauth-token'] },
   ] as const)('reports typed missing credentials for $kind', async request => {
     const accountRuntime = await runtime();
     await expect(accountRuntime.materialize(request, readContext() as Parameters<typeof accountRuntime.materialize>[1]))
@@ -288,9 +289,9 @@ describe('Antigravity qualified Connected Account', () => {
     const context = readContext(store(new Map([['accessToken', 'selected-access'], ['refreshToken', 'selected-refresh']])));
     // These credential-read boundaries do not use the host services omitted by this fixture.
     await expect(accountRuntime.status(context as Parameters<typeof accountRuntime.status>[0])).resolves.toMatchObject({ status: 'connected', credentialKind: 'oauth', scopes: [] });
-    const result = await accountRuntime.materialize({ kind: 'files', fileIds: ['antigravity-acp/acp_token.json'] }, context as Parameters<typeof accountRuntime.materialize>[1]);
+    const result = await accountRuntime.materialize({ kind: 'files', fileIds: ['antigravity-cli/antigravity-oauth-token'] }, context as Parameters<typeof accountRuntime.materialize>[1]);
     if (result.kind !== 'files') throw new Error('Expected Antigravity token materialization');
-    expect(JSON.parse(new TextDecoder().decode(result.files['antigravity-acp/acp_token.json'])).scopes).toEqual([]);
+    expect(JSON.parse(new TextDecoder().decode(result.files['antigravity-cli/antigravity-oauth-token']))).not.toHaveProperty('scopes');
   });
 
   it('retains selected identity, refresh token and project when refreshing without replacement facts', async () => {
@@ -351,19 +352,40 @@ describe('Antigravity qualified Connected Account', () => {
     await expect(accountRuntime.quota(context)).resolves.toMatchObject({ limits: [{ id: 'period', label: 'Provider group · provider-period', remainingPct: 25, limit: null }] });
   });
 
-  it('materializes only selected native files with the issuing client and retained project', async () => {
+  it('materializes the native agy token file through the shared codec and keeps a newer native refresh of the same grant', async () => {
     const accountRuntime = await runtime();
-    const credentials = store(new Map([['accessToken', 'selected-access'], ['refreshToken', 'selected-refresh'], ['projectId', 'selected-project'], ['expiresAtMs', '1700003600000'], ['scopes', JSON.stringify(scopes)]]));
-    const materialized = await accountRuntime.materialize({ kind: 'files', fileIds: ['antigravity-acp/acp_token.json', 'antigravity-acp/settings.json'] }, readContext(credentials) as Parameters<typeof accountRuntime.materialize>[1]);
-    expect(materialized.kind).toBe('files');
+    const credentials = store(new Map([['accessToken', 'selected-access'], ['refreshToken', 'selected-refresh'], ['projectId', 'selected-project'],
+      ['expiresAtMs', '1700003600000'], ['providerEmail', 'selected@example.test'], ['scopes', JSON.stringify(scopes)]]));
+    const read = readContext(credentials) as Parameters<typeof accountRuntime.materialize>[1];
+    const materialized = await accountRuntime.materialize({ kind: 'files', fileIds: ['antigravity-cli/antigravity-oauth-token'] }, read);
     if (materialized.kind !== 'files') throw new Error('Native files were not materialized');
-    expect(Object.keys(materialized.files).sort()).toEqual(['antigravity-acp/acp_token.json', 'antigravity-acp/settings.json']);
-    expect(JSON.parse(new TextDecoder().decode(materialized.files['antigravity-acp/acp_token.json']))).toMatchObject({
-      token: 'selected-access', refresh_token: 'selected-refresh', client_id: '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com', token_uri: 'https://oauth2.googleapis.com/token', project_id: 'selected-project', scopes,
+    expect(Object.keys(materialized.files)).toEqual(['antigravity-cli/antigravity-oauth-token']);
+    const written = materialized.files['antigravity-cli/antigravity-oauth-token']!;
+    expect(JSON.parse(new TextDecoder().decode(written))).toMatchObject({
+      auth_method: 'consumer', id_token_email: 'selected@example.test',
+      token: { access_token: 'selected-access', refresh_token: 'selected-refresh', token_type: 'Bearer', expiry: new Date(1700003600000).toISOString() },
     });
-    expect(JSON.parse(new TextDecoder().decode(materialized.files['antigravity-acp/settings.json']))).toEqual({ auth: { type: 'oauth-personal' } });
+    expect(decodeAgyNativeCliCredential(written)).toMatchObject({ accessToken: 'selected-access', refreshToken: 'selected-refresh', expiresAt: 1700003600000 });
+
+    const nativeRefresh = encodeAgyNativeCliCredential({ accessToken: 'native-refreshed', refreshToken: 'selected-refresh', expiresAt: 1800000000000, email: null, nowMs: 0 });
+    const kept = await accountRuntime.materialize({ kind: 'files', fileIds: ['antigravity-cli/antigravity-oauth-token'] }, read,
+      { existingFiles: { 'antigravity-cli/antigravity-oauth-token': nativeRefresh } });
+    if (kept.kind !== 'files') throw new Error('Native files were not materialized');
+    expect(kept.files['antigravity-cli/antigravity-oauth-token']).toBe(nativeRefresh);
+    const otherGrant = encodeAgyNativeCliCredential({ accessToken: 'other-access', refreshToken: 'other-refresh', expiresAt: 1800000000000, email: null, nowMs: 0 });
+    const replaced = await accountRuntime.materialize({ kind: 'files', fileIds: ['antigravity-cli/antigravity-oauth-token'] }, read,
+      { existingFiles: { 'antigravity-cli/antigravity-oauth-token': otherGrant } });
+    if (replaced.kind !== 'files') throw new Error('Native files were not materialized');
+    expect(decodeAgyNativeCliCredential(replaced.files['antigravity-cli/antigravity-oauth-token'])?.refreshToken).toBe('selected-refresh');
   });
-  it('requires a completed provider turn with the exact qualified selection epoch after a restart', async () => {
+  it('forces native file token storage only for the selected-purpose key', async () => {
+    const accountRuntime = await runtime();
+    const read = readContext(store(new Map([['accessToken', 'selected-access']]))) as Parameters<typeof accountRuntime.materialize>[1];
+    await expect(accountRuntime.materialize({ kind: 'environment', keys: ['AGY_CLI_FORCE_FILE_TOKEN_STORAGE'] }, read))
+      .resolves.toEqual({ kind: 'environment', env: { AGY_CLI_FORCE_FILE_TOKEN_STORAGE: '1' } });
+    await expect(accountRuntime.materialize({ kind: 'environment', keys: ['AGY_ACP_FORCE_FILE_STORAGE'] }, read)).rejects.toThrow();
+  });
+  it('verifies any provider activity of the exact qualified selection epoch after a restart', async () => {
     let launch: AgentConnectedAccountLaunchContributionV1 | undefined;
     await runtime(value => { launch = value; });
     const adapter = launch?.continuity?.runtimeAuthAdapter;
@@ -373,7 +395,9 @@ describe('Antigravity qualified Connected Account', () => {
     const target = { agentId: ANTIGRAVITY_AGENT_ID };
     expect(adapter.canHotApply({ target, selection: selected })).toMatchObject({ supported: false, recovery: 'restart_rematerialize' });
     await expect(adapter.verifyActiveAccount?.({ target, selection: selected })).resolves.toMatchObject({ status: 'unavailable' });
-    await expect(adapter.verifyProviderOutcome({ target, selections: [selected], outcome: { kind: 'provider_activity', event: 'task_started' } })).resolves.toMatchObject({ status: 'unavailable' });
+    // The launch binds the account before any prompt, so turn start is sufficient evidence.
+    await expect(adapter.verifyProviderOutcome({ target, selections: [selected], outcome: { kind: 'provider_activity', event: 'task_started' } })).resolves.toMatchObject({ status: 'verified' });
+    await expect(adapter.verifyProviderOutcome({ target, selections: [selected], outcome: { kind: 'quota_unknown' } })).resolves.toMatchObject({ status: 'unavailable' });
     await expect(adapter.verifyProviderOutcome({ target, selections: [{ ...selected, credentialRevision: null }], outcome: { kind: 'provider_activity', event: 'assistant_message_end' } })).resolves.toMatchObject({ status: 'unavailable' });
     await expect(adapter.verifyProviderOutcome({ target, selections: [{ ...selected, serviceId: 'happier.agent.gemini/gemini-account' }], outcome: { kind: 'provider_activity', event: 'assistant_message_end' } })).resolves.toMatchObject({ status: 'unavailable' });
     await expect(adapter.verifyProviderOutcome({ target, selections: [selected], outcome: { kind: 'provider_activity', event: 'assistant_message_end' } })).resolves.toMatchObject({ status: 'verified', targets: [{ serviceId: selected.serviceId, profileId: 'selected-account', groupId: 'pool-a', groupGeneration: 3, credentialRevision: 'revision-a' }] });
@@ -432,9 +456,9 @@ describe('Antigravity explicit native import', () => {
       expect(attempted.values.get('projectId')).toBe('native-project');
       const read = readContext(attempted); read.configuration.target.modeId = 'native-import';
       await expect(accountRuntime.status(read as Parameters<typeof accountRuntime.status>[0])).resolves.toMatchObject({ status: 'connected', scopes });
-      const files = await accountRuntime.materialize({ kind: 'files', fileIds: ['antigravity-acp/acp_token.json'] }, read as Parameters<typeof accountRuntime.materialize>[1]);
+      const files = await accountRuntime.materialize({ kind: 'files', fileIds: ['antigravity-cli/antigravity-oauth-token'] }, read as Parameters<typeof accountRuntime.materialize>[1]);
       if (files.kind !== 'files') throw new Error('Expected OAuth materialization');
-      expect(JSON.parse(new TextDecoder().decode(files.files['antigravity-acp/acp_token.json']))).toMatchObject({ refresh_token: 'native-refresh', project_id: 'native-project', scopes });
+      expect(decodeAgyNativeCliCredential(files.files['antigravity-cli/antigravity-oauth-token'])).toMatchObject({ refreshToken: 'native-refresh' });
     } finally { vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); }
   });
 });

@@ -1,11 +1,9 @@
 import { readFile, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigravity/oauth-profile';
+import { parseAgyNativeCredential, type AgyNativeCredential } from './nativeTokenFile.js';
 import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 
-const AGY_OAUTH_CLIENT_ID = ANTIGRAVITY_OAUTH_PROFILE.clientId;
-const AGY_OAUTH_TOKEN_URL = ANTIGRAVITY_OAUTH_PROFILE.tokenUrl;
 type NativeReadWarning = (message: string) => void;
 
 // This trusted daemon adapter reads native OS credentials only after explicit native-import
@@ -13,30 +11,10 @@ type NativeReadWarning = (message: string) => void;
 // boundary. macOS preserves Keychain consent; Linux follows native Secret Service selection;
 // Windows exposes the fixed CLI file only because its automatic keyring is uncharacterized.
 
-export type AgyNativeCredential = Readonly<{
-  accessToken: string | null;
-  refreshToken: string;
-  expiresAt: number | null;
-  projectId: string | null;
-}>;
-const text = (value: unknown): string | null => typeof value === 'string' && value.trim() ? value.trim() : null;
+export type { AgyNativeCredential };
+export { parseAgyNativeCredential };
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const unavailable = () => Object.assign(new Error('Antigravity native credentials are unavailable'), { code: 'credentials_unavailable' });
-
-/** ACP 1.3.0 credential_store.py and CLI 1.3.3 consumer token envelope. File scopes are requested scopes, never grant evidence. */
-export function parseAgyNativeCredential(value: unknown, source: 'acp' | 'cli'): AgyNativeCredential | null {
-  const data = record(value);
-  if (!data) return null;
-  if (source === 'acp' && (text(data.client_id) !== AGY_OAUTH_CLIENT_ID || (text(data.token_uri) && text(data.token_uri) !== AGY_OAUTH_TOKEN_URL))) return null;
-  if (source === 'cli' && data.auth_method !== 'consumer') return null;
-  const tokens = source === 'cli' ? record(data.token) : data;
-  const refreshToken = text(tokens?.refresh_token);
-  if (!tokens || !refreshToken) return null;
-  const expiry = text(tokens.expiry);
-  const expiresAt = expiry ? Date.parse(expiry) : typeof tokens.expiry_date === 'number' ? tokens.expiry_date : null;
-  const accessToken = source === 'acp' ? text(tokens.token) ?? text(tokens.access_token) : text(tokens.access_token);
-  return { accessToken, refreshToken, expiresAt: expiresAt !== null && Number.isFinite(expiresAt) ? expiresAt : null, projectId: text(data.project_id) };
-}
 
 // Native CLI 1.3.3 uses a 500 ms detector budget, a 5 s Keyring read budget,
 // and a marker younger than one hour (os.Stat.ModTime, not its contents).

@@ -30,6 +30,10 @@ function createPublicInteractionsAdapter(
     request: (async (request, options) => {
       const cancellation = options?.signal ? { signal: options.signal } : undefined;
       if (request.kind === 'approval') {
+        if (options?.permissionContext?.requireExplicitApproval) {
+          throw new PluginError({ code: 'agent_acp_manual_approval_unavailable',
+            message: 'Explicit ACP approval requires a bound native interaction service' });
+        }
         return await services.interactions.requestApproval(request, cancellation);
       }
       if (request.kind === 'questions') {

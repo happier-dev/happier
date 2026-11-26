@@ -63,16 +63,14 @@ describe('Antigravity agent definition', () => {
       auth: {
         support: 'login_terminal',
         machineLoginKey: 'antigravity-cli',
-        loginLaunches: [{ kind: 'primary', target: 'agent_acp', args: [] }],
+        loginLaunches: [{ kind: 'primary', target: 'provider_cli', args: ['acp', '--login'] }],
       },
     });
   });
 
   it('keeps model authority with the negotiated ACP session, carrying no CLI-derived fallback', () => {
-    // Happier ACP sessions run the managed `agy_acp_server`; the interactive `agy`
-    // CLI is a separate identity. `agy models` output is not a model source for
-    // ACP sessions, so the ACP agent declaration carries no static model
-    // fallback: models come from the ACP handshake of the live session.
+    // Models come from the live `agy acp` handshake; the declaration carries no
+    // static fallback catalog.
     expect(AGENT_DEFINITION).not.toHaveProperty('modelConfig');
     expect(JSON.stringify(PLUGIN_MANIFEST)).not.toContain('Gemini 3.5');
 

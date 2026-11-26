@@ -9,9 +9,9 @@ import { antigravityExternalSessionsContribution } from './agent/cliPrint/extern
 import { antigravityExternalSessionObservationContribution } from './agent/cliPrint/observation.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { antigravityConnectedAccountLaunch } from './agent/connectedServices/continuity.js';
-import { ANTIGRAVITY_ACP_SERVER_INSTALL_ID, ANTIGRAVITY_ACP_SERVER_VERSION, ANTIGRAVITY_BACKEND_ID } from './agent/install/cliRuntime.js';
+import { ANTIGRAVITY_BACKEND_ID, ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV } from './agent/install/cliRuntime.js';
 import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from './agent/systemTool.js';
-import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
+import { GEMINI_API_KEY_ENV, GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
 
 export const ANTIGRAVITY_PLUGIN = definePlugin({
   id: 'happier.agent.antigravity',
@@ -34,16 +34,11 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
         access: ['read'],
       },
     }, {
-      id: 'antigravity-acp-process',
-      capability: 'process',
-      reason: 'Launch the pinned official Antigravity ACP server through host-mediated execution.',
-      scope: { executables: [{ kind: 'managedDependency', id: 'agy-acp-server' }], envKeys: ['GEMINI_HOME', 'GEMINI_API_KEY', 'AGY_ACP_FORCE_FILE_STORAGE',
-        ...(antigravityConnectedAccountLaunch.environmentUnsetUses ?? []).map(use => use.environmentKey)] },
-    }, {
       id: 'antigravity-cli-process',
       capability: 'process',
       reason: 'Launch the user-installed Antigravity CLI through host-mediated execution.',
-      scope: { executables: [{ kind: 'systemTool', id: ANTIGRAVITY_CLI_SYSTEM_TOOL_ID }] },
+      scope: { executables: [{ kind: 'systemTool', id: ANTIGRAVITY_CLI_SYSTEM_TOOL_ID }],
+        envKeys: ['GEMINI_HOME', GEMINI_API_KEY_ENV, ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV] },
     }, {
       id: 'antigravity-quota', capability: 'network', reason: 'Set up the selected Antigravity project and read its quota.',
       scope: { targets: [
@@ -76,12 +71,13 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
             },
             credentialOrigin: 'native_import',
             fields: [{ id: 'source', title: 'Native login source', secret: false,
-              description: 'Importing shares this native login with Happier. The native app may ask you to sign in again when Happier renews it. On macOS, ACP import reads the Keychain without testing write availability.',
-              schema: { type: 'string', enum: ['acp', 'cli', 'cli-file'] }, default: 'acp',
+              description: 'Importing shares this native login with Happier. The native app may ask you to sign in again when Happier renews it. On macOS, importing an earlier Happier sign-in reads the Keychain without testing write availability.',
+              schema: { type: 'string', enum: ['acp', 'cli', 'cli-file'] }, default: 'cli',
               presentation: { control: 'select', options: [
-                { value: 'acp', title: 'Antigravity ACP' },
                 { value: 'cli', title: 'Antigravity CLI (macOS and Linux)' },
                 { value: 'cli-file', title: 'Antigravity CLI credential file' },
+                // Store of the retired Antigravity ACP server that earlier Happier releases ran.
+                { value: 'acp', title: 'Earlier Happier Antigravity sign-in' },
               ] },
             }],
           }],
@@ -128,7 +124,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
           auth: {
             support: 'login_terminal',
             machineLoginKey: 'antigravity-cli',
-            loginLaunches: [{ kind: 'primary', target: 'agent_acp', args: [] }],
+            loginLaunches: [{ kind: 'primary', target: 'provider_cli', args: ['acp', '--login'] }],
           },
         },
         sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
@@ -195,70 +191,6 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
       connectedAccountLaunch: antigravityConnectedAccountLaunch,
       externalSessions: antigravityExternalSessionsContribution,
       externalSessionObservation: antigravityExternalSessionObservationContribution,
-    },
-  },
-  managedDependencies: {
-    'agy-acp-server': {
-      title: 'Antigravity ACP server',
-      description: 'Official pinned Antigravity ACP server.',
-      sources: [{
-        kind: 'pinnedArchive',
-        installId: ANTIGRAVITY_ACP_SERVER_INSTALL_ID,
-        version: ANTIGRAVITY_ACP_SERVER_VERSION,
-        // All six official 1.3.0 archives were downloaded and SHA-256 reviewed
-        // on 2026-10-08. Largest archive: 333,727,150 bytes; largest file:
-        // 930,848,992 bytes; largest expanded payload: 1,056,922,005 bytes.
-        // Retain the existing release-owned extraction allowance and deadline.
-        archiveExtractionLimits: {
-          maxArchiveBytes: 1024 * 1024 * 1024,
-          maxFileBytes: 2 * 1024 * 1024 * 1024,
-          maxExpandedBytes: 2 * 1024 * 1024 * 1024,
-          timeoutMs: 10 * 60_000,
-        },
-        assetsByPlatform: {
-          'darwin-arm64': {
-            archiveUrl: 'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-arm64.zip',
-            sha256: '7cd97045f7b4fe81175a107cdf16f9c51484e3c78a5162cae415338bb6aa5b88',
-            sizeBytes: 111456962,
-            executableSubpath: 'agy_acp_server.par',
-          },
-          'darwin-x64': {
-            archiveUrl: 'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.3.0-darwin-x86_64.zip',
-            sha256: 'bb23956b89984bf5d354af2c3725e6c57f0cc1b7228e77a0e91c9c2bc1d47646',
-            sizeBytes: 117245544,
-            executableSubpath: 'agy_acp_server.par',
-          },
-          'linux-x64': {
-            archiveUrl: 'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-x86_64.zip',
-            sha256: '9fb60956af0a9d76220a4db91ca9ac88e2a2372ad68f985ab5fceace6b825b96',
-            sizeBytes: 333727150,
-            executableSubpath: 'agy_acp_server.par',
-            args: ['--uid='],
-          },
-          'linux-arm64': {
-            archiveUrl: 'https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-arm64.zip',
-            sha256: '500b0bc0fb858e88f4df404d4cedf80bf9298c178291e39e383d6c50b111cbdf',
-            sizeBytes: 321690363,
-            executableSubpath: 'agy_acp_server.par',
-            args: ['--uid='],
-          },
-          'win32-x64': {
-            archiveUrl: 'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-x86_64.zip',
-            sha256: '65215e0688681fa3116e048a9eab27ef53af1bbd6f3da3f1c52bd4911d8b17f9',
-            sizeBytes: 124509787,
-            executableSubpath: 'agy_acp_server.exe',
-          },
-          'win32-arm64': {
-            archiveUrl: 'https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-arm64.zip',
-            sha256: '4a0f469720e9beb9438a979f543fdbfad5022ebe0992c052c590bd78b3144ca3',
-            sizeBytes: 124654803,
-            executableSubpath: 'agy_acp_server.exe',
-          },
-        },
-      }],
-      platforms: ['macos', 'linux', 'windows'],
-      architectures: ['arm64', 'x64'],
-      executable: 'agy_acp_server',
     },
   },
   systemTools: {

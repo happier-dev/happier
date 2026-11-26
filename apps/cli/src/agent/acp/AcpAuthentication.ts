@@ -17,6 +17,7 @@ export type AcpAuthenticationSelection = Readonly<{
 export type AcpAuthenticationSelector = (context: Readonly<{
   advertisedMethodIds: readonly string[];
   initializeMetadata: Readonly<Record<string, unknown>> | null;
+  agentVersion?: string | null;
 }>) => AcpAuthenticationSelection | null | Promise<AcpAuthenticationSelection | null>;
 
 export function readAdvertisedAuthMethodIds(initResponse: InitializeResponse): readonly string[] {

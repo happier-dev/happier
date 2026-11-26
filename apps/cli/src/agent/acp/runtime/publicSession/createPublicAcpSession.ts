@@ -445,11 +445,20 @@ function validateProjectedModelUpdate(
   value: Readonly<{
     modelId: string;
     requestMeta?: Readonly<Record<string, JsonValue>>;
+    configOptions?: Readonly<Record<string, string>>;
   }> | null | undefined,
-): Readonly<{ modelId: string; requestMeta?: Readonly<Record<string, unknown>> }> | null {
+): Readonly<{ modelId: string; requestMeta?: Readonly<Record<string, unknown>>; configOptions?: Readonly<Record<string, string>> }> | null {
   if (value === null || value === undefined) return null;
   const modelId = value.modelId.trim();
   if (!modelId) throw new Error('ACP model update projector returned an invalid model id');
+  if (value.configOptions !== undefined) {
+    const entries = Object.entries(value.configOptions);
+    if (value.requestMeta !== undefined || entries.length === 0
+      || entries.some(([configId, valueId]) => !configId.trim() || typeof valueId !== 'string' || !valueId.trim())) {
+      throw new Error('ACP model update projector returned invalid config options');
+    }
+    return { modelId, configOptions: Object.freeze(Object.fromEntries(entries)) };
+  }
   if (value.requestMeta === undefined) return { modelId };
   const parsed = AgentRuntimeJsonValueV1Schema.safeParse(value.requestMeta);
   if (
@@ -775,7 +784,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   let bufferedMessages: AgentSessionPreAdmissionBuffer<ProjectedBackendMessage> | null = null;
   let bufferedMessageFailure: Exclude<AgentSessionPreAdmissionBufferResult, { status: 'accepted' }> | null = null;
   const readBufferedMessageFailure = () => bufferedMessageFailure;
-  let emittedToolCallIds = new Map<string, string>();
+  const emittedToolCalls = new Map<string, Readonly<{ turnId: string; toolName: string }>>();
   let pendingTransportTermination: AcpTransportTermination | null = null;
   let providerSessionId: string | null = null;
   let publishTail: Promise<void> = Promise.resolve();
@@ -904,6 +913,72 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       });
     }
   };
+  const emitBackendToolResult = async (
+    message: Extract<AgentMessage, { type: 'tool-result' }>,
+    turn: ActiveTurn | null,
+  ): Promise<void> => {
+    const output = AgentRuntimeJsonValueV1Schema.safeParse(message.result);
+    if (output.success) {
+      const origin = message.callLocalId ? emittedToolCalls.get(message.callLocalId) : undefined;
+      const turnId = origin?.turnId ?? (message.callLocalId ? undefined : turn?.turnId);
+      if (!turnId) return;
+      if (message.callLocalId) emittedToolCalls.delete(message.callLocalId);
+      const toolName = origin?.toolName ?? message.toolName ?? '';
+      const sidechainId = dependencies.sidechainSession && 'sessionId' in request
+        && isGenericSubAgentToolName(canonicalizeToolNameV2({ protocol: 'acp', toolName }))
+        ? createAcpToolIdentity({ sessionId: request.sessionId, turnId, sidechainId: null, toolCallId: message.callId }).callLocalId
+        : null;
+      publish({
+        kind: 'tool-result',
+        turnId,
+        toolCallId: message.callId,
+        output: sidechainId && isRecord(output.data) ? { ...output.data, sidechainId } : output.data,
+        ...(message.isError === undefined ? {} : { isError: message.isError }),
+      });
+      if (dependencies.sidechainSession && sidechainId) {
+        let replayBackend: AcpBackend | null = null;
+        const importPromise = importToolSidechain({
+          agentId: dependencies.agentId,
+          toolName,
+          sidechainId,
+          result: output.data,
+          session: dependencies.sidechainSession,
+          isCurrent: () => !disposed && !runtimeEnded && !dependencies.signal.aborted && dependencies.isCurrent(),
+          createReplayBackend() {
+            // Reuse this composer's resolved launch and transport. Replay has no
+            // primary-turn callbacks, extensions, permissions or filesystem effects.
+            replayBackend = createAcpBackend({
+              ...backendOptions,
+              sessionHolderRole: undefined,
+              sessionHolderProviderEnvironmentKeys: undefined,
+              extensions: [],
+              providerTurnSource: undefined,
+              providerTurnLifecycle: undefined,
+              createExtensionContext: undefined,
+              onProcessExit: undefined,
+              onConnectionLost: undefined,
+              observePlan: undefined,
+              onPublishedTerminalToolResult: undefined,
+              fsEnabled: false,
+              permissionHandler: undefined,
+            });
+            replayBackends.add(replayBackend);
+            return replayBackend;
+          },
+        });
+        if (importPromise) {
+          const observed = importPromise.catch((error) => {
+            logger.warn(`[${dependencies.agentId}] Child replay import failed`, error);
+          });
+          sidechainImports.add(observed);
+          void observed.finally(() => {
+            sidechainImports.delete(observed);
+            if (replayBackend) replayBackends.delete(replayBackend);
+          });
+        }
+      }
+    }
+  };
   const emitBackendMessage = async (message: ProjectedBackendMessage, turn: ActiveTurn): Promise<void> => {
     const turnId = turn.turnId;
     switch (message.type) {
@@ -922,7 +997,11 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         const input = AgentRuntimeJsonValueV1Schema.safeParse(message.args);
         if (input.success) {
           const toolName = message.toolName;
-          emittedToolCallIds.set(message.callId, toolName);
+          if (message.localId) {
+            const origin = emittedToolCalls.get(message.localId);
+            if (origin ? origin.turnId !== turnId : message.lateUpdate) return;
+            emittedToolCalls.set(message.localId, { turnId, toolName });
+          }
           const sidechainId = dependencies.sidechainSession && 'sessionId' in request
             && isGenericSubAgentToolName(canonicalizeToolNameV2({ protocol: 'acp', toolName }))
             ? createAcpToolIdentity({ sessionId: request.sessionId, turnId, sidechainId: null, toolCallId: message.callId }).callLocalId
@@ -938,66 +1017,9 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         }
         return;
       }
-      case 'tool-result': {
-        const output = AgentRuntimeJsonValueV1Schema.safeParse(message.result);
-        if (output.success) {
-          const toolName = emittedToolCallIds.get(message.callId) ?? message.toolName ?? '';
-          const sidechainId = dependencies.sidechainSession && 'sessionId' in request
-            && isGenericSubAgentToolName(canonicalizeToolNameV2({ protocol: 'acp', toolName }))
-            ? createAcpToolIdentity({ sessionId: request.sessionId, turnId, sidechainId: null, toolCallId: message.callId }).callLocalId
-            : null;
-          publish({
-            kind: 'tool-result',
-            turnId,
-            toolCallId: message.callId,
-            output: sidechainId && isRecord(output.data) ? { ...output.data, sidechainId } : output.data,
-            ...(message.isError === undefined ? {} : { isError: message.isError }),
-          });
-          if (dependencies.sidechainSession && sidechainId) {
-            let replayBackend: AcpBackend | null = null;
-            const importPromise = importToolSidechain({
-              agentId: dependencies.agentId,
-              toolName,
-              sidechainId,
-              result: output.data,
-              session: dependencies.sidechainSession,
-              isCurrent: () => !disposed && !runtimeEnded && !dependencies.signal.aborted && dependencies.isCurrent(),
-              createReplayBackend() {
-                // Reuse this composer's resolved launch and transport. Replay has no
-                // primary-turn callbacks, extensions, permissions or filesystem effects.
-                replayBackend = createAcpBackend({
-                  ...backendOptions,
-                  sessionHolderRole: undefined,
-                  sessionHolderProviderEnvironmentKeys: undefined,
-                  extensions: [],
-                  providerTurnSource: undefined,
-                  providerTurnLifecycle: undefined,
-                  createExtensionContext: undefined,
-                  onProcessExit: undefined,
-                  onConnectionLost: undefined,
-                  observePlan: undefined,
-                  onPublishedTerminalToolResult: undefined,
-                  fsEnabled: false,
-                  permissionHandler: undefined,
-                });
-                replayBackends.add(replayBackend);
-                return replayBackend;
-              },
-            });
-            if (importPromise) {
-              const observed = importPromise.catch((error) => {
-                logger.warn(`[${dependencies.agentId}] Child replay import failed`, error);
-              });
-              sidechainImports.add(observed);
-              void observed.finally(() => {
-                sidechainImports.delete(observed);
-                if (replayBackend) replayBackends.delete(replayBackend);
-              });
-            }
-          }
-        }
+      case 'tool-result':
+        await emitBackendToolResult(message, turn);
         return;
-      }
       case 'fs-edit':
         if (message.path) {
           publish({
@@ -1240,16 +1262,16 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     canBegin: () => activeTurn === null,
     flush: drainPendingPublications,
     publish,
-    begin: ({ parent, continuationId, agentTurnId }) => {
+    begin: ({ cause, agentTurnId }) => {
       const turn: ActiveTurn = {
-        ...parent, turnId: randomUUID(), cancelCause: null, submissionSettled: true,
+        ...cause?.parent, delivery: cause?.parent.delivery ?? 'newTurn',
+        turnId: randomUUID(), cancelCause: null, submissionSettled: true,
         assistantSegmentText: '', lastModelOutputText: '', providerCheckpoint: null,
         providerCheckpointAmbiguous: false,
       };
       activeTurn = turn;
-      emittedToolCallIds = new Map();
       publish({ kind: 'turn-start', turnId: turn.turnId, agentTurnId, startedBy: 'provider',
-        causedByTurnId: parent.turnId, continuationId });
+        ...(cause ? { causedByTurnId: cause.parent.turnId, continuationId: cause.continuationId } : {}) });
       // The low-level source driver initializes its generation in this same call stack.
       queueMicrotask(() => observeTurnCompletion(turn));
     },
@@ -1376,6 +1398,8 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       if (message.type === 'token-count') {
         const turnId = message.turnId;
         backendMessageProjectionTail = backendMessageProjectionTail.then(() => publishUsage(message, turnId));
+      } else if (message.type === 'tool-result') {
+        backendMessageProjectionTail = backendMessageProjectionTail.then(() => emitBackendToolResult(message, null));
       }
       return;
     }
@@ -1477,12 +1501,14 @@ async function createPublicAcpConversationFromAwaitableAdapter(
                   initializeMetadata: context.initializeMetadata
                     ? AgentRuntimeJsonValueV1Schema.parse(context.initializeMetadata) as Readonly<Record<string, JsonValue>>
                     : null,
+                  agentVersion: context.agentVersion ?? null,
                 })
               : authSelector!({
             advertisedMethodIds: context.advertisedMethodIds,
             initializeMetadata: context.initializeMetadata
               ? AgentRuntimeJsonValueV1Schema.parse(context.initializeMetadata) as Readonly<Record<string, JsonValue>>
               : null,
+            agentVersion: context.agentVersion ?? null,
                 })
           ),
         }
@@ -2262,7 +2288,6 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       bufferedMessages?.dispose();
       bufferedMessages = createPublicAcpPreAcknowledgementBuffer<ProjectedBackendMessage>();
       bufferedMessageFailure = null;
-      emittedToolCallIds = new Map();
       let submissionResult: AcpPromptSubmissionResult;
       try {
         submissionResult = await backend.sendPrompt(providerSessionId!, promptContent, {
@@ -2487,6 +2512,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     dispose() {
       disposePromise ??= (async () => {
         disposed = true;
+        emittedToolCalls.clear();
         // Lifecycle listeners are downstream observers. Closing admission is
         // synchronous, but joining the listener drain here can deadlock when a
         // listener is itself waiting for this session retirement to complete.
@@ -2629,7 +2655,6 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         submissionSettled: true, assistantSegmentText: '', lastModelOutputText: '', providerCheckpoint: null,
         providerCheckpointAmbiguous: false };
       activeTurn = turn;
-      emittedToolCallIds = new Map();
       publish({ kind: 'turn-start', turnId: turn.turnId, startedBy: 'provider' });
       observeTurnCompletion(turn);
     }

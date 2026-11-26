@@ -12,7 +12,7 @@ export function readLegacyAcpToolResultValue(result: MergedAcpToolResult): unkno
     return undefined;
 }
 
-export function projectLegacyAcpToolCallMessage(call: MergedAcpToolCall): AgentMessage {
+export function projectLegacyAcpToolCallMessage(call: MergedAcpToolCall, lateUpdate: boolean): AgentMessage {
     const input = isRecord(call.rawInput) ? call.rawInput : {};
     return {
         type: 'tool-call',
@@ -30,6 +30,7 @@ export function projectLegacyAcpToolCallMessage(call: MergedAcpToolCall): AgentM
         },
         callId: call.toolCallId,
         localId: call.localId,
+        ...(lateUpdate ? { lateUpdate: true as const } : {}),
     };
 }
 
@@ -48,6 +49,7 @@ export function projectLegacyAcpToolResultMessage(
         result: decorated,
         callId: result.toolCallId,
         localId: result.localId,
+        callLocalId: result.callLocalId,
         isError: result.isError,
     };
 }

@@ -206,6 +206,10 @@ async function presentBoundPermissionRequest(
 ): Promise<InteractionTransientResultV1> {
     const { request } = params;
     const permissionContext = params.permissionContext;
+    const requireExplicitApproval = permissionContext?.requireExplicitApproval === true;
+    if (requireExplicitApproval && (request.kind !== 'approval' || request.allowedPersistenceScopes?.includes('session'))) {
+        return unavailable(request, request.requestId);
+    }
     const hasCausalPermissionAuthority = permissionContext !== undefined
         && Object.hasOwn(permissionContext, 'causalPermissionAuthority');
     const hasTurnId = permissionContext !== undefined
@@ -241,6 +245,7 @@ async function presentBoundPermissionRequest(
                 ...(hasCausalPermissionAuthority && permissionContext
                     ? { causalPermissionAuthority: permissionContext.causalPermissionAuthority }
                     : {}),
+                ...(requireExplicitApproval ? { requireExplicitApproval: true as const } : {}),
                 ...(permissionContext?.callerPermissionMode !== undefined
                     ? { callerPermissionMode: permissionContext.callerPermissionMode } : {}),
                 owner: permissionContext?.owner ?? {

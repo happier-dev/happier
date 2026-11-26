@@ -72,6 +72,7 @@ export function createAcpClientHandlers(params: Readonly<{
   beforePermissionRequest?: (sessionId: string, toolCallId: string) => Promise<void>;
   capturePermissionRequest: (sessionId: string) => Readonly<{
     scope: 'session' | 'turn';
+    requireExplicitApproval?: true;
     isCurrent: () => boolean;
     cancel: (failure?: Error) => Promise<void>;
   }>;
@@ -155,6 +156,7 @@ export function createAcpClientHandlers(params: Readonly<{
       }
       const permissionRequest = params.capturePermissionRequest(requestSessionId);
       const tracksForeground = permissionRequest.scope === 'turn';
+      const requireExplicitApproval = permissionRequest.requireExplicitApproval === true;
       const withdraw = (): RequestPermissionResponse => {
         logger.warn('[AcpBackend] Withdrew permission request without current ownership', {
           reason: requestSessionId !== params.getActiveSessionId() ? 'session_mismatch'
@@ -165,7 +167,7 @@ export function createAcpClientHandlers(params: Readonly<{
       if (!permissionRequest.isCurrent()) return withdraw();
       const knownCall = tracksForeground ? params.toolCalls.readCall(toolCallId) : undefined;
       const cancelOwnedPrompt = async (failure?: Error): Promise<void> => {
-        const cancelPromise = permissionRequest.cancel(failure);
+        const cancelPromise = requireExplicitApproval && !failure ? Promise.resolve() : permissionRequest.cancel(failure);
         await params.emitPermissionResponse(permissionId, false);
         void cancelPromise.catch((error: unknown) => logger.warn('[AcpBackend] Permission cancellation failed', {
           errorType: error instanceof Error ? 'Error' : typeof error,
@@ -187,7 +189,8 @@ export function createAcpClientHandlers(params: Readonly<{
         mappedToolName: knownCall?.toolName,
       });
 
-      const cachedOptionId = tracksForeground ? params.lastSelectedPermissionOptionIdByToolCallId.get(toolCallId) : undefined;
+      const cachedOptionId = tracksForeground && !requireExplicitApproval
+        ? params.lastSelectedPermissionOptionIdByToolCallId.get(toolCallId) : undefined;
       if (cachedOptionId && options.some((opt) => opt.optionId === cachedOptionId)) {
         logger.debug(`[AcpBackend] Duplicate permission prompt for ${toolCallId}, reusing cached optionId=${cachedOptionId}`);
         return { outcome: { outcome: 'selected', optionId: cachedOptionId } };
@@ -221,7 +224,7 @@ export function createAcpClientHandlers(params: Readonly<{
       const nativeOptionIdByChoiceId = new Map<string, string>();
       const choices: Array<typeof upstreamChoices.choices[number]> = [];
       for (const [index, choice] of upstreamChoices.choices.entries()) {
-        if (choice.decision === 'approved' && sessionOptionId === null) continue;
+        if (requireExplicitApproval ? choice.scope !== 'once' : choice.decision === 'approved' && sessionOptionId === null) continue;
         const hostSessionGrant = request.options[index]?.kind === 'allow_always'
           && sessionOption && sessionOption.optionId !== choice.id;
         choices.push(hostSessionGrant ? {
@@ -295,14 +298,14 @@ export function createAcpClientHandlers(params: Readonly<{
           const result = await params.permissionHandler.handleToolCall(
             toolCallId, toolName, input, {
               nativeChoices,
-              buildNativeChoices: ({ mcpTool }) => {
+              ...(requireExplicitApproval ? { requireExplicitApproval: true as const } : { buildNativeChoices: ({ mcpTool }) => {
                 const onceOption = request.options.find(option => option.kind === 'allow_once');
                 const grant = choices.find(choice => choice.id === onceOption?.optionId);
                 const catalogChoice = grant ? createMcpCatalogPermissionChoiceV1({ mcpTool, grant, existingChoices: choices }) : undefined;
                 if (!catalogChoice || !onceOption) return nativeChoices;
                 nativeOptionIdByChoiceId.set(catalogChoice.id, onceOption.optionId);
                 return { ...nativeChoices, choices: [...choices, catalogChoice] };
-              },
+              } }),
             },
           );
           if (!permissionRequest.isCurrent()) return withdraw();
@@ -315,7 +318,7 @@ export function createAcpClientHandlers(params: Readonly<{
           const outcome = optionId
             ? { outcome: 'selected' as const, optionId }
             : { outcome: 'cancelled' as const };
-          if (tracksForeground && outcome.outcome === 'selected') {
+          if (tracksForeground && !requireExplicitApproval && outcome.outcome === 'selected') {
             params.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
           } else if (tracksForeground) {
             params.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);

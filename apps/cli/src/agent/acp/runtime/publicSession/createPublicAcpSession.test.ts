@@ -70,7 +70,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { withCursorEmptyResponseFailure } from '../../../../../../../packages/plugins/cursor/src/agent/runtime/emptyResponse';
 import { buildAcpModelSuffixOptionControls } from '../definition/modelSuffixOption';
-import { buildAntigravityAcpRuntimeOptions } from '../../../../../../../packages/plugins/antigravity/src/agent/runtime/factory';
+import { resolveAntigravityLaunch } from '../../../../../../../packages/plugins/antigravity/src/agent/runtime/factory';
 import { configuredAcpRuntimeConfiguration } from '@/agent/acp/runtime/definition/configured';
 import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
 import { createHostDeclarativeAcpAgentRuntimeFactory } from '@/plugins/runtime/runner/createHostDeclarativeAcpAgentRuntimeFactory';
@@ -310,6 +310,9 @@ function writePublicComposerAgent(dir: string): string {
             initializeMetadata = request.params.clientCapabilities?._meta ?? null;
             ok(request.id, {
               protocolVersion: 1,
+              ...(scenario.startsWith('agy-api-key-') ? {
+                agentInfo: { name: 'agy', version: scenario === 'agy-api-key-old-peer' ? '1.5.17' : '1.5.18' },
+              } : {}),
               agentCapabilities: scenario.startsWith('declared-steer')
                 ? { _meta: { acme: { steering: scenario !== 'declared-steer-unavailable' } } }
                 : scenario === 'media' || scenario === 'structured-steer'
@@ -755,8 +758,8 @@ function writePublicComposerAgent(dir: string): string {
               update(sessionId, typeof text === 'string' ? text : 'missing transformed prompt');
               ok(request.id, { stopReason: 'end_turn' });
             } else if (scenario.startsWith('agy-api-key-')) {
-              // Observed ACP server output: provider refusal as assistant text plus end_turn.
-              const failure = 'API key not valid. Please pass a valid API key.';
+              // Observed agy 1.5.18 output: provider refusal as assistant text plus end_turn.
+              const failure = '⚠ agent executor error: generating and executing: Error 400, Message: API key not valid. Please pass a valid API key., Status: INVALID_ARGUMENT, Details: [map[reason:API_KEY_INVALID]]';
               userUpdate(sessionId, failure);
               if (scenario === 'agy-api-key-quoted') update(sessionId, 'The diagnostic says: ' + failure);
               else if (scenario === 'agy-api-key-code') update(sessionId, '\u0060\u0060\u0060' + failure + '\u0060\u0060\u0060');
@@ -1578,7 +1581,9 @@ describe('createPublicAcpSession', () => {
   it.each(['agy-auth-setup', 'agy-auth-required', 'agy-auth-wrong-code'])('retains the declared authentication setup category through the real composer (%s)', async scenario => {
     await withTempDir('public-acp-auth-diagnostic-', async dir => {
       const fixture = createFixture(dir, scenario);
-      const { definition } = buildAntigravityAcpRuntimeOptions({});
+      // Provider-declared setup-failure match (the shape the retired Antigravity server used).
+      const definition = { auth: { methodId: 'oauth-personal', setupFailure: { requestErrorCode: -32000, dataReason: 'onboarding_failed' } },
+        mcp: { policy: 'pass_through' as const } };
       const failure = await createPublicAcpSession({ kind: 'create', sessionId: 'auth-diagnostic', cwd: dir },
         { ...fixture.options, definition }, { ...fixture.dependencies, agentId: 'antigravity' })
         .catch((error: unknown) => error);
@@ -1597,12 +1602,23 @@ describe('createPublicAcpSession', () => {
     });
   });
 
+  it('refuses a selected Antigravity account before opening a session on an older peer', async () => {
+    await withTempDir('happier-antigravity-old-peer-', async dir => {
+      const fixture = createFixture(dir, 'agy-api-key-old-peer');
+      const launch = resolveAntigravityLaunch({ launchEnvironment: { values: { GEMINI_API_KEY: 'fixture-key', GEMINI_HOME: dir }, unset: [] } });
+      await expect(createPublicAcpSession({ kind: 'create', sessionId: 'old-antigravity-peer', cwd: dir }, {
+        ...fixture.options, definition: launch.options.definition,
+      }, fixture.dependencies)).rejects.toMatchObject({ code: 'antigravity_cli_update_required' });
+    });
+  });
+
   it.each(['whole', 'create', 'resume', 'execution', 'quoted', 'code', 'user-only'] as const)(
     'classifies Antigravity invalid-key native output without completing a failed turn (%s)', async kind => {
       await withTempDir('happier-antigravity-invalid-key-', async dir => {
         const fixture = createFixture(dir, `agy-api-key-${kind}`);
-        const { definition } = buildAntigravityAcpRuntimeOptions({ GEMINI_API_KEY: 'fixture-invalid-key' });
-        const options = { ...fixture.options, definition };
+        const launch = resolveAntigravityLaunch({ launchEnvironment: { values: { GEMINI_API_KEY: 'fixture-invalid-key', GEMINI_HOME: dir }, unset: [] } });
+        const options = { ...fixture.options, definition: launch.options.definition };
+        const nativeRefusal = '⚠ agent executor error: generating and executing: Error 400, Message: API key not valid. Please pass a valid API key., Status: INVALID_ARGUMENT, Details: [map[reason:API_KEY_INVALID]]';
         const failureCause = { phase: 'turn', failureReason: 'authentication_required',
           providerErrorMessage: 'API key not valid. Please pass a valid API key.' };
         if (kind === 'execution') {
@@ -1637,7 +1653,7 @@ describe('createPublicAcpSession', () => {
             expect(failure).toMatchObject({ diagnostic: { code: 'acp_turn_failed', details: { failureCause } } });
             expect(events.some(event => event.kind === 'turn-complete')).toBe(false);
             expect(events.filter(event => event.kind === 'message-delta' && event.channel === 'assistant')
-              .map(event => event.kind === 'message-delta' ? event.text : '').join('')).toBe(failureCause.providerErrorMessage);
+              .map(event => event.kind === 'message-delta' ? event.text : '').join('')).toBe(nativeRefusal);
             if (failure?.kind !== 'turn-failed') throw new Error('Missing native failure');
             expect(classifyPrimarySessionRuntimeIssue({ provider: 'antigravity', cause: 'session_error', error: failure.diagnostic }))
               .toMatchObject({ status: 'failed', failureCause });
@@ -1652,8 +1668,9 @@ describe('createPublicAcpSession', () => {
       const fixture = createFixture(dir, scenario);
       const diagnostic = 'Usage Limit Reached\n\nYou have reached your current quota for this period.';
       const serviceId = 'happier.agent.antigravity/antigravity-account';
-      const { definition } = buildAntigravityAcpRuntimeOptions({});
-      if (!definition?.usageLimitDiagnostic) throw new Error('Expected the provider quota diagnostic declaration');
+      const definition = { mcp: { policy: 'pass_through' as const }, auth: { methodId: 'oauth-personal' },
+        usageLimitDiagnostic: { pattern: String.raw`^Usage Limit Reached\n\nYou have reached your current quota for this period\.$`,
+          connectedAccountService: { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' } } };
       const session = await createPublicAcpSession({ kind: 'create', sessionId: 'selected-quota', cwd: dir,
         launchEnvironment: { unset: [], values: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'group', serviceId,
           groupId: 'selected-pool', activeProfileId: 'selected-profile', fallbackProfileId: 'fallback', generation: 4,
@@ -2909,21 +2926,6 @@ describe('createPublicAcpSession', () => {
     });
   });
 
-  it.each([
-    ['oauth', {}], ['native-import', {}], ['key', { GEMINI_API_KEY: 'fake-gemini-key' }], ['missing', {}],
-  ] as const)('selects Antigravity launch authentication through the real composer (%s)', async (mode, values) => {
-    await withTempDir('public-acp-agy-select-', async dir => {
-      const fixture = createFixture(dir, 'agy-select-' + (mode === 'native-import' ? 'oauth' : mode));
-      const { definition } = buildAntigravityAcpRuntimeOptions(values);
-      const opened = createPublicAcpSession({ kind: 'create', sessionId: 'agy-select', cwd: dir,
-        launchEnvironment: { values, unset: [] } }, { ...fixture.options, definition }, fixture.dependencies);
-      if (mode === 'missing') { await expect(opened).rejects.toMatchObject({ code: -32000 }); return; }
-      const session = await opened;
-      try { expect(session.getProviderSessionId()).toBe('provider-created'); }
-      finally { await session.dispose(); }
-    });
-  });
-
   it('orders initialize, advertised-method verification, authentication, and session creation with closed metadata', async () => {
     await withTempDir('happier-public-acp-auth-', async (dir) => {
       const fixture = createFixture(dir, 'auth');
@@ -3007,6 +3009,8 @@ describe('createPublicAcpSession', () => {
         expect(selections).toEqual([{
           advertisedMethodIds: ['cursor_login'],
           initializeMetadata: { defaultAuthMethodId: 'cursor_login', providerOnly: 'bounded' },
+          // The fixture peer omits agentInfo.version.
+          agentVersion: null,
         }]);
         expect(events).toContainEqual(expect.objectContaining({
           kind: 'message-delta',
@@ -3497,17 +3501,11 @@ describe('createPublicAcpSession', () => {
     await withTempDir('happier-public-acp-antigravity-mcp-', async (dir) => {
       const fixture = createFixture(dir, 'vb4');
       const agent = PluginAgentContributionV2Schema.parse(ANTIGRAVITY_PLUGIN_MANIFEST.contributes.agents?.[0]);
-      const options = buildAntigravityAcpRuntimeOptions({});
-      const runtimeOptions: AgentAcpRuntimeOptions = {
-        transport: options.transport, definition: { mcp: options.definition?.mcp },
+      const runtimeOptions = resolveAntigravityLaunch({}).options;
+      const resolveSystemTool: PublicAcpComposerDependencies['systemTools']['resolve'] = async request => {
+        const fixtureGrant = await fixture.resolve();
+        return { ...fixtureGrant, toolId: request.toolId };
       };
-      const release = vi.fn();
-      const resolveManagedDependency = vi.fn(async () => ({
-        command: process.execPath,
-        args: [writePublicComposerAgent(dir)],
-        env: { PUBLIC_ACP_SCENARIO: 'vb4' },
-        release,
-      }));
       const events: AgentSessionRuntimeEvent[] = [];
       const session = await createPublicAcpSession({
         kind: 'create',
@@ -3518,7 +3516,7 @@ describe('createPublicAcpSession', () => {
         ...fixture.dependencies,
         pluginId: ANTIGRAVITY_PLUGIN_MANIFEST.id,
         agentId: 'antigravity',
-        managedDependencies: { resolve: resolveManagedDependency },
+        systemTools: { resolve: resolveSystemTool },
       });
       const subscription = session.watch((event) => { events.push(event); });
 
@@ -3542,16 +3540,10 @@ describe('createPublicAcpSession', () => {
             selectedModel: null,
           }),
         }));
-        expect(resolveManagedDependency).toHaveBeenCalledWith({
-          pluginId: ANTIGRAVITY_PLUGIN_MANIFEST.id,
-          dependencyId: 'agy-acp-server',
-          signal: fixture.dependencies.signal,
-        });
       } finally {
         subscription.dispose();
         await session.dispose();
       }
-      expect(release).toHaveBeenCalledOnce();
     });
   });
 

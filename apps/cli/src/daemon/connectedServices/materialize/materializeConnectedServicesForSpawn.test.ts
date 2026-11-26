@@ -849,9 +849,9 @@ describe('materializeConnectedServicesForSpawn', () => {
         consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
         accountId: 'retained-profile',
         materializeAccount: async ({ request }) => {
-          if (request.kind === 'environment') return { kind: 'environment', env: { AGY_ACP_FORCE_FILE_STORAGE: '1' } };
+          if (request.kind === 'environment') return { kind: 'environment', env: { AGY_CLI_FORCE_FILE_TOKEN_STORAGE: '1' } };
           if (request.kind === 'files') return { kind: 'files', files: {
-            'antigravity-acp/acp_token.json': Buffer.from('{"access_token":"fixture-access"}'),
+            'antigravity-cli/antigravity-oauth-token': Buffer.from('{"auth_method":"consumer","token":{"access_token":"fixture-access"}}'),
           } };
           throw new Error('Unexpected Antigravity materialization request');
         },

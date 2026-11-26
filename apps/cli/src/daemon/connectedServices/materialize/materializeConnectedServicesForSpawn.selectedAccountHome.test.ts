@@ -113,7 +113,6 @@ it('prepares selected Antigravity account homes and preserves copied config and 
       });
     };
     const inherited = Object.freeze({
-      AGY_ACP_CCPA_BASE_URL: 'https://native.example', agy_acp_ccpa_project: 'native-project',
       GOOGLE_APPLICATION_CREDENTIALS: 'user-google', XDG_CACHE_HOME: 'user-cache',
     });
     const readChild = async (materialized: Awaited<ReturnType<typeof launch>>) => {
@@ -126,33 +125,34 @@ it('prepares selected Antigravity account homes and preserves copied config and 
       });
       if (!environment.ok) throw new Error(environment.errorCode);
       const output = execFileSync(process.execPath, ['-e',
-        'process.stdout.write(JSON.stringify({ baseUrl: process.env.AGY_ACP_CCPA_BASE_URL ?? null, project: process.env.agy_acp_ccpa_project ?? null, google: process.env.GOOGLE_APPLICATION_CREDENTIALS, cache: process.env.XDG_CACHE_HOME }))',
+        'process.stdout.write(JSON.stringify({ fileTokens: process.env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE ?? null, google: process.env.GOOGLE_APPLICATION_CREDENTIALS, cache: process.env.XDG_CACHE_HOME }))',
       ], { env: buildScopedProcessEnv({ baseEnv: inherited, explicitEnv: environment.extraEnvForChild,
         unsetEnvKeys: environment.unsetEnvKeys }), encoding: 'utf8' });
       return JSON.parse(output) as Record<string, string | null>;
     };
     const nativeRoot = join(root, 'native');
     await mkdir(join(nativeRoot, 'config', 'skills'), { recursive: true });
-    await mkdir(join(nativeRoot, 'antigravity-acp'), { recursive: true });
+    await mkdir(join(nativeRoot, 'antigravity-cli'), { recursive: true });
     await writeFile(join(nativeRoot, 'config', 'skills', 'SKILL.md'), 'native skill');
-    await writeFile(join(nativeRoot, 'antigravity-acp', 'trusted_workspaces.json'), '{}');
-    await writeFile(join(nativeRoot, 'antigravity-acp', 'acp_token.json'), 'native credential');
+    await writeFile(join(nativeRoot, 'antigravity-cli', 'settings.json'), '{"trustedWorkspaces":[]}');
+    await writeFile(join(nativeRoot, 'antigravity-cli', 'antigravity-oauth-token'), 'native credential');
     const first = await launch('launch-a');
-    expect(await readChild(first)).toEqual({ baseUrl: null, project: null, google: 'user-google', cache: 'user-cache' });
+    expect(await readChild(first)).toEqual({ fileTokens: '1', google: 'user-google', cache: 'user-cache' });
+    expect(await readFile(join(first!.targetMaterializedRoot!, 'antigravity-cli', 'settings.json'), 'utf8')).toBe('{"trustedWorkspaces":[]}');
     const accountAHome = join(resolveConnectedServiceHomeDir({ activeServerDir: join(root, 'server'),
       serviceId: buildQualifiedPluginContributionKey(service), profileId: selectedAccountId, agentId }), nativeHome.materializedDirectoryName!);
     expect(first!.targetMaterializedRoot).toBe(accountAHome);
-    await mkdir(join(accountAHome, 'antigravity-acp', 'conversations'), { recursive: true });
-    const conversation = join(accountAHome, 'antigravity-acp', 'conversations', 'private-a.db');
+    await mkdir(join(accountAHome, 'antigravity-cli', 'conversations'), { recursive: true });
+    const conversation = join(accountAHome, 'antigravity-cli', 'conversations', 'private-a.db');
     await writeFile(conversation, 'account-a-conversation');
     const privateFiles = [
       ['conversations/private-a.db-wal', new Uint8Array([0, 255, 128])],
       ['conversations/private-a.meta', new TextEncoder().encode('{"id":"private-a"}')],
       ['brain/private-a/artifact.md', new TextEncoder().encode('private artifact')],
     ] as const;
-    await mkdir(join(accountAHome, 'antigravity-acp', 'brain', 'private-a'), { recursive: true });
-    for (const [path, bytes] of privateFiles) await writeFile(join(accountAHome, 'antigravity-acp', path), bytes);
-    await writeFile(join(accountAHome, 'antigravity-acp', 'unknown-private.json'), 'account-local');
+    await mkdir(join(accountAHome, 'antigravity-cli', 'brain', 'private-a'), { recursive: true });
+    for (const [path, bytes] of privateFiles) await writeFile(join(accountAHome, 'antigravity-cli', path), bytes);
+    await writeFile(join(accountAHome, 'antigravity-cli', 'unknown-private.json'), 'account-local');
     const copiedSkill = join(accountAHome, 'config', 'skills', 'SKILL.md');
     await utimes(copiedSkill, 1234, 1234);
     const copiedIdentity = await lstat(copiedSkill);
@@ -160,38 +160,37 @@ it('prepares selected Antigravity account homes and preserves copied config and 
     selectedAccountId = 'account-b';
     const second = await launch('launch-b');
     expect(second!.targetMaterializedRoot).not.toBe(accountAHome);
-    expect(existsSync(join(second!.targetMaterializedRoot!, 'antigravity-acp', 'conversations', 'private-a.db'))).toBe(false);
-    expect(existsSync(join(second!.targetMaterializedRoot!, 'antigravity-acp', 'brain', 'private-a', 'artifact.md'))).toBe(false);
-    expect(existsSync(join(nativeRoot, 'antigravity-acp', 'conversations', 'private-a.db'))).toBe(false);
-    expect(existsSync(join(nativeRoot, 'antigravity-acp', 'brain', 'private-a', 'artifact.md'))).toBe(false);
-    expect(await readFile(join(second!.targetMaterializedRoot!, 'antigravity-acp', 'acp_token.json'), 'utf8')).toContain('access-account-b');
+    expect(existsSync(join(second!.targetMaterializedRoot!, 'antigravity-cli', 'conversations', 'private-a.db'))).toBe(false);
+    expect(existsSync(join(second!.targetMaterializedRoot!, 'antigravity-cli', 'brain', 'private-a', 'artifact.md'))).toBe(false);
+    expect(existsSync(join(nativeRoot, 'antigravity-cli', 'conversations', 'private-a.db'))).toBe(false);
+    expect(existsSync(join(nativeRoot, 'antigravity-cli', 'brain', 'private-a', 'artifact.md'))).toBe(false);
+    expect(await readFile(join(second!.targetMaterializedRoot!, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8')).toContain('access-account-b');
     await second!.cleanupOnExit!();
     selectedAccountId = 'account-a';
     const resumed = await launch('launch-a-again');
     expect(resumed!.targetMaterializedRoot).toBe(accountAHome);
     expect(await readFile(conversation, 'utf8')).toBe('account-a-conversation');
     expect((await readdir(join(accountAHome, 'config'))).filter(name => name.includes('.local-'))).toEqual([]);
-    expect((await readdir(join(accountAHome, 'antigravity-acp'))).filter(name => name.includes('.local-'))).toEqual([]);
+    expect((await readdir(join(accountAHome, 'antigravity-cli'))).filter(name => name.includes('.local-'))).toEqual([]);
     expect((await lstat(copiedSkill)).ino).toBe(copiedIdentity.ino);
     expect((await lstat(copiedSkill)).mtimeMs).toBe(copiedIdentity.mtimeMs);
     await resumed!.cleanupOnExit!();
     const shared = await launch('launch-a-shared', true, 'shared');
     expect(shared!.targetMaterializedRoot).toBe(accountAHome);
     expect(await readFile(conversation, 'utf8')).toBe('account-a-conversation');
-    expect(await readFile(join(nativeRoot, 'antigravity-acp', 'conversations', 'private-a.db'), 'utf8')).toBe('account-a-conversation');
+    expect(await readFile(join(nativeRoot, 'antigravity-cli', 'conversations', 'private-a.db'), 'utf8')).toBe('account-a-conversation');
     for (const [path, bytes] of privateFiles) {
-      expect(new Uint8Array(await readFile(join(accountAHome, 'antigravity-acp', path)))).toEqual(bytes);
-      expect(new Uint8Array(await readFile(join(nativeRoot, 'antigravity-acp', path)))).toEqual(bytes);
+      expect(new Uint8Array(await readFile(join(accountAHome, 'antigravity-cli', path)))).toEqual(bytes);
+      expect(new Uint8Array(await readFile(join(nativeRoot, 'antigravity-cli', path)))).toEqual(bytes);
     }
-    expect(await realpath(join(accountAHome, 'antigravity-acp', 'conversations'))).toBe(await realpath(join(nativeRoot, 'antigravity-acp', 'conversations')));
-    expect(await realpath(join(accountAHome, 'antigravity-acp', 'brain'))).toBe(await realpath(join(nativeRoot, 'antigravity-acp', 'brain')));
-    expect(await readFile(join(nativeRoot, 'antigravity-acp', 'acp_token.json'), 'utf8')).toBe('native credential');
-    expect(existsSync(join(nativeRoot, 'antigravity-acp', 'unknown-private.json'))).toBe(false);
-    expect(await readFile(join(accountAHome, 'antigravity-acp', 'acp_token.json'), 'utf8')).toContain('access-account-a');
+    expect(await realpath(join(accountAHome, 'antigravity-cli', 'conversations'))).toBe(await realpath(join(nativeRoot, 'antigravity-cli', 'conversations')));
+    expect(await realpath(join(accountAHome, 'antigravity-cli', 'brain'))).toBe(await realpath(join(nativeRoot, 'antigravity-cli', 'brain')));
+    expect(await readFile(join(nativeRoot, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8')).toBe('native credential');
+    expect(existsSync(join(nativeRoot, 'antigravity-cli', 'unknown-private.json'))).toBe(false);
+    expect(await readFile(join(accountAHome, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8')).toContain('access-account-a');
     await shared!.cleanupOnExit!();
     const native = await launch('launch-native', false);
-    expect(await readChild(native)).toEqual({ baseUrl: inherited.AGY_ACP_CCPA_BASE_URL,
-      project: inherited.agy_acp_ccpa_project, google: 'user-google', cache: 'user-cache' });
+    expect(await readChild(native)).toEqual({ fileTokens: null, google: 'user-google', cache: 'user-cache' });
     await native!.cleanupOnExit!();
   } finally {
     for (const lease of leases) lease.dispose();
@@ -203,8 +202,8 @@ it('disposes an explicit probe home even when the probe writes declared native h
   const root = await mkdtemp(join(tmpdir(), 'happier-probe-history-'));
   try {
     const nativeHome = join(root, 'custodian-native');
-    const durableConversation = join(nativeHome, 'antigravity-acp', 'conversations', 'durable.db');
-    await mkdir(join(nativeHome, 'antigravity-acp', 'conversations'), { recursive: true });
+    const durableConversation = join(nativeHome, 'antigravity-cli', 'conversations', 'durable.db');
+    await mkdir(join(nativeHome, 'antigravity-cli', 'conversations'), { recursive: true });
     await writeFile(durableConversation, 'durable-account-history');
     const probe = await materializeConnectedServicesForSpawn({
       agentId: 'antigravity', materializationKey: 'probe-history', probePurpose: 'probe',
@@ -213,8 +212,8 @@ it('disposes an explicit probe home even when the probe writes declared native h
     });
     const probeHome = probe!.targetMaterializedRoot!;
     expect(probeHome).not.toBe(nativeHome);
-    const probeConversation = join(probeHome, 'antigravity-acp', 'conversations', 'probe.db');
-    await mkdir(join(probeHome, 'antigravity-acp', 'conversations'), { recursive: true });
+    const probeConversation = join(probeHome, 'antigravity-cli', 'conversations', 'probe.db');
+    await mkdir(join(probeHome, 'antigravity-cli', 'conversations'), { recursive: true });
     await writeFile(probeConversation, 'probe-only-history');
     await probe!.cleanupOnExit!();
     expect(existsSync(probeHome)).toBe(false);

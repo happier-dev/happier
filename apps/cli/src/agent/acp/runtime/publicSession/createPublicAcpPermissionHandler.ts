@@ -56,7 +56,8 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
         permissionContext?: Readonly<{
           origin?: AcpPermissionCallContext['origin'];
           turnId?: string;
-          causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
+          causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1 | null;
+          requireExplicitApproval?: true;
         }>;
       }>
     | Readonly<{ ok: false; rationale: string }> => {
@@ -83,6 +84,12 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
       causalPermissionAuthority = params.resolveCausalPermissionAuthority?.(toolCallId) ?? null;
     } catch {
       return { ok: false, rationale: 'ACP permission request causal authority is unavailable' };
+    }
+    if (context?.requireExplicitApproval && turnId) {
+      return { ok: true, requestId, permissionContext: Object.freeze({
+        ...(context.origin ? { origin: context.origin } : {}), turnId,
+        causalPermissionAuthority: null, requireExplicitApproval: true,
+      }) };
     }
     // Current public ACP sessions always install the active-turn reader. A
     // null result therefore means that this provider request cannot be tied
@@ -138,7 +145,7 @@ export function createPublicAcpPermissionHandler(params: Readonly<{
             name: toolName,
             input: parsedInput.data,
           }),
-          allowSessionPersistence: true,
+          allowSessionPersistence: context?.requireExplicitApproval !== true,
           ...(context?.nativeChoices ? { nativeChoices: context.nativeChoices } : {}),
         }, {
           signal: AbortSignal.any([params.signal, controller.signal]),

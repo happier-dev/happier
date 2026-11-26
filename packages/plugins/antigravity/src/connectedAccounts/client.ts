@@ -1,7 +1,7 @@
-import { ANTIGRAVITY_ACP_SERVER_VERSION } from '../agent/install/cliRuntime.js';
-
-// ACP's product identity is required by Cloud Code Assist entitlement endpoints.
-export const ANTIGRAVITY_CONTROL_PLANE_USER_AGENT = `antigravity/acp/${ANTIGRAVITY_ACP_SERVER_VERSION} (aidev_client; host_path=happier; proxy_client=antigravity/sdk)`;
+// Cloud Code Assist entitlement endpoints identify the calling product by this
+// user agent. It is a wire value that predates the native-only runtime, not a
+// runtime selector: keep it until Google publishes a replacement for clients.
+export const ANTIGRAVITY_CONTROL_PLANE_USER_AGENT = 'antigravity/acp/1.3.0 (aidev_client; host_path=happier; proxy_client=antigravity/sdk)';
 
 export function readAntigravityProjectId(value: unknown): string | null {
   const id = value && typeof value === 'object' && !Array.isArray(value) ? Reflect.get(value, 'id') : value;

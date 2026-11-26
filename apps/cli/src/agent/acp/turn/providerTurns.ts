@@ -10,7 +10,7 @@ import type { AcpProviderJournalFollower } from '@/plugins/runtime/context/trans
 
 export type AcpProviderTurnLifecycle = Readonly<{
   registerContinuation(input: Readonly<{ id: string; parentToolCallId: string }>): boolean;
-  beginContinuation(input: Readonly<{ id: string; turnId: string }>): boolean;
+  beginContinuation(input: Parameters<AgentAcpProviderTurnSourceHost['beginContinuation']>[0]): boolean;
   releaseToolCalls(toolCallIds: readonly string[]): void;
   foregroundActive?(): boolean;
   flush?(): Promise<void>;
@@ -21,13 +21,15 @@ export type AcpProviderTurnDriver = Readonly<{
   sessionId(): string | null;
   cwd: string;
   env(): AgentAcpProviderTurnSourceHost['env'];
+  agentVersion(): string | undefined;
   followJournal?: AcpProviderJournalFollower;
   isDisposed(): boolean;
   foregroundActive(): boolean;
   canBegin(): boolean;
   begin(): void;
   update(update: Readonly<Record<string, unknown>>): Promise<void>;
-  finish(outcome: AgentAcpCompletionEvidenceOutcome): Promise<void>;
+  releaseClaimedUpdates: AgentAcpProviderTurnSourceHost['releaseClaimedUpdates'];
+  finish: AgentAcpProviderTurnSink['finish'];
   fail(error: Error): void;
 }>;
 
@@ -46,6 +48,16 @@ export class AcpProviderTurns {
 
   isActive(): boolean { return this.active !== null; }
   isOpen(): boolean { return this.source !== null; }
+
+  claimLiveUpdate(update: Readonly<Record<string, unknown>>): boolean | Promise<boolean> {
+    return this.source?.claimLiveUpdate?.(update, { foregroundActive: this.driver.foregroundActive() }) ?? false;
+  }
+
+  hasUnattributedWork(): boolean { return this.source?.hasUnattributedWork?.() === true; }
+
+  onForegroundTurnFinished(outcome: AgentAcpCompletionEvidenceOutcome): readonly string[] | undefined {
+    return this.source?.onForegroundTurnFinished?.(outcome);
+  }
 
   /** Revoke admission first and attempt every observer cleanup even if another one throws. */
   async stop(): Promise<void> {
@@ -72,10 +84,15 @@ export class AcpProviderTurns {
         throw new Error('ACP journal source stopped during request admission');
       }
     };
+    if (source?.claimLiveUpdate) {
+      await this.lifecycle.flush?.();
+      assertCurrent();
+    }
+    const foregroundActive = this.driver.foregroundActive()
+      || (!source?.claimLiveUpdate && !this.isActive() && this.lifecycle.foregroundActive?.() === true);
     await source?.catchUp({
       ...(permissionToolCallId ? { permissionToolCallId } : {}),
-      foregroundActive: this.driver.foregroundActive()
-        || (!this.isActive() && this.lifecycle.foregroundActive?.() === true),
+      foregroundActive,
       signal: lifetime?.signal,
     });
     assertCurrent();
@@ -96,7 +113,7 @@ export class AcpProviderTurns {
     let source: AgentAcpProviderTurnSource;
     try {
       source = await this.factory({
-        sessionId, cwd: this.driver.cwd, env: this.driver.env(), signal: lifetime.signal,
+        sessionId, cwd: this.driver.cwd, env: this.driver.env(), agentVersion: this.driver.agentVersion(), signal: lifetime.signal,
         followJournal: async input => {
           if (!current() || followed || !this.driver.followJournal) throw new Error('ACP journal source is unavailable');
           followed = true;
@@ -107,6 +124,9 @@ export class AcpProviderTurns {
         },
         registerContinuation: input => current() && this.lifecycle.registerContinuation(input),
         releaseToolCalls: ids => { if (current()) this.lifecycle.releaseToolCalls(ids); },
+        releaseClaimedUpdates: async updates => {
+          if (current() && this.driver.foregroundActive()) await this.driver.releaseClaimedUpdates(updates);
+        },
         beginContinuation: input => {
           if (!current() || this.active || !this.driver.canBegin()
             || !this.lifecycle.beginContinuation(input)) return null;
@@ -126,11 +146,11 @@ export class AcpProviderTurns {
               await this.driver.update(update);
               await this.lifecycle.flush?.();
             }),
-            finish: outcome => {
+            finish: (outcome, options) => {
               if (finishing) return tail;
               finishing = true;
               return enqueue(async () => {
-                await this.driver.finish(outcome);
+                await this.driver.finish(outcome, options);
                 if (this.active === active) this.active = null;
               });
             },
