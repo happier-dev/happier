@@ -16,6 +16,7 @@ import { readWorkflowRunAccountChangeRunId } from '@/sync/runtime/orchestration/
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { refreshWorkflowRunsByIds } from './refreshWorkflowRun';
 import { projectWorkflowActivityRunFact, workflowActivityTurnEvents, type WorkflowActivityLiveFact, type WorkflowActivityObserver, type WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
+import { createSessionListPresentationSource, readSessionListPresentationPendingFlags } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
 const sources = new WeakMap<ServerAccountScopeLifetime, WorkflowActivitySource>();
 
@@ -157,9 +158,12 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                 }
                 const request = listed?.currentRequestRef;
                 const occurredAt = listed?.pendingRequestObservedAt;
-                if (occurredAt != null && occurredAt >= listeningSince && occurredAt !== oldListed?.pendingRequestObservedAt
-                    && (listed?.hasPendingPermissionRequests || listed?.hasPendingUserActionRequests)) {
-                    // The compact list update proves pending attention, while exact attribution
+                if (listed && occurredAt != null && occurredAt >= listeningSince && occurredAt !== oldListed?.pendingRequestObservedAt) {
+                    const pending = readSessionListPresentationPendingFlags(createSessionListPresentationSource(listed, {
+                        baseSession: next.sessions[id], serverId,
+                    }));
+                    if (!pending.hasPendingPermissionRequests && !pending.hasPendingUserActionRequests) continue;
+                    // The canonical projection owns attention; exact attribution additionally
                     // requires a newly visible request with its own Turn identity.
                     const exact = request?.turnId && request !== oldListed?.currentRequestRef ? {
                         turnId: request.turnId, requestId: request.requestId,

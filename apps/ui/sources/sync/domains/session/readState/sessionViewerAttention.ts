@@ -24,7 +24,7 @@ import { readExternalSessionLink } from '../external/readExternalSessionLink';
 import { deriveExternalSessionAttentionHasUnread } from '../external/readExternalSessionAttention';
 import { isSessionPersonallyTrackedForViewer } from './sessionViewer';
 import type { SessionListRenderableSession } from '../listing/sessionListRenderable';
-import { readSessionListRenderableOwnerMetadataView, readSessionListPresentationRuntime, readSessionListPresentationOwnerMetadata, readSessionListPresentationOwnerMetadataField,
+import { createSessionListPresentationSource, readSessionListRenderableOwnerMetadataView, readSessionListPresentationRuntime, readSessionListPresentationOwnerMetadata, readSessionListPresentationOwnerMetadataField,
     readSessionListPresentationPendingFlags, readSessionListPresentationPendingObservedAt,
     listSessionListPresentationPendingRequests, type SessionListPresentationSource } from '../listing/sessionListRenderableSessionProjection';
 import type { SessionFollowRuleWitnessV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
@@ -103,6 +103,7 @@ function buildPreViewerRuntimeInput(
     source?: SessionListPresentationSource,
     statesCache?: TranscriptRequestStatesCache,
 ) {
+    if (!source && !('agentState' in session)) source = createSessionListPresentationSource(session);
     if (source) return { ...readSessionListPresentationRuntime(source),
         ...readSessionListPresentationPendingFlags(source, messages),
         pendingRequestObservedAt: readSessionListPresentationPendingObservedAt(source, messages), nowMs };
@@ -215,6 +216,7 @@ export function resolveSessionPersonalAttentionForViewer(
     if (session.archivedAt != null) {
         return QUIET_SESSION_PERSONAL_ATTENTION_V1;
     }
+    if (!source && !('agentState' in session)) source = createSessionListPresentationSource(session);
     // A modern server projection already applied owner-or-Follow tracking and
     // owns the sole due-reminder exception. Do not suppress that exception by
     // re-running the older tracking guard in a consumer.
@@ -222,8 +224,16 @@ export function resolveSessionPersonalAttentionForViewer(
         const delivery = session.viewer.follow.onceDelivery;
         const current = delivery?.event === 'permission_required' || delivery?.event === 'user_action_required'
             ? readCurrentPersonalFollowOnceOccurrenceForViewer(session, messages, source, statesCache) : null;
-        const existing = current ? addSessionPersonalAttentionReasonV1(session.viewer.attention, current.event === 'permission_required'
-            ? 'permission_required' : 'user_action_required') : session.viewer.attention;
+        const attention = session.viewer.attention;
+        const pending = attention.reasons.includes('user_action_required') ? source ? readSessionListPresentationPendingFlags(source, messages)
+            : derivePendingRequestFlagsFromSession(session as Session, messages, statesCache) : null;
+        const reasons = pending && !pending.hasPendingUserActionRequests
+            ? attention.reasons.filter(reason => reason !== 'user_action_required') : attention.reasons;
+        const openedAttention = reasons.length === attention.reasons.length ? attention : {
+            ...attention, reasons, needsAttention: reasons.length > 0, primary: reasons[0] ?? null,
+        };
+        const existing = current ? addSessionPersonalAttentionReasonV1(openedAttention, current.event === 'permission_required'
+            ? 'permission_required' : 'user_action_required') : openedAttention;
         return addRuleAttentionForViewer(session, existing, nowMs, messages, rulePolicies, ruleMatches, source, statesCache);
     }
     if (!isSessionPersonallyTrackedForViewer(session)) {

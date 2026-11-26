@@ -1,7 +1,9 @@
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { SessionAwarenessProjectionV1, SessionStatusResult } from '@happier-dev/protocol';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
-import { listPendingRequests, projectSessionStatusPendingRequestsV1, readSharedMetadataActionConfirmationState } from '@happier-dev/session-core/pending';
+import { listPendingRequests, projectSessionStatusPendingRequestsV1, readSharedMetadataActionConfirmationState, type PendingRequestFacts } from '@happier-dev/session-core/pending';
+import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
+import { fetchSessionTurnsProjection } from '@/session/transport/http/sessionsHttp';
 import { projectCliSessionAwarenessFromPresentationV1 } from '@/cli/output/session/sessionAwareness';
 import type { StoredCredentials } from '@/persistence';
 import { summarizeSessionRecord, type SessionSummary } from '@/cli/output/session/sessionSummary';
@@ -163,15 +165,29 @@ export async function getSessionStatus(params: Readonly<{
   const permissionRelationship = effectiveAccess.success
     ? effectiveAccess.data.level === 'owner' ? 'owner' as const : 'sharedApprover' as const
     : null;
-  const pendingRequests = openedAgentState.success ? projectSessionStatusPendingRequestsV1(listPendingRequests({
+  const pendingFacts: PendingRequestFacts = {
     sessionId: sessionTarget.sessionId,
     active: sessionTarget.rawSession.active,
-    agentState: openedAgentState.data,
+    archivedAt: sessionTarget.rawSession.archivedAt,
+    latestTurnId: sessionTarget.rawSession.latestTurnId,
+    latestTurnStatus: sessionTarget.rawSession.latestTurnStatus,
+    agentState: openedAgentState.success ? openedAgentState.data : null,
     permissionRelationship,
     actionConfirmations: readSharedMetadataActionConfirmationState(presentation.metadata, sessionTarget.rawSession.metadataLayoutVersion),
     presentationCompletedRequests: null,
     projected: null,
-  })) : null;
+  };
+  let openRequests = openedAgentState.success ? listPendingRequests(pendingFacts) : null;
+  if (openRequests?.some(request => request.turnId && resolvePendingRequestAttentionReasonV1(request) === 'user_action_required')) {
+    const sessionTurns = await fetchSessionTurnsProjection({
+      token: params.credentials.token,
+      sessionId: sessionTarget.sessionId,
+      ...(params.signal ? { signal: params.signal } : {}),
+      ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
+    });
+    openRequests = listPendingRequests({ ...pendingFacts, sessionTurns });
+  }
+  const pendingRequests = openRequests === null ? null : projectSessionStatusPendingRequestsV1(openRequests);
 
   const ownerMetadata = tryDecryptSessionOwnerMetadataView({ credentials: params.credentials,
     accountEncryptionMode: sessionTarget.accountEncryptionCurrentness.mode, rawSession: sessionTarget.rawSession });

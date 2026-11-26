@@ -282,6 +282,13 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     expect(companion.filter(row => row.kind === 'session' && row.sessionId === background.id)).toEqual(
         column.filter(row => row.kind === 'session' && row.sessionId === background.id),
     );
+    const hostless = { ...backgroundRow, id: 'hostless-question-summary', active: false, archivedAt: observedAt,
+        hasPendingPermissionRequests: false, hasPendingUserActionRequests: true, pendingRequestObservedAt: null };
+    storage.getState().applyServerScopedSessionListRows(scope.serverId, [hostless], { source: 'rowOnly', mode: 'append' });
+    storage.getState().applyServerScopedSessionListRows(scope.serverId, [{ ...hostless, archivedAt: null,
+        seq: hostless.seq + 1, pendingRequestObservedAt: observedAt }], { source: 'rowOnly', mode: 'append' });
+    expect(column.filter(row => row.kind === 'session' && row.sessionId === hostless.id
+        && row.event === 'userActionRequired')).toEqual([]);
     const sessionFacts = column.filter(row => row.kind === 'session' && row.sessionId === session.id);
     expect(sessionFacts.map(row => row.event)).toEqual([
         'started', 'parentTurnStarted', 'parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled', 'userActionRequired',

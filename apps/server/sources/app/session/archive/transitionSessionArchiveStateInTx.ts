@@ -2,6 +2,7 @@ import { decodeSessionStoredContent } from '@/storage/sessionMachineStoredConten
 import { applyManagedCreationScopeEndInTx } from '@/app/machines/managed/managedCreationBirth';
 import { applySessionArchiveTransitionToFollowsInTx } from "@/app/session/follow/lifecycle";
 import { applySessionArchiveTransitionToManagerInTx } from "@/app/session/follow/sessionManagerService";
+import { applySessionArchiveWaitingTurnsInTx } from '@/app/session/sessionWriteService';
 import type { Tx } from "@/storage/inTx";
 import { admitSessionLifecycleAutomationRunsTx } from "@/app/automations/automationSessionLifecycleAdmission";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
@@ -26,6 +27,14 @@ export async function transitionSessionArchiveStateInTx(params: Readonly<{
     await acquireSessionAccountCursorLocksInTx(params.tx, [params.sessionId], [], {
         includeLifecyclePublications: !params.wasArchived && params.archivedAt !== null,
     });
+    if (!params.wasArchived && params.archivedAt !== null) {
+        const { accountId } = await params.tx.session.findUniqueOrThrow({
+            where: { id: params.sessionId }, select: { accountId: true },
+        });
+        await applySessionArchiveWaitingTurnsInTx({
+            tx: params.tx, sessionId: params.sessionId, ownerAccountId: accountId, archivedAt: params.archivedAt,
+        });
+    }
     const session = await params.tx.session.update({
         where: { id: params.sessionId },
         data: {

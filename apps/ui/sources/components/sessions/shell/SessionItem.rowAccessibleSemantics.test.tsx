@@ -125,7 +125,9 @@ const ROW_STATE_CASES: readonly RowStateCase[] = [
     },
     {
         label: 'action required',
-        session: { pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 1, pendingRequestObservedAt: NOW_MS },
+        session: { pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 1, pendingRequestObservedAt: NOW_MS,
+            agentState: { requests: { question: { tool: 'AskUserQuestion', kind: 'user_action',
+                arguments: {}, createdAt: NOW_MS } } } },
         spoken: 'Question',
     },
     { label: 'failed', session: { latestTurnStatus: 'failed', viewer: createSessionViewerFixture({ latestFailureSeq: 4, readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null }, attention: { needsAttention: true, reasons: ['failed'], primary: 'failed', presentation: 'full' } }) }, spoken: 'error' },

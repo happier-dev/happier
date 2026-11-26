@@ -2,6 +2,8 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import type { ToolCall } from "@happier-dev/session-core/messages";
+import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { listPendingRequestListsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { createSessionFixture, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import {
     changeTextTestInstance,
@@ -41,7 +43,7 @@ const daemonProjectionRequests: unknown[] = [];
 let daemonSettingValues: Record<string, unknown> = {};
 let daemonSessionAttachSupported = true;
 let supportsAnswersInPermission = true;
-let activeAskUserQuestionRequest: { tool: string; kind?: 'user_action'; source?: string } | null = null;
+let activeAskUserQuestionRequest: { tool: string; kind?: 'user_action'; source?: string; turnId?: string } | null = null;
 let activeAskUserQuestionRequestId = 'toolu_1';
 const askUserQuestionSessionState = vi.hoisted(() => ({
     current: null as Record<string, unknown> | null,
@@ -111,6 +113,8 @@ async function renderScreen(element: React.ReactElement) {
     }), {
         ...source,
         useAgentState: () => read().agentState,
+        useArchivedAt: () => read().archivedAt ?? null,
+        usePendingRequests: () => listPendingRequestListsFromSession(read(), []),
         useMetadata: () => readSessionOwnerMetadataView(read()),
     });
 }
@@ -1719,6 +1723,24 @@ describe('AskUserQuestionView', () => {
         });
         expect(screen.findAllByTestId('ask-user-question.submit')).toHaveLength(0);
         expect(sessionAllowWithAnswers).not.toHaveBeenCalled();
+    });
+
+    it.each(['waiting', 'completed', 'cancelled', 'failed'] as const)('uses the canonical historical-Turn question projection for %s cards', async status => {
+        activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action', turnId: 'older-turn' };
+        askUserQuestionSessionState.current = { archivedAt: null, latestTurnId: 'newer-turn', latestTurnStatus: 'completed',
+            sessionTurns: buildSessionTurnsProjectionV1({ sessionId: 's1', updatedAt: 200,
+                turns: [{ turnId: 'older-turn', status, startedAt: 1, updatedAt: 200 }] }) };
+        const screen = await renderView(makeTool());
+        if (status !== 'cancelled') {
+            expect(screen.findAllByTestId('ask-user-question.withdrawn')).toHaveLength(0);
+            await chooseOptionAndSubmit(screen, 'A');
+            expect(sessionAllowWithAnswers).toHaveBeenCalledOnce();
+        } else {
+            expect(screen.findHostByTestId('ask-user-question.withdrawn')).toBeTruthy();
+            expect(screen.findAllByTestId('ask-user-question.submit')).toHaveLength(0);
+            expect(screen.findAllByTestId('ask-user-question.dismiss')).toHaveLength(0);
+            expect(sessionAllowWithAnswers).not.toHaveBeenCalled();
+        }
     });
 
     it('withdraws submit when a read-only source contains a pending agent question', async () => {

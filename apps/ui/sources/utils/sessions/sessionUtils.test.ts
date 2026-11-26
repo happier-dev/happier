@@ -1462,11 +1462,13 @@ describe('listPendingPermissionRequests', () => {
 });
 
 describe('listPendingTranscriptRequests', () => {
-    it('returns pending transcript-backed user-action requests', async () => {
+    it('returns transcript-backed user-action requests held in the current request ledger', async () => {
         const { listPendingTranscriptRequests } = await import('./sessionUtils');
         const session = createBaseSession({
             id: 's-transcript-action',
-            agentState: null,
+            agentState: { requests: { ask_user_question_1: {
+                tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 7,
+            } } },
         });
 
         expect(listPendingTranscriptRequests(session, [

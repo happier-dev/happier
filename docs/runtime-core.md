@@ -967,6 +967,25 @@ repeating archive preserves the first timestamp, and repeating unarchive leaves
 the Session and Account cursors unchanged. Tag rejoin still records its genuine
 activity transition. Each new archive request retains its normal access admission.
 
+In unreleased 0.3 source, Home's Archive transaction cancels the Session's waiting
+Turns through the canonical Turn mutation writer, including when no runner is
+attached. Archive retains Agent State bytes and its version in both plain and
+E2EE Sessions; admin Archive authority never grants content-write authority. The
+shared pending-request projection shows a structured question only while it
+remains in Agent State, the Session is unarchived, and its named Turn is not
+cancelled. Completion or failure of the raising Turn does not close continue-mode
+or lasting questions. Unarchive therefore does not reopen Turn-bound cancelled
+questions. Questions without a Turn are hidden while archived and reappear after
+Unarchive. Archive settlement does not fire cancellation Automations, personal
+cancelled events, or remote activity alerts. The owner's keyed runner closes cancelled-Turn
+requests at its next attach or resume through the existing cancellation store,
+recording `canceled` / `abort`. Observed Archive continues through the live
+runner's existing cleanup.
+
+Without a held Agent State ledger, attention flags retain Home's projected
+question counts, which are zero for archived or non-running Sessions. This
+summary does not fabricate answerable question details.
+
 Admitted Follow originals retain their server-validated input admission receipt
 through canonical and legacy message projections. A required original's transient
 Home source-read failure uses the same pre-turn preparation wait, retaining the

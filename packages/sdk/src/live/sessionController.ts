@@ -11,6 +11,9 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents/runtime/agent-state-request-coverage';
 import { SessionEffectiveAccessV1Schema } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { SessionTurnLifecycleStatusV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnLifecycleStatusV1';
+import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
 import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { TranscriptOpenedFollowOutputV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
 import type { SessionEffectiveAccessV1, SessionMessageV1, SessionMessagesPageV1, TranscriptOpenedFollowOutputV1 } from '@happier-dev/protocol';
@@ -121,6 +124,21 @@ export async function createSessionController(params: LiveParams): Promise<Happi
       abort: facts.active && capabilities?.submitAgentInput === true,
     } });
   };
+  const refreshQuestionTurns = async (captured: AbortSignal, forceRefresh = false) => {
+    const openQuestionTurnIds = listPendingRequests(facts)
+      .filter(request => request.turnId && resolvePendingRequestAttentionReasonV1(request) === 'user_action_required')
+      .map(request => request.turnId!);
+    if (openQuestionTurnIds.length === 0) return;
+    if (!forceRefresh) {
+      const knownTurnIds = new Set(facts.sessionTurns?.turns.map(turn => turn.turnId));
+      if (openQuestionTurnIds.every(turnId => knownTurnIds.has(turnId))) return;
+    }
+    const turns = SessionTurnsProjectionV1Schema.parse(await params.read(
+      `/v1/sessions/${encodeURIComponent(params.sessionId)}/turns`, captured));
+    assertCurrent(captured);
+    facts = { ...facts, sessionTurns: turns };
+    refreshPending();
+  };
   const reduce = (messages: NormalizedMessage[]) => {
     const changed = reducer(reducerState, messages, facts.agentState, [], { requestCoverage: facts.requestCoverage });
     // The canonical read model preserves prior snapshots and unchanged
@@ -186,18 +204,26 @@ export async function createSessionController(params: LiveParams): Promise<Happi
     publish({ metadata: parsed?.success ? parsed.data : null });
     refreshPending();
   };
-  const updateSnapshot = async (raw: SessionSnapshot, captured: AbortSignal) => {
+  const updateSnapshot = async (raw: SessionSnapshot, captured: AbortSignal, forceRefreshTurns = false) => {
     assertCurrent(captured);
     if (raw.encryptionMode !== content.mode && selected === 'socket') throw new HappierTransportError('The Session encryption mode changed.', { code: 'session_content_mode_mismatch' });
     if ((typeof raw.metadataVersion === 'number' ? raw.metadataVersion : 0) > metadataVersion) metadataLayoutVersion = raw.metadataLayoutVersion;
     const numberOrNull = (value: unknown) => typeof value === 'number' ? value : null;
+    const archivedAt = numberOrNull(raw.archivedAt);
+    const latestTurnId = typeof raw.latestTurnId === 'string' ? raw.latestTurnId : null;
+    const parsedTurnStatus = SessionTurnLifecycleStatusV1Schema.safeParse(raw.latestTurnStatus);
+    const latestTurnStatus = parsedTurnStatus.success ? parsedTurnStatus.data : null;
     const projected = {
       permissionCount: numberOrNull(raw.pendingPermissionRequestCount), userActionCount: numberOrNull(raw.pendingUserActionRequestCount),
       observedAt: numberOrNull(raw.pendingRequestObservedAt), referenceAt: numberOrNull(raw.updatedAt),
     };
-    const factsChanged = facts.active !== (raw.active === true) || !facts.projected
+    const archivedChanged = facts.archivedAt !== archivedAt;
+    const cancelledTurnChanged = latestTurnStatus === 'cancelled'
+      && (facts.latestTurnStatus !== 'cancelled' || facts.latestTurnId !== latestTurnId);
+    const factsChanged = facts.active !== (raw.active === true) || archivedChanged
+      || facts.latestTurnId !== latestTurnId || facts.latestTurnStatus !== latestTurnStatus || !facts.projected
       || Object.keys(projected).some((key) => projected[key as keyof typeof projected] !== facts.projected![key as keyof typeof projected]);
-    facts = { ...facts, active: raw.active === true, projected };
+    facts = { ...facts, active: raw.active === true, archivedAt, latestTurnId, latestTurnStatus, projected };
     const access = SessionEffectiveAccessV1Schema.safeParse(raw.effectiveAccess);
     const nextCapabilities = access.success ? access.data.capabilities : null;
     const capabilitiesChanged = capabilities?.submitAgentInput !== nextCapabilities?.submitAgentInput
@@ -209,6 +235,7 @@ export async function createSessionController(params: LiveParams): Promise<Happi
       applyAgentState(await openField(raw.agentState, captured), typeof raw.agentStateVersion === 'number' ? raw.agentStateVersion : 0);
     }
     if (factsChanged || capabilitiesChanged) refreshPending();
+    await refreshQuestionTurns(captured, forceRefreshTurns || archivedChanged || cancelledTurnChanged);
   };
   const fetchPage = (afterSeq: number, captured: AbortSignal) => fetchSessionMessagesPage({
     sessionId: params.sessionId, scope: 'all', afterSeq, signal: captured,
@@ -243,7 +270,7 @@ export async function createSessionController(params: LiveParams): Promise<Happi
     rawState = createRawMessageNormalizationSequenceState(); reducerState = createReducer();
     assembler = createTranscriptStreamSegmentAssembler(); received = new Map();
     lastSeq = 0; firstSeq = undefined; metadataVersion = -1; agentStateVersion = -1;
-    facts = { ...facts, agentState: null, requestCoverage: undefined, actionConfirmations: null, presentationCompletedRequests: null };
+    facts = { ...facts, agentState: null, sessionTurns: null, requestCoverage: undefined, actionConfirmations: null, presentationCompletedRequests: null };
     publish({ transcript: emptyTranscript(), metadata: null, agentState: null, pendingRequests: [], history: { loading: true, hasMoreOlder: false } });
   };
   const readChanges = async (captured: AbortSignal): Promise<Readonly<{ targets: readonly { messageId: string; seq: number }[]; cursor: number; reset: boolean; changed: boolean }>> => {
@@ -284,12 +311,29 @@ export async function createSessionController(params: LiveParams): Promise<Happi
       const update = event.update;
       if (update.metadataLayoutVersion !== undefined && update.metadata && update.metadata.version > metadataVersion) metadataLayoutVersion = update.metadataLayoutVersion;
       const activeChanged = update.active !== undefined && update.active !== facts.active;
-      if (activeChanged) facts = { ...facts, active: update.active! };
+      const archivedChanged = update.archivedAt !== undefined && update.archivedAt !== facts.archivedAt;
+      const cancelledTurnChanged = update.latestTurnStatus === 'cancelled'
+        && (facts.latestTurnStatus !== 'cancelled' || (update.latestTurnId !== undefined && update.latestTurnId !== facts.latestTurnId));
+      const lifecycleChanged = activeChanged
+        || archivedChanged
+        || update.latestTurnId !== undefined && update.latestTurnId !== facts.latestTurnId
+        || update.latestTurnStatus !== undefined && update.latestTurnStatus !== facts.latestTurnStatus;
+      facts = { ...facts,
+        ...(update.active !== undefined ? { active: update.active } : {}),
+        ...(update.archivedAt !== undefined ? { archivedAt: update.archivedAt } : {}),
+        ...(update.latestTurnId !== undefined ? { latestTurnId: update.latestTurnId } : {}),
+        ...(update.latestTurnStatus !== undefined ? { latestTurnStatus: update.latestTurnStatus } : {}),
+      };
       if (event.agentState?.status === 'ready' && update.agentState) applyAgentState(event.agentState.value, update.agentState.version);
       if (update.metadata) void openField(update.metadata.value, captured).then((value) => {
         if (!captured.aborted) applyMetadata(value, update.metadata!.version);
       }).catch((error: unknown) => { if (!captured.aborted) supervisor?.reportProbeResult?.(probeFailure(error), scope); });
-      if (activeChanged) refreshPending();
+      if (lifecycleChanged) refreshPending();
+      if (archivedChanged || cancelledTurnChanged || event.agentState?.status === 'ready') {
+        void refreshQuestionTurns(captured, archivedChanged || cancelledTurnChanged).catch((error: unknown) => {
+          if (!captured.aborted) supervisor?.reportProbeResult?.(probeFailure(error), scope);
+        });
+      }
     } else {
       streamOpening = streamOpening.then(async () => {
         if (captured.aborted || signal.aborted) return;
@@ -372,7 +416,7 @@ export async function createSessionController(params: LiveParams): Promise<Happi
       const beforeConnect = async () => {
         const changes = await readChanges(captured);
         if (!firstConnect || changes.changed || changes.reset) {
-          await updateSnapshot(readSnapshot(await params.read(sessionPath, captured), params.sessionId), captured);
+          await updateSnapshot(readSnapshot(await params.read(sessionPath, captured), params.sessionId), captured, true);
         }
         firstConnect = false;
         return changes;
@@ -435,6 +479,8 @@ export async function createSessionController(params: LiveParams): Promise<Happi
               await repairOpenedMessages(targets, captured);
               if (page.changes?.some((change) => change.kind === 'session')) {
                 await updateSnapshot(readSnapshot(await params.read(sessionPath, captured), params.sessionId), captured);
+              } else if (page.agentState) {
+                await refreshQuestionTurns(captured);
               }
               applyRows(await openRows(page.items, captured), false);
               return page;

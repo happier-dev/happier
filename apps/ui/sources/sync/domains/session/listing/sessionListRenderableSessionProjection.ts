@@ -266,6 +266,10 @@ export function createSessionListPresentationSource(
     const hasPendingSummary = typeof row.hasPendingPermissionRequests === 'boolean' || typeof row.hasPendingUserActionRequests === 'boolean';
     const pending: PendingRequestFacts = {
         sessionId: row.id, active: lifecycle.active,
+        archivedAt: row.archivedAt === undefined ? baseSession?.archivedAt ?? null : row.archivedAt,
+        sessionTurns: basePending?.sessionTurns ?? null,
+        latestTurnId: lifecycle.latestTurnId ?? null,
+        latestTurnStatus: lifecycle.latestTurnStatus ?? null,
         requestCoverage: readSessionRequestCoverage({ serverId,
             metadata: metadata.metadata, metadataLayoutVersion: metadata.metadataLayoutVersion,
             ownerMetadataView: metadata.ownerMetadataView,

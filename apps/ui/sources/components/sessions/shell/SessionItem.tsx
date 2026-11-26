@@ -55,6 +55,7 @@ import { t } from '@/text';
 import { hasSessionListUnreadAttention } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
 import { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { createSessionListPresentationSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { getSessionStatus, presentSessionAwarenessNowLineV1, type SessionStatus } from '@/utils/sessions/sessionUtils';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import type { HappierCollectionRowContentProps } from '@happier-dev/plugin-ui/presentation';
@@ -2048,6 +2049,10 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
     const sessionStatus = managedWakeFacts || archivePending || rowStatus.state === 'archiving' || session !== rowSession
         ? getSessionStatus(session, Date.now(), {
             archiving: archivePending,
+            presentationSource: createSessionListPresentationSource(rowSession, {
+                baseSession: itemProps.session && 'agentState' in itemProps.session ? itemProps.session : undefined,
+                serverId: itemProps.serverId,
+            }),
             statusColors: theme.colors.status,
             ...managedWakeFacts,
         }) : rowStatus;

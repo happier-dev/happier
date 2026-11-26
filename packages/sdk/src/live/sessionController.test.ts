@@ -58,6 +58,8 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
   let rejectRpc = false;
   let offline = false;
   let active = true;
+  let archivedAt: number | null = null;
+  let questionTurnCancelled = false;
   let inactiveEmptyReads = 0;
   let storedFailure: 'corrupt' | 'mode_mismatch' | null = null;
   let openedFailure = false;
@@ -105,7 +107,8 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
         || compatibility.declaration.protocolVersion < CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION)) {
         response.statusCode = 426; response.end(JSON.stringify({ error: 'client-update-required' })); return;
       }
-      response.end(JSON.stringify({ session: { id: 'session-1', encryptionMode, active,
+      response.end(JSON.stringify({ session: { id: 'session-1', encryptionMode, active, archivedAt,
+        latestTurnId: 'other-turn', latestTurnStatus: 'in_progress',
         seq: rows.at(-1)?.seq ?? 0, createdAt: 1, updatedAt: 1, activeAt: 1,
         dataEncryptionKey: encryptionMode === 'e2ee' ? dataEncryptionKey : null,
         metadata: sharedMetadata ? encodeBase64(await sealSessionDataKeyBundleV0(sharedMetadata, dataKey), 'base64')
@@ -118,6 +121,11 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
           manageAccess: !sharedMetadata, managePermissionDelegation: !sharedMetadata, managePublicLink: !sharedMetadata, archiveSession: !sharedMetadata,
           renameSession: !sharedMetadata, assignResponsibility: !sharedMetadata, stopSession: !sharedMetadata, deleteSession: !sharedMetadata,
         } } } }));
+    } else if (url.pathname === '/v1/sessions/session-1/turns') {
+      response.end(JSON.stringify({ v: 1, sessionId: 'session-1', updatedAt: 3, turns: [
+        { turnId: 'archived-turn', status: questionTurnCancelled ? 'cancelled' : 'waiting', startedAt: 1, updatedAt: 3 },
+        { turnId: 'other-turn', status: 'in_progress', startedAt: 2, updatedAt: 3 },
+      ] }));
     } else if (url.pathname.endsWith('/encryption-access')) {
       response.end(JSON.stringify({ v: 1, accountId: context.accountId, tokenId: context.tokenId, encryptionAccess }));
     } else if (url.pathname === '/v2/cursor') {
@@ -220,6 +228,12 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
     io.emit('update', { id: 'update', seq: 1, createdAt: 1, body });
   };
   return { client, sessions, rpc, openedRpc, actions, requests, followReads, update,
+    setArchivedAt(value: number | null) {
+      archivedAt = value;
+      if (value !== null) questionTurnCancelled = true;
+      revision++; changeHint = {};
+      update({ t: 'update-session', id: 'session-1', archivedAt });
+    },
     setPermissionTurn(turnId: string) {
       state = { ...state, requests: { ...state.requests, permission: { ...state.requests!.permission!, turnId } } };
       stateVersion++;
@@ -271,6 +285,48 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
 }
 
 describe('SDK live Session over real HTTP and Socket.IO', () => {
+  it('does not re-read question Turns for unrelated lifecycle pushes or supplied cancellation truth', async () => {
+    const server = await fixture('plain', false, { metadata: { path: '/work', host: 'test' },
+      agentState: { requests: { question: { tool: 'AskUserQuestion', kind: 'user_action',
+        arguments: {}, createdAt: 1, turnId: 'archived-turn' } } } });
+    const controller = await server.client.sessions.get('session-1').live();
+    await expect.poll(() => controller.getSnapshot().connection).toBe('online');
+    await expect.poll(() => controller.getSnapshot().pendingRequests.map(request => request.id)).toEqual(['question']);
+    const turnReads = () => server.requests.filter(path => path === '/v1/sessions/session-1/turns').length;
+    const initialReads = turnReads();
+    server.setActive(false);
+    await expect.poll(() => controller.getSnapshot().actions.send).toBe(false);
+    // Observe the real HTTP boundary after the socket consumer has handled the push.
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(turnReads()).toBe(initialReads);
+    server.update({ t: 'update-session', id: 'session-1', latestTurnId: 'other-turn', latestTurnStatus: 'completed' });
+    server.setActive(true);
+    await expect.poll(() => controller.getSnapshot().actions.send).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(turnReads()).toBe(initialReads);
+    server.update({ t: 'update-session', id: 'session-1', latestTurnId: 'archived-turn', latestTurnStatus: 'cancelled' });
+    await expect.poll(() => controller.getSnapshot().pendingRequests).toEqual([]);
+    expect(turnReads()).toBe(initialReads);
+  });
+
+  it.each([
+    ['plain', 'socket'], ['e2ee', 'socket'], ['plain', 'action'], ['e2ee', 'action'],
+  ] as const)('keeps archived Turn questions closed after Unarchive (%s/%s)', async (mode, transport) => {
+    const question = { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 1 };
+    const server = await fixture(mode, mode === 'e2ee' && transport === 'socket', {
+      metadata: { path: '/work', host: 'test' },
+      agentState: { requests: { question: { ...question, turnId: 'archived-turn' }, lasting: question } },
+    });
+    server.setActive(false);
+    const controller = await server.client.sessions.get('session-1').live({ transport });
+    await expect.poll(() => controller.getSnapshot().pendingRequests.map(request => request.id).sort())
+      .toEqual(['lasting', 'question']);
+    server.setArchivedAt(123);
+    await expect.poll(() => controller.getSnapshot().pendingRequests).toEqual([]);
+    server.setArchivedAt(null);
+    await expect.poll(() => controller.getSnapshot().pendingRequests.map(request => request.id)).toEqual(['lasting']);
+  });
+
   it.each(['claude', 'codex'])('uses the selected %s declaration when reconciling equivalent pending requests', async (agentId) => {
     const coverage = resolveAgentStateRequestCoverageOptions({ agentId: 'claude' });
     const request = { tool: 'Shell', arguments: { command: 'pwd' }, createdAt: 10_500,

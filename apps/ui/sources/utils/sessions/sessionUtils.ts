@@ -48,7 +48,7 @@ import {
 } from '@/sync/ops/sessionMachineTarget';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { readSessionListRenderableOwnerMetadataView, readSessionListRenderableSharedMetadata,
+import { createSessionListPresentationSource, readSessionListRenderableOwnerMetadataView, readSessionListRenderableSharedMetadata,
     readSessionListPresentationRuntime, readSessionListPresentationPendingFlags, readSessionListPresentationPendingObservedAt,
     readSessionListPresentationDisplay,
     type SessionListPresentationSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
@@ -238,24 +238,18 @@ export function shouldReadTranscriptForPendingRequests(session: Session): boolea
 }
 
 function hasPendingPermissionRequests(session: SessionStatusSource): boolean {
-    if (typeof (session as SessionListRenderableSession).hasPendingPermissionRequests === 'boolean') {
-        return (session as SessionListRenderableSession).hasPendingPermissionRequests === true;
-    }
-    return derivePendingRequestFlagsFromSession(session as Session).hasPendingPermissionRequests;
+    return 'agentState' in session ? derivePendingRequestFlagsFromSession(session).hasPendingPermissionRequests
+        : readSessionListPresentationPendingFlags(createSessionListPresentationSource(session)).hasPendingPermissionRequests;
 }
 
 function hasPendingUserActionRequests(session: SessionStatusSource): boolean {
-    if (typeof (session as SessionListRenderableSession).hasPendingUserActionRequests === 'boolean') {
-        return (session as SessionListRenderableSession).hasPendingUserActionRequests === true;
-    }
-    return derivePendingRequestFlagsFromSession(session as Session).hasPendingUserActionRequests;
+    return 'agentState' in session ? derivePendingRequestFlagsFromSession(session).hasPendingUserActionRequests
+        : readSessionListPresentationPendingFlags(createSessionListPresentationSource(session)).hasPendingUserActionRequests;
 }
 
 function latestPendingRequestObservedAt(session: SessionStatusSource): number | null {
-    if (typeof (session as SessionListRenderableSession).hasPendingPermissionRequests === 'boolean') {
-        return (session as SessionListRenderableSession).pendingRequestObservedAt ?? null;
-    }
-    return deriveLatestPendingRequestObservedAtFromSession(session as Session);
+    return 'agentState' in session ? deriveLatestPendingRequestObservedAtFromSession(session)
+        : readSessionListPresentationPendingObservedAt(createSessionListPresentationSource(session));
 }
 
 function hasPendingUserMessagesFromSource(session: SessionStatusSource): boolean {
@@ -479,9 +473,9 @@ export function getSessionStatus(session: SessionStatusSource, nowMs: number = D
     const { statusColors = DEFAULT_SESSION_STATUS_COLORS } = resolvedOptions;
     const awareness = projectUiSessionAwareness(session, nowMs, {
         ...resolvedOptions,
-        hasPendingPermissionRequests: hasPendingPermissionRequests(session),
-        hasPendingUserActionRequests: hasPendingUserActionRequests(session),
-        pendingRequestObservedAt: latestPendingRequestObservedAt(session),
+        hasPendingPermissionRequests: pending?.hasPendingPermissionRequests ?? hasPendingPermissionRequests(session),
+        hasPendingUserActionRequests: pending?.hasPendingUserActionRequests ?? hasPendingUserActionRequests(session),
+        pendingRequestObservedAt: source ? readSessionListPresentationPendingObservedAt(source) : latestPendingRequestObservedAt(session),
     });
     const connected = awareness.runtime !== 'offline' && awareness.runtime !== 'unknown';
     const archiving = resolvedOptions.archiving ?? (('archiving' in session && session.archiving === true)

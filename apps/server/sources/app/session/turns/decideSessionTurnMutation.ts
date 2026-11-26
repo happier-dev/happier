@@ -29,6 +29,8 @@ export async function decideSessionTurnMutation(params: Readonly<{
     requestedTurnId: string | undefined;
     latestTurnId: string | null;
     terminalStatus: PrimaryTurnStatusV1 | null;
+    /** Home Archive settles lifecycle only; this is never selected by a client mutation. */
+    archiveWaitingTurn?: true;
     loadLatestTurnStatus: (turnId: string) => Promise<string | null>;
 }>): Promise<Refusal | Readonly<{ ok: true; updatesRollbackFacet: boolean }>> {
     const { mutation, currentTurn, targetTurnId, requestedTurnId, latestTurnId, terminalStatus } = params;
@@ -46,17 +48,18 @@ export async function decideSessionTurnMutation(params: Readonly<{
         if (Number.isFinite(startedAt) && startedAt > mutation.observedAt) return terminal();
     }
     const updatesRollbackFacet = mutation.action === 'mark_rollback_eligible' || mutation.action === 'mark_rolled_back';
-    const explicitlyStopsWaitingTurn = currentTurn?.status === 'waiting'
-        && mutation.action === 'cancel' && mutation.reason === 'explicit_stop';
+    const cancelsWaitingTurn = currentTurn?.status === 'waiting'
+        && mutation.action === 'cancel'
+        && (mutation.reason === 'explicit_stop' || params.archiveWaitingTurn === true);
     // Late anchors may annotate a cancelled turn without reopening its lifecycle.
     const appendsCancelledTurnAnchors = currentTurn?.status === 'cancelled' && mutation.action === 'append_transcript_anchors';
     if (currentTurn && isTerminal(currentTurn.status)
-        && !updatesRollbackFacet && !explicitlyStopsWaitingTurn && !appendsCancelledTurnAnchors) {
+        && !updatesRollbackFacet && !cancelsWaitingTurn && !appendsCancelledTurnAnchors) {
         return { ...terminal(), decision: isExitSettlement
             && requestedTurnId === targetTurnId && latestTurnId === targetTurnId
                 ? 'duplicate-terminal' : 'stale-terminal' };
     }
-    if (terminalStatus && requestedTurnId && latestTurnId && requestedTurnId !== latestTurnId
+    if (!params.archiveWaitingTurn && terminalStatus && requestedTurnId && latestTurnId && requestedTurnId !== latestTurnId
         && await params.loadLatestTurnStatus(latestTurnId) === 'in_progress') return terminal();
     if (mutation.action === 'touch_active' && latestTurnId && targetTurnId !== latestTurnId) return terminal();
     if (updatesRollbackFacet && currentTurn?.status !== 'completed') return terminal();

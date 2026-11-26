@@ -18,8 +18,7 @@ import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRow
 import { readProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import {
-    readPendingAgentStateCompletedRequestSignature,
-    readPendingAgentStateRequestSignature,
+    buildPendingSessionRequestsSourceSignature,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -227,7 +226,6 @@ function buildSessionActivitySignature(session: Session): string {
     ) {
         return buildHiddenSessionSignature(visibilitySession);
     }
-    const agentState = session.agentState;
     return joinSignatureParts([
         session.id,
         readSessionContentAvailability(session),
@@ -257,12 +255,8 @@ function buildSessionActivitySignature(session: Session): string {
         readNumber(session.pendingCount) ?? '',
         readNumber(session.pendingBlockedCount) ?? '',
         hasProjectedPendingRequestCounts(session) ? readNumber(session.updatedAt) ?? '' : '',
-        readNumber(session.pendingPermissionRequestCount) ?? '',
-        readNumber(session.pendingUserActionRequestCount) ?? '',
-        readNumber(session.pendingRequestObservedAt) ?? '',
+        buildPendingSessionRequestsSourceSignature(session),
         readNumber(session.agentStateVersion) ?? '',
-        readPendingAgentStateRequestSignature(agentState),
-        readPendingAgentStateCompletedRequestSignature(agentState),
         readSessionMetadataActivitySignature(ownerMetadata),
     ]);
 }

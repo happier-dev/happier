@@ -10,7 +10,7 @@ import { useSessionTranscriptSource } from '@/components/sessions/transcript/sou
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { buildAgentRequestSemanticSummary, resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { buildAgentRequestSemanticSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { isStructuredQuestionSelectionCountValid, type StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
@@ -414,11 +414,6 @@ function isDismissedQuestion(tool: ToolViewProps['tool']): boolean {
         || (tool.state === 'completed' && readAskUserQuestionResult(tool.result)?.status === 'declined');
 }
 
-function isPendingAskUserQuestionRequest(request: unknown): boolean {
-    return isRecord(request) && request.tool === 'AskUserQuestion'
-        && resolveAgentRequestKind({ toolName: request.tool, requestKind: request.kind }) === 'user_action';
-}
-
 function reportQuestionResponseFailure(error: unknown, requestKey: string): void {
     if (readPermissionActionDisposition(error) === 'outcomeUnknown') {
         markPermissionAnswerUnconfirmed(requestKey, error);
@@ -719,10 +714,11 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     const sourceInteraction = source.useInteraction();
     const actions = source.actions;
     const agentState = source.useAgentState();
+    const pendingRequests = source.usePendingRequests();
     const archivedAt = source.useArchivedAt?.();
     const ownerMetadata = source.useMetadata();
-    const currentFacts = React.useRef({ agentState, ownerMetadata });
-    currentFacts.current = { agentState, ownerMetadata };
+    const currentFacts = React.useRef({ pendingRequests, ownerMetadata });
+    currentFacts.current = { pendingRequests, ownerMetadata };
     const { theme } = useUnistyles();
     const [selections, setSelections] = React.useState<Map<number, Set<number>>>(new Map());
     const [freeformAnswers, setFreeformAnswers] = React.useState<Map<number, string>>(new Map());
@@ -803,12 +799,11 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     // responder; an answer it still holds keeps the form withdrawn.
     const hasActiveAskUserQuestionRequest = executionRun !== undefined
         ? executionRun.respond !== undefined && toolCallId !== null && !executionRun.pendingRequestIds.has(toolCallId)
-        : isPendingAskUserQuestionRequest(activeMatchingRequest);
-    const withdrawnByArchive = executionRun === undefined && archivedAt != null && isRunning
-        && hasActiveAskUserQuestionRequest;
+        : pendingRequests.userActionRequests.some(request => request.id === toolCallId);
+    const withdrawn = executionRun === undefined && isRunning && activeMatchingRequest != null
+        && !hasActiveAskUserQuestionRequest;
     const canInteract =
         isRunning &&
-        !withdrawnByArchive &&
         !submissionOutcome &&
         !isSubmitting &&
         !answerUnconfirmed &&
@@ -994,8 +989,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
             }
             if (!sessionId || !actions) return;
 
-            const latestRequest = currentFacts.current.agentState?.requests?.[toolCallId];
-            if (!isPendingAskUserQuestionRequest(latestRequest)) {
+            if (!currentFacts.current.pendingRequests.userActionRequests.some(request => request.id === toolCallId)) {
                 return;
             }
 
@@ -1107,7 +1101,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                 if (!send || executionRun.pendingRequestIds.has(toolCallId)) return null;
                 return () => send({ requestId: toolCallId, approved: false });
             }
-            if (!sessionId || !actions || !isPendingAskUserQuestionRequest(currentFacts.current.agentState?.requests?.[toolCallId])) return null;
+            if (!sessionId || !actions || !currentFacts.current.pendingRequests.userActionRequests.some(request => request.id === toolCallId)) return null;
             return () => actions.answerUserAction({ id: toolCallId, decision: 'reject' });
         })();
         if (!respond) return;
@@ -1124,10 +1118,10 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     }, [sessionId, toolCallId, actions, executionRun, canInteract, source, answerRequestKey]);
 
     // The asker withdrew it: the reason replaces the form; nothing is left to answer.
-    if (!submissionOutcome && (tool.permission?.status === 'canceled' || withdrawnByArchive)) {
+    if (!submissionOutcome && (tool.permission?.status === 'canceled' || withdrawn)) {
         const reason = tool.permission?.status === 'canceled'
             ? tool.permission.reason
-            : t('workflows.events.sessionArchived');
+            : archivedAt != null ? t('workflows.events.sessionArchived') : null;
         return (
             <ToolSectionView>
                 <View testID="ask-user-question.withdrawn" style={styles.submittedContainer}>

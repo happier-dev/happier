@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents';
-import { accountSettingsParse, StrictJsonValueSchema } from '@happier-dev/protocol';
+import { accountSettingsParse, StrictJsonValueSchema, type SessionTurnsProjectionV1 } from '@happier-dev/protocol';
 import type { AgentState } from '@/api/types';
 import { configuration } from '@/configuration';
 import type { PermissionRequestPushSender } from '@/settings/notifications/permissionRequestPush';
@@ -647,6 +647,68 @@ describe('AgentStateRequestStore', () => {
         expect(delivered).not.toHaveBeenCalled();
         await expect(store.publishRequestAndWait({ requestId: 'new-question', toolName: 'AskUserQuestion',
             toolInput: {}, createdAt: 3 })).rejects.toThrow('session_archived');
+        store.dispose();
+    });
+
+    it.each(['attach', 'rebind', 'reconnect'] as const)('retires only cancelled-Turn questions at owner %s after unarchive', async boundary => {
+        const session = Object.assign(new FakeSession(), {
+            getArchivedAtSnapshot: () => null,
+            // Home HTTP is the boundary; its non-content Turn facts survive Unarchive.
+            readSessionTurnsProjection: vi.fn(async () => ({ v: 1 as const, sessionId: 'session-test', updatedAt: 3, turns: [
+                { turnId: 'cancelled', status: 'cancelled' as const, startedAt: 1, updatedAt: 3, terminalAt: 3 },
+                { turnId: 'waiting', status: 'waiting' as const, startedAt: 1, updatedAt: 2 },
+                { turnId: 'completed', status: 'completed' as const, startedAt: 1, updatedAt: 2, terminalAt: 2 },
+            ] })),
+        });
+        const question = { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 1 };
+        const requests = { cancelled: { ...question, turnId: 'cancelled' }, waiting: { ...question, turnId: 'waiting' },
+            completed: { ...question, turnId: 'completed' }, unknown: { ...question, turnId: 'unknown' }, lasting: question,
+            permission: { tool: 'Bash', arguments: {}, createdAt: 1, turnId: 'cancelled' } };
+        if (boundary === 'attach') session.agentState.requests = structuredClone(requests);
+        const store = new AgentStateRequestStore({ session: boundary === 'rebind' ? new FakeSession() : session,
+            logPrefix: '[Cancelled question Turn]' });
+        if (boundary !== 'attach') {
+            session.agentState.requests = structuredClone(requests);
+            if (boundary === 'rebind') store.updateSession(session);
+            else await store.recoverAppliedCompletions();
+        }
+        await vi.waitFor(() => expect(session.agentState.completedRequests?.cancelled)
+            .toMatchObject({ status: 'canceled', decision: 'abort', turnId: 'cancelled' }));
+        expect(session.agentState.requests).toEqual({ waiting: requests.waiting, completed: requests.completed,
+            unknown: requests.unknown, lasting: requests.lasting, permission: requests.permission });
+        expect(session.readSessionTurnsProjection).toHaveBeenCalledTimes(1);
+        store.dispose();
+    });
+
+    it('does not apply a previous Session Turn read to the replacement Session', async () => {
+        let release!: (projection: SessionTurnsProjectionV1) => void;
+        const projection = new Promise<Parameters<typeof release>[0]>(resolve => { release = resolve; });
+        const oldSession = Object.assign(new FakeSession(), { readSessionTurnsProjection: () => projection });
+        const question = { tool: 'AskUserQuestion', arguments: {}, createdAt: 1, turnId: 'turn' };
+        oldSession.agentState.requests = { old: question };
+        const store = new AgentStateRequestStore({ session: oldSession, logPrefix: '[Previous Session Turn]' });
+        const reconciliation = store.reconcileSessionArchive();
+        const replacement = new FakeSession();
+        replacement.sessionId = 'replacement';
+        replacement.agentState.requests = { current: question };
+        store.updateSession(replacement);
+        release({ v: 1, sessionId: oldSession.sessionId, updatedAt: 3,
+            turns: [{ turnId: 'turn', status: 'cancelled', startedAt: 1, updatedAt: 3 }] });
+        await reconciliation;
+        expect(replacement.agentState.requests).toEqual({ current: question });
+        expect(replacement.agentState.completedRequests).toEqual({});
+        store.dispose();
+    });
+
+    it('does not read Turn history or write Agent State when attach has no Turn-scoped question', async () => {
+        const session = Object.assign(new FakeSession(), { readSessionTurnsProjection: vi.fn(async () => null) });
+        session.agentState.requests = { permission: { tool: 'Bash', arguments: {}, createdAt: 1, turnId: 'turn' },
+            lasting: { tool: 'AskUserQuestion', arguments: {}, createdAt: 1 } };
+        const write = vi.spyOn(session, 'updateAgentState'); // Persistence is the boundary.
+        const store = new AgentStateRequestStore({ session, logPrefix: '[No cancelled question Turn]' });
+        await store.recoverAppliedCompletions();
+        expect(session.readSessionTurnsProjection).not.toHaveBeenCalled();
+        expect(write).not.toHaveBeenCalled();
         store.dispose();
     });
 

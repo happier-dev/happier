@@ -6,13 +6,13 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { AgentState, Metadata } from '@happier-dev/session-core/state';
 import { readSessionPresentationAgentId, readSessionRowPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { readSessionRequestCoverage } from '@/sync/domains/session/pending/readSessionRequestCoverage';
+import { derivePendingRequestFlags, readSharedMetadataActionConfirmationState } from '@happier-dev/session-core/pending';
 import type { AgentStateOpenResult } from '@/sync/encryption/sessionEncryption';
 import { SESSION_LIST_DOCUMENT_ADMISSION, observeSessionListDocumentVersions,
     admitOpenedSessionListAgentState, admitOpenedSessionListDisplayMetadata } from '@/sync/domains/session/sessionDocumentAdmission';
 import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
 import {
     deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch,
-    derivePendingRequestFlagsFromAgentState,
     readSessionListRenderableSourceMetadata,
     summarizeSessionListReadableActivityFromMessageRecords,
     type SessionListRenderableSession,
@@ -362,10 +362,14 @@ export async function buildNewSessionFromSocketUpdate(params: {
 
     const active = typeof updateBody.active === 'boolean' ? updateBody.active : true;
     const activeAt = readTimestamp(updateBody.activeAt, params.updateCreatedAt);
-    const pendingFlags = derivePendingRequestFlagsFromAgentState(decryptedState.agentState,
-        readSessionRequestCoverage({ serverId: params.sourceServerId ?? undefined,
+    const pendingFlags = derivePendingRequestFlags({
+        sessionId, active, archivedAt: null, agentState: decryptedState.agentState,
+        requestCoverage: readSessionRequestCoverage({ serverId: params.sourceServerId ?? undefined,
             metadata: decryptedState.metadata, metadataLayoutVersion,
-        }));
+        }),
+        actionConfirmations: readSharedMetadataActionConfirmationState(decryptedState.metadata, metadataLayoutVersion),
+        presentationCompletedRequests: null, projected: null,
+    });
     const currentStorageState = readExternalSessionStorageState(updateBody.currentStorageState);
 
     return {
@@ -943,25 +947,37 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
                 : parsePlainSessionAgentStateResult(updateBody.agentState.value);
     const parsedAgentState = agentStateOpenResult?.status === 'available' ? agentStateOpenResult.value : undefined;
 
-    const pendingFlags =
-        typeof updateBody.pendingPermissionRequestCount === 'number' || typeof updateBody.pendingUserActionRequestCount === 'number'
-            ? {
-                hasPendingPermissionRequests: (updateBody.pendingPermissionRequestCount ?? 0) > 0,
-                hasPendingUserActionRequests: (updateBody.pendingUserActionRequestCount ?? 0) > 0,
-            }
-            : parsedAgentState !== undefined
-                ? derivePendingRequestFlagsFromAgentState(parsedAgentState,
-                    readSessionRequestCoverage({ serverId: renderable.serverId,
+    const hasServerProjectedCounts = typeof updateBody.pendingPermissionRequestCount === 'number'
+        || typeof updateBody.pendingUserActionRequestCount === 'number';
+    const pendingFlags = derivePendingRequestFlags({
+        sessionId: renderable.id,
+        active: typeof updateBody.active === 'boolean' ? updateBody.active : renderable.active,
+        archivedAt: typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
+            ? updateBody.archivedAt : renderable.archivedAt,
+        latestTurnId: typeof updateBody.latestTurnId === 'string' || updateBody.latestTurnId === null
+            ? updateBody.latestTurnId : renderable.latestTurnId,
+        latestTurnStatus: readLatestTurnStatus(updateBody.latestTurnStatus, renderable.latestTurnStatus),
+        agentState: parsedAgentState ?? null,
+        requestCoverage: readSessionRequestCoverage({ serverId: renderable.serverId,
                         metadata: parsedMetadata ?? renderable.metadata, metadataLayoutVersion: nextMetadataLayoutVersion,
                         ownerMetadataView: storedMetadataLayoutVersion === nextMetadataLayoutVersion
                             ? readSessionListRenderableOwnerMetadataView(renderable) : undefined,
                     }, parsedMetadata === undefined
                         ? readSessionRowPresentationAgentId(renderable)
-                        : readSessionPresentationAgentId({ metadata: parsedMetadata, metadataLayoutVersion: nextMetadataLayoutVersion })))
-                : {
-                    hasPendingPermissionRequests: renderable.hasPendingPermissionRequests === true,
-                    hasPendingUserActionRequests: renderable.hasPendingUserActionRequests === true,
-                };
+                        : readSessionPresentationAgentId({ metadata: parsedMetadata, metadataLayoutVersion: nextMetadataLayoutVersion })),
+        actionConfirmations: readSharedMetadataActionConfirmationState(parsedMetadata ?? renderable.metadata, nextMetadataLayoutVersion),
+        presentationCompletedRequests: null,
+        projected: hasServerProjectedCounts || parsedAgentState === undefined
+            ? {
+                permissionCount: typeof updateBody.pendingPermissionRequestCount === 'number'
+                    ? updateBody.pendingPermissionRequestCount : renderable.hasPendingPermissionRequests ? 1 : 0,
+                userActionCount: typeof updateBody.pendingUserActionRequestCount === 'number'
+                    ? updateBody.pendingUserActionRequestCount : renderable.hasPendingUserActionRequests ? 1 : 0,
+                observedAt: typeof updateBody.pendingRequestObservedAt === 'number'
+                    ? updateBody.pendingRequestObservedAt : renderable.pendingRequestObservedAt ?? null,
+            }
+            : null,
+    });
     const nextSessionSeq = computeNextSessionSeqFromUpdate({
         currentSessionSeq: renderable.seq ?? 0,
         updateType: 'update-session',

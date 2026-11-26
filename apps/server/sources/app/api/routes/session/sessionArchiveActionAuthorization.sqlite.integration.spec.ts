@@ -10,7 +10,8 @@ import {
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { sealSessionDataKeyBundleV0 } from '@happier-dev/protocol';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
 import { registerSessionArchiveRoutes } from './registerSessionArchiveRoutes';
@@ -26,9 +27,17 @@ import { setSessionManager } from '@/app/session/follow/sessionManagerService';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { db } from '@/storage/db';
+import { parseStoredPrimaryTurnStatus } from '@/app/session/readCursor/manualUnreadBoundary';
+import { listPendingRequests } from '@happier-dev/session-core/pending';
+import { AgentStateSchema } from '@happier-dev/session-core/state';
+import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 import { eventRouter } from '@/app/events/eventRouter';
+import * as lifecycleAdmission from '@/app/automations/automationSessionLifecycleAdmission';
+import * as remoteActivityAlerts from '@/app/activity/remoteAlerts/submitSessionActivityRemoteAlerts';
+import * as personalEvents from '@/app/session/personal/publishPersonalEvent';
 import * as archiveAccessPolicy from '@/app/session/access/sessionAccess';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { initializeSessionSystemRecordsProtocolV1Activation, resetSessionSystemRecordsProtocolV1ActivationForTests } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
 
 let harness: LightSqliteHarness;
@@ -376,5 +385,77 @@ it.each([
         }
         publisher = null;
         expect((await invoke(operation)).statusCode).toBe(401);
+    } finally { await app.close(); }
+});
+
+
+it.each(['plain', 'e2ee'] as const)('settles hostless waiting Turns on Archive without touching %s Agent State', async encryptionMode => {
+    // Observe the real owners without replacing their implementation. Archive is quiet settlement.
+    const automationAdmission = vi.spyOn(lifecycleAdmission, 'admitSessionLifecycleAutomationRunsTx');
+    const remoteAlerts = vi.spyOn(remoteActivityAlerts, 'scheduleSessionActivityRemoteAlerts');
+    const personalEvent = vi.spyOn(personalEvents, 'scheduleSessionPersonalEvent');
+    const account = await db.account.create({ data: { encryptionMode,
+        ...(encryptionMode === 'e2ee' ? createSignedAccountContentBinding() : { publicKey: null }),
+    } });
+    const viewer = await db.account.create({ data: { encryptionMode: 'plain', publicKey: null } });
+    const admin = await db.account.create({ data: { encryptionMode: 'plain', publicKey: null } });
+    const openedAgentState = AgentStateSchema.parse({ requests: {
+        question: { tool: 'AskUserQuestion', kind: 'user_action', source: 'session.needs_you.raise', turnId: 'waiting-turn',
+            questionV1: { mode: 'wait', type: 'decision', lasting: false }, arguments: {}, createdAt: 1 },
+    } });
+    const agentState = encryptionMode === 'e2ee'
+        ? encodeBase64(await sealSessionDataKeyBundleV0(openedAgentState, crypto.getRandomValues(new Uint8Array(32))), 'base64')
+        : JSON.stringify(openedAgentState);
+    const session = await db.session.create({ data: { accountId: account.id, tag: crypto.randomUUID(), encryptionMode,
+        metadata: encryptionMode === 'plain' ? '{}' : 'opaque-metadata', active: false,
+        agentState, agentStateVersion: 7, latestTurnId: 'waiting-turn', latestTurnStatus: 'waiting', latestTurnStatusObservedAt: 2 } });
+    for (const [accountId, accessLevel] of [[viewer.id, 'view'], [admin.id, 'admin']] as const) {
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id,
+            accountId, accessLevel, canApprovePermissions: false } });
+    }
+    for (const turnId of ['older-waiting-turn', 'waiting-turn']) await db.sessionTurn.create({ data: {
+        sessionId: session.id, turnId, status: 'waiting', startedAt: 1, updatedAt: 2, terminalAt: 2,
+    } });
+    const { app } = await createApp(async () => null);
+    try {
+        const invoke = async (accountId: string, operation = 'archive') => {
+            const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
+            return app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/${operation}`, payload: {},
+                headers: { authorization: `Bearer ${token}` } });
+        };
+        const beforeTurns = await db.sessionTurn.findMany({ where: { sessionId: session.id } });
+        expect((await invoke(viewer.id)).statusCode).toBe(403);
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(session);
+        expect(await db.sessionTurn.findMany({ where: { sessionId: session.id } })).toEqual(beforeTurns);
+        const archived = await invoke(admin.id);
+        expect(archived.statusCode, archived.body).toBe(200);
+        expect(automationAdmission.mock.calls.map(([input]) => input.occurrence.event)).toEqual(['sessionArchived']);
+        expect(remoteAlerts).toHaveBeenCalledTimes(0);
+        expect(personalEvent.mock.calls.some(([, , event]) => event.event === 'cancelled')).toBe(false);
+        const after = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+        expect(after).toMatchObject({ archivedAt: expect.any(Date), latestTurnStatus: 'cancelled', agentState, agentStateVersion: 7 });
+        expect(after.agentStateBytes).toEqual(session.agentStateBytes);
+        const turns = await db.sessionTurn.findMany({ where: { sessionId: session.id } });
+        expect(turns.map(turn => turn.status)).toEqual(['cancelled', 'cancelled']);
+        const projectQuestions = (archivedAt: number | null) => listPendingRequests({
+            sessionId: session.id, active: false, archivedAt, agentState: openedAgentState,
+            latestTurnId: after.latestTurnId, latestTurnStatus: parseStoredPrimaryTurnStatus(after.latestTurnStatus),
+            actionConfirmations: null, presentationCompletedRequests: null, projected: null,
+        });
+        expect(projectQuestions(after.archivedAt!.getTime())).toEqual([]);
+        const receipts = await db.sessionTurnMutationReceipt.findMany({ where: { sessionId: session.id } });
+        expect((await invoke(account.id)).json()).toEqual(archived.json());
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(after);
+        expect(await db.sessionTurnMutationReceipt.findMany({ where: { sessionId: session.id } })).toEqual(receipts);
+        expect((await invoke(account.id, 'unarchive')).statusCode).toBe(200);
+        expect(projectQuestions(null)).toEqual([]);
+        expect(await applySessionTurnMutation({ actorUserId: account.id,
+            authentication: createPresentUserSessionAccessAuthentication({ env: {} }),
+            mutation: { v: 1, sessionId: session.id, turnId: 'waiting-turn', mutationId: 'late-complete',
+                action: 'complete', observedAt: Date.now() },
+        })).toMatchObject({ ok: true, didApply: false, reason: 'terminal-turn' });
+        expect(await db.sessionTurn.findMany({ where: { sessionId: session.id } })).toEqual(turns);
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { agentState: true, agentStateVersion: true } }))
+            .toEqual({ agentState, agentStateVersion: 7 });
     } finally { await app.close(); }
 });

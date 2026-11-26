@@ -17,7 +17,7 @@ import { readSessionOwnerMetadataView } from '../readSessionOwnerMetadataView';
 import { toAwarenessRuntimeInput } from '../attention/runtimePresentation';
 import { readSessionContentAvailability } from '../encryptedContentAvailability';
 import { readSessionUsageLimitRecoveryFromMetadata } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
-import { readSessionListPresentationRuntime, readSessionListPresentationOwnerMetadata, readSessionListPresentationOwnerMetadataField, readSessionListPresentationDisplay, readSessionListPresentationPendingFlags, readSessionListRenderableOwnerMetadataView,
+import { createSessionListPresentationSource, readSessionListPresentationRuntime, readSessionListPresentationOwnerMetadata, readSessionListPresentationOwnerMetadataField, readSessionListPresentationDisplay, readSessionListPresentationPendingFlags, readSessionListRenderableOwnerMetadataView,
     readSessionListPresentationPendingObservedAt, type SessionListPresentationSource } from '../listing/sessionListRenderableSessionProjection';
 
 export type UiSessionAwarenessOptions = UiSessionManagedWakeFacts & Readonly<{
@@ -74,7 +74,8 @@ export function createUiSessionAwarenessInput(
     const metadata = hasReadableMetadata
         ? source ? source.metadata : hydrated ? presentationMetadata : session.metadata
         : null;
-    const pending = source ? readSessionListPresentationPendingFlags(source) : hydrated ? derivePendingRequestFlagsFromSession(session, []) : session;
+    const pendingSource = source ?? (!('agentState' in session) ? createSessionListPresentationSource(session) : undefined);
+    const pending = pendingSource ? readSessionListPresentationPendingFlags(pendingSource) : derivePendingRequestFlagsFromSession(session as Session, []);
     const hasPendingPermissionRequests = options.hasPendingPermissionRequests ?? pending.hasPendingPermissionRequests;
     const hasPendingUserActionRequests = options.hasPendingUserActionRequests ?? pending.hasPendingUserActionRequests;
     const hasPendingOptionsEvidence = options.hasPendingPermissionRequests !== undefined
@@ -105,8 +106,8 @@ export function createUiSessionAwarenessInput(
         hasPendingUserMessages: options.hasPendingUserMessages ?? (source?.lifecycle.pendingCount ?? session.pendingCount ?? 0) > 0,
         optimisticThinkingAt: session.optimisticThinkingAt ?? options.optimisticPendingUserMessageAt,
         controlServiceability: controlState === 'unknown' ? null : controlState,
-        pendingRequestObservedAt: options.pendingRequestObservedAt ?? (source ? readSessionListPresentationPendingObservedAt(source)
-            : hydrated ? deriveLatestPendingRequestObservedAtFromSession(session, []) : session.pendingRequestObservedAt),
+        pendingRequestObservedAt: options.pendingRequestObservedAt ?? (pendingSource ? readSessionListPresentationPendingObservedAt(pendingSource)
+            : deriveLatestPendingRequestObservedAtFromSession(session as Session, [])),
     });
     const lifecycle = { ...components.lifecycle,
         latestReadyEventAtMs: source?.lifecycle.latestReadyEventAt ?? session.latestReadyEventAt,

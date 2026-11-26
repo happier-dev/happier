@@ -24,6 +24,7 @@ import { getSessionStatus } from './getSessionStatus';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 
 const { mockIo } = vi.hoisted(() => ({ mockIo: vi.fn() }));
 vi.mock('axios', async (importOriginal) => {
@@ -489,5 +490,42 @@ describe('getSessionStatus awareness acquisition', () => {
         { requestId: 'ask-choice', kind: 'user_action', tool: 'AskUserQuestion', arguments: { questions: [{ id: 'choice', question: 'Continue?' }] } },
       ],
     });
+  });
+
+  it.each(['plain', 'e2ee'] as const)('does not reopen a hostless historical-Turn question after unarchive (%s)', async mode => {
+    const selectedCredentials = mode === 'plain' ? credentials : e2eeCredentials;
+    const fields = buildSessionMetadataEnvelopeFields({ credentials: selectedCredentials,
+      accountEncryptionMode: mode,
+      ...(mode === 'e2ee' ? { storedContentMode: 'e2ee', encryptionKey: new Uint8Array(32).fill(19),
+        encryptionVariant: 'dataKey' } as const : { storedContentMode: 'plain' } as const),
+      metadata: { path: '/workspace', host: 'host' }, agentState: { requests: {
+        scoped: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, turnId: 'older-turn', createdAt: 100 },
+        lasting: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 150 },
+      } },
+    });
+    let archivedAt: number | null = 300;
+    const turns = buildSessionTurnsProjectionV1({ sessionId, updatedAt: 300,
+      turns: [{ turnId: 'older-turn', status: 'cancelled', startedAt: 1, updatedAt: 300 }] });
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (String(url).endsWith('/encryption/currentness')) return { status: 200,
+        data: createAccountEncryptionCurrentnessFixture(mode === 'plain' ? {} : { mode: 'e2ee',
+          recipientEnvelopeReadiness: { status: 'available' },
+          contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+            createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+              material: { type: 'dataKey', machineKey }, dataKeyPublicKey: publicKey }).contentPublicKeyFingerprint) }) };
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, share: null, active: false, archivedAt, encryptionMode: mode, metadataLayoutVersion: 1,
+        metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata, agentState: fields.agentState,
+        ...(mode === 'e2ee' ? { dataEncryptionKey } : {}),
+        latestTurnId: 'newer-turn', latestTurnStatus: 'completed',
+      }) } };
+      if (String(url).endsWith(`/v1/sessions/${sessionId}/turns`)) return { status: 200, data: turns };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    expect(await getSessionStatus({ credentials: selectedCredentials, idOrPrefix: sessionId, live: false }))
+      .toMatchObject({ ok: true, pendingRequests: [] });
+    archivedAt = null;
+    expect(await getSessionStatus({ credentials: selectedCredentials, idOrPrefix: sessionId, live: false }))
+      .toMatchObject({ ok: true, pendingRequests: [{ requestId: 'lasting', kind: 'user_action' }] });
   });
 });

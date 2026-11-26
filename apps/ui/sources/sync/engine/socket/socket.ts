@@ -700,6 +700,7 @@ function requestTargetedSessionHydration(params: Readonly<{
     sessionId: string | null | undefined;
     sourceServerId?: string | null;
     reason: SocketSessionHydrationReason;
+    heldProjectionDemand?: boolean;
     hydrateSessionById?: (sessionId: string, reason: SocketSessionHydrationReason) => void;
     invalidateSessions: () => void;
     refreshSessionRows?: (sessionIds: readonly string[]) => void;
@@ -711,7 +712,7 @@ function requestTargetedSessionHydration(params: Readonly<{
         params.invalidateSessions();
         return;
     }
-    if (!isCacheOnlySessionHydrationAnchorActive(sessionId, params.sourceServerId)) {
+    if (!params.heldProjectionDemand && !isCacheOnlySessionHydrationAnchorActive(sessionId, params.sourceServerId)) {
         // A known Session without a content consumer is a row-level change: the canonical batch
         // row owner reads and places that row. Only a caller without that owner keeps the
         // conservative list refresh; an unknown Session (no id) stays structural above.
@@ -772,11 +773,19 @@ function isTerminalProjectionStatus(value: unknown): boolean {
 
 function shouldHydrateTurnsProjectionForSessionUpdate(params: Readonly<{
     updateBody: unknown;
+    currentArchivedAt: number | null | undefined;
     fullContentConsumerActive: boolean;
+    heldTurnsNeedRefresh: boolean;
 }>): boolean {
-    if (!params.fullContentConsumerActive) return false;
     if (!params.updateBody || typeof params.updateBody !== 'object') return false;
-    const update = params.updateBody as { latestTurnStatus?: unknown; rollbackEligibleTurnStarts?: unknown };
+    const update = params.updateBody as { archivedAt?: unknown; latestTurnStatus?: unknown; rollbackEligibleTurnStarts?: unknown };
+    // Archive cancels historical waiting turns too. Refresh only on a genuine archive/unarchive
+    // transition for the target Session, and only when full-content or waiting/question turns need it.
+    if ((typeof update.archivedAt === 'number' || update.archivedAt === null)
+        && update.archivedAt !== (params.currentArchivedAt ?? null)) {
+        return params.fullContentConsumerActive || params.heldTurnsNeedRefresh;
+    }
+    if (!params.fullContentConsumerActive) return false;
     // Rollback projection updates carry committed end anchors, including for an older turn
     // while the latest turn is already running. Full-content consumers need that turn too.
     return isTerminalProjectionStatus(update.latestTurnStatus) || Array.isArray(update.rollbackEligibleTurnStarts);
@@ -1973,7 +1982,15 @@ export async function handleUpdateContainer(params: {
         const shouldRefreshTurnsProjection =
             shouldHydrateTurnsProjectionForSessionUpdate({
                 updateBody: updateData.body,
+                currentArchivedAt: currentSession.archivedAt,
                 fullContentConsumerActive,
+                heldTurnsNeedRefresh: nextSession.sessionTurns?.turns.some(turn => turn.status === 'waiting') === true
+                    || Object.values(nextSession.agentState?.requests ?? {}).some(request => {
+                        const turnId = typeof request.turnId === 'string' ? request.turnId.trim() : '';
+                        if (!turnId) return false;
+                        if (nextSession.latestTurnId === turnId && nextSession.latestTurnStatus === 'cancelled') return false;
+                        return !nextSession.sessionTurns?.turns.some(turn => turn.turnId === turnId && turn.status === 'cancelled');
+                    }),
             });
         const shouldRefreshCurrentLayout1OwnerMetadata =
             shouldRefreshLayout1OwnerMetadata
@@ -1982,6 +1999,7 @@ export async function handleUpdateContainer(params: {
             requestTargetedSessionHydration({
                 sessionId: updateData.body.id,
                 sourceServerId,
+                heldProjectionDemand: shouldRefreshTurnsProjection,
                 reason: shouldRefreshCurrentLayout1OwnerMetadata
                     ? 'socket-update-owner-metadata'
                     : 'socket-update-turn-projection',

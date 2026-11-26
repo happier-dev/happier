@@ -1,6 +1,8 @@
 import type { Message } from '@happier-dev/session-core/messages';
 import { readStoredSessionMessagesFromStateLike } from '@happier-dev/session-core/messages';
 import type { AgentState } from '@happier-dev/session-core/state';
+import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
+import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { readAccountNameFromLegacyProfileV1, resolveAccountDisplayLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionFullPublicationUpdatedAt } from '../sessionRuntimeObservation';
@@ -52,6 +54,10 @@ export function readPendingRequestFactsFromSession(session: Omit<Session, 'prese
     return {
         sessionId: session.id,
         active: session.active === true,
+        archivedAt: session.archivedAt ?? null,
+        sessionTurns: session.sessionTurns ?? null,
+        latestTurnId: session.latestTurnId ?? null,
+        latestTurnStatus: session.latestTurnStatus ?? null,
         agentState: session.agentState ?? null,
         permissionRelationship: session.access?.level === 'owner' ? 'owner' : session.access ? 'sharedApprover' : null,
         ...(permissionOwnerLabel ? { permissionOwnerLabel } : {}),
@@ -187,8 +193,16 @@ export function buildPendingSessionRequestsSourceSignature(session: Session): st
         session.metadata,
         session.metadataLayoutVersion,
     );
+    const hasTurnBoundQuestion = session.archivedAt == null && Object.values(session.agentState?.requests ?? {}).some(request =>
+        request.turnId?.trim() && resolvePendingRequestAttentionReasonV1({
+            kind: resolveAgentRequestKind({ toolName: request.tool, requestKind: request.kind }), source: request.source,
+        }) === 'user_action_required');
     return buildStableJsonSignature({
         active: session.active === true,
+        archivedAt: session.archivedAt ?? null,
+        latestTurnId: session.latestTurnId ?? null,
+        latestTurnStatus: session.latestTurnStatus ?? null,
+        sessionTurns: hasTurnBoundQuestion ? session.sessionTurns?.turns.map(({ turnId, status }) => ({ turnId, status })) ?? null : null,
         requestCoverage: readSessionRequestCoverage(session),
         presentationCompletedRequests: readSessionPresentationCompletedRequests(session),
         agentStateRequests: session.agentState?.requests ?? null,

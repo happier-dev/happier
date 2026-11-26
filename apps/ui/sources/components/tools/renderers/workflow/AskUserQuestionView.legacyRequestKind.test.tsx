@@ -10,6 +10,7 @@ import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { PendingNavigationSettledNotice } from '@/components/sessions/pendingNavigation/PendingNavigationSettledNotice';
 import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
+import { listPendingRequestListsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -214,6 +215,12 @@ describe('AskUserQuestionView legacy request-kind fallback', () => {
                 actions: { answerUserAction: async () => {}, respondToPermission: async () => {}, abort: async () => {}, submitMessage: async () => {} },
             }),
             useArchivedAt: () => state === 'archived' ? 10 : null,
+            usePendingRequests: () => listPendingRequestListsFromSession(createSessionFixture({
+                archivedAt: state === 'archived' ? 10 : null,
+                agentState: { requests: state === 'withdrawn' ? {} : {
+                    'question-1': { tool: 'AskUserQuestion', arguments: {}, createdAt: 1 },
+                } },
+            }), []),
         };
         const screen = await renderWithSessionTranscriptSource(<AppPaneProvider>
             <AskUserQuestionView {...makeToolViewProps(tool, { sessionId: 's1' })} />

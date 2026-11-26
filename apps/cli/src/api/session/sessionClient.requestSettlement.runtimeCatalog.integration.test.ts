@@ -19,6 +19,7 @@ import { createApiSessionSocketStub, createSessionRuntimeActivityHomeStub, creat
 import { createInitialHostRuntimeActivityMutation } from '@/agent/runtime/session/activity/createHostRuntimeActivityProjection';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import type { Session } from '@/api/types';
+import { decodeBase64, decrypt } from '@/api/encryption';
 import { createSessionClientDurableMutationPersistenceContext, parseRuntimeSessionClientDurableMutation } from './client/transport/mutations/sessionClientDurableMutationPersistence';
 import { ApiSessionClient, type ApiSessionClientOptions } from './sessionClient';
 import { registerTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from './client/transport/transcriptSecretRedaction';
@@ -284,6 +285,46 @@ describe('ApiSessionClient exact request settlement recovery', () => {
     for (const gate of connectGates.splice(0)) gate.resolve();
     await Promise.all(clients.splice(0).map(client => client.close()));
     vi.unstubAllGlobals();
+  });
+
+  it.each(['plain', 'e2ee'] as const)('cleans a hostless archived question after owner %s runner attach following Unarchive', async mode => {
+    const question = { tool: 'AskUserQuestion', kind: 'user_action', arguments: { questions: [{ question: 'Continue?' }] },
+      createdAt: 1, turnId: 'archived-turn' };
+    const active = { ...question, turnId: 'active-turn' };
+    const source = createPlainSessionFixture({ id: `hostless-question-${mode}`,
+      agentState: { requests: { question, active }, completedRequests: {} } });
+    const credentials = mode === 'e2ee' ? ownerCredentials : { token: 'tok', encryption: null };
+    const contentMode = mode === 'e2ee'
+      ? { storedContentMode: 'e2ee' as const, encryptionKey: ownerCredentials.encryption.secret, encryptionVariant: 'legacy' as const }
+      : { storedContentMode: 'plain' as const };
+    const tuple = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: mode,
+      metadata: source.metadata, agentState: source.agentState, ...contentMode });
+    const storedSession: Session = mode === 'e2ee'
+      ? { ...source, encryptionMode: mode, encryptionKey: ownerCredentials.encryption.secret, encryptionVariant: 'legacy' }
+      : source;
+    const session: Session = { ...storedSession, metadataLayoutVersion: 1,
+      ownerMetadata: tuple.ownerMetadataValue, ownerMetadataEnvelope: tuple.ownerMetadata };
+    const row = createSessionRecordFixture({ id: session.id, encryptionMode: mode, archivedAt: null,
+      metadataLayoutVersion: 1, metadata: tuple.sharedMetadata.ciphertext, ownerMetadata: tuple.ownerMetadata,
+      agentState: tuple.agentState, agentStateVersion: session.agentStateVersion, share: null });
+    serveSession(row, createAccountEncryptionCurrentnessFixture({ mode }));
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    vi.mocked(axios.get).mockImplementation(async (url, config) => new URL(String(url)).pathname.endsWith('/turns')
+      ? { status: 200, data: { v: 1, sessionId: session.id, updatedAt: 3, turns: [
+        { turnId: 'archived-turn', status: 'cancelled', startedAt: 1, updatedAt: 3, terminalAt: 3 },
+        { turnId: 'active-turn', status: 'waiting', startedAt: 1, updatedAt: 2 },
+      ] } } : get(url, config));
+    const client = createClient(session, [createSocket()], { metadataAuthority: { kind: 'owner', credentials } });
+    const store = new AgentStateRequestStore({ session: client, logPrefix: '[Hostless Archive owner attach]' });
+    client.bindAgentStateRequestStore(store);
+    const readState = () => mode === 'plain' ? JSON.parse(row.agentState ?? '{}')
+      : decrypt(ownerCredentials.encryption.secret, 'legacy', decodeBase64(row.agentState ?? ''));
+    try {
+      await vi.waitFor(() => expect(readState()).toMatchObject({ requests: { active }, completedRequests: {
+        question: { ...question, status: 'canceled', decision: 'abort' },
+      } }));
+      expect(readState().requests.question).toBeUndefined();
+    } finally { store.dispose(); }
   });
 
   it.each(['reconnect', 'close'] as const)('settles an already-applied native choice through the bound Session store on %s', async (edge) => {

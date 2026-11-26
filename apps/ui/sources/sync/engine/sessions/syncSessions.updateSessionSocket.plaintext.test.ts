@@ -16,6 +16,20 @@ import {
   buildUpdatedSessionListRenderablePatchFromSocketUpdate,
 } from './syncSessions';
 
+it.each([
+  { active: true, archivedAt: null, expected: true },
+  { active: false, archivedAt: null, expected: false },
+  { active: true, archivedAt: 300, expected: false },
+])('preserves metadata-only server question attention: active=$active archived=$archivedAt', async ({ active, archivedAt, expected }) => {
+  const renderable = createSessionListRenderableSessionFixture({ active, archivedAt,
+    hasPendingUserActionRequests: true, pendingRequestObservedAt: 100 });
+  const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({ renderable,
+    updateBody: { metadata: { version: renderable.metadataVersion + 1,
+      value: JSON.stringify({ path: '/work', host: 'machine', name: 'Renamed' }) } },
+    updateSeq: 2, updateCreatedAt: 2, sessionEncryption: null });
+  expect(patch.hasPendingUserActionRequests).toBe(expected);
+});
+
 function createSession(params: { sessionId: string; encryptionMode: 'plain' | 'e2ee' }): Session {
   const now = 1_700_000_000_000;
   return {
@@ -95,7 +109,7 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
     const withoutPayload = await buildUpdatedSessionFromSocketUpdate({ session,
       updateBody: { metadataLayoutVersion: layout, active: true }, updateSeq: 2, updateCreatedAt: 2, sessionEncryption: null });
     expect(withoutPayload.agentState).toBe(retained ? state : null);
-    const renderable = createSessionListRenderableSessionFixture({ metadataLayoutVersion: layout, access,
+    const renderable = createSessionListRenderableSessionFixture({ active: true, metadataLayoutVersion: layout, access,
       metadata: ownerMetadataView ? { path: '/private' } : null, encryptedContentAvailability: availability });
     const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({ renderable,
       updateBody: { metadataLayoutVersion: layout, agentState: { version: 2, value: JSON.stringify(state) } },
@@ -114,7 +128,7 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
       updateSeq: 2, updateCreatedAt: 2, sessionEncryption: reader });
     expect(updated.nextSession.encryptedContentAvailability).toBe('encrypted_content_unavailable');
     expect(updated.agentState).toBeNull();
-    const renderable = createSessionListRenderableSessionFixture({ metadataLayoutVersion: 1, encryptionMode: 'e2ee' });
+    const renderable = createSessionListRenderableSessionFixture({ active: true, metadataLayoutVersion: 1, encryptionMode: 'e2ee' });
     const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({ renderable, updateBody,
       updateSeq: 2, updateCreatedAt: 2, sessionEncryption: reader });
     expect(patch.encryptedContentAvailability).toBe('encrypted_content_unavailable');
@@ -145,7 +159,7 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
     expect(updated.nextSession.encryptedContentAvailability).toBe('ready');
     expect(updated.agentState).toEqual(state);
     const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
-      renderable: createSessionListRenderableSessionFixture({ metadataLayoutVersion: 1, encryptionMode: 'e2ee',
+      renderable: createSessionListRenderableSessionFixture({ active: true, metadataLayoutVersion: 1, encryptionMode: 'e2ee',
         encryptedContentAvailability: 'encrypted_content_unavailable' }),
       updateBody, updateSeq: 2, updateCreatedAt: 2, sessionEncryption: reader,
     });
@@ -156,7 +170,7 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
   it('does not treat a legacy owner list view as an opened layout-1 owner envelope during contraction', async () => {
     const state = AgentStateSchema.parse({ requests: { permission: { tool: 'Bash', arguments: {}, createdAt: 1 } } });
     const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
-      renderable: createSessionListRenderableSessionFixture({ metadataLayoutVersion: 0 }),
+      renderable: createSessionListRenderableSessionFixture({ active: true, metadataLayoutVersion: 0 }),
       updateBody: { metadataLayoutVersion: 1, agentState: { version: 2, value: JSON.stringify(state) } },
       updateSeq: 2, updateCreatedAt: 2, sessionEncryption: null,
     });

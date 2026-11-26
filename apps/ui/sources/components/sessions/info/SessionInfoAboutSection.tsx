@@ -21,6 +21,7 @@ import type { MachinePoolProjectionMachine } from '@/sync/engine/machines/useMac
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { listPendingSessionRequests } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
 import { t } from '@/text';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
@@ -113,9 +114,7 @@ export const SessionInfoAboutSection = React.memo(
     const managedFolder = metadata
       ? readSessionDirectoryKind(metadata) === 'managed'
       : false;
-    const pendingRequestCount = session.agentState?.requests
-      ? Object.keys(session.agentState.requests).length
-      : 0;
+    const pendingRequestCount = listPendingSessionRequests(session).length;
 
     const lead: Fact[] = [];
     const more: Fact[] = [];

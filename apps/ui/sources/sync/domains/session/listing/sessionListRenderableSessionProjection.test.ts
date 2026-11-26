@@ -18,6 +18,23 @@ import { areStoredSessionsEqual } from '@/sync/store/domains/areStoredSessionsEq
 import { SESSION_LIST_DOCUMENT_ADMISSION } from '../sessionDocumentAdmission';
 import { hasAuthoritativeSessionRouteData } from '../hasAuthoritativeSessionRouteData';
 
+it('retains compact server question attention without a held ledger only while running and unarchived', () => {
+    const full = createSessionFixture({ active: true, archivedAt: 300, agentState: null,
+        pendingUserActionRequestCount: 1, pendingPermissionRequestCount: 0 });
+    const archived = { ...buildSessionListRenderableFromSession(full), hasPendingUserActionRequests: true };
+    const unarchived = { ...archived, archivedAt: null };
+    const inactive = { ...unarchived, active: false };
+    expect(readSessionListPresentationPendingFlags(createSessionListPresentationSource(archived))
+        .hasPendingUserActionRequests).toBe(false);
+    expect(readSessionListPresentationPendingFlags(createSessionListPresentationSource(inactive))
+        .hasPendingUserActionRequests).toBe(false);
+    expect(readSessionListPresentationPendingFlags(createSessionListPresentationSource(unarchived))
+        .hasPendingUserActionRequests).toBe(true);
+    const heldEmpty = createSessionFixture({ ...full, archivedAt: null, agentState: { requests: {} } });
+    expect(readSessionListPresentationPendingFlags(createSessionListPresentationSource(unarchived, { baseSession: heldEmpty }))
+        .hasPendingUserActionRequests).toBe(false);
+});
+
 it('selects metadata-only display advances by layout and observed revision without advancing full documents', () => {
     const admission = { scope: 'home/account', encryptionMode: 'plain' as const, metadataLayoutVersion: 0,
         metadataAudience: 'owner' as const, dataEncryptionKey: null };

@@ -2072,18 +2072,30 @@ describe('socket update handling: plaintext update-session', () => {
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
-    it.each(['terminal', 'earlier-turn-anchors'] as const)('target-hydrates live full-content session turn projections after %s updates', async kind => {
+    it.each(['terminal', 'earlier-turn-anchors', 'archive', 'unarchive', 'archive-held', 'unarchive-held'] as const)('target-hydrates live full-content session turn projections after %s updates', async kind => {
         const sessionId = 's_live_turn_projection';
         const sourceServerId = 'server-live-turns';
-        markSessionSurfaceVisible(sessionId, sourceServerId);
+        const held = kind.endsWith('-held');
+        const archive = kind.startsWith('archive');
+        const unarchive = kind.startsWith('unarchive');
+        if (!held) markSessionSurfaceVisible(sessionId, sourceServerId);
         storage.getState().applySessions([{
             ...buildSession(sessionId),
             active: false,
             latestTurnId: 'turn-1',
             latestTurnStatus: 'in_progress',
             latestTurnStatusObservedAt: 1_100,
+            archivedAt: unarchive ? 1_100 : null,
+            ...(held ? { sessionTurns: { v: 1 as const, sessionId, updatedAt: 1_100, turns: [
+                { turnId: 'older-turn', status: 'waiting' as const, startedAt: 1_000, updatedAt: 1_100 },
+            ] } } : {}),
         }]);
 
+        // Other held Sessions are not demand for this Session's lifecycle change.
+        storage.getState().applySessions(Array.from({ length: 12 }, (_, index) => ({
+            ...buildSession(`unrelated-held-${index}`),
+            sessionTurns: { v: 1 as const, sessionId: `unrelated-held-${index}`, updatedAt: 1, turns: [] },
+        })));
         const hydrateSessionById = vi.fn();
         const params = buildBaseParams({ hydrateSessionById });
         await handleUpdateContainer({
@@ -2096,17 +2108,57 @@ describe('socket update handling: plaintext update-session', () => {
                 body: {
                     t: 'update-session',
                     id: sessionId,
-                    latestTurnId: kind === 'terminal' ? 'turn-1' : 'turn-2',
-                    latestTurnStatus: kind === 'terminal' ? 'completed' : 'in_progress',
-                    latestTurnStatusObservedAt: 1_235,
+                    ...(archive || unarchive
+                        ? { archivedAt: archive ? 1_235 : null }
+                        : { latestTurnId: kind === 'terminal' ? 'turn-1' : 'turn-2',
+                            latestTurnStatus: kind === 'terminal' ? 'completed' : 'in_progress',
+                            latestTurnStatusObservedAt: 1_235 }),
                     ...(kind === 'earlier-turn-anchors' ? { rollbackEligibleTurnStarts: [17] } : {}),
                 },
             },
         });
 
         expect(hydrateSessionById).toHaveBeenCalledWith(sessionId, 'socket-update-turn-projection');
+        expect(hydrateSessionById.mock.calls).toEqual([[sessionId, 'socket-update-turn-projection']]);
         expect(params.invalidateSessions).not.toHaveBeenCalled();
     });
+
+    it.each(['archive-settled', 'unarchive-settled', 'noop-unarchived'] as const)(
+        'does not hydrate a held Session without waiting turns or open Turn questions on %s',
+        async kind => {
+            const sessionId = 's_held_settled';
+            const sourceServerId = 'server-live-turns';
+            const initiallyArchived = kind === 'unarchive-settled';
+            storage.getState().applySessions([{
+                ...buildSession(sessionId),
+                active: false,
+                archivedAt: initiallyArchived ? 1_100 : null,
+                latestTurnId: 'turn-done',
+                latestTurnStatus: 'completed',
+                sessionTurns: { v: 1 as const, sessionId, updatedAt: 1_100, turns: [
+                    { turnId: 'turn-done', status: 'completed' as const, startedAt: 1_000, updatedAt: 1_100 },
+                ] },
+            }]);
+            const hydrateSessionById = vi.fn();
+            const params = buildBaseParams({ hydrateSessionById });
+            await handleUpdateContainer({
+                ...params,
+                sourceServerId,
+                updateData: {
+                    id: 'u-held-settled-' + kind,
+                    seq: 19,
+                    createdAt: 1_235,
+                    body: {
+                        t: 'update-session',
+                        id: sessionId,
+                        archivedAt: kind === 'archive-settled' ? 1_235 : null,
+                    },
+                },
+            });
+            expect(hydrateSessionById).not.toHaveBeenCalled();
+            expect(params.invalidateSessions).not.toHaveBeenCalled();
+        },
+    );
 
     it('keeps layout-0 metadata socket patches on the existing inline hydration path', async () => {
         const sessionId = 's_layout0_inline_metadata';

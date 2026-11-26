@@ -43,9 +43,7 @@ import { deriveExternalSessionAttentionHasUnread, type ExternalSessionAttention 
 import { readExternalSessionLink, type ExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import {
     deriveLatestPendingRequestObservedAtFromSession,
-    derivePendingRequestFlagsFromAgentState,
     derivePendingRequestFlagsFromSession,
-    readPendingRequestFactsFromSession,
     type TranscriptRequestStatesCache,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import {
@@ -622,29 +620,20 @@ export function buildSessionListRenderableFromSession(
         )
         || session.agentState !== null
         || aggregate !== null;
-    const suppressPendingAttention = session.active !== true;
-    const pending = (() => {
-        if (suppressPendingAttention) return derivePendingRequestFlagsFromAgentState(
-            readPendingRequestFactsFromSession(session).actionConfirmations,
-        );
-        if (preservePendingFlags && previous) {
-            return {
-                hasPendingPermissionRequests: previous.hasPendingPermissionRequests,
-                hasPendingUserActionRequests: previous.hasPendingUserActionRequests,
-            };
-        }
-        return derivePendingRequestFlagsFromSession(session, messages, statesCache);
-    })();
-    const pendingRequestObservedAt = (() => {
-        if (suppressPendingAttention) return null;
-        if (preservePendingFlags && previous) return previous.pendingRequestObservedAt ?? null;
-        return deriveLatestPendingRequestObservedAtFromSession(session, messages, statesCache);
-    })();
+    const pendingSession = preservePendingFlags && previous ? {
+        ...session,
+        pendingPermissionRequestCount: previous.hasPendingPermissionRequests ? 1 : 0,
+        pendingUserActionRequestCount: previous.hasPendingUserActionRequests ? 1 : 0,
+        pendingRequestObservedAt: previous.pendingRequestObservedAt ?? null,
+    } : session;
+    const pending = derivePendingRequestFlagsFromSession(pendingSession, messages, statesCache);
+    const pendingRequestObservedAt = deriveLatestPendingRequestObservedAtFromSession(pendingSession, messages, statesCache);
     const currentRequestRef = (() => {
         // An opened display omits both request ledgers. Even a retained, current Agent-state
         // witness cannot prove that newer shared metadata has no Action confirmation.
         if (openedDisplay && metadataUndecided) return undefined;
-        if (preservePendingFlags) return previous?.currentRequestRef ?? null;
+        if (preservePendingFlags) return pending.hasPendingPermissionRequests || pending.hasPendingUserActionRequests
+            ? previous?.currentRequestRef ?? null : null;
         const reason = pending.hasPendingPermissionRequests ? 'permission_required'
             : pending.hasPendingUserActionRequests ? 'user_action_required' : null;
         // Reuse this derivation's held Agent/shared-action facts and transcript aggregate. Never

@@ -11,10 +11,32 @@ import {
     listPendingSessionRequests,
 } from './listPendingSessionRequests';
 import { sessionRuntimeObservations } from '../sessionRuntimeObservation';
+import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { buildSessionListRenderableFromSession } from '../listing/sessionListRenderable';
 
 afterEach(() => sessionRuntimeObservations.clear());
 
 describe('pending request facts adapter', () => {
+    it('keeps hostless questions closed after unarchive using their historical Turn and restores lasting questions', () => {
+        const session = createSessionFixture({ id: 'hostless-question', active: false,
+            agentState: { requests: {
+                scoped: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 100, turnId: 'older-turn' },
+                lasting: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: 150 },
+            } }, latestTurnId: 'latest-turn', latestTurnStatus: 'completed',
+            sessionTurns: buildSessionTurnsProjectionV1({ sessionId: 'hostless-question', updatedAt: 200,
+                turns: [{ turnId: 'older-turn', status: 'cancelled', startedAt: 1, updatedAt: 200 }] }) });
+        const archived = { ...session, archivedAt: 300 };
+        expect(listPendingSessionRequests(archived, [])).toEqual([]);
+        expect(derivePendingRequestFlagsFromSession(archived, []).hasPendingUserActionRequests).toBe(false);
+        expect(buildSessionListRenderableFromSession(archived).hasPendingUserActionRequests).toBe(false);
+        const unarchived = { ...archived, archivedAt: null };
+        expect(listPendingSessionRequests(unarchived, []).map(request => request.id)).toEqual(['lasting']);
+        expect(deriveLatestPendingRequestObservedAtFromSession(unarchived, [])).toBe(150);
+        const row = buildSessionListRenderableFromSession(unarchived);
+        expect(row.hasPendingUserActionRequests).toBe(true);
+        expect(row.pendingRequestObservedAt).toBe(150);
+    });
+
     it.each([undefined, 1_200])('orders projected pending fallback against the full-publication witness (observedAt %s)', observedAt => {
         const session = createSessionFixture({ id: 'pending-witness', serverId: 'pending-witness-home',
             active: true, updatedAt: 1_000, metadata: null, agentState: null,

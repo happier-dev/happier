@@ -18,6 +18,7 @@ import { didSessionActivityBadgeSignalChange } from "@/app/activity/accountActiv
 import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { publishSessionArchiveTransition } from "@/app/session/archive/publishSessionArchiveTransition";
 import { resolveSessionAccountChangePublications } from "@/app/session/changeTracking/markAccountChangesForSessionAccounts";
+import { parseStoredPrimaryTurnStatus } from "@/app/session/readCursor/manualUnreadBoundary";
 import { log } from "@/utils/logging/log";
 import { type Fastify } from "../../types";
 
@@ -136,6 +137,10 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 stopOutcome,
                 projection: {
                     archivedAt,
+                    latestTurnId: updated.session.latestTurnId,
+                    latestTurnStatus: parseStoredPrimaryTurnStatus(updated.session.latestTurnStatus),
+                    latestTurnStatusObservedAt: updated.session.latestTurnStatusObservedAt === null
+                        ? null : Number(updated.session.latestTurnStatusObservedAt),
                     ...(runtimeActivityClear.didWrite ? runtimeActivityClear.projection : {}),
                 },
                 recipientCursors,

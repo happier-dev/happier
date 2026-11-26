@@ -1,13 +1,34 @@
 import { describe, expect, it, vi } from 'vitest';
 import { SessionWorkflowActivityHeadlineV1Schema } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
-import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit';
+import { createSessionFixture, createSessionListRenderableSessionFixture, createSessionViewerFixture } from '@/dev/testkit';
 import { buildSessionListRenderableFromSession } from '../listing/sessionListRenderable';
 import { createSessionListPresentationSource } from '../listing/sessionListRenderableSessionProjection';
 import { projectUiSessionAwareness } from './sessionAwareness';
 import { SessionUsageLimitRecoveryV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
+import { resolveSessionPersonalAttentionForViewer } from '../readState/sessionViewerAttention';
 
 describe('UI Session awareness acquisition adapter', () => {
+    it('retains compact server question attention without a request ledger only while running and unarchived', () => {
+        const row = createSessionListRenderableSessionFixture({ active: true, activeAt: 1_000,
+            hasPendingPermissionRequests: false, hasPendingUserActionRequests: true, pendingRequestObservedAt: 1_000 });
+        expect(projectUiSessionAwareness({ ...row, archivedAt: 2_000 }, 1_001).operational.reasons)
+            .not.toContain('action_required');
+        expect(projectUiSessionAwareness({ ...row, active: false, archivedAt: null }, 1_001).operational.reasons)
+            .not.toContain('action_required');
+        expect(projectUiSessionAwareness({ ...row, archivedAt: null }, 1_001).operational.reasons)
+            .toContain('action_required');
+    });
+
+    it('requires an open question ledger for a modern viewer question reason while retaining unrelated attention', () => {
+        const row = createSessionListRenderableSessionFixture({ archivedAt: null, hasPendingUserActionRequests: true,
+            viewer: createSessionViewerFixture({ attention: { needsAttention: true,
+                reasons: ['user_action_required', 'unread'], primary: 'user_action_required', presentation: 'full' } }) });
+        expect(resolveSessionPersonalAttentionForViewer(row, 1_001)).toMatchObject({
+            needsAttention: true, reasons: ['unread'], primary: 'unread',
+        });
+    });
+
     it('reads startup progress from the admitted list source without reviving an older Agent state', () => {
         const session = createSessionFixture({ encryptionMode: 'plain', active: true, presence: 'online',
             activeAt: 1_000, agentStateVersion: 4, agentState: { workStatus: 'waiting_for_startup_lock' } });

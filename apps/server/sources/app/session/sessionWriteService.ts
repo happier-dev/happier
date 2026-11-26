@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { decodeSessionStoredContent, encodeSessionStoredContent, sessionStoredContentWhere, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { prepareSessionMessageToolOutputForWrite, SessionMessageToolOutputInvalidError } from '@/storage/sessionMessageToolOutput';
@@ -3138,6 +3139,7 @@ function createSessionTurnAppliedResult(params: {
 }
 
 async function applySessionTurnMutationWithOwnerAccessInTx(params: {
+    archiveWaitingTurn?: true;
     tx: Tx;
     actorUserId: string;
     turnMutation: SessionTurnMutationV1;
@@ -3300,6 +3302,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
         const transition = await decideSessionTurnMutation({
             mutation: params.turnMutation, currentTurn, targetTurnId, requestedTurnId,
             latestTurnId: session.latestTurnId, terminalStatus,
+            archiveWaitingTurn: params.archiveWaitingTurn,
             loadLatestTurnStatus: async turnId => {
                 const latest = await tx.sessionTurn.findUnique({
                     where: { sessionId_turnId: { sessionId, turnId } },
@@ -3455,7 +3458,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                         ? "parentTurnCancelled" as const
                         : null
             : null;
-        if (lifecycleEvent !== null) {
+        if (lifecycleEvent !== null && !params.archiveWaitingTurn) {
             const lifecycleAdmissions = await admitSessionLifecycleAutomationRunsTx({
                 tx,
                 accountId: writeAuthority.accountId,
@@ -3613,6 +3616,36 @@ async function applySessionTurnMutationWithOwnerAccess(params: {
     return producesAutomationSessionLifecycleOccurrence(params.turnMutation.action)
         ? await rejoinAutomationOccurrenceInsertRace(operation)
         : await operation();
+}
+
+/** Home's admitted Archive changes lifecycle through the same receipt/turn/projection owner. */
+export async function applySessionArchiveWaitingTurnsInTx(params: Readonly<{
+    tx: Tx;
+    sessionId: string;
+    ownerAccountId: string;
+    archivedAt: Date;
+}>): Promise<void> {
+    const turns = await params.tx.sessionTurn.findMany({
+        where: { sessionId: params.sessionId, status: 'waiting' },
+        select: { turnId: true },
+    });
+    for (const { turnId } of turns) {
+        const result = await applySessionTurnMutationWithOwnerAccessInTx({
+            tx: params.tx,
+            actorUserId: params.ownerAccountId,
+            turnMutation: {
+                v: 1, sessionId: params.sessionId, turnId,
+                mutationId: `home-archive:${createHash('sha256').update(JSON.stringify([
+                    params.sessionId, params.archivedAt.getTime(), turnId,
+                ])).digest('hex')}`,
+                observedAt: params.archivedAt.getTime(), action: 'cancel', reason: 'session_archived',
+            },
+            archiveWaitingTurn: true,
+            markParticipants: false,
+            principal: { kind: 'session_owner_runtime' },
+        });
+        if (!result.ok) throw new Error(`Archive Turn settlement failed: ${result.error}`);
+    }
 }
 
 export async function applyLatestSessionTurnEndInTx(params: Readonly<{

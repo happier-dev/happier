@@ -21,6 +21,10 @@ export function useTranscriptRootPendingRequests(params: Readonly<{
         () => buildPendingSessionRequestsSourceSignature(session),
         [
             session.active,
+            session.archivedAt,
+            session.sessionTurns,
+            session.latestTurnId,
+            session.latestTurnStatus,
             session.agentState,
             session.id,
             session.pendingPermissionRequestCount,

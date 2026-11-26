@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { SessionStatusResultSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import type { Message } from "../messages/messageTypes.js";
 import { readSharedMetadataActionConfirmationState } from "./readSharedMetadataPendingRequestFacts.js";
 import {
@@ -54,6 +55,73 @@ const SHARED_ACTION_REQUEST = {
 };
 
 describe('public status pending request projection', () => {
+    it('retains server question attention without a held ledger only while running and unarchived', () => {
+        const facts = createPendingFacts({ active: true, agentState: null,
+            projected: { permissionCount: 0, userActionCount: 1, observedAt: 100 } });
+        expect(derivePendingRequestFlags(facts, []).hasPendingUserActionRequests).toBe(true);
+        expect(derivePendingRequestFlags({ ...facts, archivedAt: 300 }, []).hasPendingUserActionRequests).toBe(false);
+        expect(derivePendingRequestFlags({ ...facts, active: false }, []).hasPendingUserActionRequests).toBe(false);
+        expect(listPendingRequests(facts, [])).toEqual([]);
+    });
+
+    // SEC-COORD-OPUS-1126H: continue/lasting questions outlive successful or failed raising Turns.
+    it.each([
+        { mode: 'continue', lasting: false, status: 'completed' },
+        { mode: 'continue', lasting: false, status: 'failed' },
+        { mode: 'continue', lasting: true, status: 'completed' },
+        { mode: 'continue', lasting: true, status: 'failed' },
+        { mode: 'wait', lasting: true, status: 'completed' },
+        { mode: 'wait', lasting: true, status: 'failed' },
+        { mode: 'continue', lasting: true, status: 'cancelled' },
+    ] as const)('projects $mode lasting=$lasting after $status, including Unarchive', ({ mode, lasting, status }) => {
+        for (const active of [true, false]) {
+            const facts = createPendingFacts({ active, archivedAt: null, latestTurnId: 'raising-turn', latestTurnStatus: status,
+                agentState: { requests: { question: { tool: 'AskUserQuestion', kind: 'user_action',
+                    source: 'session.needs_you.raise', turnId: 'raising-turn', createdAt: 100, arguments: {},
+                    questionV1: { mode, lasting, type: 'decision', ...(mode === 'continue' ? { assumption: 'assume yes' } : {}) },
+                } } } });
+            const expected = status === 'cancelled' ? [] : ['question'];
+            expect(listPendingRequests(facts, []).map(request => request.id)).toEqual(expected);
+            expect(derivePendingRequestFlags(facts, []).hasPendingUserActionRequests).toBe(status !== 'cancelled');
+            expect(listPendingRequests({ ...facts, archivedAt: 300 }, [])).toEqual([]);
+            expect(listPendingRequests({ ...facts, archivedAt: null }, []).map(request => request.id)).toEqual(expected);
+        }
+    });
+
+    it.each([true, false])('closes archived and cancelled-Turn questions across pending projections (active %s)', active => {
+        const facts = createPendingFacts({ active, agentState: { requests: {
+            question: { tool: 'AskUserQuestion', kind: 'user_action', turnId: 'older-turn', createdAt: 100, arguments: {} },
+        } }, projected: { permissionCount: 0, userActionCount: 1, observedAt: 100 } });
+        for (const status of ['waiting', 'in_progress', 'completed', 'cancelled', 'failed'] as const) {
+            const current = { ...facts, archivedAt: null, latestTurnId: 'newer-turn', latestTurnStatus: 'completed' as const,
+                sessionTurns: buildSessionTurnsProjectionV1({ sessionId: facts.sessionId, updatedAt: 200,
+                    turns: [{ turnId: 'older-turn', status, startedAt: 1, updatedAt: 200 }] }) };
+            const open = status !== 'cancelled';
+            expect(listPendingRequests(current, []).map(request => request.id), status).toEqual(open ? ['question'] : []);
+            expect(derivePendingRequestFlags(current, []).hasPendingUserActionRequests, status).toBe(open);
+            expect(deriveLatestPendingRequestObservedAt(current, []), status).toBe(open ? 100 : null);
+            const archived = { ...current, archivedAt: 300 };
+            expect(listPendingRequests(archived, []), status).toEqual([]);
+            expect(derivePendingRequestFlags(archived, []).hasPendingUserActionRequests, status).toBe(false);
+            expect(deriveLatestPendingRequestObservedAt(archived, []), status).toBeNull();
+        }
+    });
+
+    it('hides a lasting question only while archived and requires Agent State membership for transcript questions', () => {
+        const facts = createPendingFacts({ active: true, agentState: { requests: {
+            lasting: { tool: 'AskUserQuestion', kind: 'user_action', createdAt: 100, arguments: {} },
+        } } });
+        const archived = { ...facts, archivedAt: 300 };
+        expect(listPendingRequests(archived, [])).toEqual([]);
+        expect(listPendingRequests({ ...archived, archivedAt: null }, []).map(request => request.id)).toEqual(['lasting']);
+        const transcript: Message = { id: 'question-message', kind: 'tool-call', localId: null, createdAt: 100,
+            tool: { id: 'transcript-question', name: 'AskUserQuestion', input: {}, state: 'running', createdAt: 100,
+                startedAt: null, completedAt: null, description: null,
+                permission: { id: 'absent-request', status: 'pending', kind: 'user_action' } }, children: [] };
+        expect(listPendingRequests({ ...facts, agentState: { requests: {} } }, [transcript])).toEqual([]);
+        expect(derivePendingRequestFlags({ ...facts, agentState: { requests: {} } }, [transcript]).hasPendingUserActionRequests).toBe(false);
+    });
+
     it('carries the authorized owner label with a disabled native choice through public status', () => {
         const nativeChoices = { requirementId: 'owner-label', source: 'native', choices: [
             { id: 'remember', label: 'Remember', decision: 'approved' as const, scope: 'localPersistent' as const,
@@ -158,10 +226,13 @@ describe('oldest pending request', () => {
 });
 
 describe('shared Action confirmation projection', () => {
-    it('renders an Action-only request without exposing owner AgentState', () => {
+    it.each([true, false])('renders an archived Action-only request independently of question openness (active %s)', active => {
         const session = createPendingFacts({
             sessionId: 'session-action',
-            active: true,
+            active,
+            archivedAt: 300,
+            latestTurnId: 'turn-action',
+            latestTurnStatus: 'cancelled',
             agentState: null,
             actionConfirmations: readSharedMetadataActionConfirmationState({
                 v: 1,
@@ -270,7 +341,7 @@ describe('derivePendingRequestFlags', () => {
         });
     });
 
-    it('uses projected pending counts and timestamps before stale hydrated request details', () => {
+    it('does not manufacture a question from projected counts without Agent State membership', () => {
         const session = createPendingFacts({
             active: true,
             agentState: {
@@ -289,9 +360,9 @@ describe('derivePendingRequestFlags', () => {
 
         expect(derivePendingRequestFlags(session)).toEqual({
             hasPendingPermissionRequests: false,
-            hasPendingUserActionRequests: true,
+            hasPendingUserActionRequests: false,
         });
-        expect(deriveLatestPendingRequestObservedAt(session)).toBe(5_000);
+        expect(deriveLatestPendingRequestObservedAt(session)).toBeNull();
     });
 
     it('keeps a hydrated native permission visible when projected zero counts have no observation or predate it', () => {

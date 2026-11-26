@@ -15,6 +15,8 @@ import { createActivityAttentionStoreSourceSelector } from './createActivityAtte
 import { buildNextSessionListRenderableDelta } from '@/sync/store/domains/sessionListIndexFinalization';
 import type { StorageState } from '@/sync/store/types';
 import { readActivitySessionRulePolicies } from './readActivitySessionRulePolicies';
+import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { listPendingSessionRequests } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 function expectNoObjectKeysOrValuesOnRecords(action: () => void, guardedRecords: readonly object[]): void {
     const originalObjectKeys = Object.keys.bind(Object);
@@ -775,6 +777,23 @@ describe('createActivityAttentionStoreSourceSelector', () => {
 
         expect(second).not.toBe(first);
         expect(second.sessionsById[secondSession.id]?.metadata?.summary?.text).toBe('After');
+    });
+
+    it('refreshes pending attention when only a historical question Turn settles', () => {
+        const selector = createActivityAttentionStoreSourceSelector();
+        const base = storage.getState();
+        const waiting = createSessionFixture({ id: 'historical-question', active: false, archivedAt: null,
+            agentState: { requests: { question: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {},
+                createdAt: 100, turnId: 'older-turn' } } },
+            latestTurnId: 'newer-turn', latestTurnStatus: 'completed',
+            sessionTurns: buildSessionTurnsProjectionV1({ sessionId: 'historical-question', updatedAt: 200,
+                turns: [{ turnId: 'older-turn', status: 'waiting', startedAt: 1, updatedAt: 200 }] }) });
+        const first = selector({ ...base, sessions: { [waiting.id]: waiting } });
+        expect(listPendingSessionRequests(first.sessionsById[waiting.id]!, [])).toHaveLength(1);
+        const settled = { ...waiting, sessionTurns: buildSessionTurnsProjectionV1({ sessionId: waiting.id, updatedAt: 300,
+            turns: [{ turnId: 'older-turn', status: 'cancelled', startedAt: 1, updatedAt: 300 }] }) };
+        const second = selector({ ...base, sessions: { [settled.id]: settled } });
+        expect(listPendingSessionRequests(second.sessionsById[settled.id]!, [])).toEqual([]);
     });
 
     it('does not collapse distinct pending request fields that contain signature separators', () => {

@@ -1,8 +1,7 @@
 import {
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromSession,
-    readPendingAgentStateCompletedRequestSignature,
-    readPendingAgentStateRequestSignature,
+    buildPendingSessionRequestsSourceSignature,
     readStoredTranscriptRequestStatesCache,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import {
@@ -40,7 +39,6 @@ function readNumber(value: unknown): number | null {
 }
 
 function buildSessionPermissionSignature(session: Session): string {
-    const agentState = session.agentState;
     return [
         session.id,
         readSessionViewerAttentionSignature(session),
@@ -52,11 +50,7 @@ function buildSessionPermissionSignature(session: Session): string {
         session.latestTurnStatus ?? '',
         readNumber(session.latestTurnStatusObservedAt) ?? '',
         readNumber(session.meaningfulActivityAt) ?? '',
-        readNumber(session.pendingPermissionRequestCount) ?? '',
-        readNumber(session.pendingUserActionRequestCount) ?? '',
-        readNumber(session.pendingRequestObservedAt) ?? '',
-        readPendingAgentStateRequestSignature(agentState),
-        readPendingAgentStateCompletedRequestSignature(agentState),
+        buildPendingSessionRequestsSourceSignature(session),
     ].join('\u001f');
 }
 

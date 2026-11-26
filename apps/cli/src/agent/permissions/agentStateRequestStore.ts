@@ -30,7 +30,7 @@ import type { SessionQuestionContextV1, SessionQuestionHandlerV1 } from '@happie
 import type { StructuredQuestionAnswerDetailsV1, StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { ResolvedMcpToolIdentityV1Schema, type ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import type { AccountSettings, SessionPermissionApprovalReviewerClaimV1, SessionPermissionAccountUserDecisionActorV1, SessionPermissionExternalHumanDecisionActorV1 } from '@happier-dev/protocol';
+import type { AccountSettings, SessionPermissionApprovalReviewerClaimV1, SessionPermissionAccountUserDecisionActorV1, SessionPermissionExternalHumanDecisionActorV1, SessionTurnsProjectionV1 } from '@happier-dev/protocol';
 import {
     getSessionNotificationAgentDisplayName,
     getSessionNotificationTitle,
@@ -253,6 +253,7 @@ type SessionLike = Readonly<{
     subscribeToSessionConnectionState?: (listener: (state: Readonly<{ phase: string }>) => void) => () => void;
     getArchivedAtSnapshot?: () => number | null | undefined;
     onArchivedAtChange?: (listener: (archivedAt: number | null) => void) => () => void;
+    readSessionTurnsProjection?: () => Promise<SessionTurnsProjectionV1 | null>;
     clearQuestionWaitTurn?: (sourceTurnIds: readonly string[]) => void | Promise<void>;
     getAgentStateResponseTargetDispatcher?: () => AgentStateResponseTargetDispatcher;
     captureSessionFollowRuleEvidence?: (event: FollowEventV1) => SessionFollowRuleSourceEvidenceV1 | null;
@@ -505,7 +506,7 @@ export class AgentStateRequestStore {
         this.unsubscribeArchiveState?.();
         const reconcile = () => {
             void this.reconcileSessionArchive().catch(error => {
-                logger.infoFile(`${this.logPrefix} Archived Session request withdrawal failed`, {
+                logger.infoFile(`${this.logPrefix} Session request withdrawal failed`, {
                     errorName: error instanceof Error ? error.name : typeof error,
                 });
             });
@@ -514,9 +515,19 @@ export class AgentStateRequestStore {
         reconcile();
     }
 
-    /** Archive is an explicit withdrawal, including when a retained host is first rebound. */
+    /** Rebind consumes Archive's retained Turn cancellation even after Unarchive. */
     async reconcileSessionArchive(): Promise<void> {
-        if (!this.isSessionArchived()) return;
+        if (!this.isSessionArchived()) {
+            const session = this.session;
+            if (!session?.readSessionTurnsProjection || !Object.values(this.target.readState()?.requests ?? {})
+                .some(request => typeof request.turnId === 'string' && isStoredQuestion(request))) return;
+            const projection = await session.readSessionTurnsProjection();
+            if (this.session !== session) return;
+            const cancelledTurnIds = new Set(projection?.turns.filter(turn => turn.status === 'cancelled').map(turn => turn.turnId));
+            if (cancelledTurnIds.size > 0) await this.cancelRequests({ cancelledTurnIds,
+                reason: 'Question turn cancelled', decision: 'abort', requestIds: [] });
+            return;
+        }
         if (this.archiveCleanup) return await this.archiveCleanup;
         const cleanup = this.cancelAllRequests({ reason: 'Session archived', decision: 'abort', requestIds: [] }).then(() => undefined);
         this.archiveCleanup = cleanup;
@@ -1482,10 +1493,13 @@ export class AgentStateRequestStore {
         pluginId?: string;
         turnId?: string;
         source?: string;
+        cancelledTurnIds?: ReadonlySet<string>;
         observedRetirement?: true;
     }>): Promise<readonly AgentStateRequestCancellation[]> {
         const completedRequestsById = new Map<string, AgentStateRequestCancellation>();
         const isSelected = (id: string, entry: Readonly<Record<string, unknown>>) => {
+            if (params.cancelledTurnIds) return typeof entry.turnId === 'string'
+                && params.cancelledTurnIds.has(entry.turnId) && isStoredQuestion(entry);
             if (params.scope === 'foreground' && readRunScopedExecutionPermissionRequestIdentity(id)) return false;
             if (typeof params.scope === 'object') {
                 return readRunScopedExecutionPermissionRequestIdentity(id)?.runId === params.scope.runId && isStoredQuestion(entry);

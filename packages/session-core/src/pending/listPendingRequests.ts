@@ -11,10 +11,16 @@ import { ResolvedMcpToolIdentityV1Schema, type ResolvedMcpToolIdentityV1 } from 
 import { SessionQuestionContextV1Schema, SessionQuestionHandlerV1Schema, type SessionQuestionContextV1, type SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
 import type { NativePermissionChoicesV1, NativePermissionChoiceAvailabilityV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { evaluatePermissionResponseAuthorityV1 } from '@happier-dev/agents/permissions';
+import type { SessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import type { SessionTurnLifecycleStatusV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnLifecycleStatusV1';
 
 export type PendingRequestFacts = Readonly<{
     sessionId: string;
     active: boolean;
+    archivedAt?: number | null;
+    sessionTurns?: SessionTurnsProjectionV1 | null;
+    latestTurnId?: string | null;
+    latestTurnStatus?: SessionTurnLifecycleStatusV1 | null;
     agentState: AgentState | null;
     permissionRelationship?: 'owner' | 'sharedApprover' | null;
     permissionOwnerLabel?: string;
@@ -376,8 +382,10 @@ export function listPendingTranscriptRequests(
     messages?: ReadonlyArray<Message>,
     statesCache?: TranscriptRequestStatesCache,
 ): SessionPendingRequest[] {
+    const isQuestionOpen = createPendingQuestionOpenPredicate(facts);
     return Array.from(getTranscriptRequestStates(facts, messages, statesCache).values())
-        .flatMap((state) => (state.status === 'pending' ? [projectNativeChoiceAvailability(state.request, facts)] : []));
+        .flatMap((state) => (state.status === 'pending' && isQuestionOpen(state.request)
+            ? [projectNativeChoiceAvailability(state.request, facts)] : []));
 }
 
 type PendingAgentStateRequestFacts = Readonly<{
@@ -435,7 +443,10 @@ export function derivePendingRequestFlagsFromAgentState(
     agentState: PendingAgentStateRequestFacts | SessionActionConfirmationsV1 | null | undefined,
     requestCoverage?: AgentStateRequestCoverageOptions,
 ): PendingRequestFlags {
-    const requests = listPendingAgentStateRequests(agentState, requestCoverage);
+    return derivePendingRequestFlagsFromRequests(listPendingAgentStateRequests(agentState, requestCoverage));
+}
+
+function derivePendingRequestFlagsFromRequests(requests: readonly SessionPendingRequest[]): PendingRequestFlags {
     if (requests.length === 0) {
         return EMPTY_PENDING_REQUEST_FLAGS;
     }
@@ -487,10 +498,12 @@ function hasPendingAgentRequests(facts: PendingRequestFacts): boolean {
         || listPendingAgentStateRequests(facts.actionConfirmations).length > 0;
 }
 
-function readProjectedPendingRequestFlags(facts: PendingRequestFacts): PendingRequestFlags {
+function readProjectedPendingRequestFlags(facts: PendingRequestFacts, hasOpenAgentQuestions: boolean): PendingRequestFlags {
     return {
         hasPendingPermissionRequests: (facts.projected?.permissionCount ?? 0) > 0,
-        hasPendingUserActionRequests: (facts.projected?.userActionCount ?? 0) > 0,
+        hasPendingUserActionRequests: facts.agentState != null
+            ? hasOpenAgentQuestions
+            : facts.archivedAt == null && (facts.projected?.userActionCount ?? 0) > 0,
     };
 }
 
@@ -552,8 +565,9 @@ export function listPendingRequests(
     statesCache?: TranscriptRequestStatesCache,
 ): SessionPendingRequest[] {
     const sharedActionState = facts.actionConfirmations;
+    const isQuestionOpen = createPendingQuestionOpenPredicate(facts);
     const pendingAgentStateRequests = [
-        ...listPendingAgentStateRequests(facts.agentState, facts.requestCoverage),
+        ...listPendingAgentStateRequests(facts.agentState, facts.requestCoverage).filter(isQuestionOpen),
         ...listPendingAgentStateRequests(sharedActionState),
     ];
 
@@ -575,7 +589,7 @@ export function listPendingRequests(
     const transcriptStates = getTranscriptRequestStates(facts, messages, statesCache);
     const pending = new Map<string, SessionPendingRequest>();
     const pendingTranscriptRequests = Array.from(transcriptStates.values())
-        .flatMap((state) => (state.status === 'pending' && isPendingRequestCurrent(facts, state.request, state) ? [state.request] : []));
+        .flatMap((state) => (state.status === 'pending' && isPendingRequestCurrent(facts, state.request, state, isQuestionOpen) ? [state.request] : []));
 
     for (const request of pendingTranscriptRequests) {
         pending.set(request.id, request);
@@ -584,7 +598,7 @@ export function listPendingRequests(
     if (pendingAgentStateRequests.length > 0) {
         for (const request of pendingAgentStateRequests) {
             const transcriptState = transcriptStates.get(request.id);
-            if (!isPendingRequestCurrent(facts, request, transcriptState)) {
+            if (!isPendingRequestCurrent(facts, request, transcriptState, isQuestionOpen)) {
                 continue;
             }
 
@@ -609,7 +623,9 @@ export function listPendingRequests(
     return Array.from(pending.values(), request => projectNativeChoiceAvailability(request, facts));
 }
 
-function isPendingRequestCurrent(facts: PendingRequestFacts, request: SessionPendingRequest, state: TranscriptRequestState | undefined): boolean {
+function isPendingRequestCurrent(facts: PendingRequestFacts, request: SessionPendingRequest, state: TranscriptRequestState | undefined,
+    isQuestionOpen: (request: SessionPendingRequest) => boolean): boolean {
+    if (!isQuestionOpen(request)) return false;
     if (state?.status === 'terminal' && state.terminalKind === 'hard' && (request.createdAt ?? 0) <= state.createdAt) return false;
     if (isSessionActionConfirmationRequest(request) || resolvePendingRequestAttentionReasonV1(request) !== 'permission_required'
         || facts.projected?.permissionCount !== 0) return true;
@@ -617,11 +633,35 @@ function isPendingRequestCurrent(facts: PendingRequestFacts, request: SessionPen
     return observedAt === null || (request.createdAt !== null && request.createdAt > observedAt);
 }
 
+/** The request ledger owns membership; Archive and Turn cancellation own whether a question can remain open. */
+function createPendingQuestionOpenPredicate(facts: PendingRequestFacts): (request: SessionPendingRequest) => boolean {
+    let cancelledTurnIds: Set<string> | undefined;
+    return request => {
+        if (resolvePendingRequestAttentionReasonV1(request) !== 'user_action_required') return true;
+        const current = facts.agentState?.requests?.[request.id];
+        if (facts.archivedAt != null || current === undefined) return false;
+        const turnId = current.turnId?.trim();
+        if (!turnId) return true;
+        if (!cancelledTurnIds) {
+            cancelledTurnIds = new Set<string>();
+            // Only Turn cancellation (Stop/Archive) closes Turn-bound questions; continue/lasting questions outlive completed/failed Turns.
+            for (const turn of facts.sessionTurns?.turns ?? []) {
+                if (turn.status === 'cancelled') cancelledTurnIds.add(turn.turnId);
+            }
+            if (facts.latestTurnId && facts.latestTurnStatus === 'cancelled') {
+                cancelledTurnIds.add(facts.latestTurnId);
+            }
+        }
+        return !cancelledTurnIds.has(turnId);
+    };
+}
+
 /** An unstamped summary cannot retire a native request; a newer stamped observation or exact completion can. */
-function hasUnprojectedAgentPermissionRequest(facts: PendingRequestFacts, transcriptStates: Map<string, TranscriptRequestState>): boolean {
+function hasUnprojectedAgentPermissionRequest(facts: PendingRequestFacts, transcriptStates: Map<string, TranscriptRequestState>,
+    isQuestionOpen: (request: SessionPendingRequest) => boolean): boolean {
     return listPendingAgentStateRequests(facts.agentState, facts.requestCoverage).some(request =>
         resolvePendingRequestAttentionReasonV1(request) === 'permission_required'
-        && isPendingRequestCurrent(facts, request, transcriptStates.get(request.id)));
+        && isPendingRequestCurrent(facts, request, transcriptStates.get(request.id), isQuestionOpen));
 }
 
 export function listPendingPermissionRequests(
@@ -658,9 +698,7 @@ export function deriveLatestPendingRequestObservedAt(
     statesCache?: TranscriptRequestStatesCache,
 ): number | null {
     if (facts.active !== true) {
-        return latestPendingRequestCreatedAt(
-            listPendingAgentStateRequests(facts.agentState, facts.requestCoverage).filter((request) => request.kind === 'user_action'),
-        );
+        return latestPendingRequestCreatedAt(listPendingRequests(facts, messages, statesCache));
     }
 
     if (hasProjectedPendingRequestCounts(facts)) {
@@ -706,23 +744,22 @@ export function derivePendingRequestFlags(
     statesCache?: TranscriptRequestStatesCache,
 ): PendingRequestFlags {
     if (facts.active !== true) {
-        const agentStateFlags = derivePendingRequestFlagsFromAgentState(facts.agentState, facts.requestCoverage);
-        return {
-            hasPendingPermissionRequests: false,
-            hasPendingUserActionRequests: agentStateFlags.hasPendingUserActionRequests,
-        };
+        return derivePendingRequestFlagsFromRequests(listPendingRequests(facts, messages, statesCache));
     }
 
     const actionFlags = derivePendingRequestFlagsFromAgentState(
         facts.actionConfirmations,
     );
+    const isQuestionOpen = createPendingQuestionOpenPredicate(facts);
+    const agentStateFlags = derivePendingRequestFlagsFromRequests(
+        listPendingAgentStateRequests(facts.agentState, facts.requestCoverage).filter(isQuestionOpen),
+    );
 
     if (hasProjectedPendingRequestCounts(facts)) {
         const transcriptStates = getTranscriptRequestStates(facts, messages, statesCache);
-        const agentPermissionRequired = hasUnprojectedAgentPermissionRequest(facts, transcriptStates);
+        const agentPermissionRequired = hasUnprojectedAgentPermissionRequest(facts, transcriptStates, isQuestionOpen);
         if (shouldUseProjectedPendingRequestCounts(facts, transcriptStates)) {
-            const projectedFlags = readProjectedPendingRequestFlags(facts);
-            const agentStateFlags = derivePendingRequestFlagsFromAgentState(facts.agentState, facts.requestCoverage);
+            const projectedFlags = readProjectedPendingRequestFlags(facts, agentStateFlags.hasPendingUserActionRequests);
             return {
                 hasPendingPermissionRequests:
                     projectedFlags.hasPendingPermissionRequests
@@ -736,7 +773,7 @@ export function derivePendingRequestFlags(
             };
         }
         const pendingTranscriptRequests = Array.from(transcriptStates.values())
-            .flatMap((state) => (state.status === 'pending' && isPendingRequestCurrent(facts, state.request, state) ? [state.request] : []));
+            .flatMap((state) => (state.status === 'pending' && isPendingRequestCurrent(facts, state.request, state, isQuestionOpen) ? [state.request] : []));
         if (pendingTranscriptRequests.length === 0) {
             return agentPermissionRequired ? { ...actionFlags, hasPendingPermissionRequests: true } : actionFlags;
         }
@@ -753,7 +790,7 @@ export function derivePendingRequestFlags(
 
     const transcriptStates = getTranscriptRequestStates(facts, messages, statesCache);
     if (shouldUseProjectedPendingRequestCounts(facts, transcriptStates)) {
-        const projectedFlags = readProjectedPendingRequestFlags(facts);
+        const projectedFlags = readProjectedPendingRequestFlags(facts, agentStateFlags.hasPendingUserActionRequests);
         return {
             hasPendingPermissionRequests:
                 projectedFlags.hasPendingPermissionRequests || actionFlags.hasPendingPermissionRequests,
