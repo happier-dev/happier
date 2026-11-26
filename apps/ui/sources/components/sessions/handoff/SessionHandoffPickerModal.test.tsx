@@ -1919,7 +1919,10 @@ describe('SessionHandoffPickerModal', () => {
             'Target machine', 'newSession.machinePicker.searchPlaceholder', 'common.close',
         ]);
         const targetAddress = targetCommands[3]!.id;
-        await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
+        const closeTarget = reader!.resolveCurrentUiCommand(targetCommands[5]!.id)!;
+        if (closeTarget.command.kind !== 'hostLocal') throw new Error('Expected picker close');
+        await act(async () => { await closeTarget.command.invoke({ signal: closeTarget.retirementSignal, context: { surface: 'agent' } }); });
+        await vi.waitFor(() => expect(screen.findByTestId('new-session-machine-list')).toBeNull());
         const current = reader!;
         expect(current.readCurrentUiContext()!.commands.map(command => command.title)).toEqual([
             'common.cancel', 'newSession.selectMachineTitle',
@@ -1941,6 +1944,7 @@ describe('SessionHandoffPickerModal', () => {
         await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
         await vi.waitFor(() => expect(screen.findByTestId('new-session-machine-list')).not.toBeNull());
         const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');
+        await vi.waitFor(() => expect(current.readCurrentUiContext()!.commands.some(command => command.description === 'session.handoff.target.option:machine_target')).toBe(true));
         const targetCommand = current.resolveCurrentUiCommand(current.readCurrentUiContext()!.commands.find(command => command.description === 'session.handoff.target.option:machine_target')!.id)!
         if (targetCommand.command.kind !== 'hostLocal') throw new Error('Expected target draft');
         await act(async () => { await targetCommand.command.invoke({ signal: targetCommand.retirementSignal, context: { surface: 'agent' } }); });

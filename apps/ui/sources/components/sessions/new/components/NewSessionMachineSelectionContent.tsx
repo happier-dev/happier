@@ -41,6 +41,7 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
     favoriteMachines: ReadonlyArray<TMachine>;
     onSelectMachine: (machine: TMachine) => void;
     onSelectScopedMachine: (machine: ScopedSelectionMachine<TMachine>) => void;
+    onRequestClose?: () => void;
     resolveMachineAvailability?: (machine: TMachine, serverId: string) => MachineSelectionAvailability;
     resolveMachinePresentation?: (machine: TMachine) => MachineSelectionPresentation;
     onSelectPool?: (selection: ServerScopedMachinePoolSelection) => void;
@@ -202,7 +203,7 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
             rootStep={rootStep}
             selectedOptionId={selectedOptionId}
             onSelect={() => {}}
-            onRequestClose={() => {}}
+            onRequestClose={props.onRequestClose ?? (() => {})}
             autoFocusInputOnWeb={!inline}
             // In a popover the picker is a transient menu: the shared menu rows (inset, rounded,
             // menu height), as the composer's other pickers draw theirs. The picker page keeps list rows.
