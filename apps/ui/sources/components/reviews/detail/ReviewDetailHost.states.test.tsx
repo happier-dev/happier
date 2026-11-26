@@ -31,11 +31,14 @@ async function renderReview(
     reviewId: string;
     state: 'completed' | 'partial';
     comments: readonly ReviewCommentV1[];
+    metadataResponse?: () => Response;
   }>,
 ) {
   fixture = await createSessionFilesViewFixture({
     serverUrl: `https://${params.reviewId}.test`,
     request: async (url) => {
+      if (new URL(String(url)).pathname === '/v1/reviews/get' && params.metadataResponse)
+        return params.metadataResponse();
       if (new URL(String(url)).pathname === '/v1/reviews/comments')
         return Response.json({
           items: params.comments.map(storePlainReviewCommentFixture),
@@ -89,6 +92,41 @@ async function renderReview(
     />,
   );
 }
+
+it('keeps the opened Review visible and retries its typed metadata read failure', async () => {
+  const reviewId = 'metadata-failed-review';
+  let failed = false;
+  const screen = await renderReview({ reviewId, state: 'completed', comments: [], metadataResponse: () => failed
+    ? Response.json({ error: 'database_transaction_conflict_exhausted', statusCode: 503 }, { status: 503 })
+    : Response.json({
+      review: { reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+        state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2,
+        counts: { total: 0, needsDecision: 0 } },
+      human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [], needsYou: { reviewId, roundOrdinal: 1,
+        reason: 'review_needs_you', needsYou: false, requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } },
+    }),
+  });
+  try {
+    const { getReviewDetailSnapshot, reviewDetailKey } = await import('@/sync/store/domains/reviews/detail');
+    const key = reviewDetailKey({ serverId: fixture!.scope.serverId, accountId: 'alice' }, reviewId);
+    await vi.waitFor(() => expect(getReviewDetailSnapshot(key).status).toBe('ready'));
+    failed = true;
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { deriveArtifactStoredKindV1, REVIEW_ARTIFACT_KIND_V1 } = await import('@happier-dev/protocol/artifacts/artifactKindV1');
+    publishHomeAccountChange(fixture!.scope.serverId, [reviewId], { changeKinds: ['artifact'],
+      artifactKinds: [deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 })] });
+    await vi.waitFor(() => expect(getReviewDetailSnapshot(key).error?.code).toBe('database_transaction_conflict_exhausted'));
+    await vi.waitFor(() => expect(screen.findByTestId('review-detail:metadata-failure-action')).not.toBeNull());
+    await screen.pressByTestIdAsync('review-detail:metadata-failure-details-toggle');
+    expect(screen.getTextContent()).toContain('database_transaction_conflict_exhausted');
+    expect(screen.getTextContent()).toContain('Code review');
+    failed = false;
+    await screen.pressByTestIdAsync('review-detail:metadata-failure-action');
+    await vi.waitFor(() => expect(screen.findByTestId('review-detail:metadata-failure')).toBeNull());
+    expect(getReviewDetailSnapshot(key).status).toBe('ready');
+    expect(screen.getTextContent()).toContain('Code review');
+  } finally { await screen.unmount(); }
+});
 
 it('shows zero scored coverage for a partial round and one line when it found nothing (UI refinements 1125)', async () => {
   const screen = await renderReview({

@@ -26,6 +26,7 @@ import { formatCodeCommitShortOid } from '@/components/projects/files/code/codeE
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { useReviewDetail } from '../useReviewDetail';
+import { ReviewReadFailure } from '../ReviewReadFailure';
 import { useReviewHumanActions } from '../useReviewHumanActions';
 import { useReviewHistory } from '../useReviewHistory';
 import { useReviewComments } from '@/components/sessions/reviews/findings/useReviewRunComments';
@@ -618,8 +619,10 @@ export function ReviewDetailHost(props: Readonly<{
         label={unfinishedReviewers.length === 1 ? t('reviewWalkthrough.detail.retryReviewer', { name: unfinishedReviewers[0]!.name })
           : t('reviewWalkthrough.detail.retryUnfinished', { count: unfinishedReviewers.length })}
         onPress={() => newRound.retry?.(unfinishedReviewers)} /> : null}
-      notice={scope && ((newRound.approval.approvalPending && newRound.approval.approvalId)
-        || (humanActions.approval.approvalPending && humanActions.approval.approvalId)) ? <>
+      notice={detail.error || (scope && ((newRound.approval.approvalPending && newRound.approval.approvalId)
+        || (humanActions.approval.approvalPending && humanActions.approval.approvalId))) ? <>
+        {detail.error ? <ReviewReadFailure testID="review-detail:metadata-failure" size="line"
+          failure={detail.error} onRetry={detail.refresh} /> : null}
         {scope && newRound.approval.approvalPending && newRound.approval.approvalId ? <ActionApprovalPendingNotice
         testID="review-detail:new-round-approval" message={t('approvals.title')}
         onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}

@@ -3,6 +3,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { useReviewDetail } from '../useReviewDetail';
+import { ReviewReadFailure } from '../ReviewReadFailure';
 import { projectReviewGlance } from '../detail/reviewGlance';
 import { ReviewSummary, type ReviewSummaryProps } from './ReviewSummary';
 
@@ -21,14 +22,14 @@ export function ReviewSummaryHost(props: Readonly<{
     const detail = useReviewDetail(props.reviewId, { scope: props.scope });
     const glance = projectReviewGlance(undefined, detail.data?.review ?? null,
         { needsYou: detail.data?.human.needsYou, workflowFailureCode: props.workflowFailureCode });
-    if (!glance) return <SurfaceStateCard kind={detail.status === 'error' ? 'error' : 'loading'}
-        title={t(detail.status === 'error' ? 'common.error' : 'common.loading')}
-        action={detail.status === 'error' ? { label: t('common.retry'), onPress: () => void detail.refresh() } : undefined} />;
+    if (!glance) return detail.error
+        ? <ReviewReadFailure failure={detail.error} onRetry={detail.refresh} />
+        : <SurfaceStateCard kind="loading" title={t('common.loading')} />;
     return <>
         <ReviewSummary subject={props.subject ?? null} glance={glance} rows={props.rows ?? []}
             more={props.more} reviewers={props.reviewers ?? []}
             {...(props.onOpenReview ? { onOpenReview: props.onOpenReview } : {})} footerAction={props.footerAction} />
-        {detail.status === 'error' ? <SurfaceStateCard testID="review-summary:retry" kind="error" size="line"
-            title={t('common.error')} action={{ label: t('common.retry'), onPress: () => void detail.refresh() }} /> : null}
+        {detail.error ? <ReviewReadFailure testID="review-summary:retry" size="line"
+            failure={detail.error} onRetry={detail.refresh} /> : null}
     </>;
 }
