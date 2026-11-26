@@ -745,6 +745,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewChanges: "檢視變更",
                 signInsTitle: ({ machine }: { machine: string }) => `${machine} 上的登入`,
                 signInsHelp: ({ machine }: { machine: string }) => `${machine} 自行使用的帳號，用於代理程式、複製與推送。若你為其中某項選擇已連結的帳號，就會改用該帳號。`,
+                signInsOffline: "它恢復後，登入資訊會顯示在這裡。",
                 signInConnectedOnly: "使用已連結的帳號登入",
                 signInConnected: "使用已連接帳戶",
                 signInAction: "登入…",

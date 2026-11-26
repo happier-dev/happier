@@ -745,6 +745,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewChanges: "Przejrzyj zmiany",
                 signInsTitle: ({ machine }: { machine: string }) => `Logowania na ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Konta, których ${machine} używa samodzielnie, dla agentów, klonowania i wypychania. Jeśli wybierzesz dla któregoś połączone konto, zostanie użyte ono.`,
+                signInsOffline: "Jego logowania pojawią się tutaj, gdy wróci.",
                 signInConnectedOnly: "Loguje się połączonym kontem",
                 signInConnected: "Użyj połączonego konta",
                 signInAction: "Zaloguj…",

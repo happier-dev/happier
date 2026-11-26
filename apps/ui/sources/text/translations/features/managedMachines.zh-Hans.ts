@@ -745,6 +745,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewChanges: "查看更改",
                 signInsTitle: ({ machine }: { machine: string }) => `${machine} 上的登录`,
                 signInsHelp: ({ machine }: { machine: string }) => `${machine} 自己使用的账号，用于代理、克隆和推送。如果你为其中某项选择了已连接的账号，则改用该账号。`,
+                signInsOffline: "它恢复后，登录信息会显示在这里。",
                 signInConnectedOnly: "使用已连接的账号登录",
                 signInConnected: "使用已连接账户",
                 signInAction: "登录…",

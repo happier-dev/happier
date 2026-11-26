@@ -68,7 +68,7 @@ afterEach(async () => {
  * A cold Team Setup for one GitHub Source on the person's remembered Machine, whose daemon reports the GitHub CLI
  * signed in (one Machine id per test: the sign-in owner keeps reports per Machine for the app's lifetime) with a connected account available. `statusAnswered` holds that report back to order it after the plan.
  */
-async function openColdSetup(machineId: string, statusAnswered: Promise<void> = Promise.resolve()) {
+async function openColdSetup(machineId: string, statusAnswered: Promise<void> = Promise.resolve(), options: Readonly<{ offline?: boolean }> = {}) {
   let statusRequested: () => void = () => {};
   const requested = new Promise<void>((resolve) => { statusRequested = resolve; });
   const serverId = await homes.addHome({
@@ -112,7 +112,8 @@ async function openColdSetup(machineId: string, statusAnswered: Promise<void> = 
       coverage: { complete: true, nextCursor: null },
     },
   });
-  const machine = createMachineFixture({ id: machineId, activeAt: Date.now() });
+  // Offline: last seen long ago, and its daemon never answers.
+  const machine = createMachineFixture(options.offline ? { id: machineId, active: false, activeAt: 1 } : { id: machineId, activeAt: Date.now() });
   const row = createPlainMachineRowFixture({
     id: machineId,
     accountId: 'member',
@@ -136,6 +137,7 @@ async function openColdSetup(machineId: string, statusAnswered: Promise<void> = 
   )!;
   const toolId = `${github.id}/${definition.id}`;
   daemon.rpc.mockImplementation(async ({ method }: { method: string }) => {
+    if (options.offline) return await new Promise(() => {});
     if (
       method ===
       RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
@@ -246,6 +248,21 @@ it('reveals the plan once, with the Sign-ins row settled, when the sign-in repor
     expect(screen.findByTestId('team-setup-repositories-frame')?.props.style).toBeUndefined();
     expect(screen.findByTestId('machine-setup-sign-ins-loading')).toBeNull();
     expect(screen.findByTestId(connected)).not.toBeNull();
+  } finally {
+    await screen.unmount();
+  }
+});
+
+it('keeps the Sign-ins section in place and lands the plan when the chosen Machine is offline', async () => {
+  // 77e80c389b8 at 390 with the daemon stopped: the plan landed, but the Sign-ins section vanished. Offline, no report
+  // can come, so the section settles on the Machine's offline presence and says when its sign-ins show.
+  const { screen } = await openColdSetup('asleep-box', undefined, { offline: true });
+  try {
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-setup-run'), screen.getTextContent()).not.toBeNull());
+    expect(screen.findByTestId('machine-setup-sign-ins')).not.toBeNull();
+    expect(screen.findByTestId('machine-setup-sign-ins-offline')).not.toBeNull();
+    expect(screen.findByTestId('machine-setup-sign-ins-loading')).toBeNull();
+    expect(daemon.rpc.mock.calls.filter(([request]) => request.method === 'daemon.agents.signIn.status')).toHaveLength(0);
   } finally {
     await screen.unmount();
   }

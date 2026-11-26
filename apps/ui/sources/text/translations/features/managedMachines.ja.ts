@@ -745,6 +745,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewChanges: "変更を確認",
                 signInsTitle: ({ machine }: { machine: string }) => `${machine} のサインイン`,
                 signInsHelp: ({ machine }: { machine: string }) => `${machine} が自分で使うアカウントです（エージェント、クローン、プッシュ用）。接続済みアカウントを選んだ場合は、そちらが使われます。`,
+                signInsOffline: "戻ったら、ここにサインインが表示されます。",
                 signInConnectedOnly: "接続済みアカウントでサインインします",
                 signInConnected: "接続済みアカウントを使う",
                 signInAction: "サインイン…",

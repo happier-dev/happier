@@ -12,6 +12,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { getStorage } from '@/sync/domains/state/storage';
 import { MachineAgentMark } from '@/components/machines/agents/MachineAgentMark';
+import { MachineOfflineNotice } from '@/components/machines/page/MachineOfflineNotice';
 import { showAgentSignInTerminalSheet } from '@/components/machines/agents/AgentSignInTerminalSheet';
 import { useAgentSignInTerminalHost } from '@/components/machines/agents/signInTerminalHost';
 import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
@@ -122,16 +123,22 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     editable: boolean;
     connectedServiceKey?: string;
     /**
-     * Told once this Machine's sign-in report has settled (rows landed, none installed, or the read failed), so a page
-     * that lands its sections together can count it among its own first reads.
+     * The Machine's presence as the page knows it. Offline, nothing is read and the section says when its sign-ins
+     * show instead of disappearing; `null` or absent means not known yet, and the report is read as usual.
+     */
+    online?: boolean | null;
+    /**
+     * Told once this Machine's sign-in report has settled (rows landed, none installed, the read failed, or the Machine
+     * is offline and no report can come), so a page that lands its sections together can count it among its first reads.
      */
     onReportSettled?: (machineId: string) => void;
   }>,
 ) {
+  const offline = props.online === false;
   const { items: rows, start, phase } = useMachineCliSignIns({
     serverId: props.serverId,
     machineId: props.machineId,
-    presented: props.presented,
+    presented: props.presented && !offline,
     connectedServiceKey: props.connectedServiceKey,
   });
   const terminalHost = useAgentSignInTerminalHost();
@@ -186,14 +193,15 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
   // The owner lists only CLIs installed on this Machine (512b12e307d); each row says what the Machine reported.
   // Until every CLI has reported, the owner publishes no rows and the section holds one row's shape; the rows then land
   // together. A Machine that reports none drops the held section.
-  const reportSettled = phase !== 'loading' && phase !== 'idle';
+  const reportSettled = offline || (phase !== 'loading' && phase !== 'idle');
   const { onReportSettled, machineId } = props;
   React.useEffect(() => {
     if (reportSettled) onReportSettled?.(machineId);
   }, [machineId, onReportSettled, reportSettled]);
-  if (rows.length === 0 && phase !== 'loading') return null;
+  if (rows.length === 0 && phase !== 'loading' && !offline) return null;
   return <MachineSignInsList serverId={props.serverId} machineId={props.machineId} machineName={props.machineName}
-    rows={rows} editable={props.editable} onSignIn={(row) => { void open(row); }} onUseConnected={useConnected} />;
+    rows={rows} offline={offline} editable={props.editable && !offline} onSignIn={(row) => { void open(row); }}
+    onUseConnected={useConnected} />;
 });
 
 /** The rows themselves, drawn from the owner's reported rows; the section and its `/dev` specimen both mount it. */
@@ -203,6 +211,8 @@ export const MachineSignInsList = React.memo(function MachineSignInsList(
     machineId: string;
     machineName: string;
     rows: readonly MachineCliSignInRow[];
+    /** The Machine is offline: with nothing read, the section keeps its place and says when its sign-ins show. */
+    offline?: boolean;
     editable: boolean;
     onSignIn: (row: MachineCliSignInRow) => void;
     onUseConnected: (row: MachineCliSignInRow, serviceId: string) => void;
@@ -218,8 +228,10 @@ export const MachineSignInsList = React.memo(function MachineSignInsList(
         machine: props.machineName,
       })}
     >
-      {/* One sign-in row's shape while the Machine's report is still arriving. */}
-      {props.rows.length === 0 ? <SkeletonItem testID="machine-setup-sign-ins-loading" /> : null}
+      {/* One sign-in row's shape while the Machine's report is still arriving; offline, what that means here instead. */}
+      {props.rows.length > 0 ? null : props.offline ? (
+        <MachineOfflineNotice testID="machine-setup-sign-ins-offline" title={t('machinePresets.setup.tab.signInsOffline')} />
+      ) : <SkeletonItem testID="machine-setup-sign-ins-loading" />}
       {props.rows.map((row) => (
         <Item
           key={row.id}

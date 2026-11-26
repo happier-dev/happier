@@ -745,6 +745,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewChanges: "Änderungen prüfen",
                 signInsTitle: ({ machine }: { machine: string }) => `Anmeldungen auf ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Konten, die ${machine} selbst nutzt, für Agenten, Klone und Pushes. Ein verbundenes Konto, das du dafür wählst, wird stattdessen verwendet.`,
+                signInsOffline: "Seine Anmeldungen erscheinen hier, sobald es wieder da ist.",
                 signInConnectedOnly: "Meldet sich mit einem verbundenen Konto an",
                 signInConnected: "Verbundenes Konto verwenden",
                 signInAction: "Anmelden…",

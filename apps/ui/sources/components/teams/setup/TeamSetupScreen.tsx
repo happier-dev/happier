@@ -449,6 +449,8 @@ function TeamSetupPlanPage(
   const sourcesState = resources.sources.state;
   const sourcesLoading = sourcesState.status === 'initial' || sourcesState.status === 'loading';
   const sourcesFailed = sourcesState.status === 'offline' || sourcesState.status === 'refused';
+  // The chosen Machine's presence as its picker shows it; `null` until known.
+  const machineOnline = selection.state.kind === 'online' ? true : selection.state.kind === 'offline' ? false : null;
   // The GitHub CLI's sign-in on the chosen Machine, shown while a GitHub repository is included.
   const showsSignIns = !!machineId && !!githubServiceKey && included.some(source => source.repository?.provider.kind === 'github');
   // The page's own reads that shape the plan: Sources, each included repository's environment read, and on a chosen
@@ -532,7 +534,7 @@ function TeamSetupPlanPage(
       signIns={showsSignIns && machineId && githubServiceKey ? (
         <MachineSignInsSection serverId={context.scope.serverId} machineId={machineId}
           machineName={machineName ?? t('teams.join.setupPage.yourMachine')}
-          presented={presented} editable={!running}
+          presented={presented} editable={!running} online={machineOnline}
           connectedServiceKey={githubServiceKey} onReportSettled={settleSignIns} />
       ) : null}
       machinePlan={machinePlan}

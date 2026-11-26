@@ -730,6 +730,7 @@ export const managedMachinesEn = {
                 reviewChanges: "Review changes",
                 signInsTitle: ({ machine }: { machine: string }) => `Sign-ins on ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Accounts ${machine} uses on its own, for agents, clones and pushes. A connected account you choose for one is used instead.`,
+                signInsOffline: 'Its sign-ins show here when it’s back.',
                 signInConnectedOnly: "Signs in with a connected account",
                 signInConnected: "Use connected account",
                 signInAction: "Sign in…",

@@ -745,6 +745,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewChanges: "Rivedi le modifiche",
                 signInsTitle: ({ machine }: { machine: string }) => `Accessi su ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Account che ${machine} usa per conto suo, per agenti, cloni e push. Un account collegato che scegli per uno di essi viene usato al suo posto.`,
+                signInsOffline: "I suoi accessi compaiono qui quando torna.",
                 signInConnectedOnly: "Accede con un account collegato",
                 signInConnected: "Usa account collegato",
                 signInAction: "Accedi…",
