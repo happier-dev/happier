@@ -344,6 +344,42 @@ describe('Pi shared terminal host', () => {
     expect(port.notices).toHaveLength(1);
   });
 
+  it('retries a failed fence-lifting write when the bound terminal session reattaches', async () => {
+    const { host } = createHost();
+    const port = createSessionPort();
+    const { config, bridge, channel } = await attachFirstBridge(host);
+    host.publishLocalControl(port.session);
+    await channel.close();
+    bridge.bye('new');
+    await bridge.end();
+    const foreign = await connectBridge(config, { sessionId: 'pi-session-2' });
+    sockets.push(foreign.socket);
+    foreign.sendHello();
+    await vi.waitFor(() => expect(port.localControl()?.remoteWritable).toBe(false));
+    foreign.bye('resume');
+    await foreign.end();
+    await foreign.closed;
+
+    vi.mocked(port.session.updateAgentState).mockRejectedValueOnce(new Error('state write failed'));
+    const returning = host.channelHost.open(SPEC);
+    const returned = await connectBridge(config);
+    sockets.push(returned.socket);
+    returned.sendHello();
+    const first = listenTo(await returning);
+    expect(port.localControl()?.remoteWritable).toBe(false);
+    returned.bye('reload');
+    await returned.end();
+    await vi.waitFor(() => expect(first.closures).toEqual([{ kind: 'detached', reattachable: true }]));
+
+    const reopening = host.channelHost.open(SPEC);
+    const reloaded = await connectBridge(config);
+    sockets.push(reloaded.socket);
+    reloaded.sendHello();
+    await reopening;
+    expect(port.localControl()?.remoteWritable).toBe(true);
+    expect(port.notices).toHaveLength(1);
+  });
+
   it('ends the runner with Pi exit code and releases the launch artifacts', async () => {
     const { host, fakePi, terminations } = createHost();
     const config = await host.ensureListening();
@@ -408,6 +444,29 @@ describe('Pi shared terminal host', () => {
     host.publishLocalControl(port.session);
     expect(port.localControl()?.remoteWritable).toBe(false);
     expect(update).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not mute the console or launch Pi when opening is cancelled during listener startup', async () => {
+    const { host, launch } = createHost();
+    const muteConsole = vi.spyOn(logger, 'muteConsole');
+    const abort = new AbortController();
+    const reason = new Error('startup cancelled');
+    try {
+      const releaseArtifacts = vi.fn(async () => {});
+      const opening = host.channelHost.open(SPEC, { signal: abort.signal, retainArtifacts: releaseArtifacts });
+      abort.abort(reason);
+      await expect(opening).rejects.toBe(reason);
+      expect(launch).not.toHaveBeenCalled();
+      expect(muteConsole).not.toHaveBeenCalled();
+      expect(releaseArtifacts).toHaveBeenCalledTimes(1);
+
+      const replacement = await attachFirstBridge(host);
+      await replacement.channel.close();
+      await host.dispose();
+      expect(releaseArtifacts).toHaveBeenCalledTimes(1);
+    } finally {
+      muteConsole.mockRestore();
+    }
   });
 
   it('waits for the listener close event before disposal completes', async () => {

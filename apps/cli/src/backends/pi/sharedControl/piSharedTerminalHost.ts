@@ -86,6 +86,10 @@ function bridgeUnavailable(): Error {
   return new Error(PI_SHARED_CONTROL_BRIDGE_UNAVAILABLE_ERROR);
 }
 
+function attachCancelled(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error('Pi shared terminal attach was cancelled');
+}
+
 async function launchPiInThisTerminal(spec: PiRpcChannelOpenSpec): Promise<PiSharedTerminalProcess> {
   // Binary-safe owned launcher: managed JS runtime, inherited stdio, and a private IPC channel
   // that ends Pi if this runner dies.
@@ -204,12 +208,13 @@ export function createPiSharedTerminalHost(params: Readonly<{
   };
 
   const updateFence = (next: boolean): void => {
-    if (next === fenced) return;
-    fenced = next;
-    logger.infoFile(`[pi] Shared terminal ${fenced ? 'left' : 'returned to'} the bound Pi session`);
-    if (!session) return;
-    if (fenced) session.sendAgentMessage('pi', { type: 'message', message: SESSION_FENCE_NOTICE });
-    void publish(session);
+    if (next !== fenced) {
+      fenced = next;
+      logger.infoFile(`[pi] Shared terminal ${fenced ? 'left' : 'returned to'} the bound Pi session`);
+      if (fenced) session?.sendAgentMessage('pi', { type: 'message', message: SESSION_FENCE_NOTICE });
+    }
+    // A rebind can retry a failed publication even when the fence itself is unchanged.
+    if (session) void publish(session);
   };
 
   const rejectHelloWaiters = (error: Error): void => {
@@ -438,7 +443,7 @@ export function createPiSharedTerminalHost(params: Readonly<{
         reject: (error) => { settle(); reject(error); },
       };
       const onAbort = (): void => {
-        waiter.reject(signal?.reason instanceof Error ? signal.reason : new Error('Pi shared terminal attach was cancelled'));
+        if (signal) waiter.reject(attachCancelled(signal));
       };
       helloWaiters.add(waiter);
       signal?.addEventListener('abort', onAbort, { once: true });
@@ -454,15 +459,21 @@ export function createPiSharedTerminalHost(params: Readonly<{
         await options?.retainArtifacts?.();
         throw bridgeUnavailable();
       }
-      // Artifacts named in a live Pi's argv stay until that Pi exits (it re-reads them on `/reload`).
-      if (options?.retainArtifacts) retainedArtifacts.push(options.retainArtifacts);
-      if (attached || opening) throw new Error('Pi shared terminal already has an attached backend');
+      let unusedCleanup = options?.retainArtifacts;
+      if (attached || opening) {
+        await unusedCleanup?.();
+        throw new Error('Pi shared terminal already has an attached backend');
+      }
       opening = true;
       try {
         if (!launched) {
-          launched = true;
           await ensureListening();
           if (disposed) throw bridgeUnavailable();
+          if (options?.signal?.aborted) throw attachCancelled(options.signal);
+          // Pi re-reads its launch files on /reload, so retain only files it actually launches with.
+          if (unusedCleanup) retainedArtifacts.push(unusedCleanup);
+          unusedCleanup = undefined;
+          launched = true;
           awaitingHello = true;
           const ready = connection && !connection.closed
             ? Promise.resolve(bindChannel(connection))
@@ -496,6 +507,11 @@ export function createPiSharedTerminalHost(params: Readonly<{
         return await waitForHello(options?.signal);
       } finally {
         opening = false;
+        try {
+          await unusedCleanup?.();
+        } catch (error) {
+          logger.infoFile('[pi] Shared terminal unused launch artifact cleanup incomplete', error);
+        }
       }
     },
     onSessionAvailable: (listener) => {
