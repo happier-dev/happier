@@ -1007,9 +1007,10 @@ export async function startTestDaemon(params: {
           testDir: params.testDir,
           env: buildIsolatedDaemonServiceEnv({
             ...params.env,
-            // Use an isolated snapshot node_modules copy by default. Symlink mode aliases the live
-            // workspace tree and can observe transient file gaps while shared deps are being rebuilt.
-            HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? 'copy',
+            // Source launches use the shared launch owner's workspace default.
+            // Distribution launches retain their isolated dependency copy.
+            HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE
+              ?? (shouldUseCliSourceEntrypoint(params.env) ? undefined : 'copy'),
           }, params.happyHomeDir),
         },
         {
