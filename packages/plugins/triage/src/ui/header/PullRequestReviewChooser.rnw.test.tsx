@@ -419,34 +419,24 @@ describe('the mounted selected-PR review chooser', () => {
 
   it.each([false, true])('never repeats a canonical unknown review start and offers only Session open (partial=%s)', async partial => {
     const calls: string[] = [];
-    const { fixture, focusedLabels, controls } = await mountChooser(async (action, input) => {
-      calls.push(action);
-      if (action === TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1) {
-        const handler = createTriageStartPullRequestReviewActionHandler();
-        const context = {
-          services: {
-            targetedContributions: { observeForSelf: () => ({
-              readCurrent: async () => ({ contributions: [{
-                contributor: { pluginId: PENDING.review.entryRef.source.pluginId, contributionId: PENDING.review.entryRef.source.localId, immutableGenerationId: 'generation-1' },
-                protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: 1 },
-                descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example forge', kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] },
-                operations: { listInstances: {}, scan: {}, get: {}, verifyReviewWorkspace: {} }, surfaces: { detail: {} },
-              }] }), dispose() {},
-            }) },
-            actions: {
-              executeAdmittedTargetedOperation: async () => ({ kind: 'verified', pullRequest: { number: 17 } }),
-              execute: async () => ({ results: await fanoutStarts({ keys: partial ? ['codex', 'claude'] : ['codex'], startOne: async key =>
-                partial && key === 'codex' ? { runId: 'run-a', callId: 'call-a', sidechainId: 'sidechain-a' } : { runId: 'possibly-created' } }) }),
-            },
-          },
-        } as unknown as PluginInvocationContext;
-        return await handler(TriageStartPullRequestReviewInputV1Schema.parse(input), context);
-      }
-      if (action === 'session.open') return null;
-      throw new Error(`Unexpected action ${action}`);
-    }, async () => ({ kind: 'reviewComposition', input: ReviewStartInputSchema.parse({
+    const input = ReviewStartInputSchema.parse({
       ...DEFAULT_REVIEW_INPUT, reviewers: ['codex', ...(partial ? ['claude'] : [])].map(engineId => ({ kind: 'engine', engineId })),
-    }) }));
+    });
+    const keys = reviewReviewerIdsForStartV1(input);
+    const results = await fanoutStarts({ keys, startOne: async key =>
+      partial && key === keys[0] ? { runId: 'run-a', callId: 'call-a', sidechainId: 'sidechain-a' } : { runId: 'possibly-created' } });
+    const kit = await createTriagePullRequestReviewActionTestkit({ executeReview: async () => ({
+      intent: 'review', sessionId: PENDING.sessionId, results,
+    }) });
+    const prepared = TriagePreparePullRequestReviewResultV1Schema.parse(await kit.invoke('entries/prepare-pull-request-review-v1',
+      { ...kit.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha }));
+    if (prepared.status !== 'prepared') throw new Error('Expected prepared PR');
+    const { fixture, focusedLabels, controls } = await mountChooser(async (action, actionInput) => {
+      calls.push(action);
+      if (action === 'session.open') return null;
+      return await kit.invoke(action, actionInput as import('@happier-dev/plugin-sdk').JsonValue);
+    }, async () => ({ kind: 'reviewComposition', input }), undefined, undefined, undefined,
+    { ...PENDING, review: prepared.review, comparisonSource: prepared.comparisonSource });
     await controls.press('Start review');
     await settle();
     expect(focusedLabels.at(-1)).toBe('Open session');
@@ -484,6 +474,45 @@ describe('the mounted selected-PR review chooser', () => {
     expect(document.body.textContent).toContain(phase);
     expect(controls.presentation('Try again') !== undefined).toBe(!effectAttempted);
     expect(await fixture.queryByRole('button', { name: 'Open session' }) !== undefined).toBe(effectAttempted);
+  });
+
+  it('keeps Details on an uncorrelated Start settlement after the shared selector completes', async () => {
+    const calls: string[] = [];
+    const { fixture, controls } = await mountChooser(async action => {
+      calls.push(action);
+      throw new Error('Unknown Start must not open the Session');
+    }, undefined, undefined, undefined, async ({ action }) => {
+      calls.push(typeof action === 'string' ? action : action.localId);
+      return { ok: false, errorCode: 'RPC_OUTCOME_UNKNOWN', error: 'RPC_OUTCOME_UNKNOWN' };
+    });
+
+    await controls.press('Start review');
+    await settle();
+
+    expect(calls).toEqual([TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]);
+    await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+    expect(document.body.textContent).toContain('RPC_OUTCOME_UNKNOWN');
+    await expect(fixture.getByRole('button', { name: 'Open session' })).resolves.toBeDefined();
+    await expect(fixture.queryByRole('button', { name: 'Try again' })).resolves.toBeUndefined();
+  });
+
+  it('keeps Details and Retry for a typed refusal returned in the Start result', async () => {
+    const code = 'source_workspace_unavailable';
+    const requestId = 'review-source-preflight';
+    const calls: string[] = [];
+    const { fixture, controls } = await mountChooser(async action => {
+      calls.push(action);
+      return { v: 1, status: 'refused', reason: 'sourceUnavailable', failure: { codes: [code], requestId } };
+    });
+
+    await controls.press('Start review');
+    await settle();
+
+    expect(calls).toEqual([TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]);
+    expect(controls.presentation('Try again')).toBeDefined();
+    await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+    expect(document.body.textContent).toContain(code);
+    expect(document.body.textContent).toContain(requestId);
   });
 
   it('preserves a typed review input-selection failure in the existing notification', async () => {

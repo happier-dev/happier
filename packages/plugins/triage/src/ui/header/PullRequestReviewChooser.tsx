@@ -24,7 +24,7 @@ import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 import type { TriagePendingPullRequestReviewV1 } from './useEntrySessionStart.js';
 
 type ReviewControlFailureV1 = Readonly<{
-  code: string; message: string; details: ProtocolJsonValue;
+  code: string; message?: string; details?: ProtocolJsonValue; diagnostics?: readonly string[];
   requestId?: string; phase?: string; effectAttempted?: boolean;
 }>;
 
@@ -75,6 +75,12 @@ export function TriagePullRequestReviewChooser(
       if (operation.current !== currentOperation) return;
       if (continuation.kind === 'cancelled') { setPhase({ kind: 'choosing' }); return; }
       const failure = continuation.kind === 'settled' ? continuation.result.failure : continuation.failure;
+      if (continuation.kind === 'settled' && continuation.result.status === 'refused') {
+        setPhase({ kind: 'failed', failure: 'reviewRefused', hostFailure: failure === undefined ? undefined : {
+          code: failure.codes[0] ?? 'unavailable', requestId: failure.requestId, diagnostics: failure.codes.slice(1),
+        } });
+        return;
+      }
       if (failure !== undefined) void presentTriageMountedUiActionFailure(host, new PluginError({
         code: failure.codes[0] ?? 'unavailable',
         diagnostics: failure.codes.slice(1).map(code => ({ code, severity: 'error' })),
@@ -82,7 +88,7 @@ export function TriagePullRequestReviewChooser(
       }), text, continuation.kind === 'settled' && continuation.result.status === 'accepted'
         ? text('plugins.triage.review.relationNotRecorded', 'Review started. Relation not recorded.') : undefined);
       if (continuation.kind === 'unknown') { setPhase({ kind: 'failed', failure: 'reviewUnknown', hostFailure }); return; }
-      if (continuation.kind !== 'settled' || continuation.result.status === 'refused') {
+      if (continuation.kind !== 'settled') {
         setPhase({ kind: 'failed', failure: 'reviewRefused', hostFailure }); return;
       }
       await openSession();
@@ -138,7 +144,7 @@ export function TriagePullRequestReviewChooser(
       {notice === null ? null : failed?.hostFailure === undefined ? (
         <Status tone="warning" {...notice} />
       ) : (
-        <ActionFailureDetails {...failed.hostFailure} inline={{ fallback: text(notice.labelKey, notice.label) }} />
+        <ActionFailureDetails {...failed.hostFailure} inline={{ fallback: text(notice.labelKey, notice.label), diagnostics: failed.hostFailure.diagnostics }} />
       )}
       <Row gap="small" align="center" wrap>
         {phase.kind === 'choosing' || phase.kind === 'starting' || canRetryReview ? (
