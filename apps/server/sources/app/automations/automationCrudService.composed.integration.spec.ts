@@ -1782,6 +1782,16 @@ describe("automationCrudService (integration)", () => {
             idempotencyKey: "conversation:reserved-for-direct-invocation",
         })).resolves.toMatchObject({ id: prefixedManual!.id, causeKind: "manual" });
 
+        expect(prefixedManual!.id).not.toBe(first!.id);
+        const queuedManualRuns = await db.automationRun.findMany({
+            where: { automationId: created.id }, select: { id: true, state: true },
+        });
+        expect(queuedManualRuns).toHaveLength(2);
+        expect(queuedManualRuns).toEqual(expect.arrayContaining([
+            { id: first!.id, state: "queued" },
+            { id: prefixedManual!.id, state: "queued" },
+        ]));
+
         await setAutomationEnabled({
             accountId: account.id, automationId: created.id, enabled: false,
         });
