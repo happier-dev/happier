@@ -33,10 +33,11 @@ export async function startTelemetryCollector(options: TelemetryCollectorOptions
     }
     let pending = Promise.resolve();
     let assignmentReads = Promise.resolve();
-    let missRefresh: Promise<void> | undefined;
+    let queuedMissRefresh: Promise<void> | undefined;
 
-    function readAndApplyAssignments(): Promise<readonly TelemetryAssignment[]> {
+    function readAndApplyAssignments(onStart?: () => void): Promise<readonly TelemetryAssignment[]> {
         const read = assignmentReads.then(async () => {
+            onStart?.();
             if (stopped) return [];
             const assignments = await options.readAssignments();
             if (!stopped) admission.replace(assignments);
@@ -49,8 +50,10 @@ export async function startTelemetryCollector(options: TelemetryCollectorOptions
     function refreshOnMiss(): Promise<void> {
         // Await only the read and admission update. Receiver release waits for
         // in-flight HTTP requests, including the request asking for this read.
-        missRefresh ??= readAndApplyAssignments().then(() => {}).finally(() => { missRefresh = undefined; });
-        return missRefresh;
+        // Misses can share a queued read. Once it starts, a later miss needs
+        // another read because Home may have staged a candidate in the meantime.
+        queuedMissRefresh ??= readAndApplyAssignments(() => { queuedMissRefresh = undefined; }).then(() => {});
+        return queuedMissRefresh;
     }
 
     async function reconcile(): Promise<void> {

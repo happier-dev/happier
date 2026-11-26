@@ -72,26 +72,32 @@ describe('production collector assignment lifecycle', () => {
         } finally { await collector.stop(); expect(subscribed).toBe(0); await runtime.ingest.settled(); database.close(); }
     });
 
-    it('shares one assignment read across concurrent misses and reads once per sequential miss', async () => {
+    it('admits candidate preflights through one trailing read and reads once per sequential miss', async () => {
         const database = await fixture();
         const requests = 4;
-        let arrivals = 0;
-        let allArrived!: () => void;
-        const arrivalsReady = new Promise<void>(resolve => { allArrived = resolve; });
-        let blockRead = false;
+        const staleReadStarted = Promise.withResolvers<void>();
+        const releaseStaleRead = Promise.withResolvers<void>();
+        const preflightsArrived = Promise.withResolvers<void>();
+        const serving = { environmentId: 'A', tokenHash: hash('token-A') };
+        let assignments: readonly TelemetryAssignment[] = [serving];
+        let preflights = 0;
         let reads = 0;
         const runtime: typeof database.runtime = { ...database.runtime,
             acquireReceiver: options => database.runtime.acquireReceiver({ ...options, admit(request, signal) {
                 const result = options.admit!(request, signal);
-                if (blockRead && ++arrivals === requests) allArrived();
+                if (request.headers.authorization === 'Bearer candidate-A' && ++preflights === requests) preflightsArrived.resolve();
                 return result;
             } }),
         };
         const collector = await startTelemetryCollector({ port: 0, runtime, subscribeAssignmentsChanged: () => () => {},
             readAssignments: async () => {
                 reads++;
-                if (blockRead) await arrivalsReady;
-                return [{ environmentId: 'A', tokenHash: hash('token-A') }];
+                const snapshot = assignments;
+                if (reads === 2) {
+                    staleReadStarted.resolve();
+                    await releaseStaleRead.promise;
+                }
+                return snapshot;
             },
         });
         const send = (token: string) => fetch(`${collector.endpoint()}/v1/traces`, {
@@ -100,16 +106,20 @@ describe('production collector assignment lifecycle', () => {
         try {
             expect((await send('token-A')).status).toBe(200);
             expect(reads).toBe(1);
-            blockRead = true;
-            const concurrent = await Promise.all(Array.from({ length: requests }, (_, index) => send(`unknown-${index}`)));
-            blockRead = false;
-            expect(concurrent.map(response => response.status)).toEqual(Array(requests).fill(401));
-            expect(reads - 1).toBe(1);
+            const junk = send('junk');
+            await staleReadStarted.promise;
+            assignments = [serving, { environmentId: 'A', tokenHash: hash('candidate-A') }];
+            const concurrent = Promise.all(Array.from({ length: requests }, () => send('candidate-A')));
+            await preflightsArrived.promise;
+            releaseStaleRead.resolve();
+            expect((await junk).status).toBe(401);
+            expect((await concurrent).map(response => response.status)).toEqual(Array(requests).fill(200));
+            expect(reads - 2).toBe(1);
             for (let index = 0; index < requests; index++) {
                 expect((await send(`unknown-${index}`)).status).toBe(401);
             }
-            expect(reads - 2).toBe(requests);
-        } finally { await collector.stop(); database.close(); }
+            expect(reads - 3).toBe(requests);
+        } finally { releaseStaleRead.resolve(); await collector.stop(); database.close(); }
     });
 
     it('refuses a miss when the assignment read fails and recovers on a later request', async () => {

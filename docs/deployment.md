@@ -3470,7 +3470,8 @@ against the acknowledged runtime Link revision takes over. The pending digest
 stays in Home and is absent from the Environment and Link reads.
 For Workers, the bindings write makes the candidate digest available to the
 selected collector before Cloudflare updates the destinations. A bearer miss
-triggers one signed assignment read, shared by concurrent misses. The collector
+awaits a signed assignment read that starts after the miss. Misses that arrive
+while a read is in flight share one queued follow-up read. The collector
 uses the candidate for provider preflight and continues to accept the serving
 bearer until Cloudflare acknowledges both destination updates. Home then promotes
 the candidate and notifies the collector to retire the old digest. Clearing
