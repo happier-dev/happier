@@ -373,12 +373,14 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
                 ...(input.review.inlineThreshold === undefined ? {} : { inlineThreshold: input.review.inlineThreshold }),
             } : {}),
             sessionId: input.sessionId,
+            source: input.comparisonSource,
             changeType: 'committed',
             base: { kind: 'commit', baseCommit: input.review.observed.baseSha },
         });
         if (!admission.success) return { v: 1, status: 'refused', reason: 'reviewRejected' };
         const verified = await verifyTriagePullRequestReviewWorkspace(input, context,
-            admission.data.outputs?.includes('walkthrough') === true && (!composition || input.comparisonId === undefined));
+            (input.comparisonSource !== undefined || admission.data.outputs?.includes('walkthrough') === true)
+                && (!composition || input.comparisonId === undefined));
         if (verified.status !== 'verified') {
             const { sourceResult: _sourceResult, ...refusal } = verified;
             return refusal;

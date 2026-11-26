@@ -11,6 +11,10 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginActionPresentUserGate, PLUGIN_ACTION_INPUT_SCHEMAS, type SessionMessageSendResultV1 } from '@happier-dev/protocol';
 import { TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, projectTriagePrepareReviewWorkspaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
+import { dispatchReviewDispatch2 } from '@happier-dev/protocol/actions/executor/review/dispatch';
+import { createInMemoryReviewRecordPortV1 } from '../../../../protocol/src/reviews/reviewArtifactV1.testkit';
+import { REVIEW_HUMAN_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIdsReviewHumanV1';
+import { ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
 
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../accountExecution.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
@@ -947,6 +951,51 @@ describe('the Session-start Action a mounted header can actually press', () => {
 });
 
 describe('the registered formal Review transition', () => {
+    it('retains pinned Changes for a report-only person Review without launching executable work', async () => {
+        const records = createInMemoryReviewRecordPortV1();
+        const person = { kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'requested-person' }, required: true };
+        const h = await createTriagePullRequestReviewActionTestkit({ executeReview: async raw => {
+            const data = ReviewStartInputSchema.parse(raw);
+            const response = await dispatchReviewDispatch2({ actionId: 'review.start', data, parsed: { data },
+                ctx: { surface: 'ui', defaultSessionId: 'session-a', defaultSessionMachineId: TESTKIT_SELECTED_WORKSPACE.machineId },
+                deps: { reviewRecords: () => records }, workflowSessionScope: null,
+                // Authenticated reviewer HTTP and SCM transports are system boundaries;
+                // the registered PR Action, Review preparation and Artifact codec remain real.
+                executeHostChild: async (action, input) => {
+                    if (action !== REVIEW_HUMAN_ACTION_IDS_V1.setReviewers) throw new Error(`Unexpected executable work: ${action}`);
+                    const request = ReviewReviewersSetInputV1Schema.parse(input);
+                    return { ok: true, result: ReviewHumanActionStateV1Schema.parse({
+                        reviewId: request.reviewId, roundOrdinal: request.roundOrdinal,
+                        requests: [{ id: 'human-request', roundOrdinal: request.roundOrdinal,
+                            principal: person.principal, required: true, needsAccess: false }], verdicts: [],
+                        needsYou: { reviewId: request.reviewId, roundOrdinal: request.roundOrdinal, reason: 'review_needs_you',
+                            needsYou: true, requestedVerdict: true, pendingDecisions: false, canSubmitVerdict: true },
+                    }) };
+                },
+                startExecutionRunWithSelection: async () => { throw new Error('Person Review must not launch an Agent'); },
+            });
+            if (!response?.ok) throw new Error(JSON.stringify(response));
+            return response.result;
+        } });
+        const result = TriageStartPullRequestReviewResultV1Schema.parse(await h.invoke(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
+            TriageStartPullRequestReviewInputV1Schema.parse({ v: 1, sessionId: 'session-a', review: formalReviewInput().review,
+                comparisonSource: REVIEW_COMPARISON_SOURCE,
+                reviewInput: { reviewers: [person], instructions: 'Check ownership and all supplied prices.' },
+            })));
+        expect(result.status).toBe('accepted');
+        if (result.status !== 'accepted' || !result.review) throw new Error('Expected a retained human Review');
+        const stored = await records.read(result.review.reviewId);
+        expect(stored?.rounds).toEqual([expect.objectContaining({ ordinal: 1, state: 'completed', reviewerIds: [], runs: [],
+            comparisonId: REVIEW_COMPARISON.id, comparisonCapture: {
+                target: { kind: 'machine', machineId: TESTKIT_SELECTED_WORKSPACE.machineId },
+                input: { sessionId: 'session-a', cwd: formalReviewInput().review.repositoryPath,
+                    source: REVIEW_COMPARISON_SOURCE, comparisonId: REVIEW_COMPARISON.id },
+            },
+        })]);
+        expect(h.captureInputs).toHaveLength(1);
+        expect(h.verifyInputs).toHaveLength(1);
+    });
+
     it.each([false, true])('admits the selected-PR composition without a prepared comparison (walkthrough=%s)', async walkthrough => {
         const reviews: unknown[] = [];
         const h = await createTriagePullRequestReviewActionTestkit({ executeReview: async input => {
@@ -964,15 +1013,15 @@ describe('the registered formal Review transition', () => {
             TriageStartPullRequestReviewInputV1Schema.parse(request));
         expect(TriageStartPullRequestReviewResultV1Schema.parse(result)).toMatchObject({ status: 'accepted' });
         expect(h.verifyInputs).toHaveLength(1);
-        expect(h.captureInputs).toHaveLength(walkthrough ? 1 : 0);
+        expect(h.captureInputs).toHaveLength(1);
         expect(reviews).toEqual([expect.objectContaining({ reviewers,
             sessionId: 'session-a', scope: 'changes', cwd: formalReviewInput().review.repositoryPath,
             scmPullRequestReviewScope: expect.objectContaining({ observed: TESTKIT_OBSERVED_REVISION }),
-            ...(walkthrough ? { comparisonId: REVIEW_COMPARISON.id } : {}),
+            comparisonId: REVIEW_COMPARISON.id, source: REVIEW_COMPARISON_SOURCE,
         })]);
         if (!walkthrough) {
             expect(reviews[0]).not.toHaveProperty('narrator');
-            expect(ReviewStartInputSchema.parse(reviews[0]).comparisonId).toBeUndefined();
+            expect(ReviewStartInputSchema.parse(reviews[0]).comparisonId).toBe(REVIEW_COMPARISON.id);
         }
     });
 
@@ -1060,8 +1109,9 @@ describe('the registered formal Review transition', () => {
         ], instructions: 'My editable review composition', outputs: ['walkthrough'] };
         const answer = await h.invoke(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1, {
             v: 1, sessionId: 'session-a', review: parsed.review,
-            reviewInput: { ...reviewInput, cwd: '/another-repository', scope: 'repository', comparisonId: 'another-comparison' },
-            comparisonId: parsed.comparisonId,
+            reviewInput: { ...reviewInput, cwd: '/another-repository', scope: 'repository', comparisonId: 'another-comparison',
+                source: { kind: 'workingTree', area: 'both' } },
+            comparisonId: parsed.comparisonId, comparisonSource: parsed.comparisonSource,
         });
         expect(TriageStartPullRequestReviewResultV1Schema.parse(answer)).toMatchObject({ status: 'accepted',
             reviewResult: { intent: 'review', results: reviewReviewerIdsForStartV1(ReviewStartInputSchema.parse(reviewInput)).map(key => ({ key })) } });
@@ -1072,7 +1122,7 @@ describe('the registered formal Review transition', () => {
             scmPullRequestReviewScope: expect.objectContaining({ observed: parsed.review.observed }),
         })]);
         expect(reviews[0]).not.toHaveProperty('comparisonId', 'another-comparison');
-        expect(reviews[0]).toMatchObject({ comparisonId: parsed.comparisonId });
+        expect(reviews[0]).toMatchObject({ comparisonId: parsed.comparisonId, source: parsed.comparisonSource });
     });
 
     it.each(['composition', 'chooser'])('preserves an admitted steps Workflow receipt instead of claiming its reviewers already started (%s)', async mode => {
@@ -1190,12 +1240,12 @@ describe('the registered formal Review transition', () => {
         expect(events).toEqual([]);
     });
 
-    it('refuses a different PR number before comparison capture', async () => {
+    it.each([false, true])('refuses a different PR number before comparison capture (walkthrough=%s)', async walkthrough => {
         const events: string[] = [];
         const comparisonSource = { ...REVIEW_COMPARISON_SOURCE, locator: { ...REVIEW_COMPARISON_SOURCE.locator, number: 18 } };
         const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
         await expect(handler({
-            ...formalReviewInput(), outputs: ['walkthrough'],
+            ...formalReviewInput(), ...(walkthrough ? { outputs: ['walkthrough'] } : {}),
             comparisonSource,
         }, createFormalReviewContext({
             verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
@@ -1217,7 +1267,7 @@ describe('the registered formal Review transition', () => {
         }, createFormalReviewContext({
             verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
             captureResult: { success: true, comparison: REVIEW_COMPARISON },
-            expectedReviewInputs: { outputs: ['walkthrough'], narrator, comparisonId: REVIEW_COMPARISON.id },
+            expectedReviewInputs: { outputs: ['walkthrough'], narrator, comparisonId: REVIEW_COMPARISON.id, source: REVIEW_COMPARISON_SOURCE },
             events,
         }))).resolves.toMatchObject({ status: 'started' });
         expect(events).toEqual([
