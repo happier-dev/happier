@@ -19,6 +19,7 @@ import { t } from '@/text';
 
 import { WelcomeActionCard, WelcomeWayButton } from './WelcomeActionCard';
 import { WelcomeActionList, type WelcomeActionAdmission } from './WelcomeActionList';
+import { WelcomeHeadline } from './WelcomeHeadline';
 import type { WelcomeEntryViewModel } from './welcomeEntryViewModel';
 
 export type { WelcomeEntryViewModel } from './welcomeEntryViewModel';
@@ -110,12 +111,18 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                     {model.context ? <View style={styles.context}>
                         <HomeContextLine testID="welcome-home-context" {...model.context} />
                     </View> : null}
-                    <Text accessibilityRole="header" style={[styles.title, compact ? styles.headlineCompact : null]}>
-                        {compact && model.heading.compact ? model.heading.compact.title : model.heading.title}
-                    </Text>
-                    <Text accessibilityRole="header" style={[styles.subtitleTitle, compact ? styles.headlineCompact : null]}>
-                        {compact && model.heading.compact ? model.heading.compact.subtitle : model.heading.subtitle}
-                    </Text>
+                    {model.heading.rotation && !(compact && model.heading.compact) ? (
+                        <WelcomeHeadline headline={model.heading.rotation} interactive={interaction != null}
+                            lineStyle={[styles.title, compact ? styles.headlineCompact : null]}
+                            line2Style={[styles.subtitleTitle, compact ? styles.headlineCompact : null]} />
+                    ) : <>
+                        <Text accessibilityRole="header" style={[styles.title, compact ? styles.headlineCompact : null]}>
+                            {compact && model.heading.compact ? model.heading.compact.title : model.heading.title}
+                        </Text>
+                        <Text accessibilityRole="header" style={[styles.subtitleTitle, compact ? styles.headlineCompact : null]}>
+                            {compact && model.heading.compact ? model.heading.compact.subtitle : model.heading.subtitle}
+                        </Text>
+                    </>}
                     {model.heading.intro ? (
                         <Text testID="welcome-intro" style={[styles.intro, compact ? styles.introCompact : null]}>
                             {model.heading.intro}
@@ -259,6 +266,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginBottom: theme.space.s12,
     },
     headingBlock: {
+        // The column's width, so the headline's fixed line can fit itself to it (its parts stand by transform).
+        alignSelf: 'stretch',
         maxWidth: '100%',
         alignItems: 'center',
         // No vertical gap between the two title lines — matches the brand

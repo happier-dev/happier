@@ -18,6 +18,7 @@ import { t } from '@/text';
 import { FirstOpenWelcomeModelContext } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { ShellHeaderClearanceContext, ShellWelcomeOverflowContext } from '@/components/onboarding/unauthShell/shellCorner';
 
+import { joinWelcomeHeadlinePhrase, readWelcomeHeadlineVisitOrder, translateWelcomeHeadline } from './welcomeHeadline';
 import { WelcomeDecisionPanel } from './WelcomeDecisionPanel';
 import { WelcomeEntryView, type WelcomeEntryViewModel } from './WelcomeEntryView';
 
@@ -349,9 +350,13 @@ describe('WelcomeDecisionPanel', () => {
     });
 
     it.each([
-        { state: 'live', expiresInMs: 60_000, title: 'welcome.terminalContinuationTitle', subtitle: 'welcome.terminalContinuationSubtitle' },
-        { state: 'expired', expiresInMs: -1, title: 'welcome.brandTaglineLine1', subtitle: 'welcome.brandTaglineLine2' },
-    ] as const)('greets a person sent here by a $state terminal link', async ({ state, expiresInMs, title, subtitle }) => {
+        { state: 'live', expiresInMs: 60_000, heading: () => [t('welcome.terminalContinuationTitle'), t('welcome.terminalContinuationSubtitle')] },
+        { state: 'expired', expiresInMs: -1, heading: () => {
+            // An expired link greets like a first visit: this visit's first headline phrase over its fixed second line.
+            const headline = translateWelcomeHeadline(readWelcomeHeadlineVisitOrder());
+            return [joinWelcomeHeadlinePhrase(headline.phrases[0]!, headline.joiner), headline.line2];
+        } },
+    ] as const)('greets a person sent here by a $state terminal link', async ({ state, expiresInMs, heading }) => {
         const { setPendingTerminalConnect, clearPendingTerminalConnect } = await import('@/sync/domains/pending/pendingTerminalConnect');
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         setPendingTerminalConnect({
@@ -367,7 +372,7 @@ describe('WelcomeDecisionPanel', () => {
             const headers = screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'header')
                 .map(node => node.props.children);
             // The greeting leads; the quiet "Already use Happier?" group heading follows it.
-            expect(headers.slice(0, 2)).toEqual([t(title), t(subtitle)]);
+            expect(headers.slice(0, 2)).toEqual(heading());
             const doors = screen.findAll(node => typeof node.type === 'string'
                 && (node.props.testID === 'welcome-primary-start-title' || node.props.testID === 'welcome-scan-existing-home-title'));
             expect(doors[0]?.props.testID).toBe(state === 'live' ? 'welcome-scan-existing-home-title' : 'welcome-primary-start-title');
@@ -391,8 +396,7 @@ describe('WelcomeDecisionPanel', () => {
 
         const greetings = screen.findAll(node => typeof node.type === 'string'
             && node.props.accessibilityRole === 'header'
-            && (node.props.children === t('welcome.brandTaglineLine1')
-                || node.props.children === t('welcome.brandTaglineLine2')));
+            && node.props.children === t('welcome.headline.everywhere'));
         expect(greetings).toHaveLength(0);
         await screen.pressByTestIdAsync('welcome-primary-start');
         expect(onAuthenticate).toHaveBeenCalledWith(expect.objectContaining({

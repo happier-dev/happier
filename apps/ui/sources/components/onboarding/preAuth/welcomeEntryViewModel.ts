@@ -9,6 +9,7 @@ import type { OrganizationPolicyManagedDisplay } from '@/components/organization
 import { t } from '@/text';
 
 import type { WelcomeAuthenticationMethod, WelcomeEntryModel } from './composeWelcomeEntryModel';
+import { joinWelcomeHeadlinePhrase, readWelcomeHeadlineVisitOrder, translateWelcomeHeadline, type WelcomeHeadline } from './welcomeHeadline';
 
 type Action = Readonly<{
     testID: string;
@@ -40,7 +41,14 @@ export type WelcomeEntryViewModel = Readonly<{
     /** The one quiet line naming the Home this welcome belongs to, above its heading (a Home reached by address). */
     context?: Readonly<{ label?: string; address: string }>;
     /** `compact`: the phone's own two lines where they differ (direction A greets a phone with the welcome question). */
-    heading?: Readonly<{ title: string; subtitle: string; intro?: string; compact?: Readonly<{ title: string; subtitle: string }> }>;
+    heading?: Readonly<{
+        title: string;
+        subtitle: string;
+        intro?: string;
+        compact?: Readonly<{ title: string; subtitle: string }>;
+        /** The first Welcome's headline: this visit's phrases for its first line (`title` is the first of them). */
+        rotation?: WelcomeHeadline;
+    }>;
     /** The quiet line under the doors on a greeting (direction A): what Happier is, in three facts. */
     trust?: string;
     retention?: RelayRetentionDisclosureModel;
@@ -244,9 +252,7 @@ export function projectWelcomeEntryViewModel(
             : returning ? input.returningGreeting
                 // Direction A (owner 2026-11-19): the product's own line leads the first welcome; the door below says
                 // what starting here does ("Your key lives here" only where the key is made on this device).
-                : { title: t('welcome.brandTaglineLine1'), subtitle: t('welcome.brandTaglineLine2'),
-                    intro: t('welcome.brandSubTagline'),
-                    compact: { title: t('welcome.welcomeQuestionTitle'), subtitle: t('welcome.welcomeQuestionSubtitle') } },
+                : firstWelcomeHeading(),
         trust: input.showGreeting && !input.terminalWaiting ? t('welcome.welcomeTrustLine') : undefined,
         retention: retention?.kind === 'summary' ? { kind: 'summary', summary: retention.summary }
             : retention ? { kind: 'unreadable' } : undefined,
@@ -264,5 +270,21 @@ export function projectWelcomeEntryViewModel(
                 iconName: 'hard-drives',
             },
         } : undefined,
+    };
+}
+
+/**
+ * The first Welcome's heading (direction A, owner 2026-11-19; headline owner 2026-11-26): the product's own line leads
+ * it, its first line this visit's phrases, and a phone asks its question instead.
+ */
+function firstWelcomeHeading(): NonNullable<WelcomeEntryViewModel['heading']> {
+    const rotation = translateWelcomeHeadline(readWelcomeHeadlineVisitOrder());
+    const first = rotation.phrases[0];
+    return {
+        title: first ? joinWelcomeHeadlinePhrase(first, rotation.joiner) : rotation.line2,
+        subtitle: rotation.line2,
+        intro: t('welcome.brandSubTagline'),
+        compact: { title: t('welcome.welcomeQuestionTitle'), subtitle: t('welcome.welcomeQuestionSubtitle') },
+        rotation,
     };
 }
