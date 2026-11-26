@@ -4,12 +4,13 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome, createServedTerminalActionRelay, servedMachineActionRelayInstallationPublicKey } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 const boundary = vi.hoisted(() => ({
     params: { id: 'machine-1' } as Record<string, string>,
@@ -46,11 +47,40 @@ const { AuthProvider } = await import('@/auth/context/AuthContext');
 describe('Machine detail navigation and terminal entry', () => {
     let serverId: string;
     let scopeServerId: string;
+    const serverUrl = 'https://machine-detail.test';
+    const serverIdentityId = 'srv_machine_detail';
+    const scope = () => ({ serverId: scopeServerId, accountId: 'account-a' });
+    const makeMachine = (machine: Partial<Machine> = {}) => createHydratedPlainMachineFixture({
+        id: 'machine-1', accountId: 'account-a', machine: { activeAt: Date.now(), presenceProtocolVersion: 1, ...machine },
+    });
     // The census and the exact by-id Machine read (read-batch) answer the same row.
-    const answerMachineRow = (row: ReturnType<typeof createPlainMachineRowFixture>) => {
+    const answerMachineRow = (row: ReturnType<typeof createPlainMachineRowFixture> | ReturnType<typeof createPlainSharedMachineRowFixture>) => {
         home.answer(serverId, '/v1/machines', { body: [row] });
         home.answer(serverId, '/v1/machines/machine-1', { body: { machine: row } });
+        home.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, id => id === row.id ? row : null).json(),
+        }) });
     };
+    const publishMachine = async (machine: Machine) => {
+        if (machine.isShared) {
+            const shell = await answerExternalActionAccountForHome(home, serverId, { machineId: machine.id,
+                custodian: { accountId: 'account-owner', displayName: 'Account Owner' }, sharedMachineRole: 'use',
+                actionId: 'machines.terminal.list', tokenEpoch: 0, requesterInvocation: 'credentials',
+                execute: () => ({ ok: true, terminals: [], machineShell: { ok: true, cwd: '/members/account-a' } }),
+            });
+            machine = { ...machine, access: shell.machine.access, installationId: shell.machine.installationId,
+                installationPublicKey: shell.machine.installationPublicKey };
+        } else {
+            machine = { ...machine, installationPublicKey: await servedMachineActionRelayInstallationPublicKey() };
+        }
+        const row = machine.isShared
+            ? createPlainSharedMachineRowFixture({ id: machine.id, custodianAccountId: 'account-owner', role: 'use', machine })
+            : createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine });
+        answerMachineRow(row);
+        await publishMachineInventoryForTest(scope(), [{ ...machine, access: row.access, dataEncryptionKey: row.dataEncryptionKey }]);
+    };
+    const applySettings = (settings: typeof settingsDefaults) =>
+        storage.getState().applySettingsForScope(scope(), settings, (storage.getState().settingsVersion ?? 0) + 1);
     let disposeLoader: (() => void) | undefined;
     beforeEach(async () => {
         await standardCleanup();
@@ -69,13 +99,25 @@ describe('Machine detail navigation and terminal entry', () => {
                 frames: [], nextByteOffset: 0, availableByteOffset: 0, droppedBeforeByteOffset: 0, done: true };
             return { supported: false, reason: 'not-supported' };
         });
-        serverId = await home.addHome({ name: 'Machine Home', serverUrl: 'https://machine-detail.test', serverIdentityId: 'srv_machine_detail', accountId: 'account-a', currentAccount: true });
+        serverId = await home.addHome({ name: 'Machine Home', serverUrl, serverIdentityId, accountId: 'account-a', currentAccount: true });
         scopeServerId = getActiveServerSnapshot().serverId;
-        answerMachineRow(createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' }));
-        await storage.getState().activateProfileScope({ serverId, accountId: 'account-a' });
-        await storage.getState().activateSettingsScope({ serverId, accountId: 'account-a' });
-        storage.getState().applySettings(settingsDefaults, (storage.getState().settingsVersion ?? 0) + 1);
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now(), isShared: false })], true);
+        const terminalRelay = await createServedTerminalActionRelay({
+            homes: [{ serverId: scopeServerId, serverUrl, serverIdentityId, accountId: 'account-a' }],
+            machineIds: ['machine-1'], machineRpc: boundary.rpc,
+        });
+        for (const actionId of ['machines.terminal.list', 'machines.terminal.open', 'machines.terminal.close']) {
+            for (const path of [`/v1/actions/${actionId}`, `/v1/actions/${actionId}/execution-authorization`]) {
+                home.answer(serverId, `POST ${path}`, { select: async (body, request) => {
+                    const response = await terminalRelay.handle({ url: new URL(request.url), method: 'POST', headers: new Headers(request.init?.headers), body });
+                    if (!response) throw new Error('Expected the owner Machine terminal relay to handle the request');
+                    return { status: response.status, body: await response.json() };
+                } });
+            }
+        }
+        await storage.getState().activateProfileScope(scope());
+        await storage.getState().activateSettingsScope(scope());
+        applySettings(settingsDefaults);
+        await publishMachine(makeMachine());
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         disposeLoader = await installRealActionExecutorModuleLoader();
         vi.mocked(Modal.show).mockClear();
@@ -89,15 +131,15 @@ describe('Machine detail navigation and terminal entry', () => {
     );
 
     it('shows the inherited effective host without implying that override-off disables hosting', async () => {
-        storage.getState().applySettings({ ...settingsDefaults, sessionTerminalHost: 'herdr' }, (storage.getState().settingsVersion ?? 0) + 1);
+        applySettings({ ...settingsDefaults, sessionTerminalHost: 'herdr' });
         boundary.params = { id: 'machine-1', page: 'terminal' };
         const screen = await render(<MachineSubPageScreen />);
         expect(screen.findAllByTestId('machine-terminal-effective-host').some(row => row.props.subtitle === 'Herdr')).toBe(true);
     });
 
     it('keeps the Windows launch override on the Terminal page of a Windows machine, and only there', async () => {
-        const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now() });
-        storage.getState().applyMachines([{ ...machine, metadata: { ...machine.metadata!, platform: 'win32' } }], true);
+        const machine = makeMachine();
+        await publishMachine({ ...machine, metadata: { ...machine.metadata!, platform: 'win32' }, metadataVersion: machine.metadataVersion + 1 });
         boundary.params = { id: 'machine-1', page: 'terminal' };
         const screen = await render(<MachineSubPageScreen />);
         expect(screen.findAll(node => node.props?.title === 'machine.windows.remoteSessionModeOverrideTitle').length).toBeGreaterThan(0);
@@ -109,7 +151,7 @@ describe('Machine detail navigation and terminal entry', () => {
     });
 
     it('shows the retained host choice even after an older UI removes its legacy tmux record', async () => {
-        storage.getState().applySettings({ ...settingsDefaults, sessionTerminalHostByMachineId: { 'machine-1': 'herdr' }, sessionTmuxByMachineId: {} }, (storage.getState().settingsVersion ?? 0) + 1);
+        applySettings({ ...settingsDefaults, sessionTerminalHostByMachineId: { 'machine-1': 'herdr' }, sessionTmuxByMachineId: {} });
         boundary.params = { id: 'machine-1', page: 'terminal' };
         const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
         const screen = await render(<MachineSubPageScreen />);
@@ -125,7 +167,9 @@ describe('Machine detail navigation and terminal entry', () => {
         const screen = await render(<MachinePageScreen />);
         await screen.pressByTestIdAsync('machine-detail-start-session');
         const route = boundary.push.mock.calls.at(-1)?.[0] as { pathname: string; params: { draftId: string } };
-        expect(route).toEqual({ pathname: '/new', params: { draftId: expect.any(String) } });
+        expect(route).toEqual({ pathname: '/new', params: {
+            draftId: expect.any(String), draftServerId: scope.serverId, draftAccountId: scope.accountId,
+        } });
         expect(readNewSessionDraftFromRepository({ scope, draftId: route.params.draftId })).toMatchObject({
             selectedMachineId: 'machine-1', targetServerId: serverId,
             executionTarget: { kind: 'machine', target: { serverId, machineId: 'machine-1' } },
@@ -137,23 +181,14 @@ describe('Machine detail navigation and terminal entry', () => {
         { isShared: true, active: true, visible: true },
         { isShared: false, active: false, visible: false },
     ])('offers an admitted header Shell while online, including shared Machines ($isShared, $active)', async ({ isShared, active, visible }) => {
-        const row = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' });
-        const access = { ...row.access!, role: isShared ? 'use' as const : 'manage' as const };
-        const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(), isShared, active, access,
-            presenceProtocolVersion: 1 });
-        answerMachineRow(createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine }));
-        storage.getState().applyMachines([machine], true, { sourceServerId: scopeServerId, sourceAccountId: 'account-a' });
-        observeMachinePresenceForTest({ serverId: scopeServerId, accountId: 'account-a' }, [machine.id]);
+        await publishMachine(makeMachine({ isShared, active, ...(active ? {} : { activeAt: 0 }) }));
         const screen = await render(<MachinePageScreen />);
         await waitForHomeGovernance(() => expect(screen.findAll(node => node.props?.testID === 'machine-detail-open-terminal' && typeof node.props.onPress === 'function').length > 0).toBe(visible));
     });
 
     it('opens the admitted requester root even when Machine metadata has no home folder', async () => {
-        const row = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' });
-        const metadata = { ...createMachineFixture().metadata!, homeDir: '' };
-        answerMachineRow({ ...row, metadata: encodePlainMachineStoredContent(metadata) });
-        storage.getState().applyMachines([], true);
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now(), isShared: false, metadata })], true);
+        const machine = makeMachine();
+        await publishMachine({ ...machine, metadata: { ...machine.metadata!, homeDir: '' }, metadataVersion: machine.metadataVersion + 1 });
         const screen = await render(<MachinePageScreen />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('machine-detail-open-terminal')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-detail-open-terminal');
