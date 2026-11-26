@@ -7925,7 +7925,7 @@ describe('plugin-surface action branch selection', () => {
                 targetSourceCustody: TARGET_SOURCE_CUSTODY,
                 resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {},
                 createOpenNewSession: executeSelectedOperation => createPluginOpenNewSessionHostApiHandler({
-                    pluginId: CALLER_PLUGIN_ID, accountLifetime, isCurrent: () => true,
+                    ...mountedCallerBinding(), accountLifetime, isCurrent: () => true,
                     executionTarget: { serverId: accountLifetime.scope.serverId, machineId: 'machine-client-action' },
                     executeSelectedOperation,
                 }),
@@ -8099,7 +8099,7 @@ describe('plugin-surface action branch selection', () => {
                         targetPluginId: CALLER_PLUGIN_ID, accountLifetime },
                 }) } : {}),
                 createOpenNewSession: executeSelectedOperation => createPluginOpenNewSessionHostApiHandler({
-                    pluginId: CALLER_PLUGIN_ID, accountLifetime, isCurrent: () => true,
+                    ...mountedCallerBinding(), accountLifetime, isCurrent: () => true,
                     executionTarget: { serverId: accountLifetime.scope.serverId, machineId: scope.machineId }, executeSelectedOperation,
                 }) });
             newSessionNavigation.mockReset();

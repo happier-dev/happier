@@ -96,6 +96,8 @@ export function seedAndOpenNewSession(params: Readonly<{
      * so a seed with attachments or a post-create Action requires this identity.
      */
     pluginId?: string;
+    /** Host-stamped source contribution for the seeded Action's caller context. */
+    contributionLocalId?: string;
     /** Internal same-setup projection, never part of plugin-authored wire input. */
     configurationDraft?: NewSessionDraft;
     /** Host-resolved source intent. The mounted draft owns entitlement. */
@@ -178,7 +180,14 @@ export function seedAndOpenNewSession(params: Readonly<{
     const seededDraftId = (params.seedDraft ?? seedNewSessionDraftV1)({
         seed: {
             ...(seed.actionDefault === undefined ? {} : { actionDefault: seed.actionDefault }),
-            ...(postCreateAction && pluginId ? { postCreateAction: { intent: postCreateAction, pluginId, authoringScope: params.scope } } : {}),
+            ...(postCreateAction && pluginId ? {
+                postCreateAction: {
+                    intent: postCreateAction,
+                    pluginId,
+                    ...(params.contributionLocalId === undefined ? {} : { contributionLocalId: params.contributionLocalId }),
+                    authoringScope: params.scope,
+                },
+            } : {}),
             ...(seed.sessionName === undefined ? {} : { sessionName: seed.sessionName }),
             ...(seed.initialSessionFacts === undefined ? {} : { initialSessionFacts: seed.initialSessionFacts }),
             ...(seed.promptStack === undefined ? {} : { promptStack: seed.promptStack }),

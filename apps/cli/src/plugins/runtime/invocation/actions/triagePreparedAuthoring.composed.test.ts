@@ -84,6 +84,7 @@ describe('Triage prepared New Session authoring', () => {
             const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff', draftId: 'draft' }));
             const handler = createPluginOpenNewSessionHandler({
                 pluginId: 'happier.triage',
+                contributionLocalId: 'triage-app',
                 accountLifetime: { scope: { serverId: 'server-1', accountId: 'account-1' },
                     isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
                 isCurrent: () => true,

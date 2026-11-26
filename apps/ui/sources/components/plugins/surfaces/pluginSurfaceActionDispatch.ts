@@ -1056,7 +1056,8 @@ function createClientActionUi(
             const retained = options?.preparedReviewWorkspace === undefined ? undefined : selectedInputs.resolve(options.preparedReviewWorkspace);
             if (options?.preparedReviewWorkspace !== undefined && !retained) throw new PluginError({ code: 'plugin_surface_targeted_selection_invalid' });
             const openNewSession = createPluginOpenNewSessionHandler({
-                pluginId: selection.action.pluginId,
+                pluginId: selection.registration.contribution.pluginId,
+                contributionLocalId: selection.registration.contribution.localId,
                 accountLifetime,
                 lifetimeSignal: signal,
                 isCurrent,

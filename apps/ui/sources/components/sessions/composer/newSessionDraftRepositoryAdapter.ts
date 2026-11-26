@@ -2,7 +2,7 @@ import { ComposerAttachmentDraftV1Schema } from '@happier-dev/protocol/runtime/i
 import { SessionSpaceMembershipTargetV1Schema } from '@happier-dev/protocol/actions';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { nullable, nonoptional, strictObject, string, minLength } from 'zod/mini';
+import { nullable, nonoptional, optional, strictObject, string, minLength } from 'zod/mini';
 import type { StrictJsonValue } from '@happier-dev/protocol/drafts/sessionDrafts';
 import type { SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
@@ -40,6 +40,7 @@ import { getSessionDraftAuthoringFieldValues } from '@/sync/ops/sessionDrafts/se
 const storedPostCreateActionSchema = strictObject({
     intent: nonoptional(PluginUiNewSessionSeedV1Schema.shape.postCreateAction),
     pluginId: string().check(minLength(1)),
+    contributionLocalId: optional(string().check(minLength(1))),
     authoringScope: strictObject({
         serverId: string().check(minLength(1)),
         accountId: string().check(minLength(1)),

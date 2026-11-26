@@ -1363,6 +1363,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         ? (executeSelectedOperation: PluginSurfaceHostApiMethodHandler) => (
             createPluginOpenNewSessionHostApiHandler({
                 pluginId: input.facts.pluginId,
+                contributionLocalId: input.facts.contributionId,
                 accountLifetime,
                 lifetimeSignal: mountLifetime.signal,
                 isCurrent,

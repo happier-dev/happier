@@ -25,6 +25,7 @@ import { installNewSessionScreenModelCommonModuleMocks, selectNewSessionTestHome
 import type { HandleCreateSessionOptions } from './useCreateNewSession';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { TRIAGE_APP_PAGE_LOCAL_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { createPromptDocInLibrary } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
@@ -646,6 +647,8 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       await import('../../../../../../../packages/plugins/triage/src/corpus/collections/ids');
     const { toCorpusStoredValue } = await import('../../../../../../../packages/plugins/triage/src/corpus/collections/rowCodec');
 
+    const actionId = TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1;
+    const manifest = TRIAGE_PLUGIN.manifest;
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     if (!accountLifetime) throw new Error('Expected creator Account custody');
     const scope = accountLifetime.scope;
@@ -662,8 +665,6 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
 
     const invocations: unknown[] = [];
     let linkRequestId: string | undefined;
-    const actionId = TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1;
-    const manifest = TRIAGE_PLUGIN.manifest;
     const installed = await installPortableAccountPluginReleaseForTest({
       manifest: scenario === 'confirmation' ? {
         ...manifest,
@@ -790,7 +791,20 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
       else {
         expect(await requestTriageNewSessionAuthoringV1({
           version: () => ({ methods: ['openNewSession'] }),
-          openNewSession: async seed => open(seed),
+          openNewSession: async seed => {
+            if (scenario !== 'docked-fix-start') return open(seed);
+            const { createPluginOpenNewSessionHandler } = await import('@/components/plugins/surfaces/pluginOpenNewSessionHostApi');
+            const caller = { pluginId: manifest.id, contributionLocalId: TRIAGE_APP_PAGE_LOCAL_ID_V1 };
+            const handler = createPluginOpenNewSessionHandler({
+              ...caller, accountLifetime, isCurrent: accountLifetime.isCurrent,
+              executeSelectedOperation: async () => { throw new Error('No preparation is requested'); },
+            });
+            newSessionPush.mockClear();
+            expect(await handler(seed)).toBeNull();
+            const route = newSessionPush.mock.calls[0]?.[0];
+            expect(route).toMatchObject({ pathname: '/new', params: { draftId: expect.any(String) } });
+            draftId = (route as { params: { draftId: string } }).params.draftId;
+          },
           selectActionInput: async () => { throw new Error('No preparation is requested'); },
         }, { entries: [], linkEntry: { entryRef, display: TESTKIT_LINK_DISPLAY, sourceInstance: configured.instance },
           promptText: scenario === 'docked-investigate' ? 'Investigate this entry'
@@ -798,7 +812,11 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
           .toEqual({ status: 'seeded' });
       }
       expect(invocations).toEqual([]);
-      expect(Boolean(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction)).toBe(!plain);
+      const postCreateAction = readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction;
+      expect(Boolean(postCreateAction)).toBe(!plain);
+      if (scenario === 'agent') {
+        expect(postCreateAction).toMatchObject({ pluginId: manifest.id, contributionLocalId: configuredActionId });
+      }
       const createRequestId = 'triage-docked-create';
       const operationId = 'triage-docked-spawn';
       const presentedWithInvocationCounts: number[] = [];
@@ -845,6 +863,43 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         });
         expect(rows.rows).toHaveLength(linksEntry ? 1 : 0);
         expect(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction).toBeUndefined();
+        if (scenario === 'docked-fix-start') {
+          // Exercise the browser relay with the reloaded seed and the Session
+          // that actually settled. Only the final Account transport is a fixture.
+          if (!postCreateAction) throw new Error('Expected the host-authored post-create Action');
+          const { createUiAccountActionTransport } = await import('@/sync/ops/actions/accountActionTransport');
+          const { createPluginActionCallerContext } = await import('@/components/plugins/surfaces/pluginActionCallerContext');
+          const { bindPluginUiNewSessionPostCreateActionV1 } = await import('@happier-dev/protocol/plugins/ui');
+          const { ACTION_INVOKE_ACTION_ID_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+          const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+          const account = await captureLazyActionAccountContext(scope.serverId);
+          const receipt = { kind: 'accepted' };
+          const relay = vi.fn(async () => receipt);
+          const execute = createUiAccountActionTransport({
+            account, resolveFallbackMachineId: () => 'm1', transport: relay,
+          });
+          const { pluginId, contributionLocalId } = postCreateAction;
+          const input = bindPluginUiNewSessionPostCreateActionV1(postCreateAction.intent, 'sess_new');
+          const executeLink = (caller: Parameters<typeof createPluginActionCallerContext>[0]) => execute({
+            actionId: ACTION_INVOKE_ACTION_ID_V1, input,
+            context: { ...createPluginActionCallerContext(caller), surface: 'ui', serverId: account.serverId,
+              runtimeAccountId: scope.accountId, actionRequestId: linkRequestId },
+          });
+          try {
+            await expect(executeLink({ pluginId })).resolves.toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+            expect(relay).not.toHaveBeenCalled();
+            await expect(executeLink({ pluginId, contributionLocalId })).resolves.toBe(receipt);
+            expect(relay).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+              accountId: scope.accountId, requestId: linkRequestId,
+              payload: expect.objectContaining({ input: expect.objectContaining({ sessionId: 'sess_new' }) }),
+              invocation: expect.objectContaining({ authority: 'account_automation',
+                caller: expect.objectContaining({ kind: 'plugin', pluginId, contributionLocalId: TRIAGE_APP_PAGE_LOCAL_ID_V1 }),
+              }),
+            }));
+          } finally {
+            account.dispose();
+          }
+        }
         if (scenario === 'confirmation') expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
           chrome: expect.objectContaining({ testID: 'app-shell-transient-interaction-dialog' }),
         }));

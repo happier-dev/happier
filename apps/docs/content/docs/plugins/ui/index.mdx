@@ -325,8 +325,9 @@ expects the created Session ID. Use a path such as `sessionId` or
 
 The person creates the Session from the editable draft. Once the host receives
 the Session ID, it fills the input path and makes one attempt through normal
-Action admission with the seeding plugin's authority. Existing confirmation
-rules apply. If the Session is created in a different Account, the host drops
+Action admission under the seeding contribution's Account automation authority.
+The host identifies that contribution from the mounted surface or client Action.
+Existing confirmation rules apply. If the Session is created in a different Account, the host drops
 the intent and shows a post-create notice. Clearing the draft also clears
 the intent. For ordinary Machine creation, the host attempts the Action before
 automatically opening the Session or starting another draft. The notice includes

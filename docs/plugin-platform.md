@@ -9895,9 +9895,10 @@ In 0.3 development source, a mounted plugin can declare one optional
 `postCreateAction` on `openNewSession`. The declaration contains a qualified
 `action`, an `input` JSON object and the `sessionIdPath` in that object.
 New Session retains the intent with the seeded draft's device-local state.
+The host records the seeding plugin and source contribution from its binding.
 When the person submits the draft and creation returns the Session ID, the
 existing post-create checkpoint writes that ID at the declared path and makes
-one ordinary Action invocation with the seeding plugin's Account automation
+one ordinary Action invocation as that contribution with Account automation
 authority. Existing Action confirmation rules apply. If the Session lands in a
 different Account, the checkpoint discards the intent and shows a follow-up
 notice. For ordinary Machine creation, the launcher attempts the Action before

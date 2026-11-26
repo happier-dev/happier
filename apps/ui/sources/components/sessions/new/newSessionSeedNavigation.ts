@@ -52,6 +52,7 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
     /** Host-owned prepared media; never part of the public seed. */
     media?: ComposerDraftAppendContent;
     pluginId?: string;
+    contributionLocalId?: string;
     scope: ServerAccountScope;
     signal?: AbortSignal;
     isCurrent: () => boolean;
@@ -72,6 +73,7 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
             ...(params.teamModelSeed ? { teamModelSeed: params.teamModelSeed } : {}),
             ...(params.media ? { media: params.media } : {}),
             ...(params.pluginId ? { pluginId: params.pluginId } : {}),
+            ...(params.contributionLocalId === undefined ? {} : { contributionLocalId: params.contributionLocalId }),
             scope: params.scope,
             ...(params.signal ? { signal: params.signal } : {}),
             isCurrent: () => params.isCurrent() && params.presentation?.isCurrent?.() !== false,

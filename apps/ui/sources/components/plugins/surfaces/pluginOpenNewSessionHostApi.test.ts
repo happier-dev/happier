@@ -7,6 +7,8 @@ import type {
 
 import { createPluginOpenNewSessionHostApiHandler } from './pluginOpenNewSessionHostApi';
 
+const triageCaller = { pluginId: 'happier.triage', contributionLocalId: 'triage-app' } as const;
+
 const accountLifetime = Object.freeze({
     scope: Object.freeze({ serverId: 'server-a', accountId: 'account-a' }),
     isCurrent: () => true,
@@ -80,7 +82,7 @@ describe('openNewSession Host API producer', () => {
     ] as const)('retains the preparation owner $kind/$reason diagnostics without navigating', async (result) => {
         const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
         const handler = createPluginOpenNewSessionHostApiHandler({
-            pluginId: 'happier.triage', accountLifetime, isCurrent: () => true,
+            ...triageCaller, accountLifetime, isCurrent: () => true,
             executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
             // Preserve the real contribution result contract at the transport boundary.
             executeSelectedOperation: async () => TriagePrepareReviewWorkspaceResultV1Schema.parse(result),
@@ -96,7 +98,7 @@ describe('openNewSession Host API producer', () => {
     it('retains the preparation owner workspaceRequired reason without navigating', async () => {
         const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
         const handler = createPluginOpenNewSessionHostApiHandler({
-            pluginId: 'happier.triage', accountLifetime, isCurrent: () => true,
+            ...triageCaller, accountLifetime, isCurrent: () => true,
             executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
             // The selected operation is a transport boundary; its typed refusal is not a navigation failure.
             executeSelectedOperation: async () => ({ kind: 'workspaceRequired' }),
@@ -107,10 +109,10 @@ describe('openNewSession Host API producer', () => {
         })).resolves.toEqual({ code: 'unavailable', diagnostics: ['workspaceRequired'] });
         expect(openNewSession).not.toHaveBeenCalled();
     });
-    it('attributes the exact plugin and Account scope and settles with JSON null', async () => {
+    it('attributes the bound plugin contribution and Account scope and settles with JSON null', async () => {
         const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
         const handler = createPluginOpenNewSessionHostApiHandler({
-            pluginId: 'happier.triage',
+            ...triageCaller,
             accountLifetime,
             isCurrent: () => true,
             executeSelectedOperation,
@@ -120,7 +122,7 @@ describe('openNewSession Host API producer', () => {
         await expect(handler(request({ prompt: 'Repair CI' }))).resolves.toBeNull();
         expect(openNewSession).toHaveBeenCalledWith(expect.objectContaining({
             seed: { prompt: 'Repair CI' },
-            pluginId: 'happier.triage',
+            ...triageCaller,
             scope: accountLifetime.scope,
         }));
     });
@@ -128,7 +130,7 @@ describe('openNewSession Host API producer', () => {
     it('materializes the exact selected operation before opening on its exact machine', async () => {
         const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
         const handler = createPluginOpenNewSessionHostApiHandler({
-            pluginId: 'happier.triage',
+            ...triageCaller,
             accountLifetime,
             isCurrent: () => true,
             executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
@@ -167,7 +169,7 @@ describe('openNewSession Host API producer', () => {
     it('refuses retired, malformed, stale-target, failed and cancelled preparation before navigation', async () => {
         const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
         const stale = createPluginOpenNewSessionHostApiHandler({
-            pluginId: 'happier.triage',
+            ...triageCaller,
             accountLifetime: { ...accountLifetime, isCurrent: () => false },
             isCurrent: () => true,
             executeSelectedOperation,
@@ -179,7 +181,7 @@ describe('openNewSession Host API producer', () => {
         });
 
         const handler = createPluginOpenNewSessionHostApiHandler({
-            pluginId: 'happier.triage',
+            ...triageCaller,
             accountLifetime,
             isCurrent: () => true,
             executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
@@ -204,7 +206,7 @@ describe('openNewSession Host API producer', () => {
         expect(openNewSession).not.toHaveBeenCalled();
 
         const failed = createPluginOpenNewSessionHostApiHandler({
-            pluginId: 'happier.triage',
+            ...triageCaller,
             accountLifetime,
             isCurrent: () => true,
             executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
@@ -222,7 +224,7 @@ describe('openNewSession Host API producer', () => {
 
         const controller = new AbortController();
         const cancelled = createPluginOpenNewSessionHostApiHandler({
-            pluginId: 'happier.triage',
+            ...triageCaller,
             accountLifetime,
             isCurrent: () => true,
             executionTarget: { serverId: 'server-a', machineId: 'machine-a' },

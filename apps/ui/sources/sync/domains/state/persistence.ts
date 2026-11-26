@@ -178,6 +178,7 @@ export interface NewSessionDraft {
     postCreateAction?: Readonly<{
         intent: NonNullable<import('@happier-dev/protocol/plugins/ui').PluginUiNewSessionSeedV1['postCreateAction']>;
         pluginId: string;
+        contributionLocalId?: string;
         authoringScope: ServerAccountScope;
     }>;
     input: string;

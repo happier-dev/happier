@@ -33,6 +33,7 @@ type OpenNewSession = (params: Readonly<{
     seed: unknown;
     teamModelSeed?: Parameters<typeof openOrdinaryNewSessionSeed>[0]['teamModelSeed'];
     pluginId: string;
+    contributionLocalId: string;
     scope: ServerAccountScope;
     signal?: AbortSignal;
     isCurrent: () => boolean;
@@ -73,6 +74,7 @@ function readPreparedRepositoryPath(value: PluginUiJsonValueV1): string | null {
  */
 type PluginOpenNewSessionBinding = Readonly<{
     pluginId: string;
+    contributionLocalId: string;
     accountLifetime: ActiveServerAccountScopeLifetime;
     lifetimeSignal?: AbortSignal;
     isCurrent: () => boolean;
@@ -201,6 +203,7 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
                     seed,
                     ...(teamModelSeed === undefined ? {} : { teamModelSeed }),
                     pluginId: input.pluginId,
+                    contributionLocalId: input.contributionLocalId,
                     scope,
                     ...(openSignal ? { signal: openSignal } : {}),
                     isCurrent: mayOpen,

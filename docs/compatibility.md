@@ -11065,10 +11065,13 @@ request. Draft storage and the wire epoch stay the same.
 
 Unreleased 0.3 mounted `openNewSession` requests may include one strict
 `postCreateAction` intent. The host retains it in the draft's device-local
-supplement with the host-stamped plugin identity and authoring Account. After
-creation returns a Session ID in that Account, the host invokes the intent as
-plugin Account automation. Older development supplements without this
-provenance discard the intent. Earlier strict mounted readers require matching
+supplement with the host-stamped plugin identity, source contribution and
+authoring Account. After creation returns a Session ID in that Account, the
+host invokes the intent as plugin Account automation. Older development
+supplements that lack the plugin identity or Account discard the intent.
+Supplements with only the plugin and Account remain readable. The browser
+Action relay refuses their follow-up with `admission_unavailable` because it
+requires the originating contribution. Earlier strict mounted readers require matching
 development Protocol, SDK and UI source for the new field. The common
 `session.authoring.open` Action retains its existing closed seed contract and
 older draft supplements may omit the field. The inspected `../0.2` frontier

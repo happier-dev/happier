@@ -787,7 +787,10 @@ export function useCreateNewSession(params: Readonly<{
                 const failure = await createDefaultActionExecutor().execute(
                     'action.invoke',
                     bindPluginUiNewSessionPostCreateActionV1(seededAction.intent, input.sessionId),
-                    { ...createPluginActionCallerContext({ pluginId: seededAction.pluginId }),
+                    { ...createPluginActionCallerContext({
+                        pluginId: seededAction.pluginId,
+                        ...(seededAction.contributionLocalId === undefined ? {} : { contributionLocalId: seededAction.contributionLocalId }),
+                    }),
                         surface: 'ui', serverId: input.scope.serverId, expectedAccountId: input.scope.accountId,
                         defaultSessionId: input.sessionId, actionRequestId, signal: input.signal },
                 ).then(result => result.ok ? null : result, normalizeActionExecutorThrownError);
