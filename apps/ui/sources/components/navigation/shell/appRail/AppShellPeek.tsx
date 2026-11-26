@@ -134,7 +134,7 @@ export function AppShellPeekCovered(props: Readonly<{ children: React.ReactNode 
     return (
         <Animated.View {...underlayProps} ref={contentRef} style={[stylesheet.covered, motion.style, pointerEvents.webStyle]}
             pointerEvents={pointerEvents.nativePointerEvents}>
-            <PluginSurfaceFocusEligibilityProvider active={!covered}>
+            <PluginSurfaceFocusEligibilityProvider active={!covered} currentUiContextActive={!covered}>
                 {props.children}
             </PluginSurfaceFocusEligibilityProvider>
         </Animated.View>

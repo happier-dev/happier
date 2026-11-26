@@ -9,7 +9,7 @@ vi.mock('react-native', () => vi.importActual<typeof import('react-native-web')>
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 import { AppShellPeekCovered, AppShellPeekLayer, AppShellPeekProvider, useAppShellPeek } from './AppShellPeek';
-import { PluginSurfaceFocusEligibilityProvider, useLayoutPresentationActive, usePluginSurfaceCurrentUiContextEligibility, usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationActive, usePluginSurfaceCurrentUiContextEligibility, usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 function RailTrigger() {
     const peek = useAppShellPeek();
@@ -31,7 +31,7 @@ describe('app shell column focus on web', () => {
         const root = createRoot(container);
         try {
             await act(async () => root.render(
-                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                <>
                     <AppShellPeekProvider enabled currentId="sessions" columnShown>
                         <RailTrigger />
                         <AppShellPeekCovered><PluginColumnProbe /></AppShellPeekCovered>
@@ -39,10 +39,11 @@ describe('app shell column focus on web', () => {
                             resolveColumn={() => ({ kind: 'builtin', id: 'plugins' })}
                             renderColumn={() => <button data-testid="peek-control">Plugins</button>} />
                     </AppShellPeekProvider>
-                </PluginSurfaceFocusEligibilityProvider>,
+                </>,
             ));
             const coveredControl = container.querySelector<HTMLElement>('[data-testid="column-focus"]')!;
             expect(coveredControl.dataset.eligible).toBe('true');
+            expect(coveredControl.dataset.current).toBe('true');
             expect(coveredControl.closest('[inert]')).toBeNull();
             const trigger = container.querySelector('button')!;
             trigger.focus();

@@ -729,10 +729,13 @@ it.each(['owner', 'view'] as const)(
         >
           <InjectedAuthProvider credentials={connection.credentials}><MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
             <CurrentUiContextActionHost />
+            {/* The workspace owns semantic focus above retained destinations in the real shell. */}
+            <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
             <RetainedPanelSurface isActive={shown}>
               <DestinationInstanceHost tabId="project-tab" ref={{ kind: 'project', params: {} }} pathname="/projects/project"
                 focused={shown} visible={shown} navigation={tabNavigation}>{content}</DestinationInstanceHost>
             </RetainedPanelSurface>
+            </PluginSurfaceFocusEligibilityProvider>
           </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider></InjectedAuthProvider>
         </AppShellPluginUiProjectionValueProvider>
       );

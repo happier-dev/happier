@@ -8,14 +8,12 @@ import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persisten
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { AppShellPeekCovered, AppShellPeekProvider } from '@/components/navigation/shell/appRail/AppShellPeek';
 import {
   CurrentUiContextProvider,
   useOptionalCurrentUiContextReader,
-  usePublishCurrentUiContext,
   type CurrentUiContextReader,
 } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
-import { useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -58,9 +56,6 @@ afterEach(async () => {
 
 function Publication() {
   reader = useOptionalCurrentUiContextReader();
-  const commands = useCurrentUiContextComposedCommands();
-  const enrichment = React.useMemo(() => ({ commands }), [commands]);
-  usePublishCurrentUiContext(enrichment);
   React.useEffect(() => {
     if (!reader) return;
     const current = reader;
@@ -154,13 +149,12 @@ describe('Sessions list fold commands', () => {
         <MainAppTabStateProvider>
           <AppPaneProvider>
             <CurrentUiContextProvider>
-              <PluginSurfaceFocusEligibilityProvider
-                active
-                currentUiContextActive
-              >
+              <AppShellPeekProvider enabled currentId="sessions" columnShown>
+              <AppShellPeekCovered>
                 <Publication />
                 {shown ? <MountedList active={active} /> : null}
-              </PluginSurfaceFocusEligibilityProvider>
+              </AppShellPeekCovered>
+              </AppShellPeekProvider>
             </CurrentUiContextProvider>
           </AppPaneProvider>
         </MainAppTabStateProvider>
@@ -187,6 +181,10 @@ describe('Sessions list fold commands', () => {
         { surface: 'agent' },
       ),
     ).toMatchObject({ ok: true });
+    expect(reader!.readCurrentUiContext()!.commands.map(command => command.title).sort()).toEqual([
+      `${t('common.collapse')} · Happier`,
+      `${t('common.collapse')} · Launch`,
+    ].sort());
     const collapseSection = find('collapse', 'Launch');
     expect(collapseSection).toBeDefined();
     expect(find('collapse', 'Happier')).toBeDefined();
@@ -211,8 +209,9 @@ describe('Sessions list fold commands', () => {
     // A list that is not presented publishes nothing; an unmounted one retires its addresses.
     const retained = find('collapse', 'Launch')!;
     await screen.update(tree(true, false));
-    expect(find('collapse', 'Launch')).toBeUndefined();
+    expect(reader!.readCurrentUiContext()!.commands).toEqual([]);
     await screen.update(tree(false));
+    expect(reader!.readCurrentUiContext()!.commands).toEqual([]);
     expect(await invoke(retained.id)).toMatchObject({ ok: false });
     expect(
       collapsedGroupsState.readAll()[
