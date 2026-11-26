@@ -288,9 +288,9 @@ describe('Usage Sources body', () => {
     expect.soft(cancelled).toMatchObject({ ok: false, errorCode: 'cancelled' });
     expect.soft(unchanged).toMatchObject({ ok: true, result: { value: { status: 'unchanged' } } });
     expect.soft(failed).toMatchObject({ ok: false, errorCode: 'usage_source_unavailable' });
-    expect.soft(changed).toMatchObject({ ok: true, result: { value: { status: 'changed', source: {
-      sourceId: initial.sourceId, root: { kind: 'override', path: newRoot },
-    } } } });
+    expect.soft(changed).toMatchObject({ ok: true, result: { value: { status: 'changed' } } });
+    if (changed.ok) expect.soft(changed.result).toEqual(expect.objectContaining({ value: { status: 'changed' } }));
+    expect.soft(JSON.stringify(changed)).not.toContain(newRoot);
     await screen.unmount();
   });
   it('reports the mounted Retry read failure and recovers after the Machine answers', async () => {

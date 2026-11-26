@@ -3,8 +3,9 @@ import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { isUsageSourceMissing, selectUsageSourceDiscoveryInventory, matchesUsageSourceAccountingScope, USAGE_SOURCE_CONSENT_DISCLOSURE, type UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 import { UsageSourceInventoryScopeSchema, type UsageSourceInventoryScope } from '@happier-dev/protocol/inputs/usageQuery';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isDeferredApprovalResult } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { isJsonObject, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { isJsonObject, projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/resolveBundledAgentIdFromContributionIdentity';
 import { Modal } from '@/modal';
@@ -460,13 +461,16 @@ function useSourceFolderPrompt(controller: UsageSourcesController, sourceId: str
     if (!proposed || proposed === root) return { ok: true, result: { status: 'unchanged' } };
 
     // The Machine expands and validates the path with its own home-directory owner.
-    const outcome = projectActionResultForCurrentUiCommand(await controller.setRoot(sourceId, proposed, confirmedContext ?? context));
-    if (!outcome.ok) return outcome;
-    const result = outcome.result;
-    // The controller already admitted the refreshed source or a pending approval.
-    return isJsonObject(result) && result.source !== undefined
-      ? { ...outcome, result: { status: 'changed', source: result.source } }
-      : outcome;
+    const settled = await controller.setRoot(sourceId, proposed, confirmedContext ?? context);
+    if (!settled.ok || isDeferredApprovalResult(settled)) return projectActionResultForCurrentUiCommand(settled);
+    // The confirming person updates the mounted row. The caller receives the root Action's observation.
+    const project = getActionSpec('usage.sources.root.set').projectObservationOutput;
+    const observed = projectNativeJsonValueForTransport(project?.(settled.result) ?? {});
+    return {
+      ok: true,
+      result: { ...(isJsonObject(observed) ? observed : {}), status: 'changed' },
+      automationNotices: settled.automationNotices,
+    };
   }, [controller, sourceId, root, agent, machineName, Bridge]);
 }
 
