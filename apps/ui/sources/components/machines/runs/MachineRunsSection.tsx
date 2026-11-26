@@ -275,7 +275,7 @@ export const MachineRunsSection = React.memo(function MachineRunsSection(props: 
                                             {stoppingRunId === run.runId ? (
                                                 <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                                             ) : (
-                                                <Icon name="stop-circle" size={20} color={theme.colors.accent.orange} />
+                                                <Icon name="stop-circle" size={20} color={theme.colors.text.secondary} />
                                             )}
                                         </Pressable>
                                     ) : null}

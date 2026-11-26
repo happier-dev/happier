@@ -266,7 +266,7 @@ const SharedRunRow = React.memo(function SharedRunRow(
               <Icon
                 name="stop-circle"
                 size={20}
-                color={theme.colors.accent.orange}
+                color={theme.colors.text.secondary}
               />
             )}
           </Pressable>
