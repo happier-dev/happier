@@ -775,6 +775,8 @@ export interface AcpBackendOptions {
     providerTurnSource?: AcpProviderTurnSourceFactory;
     /** Some providers accept unknown ids in session/load and silently open empty history. */
     requireListedSessionOnLoad?: boolean;
+    /** Provider-owned admission of the initialized agent; throwing stops startup before any session request. */
+    admitInitializedAgent?: (agent: Readonly<{ version: string | null }>) => void;
     cleanup?: () => void | Promise<void>;
   }>>;
 
@@ -935,6 +937,7 @@ export class AcpBackend implements AgentBackend {
   private spawnedProcessEnv: NodeJS.ProcessEnv = {};
   private spawnedProviderTurnSource?: AcpProviderTurnSourceFactory;
   private requireListedSessionOnLoad = false;
+  private admitInitializedAgent: ((agent: Readonly<{ version: string | null }>) => void) | null = null;
   private processLaunchCleanup: (() => void | Promise<void>) | null = null;
   private stderrAppender: BoundedTextFileAppender | null = null;
   private readonly summarizeStderrForLogs = createAcpStderrLogSummarizer();
@@ -1460,6 +1463,7 @@ export class AcpBackend implements AgentBackend {
     this.spawnedProcessEnv = {};
     this.spawnedProviderTurnSource = undefined;
     this.requireListedSessionOnLoad = false;
+    this.admitInitializedAgent = null;
     if (!cleanup) return;
     try {
       await cleanup();
@@ -1581,6 +1585,7 @@ export class AcpBackend implements AgentBackend {
       if (!command) throw new Error('ACP process launch did not provide a command');
       this.spawnedProviderTurnSource = preparedLaunch?.providerTurnSource ?? this.options.providerTurnSource;
       this.requireListedSessionOnLoad = preparedLaunch?.requireListedSessionOnLoad === true;
+      this.admitInitializedAgent = preparedLaunch?.admitInitializedAgent ?? null;
       this.spawnedProcessEnv = { ...this.buildSpawnEnv(preparedLaunch?.unsetEnv), ...preparedLaunch?.env };
 
       // Spawn the ACP agent process.
@@ -2175,6 +2180,7 @@ export class AcpBackend implements AgentBackend {
     const initResponseRecord = asRecord(initResponse);
     const agentInfo = asRecord(initResponseRecord?.agentInfo);
     this.negotiatedAgentVersion = agentInfo ? getString(agentInfo, 'version') ?? undefined : undefined;
+    this.admitInitializedAgent?.({ version: this.negotiatedAgentVersion ?? null });
     const agentCapabilities = asRecord(initResponseRecord?.agentCapabilities);
     const negotiatedSessionLoadSupport = agentCapabilities?.loadSession === true;
     const negotiatedSessionCapabilities = readAcpNegotiatedSessionCapabilities(agentCapabilities);

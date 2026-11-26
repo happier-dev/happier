@@ -40,7 +40,6 @@ export type DaemonSpawnRuntimeSelection = Readonly<{
   codexBackendMode?: CodexBackendMode;
   agentRuntimeDescriptorV1?: AgentRuntimeDescriptorV1;
   directory?: string;
-  vendorResumeId?: string | null;
   environmentVariables?: NodeJS.ProcessEnv;
   /** Preflight queries may observe prerequisites without installing or updating them. */
   readinessOnly?: boolean;

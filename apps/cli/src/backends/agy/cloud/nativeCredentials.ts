@@ -5,7 +5,7 @@ import { AGY_OAUTH_CLIENT_ID, AGY_OAUTH_TOKEN_URL } from '@happier-dev/agents';
 import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { logger } from '@/ui/logger';
 import { ConnectedServiceImportError } from '@/cloud/connectedServices/connectedServiceImportError';
-import { resolvePinnedAgyAcpServerHome } from '../acp/pinnedAgyAcpServer';
+import { resolveAgyMachineProfileDir } from '../acp/agyAcpLaunch';
 
 export type AgyNativeCredential = Readonly<{
   accessToken: string | null;
@@ -133,7 +133,7 @@ export async function readAgyNativeCredential(source: 'acp' | 'cli' | 'cli-file'
   // Do not silently import a stale file instead of the native selected login.
   if (source === 'cli' && process.platform !== 'linux' && process.platform !== 'darwin') throw unavailable();
   const home = resolveHomeDirFromEnvironment(process.env);
-  const geminiHome = resolvePinnedAgyAcpServerHome(process.env);
+  const geminiHome = resolveAgyMachineProfileDir(process.env);
   const cliDirectory = join(home, '.gemini', 'antigravity-cli');
   const file = source === 'acp' ? join(geminiHome, 'antigravity-acp', 'acp_token.json') : join(cliDirectory, 'antigravity-oauth-token');
   let contents: string | null = null;

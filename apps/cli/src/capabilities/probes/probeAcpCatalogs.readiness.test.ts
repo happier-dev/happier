@@ -1,11 +1,11 @@
-import { chmod, readFile, readdir, writeFile } from 'node:fs/promises';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_IDS } from '@happier-dev/agents';
 import type { DetectCliSnapshot } from '@/capabilities/snapshots/cliSnapshot';
 import { agent as agyEntry } from '@/backends/agy';
-import { withIsolatedHappierHome } from '@/backends/agy/acp/pinnedAgyAcpServer.testkit';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import { probeAcpCatalogs } from './probeAcpCatalogs';
 
@@ -26,32 +26,21 @@ async function discover(entryPoint: 'catalog' | 'backend' | 'session', home: str
 }
 
 describe('ACP catalog prerequisite readiness', () => {
-  it.each(['catalog', 'backend', 'session'] as const)('applies the managed prerequisite policy to connected accounts for %s', async (entryPoint) => {
-    await withIsolatedHappierHome(async (home, downloadRequest) => {
-      await expect(discover(entryPoint, home, CONNECTED_ACCOUNT_ENV)).rejects.toThrow(entryPoint === 'session'
-        ? 'Unexpected installation download'
-        : 'Agy ACP server is unavailable:');
-      expect(downloadRequest).toHaveBeenCalledTimes(entryPoint === 'session' ? 1 : 0);
-      if (entryPoint !== 'session') {
-        await expect(readdir(join(home, 'tools', 'agy-acp-server'))).rejects.toMatchObject({ code: 'ENOENT' });
-      }
-    });
-  });
-
-  it.each(['catalog', 'backend', 'session'] as const)('requires the agy CLI for native login without installing the pinned server for %s', async (entryPoint) => {
-    await withIsolatedHappierHome(async (home, downloadRequest) => {
-      await expect(discover(entryPoint, home, { HAPPIER_AGY_PATH: join(home, 'missing-agy') }))
+  it.each([
+    ...(['catalog', 'backend', 'session'] as const).map((entryPoint) => ({ entryPoint, account: 'machine login', env: {} })),
+    ...(['catalog', 'backend', 'session'] as const).map((entryPoint) => ({ entryPoint, account: 'connected account', env: CONNECTED_ACCOUNT_ENV })),
+  ])('requires the agy CLI for the $account at $entryPoint', async ({ entryPoint, env }) => {
+    await withTempDir('happier-agy-readiness-', async (home) => {
+      await expect(discover(entryPoint, home, { ...env, HAPPIER_AGY_PATH: join(home, 'missing-agy') }))
         .rejects.toThrow('Agy CLI (agy) is unavailable');
-      expect(downloadRequest).not.toHaveBeenCalled();
-      await expect(readdir(join(home, 'tools', 'agy-acp-server'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
   });
 });
 
 describe('Antigravity ACP capability launch', () => {
   // The scripted stand-in is launched through its shebang, which Windows cannot execute.
-  it.skipIf(process.platform === 'win32')('probes the interactive agy CLI ACP server without installing the pinned server', async () => {
-    await withIsolatedHappierHome(async (home, downloadRequest) => {
+  it.skipIf(process.platform === 'win32')('probes the interactive agy CLI ACP server', async () => {
+    await withTempDir('happier-agy-capability-', async (home) => {
       const argvPath = join(home, 'probe-argv.json');
       const methodsPath = join(home, 'probe-methods.jsonl');
       const interactivePath = join(home, 'agy');
@@ -91,8 +80,6 @@ describe('Antigravity ACP capability launch', () => {
       expect(result).toMatchObject({ available: true, resolvedPath: interactivePath, acp: { ok: true, loadSession: true } });
       expect(JSON.parse(await readFile(argvPath, 'utf8'))).toEqual(['acp']);
       expect((await readFile(methodsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line))).toEqual(['initialize']);
-      expect(downloadRequest).not.toHaveBeenCalled();
-      await expect(readdir(join(home, 'tools', 'agy-acp-server'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
   });
 });
