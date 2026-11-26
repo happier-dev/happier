@@ -227,7 +227,7 @@ import { SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/boa
 import { SessionSystemRecordAddressSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordAddress';
 import { projectExternalActionPendingResetStartAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionDeploymentReadEnvelopeAdmissionV1, type DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { isEnvironmentDatabaseAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { isEnvironmentDatabaseAdmissionV1, isSelectedDeploymentDatabaseReadV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier-dev/protocol/scm/reviewedMarks';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
@@ -1032,12 +1032,19 @@ function isAdmittedWorkflowOriginAction(input: Pick<DeploymentWorkflowOriginInpu
 export async function hasCurrentExternalActionWorkflowOriginInTx(reader: Tx, input: DeploymentWorkflowOriginInput,
     continuation?: DeploymentReceiptContinuation, phase: MachineWorkflowOriginPhase = 'admission'): Promise<boolean> {
     const origin = input.workflowActionOrigin;
-    if (!origin || origin.requestId !== input.requestId || !isAdmittedWorkflowOriginAction(input)) return false;
-    if (origin.sessionLeaf || input.admittedMachineRole !== undefined) {
-        // The installed FIN producer already admitted the exact leaf/Session.
-        // Home cannot open that E2EE binding; later effects only read Run liveness.
+    if (!origin || origin.requestId !== input.requestId) return false;
+    const selectedDatabaseRead = isSelectedDeploymentDatabaseReadV1(input.deploymentReadAdmission);
+    if (selectedDatabaseRead) {
+        if (input.target.kind !== 'machine' || input.target.machineId !== input.machineId
+            || origin.sessionLeaf || origin.sessionAuthority || origin.reviewedChild) return false;
+        // Run provenance binds the installed publisher to its starter. The
+        // existing Deployment root admission owns Source and database access.
+        if (phase === 'admission') return await readCurrentMachineWorkflowOriginInTx(reader, input, phase) !== null;
+    } else if (!isAdmittedWorkflowOriginAction(input)) return false;
+    if (origin.sessionLeaf || input.admittedMachineRole !== undefined || selectedDatabaseRead) {
+        // The exact leaf already passed admission. Later effects only read Run liveness.
         return await reader.automationRun.findFirst({ where: { id: origin.runId, accountId: input.accountId,
-            claimedByMachineId: input.publisherMachineId ?? (origin.sessionLeaf ? input.machineId : { not: null }),
+            claimedByMachineId: input.publisherMachineId ?? (origin.sessionLeaf || selectedDatabaseRead ? input.machineId : { not: null }),
             workflowAcceptedSnapshotEnvelope: { not: null }, workflowCustodyState: 'pending',
             state: { in: ['claimed', 'running'] } }, select: { id: true } }) !== null;
     }
@@ -1095,10 +1102,10 @@ async function readCurrentExternalActionPrincipal(
     if (binding.actionId === 'approval.request.decide'
         && resolveMachineRpcExternalActionEffectV1(RPC_METHODS.APPROVAL_REQUEST_DECIDE, binding) !== binding.actionId) return null;
     if (binding.workflowActionOrigin) {
-        if (!isAdmittedWorkflowOriginAction(binding)
-            || purpose?.kind !== 'issued-managed-intent-native-fact'
-                && purpose?.kind !== 'issued-managed-native-credential-fact'
-                && !await hasCurrentExternalActionWorkflowOriginInTx(reader, binding, deploymentContinuation, 'execution')) return null;
+        const issuedManagedFact = purpose?.kind === 'issued-managed-intent-native-fact'
+            || purpose?.kind === 'issued-managed-native-credential-fact';
+        if (issuedManagedFact ? !isAdmittedWorkflowOriginAction(binding)
+            : !await hasCurrentExternalActionWorkflowOriginInTx(reader, binding, deploymentContinuation, 'execution')) return null;
         // The assigned Run already admitted its requester. Later effects retain
         // that signed identity and consult the existing active-job owner only.
         return projectAcceptedDeploymentPrincipal(binding);

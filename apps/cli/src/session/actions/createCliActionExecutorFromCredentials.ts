@@ -67,10 +67,10 @@ import { ManagedMachineControllerError } from '@/machines/managed/controllerErro
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
-import { projectDeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { isSelectedDeploymentDatabaseReadV1, projectDeploymentReadAdmissionV1, projectDeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { isSettingsDeclarationActionIdV1, SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { enrichCliActionApprovalContext } from './enrichCliActionApprovalContext';
@@ -128,6 +128,8 @@ import { resolveFilesystemTransferCustodyFailure } from './filesystemTransferCus
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, resolveExternalActionMachineTarget, resolveSelectedExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { prepareInstalledWorkflowActionAuthorizationResult } from '@/api/installedWorkflowActionAuthorization';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
 import { ManagedResourceTargetV1Schema, MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readManagedMachineRead } from '@/machines/managed/readManagedMachine';
@@ -1879,6 +1881,44 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           invocation: createOneShotPatInvocation(async () => actionFailure('approval_requester_unavailable')) };
       const binding = context.externalActionExecutionAuthorization?.binding;
       const workflowOrigin = binding?.workflowActionOrigin;
+      if (actionId === ACTION_INVOKE_ACTION_ID_V1 && params.pluginActionExecutionOwner === 'current_process'
+        && context.actionCaller?.kind === 'workflowRun' && context.actionCaller.authorization.principal.kind === 'host'
+        && (!binding || binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && !workflowOrigin)
+        && isSelectedDeploymentDatabaseReadV1(projectDeploymentReadAdmissionV1(actionId, input))) {
+        return { context, invocation: createOneShotPatInvocation(async () => {
+          const machineId = params.machineId;
+          const serverIdentityId = params.serverIdentityId;
+          const installationId = params.externalActionMachineInstallationId;
+          const privateKey = params.externalActionMachineRequestPrivateKey;
+          if (!machineId || !serverIdentityId || !installationId || !privateKey
+            || (context.runtimeAccountId && context.runtimeAccountId !== readAccountIdFromToken(credentials.token))) {
+            return actionFailure('admission_unavailable');
+          }
+          // Run starts retain their own root. After the coordinator commits this
+          // leaf's dispatch, Home mints the separate exact database read for its starter.
+          const target = { kind: 'machine' as const, machineId };
+          const serverId = context.serverId ?? approvalServerId;
+          const serverHttpBaseUrl = resolveActionServerApiUrl();
+          const admitted = await prepareInstalledWorkflowActionAuthorizationResult({ credentials, context,
+            actionId, input, target, machineId, serverId, serverIdentityId, installationId, privateKey, serverHttpBaseUrl });
+          if (!admitted) return actionFailure('admission_unavailable');
+          if ('ok' in admitted) return { ...actionFailure(admitted.code ?? 'admission_unavailable'),
+            ...(admitted.details === undefined ? {} : { details: admitted.details }),
+            ...(admitted.requestId === undefined ? {} : { requestId: admitted.requestId }),
+            ...(admitted.failureCause ? { failureCause: admitted.failureCause } : {}) };
+          // The installed starter owns both the signed HTTP transport and the
+          // Account material needed to open the admitted Environment artifacts.
+          const accountId = admitted.authorization.binding.accountId;
+          const authorization = await projectRequesterAccountActionAuthorization({ authorization: admitted.authorization,
+            serverIdentityId, signal: context.signal, bootstrap: { credentials,
+              attribution: { accountId, machineId, installationId, serverId },
+              serverHttpBaseUrl, isCurrent: async () => !context.signal?.aborted } });
+          if (!authorization) return actionFailure('requester_account_context_unavailable');
+          return (await resolveExecutor(credentials)).execute(actionId, input, { ...context, serverId, serverIdentityId,
+            runtimeAccountId: accountId, externalActionTarget: target,
+            externalActionExecutionAuthorization: authorization, originalActionEnvelope: admitted.envelope });
+        }) };
+      }
       // An approved step already carries its admitted receipt. Foreign Machine roots
       // still use the Home-admitted host route, which need not open the requester's Run.
       if (!context.approvedActionReplay && binding?.actionId === actionId && workflowOrigin

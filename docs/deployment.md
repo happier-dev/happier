@@ -1202,6 +1202,11 @@ editor audience and agent level from its template. Home evaluates the selected
 target against that policy at request admission. A change takes effect for the
 next request. A write already admitted can finish.
 
+When an installed Workflow reads a selected database, Home uses the Account
+that started the Run and the Environment's database agent policy to admit the
+read. The signed Action binds the Environment, target and receiver so the
+installed executor can obtain the selected read-role credential for that leaf.
+
 The existing service Exec owner supplies native container reachability to the
 shared PostgreSQL or MySQL driver. Shared dialect modules own statement admission,
 parameter binding and typed ordered result decoding. Reads use the dedicated

@@ -11,7 +11,7 @@ import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/acc
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { StoredCredentials } from '@/persistence';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
-import { prepareExternalActionRequesterAccountAuthorizationWithEnvelope, prepareExternalActionRequesterAccountAuthorizationResult, deliverExternalActionRequest,
+import { prepareExternalActionRequesterAccountAuthorizationResult, deliverExternalActionRequest,
   type dispatchOriginalAccountAction,
   type ExternalActionMachineRequestSigningKey } from './externalActionExecutionAuthorization';
 
@@ -34,8 +34,7 @@ type InstalledWorkflowActionInput = Readonly<{
 }>;
 
 /** The existing installed-source issuer binds admitted Run facts to the exact child envelope. */
-export async function prepareInstalledWorkflowActionAuthorizationWithEnvelope(input: InstalledWorkflowActionInput):
-  Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelope: ExternalActionRequestEnvelope }> | null> {
+export async function prepareInstalledWorkflowActionAuthorizationResult(input: InstalledWorkflowActionInput) {
   const caller = input.context.actionCaller;
   const requestId = input.context.actionRequestId;
   const accountId = readAccountIdFromToken(input.credentials.token);
@@ -68,11 +67,17 @@ export async function prepareInstalledWorkflowActionAuthorizationWithEnvelope(in
   const material = input.credentials.encryption?.type === 'legacy'
     ? { type: 'dataKey' as const, machineKey: resolveAccountContentSecretKey(input.credentials.encryption) }
     : input.credentials.encryption;
-  return prepareExternalActionRequesterAccountAuthorizationWithEnvelope({ ...input, accountId,
+  return prepareExternalActionRequesterAccountAuthorizationResult({ ...input, accountId,
     requestId, token: input.credentials.token, tokenEpochHint, accountEncryptionMode: encryption.mode,
     workflowActionOrigin: { runId, requestId, ...(sessionAuthority ? { sessionAuthority } : {}),
       ...(sessionLeaf?.success ? { sessionLeaf: sessionLeaf.data } : {}) },
     ...(material ? { material } : {}), signal: input.context.signal });
+}
+
+export async function prepareInstalledWorkflowActionAuthorizationWithEnvelope(input: InstalledWorkflowActionInput):
+  Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelope: ExternalActionRequestEnvelope }> | null> {
+  const result = await prepareInstalledWorkflowActionAuthorizationResult(input);
+  return result && 'authorization' in result ? result : null;
 }
 
 /** Existing authorization-only callers keep the same issuer and contract. */
