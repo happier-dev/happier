@@ -99,7 +99,8 @@ describe('managed controller invocation codec', () => {
       },
     });
     const executor = createExecutor();
-    const run = (current: boolean, received = authorization, surface: 'ui' | 'cli' = 'ui', includeHttp = true, selectedExecutor = executor) => executeExternalAction({ actionId, envelope,
+    const run = (current: boolean, received = authorization, surface: 'ui' | 'cli' = 'ui', includeHttp = true, selectedExecutor = executor,
+      selectedEnvelope = envelope) => executeExternalAction({ actionId, envelope: selectedEnvelope,
       principal: { accountId: 'member', authority: 'present_user', authentication },
       ...(surface === 'cli' ? { surface } : {}),
       ...(includeHttp ? { currentServerHttpBaseUrl: homeHttpUrl } : {}),
@@ -177,7 +178,29 @@ describe('managed controller invocation codec', () => {
           expect(item.outcome, diagnostics).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
         }
       }
-      expect(dispatch).toHaveBeenCalledTimes(1);
+      // Crossed mode × envelope. An E2EE root never downgrades to V1. A plain root may
+      // carry whole-Action protected transport (requester operation and telemetry reads
+      // always do); its per-invocation codec key is not Account material.
+      const crossed = ExternalActionRequestEnvelopeSchema.parse(accountEncryptionMode === 'e2ee'
+        ? { v: 1 as const, requestId: binding.requestId, target, input: actionInput }
+        : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: actionInput, randomBytes: tweetnacl.randomBytes }));
+      const { requesterAccountContext: _codec, ...root } = authorization;
+      const crossedAuthorization = sealManagedControllerActionCodecV1({ authorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+        ...root, binding: { ...root.binding, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(crossed) } }),
+      material, invocation: { caller: { kind: 'host' }, surface: 'ui', authority: 'present_user' },
+      installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+      const crossedResult = await run(true, crossedAuthorization, 'ui', true, executor, crossed);
+      if (accountEncryptionMode === 'e2ee') {
+        expect(crossedResult).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+        expect(dispatch).toHaveBeenCalledTimes(1);
+      } else {
+        expect(crossedResult.kind, refusalDiagnostic(crossedResult)).toBe('response');
+        if (crossedResult.kind !== 'response' || crossed.v !== 2) throw new Error('Expected a protected controller response');
+        expect(openExternalActionResponseV2({ envelope: crossedResult.response, request: crossed, binding, material }))
+          .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        expect(dispatch).toHaveBeenCalledTimes(2);
+        expect(dispatch).toHaveBeenLastCalledWith(actionId, actionInput);
+      }
       expect(get).not.toHaveBeenCalled();
       expect(post.mock.calls.every(([url]) => url.endsWith('/verify'))).toBe(true);
       expect(getActiveAccountSettingsSnapshot()).toBe(custodianSettings);
