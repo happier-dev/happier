@@ -62,13 +62,12 @@ import {
   readDeploymentPromotionTarget,
   deploymentDeployAvailability,
   deploymentFailureTitle,
-  deploymentHeadline,
+  deploymentReceiptTitle,
   deploymentHealthFact,
   deploymentEnvironmentHealthKind,
   deploymentMachineHealthLabel,
   deploymentOperationLabel,
   deploymentRevisionLabel,
-  deploymentSourceLabel,
   deploymentSettledReceiptState,
   deploymentStateLabel,
   deploymentStateNotice,
@@ -328,7 +327,7 @@ export const DeploymentReceiptDetail = React.memo(
       );
     }
     const { deployment, content, facts } = opened;
-    const sourceLabel = deploymentSourceLabel(content);
+    const sourceLabel = facts.source ? deploymentRevisionLabel(facts.source) : null;
     // Where it ran is the facts owner's answer (placement), never re-read from the content here.
     const platform = facts.placement === 'platform';
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
@@ -533,7 +532,7 @@ export const DeploymentReceiptDetail = React.memo(
                 ? { production: { source: environmentValue.environment, create: props.onCreateProduction } } : {}),
               onChooseDestination: (chosen) => { promotionDestination.current = chosen; },
               sourceEnvironmentId: environmentId, sourceDeploymentId: deployment.id,
-              name: props.environmentName ?? environmentValue.content.name, version: deploymentSourceLabel(content) ?? deployment.id,
+              name: props.environmentName ?? environmentValue.content.name, version: sourceLabel ?? deployment.id,
               promote, review: props.review,
               onOpenReceipt: (destinationId, deploymentId) => props.onOpenPromotionReceipt?.(destinationId, deploymentId),
             }) : undefined}
@@ -604,7 +603,7 @@ export const DeploymentReceiptDetail = React.memo(
           <ItemList testID="project-deployments.receipt">
             <PageHeader
               testID="project-deployments.receipt.header"
-              title={deploymentHeadline(deployment, content)}
+              title={deploymentReceiptTitle(deployment, sourceLabel)}
               alwaysShowTitle
               // The commit's own subject says what this version is; a stored definition has none.
               description={facts.commitSubject ?? undefined}

@@ -1,7 +1,6 @@
-import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isNativeDeploymentPromotionSourceV1 } from '@happier-dev/deployments/contracts/v1';
-import type { DeploymentContentV1, DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
 import { isDeploymentServiceRunningWithoutCheckV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
@@ -140,13 +139,6 @@ export function deploymentOperationLabel(operation: DeploymentReceiptHeaderV1['o
   }
 }
 
-/** What was deployed, as a short name: a commit's short id, or a stored definition's revision digest. */
-export function deploymentSourceLabel(content: DeploymentContentV1): string | null {
-  const source = content.sourceIntent;
-  if (!source) return null;
-  return deploymentRevisionLabel(projectDeploymentReviewRevisionV1(source));
-}
-
 type ReceiptOperation = DeploymentReceiptHeaderV1['operation'];
 
 /**
@@ -226,14 +218,6 @@ export function deploymentHistoryLead(
     return deploymentStateNotice(receipt.state, failure);
   }
   return deploymentRailState(deploymentSettledReceiptState(receipt.state));
-}
-
-/** The receipt page's title: what the receipt's operation did to which version, in the receipt's own state. */
-export function deploymentHeadline(
-  receipt: DeploymentReceiptHeaderV1,
-  content: DeploymentContentV1,
-): string {
-  return deploymentReceiptTitle(receipt, deploymentSourceLabel(content));
 }
 
 /**

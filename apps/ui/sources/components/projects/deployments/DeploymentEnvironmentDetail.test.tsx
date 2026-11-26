@@ -2407,6 +2407,53 @@ describe('Project deployments page', () => {
     } finally { controller.retire(); }
   });
 
+  it('names the Pages revision built by the provider consistently on Overview and the Receipt', async () => {
+    const base = environmentDetailForHome();
+    const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
+    if (!servingId) throw new Error('Expected a serving Receipt in the fixture');
+    const builtSha = 'b'.repeat(40);
+    const receipt = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }),
+      content: {
+        sourceIntent: createDeploymentReceiptDetailV1().content.sourceIntent,
+        sourceMethod: 'gitIntegration', commitSubject: 'Commit requested before the provider built',
+        machines: [], images: [], machineResults: [], steps: [],
+        platform: {
+          targetLinkRevision: 1,
+          credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+            purpose: { consumer: { pluginId: 'happier.deploy-cloudflare', localId: 'deploy' }, purpose: 'deploy' },
+            target: { kind: 'account', account: { service: { pluginId: 'happier.deploy-cloudflare', localId: 'account' }, accountId: 'provider' } } },
+          providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
+          providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
+          preparedNative: { projectName: 'project', pages: { projectMode: 'gitIntegration', productionBranch: 'main' } },
+          observation: { v: 1, state: 'succeeded', observedAtMs: 1, builtSha },
+        },
+      },
+    });
+    const { controller, detail } = controllerFor({ receipt, detail: base });
+    try {
+      const overview = await renderScreen(<DeploymentEnvironmentDetail controller={controller}
+        environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+        phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} />);
+      await waitForContent(overview, 'project-deployments.environment.serving.cells.version');
+      expect(projectDeploymentReceiptHistoryEntryV1(receipt).source).toEqual({ kind: 'repository', sha: builtSha });
+      const servingText = () => overview.findByTestId('project-deployments.environment.serving.receipt')
+        ?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string')
+        .map(node => node.props.children).join(' ');
+      await waitForHomeGovernance(() => expect(servingText()).toContain(builtSha.slice(0, 7)));
+      expect(servingText()).not.toContain(receipt.content.commitSubject);
+      await overview.unmount();
+      const opened = await renderScreen(<DeploymentReceiptDetail cancel={null} deploy={null} phone={false} linkPath={null}
+        serverId={scope.serverId} readLogs={null} controller={controller} environmentId={detail.environment.id}
+        deploymentId={receipt.deployment.id} demand={shown} accountId={scope.accountId} onBack={() => {}}
+        rollback={null} review={noReview} onOpenReceipt={() => {}} />);
+      await waitForHomeGovernance(() => {
+        expect(opened.getTextContent()).toContain(builtSha.slice(0, 7));
+        expect(opened.getTextContent()).not.toContain(receipt.content.commitSubject);
+      });
+    } finally { controller.retire(); }
+  });
+
   it.each(['degraded', 'passing', 'deploying', 'deployingWithoutAnObservation'] as const)('uses one history read for Recent activity and current health (%s)', async phase => {
     const base = environmentDetailForHome();
     const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;

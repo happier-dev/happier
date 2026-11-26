@@ -3,8 +3,9 @@ import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testin
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentReceiptMetadataV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { projectDeploymentReceiptSourceFactsV1 } from '@happier-dev/deployments';
 import { t } from '@/text';
-import { deploymentDeployAvailability, deploymentFailureTitle, deploymentSourceLabel, deploymentHeadline, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentHealthFact, deploymentSettledStateLabel } from './deploymentPresentation';
+import { deploymentDeployAvailability, deploymentFailureTitle, deploymentReceiptTitle, deploymentRevisionLabel, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentHealthFact, deploymentSettledStateLabel } from './deploymentPresentation';
 
 it('presents the recorded interruption reason on the receipt and its history row', () => {
     const receipt = createDeploymentReceiptHeaderV1({ state: 'outcome_unknown' });
@@ -76,8 +77,9 @@ describe('data cleanup receipt presentation', () => {
                 dataCreation: { reference: { runId: 'run:one', invocationId: 'inv:one' }, retainedProviderResource: true,
                     deleteAction: { pluginId: 'acme.alpha', localId: 'delete' }, operands: { branchId: 'A' } } } });
         const receipt = createDeploymentReceiptHeaderV1({ operation: 'teardown', state: 'failed' });
-        expect(deploymentSourceLabel(content)).toBeNull();
-        expect(deploymentHeadline(receipt, content)).toBe(deploymentStateLabel('failed'));
+        const { source } = projectDeploymentReceiptSourceFactsV1(content);
+        expect(source).toBeNull();
+        expect(deploymentReceiptTitle(receipt, null)).toBe(deploymentStateLabel('failed'));
     });
 });
 
@@ -95,8 +97,10 @@ describe('receipt titles name the operation the receipt records', () => {
     // The protocol's own operation vocabulary, so a new operation fails here until it has its words.
     const operations = DeploymentReceiptMetadataV1Schema.shape.operation.options;
     const { content } = createDeploymentReceiptDetailV1();
+    const { source } = projectDeploymentReceiptSourceFactsV1(content);
+    const label = source ? deploymentRevisionLabel(source) : null;
     const headline = (operation: (typeof operations)[number], state: 'running' | 'succeeded' | 'failed' | 'cancelled') =>
-        deploymentHeadline(createDeploymentReceiptHeaderV1({ operation, state }), content);
+        deploymentReceiptTitle(createDeploymentReceiptHeaderV1({ operation, state }), label);
 
     it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)('%s: every operation reads differently', (state) => {
         const titles = operations.map(operation => headline(operation, state));

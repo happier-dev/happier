@@ -88,7 +88,6 @@ import {
   deploymentRevisionLabel,
   deploymentOperationLabel,
   readDeploymentPromotionTarget,
-  deploymentSourceLabel,
   deploymentSettledReceiptState,
   deploymentStateLabel,
   deploymentStateNotice,
@@ -823,13 +822,14 @@ export const DeploymentEnvironmentDetail = React.memo(
     // Restore a backup: the pre-migration dump the serving deploy kept, read from the active receipt the page
     // already holds. The restore Action decides admission at each press.
     const servingReceipt = activeReceipt;
+    const servingVersion = servingReceipt?.facts.source ? deploymentRevisionLabel(servingReceipt.facts.source) : null;
     const fleetLink = runtime?.targetKind === 'ownServer' && runtime.source.kind === 'host'
       ? { ...runtime, source: runtime.source } : null;
     const openFleet = lifetime && detail.environment.capabilities.manageTargets && fleetLink
       ? () => showDeploymentFleetSheet({ detail, runtimeLink: fleetLink, receipt: servingReceipt, lifetime }) : null;
 
     const retainedBackup = backupSummary.result.value && servingReceipt
-      ? retainedBackupFromSummary(backupSummary.result.value, deploymentSourceLabel(servingReceipt.content)) : null;
+      ? retainedBackupFromSummary(backupSummary.result.value, servingVersion) : null;
     const restoreAction = props.restore ?? null;
     const restoreOperands = retainedBackup ? deploymentRestoreOperands(detail, retainedBackup) : null;
     const restoreTarget = deploymentDataTargetOperands(detail);
@@ -901,7 +901,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             controller: props.controller, serverId: props.serverId, sourceEnvironmentId: detail.environment.id,
             sourceDeploymentId: activeReceipt.deployment.id, target: promotionTarget,
             production: { source: detail.environment, create: props.onCreateProduction },
-            name: detail.content.name, version: deploymentSourceLabel(activeReceipt.content) ?? activeReceipt.deployment.id,
+            name: detail.content.name, version: servingVersion ?? activeReceipt.deployment.id,
             promote: props.promote!, review,
             onOpenReceipt: (environmentId, deploymentId) => props.onOpenPromotionReceipt?.(environmentId, deploymentId),
           }) : undefined}

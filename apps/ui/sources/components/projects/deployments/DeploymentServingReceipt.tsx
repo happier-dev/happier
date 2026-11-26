@@ -15,7 +15,6 @@ import {
   deploymentDurationMs,
   deploymentReceiptAtMs,
   deploymentRevisionLabel,
-  deploymentSourceLabel,
 } from './deploymentPresentation';
 import type { useDeploymentReceipt } from './useDeploymentReads';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -154,7 +153,7 @@ function servingCells(
   settledAt: number,
 ): FactStripFact[] {
   const { content, deployment, facts } = receipt;
-  const revision = deploymentSourceLabel(content);
+  const revision = facts.source ? deploymentRevisionLabel(facts.source) : null;
   const kept = facts.retainedRollbackTarget;
   const cells: FactStripFact[] = [];
   if (revision)
@@ -171,12 +170,12 @@ function servingCells(
           }
         : {}),
     });
-  if (content.commitSubject)
+  if (facts.commitSubject)
     cells.push({
       key: 'commit',
       wide: true,
       label: t('projects.deployments.overviewStatus.cellCommit'),
-      value: content.commitSubject,
+      value: facts.commitSubject,
       ...(byYou ? { detail: t('projects.deployments.byYou') } : {}),
     });
   const pullRequest =
