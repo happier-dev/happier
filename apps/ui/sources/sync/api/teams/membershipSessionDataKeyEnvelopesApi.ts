@@ -76,7 +76,14 @@ export async function executeMembershipHistoryActionForScope(options: Readonly<{
             sessionKeyUnprovenCount: outcome.sessionKeyUnprovenSessions.length, recipientUnavailableReason: outcome.recipientUnavailableReason,
             exceptions: outcome.exceptions };
     } catch (error) {
-        if (error instanceof SessionAccessApiError) return { ok: false, errorCode: error.code, error: error.code };
+        if (error instanceof SessionAccessApiError) {
+            return {
+                ok: false,
+                errorCode: error.code,
+                error: error.code,
+                ...(error.status === undefined ? {} : { details: { httpStatus: error.status } }),
+            };
+        }
         throw error;
     }
 }

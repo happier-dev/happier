@@ -6,7 +6,7 @@ import { executeMembershipHistoryActionForScope, type MembershipSessionDataKeyEn
 import { SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 import { runTeamAction } from './teamActionClient';
 import type { HomeDomainFailure } from './teamActionClient';
-import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
+import { homeDomainFailureCode, homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 
 function failure(outcome: HomeDomainFailure): SessionAccessApiError {
     const code = homeDomainFailureCode(outcome);
@@ -18,12 +18,18 @@ async function run<T>(options: MembershipSessionDataKeyEnvelopeRequestOptions, a
     parse: (value: unknown) => T, callbacks?: Readonly<{
         onProgress?: (progress: SessionDataKeyPreparationProgress) => void;
         onApprovalSucceeded?: (value: T) => void;
-        onApprovalFailed?: (code: string) => void;
+        onApprovalFailed?: (error: SessionAccessApiError) => void;
     }>): Promise<T> {
+    const { onApprovalFailed, ...rest } = callbacks ?? {};
     const outcome = await runTeamAction({ scope: options.scope, actionId,
         input: { teamId: options.address.teamId, target: options.target, recipientAccountId: options.recipientAccountId },
         parse, ...(options.signal ? { signal: options.signal } : {}),
-        ...callbacks,
+        ...rest,
+        ...(onApprovalFailed ? {
+            onApprovalFailed: (code, cause) => onApprovalFailed(cause
+                ? failure(homeDomainFailureFromActionFailure(cause, actionId))
+                : new SessionAccessApiError(code)),
+        } : {}),
         executorOptions: { teamMembershipHistoryAction: async args => await executeMembershipHistoryActionForScope({
             ...options, actionId: args.actionId, input: args.input,
             ...(callbacks?.onProgress ? { onProgress: callbacks.onProgress } : {}),
@@ -40,7 +46,7 @@ export function getTeamMembershipHistoryReadiness(options: MembershipSessionData
 export function prepareTeamMembershipHistory(options: MembershipSessionDataKeyEnvelopeRequestOptions & Readonly<{
     onProgress?: (progress: SessionDataKeyPreparationProgress) => void;
     onApprovalSucceeded?: (value: TeamMembershipHistoryPreparationResultV1) => void;
-    onApprovalFailed?: (code: string) => void;
+    onApprovalFailed?: (error: SessionAccessApiError) => void;
 }>) {
     return run(options, 'teams.members.history.prepare', value => TeamMembershipHistoryPreparationResultV1Schema.parse(value), options);
 }

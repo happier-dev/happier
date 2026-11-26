@@ -293,7 +293,7 @@ describe('member encrypted-access state', () => {
             sessionKeyUnprovenCount: 0,
             recipientUnavailableReason: null,
             exceptions: null,
-        })).toEqual({ kind: 'failed' });
+        })).toEqual({ kind: 'refused', code: 'invalid_recipient_binding' });
     });
 
     it('reports an Account that cannot hold keys as setup, not as empty work', () => {
@@ -321,6 +321,64 @@ describe('TeamMemberEncryptionSection mounted membership history', () => {
         }));
         await vi.waitFor(() => expect(screen.getTextContent().split(t(message))).toHaveLength(2));
         expect(screen.getTextContent()).not.toContain(t('common.retry'));
+        expect(screen.getTextContent().includes(t('teams.errors.signInRequiredAction'))).toBe(code === 'team_authentication_required');
+    });
+
+    it.each([
+        { code: 'invalid_request', status: 400, message: 'homeGovernance.invalidRead' },
+        { code: 'invalid_cursor', status: 400, message: 'teams.errors.listCursorExpired' },
+        { code: 'team_not_found', status: 404, message: 'teams.errors.notFound' },
+        { code: 'group_not_found', status: 404, message: 'teams.groups.notFound' },
+        { code: 'account_not_found', status: 404, message: 'homeGovernance.errorAccountNotFound' },
+        { code: 'team_forbidden', status: 403, message: 'teams.errors.forbidden' },
+    ] as const)('presents the settled encrypted-history read refusal $code', async ({ status, code, message }) => {
+        const setup = await setupMountedMemberRequest(async () => Response.json({ error: code }, { status }));
+        const screen = await renderSettingsView(React.createElement(TeamMemberEncryptionSection, {
+            context: createMountedContext(setup.profile.id, vi.fn()),
+            ...(code === 'group_not_found' ? { target: { kind: 'group' as const, teamGroupId: 'group-1', accountId: 'recipient-1' } } : {}),
+        }));
+        await vi.waitFor(() => expect(screen.getTextContent().split(t(message))).toHaveLength(2));
+        expect(screen.getTextContent()).not.toContain(t('common.retry'));
+    });
+
+    it.each([
+        { code: 'team_authentication_required', status: 403, message: 'session.access.authenticationRequired' },
+        { code: 'team_authentication_unavailable', status: 503, message: 'teams.credentials.externalApi.authenticationUnavailable' },
+        { code: 'invalid_request', status: 400, message: 'homeGovernance.invalidRead' },
+        { code: 'recipient_key_unavailable', status: 409, message: 'teams.members.encryption.recipientKeyUnavailable' },
+        { code: 'session_data_key_unavailable', status: 409, message: 'teams.members.encryption.sessionKeyUnavailable' },
+        { code: 'forbidden', status: 403, message: 'teams.errors.forbidden' },
+    ] as const)('keeps the owner refusal $code when preparing encrypted history', async ({ status, code, message }) => {
+        const recipientContent = tweetnacl.box.keyPair();
+        const recipientSigning = tweetnacl.sign.keyPair();
+        let managerKeys!: ReturnType<typeof tweetnacl.box.keyPair>;
+        let patchCount = 0;
+        const setup = await setupMountedMemberRequest(async (_url, init) => {
+            if (init?.method === 'PATCH') {
+                patchCount++;
+                return Response.json({ error: code }, { status });
+            }
+            return Response.json({ status: 'ready', recipientAccountId: 'recipient-1',
+                contentKey: { status: 'available', accountSigningPublicKey: encodeHex(recipientSigning.publicKey),
+                    contentPublicKey: encodeBase64(recipientContent.publicKey, 'base64'),
+                    contentPublicKeySignature: encodeBase64(signAccountContentKeyBindingV1({
+                        accountSigningSecretKey: recipientSigning.secretKey, contentPublicKey: recipientContent.publicKey,
+                    }), 'base64') },
+                items: [{ sessionId: 'session-1', callerDataKeyEnvelope: encryptDataKeyForRecipientV0(
+                    new Uint8Array(32).fill(7), encodeBase64(managerKeys.publicKey, 'base64')), ...SESSION_1_BOUND_METADATA }],
+                exceptions: { callerEnvelopeRepairRequiredCount: 0, callerVisibleNonTransferableSessionCount: 0 },
+                nextCursor: null,
+            });
+        }, { accountEncryption: 'e2ee' });
+        managerKeys = setup.managerKeys;
+        const screen = await renderSettingsView(React.createElement(TeamMemberEncryptionSection, {
+            context: createMountedContext(setup.profile.id, vi.fn()),
+        }));
+        await vi.waitFor(() => expect(screen.findRow('team-member-encryption-prepare')).not.toBeNull());
+        await act(async () => { screen.pressRow('team-member-encryption-prepare'); });
+        await vi.waitFor(() => expect(patchCount).toBe(1));
+        await vi.waitFor(() => expect(screen.getTextContent().split(t(message))).toHaveLength(2));
+        expect(screen.findRow('team-member-encryption-retry')).toBeNull();
         expect(screen.getTextContent().includes(t('teams.errors.signInRequiredAction'))).toBe(code === 'team_authentication_required');
     });
 
@@ -456,7 +514,9 @@ describe('TeamMemberEncryptionSection mounted membership history', () => {
             context: createMountedContext(setup.profile.id, vi.fn()), autoStartPreparation: true,
             target: { kind: 'group', teamGroupId: 'group-1', accountId: 'recipient-1' },
         }));
-        await vi.waitFor(() => expect(screen.findRow('team-member-encryption-retry')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findRow('team-member-encryption-unavailable')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('actionConfirmations.openActionSettings'));
+        expect(screen.findRow('team-member-encryption-retry')).toBeNull();
         expect(request.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
     });
 

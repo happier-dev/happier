@@ -14,6 +14,7 @@ import type { TeamMembershipHistoryPreparationResultV1, TeamMembershipHistoryRea
 import { getTeamMembershipHistoryReadiness, prepareTeamMembershipHistory } from '@/sync/ops/teams/teamMembershipHistoryOperations';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
+import type { TranslationKeyNoParams } from '@/text/i18n';
 
 import { teamReadFailureLabel } from '../teamMutationPresentation';
 import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
@@ -36,7 +37,7 @@ type EncryptedAccess =
     | Readonly<{ kind: 'checking' }>
     | Readonly<{
         kind: 'unavailable';
-        reason: 'unsupported' | 'forbidden' | 'not_found' | 'transient';
+        reason: 'unsupported' | 'forbidden' | 'not_found' | 'transient' | 'unclassified';
         retryable: boolean;
     }>
     | Readonly<{
@@ -64,7 +65,7 @@ type EncryptedAccess =
     | Readonly<{ kind: 'recipient_changed' }>
     /** The exact Team/Group membership disappeared; the host and resource are rediscovered. */
     | Readonly<{ kind: 'membership_changed' }>
-    | Readonly<{ kind: 'failed' }>;
+    | Readonly<{ kind: 'failed'; retryable: boolean }>;
 
 const CHECKING: EncryptedAccess = Object.freeze({ kind: 'checking' as const });
 const UNSUPPORTED: EncryptedAccess = Object.freeze({
@@ -72,7 +73,26 @@ const UNSUPPORTED: EncryptedAccess = Object.freeze({
     reason: 'unsupported' as const,
     retryable: false,
 });
-const FAILED: EncryptedAccess = Object.freeze({ kind: 'failed' as const });
+const FAILED: EncryptedAccess = Object.freeze({ kind: 'failed' as const, retryable: false });
+
+const historyRefusalTranslation: Readonly<Partial<Record<string, TranslationKeyNoParams>>> = Object.freeze({
+    invalid_request: 'homeGovernance.invalidRead',
+    invalid_cursor: 'teams.errors.listCursorExpired',
+    team_not_found: 'teams.errors.notFound',
+    group_not_found: 'teams.groups.notFound',
+    account_not_found: 'homeGovernance.errorAccountNotFound',
+    team_forbidden: 'teams.errors.forbidden',
+    forbidden: 'teams.errors.forbidden',
+    teams_unavailable: 'teams.unavailable.disabled',
+    recipient_key_unavailable: 'teams.members.encryption.recipientKeyUnavailable',
+    session_data_key_unavailable: 'teams.members.encryption.sessionKeyUnavailable',
+    invalid_recipient_binding: 'teams.members.encryption.recipientBindingInvalid',
+});
+
+function membershipHistoryRefusalLabel(code: string): string {
+    const message = historyRefusalTranslation[code];
+    return message ? t(message) : teamReadFailureLabel({ kind: 'forbidden', code, retryable: false });
+}
 
 /**
  * The last settled result per exact membership-history scope, kept for this app run only.
@@ -102,8 +122,8 @@ export function classifyTeamMemberRecipientEncryptionState(
  */
 export function classifyTeamMemberEncryptionDiscoveryFailure(error: unknown): Extract<EncryptedAccess, { kind: 'unavailable' | 'refused' }> {
     if (error instanceof SessionAccessApiError) {
-        if (error.code === 'team_authentication_required' || error.code === 'team_authentication_unavailable'
-            || isActionTurnedOffErrorCode(error.code)) {
+        if (Object.hasOwn(historyRefusalTranslation, error.code) || error.code === 'team_authentication_required'
+            || error.code === 'team_authentication_unavailable' || isActionTurnedOffErrorCode(error.code)) {
             return { kind: 'refused', code: error.code };
         }
         if (error.code === 'unsupported_action' || error.code === 'session_access_sharing_unavailable') {
@@ -114,6 +134,9 @@ export function classifyTeamMemberEncryptionDiscoveryFailure(error: unknown): Ex
         }
         if (error.status === 404 || error.code === 'membership_not_found') {
             return { kind: 'unavailable', reason: 'not_found', retryable: false };
+        }
+        if (error.status !== undefined && error.status < 500) {
+            return { kind: 'unavailable', reason: 'unclassified', retryable: false };
         }
     }
     return { kind: 'unavailable', reason: 'transient', retryable: true };
@@ -172,10 +195,7 @@ export function projectTeamMemberPreparationOutcome(
                 || outcome.sessionKeyUnprovenCount > 0,
         };
     }
-    // An unverifiable recipient binding is the one stable cryptographic failure left:
-    // committed pages stay correct, and nothing was sealed to a key the claiming
-    // Account did not sign.
-    return FAILED;
+    return { kind: 'refused', code: 'invalid_recipient_binding' };
 }
 
 export function TeamMemberEncryptionSection(props: Readonly<{
@@ -279,6 +299,17 @@ export function TeamMemberEncryptionSection(props: Readonly<{
         setRefreshing(false);
         setState({ kind: 'preparing', preparedCount: 0 });
         announceAccessibilityMessage(t('teams.members.encryption.preparing', { prepared: 0 }));
+        const reject = (error: unknown) => {
+            if (currentGeneration !== generation.current) return;
+            const refusal = classifyTeamMemberEncryptionDiscoveryFailure(error);
+            if (refusal.kind === 'refused') {
+                announceAccessibilityMessage(membershipHistoryRefusalLabel(refusal.code));
+                setState(refusal);
+                return;
+            }
+            announceAccessibilityMessage(t('teams.members.encryption.failed'));
+            setState(refusal.retryable ? { kind: 'failed', retryable: true } : FAILED);
+        };
         void (async () => {
             try {
                 const settle = (outcome: TeamMembershipHistoryPreparationResultV1) => {
@@ -291,7 +322,8 @@ export function TeamMemberEncryptionSection(props: Readonly<{
                         settled.kind === 'ready'
                             ? settled.actionable || settled.callerRepairRequired
                                 ? t('teams.members.encryption.pending') : t('teams.members.encryption.ready')
-                            : settled.kind === 'setup_required' ? t('teams.members.encryption.setupRequired') : t('teams.members.encryption.failed'),
+                            : settled.kind === 'setup_required' ? t('teams.members.encryption.setupRequired')
+                                : settled.kind === 'refused' ? membershipHistoryRefusalLabel(settled.code) : t('teams.members.encryption.failed'),
                     );
                     setState(settled);
                 };
@@ -307,7 +339,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
                         setState({ kind: 'preparing', preparedCount: progress.preparedCount });
                     },
                     onApprovalSucceeded: settle,
-                    onApprovalFailed: () => { if (currentGeneration === generation.current) setState(FAILED); },
+                    onApprovalFailed: reject,
                 });
                 settle(outcome);
             } catch (cause) {
@@ -317,8 +349,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
                     context.requestApproval(cause.registration);
                     return;
                 }
-                announceAccessibilityMessage(t('teams.members.encryption.failed'));
-                setState(FAILED);
+                reject(cause);
             }
         })();
     }, [context, discover, request, state]);
@@ -343,14 +374,17 @@ export function TeamMemberEncryptionSection(props: Readonly<{
             ? { kind: 'forbidden' as const, retryable: false, code: state.code }
             : null;
         const retry = () => discover();
-        const action = refusal
-            ? readFailureAction(refusal, { onPress: retry })
-            : { label: t('common.retry'), onPress: retry };
+        const reread = refusal?.code === 'invalid_cursor' || refusal?.code === 'recipient_key_unavailable';
+        const action = reread
+            ? { label: t('common.refresh'), onPress: retry }
+            : refusal
+                ? readFailureAction(refusal, { onPress: retry })
+                : { label: t('common.retry'), onPress: retry };
         return (
             <ItemGroup title={t('teams.members.encryption.title')}>
                 <Item
                     testID="team-member-encryption-unavailable"
-                    title={refusal ? teamReadFailureLabel(refusal) : t('teams.unavailable.offline')}
+                    title={refusal ? membershipHistoryRefusalLabel(refusal.code) : t('teams.unavailable.offline')}
                     detail={action?.label}
                     loading={refreshing}
                     onPress={action?.onPress}
@@ -443,14 +477,16 @@ export function TeamMemberEncryptionSection(props: Readonly<{
     if (state.kind === 'failed') {
         return (
             <ItemGroup title={t('teams.members.encryption.title')} description={t('teams.members.encryption.failed')}>
-                <Item
-                    testID="team-member-encryption-retry"
-                    title={t('teams.members.encryption.retry')}
-                    loading={refreshing}
-                    disabled={!context.mutationsAvailable || refreshing}
-                    onPress={prepare}
-                    showChevron={false}
-                />
+                {state.retryable ? (
+                    <Item
+                        testID="team-member-encryption-retry"
+                        title={t('teams.members.encryption.retry')}
+                        loading={refreshing}
+                        disabled={!context.mutationsAvailable || refreshing}
+                        onPress={prepare}
+                        showChevron={false}
+                    />
+                ) : null}
             </ItemGroup>
         );
     }
