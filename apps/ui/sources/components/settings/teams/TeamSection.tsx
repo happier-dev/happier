@@ -168,9 +168,9 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     children: (context: TeamSectionContext, header: React.ReactNode | undefined, renderHeader: TeamSectionRenderHeader) => React.ReactNode;
 }>) {
     const router = useRouter();
-    const readFailureAction = useTeamReadFailureAction();
     const binding = useTeamBinding(props.serverId, props.teamId);
     const projection = binding.kind === 'bound' ? binding : binding.kind === 'resolving' ? binding.retained : undefined;
+    const readFailureAction = useTeamReadFailureAction(projection?.address);
     const scopeKey = projection
         ? serverAccountScopedTeamKey(projection.scope, projection.address)
         : `unbound:${props.serverId}:${props.teamId}`;
@@ -331,6 +331,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         address,
         homeName,
         team: state.team,
+        staleReadFailure: state.stale ? state.error ?? null : null,
         // An archived Team is read-only for everyone; restore stays available to
         // the viewers whose projected capability actually backs it.
         mutationsAvailable: state.mutationsAvailable,
@@ -347,12 +348,12 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         && state.mutationsAvailable;
 
     // The Team's own read state, read once here so the header builder below closes over plain values.
-    const { stale: teamStale, error: teamError, archived: teamArchived } = state;
+    const { stale: teamStale, archived: teamArchived } = state;
     const renderHeader: TeamSectionRenderHeader = (pageReads = NO_PAGE_READS) => {
         // One outage is one notice: the Team's own read and the page's reads that are not current
         // share it, it names the first failure, and its one retry asks every one of them again.
         const staleReads: readonly TeamPageStaleRead[] = teamStale
-            ? [{ failure: teamError ?? null, retry: refresh }, ...pageReads]
+            ? [{ failure: context.staleReadFailure ?? null, retry: refresh }, ...pageReads]
             : pageReads;
         const failure = staleReads.find((read) => read.failure !== null)?.failure ?? null;
         const retryAll = () => {

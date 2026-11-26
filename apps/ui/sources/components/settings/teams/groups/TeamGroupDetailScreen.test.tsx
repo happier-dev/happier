@@ -832,6 +832,34 @@ describe('TeamGroupDetailScreen', () => {
             }
         });
 
+        it('renders one Team sign-in when both the Group roster and Team candidate read refuse it', async () => {
+            const serverId = await addManagedHome();
+            harness.answer(serverId, GROUP_GET_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }) });
+            harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, {
+                body: { items: [teamGroupMemberFixture({ accountId: 'account-grace', membershipId: 'membership-grace' })], nextCursor: null },
+            });
+            harness.answer(serverId, TEAM_MEMBERS_LIST_PATH, { status: 403, body: { error: 'team_authentication_required' } });
+            const screen = await renderGroupDetail(serverId);
+            await waitForTestId(screen, 'team-group-add-member');
+            await screen.pressByTestIdAsync('team-group-add-member');
+            await waitForTestId(screen, 'team-group-candidates-sign-in');
+
+            harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { status: 403, body: { error: 'team_authentication_required' } });
+            const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+            const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol/changes');
+            await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+            await waitForTestId(screen, 'team-stale');
+            await vi.waitFor(() => {
+                const { AttentionBanner } = groupBannerModule;
+                const banner = screen.findAllByType(AttentionBanner).find((node) => node.props.testID === 'team-stale');
+                expect(banner?.props.title).toBe('session.access.authenticationRequired');
+            });
+            expect(screen.getTextContent().split('session.access.authenticationRequired')).toHaveLength(2);
+            expect(screen.findByTestId('team-group-candidates-sign-in')).toBeNull();
+            await screen.pressByTestIdAsync('team-stale-sign-in');
+            expect(groupRouterPush).toHaveBeenCalledWith(expect.stringContaining(`/teams/team-1/sign-in?serverId=${serverId}`));
+        });
+
         it('refreshes the first Team roster page after its next-page cursor is refused', async () => {
             const serverId = await addManagedHome();
             harness.answer(serverId, GROUP_GET_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, memberCount: 0 }) });

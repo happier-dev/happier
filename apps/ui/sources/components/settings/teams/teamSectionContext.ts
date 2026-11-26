@@ -1,5 +1,6 @@
 import type { TeamSummaryV1 } from '@happier-dev/protocol/teams';
 
+import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -24,6 +25,8 @@ export type TeamSectionContext = Readonly<{
     address: TeamAddress;
     homeName: string;
     team: TeamSummaryV1;
+    /** The stopped Team read, also used by the header's stale notice. */
+    staleReadFailure?: ScopedSnapshotError | null;
     /**
      * Host readiness alone: false while the shown Team is stale or its Home is
      * unreachable. Lifecycle actions that are legitimate *because* a Team or

@@ -903,7 +903,12 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
             }
 
             const candidatesError = candidates.error;
-            if (candidatesError) {
+            const pageFailure = context.staleReadFailure ?? (groupStale ? detail.error : null) ?? members.error;
+            // Both reads address this Team. The page's sign-in already recovers
+            // the picker; keep other failures here with their own recovery.
+            const signInShownInHeader = pageFailure?.code === 'team_authentication_required'
+                && candidatesError?.code === 'team_authentication_required';
+            if (candidatesError && !signInShownInHeader) {
                 const label = teamReadFailureLabel(candidatesError);
                 const recovery = readFailureAction(candidatesError, {
                     onPress: () => void candidates.reload(),
@@ -1079,6 +1084,7 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
         eligibleCandidates,
         group,
         groupCurrent,
+        groupStale,
         groupHistoryAccess,
         groupId,
         groupName,
