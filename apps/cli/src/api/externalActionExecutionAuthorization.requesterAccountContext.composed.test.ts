@@ -13,12 +13,17 @@ import { AccountProfileSchema, AutomationDefinitionCreateRequestSchema, Automati
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { REVIEW_ARTIFACT_KIND_V1, ReviewArtifactBodyV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { encryptWithDataKey } from '@/api/encryption';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/plugin-sdk/events';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountArtifactRoutes, registerAccountHomeHttp, registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
 import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -1175,6 +1180,7 @@ it('spends the same contributed requester custody through CLI and native HTTP po
       expect(cli).toMatchObject({ ok: true, headers: { Authorization: `Bearer ${credentials.token}` } });
       const native = await projected.requesterHttpProjection.createRequestHeaders(request);
       expect(native).toEqual({ Authorization: `Bearer ${credentials.token}`,
+        [requesterAccountEncryptionMode]: 'plain',
         [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });
       const wireOnly = await projectExternalActionRequesterHttpAuthorization({ ...projectionInput, authorization: root });
       expect(await wireOnly?.requesterHttpProjection?.createRequestHeaders(request)).toBeNull();
@@ -1183,23 +1189,36 @@ it('spends the same contributed requester custody through CLI and native HTTP po
 });
 
 describe('ordinary CLI requester Account custody on the existing Action carrier', () => {
-  it.each(['review.start', 'review.new_round', 'review.prepare_round', 'review.settle_round', 'action.invoke'] as const)(
-    'uses the admitted requester for Review records under %s at the Artifact HTTP boundary', async actionId => {
+  it.each((['review.start', 'review.new_round', 'review.prepare_round', 'review.settle_round', 'action.invoke'] as const)
+    .flatMap(actionId => (actionId === 'action.invoke' ? ['plain', 'e2ee'] as const : ['plain'] as const)
+      .map(mode => ({ actionId, mode }))))(
+    'uses the admitted requester for Review records under $actionId ($mode) at the Artifact HTTP boundary', async ({ actionId, mode }) => {
       await withConfiguredDaemonTestHome({ prefix: 'review-record-root-' }, async () => {
         const observed: Array<Readonly<{ path: string; effect: unknown; authorization: unknown; signature: unknown }>> = [];
         const artifacts = fastify();
         const requesterToken = token();
         const contributed = actionId === 'action.invoke';
-        artifacts.get('/v1/artifacts/:artifactId', async (request, reply) => {
-          if (!contributed || request.headers.authorization !== `Bearer ${requesterToken}`) {
-            return reply.code(401).send({ error: 'invalid_token' });
-          }
-          return reply.code(404).send({ error: 'artifact_not_found' });
-        });
+        const credentials: StoredCredentials = { token: requesterToken, credentialProvenance: 'stored_session',
+          encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(23) } };
+        const resource = await createResourceDataKey({ credentials, mode });
+        const encode = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
+          : encodeBase64(encryptWithDataKey(value, resource.dataKey), 'base64');
+        const artifactRows = registerAccountArtifactRoutes(artifacts, 'bob', { encryptionMode: mode });
+        artifactRows.seed('existing-review-record', encode({ kind: REVIEW_ARTIFACT_KIND_V1, v: 1,
+          reviewId: 'existing-review-record', title: 'Human Review' }),
+        encode({ body: JSON.stringify(ReviewArtifactBodyV1Schema.parse({ v: 1, rounds: [{
+          ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [],
+        }] })) }), resource.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER);
         // Home authorization is covered by its server composed suite. This HTTP
         // boundary returns the ordinary missing-record response after observing
         // the real caller's signed JSON frame through its canonical decoder.
-        artifacts.post('/v1/artifacts/:artifactId', async (request, reply) => {
+        artifacts.addHook('preHandler', async (request, reply) => {
+          if (request.method === 'GET') {
+            if (!contributed || request.headers.authorization !== `Bearer ${requesterToken}`) {
+              return reply.code(401).send({ error: 'invalid_token' });
+            }
+            return;
+          }
           const frame = decodeExternalActionHttpBodyV1(request.body);
           if (!frame) throw new Error('Expected signed Artifact read frame');
           if (contributed) {
@@ -1211,13 +1230,12 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           return reply.code(404).send({ error: 'artifact_not_found' });
         });
         await artifacts.ready();
-        const target = await home('plain', [], { originalOwnAction: actionId, artifacts });
+        const target = await home(mode, [], { originalOwnAction: actionId, artifacts });
         const channel = await createRequesterCurrentnessSocketHarness();
-        const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
         const serverId = configuration.activeServerId;
         const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-review-record', binding: {
           accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 7 },
-          accountEncryptionMode: 'plain', serverIdentityId: homeIdentityId, machineId: 'alice-machine',
+          accountEncryptionMode: mode, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
           installationId: 'alice-installation', actionId, requestId: 'review-record-request',
           requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'alice-machine' },
         } });
@@ -1232,7 +1250,8 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
             serverId, serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, target: root.binding.target,
             installationId: root.binding.installationId, privateKey: target.privateKey, rootAdmitted: true });
           if (!authorization?.requesterHttpProjection) throw new Error('Expected Review requester HTTP projection');
-          const daemonCredentials = contributed ? { ...credentials, token: token('account', 'alice') } : credentials;
+          const daemonCredentials = contributed ? { ...credentials,
+            token: mode === 'plain' ? token('account', 'alice') : requesterToken.replace('signature', 'older-signature') } : credentials;
           const deps = createCliActionDeps({ token: daemonCredentials.token, credentials: daemonCredentials, serverId,
             serverIdentityId: homeIdentityId, serverHttpBaseUrl: target.url, sessionId: '',
             externalActionMachineInstallationId: root.binding.installationId,
@@ -1241,7 +1260,14 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
             externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization });
           if (!records) throw new Error('Expected real Review record port');
           expect(await records.read('new-review-record')).toBeNull();
-          if (contributed) return;
+          if (contributed) {
+            // A 404 never opens content. This existing owner row also consumes
+            // admitted Account mode when requester and installed credentials differ.
+            expect(await records.read('existing-review-record')).toMatchObject({
+              reviewId: 'existing-review-record', rounds: [{ state: 'completed', reviewerIds: [] }],
+            });
+            return;
+          }
           const read = observed.find(request => request.path === '/v1/artifacts/new-review-record');
           expect(read).toMatchObject({ effect: actionId,
             authorization: root.token, signature: expect.any(String) });

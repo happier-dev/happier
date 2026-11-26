@@ -1955,7 +1955,9 @@ function resolveContributedActionRequesterHttpHeaders(input: Readonly<{
     || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) {
     return refuseExternalActionHeaders('requester_account_custody_mismatch', binding.requestId);
   }
+  const mode = input.authorization.requesterAccountProjection?.accountEncryptionMode ?? binding.accountEncryptionMode;
   return { ok: true, headers: { Authorization: `Bearer ${requester.credentials.token}`,
+    ...(mode === undefined ? {} : { [requesterAccountEncryptionMode]: mode }),
     ...(input.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
 }
 
