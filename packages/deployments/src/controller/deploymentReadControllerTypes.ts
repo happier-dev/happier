@@ -107,7 +107,8 @@ type DeploymentSelectedDataLinkV1 = Readonly<{
 export type DeploymentSelectedDatabaseV1 =
     | Readonly<{ kind: 'selfHosted'; data: NonNullable<NonNullable<DeploymentEnvironmentContentV1['template']>['data']>[number] }>
     | Readonly<{ kind: 'managed' | 'detached'; link: DeploymentSelectedDataLinkV1 }>;
-export type DeploymentDataServiceReadItemV1<TDetail extends DeploymentEnvironmentDetailV1 = DeploymentEnvironmentDetailV1> = Readonly<{
+type DeploymentSelectedDatabaseDetailV1 = DeploymentEnvironmentDetailV1 & Pick<DeploymentEnvironmentReadDetailV1, 'runtimeTargetLink'>;
+export type DeploymentDataServiceReadItemV1<TDetail extends DeploymentSelectedDatabaseDetailV1 = DeploymentSelectedDatabaseDetailV1> = Readonly<{
     environment: DeploymentEnvironmentHeaderV1; title: string; content: DeploymentEnvironmentContentV1;
     projectSourceName?: string | null;
     /** One exact Database route. A null address means the Environment no longer holds that database. */

@@ -23,7 +23,7 @@ import { projectDeploymentCancellationConsequenceV1 } from '@happier-dev/deploym
 import { readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1, readDeploymentDomainArtifactV1 } from '@happier-dev/deployments';
 import type {
     DeploymentReadTransportV1, DeploymentReadScopeV1, DeploymentReadOptionsV1, DeploymentReadResultV1, DeploymentWorkbenchTargetReadV1,
-    DeploymentSelectedDatabaseV1,
+    DeploymentDataServiceReadItemV1, DeploymentSelectedDatabaseV1,
 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentCollectionV1, DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -352,13 +352,14 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     environment: runtimeEnvironment,
                     targetLinks: (selectedMetadata?.targetLinks ?? (runtimeLink ? [runtimeLink] : [])).map(targetLink => ({ targetLink })),
                 }) : null;
-                let selected: { detail: DeploymentEnvironmentDetailV1; address: DeploymentSelectedDatabaseV1 | null } | undefined;
+                let selected: DeploymentDataServiceReadItemV1['selected'];
                 if (selectedMetadata && query.database !== undefined) {
                     const result = await readSelectedDatabase(account, options.signal, query.database, data[0], selectedMetadata.targetLinks);
                     if (!result.ok) return result;
                     const address = result.value;
                     const selectedLink = address && address.kind !== 'selfHosted' ? address.link : null;
-                    const detail: DeploymentEnvironmentDetailV1 = { environment, content,
+                    const detail: NonNullable<DeploymentDataServiceReadItemV1['selected']>['detail'] = {
+                        environment, content, runtimeTargetLink,
                         targetLinks: selectedMetadata.targetLinks.map(targetLink =>
                             selectedLink?.targetLink === targetLink ? selectedLink : { targetLink }),
                         ...(selectedMetadata.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: selectedMetadata.savedSecretRevisions }),

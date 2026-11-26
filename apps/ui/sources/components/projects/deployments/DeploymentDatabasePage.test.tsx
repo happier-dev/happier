@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { createDeploymentReadControllerV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import {
   createDeploymentEnvironmentHeaderV1,
@@ -157,6 +157,7 @@ async function renderDatabase(
     /** Read the Database subject and Workbench target through the real selected-Environment transport. */
     readDatabaseAutomations?: boolean;
     countEnvironmentAcquisitions?: boolean;
+    noRuntimeLink?: boolean;
     detached?: boolean;
     /** Open from the Project Source route with a saved Workflow to link. */
     linkWorkflow?: string;
@@ -273,8 +274,10 @@ async function renderDatabase(
   // Each case uses its own Home and Machine.
   const detail = { ...authored, environment: { ...authored.environment,
     serverId: input.moveDestination || input.movePickerScope || input.readDatabaseAutomations ? serverIdentityId : serverId,
-    controllerMachineId: machineId },
-    targetLinks: authored.targetLinks.map((row) => ({ ...row, targetLink: { ...row.targetLink,
+    controllerMachineId: machineId,
+    ...(input.noRuntimeLink ? { runtimeTargetLinkId: undefined } : {}) },
+    targetLinks: (input.noRuntimeLink ? authored.targetLinks.filter(row => row.targetLink.role !== 'runtime')
+      : authored.targetLinks).map((row) => ({ ...row, targetLink: { ...row.targetLink,
     // Measure the route's own acquisition before deployed size or backup Actions need their own admission.
     ...(input.countEnvironmentAcquisitions && !input.managed ? { activeDeploymentId: undefined } : {}),
     ...(row.targetLink.source.kind === 'host' && Array.isArray(row.targetLink.machines)
@@ -628,7 +631,7 @@ async function renderDatabase(
     const { createDeploymentActions } = await import('./deploymentActions');
     setBindings = createDeploymentActions(account.accountLifetime, detail.environment.projectSourceId).setBindings;
   }
-  if (input.readDatabaseAutomations) {
+  if (input.readDatabaseAutomations && !input.moveDestination && !input.movePickerScope) {
     await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
       header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Shop database' }, body: JSON.stringify(detail.content) });
     if (input.managed) {
@@ -672,7 +675,8 @@ async function renderDatabase(
       listDataServicePage: async (_scope, query) => {
         const data = detail.content.template?.data?.find(service => service.service === query.database);
         return { ok: true, value: { items: [{ environment: detail.environment, content: detail.content, title: detail.content.name,
-          selected: { detail, address: data ? { kind: 'selfHosted', data } : null },
+          selected: { detail: { ...detail, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(detail) },
+            address: data ? { kind: 'selfHosted', data } : null },
         }], nextCursor: null, coverage: 'partial' as const } };
       },
       ...(publicReadTransport ? { listEnvironments: publicReadTransport.listEnvironments } : {}),
@@ -739,6 +743,9 @@ async function renderDatabase(
     environmentId,
     serverIdentityId,
     machineId,
+    readSelectedDatabase: () => publicReadTransport?.listDataServicePage({ serverId: detail.environment.serverId,
+      accountId: account.accountId, projectSourceId: detail.environment.projectSourceId }, { environmentId, database: 'postgres' },
+    { signal: new AbortController().signal }),
     movePickerQueries,
     readRetainedReceipt,
     requests: () => homes.requests,
@@ -1088,6 +1095,25 @@ describe('Environment → Database → Workbench', () => {
 });
 
 describe('Environment → Database → Move', () => {
+  it.each([true, false])('opens Move only with a serving runtime Link from the selected database read (%s)', async hasRuntimeLink => {
+    const view = await renderDatabase({ readDatabaseAutomations: true, moveDestination: true,
+      storedDefinition: true, databaseOnly: true, noRuntimeLink: !hasRuntimeLink });
+    try {
+      expect(await view.settle(`${page}.header`)).not.toBeNull();
+      if (hasRuntimeLink) {
+        expect(await view.settle(`${page}.move`)).not.toBeNull();
+        await view.screen.pressByTestIdAsync(`${page}.move`);
+        expect(await view.settle('project-deployments.move.destination:database-dedicated')).not.toBeNull();
+      } else {
+        expect(view.screen.findByTestId(`${page}.move`)).toBeNull();
+      }
+      const result = await view.readSelectedDatabase();
+      expect(result).toMatchObject({ ok: true, value: { items: [{ selected: { detail: {
+        runtimeTargetLink: hasRuntimeLink ? { activeDeploymentId: 'deployment-a' } : null,
+      } } }] } });
+    } finally { await view.dispose(); }
+  });
+
   it('offers dedicated Postgres across Projects and Machines and excludes unsupported destinations', async () => {
     const view = await renderDatabase({ moveDestination: true, movePickerScope: true, storedDefinition: true, databaseOnly: true });
     try {

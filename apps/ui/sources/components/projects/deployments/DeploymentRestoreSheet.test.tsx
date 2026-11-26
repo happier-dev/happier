@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import {
   createDeploymentEnvironmentHeaderV1,
@@ -46,8 +47,8 @@ vi.mock('expo-document-picker', () => ({ getDocumentAsync: uploadBoundary.pick }
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
   callGuardedMachineRpcWithPolicy: uploadBoundary.rpc,
 }));
-const { DeploymentDatabasePage } =
-  await import('./DeploymentDatabasePage');
+const { DeploymentDatabasePage } = await import('./DeploymentDatabasePage');
+const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
 const { HappyError } = await import('@/utils/errors/errors');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 
@@ -164,9 +165,19 @@ async function renderRestore(answer: Answer) {
         definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
         services: ['postgres'], data: [{ engine: 'postgres' as const, service: 'postgres' }] } },
   };
+  homes.answer(serverId, `GET /v1/deployments/environments/${environmentId}`, { body: {
+    ok: true, environment: withBackup.environment, targetLinks: withBackup.targetLinks.map(row => row.targetLink),
+  } });
+  await account.createArtifactDocument({
+    artifactId: withBackup.environment.contentArtifactId,
+    header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Database with a kept backup' },
+    body: JSON.stringify(withBackup.content),
+  });
+  const { listDataServicePage } = createDeploymentReadTransport(account.accountLifetime);
   const controller = createDeploymentReadControllerV1({
     scope: { ...scope, serverId: homeId },
     transport: {
+      listDataServicePage,
       listEnvironments: async () => ({
         ok: true,
         value: { items: [], nextCursor: null },

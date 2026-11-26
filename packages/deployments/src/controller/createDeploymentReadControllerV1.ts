@@ -141,8 +141,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         const detail = entry.projection.getSnapshot().value as DeploymentReceiptReadDetailV1 | null;
         return detail?.content ? detail : null;
     }
-    function withMemberVersions(detail: DeploymentEnvironmentDetailV1): DeploymentEnvironmentReadDetailV1 {
-        const link = selectDeploymentRuntimeTargetLinkV1(detail);
+    function withMemberVersions(detail: DeploymentEnvironmentDetailV1,
+        link = selectDeploymentRuntimeTargetLinkV1(detail)): DeploymentEnvironmentReadDetailV1 {
         const retained = [...entries.values()].flatMap(entry => {
             const opened = entry.resource.environmentId === detail.environment.id ? receipt(entry) : null;
             return opened ? [opened] : [];
@@ -419,7 +419,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                         const result = await read(scope, query, { signal, ...(prior ? { previousItems: prior.items } : {}) });
                         if (!result.ok) return result;
                         return { ...result, value: { ...result.value, items: result.value.items.map(({ selected, ...item }) =>
-                            selected ? { ...item, selected: { ...selected, detail: withMemberVersions(selected.detail) } } : item) } };
+                            selected ? { ...item, selected: { ...selected,
+                                detail: withMemberVersions(selected.detail, selected.detail.runtimeTargetLink) } } : item) } };
                     }
                     // The Databases page lists the Environments that hold databases. Their contents are end-to-end
                     // encrypted, so the Home pages every Environment: a page of none is read past here, and a page is
