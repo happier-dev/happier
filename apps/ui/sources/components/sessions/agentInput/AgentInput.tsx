@@ -32,6 +32,8 @@ import {
     type MultiTextInputSubmitBehavior,
 } from '@/components/ui/forms/MultiTextInput';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE, MULTI_TEXT_INPUT_BASE_LINE_HEIGHT } from '@/components/ui/forms/multiTextInputTypography';
+import { resolveComposerEditorLineHeightPx } from '@/components/ui/forms/composerEditor/composerEditorLineHeight';
+import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import { composerReferencesFromStructuredMentions, composerStructuredMentionsFromReferences } from '@/components/sessions/composer/composerScopeAdapters';
 import type { ComposerEditorReference, ComposerEditorDecoration } from '@/components/ui/forms/composerEditor/composerEditorTypes';
 import { buildMentionRefV1, parseMentionRefV1, MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
@@ -178,7 +180,7 @@ import {
     type SessionInstrumentStripQuota,
 } from './instrumentStrip';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
-import { AgentInputAttachmentsRow } from './components/AgentInputAttachmentsRow';
+import { AgentInputAttachmentsRow, AgentInputAttachmentsSummaryChip } from './components/AgentInputAttachmentsRow';
 import { AgentInputReadOnlyDocumentText, AgentInputTextField, AgentInputTextSync } from './components/AgentInputTextLeaves';
 import { resolveComposerReferenceChipLabel } from './composerReferenceChipLabel';
 import { resolveAgentInputEngineOptionId } from './controls/resolveAgentInputEngineOptionId';
@@ -1430,7 +1432,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const [inputExpansionToggleVisible, setInputExpansionToggleVisible] = React.useState(false);
     const [actionFooterHeightPx, setActionFooterHeightPx] = React.useState(0);
     const [composerAttentionHeightPx, setComposerAttentionHeightPx] = React.useState(0);
+    // The web rail's natural height (kept while the rail is folded) and the presentation notices above it.
     const [variableContentBeforeInputHeightPx, setVariableContentBeforeInputHeightPx] = React.useState(0);
+    const [presentationFeedbackHeightPx, setPresentationFeedbackHeightPx] = React.useState(0);
     const [nativeAttachmentViewportOffsetPx, setNativeAttachmentViewportOffsetPx] = React.useState(0);
     const [nativeAttachmentViewportHeightPx, setNativeAttachmentViewportHeightPx] = React.useState(0);
     const [nativeAttachmentRowTopPx, setNativeAttachmentRowTopPx] = React.useState<number | null>(null);
@@ -1469,13 +1473,37 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         });
     }, [actionFooterHeightPx, composerAttentionHeightPx, hostPanelMaxHeight]);
     const fallbackInputMaxHeight = props.inputMaxHeight ?? defaultInputMaxHeight;
+    // The card's chrome around its text section: the footer, attention and paddings. None of it depends on the rail.
+    const panelChromeOutsideTextSection = actionFooterHeightPx
+        + composerAttentionHeightPx
+        + resolveAgentInputPanelPaddingTop(isMobileLayoutWidth(screenWidth) ? resolveAgentInputPhonePanelPaddingX(theme) : theme.space.s8)
+        + AGENT_INPUT_PANEL_PADDING_BOTTOM
+        + AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM;
+    const uiFontScale = useLocalSetting('uiFontScale');
+    const oneLineInputContainerHeightPx = React.useMemo(() => {
+        const line = resolveComposerEditorLineHeightPx(
+            scaleTextStyle({ fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE }, typeof uiFontScale === 'number' ? uiFontScale : 1),
+        );
+        if (embeddedPanel) return line;
+        return Math.max(
+            AGENT_INPUT_FIELD_CONTAINER_STYLE.minHeight,
+            props.minHeight ?? 0,
+            line + AGENT_INPUT_FIELD_PADDING_Y * 2 + AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT,
+        );
+    }, [embeddedPanel, props.minHeight, uiFontScale]);
+    // The rail never shows part of a chip (DESIGN-ACCEPT-4 R1 follow-up). When the host's room cannot hold the whole
+    // rail and one line of the prompt, the rail folds to one summary chip in the prompt's row. Decided here, once, from
+    // the rail's natural height (kept while folded), so folding never frees room that would unfold it again.
+    const attachmentRailFolded = Platform.OS === 'web'
+        && typeof hostPanelMaxHeight === 'number'
+        && (props.attachmentRowItems?.length ?? 0) > 0
+        && variableContentBeforeInputHeightPx > 0
+        && hostPanelMaxHeight - panelChromeOutsideTextSection - presentationFeedbackHeightPx - variableContentBeforeInputHeightPx
+            < oneLineInputContainerHeightPx;
     const minimumMeasuredPanelFixedChromeHeight = Platform.OS === 'web'
-        ? actionFooterHeightPx
-            + composerAttentionHeightPx
-            + variableContentBeforeInputHeightPx
-            + resolveAgentInputPanelPaddingTop(isMobileLayoutWidth(screenWidth) ? resolveAgentInputPhonePanelPaddingX(theme) : theme.space.s8)
-            + AGENT_INPUT_PANEL_PADDING_BOTTOM
-            + AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM
+        ? panelChromeOutsideTextSection
+            + presentationFeedbackHeightPx
+            + (attachmentRailFolded ? 0 : variableContentBeforeInputHeightPx)
         : undefined;
     const resolvedInputMaxHeight = React.useMemo(() => {
         return computeMeasuredPanelInputMaxHeight({
@@ -3506,11 +3534,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         styles.composerPresentationEffects,
     ]);
     const hasVariableContentBeforeInput = attachmentRowItems.length > 0 || composerPresentationFeedback !== null;
+    const hasAttachmentRail = attachmentRowItems.length > 0;
+    const hasPresentationFeedback = composerPresentationFeedback !== null;
     React.useEffect(() => {
-        if (!hasVariableContentBeforeInput) {
-            updateLayoutHeight(setVariableContentBeforeInputHeightPx, 0);
-        }
-    }, [hasVariableContentBeforeInput]);
+        if (!hasAttachmentRail) updateLayoutHeight(setVariableContentBeforeInputHeightPx, 0);
+        if (!hasPresentationFeedback) updateLayoutHeight(setPresentationFeedbackHeightPx, 0);
+    }, [hasAttachmentRail, hasPresentationFeedback]);
     const hasMachine = Boolean(props.onMachineClick || props.machinePopover);
     const hasPath = Boolean(props.onPathClick || props.pathPopover);
     const folderChipState = React.useMemo(
@@ -4144,26 +4173,34 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             );
         }
 
-        // The rail gives up height before the prompt does, as on native: its viewport shrinks and scrolls while the
-        // prompt keeps at least one line (DESIGN-ACCEPT-4 R1, 200% zoom). Its content reports its natural height,
-        // so the prompt's budget never grows into the room the rail gave up.
+        // Notices above the rail measure their own height; the rail measures its natural height, which the layout
+        // owner keeps while the rail is folded into its summary chip (`attachmentRailFolded`). While shown, the rail
+        // still sits in a viewport that can shrink, so a frame before that decision never clips the prompt.
         return (
-            <ScrollView
-                testID="agent-input-attachment-rail-viewport"
-                style={styles.nativeKeyboardVariableSection}
-                showsVerticalScrollIndicator={false}
-                alwaysBounceVertical={false}
-            >
-                <View
-                    testID="agent-input-variable-content-before-input"
-                    onLayout={(event) => {
-                        updateLayoutHeight(setVariableContentBeforeInputHeightPx, event.nativeEvent.layout.height);
-                    }}
-                >
-                    {composerPresentationFeedback}
-                    <WebDropTargetView {...trayDropZoneHandlers} testID="agent-input-attachment-drop-target">{attachmentsRow}</WebDropTargetView>
-                </View>
-            </ScrollView>
+            <>
+                {composerPresentationFeedback ? (
+                    <View onLayout={(event) => updateLayoutHeight(setPresentationFeedbackHeightPx, event.nativeEvent.layout.height)}>
+                        {composerPresentationFeedback}
+                    </View>
+                ) : null}
+                {hasAttachmentRail && !attachmentRailFolded ? (
+                    <ScrollView
+                        testID="agent-input-attachment-rail-viewport"
+                        style={styles.nativeKeyboardVariableSection}
+                        showsVerticalScrollIndicator={false}
+                        alwaysBounceVertical={false}
+                    >
+                        <View
+                            testID="agent-input-variable-content-before-input"
+                            onLayout={(event) => {
+                                updateLayoutHeight(setVariableContentBeforeInputHeightPx, event.nativeEvent.layout.height);
+                            }}
+                        >
+                            <WebDropTargetView {...trayDropZoneHandlers} testID="agent-input-attachment-drop-target">{attachmentsRow}</WebDropTargetView>
+                        </View>
+                    </ScrollView>
+                ) : null}
+            </>
         );
     };
 
@@ -4414,6 +4451,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
                     }}
                 >
+                    {attachmentRailFolded ? (
+                        <AgentInputAttachmentsSummaryChip items={attachmentRowItems} onRequestComposerFocus={requestComposerFocus} />
+                    ) : null}
                     <ComposerHistorySwipeArea
                         enabled={dictationEditable && submitEnabled && props.messageHistory !== 'none' && (!liveTextStatus.hasText || historyFlicksArmed)}
                     hint={historyPositionHint}

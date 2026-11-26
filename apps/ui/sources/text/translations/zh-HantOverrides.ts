@@ -8448,6 +8448,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     agentInput: {
         keepKeyboard: { label: "傳送後保持鍵盤開啟" },
         historyPosition: ({ index, total }: { index: number; total: number }) => `${index} / ${total}`,
+        attachmentsSummary: ({ count }: { count: number }) => `${count} 個附件`,
         sendOptions: {
             title: "傳送選項",
             sendAndStartAnother: "傳送並開始另一個",

@@ -10404,6 +10404,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
   agentInput: {
       keepKeyboard: { label: "Mantener el teclado abierto al enviar" },
       historyPosition: ({ index, total }: { index: number; total: number }) => `${index} de ${total}`,
+      attachmentsSummary: ({ count }: { count: number }) => count === 1 ? '1 adjunto' : `${count} adjuntos`,
       sendOptions: {
           title: "Opciones de envío",
           sendAndStartAnother: "Enviar y empezar otra",

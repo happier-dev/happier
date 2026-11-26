@@ -10064,6 +10064,7 @@ export const zhHans: TranslationStructure = {
   agentInput: {
       keepKeyboard: { label: "发送后保持键盘打开" },
       historyPosition: ({ index, total }: { index: number; total: number }) => `${index} / ${total}`,
+      attachmentsSummary: ({ count }: { count: number }) => `${count} 个附件`,
       sendOptions: {
           title: "发送选项",
           sendAndStartAnother: "发送并开始另一个",

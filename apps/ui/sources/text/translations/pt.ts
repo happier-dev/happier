@@ -10521,6 +10521,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
   agentInput: {
       keepKeyboard: { label: "Manter o teclado aberto ao enviar" },
       historyPosition: ({ index, total }: { index: number; total: number }) => `${index} de ${total}`,
+      attachmentsSummary: ({ count }: { count: number }) => count === 1 ? '1 anexo' : `${count} anexos`,
       sendOptions: {
           title: "Opções de envio",
           sendAndStartAnother: "Enviar e começar outra",

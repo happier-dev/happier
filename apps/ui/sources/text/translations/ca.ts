@@ -9711,6 +9711,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
     agentInput: {
         keepKeyboard: { label: "Mantén el teclat obert després d’enviar" },
         historyPosition: ({ index, total }: { index: number; total: number }) => `${index} de ${total}`,
+        attachmentsSummary: ({ count }: { count: number }) => count === 1 ? '1 adjunt' : `${count} adjunts`,
         sendOptions: {
             title: "Opcions d’enviament",
             sendAndStartAnother: "Envia i comença una altra",

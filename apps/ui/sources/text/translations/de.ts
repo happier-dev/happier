@@ -10398,6 +10398,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     agentInput: {
         keepKeyboard: { label: "Tastatur nach dem Senden geöffnet lassen" },
         historyPosition: ({ index, total }: { index: number; total: number }) => `${index} von ${total}`,
+        attachmentsSummary: ({ count }: { count: number }) => count === 1 ? '1 Anhang' : `${count} Anhänge`,
         sendOptions: {
             title: "Sendeoptionen",
             sendAndStartAnother: "Senden und weitere starten",

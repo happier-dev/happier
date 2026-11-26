@@ -10238,6 +10238,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
   agentInput: {
       keepKeyboard: { label: "Nie zamykaj klawiatury po wysłaniu" },
       historyPosition: ({ index, total }: { index: number; total: number }) => `${index} z ${total}`,
+      attachmentsSummary: ({ count }: { count: number }) => count === 1 ? '1 załącznik' : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? `${count} załączniki` : `${count} załączników`,
       sendOptions: {
           title: "Opcje wysyłania",
           sendAndStartAnother: "Wyślij i rozpocznij kolejną",

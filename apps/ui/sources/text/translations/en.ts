@@ -12060,6 +12060,7 @@ const enZen = {
 const enAgentInput = {
     keepKeyboard: { label: "Keep keyboard open after sending" },
     historyPosition: ({ index, total }: { index: number; total: number }) => `${index} of ${total}`,
+    attachmentsSummary: ({ count }: { count: number }) => count === 1 ? '1 attachment' : `${count} attachments`,
     sendOptions: {
         title: "Send options",
         sendAndStartAnother: "Send and start another",

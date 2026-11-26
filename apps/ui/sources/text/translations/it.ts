@@ -10626,6 +10626,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
   agentInput: {
       keepKeyboard: { label: "Tieni aperta la tastiera dopo l’invio" },
       historyPosition: ({ index, total }: { index: number; total: number }) => `${index} di ${total}`,
+      attachmentsSummary: ({ count }: { count: number }) => count === 1 ? '1 allegato' : `${count} allegati`,
       sendOptions: {
           title: "Opzioni di invio",
           sendAndStartAnother: "Invia e iniziane un’altra",

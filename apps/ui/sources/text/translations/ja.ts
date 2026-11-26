@@ -10709,6 +10709,7 @@ localTailscale: {
   agentInput: {
       keepKeyboard: { label: "送信後もキーボードを開いたままにする" },
       historyPosition: ({ index, total }: { index: number; total: number }) => `${index} / ${total}`,
+      attachmentsSummary: ({ count }: { count: number }) => `添付 ${count} 件`,
       sendOptions: {
           title: "送信オプション",
           sendAndStartAnother: "送信して次を開始",

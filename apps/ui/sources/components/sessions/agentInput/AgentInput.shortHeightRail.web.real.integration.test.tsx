@@ -89,21 +89,39 @@ async function measureShortComposer(maxPanelHeight: number) {
   });
   const layout = await measureWebLayout(container, {
     viewport: VIEWPORT,
-    edgeProbeTestIds: ['new-session-composer-input-viewport'],
+    edgeProbeTestIds: ['new-session-composer-input-viewport', 'rail-setup-chip', 'agent-input-attachments-summary'],
     settle: (replay) => act(replay),
     ...(process.env.HAPPIER_TEST_SHORT_RAIL_SHOT ? { screenshotPath: process.env.HAPPIER_TEST_SHORT_RAIL_SHOT } : {}),
   });
-  return { field: layout.rect('new-session-composer-input-viewport') };
+  return {
+    field: layout.rect('new-session-composer-input-viewport'),
+    chips: layout.rects.get('rail-setup-chip') ?? [],
+    railViewport: layout.rects.get('agent-input-attachment-rail-viewport')?.[0],
+    summary: layout.rects.get('agent-input-attachments-summary')?.[0],
+  };
 }
 
 describe('the composer prompt when the host leaves it little height', () => {
-  // DESIGN-ACCEPT-4 R1: at 200% zoom the chip rail kept its height and the prompt collapsed to its descenders.
-  it('keeps one full line of the prompt visible under the attachment rail', async () => {
-    const { field } = await measureShortComposer(150);
-    // The field's own viewport (what the person sees of the prompt) holds a 22.4 px line of the composer's
-    // 16 px type, and no section or card edge cuts into it from above or below (its trailing side sits under the
-    // field's own read-aloud and voice tools, so only its top and bottom are probed).
+  // DESIGN-ACCEPT-4 R1: at 200% zoom the chip rail kept its height and the prompt collapsed to its descenders;
+  // its follow-up: a rail squeezed to a sliver of a chip read as broken, so the rail folds to one summary chip.
+  it('folds the rail to a summary chip at 720x450, with no part of a chip showing and the prompt line whole', async () => {
+    const { field, chips, railViewport, summary } = await measureShortComposer(150);
+    // The field's own viewport holds a 22.4 px line of the composer's 16 px type, and no section or card edge
+    // cuts into it from above or below (its trailing side sits under the field's own tools).
     expect(field.height).toBeGreaterThanOrEqual(22.4);
+    expect(field.receivesPointerAtEdges).toMatchObject({ top: true, bottom: true });
+    expect(chips).toHaveLength(0);
+    expect(railViewport).toBeUndefined();
+    expect(summary).toBeDefined();
+    expect(summary?.receivesPointerAtEdges).toEqual({ left: true, right: true, top: true, bottom: true });
+  });
+
+  it('shows the whole rail above the prompt when the host has room for both', async () => {
+    const { field, chips, summary } = await measureShortComposer(320);
+    expect(summary).toBeUndefined();
+    expect(chips).toHaveLength(1);
+    expect(chips[0]!.receivesPointerAtEdges).toEqual({ left: true, right: true, top: true, bottom: true });
+    expect(field.top).toBeGreaterThanOrEqual(chips[0]!.bottom);
     expect(field.receivesPointerAtEdges).toMatchObject({ top: true, bottom: true });
   });
 });

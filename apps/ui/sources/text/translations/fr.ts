@@ -10244,6 +10244,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
   agentInput: {
       keepKeyboard: { label: "Garder le clavier ouvert après l’envoi" },
       historyPosition: ({ index, total }: { index: number; total: number }) => `${index} sur ${total}`,
+      attachmentsSummary: ({ count }: { count: number }) => count === 1 ? '1 pièce jointe' : `${count} pièces jointes`,
       sendOptions: {
           title: "Options d’envoi",
           sendAndStartAnother: "Envoyer et en démarrer une autre",

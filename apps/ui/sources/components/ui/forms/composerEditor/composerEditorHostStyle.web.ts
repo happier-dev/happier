@@ -7,6 +7,7 @@ import { scaleTextStyle } from '@/components/ui/text/uiFontScale';
 import { referenceChipCssVariables } from '@/components/ui/referenceChip/referenceChipStyles';
 
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from '../multiTextInputTypography';
+import { COMPOSER_EDITOR_LINE_HEIGHT_RATIO } from './composerEditorLineHeight';
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
 
@@ -60,7 +61,7 @@ export function resolveComposerEditorHostStyle(
     fontWeight: scaled.fontWeight,
     fontStyle: scaled.fontStyle,
     letterSpacing: scaled.letterSpacing,
-    lineHeight: scaled.lineHeight ? `${scaled.lineHeight}px` : '1.4',
+    lineHeight: scaled.lineHeight ? `${scaled.lineHeight}px` : String(COMPOSER_EDITOR_LINE_HEIGHT_RATIO),
     paddingTop: input.paddingTop,
     paddingBottom: input.paddingBottom,
     paddingLeft: input.paddingLeft,

@@ -10259,6 +10259,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     agentInput: {
         keepKeyboard: { label: "Не закрывать клавиатуру после отправки" },
         historyPosition: ({ index, total }: { index: number; total: number }) => `${index} из ${total}`,
+        attachmentsSummary: ({ count }: { count: number }) => count % 10 === 1 && count % 100 !== 11 ? `${count} вложение` : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? `${count} вложения` : `${count} вложений`,
         sendOptions: {
             title: "Варианты отправки",
             sendAndStartAnother: "Отправить и начать ещё одну",

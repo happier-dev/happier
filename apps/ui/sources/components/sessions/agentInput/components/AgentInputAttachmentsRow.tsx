@@ -36,6 +36,7 @@ import { ImageNumberBadge } from '@/components/ui/referenceChip/ImageNumberBadge
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import { useAttachmentRowFocus } from './useAttachmentRowFocus';
+import { AgentInputContentPopover } from './AgentInputContentPopover';
 
 /** A draft image the composer already holds as a direct URI (the draft owns and revokes it). */
 type ComposerAttachmentImagePreviewItem = Readonly<{ key: string; uri: string; title: string; mimeType?: string; edit?: import('@/components/ui/media/stage/mediaStageItems').StagePictureEdit }>;
@@ -234,6 +235,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.base,
+    },
+    summaryChipAnchor: {
+        flexShrink: 0,
+        marginRight: theme.space.s6,
     },
     attachmentChipPreviewButton: {
         alignItems: 'center',
@@ -1035,5 +1040,47 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                 </View>
             ) : null}
         </View>
+    );
+});
+
+/**
+ * The rail folded to one chip when the composer has no room for a whole chip row beside a line of the prompt
+ * (the composer's layout owner decides that). It never shows part of a chip: it names how many there are, and
+ * pressing it shows the whole rail in the composer's own popover, where each item keeps its press and remove.
+ */
+export const AgentInputAttachmentsSummaryChip = React.memo(function AgentInputAttachmentsSummaryChip(props: Readonly<{
+    items: readonly AgentInputAttachmentsRowItem[];
+    onRequestComposerFocus?: () => void;
+}>) {
+    const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const anchorRef = React.useRef<View>(null);
+    const [open, setOpen] = React.useState(false);
+    const close = React.useCallback(() => setOpen(false), []);
+    const toggle = React.useCallback(() => setOpen((previous) => !previous), []);
+    const label = t('agentInput.attachmentsSummary', { count: props.items.length });
+    return (
+        <>
+            <View ref={anchorRef} collapsable={false} style={styles.summaryChipAnchor}>
+                <HappierPressable
+                    testID="agent-input-attachments-summary"
+                    accessibilityRole="button"
+                    accessibilityLabel={label}
+                    accessibilityState={{ expanded: open }}
+                    onPress={toggle}
+                    style={styles.attachmentChip}
+                >
+                    <Icon name="paperclip" size={14} color={theme.colors.text.secondary} />
+                    <Text style={styles.attachmentChipText} numberOfLines={1}>{label}</Text>
+                </HappierPressable>
+            </View>
+            <AgentInputContentPopover
+                open={open}
+                anchorRef={anchorRef}
+                onRequestClose={close}
+                testID="agent-input-attachments-summary-popover"
+                content={<AgentInputAttachmentsRow items={props.items} onRequestComposerFocus={props.onRequestComposerFocus} />}
+            />
+        </>
     );
 });
