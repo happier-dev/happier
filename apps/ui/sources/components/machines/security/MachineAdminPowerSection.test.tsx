@@ -18,6 +18,7 @@ import { t } from '@/text';
 
 import {
   buildAdminAccessSetInput,
+  describeAdminAccessPreauthorization,
   describeAdminPowerHeadline,
 } from './adminPower';
 import { describeRunsAs } from './MachineAdminPowerSection';
@@ -27,6 +28,7 @@ import type {
   MachineSeparateUsersControl,
 } from './MachineAdminPowerSection';
 import { settleAdminAccessSave } from './useMachineAdminAccessSave';
+import { settleAdminAccessInspect } from './useMachineAdminAccessInspect';
 
 installMachinesSettingsCommonModuleMocks();
 
@@ -79,6 +81,7 @@ async function render(
     control?: MachineAdminPowerControls;
     separateUsers?: MachineSeparateUsersControl | null;
     online?: boolean | null;
+    preauthorization?: Parameters<typeof import('./MachineAdminPowerSection').MachineAdminPowerView>[0]['preauthorization'];
   }> = {},
 ) {
   const { MachineAdminPowerView } = await import('./MachineAdminPowerSection');
@@ -91,6 +94,7 @@ async function render(
       canManage: options.canManage ?? true,
       controls: options.control ?? controls(),
       separateUsers: options.separateUsers ?? null,
+      preauthorization: options.preauthorization ?? null,
     }),
   );
 }
@@ -366,5 +370,78 @@ describe('Machine → Security → Administrator power', () => {
         error: 'declined',
       }),
     ).toEqual({ kind: 'idle' });
+  });
+});
+
+const preauthorized = { version: 1 as const, mode: 'preauthorized' as const };
+const deniedIssue = {
+  cause: 'sudo_denied' as const,
+  remedy: {
+    kind: 'console' as const,
+    where: 'target_machine_console' as const,
+    command: 'sudo visudo',
+    sudoersRule: 'happier ALL=(ALL:ALL) NOPASSWD: ALL',
+  },
+};
+
+describe('Administrator access → Preauthorized while the Machine still denies passwordless sudo', () => {
+  // The wire observation also carries the operator fact the presentation input leaves out.
+  const denied = { ...observation(), tailscaledOperator: { authorization: 'unknown' as const } };
+  const base = { mode: 'preauthorized' as const, observation: denied, canManage: true, online: true };
+
+  it('shows the Machine’s own steps once read, and only the typed cause as a diagnostic', () => {
+    expect(describeAdminAccessPreauthorization({ ...base, read: { settled: { kind: 'read', issue: deniedIssue }, checking: false } }))
+      .toEqual({ kind: 'steps', cause: 'sudo_denied', command: 'sudo visudo', sudoersRule: 'happier ALL=(ALL:ALL) NOPASSWD: ALL', checking: false });
+    // No line the sudoers builder could write (an unusual daemon user): the cause, without a command.
+    expect(describeAdminAccessPreauthorization({ ...base, read: { settled: { kind: 'read', issue: { cause: 'sudo_denied' } }, checking: false } }))
+      .toEqual({ kind: 'noSteps', cause: 'sudo_denied', checking: false });
+  });
+
+  it('holds the notice’s place while the steps are read, and says when they could not be read', () => {
+    expect(describeAdminAccessPreauthorization({ ...base, read: { settled: null, checking: true } })).toEqual({ kind: 'reading' });
+    expect(describeAdminAccessPreauthorization({ ...base, read: { settled: { kind: 'failed', code: 'rpc_timeout' }, checking: false } }))
+      .toEqual({ kind: 'readFailed', code: 'rpc_timeout', checking: false });
+  });
+
+  it('says nothing when the Machine allows it, when a fresh read finds no issue, for None, offline, or for a reader', () => {
+    const read = { settled: { kind: 'read' as const, issue: deniedIssue }, checking: false };
+    expect(describeAdminAccessPreauthorization({ ...base, observation: observation({ passwordlessSudoToRoot: 'allowed' }), read })).toBeNull();
+    expect(describeAdminAccessPreauthorization({ ...base, observation: observation({ daemonUid: 0, daemonIdentity: 'root' }), read })).toBeNull();
+    expect(describeAdminAccessPreauthorization({ ...base, read: { settled: { kind: 'read', issue: null }, checking: false } })).toBeNull();
+    expect(describeAdminAccessPreauthorization({ ...base, mode: 'none', read })).toBeNull();
+    expect(describeAdminAccessPreauthorization({ ...base, mode: 'ask', read })).toBeNull();
+    expect(describeAdminAccessPreauthorization({ ...base, observation: null, read })).toBeNull();
+    expect(describeAdminAccessPreauthorization({ ...base, online: false, read })).toBeNull();
+    expect(describeAdminAccessPreauthorization({ ...base, canManage: false, read })).toBeNull();
+  });
+
+  it('reads the issue from Inspect and keeps a saved Preauthorized’s issue instead of a failure', () => {
+    expect(settleAdminAccessInspect({ ok: true, result: { observation: denied, preauthorizationIssue: deniedIssue, checkedAt: 1,
+      adminAccess: preauthorized, metadataVersion: 3 } })).toEqual({ kind: 'read', issue: deniedIssue });
+    expect(settleAdminAccessInspect({ ok: true, result: { observation: { ...denied, passwordlessSudoToRoot: 'allowed' }, checkedAt: 1,
+      adminAccess: preauthorized, metadataVersion: 3 } })).toEqual({ kind: 'read', issue: null });
+    expect(settleAdminAccessInspect({ ok: true, result: { status: 'locked' } })).toEqual({ kind: 'failed', code: 'locked' });
+    expect(settleAdminAccessInspect({ ok: false, errorCode: 'rpc_timeout', error: 'rpc_timeout' })).toEqual({ kind: 'failed', code: 'rpc_timeout' });
+    const saved = MachineAdminAccessMutationResultV1Schema.parse({ status: 'applied', policy: preauthorized, metadataVersion: 8,
+      effect: { outcome: 'not_applied', reasonCode: 'not_preauthorized', preauthorizationIssue: deniedIssue },
+      preauthorizationIssue: deniedIssue, observation: denied });
+    expect(settleAdminAccessSave({ ok: true, result: saved })).toEqual({ kind: 'saved', preauthorizationIssue: deniedIssue });
+  });
+
+  it('renders the steps as copyable commands with Check again, and no saved banner beside them', async () => {
+    const onCheckAgain = vi.fn();
+    const screen = await render(authority({ observation: denied, desiredAdminAccess: preauthorized }), {
+      control: controls({ save: { kind: 'saved', preauthorizationIssue: deniedIssue } }),
+      preauthorization: { notice: { kind: 'steps', cause: 'sudo_denied', command: 'sudo visudo',
+        sudoersRule: 'happier ALL=(ALL:ALL) NOPASSWD: ALL', checking: false }, onCheckAgain },
+    });
+    const card = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-security-admin-preauthorization' });
+    expect(card?.props.kind).toBe('warning');
+    expect(card?.props.diagnosticCode).toBe('sudo_denied');
+    expect(screen.findAllByTestId('machine-security-admin-preauthorization-command')).not.toHaveLength(0);
+    expect(screen.findAllByTestId('machine-security-admin-preauthorization-rule')).not.toHaveLength(0);
+    expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-security-admin-result' })).toBeUndefined();
+    card?.props.action.onPress();
+    expect(onCheckAgain).toHaveBeenCalledTimes(1);
   });
 });

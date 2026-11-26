@@ -3,6 +3,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import {
   MachineAdminAccessMutationResultV1Schema,
   type MachineAdminAccessV1,
+  type MachinePreauthorizationIssueV1,
 } from '@happier-dev/protocol/machines/adminAccessV1';
 
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
@@ -23,7 +24,8 @@ import { useScopedActionRun } from './useScopedActionRun';
 export type MachineAdminAccessSave =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'saving'; approval: ActionApprovalContinuation | null }>
-  | Readonly<{ kind: 'saved' }>
+  /** A saved Preauthorized the Machine's sudo still refuses carries the Machine's typed issue for the section. */
+  | Readonly<{ kind: 'saved'; preauthorizationIssue?: MachinePreauthorizationIssueV1 }>
   | Readonly<{ kind: 'conflict' }>
   | Readonly<{ kind: 'failed'; code: string; message?: string }>;
 
@@ -107,6 +109,11 @@ export function settleAdminAccessSave(result: ActionExecuteResult): MachineAdmin
   if (!parsed.success) return { kind: 'failed', code: 'action_invalid_output' };
   const answer = parsed.data;
   const effect = 'effect' in answer ? answer.effect : undefined;
+  // Preauthorized is saved; the Machine's sudo refusing it is the issue the section explains, not a failed save.
+  const issue = 'preauthorizationIssue' in answer && answer.policy.mode === 'preauthorized'
+    ? answer.preauthorizationIssue : undefined;
+  if (issue && (effect === undefined || (effect.outcome === 'not_applied' && effect.reasonCode === 'not_preauthorized')))
+    return { kind: 'saved', preauthorizationIssue: issue };
   if (effect?.outcome === 'not_applied' || effect?.outcome === 'outcome_unknown') {
     const code = effect.outcome === 'not_applied' ? effect.reasonCode : effect.failure?.kind ?? 'action_outcome_unknown';
     return code === 'cancelled' ? { kind: 'idle' }

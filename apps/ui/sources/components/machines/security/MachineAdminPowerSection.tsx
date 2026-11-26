@@ -9,6 +9,7 @@ import {
   useSeparateUsersChange,
 } from '@/components/sharing/machines/MachineSeparateUsersOffer';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -29,16 +30,20 @@ import { t } from '@/text';
 
 import {
   adminAccessEqual,
+  describeAdminAccessPreauthorization,
   describeAdminPowerHeadline,
   draftAdminAccess,
   isAdministratorUsernameValid,
   isElevationPlatformUnsupported,
+  needsAdminAccessPreauthorizationSteps,
   type AdminAccessMode,
+  type AdminAccessPreauthorizationNotice,
 } from './adminPower';
 import {
   useMachineAdminAccessSave,
   type MachineAdminAccessSave,
 } from './useMachineAdminAccessSave';
+import { useMachineAdminAccessInspect } from './useMachineAdminAccessInspect';
 import { useMachineAuthority } from './useMachineAuthority';
 
 export type MachineAuthorityModel = ReturnType<typeof useMachineAuthority>;
@@ -66,6 +71,12 @@ export type MachineAdminPowerControls = Readonly<{
   onDiscard: () => void;
   save: MachineAdminAccessSave;
   onOpenApproval: (artifactId: string) => void;
+}>;
+
+/** Preauthorized the Machine's sudo still refuses: the Machine's own steps, and Check again to read it anew. */
+export type MachineAdminAccessPreauthorization = Readonly<{
+  notice: AdminAccessPreauthorizationNotice;
+  onCheckAgain: () => void;
 }>;
 
 const execute = createFrontDoorActionExecute();
@@ -115,6 +126,24 @@ export function MachineAdminPowerSection(
   React.useEffect(() => {
     if (save.kind === 'saved' || save.kind === 'conflict') setDraft(null);
   }, [save.kind]);
+  // A save that kept the Machine's issue means Preauthorized is saved even before the pushed metadata says so.
+  const savedIssue = save.kind === 'saved' ? save.preauthorizationIssue ?? null : null;
+  const noticeInput = {
+    mode: savedIssue && !draft ? 'preauthorized' as const : draft?.mode ?? saved?.mode ?? null,
+    observation: authority.observation,
+    canManage: props.canManage,
+    online: props.online,
+  };
+  const inspect = useMachineAdminAccessInspect({
+    serverId: props.serverId,
+    machineId: props.machineId,
+    enabled: needsAdminAccessPreauthorizationSteps(noticeInput),
+  });
+  const { adopt } = inspect;
+  React.useEffect(() => {
+    if (savedIssue) adopt(savedIssue);
+  }, [savedIssue, adopt]);
+  const preauthorizationNotice = describeAdminAccessPreauthorization({ ...noticeInput, read: inspect.read });
   const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
   const guest = useMachineGuestExecution({
     machineId: props.machineId,
@@ -178,6 +207,9 @@ export function MachineAdminPowerSection(
       online={props.online}
       canManage={props.canManage}
       controls={controls}
+      preauthorization={preauthorizationNotice
+        ? { notice: preauthorizationNotice, onCheckAgain: () => void inspect.check() }
+        : null}
       separateUsers={{
         value: guest.runAs === null ? null : draftRunAs ?? guest.runAs,
         busy: phaseKind === 'previewing' || phaseKind === 'applying' || phaseKind === 'approval',
@@ -219,6 +251,7 @@ export function MachineAdminPowerView(
     canManage: boolean;
     controls: MachineAdminPowerControls;
     separateUsers: MachineSeparateUsersControl | null;
+    preauthorization: MachineAdminAccessPreauthorization | null;
   }>,
 ) {
   const { authority, saved, controls, separateUsers } = props;
@@ -369,6 +402,9 @@ export function MachineAdminPowerView(
           />
         )}
       </ItemGroup>
+      {props.preauthorization ? (
+        <AdminAccessPreauthorizationCard machineName={machine} preauthorization={props.preauthorization} />
+      ) : null}
       {!props.canManage ? (
         <ItemGroup surface="none">
           <SurfaceFreshnessLine
@@ -398,6 +434,7 @@ export function MachineAdminPowerView(
         controls={controls}
         changed={changed}
         canSave={next !== null && changed}
+        explained={props.preauthorization !== null}
       />
     </View>
   );
@@ -461,6 +498,53 @@ function describeIsolation(
   }
 }
 
+/**
+ * Preauthorized while the Machine's sudo still asks for a password: what to do there, in the Machine's own commands
+ * (copyable), with the typed cause under Technical details and Check again as the one next step. The headline already
+ * says Preauthorized isn't in effect, so this card only says why and what to run.
+ */
+function AdminAccessPreauthorizationCard(
+  props: Readonly<{ machineName: string; preauthorization: MachineAdminAccessPreauthorization }>,
+) {
+  const { notice, onCheckAgain } = props.preauthorization;
+  const machine = props.machineName;
+  const { theme } = useUnistyles();
+  const step = { color: theme.colors.text.secondary } as const;
+  const steps = notice.kind === 'steps' || notice.kind === 'reading';
+  return (
+    <ItemGroup surface="none">
+      <SurfaceStateCard
+        testID="machine-security-admin-preauthorization"
+        kind="warning"
+        layout="inline"
+        title={t(steps ? `${s}.preauthorizedStepsTitle` : `${s}.preauthorizedAllowTitle`, { machine })}
+        reason={t(notice.kind === 'readFailed' ? `${s}.preauthorizedStepsUnread` : `${s}.preauthorizedSudoAsks`)}
+        diagnosticCode={notice.kind === 'reading' ? null : notice.kind === 'readFailed' ? notice.code : notice.cause}
+        body={notice.kind === 'steps' ? (
+          <View style={{ gap: theme.space.s8, alignSelf: 'stretch' }}>
+            <Text variant="body" style={step}>{t(`${s}.preauthorizedOpenSudoSettings`)}</Text>
+            <View testID="machine-security-admin-preauthorization-command">
+              <CodeBlockView code={notice.command} language="shell" showHeaderRow={false} wrap showCopyButton />
+            </View>
+            <Text variant="body" style={step}>{t(`${s}.preauthorizedAddLine`)}</Text>
+            <View testID="machine-security-admin-preauthorization-rule">
+              <CodeBlockView code={notice.sudoersRule} showHeaderRow={false} wrap showCopyButton />
+            </View>
+          </View>
+        ) : notice.kind === 'noSteps' ? (
+          <Text variant="body" style={step}>{t(`${s}.preauthorizedAdministratorAllows`)}</Text>
+        ) : undefined}
+        action={{
+          label: t('machineDetailPage.security.checkAgain'),
+          testID: 'machine-security-admin-preauthorization-check',
+          busy: notice.kind === 'reading' || notice.checking,
+          onPress: onCheckAgain,
+        }}
+      />
+    </ItemGroup>
+  );
+}
+
 /** Save sits after the section's sheet; the Action's own confirmation is the review. */
 function AdminAccessSaveFoot(
   props: Readonly<{
@@ -468,10 +552,13 @@ function AdminAccessSaveFoot(
     controls: MachineAdminPowerControls;
     changed: boolean;
     canSave: boolean;
+    /** The Preauthorized card already says where a just-saved choice stands. */
+    explained: boolean;
   }>,
 ) {
   const { save } = props.controls;
   const machine = props.machineName;
+  if (save.kind === 'saved' && props.explained && save.preauthorizationIssue) return null;
   if (
     save.kind === 'saved' ||
     save.kind === 'conflict' ||

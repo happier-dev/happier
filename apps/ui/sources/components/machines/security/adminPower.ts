@@ -3,6 +3,7 @@ import {
   MachineAdministratorUsernameV1Schema,
   type MachineAdminAccessObservationV1,
   type MachineAdminAccessV1,
+  type MachinePreauthorizationIssueV1,
 } from '@happier-dev/protocol/machines/adminAccessV1';
 
 import { t } from '@/text';
@@ -127,6 +128,63 @@ export function buildAdminAccessSetInput(
     adminAccess: input.next,
     comparison: 'field' as const,
   };
+}
+
+/** The Machine's latest typed read of its passwordless sudo issue (Inspect, or the Set that saved Preauthorized). */
+export type AdminAccessPreauthorizationSettled =
+  | Readonly<{ kind: 'read'; issue: MachinePreauthorizationIssueV1 | null }>
+  | Readonly<{ kind: 'failed'; code: string }>;
+
+/** `settled` stays shown while `checking` reads again, so Check again never empties the notice. */
+export type AdminAccessPreauthorizationRead = Readonly<{
+  settled: AdminAccessPreauthorizationSettled | null;
+  checking: boolean;
+}>;
+
+export type AdminAccessPreauthorizationNotice =
+  | Readonly<{ kind: 'reading' }>
+  | Readonly<{ kind: 'steps'; cause: MachinePreauthorizationIssueV1['cause']; command: string; sudoersRule: string; checking: boolean }>
+  | Readonly<{ kind: 'noSteps'; cause: MachinePreauthorizationIssueV1['cause']; checking: boolean }>
+  | Readonly<{ kind: 'readFailed'; code: string; checking: boolean }>;
+
+/**
+ * Preauthorized chosen or saved while the pushed observation says the Machine's sudo still asks for a password: the
+ * notice's place is known from that fact alone, so it holds while the Machine's own steps are read. Only people who
+ * manage an online Machine can read and act on them; everyone else has the headline.
+ */
+export function needsAdminAccessPreauthorizationSteps(
+  input: Readonly<{
+    mode: AdminAccessMode | null;
+    observation: MachineAdminAccessObservationV1 | null;
+    canManage: boolean;
+    online: boolean | null;
+  }>,
+): boolean {
+  return (
+    input.mode === 'preauthorized' &&
+    input.canManage &&
+    input.online === true &&
+    input.observation !== null &&
+    input.observation.daemonIdentity !== 'root' &&
+    input.observation.passwordlessSudoToRoot === 'denied'
+  );
+}
+
+export function describeAdminAccessPreauthorization(
+  input: Parameters<typeof needsAdminAccessPreauthorizationSteps>[0] &
+    Readonly<{ read: AdminAccessPreauthorizationRead }>,
+): AdminAccessPreauthorizationNotice | null {
+  if (!needsAdminAccessPreauthorizationSteps(input)) return null;
+  const { settled, checking } = input.read;
+  if (settled === null) return { kind: 'reading' };
+  if (settled.kind === 'failed')
+    return { kind: 'readFailed', code: settled.code, checking };
+  // A fresh read with no issue is newer than the pushed denial; the republished observation follows.
+  if (settled.issue === null) return null;
+  const { cause, remedy } = settled.issue;
+  return remedy
+    ? { kind: 'steps', cause, command: remedy.command, sudoersRule: remedy.sudoersRule, checking }
+    : { kind: 'noSteps', cause, checking };
 }
 
 /** Ask and Preauthorized need an elevation route the Machine's system has; the observation says when it has none. */
