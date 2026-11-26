@@ -98,6 +98,7 @@ import {
   readCodexAppServerRpcTimeoutMs,
 } from './client/timeout.js';
 import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, buildCodexPromptProfileConfig, buildCodexUserMcpServerDisableOverrides, codexConfigOverridesToThreadConfig, resolveCodexHostFunctionNamespace, listCodexAppServerMcpServerNames } from './config/overrides.js';
+import type { CodexCodeModePreference } from './config/overrides.js';
 import { isFirstPartyHappierMcpBridgeServerName } from '../../mcp/serverKeys.js';
 import { CODEX_SUPPORTED_RUNTIME_VERSION } from '../../cli/supportedRuntime.js';
 import {
@@ -359,6 +360,7 @@ type CodexAppServerRuntimeParams = CodexAppServerRuntimeTarget & Readonly<{
   promptProfile?: AgentSessionOpenRequest['promptProfile'];
   skills?: AgentSessionSkillDelivery;
   toolRestriction?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
+  codeModePreference?: CodexCodeModePreference;
   resolveCurrentPolicy?: () => CodexAppServerPolicy | null;
   observeGoal?: (payload: Readonly<{ kind: 'present'; goal: Readonly<Record<string, unknown>> }> | Readonly<{ kind: 'absent' }>) => void | Promise<void>;
   observePlan?: (entries: readonly SessionTaskSnapshotEntry[]) => Promise<void>;
@@ -953,6 +955,7 @@ export function createCodexAppServerRuntime(
     params.processEnv ?? params.host.baseProcessEnv;
   let clientPromise: Promise<DisposableCodexAppServerClient> | null = null;
   let client: DisposableCodexAppServerClient | null = null;
+  let codeModeOnlyModelIds: ReadonlySet<string> | undefined;
   /** The current client's Session config overrides, bound on every thread/start and thread/resume. */
   let clientThreadConfig: Record<string, JsonValue> = {};
   let currentSkills = params.skills;
@@ -1854,9 +1857,10 @@ export function createCodexAppServerRuntime(
     const hostTurnId = activeMatch?.sessionTurnId ?? settledHostTurnId;
     if (!hostTurnId) return false;
     const publishable = toolEventProjector.project({ method, notificationParams,
-      mcpServerKeys, scopeId: hostTurnId, ...(!activeMatch ? { lateResultOnly: true } : {}) });
+      mcpServerKeys, scopeId: hostTurnId, ...(!activeMatch ? { lateResultOnly: true } : {}),
+      codeModeOnly: currentModelId !== null && codeModeOnlyModelIds?.has(currentModelId) === true });
     if (activeMatch?.promptCache && method === 'item/completed'
-      && publishable.some(event => event.type === 'tool-result' && !event.sidechainId)) {
+      && publishable.some(event => event.type === 'tool-result')) {
       const completedAtMs = readRecord(notificationParams)?.completedAtMs;
       if (typeof completedAtMs === 'number' && Number.isSafeInteger(completedAtMs) && completedAtMs >= 0) {
         activeMatch.promptCache = { ...activeMatch.promptCache, lastNonModelItemCompletedAtMs: completedAtMs };
@@ -1867,7 +1871,7 @@ export function createCodexAppServerRuntime(
     let published = false;
     for (const event of publishable) {
       if (event.type === 'tool-call') {
-        if (!event.sidechainId && isChangeTitleToolNameAlias(event.name)) {
+        if (isChangeTitleToolNameAlias(event.name)) {
           const title = readHappierTitleToolTitle(event.input);
           if (title) {
             pendingHappierTitleToolNamesByCallId.set(buildTurnToolCallKey(hostTurnId, event.callId), title);
@@ -1888,7 +1892,7 @@ export function createCodexAppServerRuntime(
         buildTurnToolCallKey(hostTurnId, event.callId),
       ) ?? null;
       pendingHappierTitleToolNamesByCallId.delete(buildTurnToolCallKey(hostTurnId, event.callId));
-      if (activeMatch && completedTitleName && !event.sidechainId && didHappierTitleToolSucceed(event.output)) {
+      if (activeMatch && completedTitleName && didHappierTitleToolSucceed(event.output)) {
         const activeClient = client;
         if (activeClient) {
           void activeClient.request('thread/name/set', {
@@ -2568,6 +2572,7 @@ export function createCodexAppServerRuntime(
       const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(mcpServers, {
         processEnv,
         ...params.toolRestriction,
+        ...params.codeModePreference,
         functionTools: params.functionTools,
         promptProfile: params.promptProfile,
         mcpToolPolicy: params.mcpToolPolicy,
@@ -2642,6 +2647,8 @@ export function createCodexAppServerRuntime(
           throw new Error('Codex app-server runtime has been disposed.');
         }
         client = createdClient;
+        const supportedModels = createdClient.launchFeatures.toolRestrictionSupportedModelIds;
+        codeModeOnlyModelIds = supportedModels ? new Set(supportedModels) : undefined;
         const operationIdentity = latestConnectedServiceRuntimeIdentity;
         void readCodexRuntimeRateLimitsSnapshot(createdClient)
           .then((result) => recordProviderAccountUsageSnapshot(result.rawSnapshot, { operationIdentity }))
@@ -3528,6 +3535,7 @@ export function createCodexAppServerRuntime(
     latestConnectedServiceRuntimeIdentity = null;
     const currentClient = client;
     client = null;
+    codeModeOnlyModelIds = undefined;
     clientPromise = null;
     collaborationModeSelectionCache.clear();
     publishedThreadId = null;

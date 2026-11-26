@@ -3,6 +3,100 @@ import { describe, expect, it } from 'vitest';
 import { createCodexAppServerToolEventProjector, projectCodexAppServerToolEventsFromNotification } from './toolEvents.js';
 
 describe('projectCodexAppServerToolEventsFromNotification', () => {
+  it('settles a yielded Script with its wait output and nested native calls', () => {
+    const projector = createCodexAppServerToolEventProjector();
+    const project = (method: string, item?: Record<string, unknown>) => projector.project({
+      method, scopeId: 'turn', notificationParams: { item }, codeModeOnly: true,
+    });
+    const raw = (item: Record<string, unknown>) => project('rawResponseItem/completed', item);
+    const input = 'const a = await tools.exec_command({cmd:"pwd"}); text(a.stdout.trim());';
+    const events = [
+      ...raw({ type: 'custom_tool_call', call_id: 'exec', name: 'exec', input }),
+      ...raw({ type: 'custom_tool_call_output', call_id: 'exec', output: 'Script running with cell ID 3' }),
+      ...raw({ type: 'function_call', call_id: 'wait', name: 'wait', arguments: '{"cell_id":"3"}' }),
+      ...project('item/completed', { id: 'command', type: 'commandExecution', command: 'pwd', aggregatedOutput: '/work\n' }),
+      ...raw({ type: 'function_call_output', call_id: 'wait', output: 'Script completed\n/work' }),
+      ...project('turn/completed'),
+    ];
+    expect(events).toMatchObject([
+      { type: 'tool-call', callId: 'exec', name: 'Script', input: { code: input, cellId: '3', language: 'javascript', origin: 'native' } },
+      { type: 'tool-call', callId: 'command', name: 'Bash', sidechainId: 'exec' },
+      { type: 'tool-result', callId: 'command', sidechainId: 'exec' },
+      { type: 'tool-result', callId: 'exec', output: { output: 'Script completed\n/work' } },
+    ]);
+  });
+
+  it.each([
+    { code: 'text(6 * 7);', native: false, only: true, names: ['Script'] },
+    { code: 'await tools.exec_command({cmd:"pwd"});', native: true, only: true, names: ['Bash'] },
+    { code: 'await tools.exec_command({cmd:"pwd"});', native: true, only: false, names: ['Script', 'Bash'] },
+    { code: 'const result = await tools.exec_command({cmd:"pwd"}); result.stdout.trim();', native: true, only: true, names: ['Script', 'Bash'] },
+  ])('projects $code using the model tool mode', ({ code, native, only, names }) => {
+    const projector = createCodexAppServerToolEventProjector();
+    const project = (method: string, item?: Record<string, unknown>) => projector.project({
+      method, scopeId: 'turn', notificationParams: { item }, codeModeOnly: only,
+    });
+    const events = [
+      ...project('rawResponseItem/completed', { type: 'custom_tool_call', call_id: 'exec', name: 'exec', input: code }),
+      ...(native ? project('item/completed', { id: 'command', type: 'commandExecution', command: 'pwd', exitCode: 0 }) : []),
+      ...project('rawResponseItem/completed', { type: 'custom_tool_call_output', call_id: 'exec', output: native ? 'Script completed' : 'Script completed\n42' }),
+      ...project('turn/completed'),
+    ];
+    expect(events.flatMap(event => event.type === 'tool-call' ? [event.name] : [])).toEqual(names);
+  });
+
+  it('parents each call across exec and wait without retaining a second top-level copy', () => {
+    const projector = createCodexAppServerToolEventProjector();
+    const project = (method: string, item?: Record<string, unknown>) => projector.project({
+      method, scopeId: 'turn', notificationParams: { item }, codeModeOnly: true,
+    });
+    const raw = (item: Record<string, unknown>) => project('rawResponseItem/completed', item);
+    const children = (start: number) => Array.from({ length: 10 }, (_, idx) => {
+      const callId = `command-${start + idx}`;
+      return project('item/completed', { id: callId, type: 'commandExecution', command: 'pwd', exitCode: 0 });
+    }).flat();
+    const events = [
+      ...raw({ type: 'custom_tool_call', call_id: 'exec', name: 'exec', input: 'for (let i = 0; i < 20; i++) await tools.exec_command({cmd:"pwd"});' }),
+      ...children(0),
+      ...raw({ type: 'custom_tool_call_output', call_id: 'exec', output: 'Script running with cell ID 3' }),
+      ...raw({ type: 'function_call', call_id: 'wait', name: 'wait', arguments: '{"cell_id":"3"}' }),
+      ...children(10),
+      ...raw({ type: 'function_call_output', call_id: 'wait', output: 'Script completed' }),
+      ...project('turn/completed'),
+    ];
+    expect(events.filter(event => event.callId === 'exec')).toMatchObject([
+      { type: 'tool-call', name: 'Script' },
+      { type: 'tool-result' },
+    ]);
+    expect(events.filter(event => event.sidechainId === 'exec')).toHaveLength(40);
+    expect(events.filter(event => event.callId !== 'exec')).toHaveLength(40);
+  });
+
+  it('flushes completed non-yielding Script before the next script and streams passThrough inner calls live before turn/completed', () => {
+    const projector = createCodexAppServerToolEventProjector();
+    const project = (method: string, item?: Record<string, unknown>) => projector.project({
+      method, scopeId: 'turn', notificationParams: { item }, codeModeOnly: true,
+    });
+    const raw = (item: Record<string, unknown>) => project('rawResponseItem/completed', item);
+
+    // 1. Non-yielding multi-line script completes immediately on custom_tool_call_output (before turn/completed).
+    expect(raw({ type: 'custom_tool_call', call_id: 'exec-1', name: 'exec', input: 'text(6 * 7);' })).toEqual([]);
+    const firstDone = raw({ type: 'custom_tool_call_output', call_id: 'exec-1', output: 'Script completed\n42' });
+    expect(firstDone).toMatchObject([
+      { type: 'tool-call', callId: 'exec-1', name: 'Script' },
+      { type: 'tool-result', callId: 'exec-1', output: { output: 'Script completed\n42' } },
+    ]);
+
+    // 2. Single-call passThrough script emits its inner tool-call immediately on item/started so live approvals render.
+    expect(raw({ type: 'custom_tool_call', call_id: 'exec-2', name: 'exec', input: 'await tools.exec_command({cmd:"pwd"});' })).toEqual([]);
+    const liveInner = project('item/started', { id: 'cmd-live', type: 'commandExecution', command: 'pwd' });
+    expect(liveInner).toMatchObject([{ type: 'tool-call', callId: 'cmd-live', name: 'Bash', sidechainId: null }]);
+    const liveResult = project('item/completed', { id: 'cmd-live', type: 'commandExecution', command: 'pwd', exitCode: 0 });
+    expect(liveResult).toMatchObject([{ type: 'tool-result', callId: 'cmd-live', sidechainId: null }]);
+    expect(raw({ type: 'custom_tool_call_output', call_id: 'exec-2', output: 'Script completed' })).toEqual([]);
+    expect(project('turn/completed')).toEqual([]);
+  });
+
   it.each([
     { id: 'activity', type: 'subAgentActivity', kind: 'interacted', agentThreadId: 'child' },
     { id: 'collab', type: 'collabAgentToolCall', tool: 'send_input', status: 'completed', agentsStates: { child: { status: 'running' } } },

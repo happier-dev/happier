@@ -484,6 +484,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
                 },
                 "manual": true
               }
+            },
+            "tools": {
+              "nativeCodeMode": true
             }
           }
         }
@@ -550,6 +553,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "approval": "host",
         "off": "hidden"
       },
+      "nativeCodeMode": false,
       "noTools": true,
       "support": "supported"
     }
@@ -1603,6 +1607,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
                 "checkNow": "unsupported"
               },
               "usageReporting": "unsupported"
+            },
+            "tools": {
+              "nativeCodeMode": false
             }
           }
         },
@@ -1631,6 +1638,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
                 "checkNow": "unsupported"
               },
               "usageReporting": "unsupported"
+            },
+            "tools": {
+              "nativeCodeMode": false
             }
           }
         }
@@ -1711,6 +1721,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "approval": "host",
         "off": "hidden"
       },
+      "nativeCodeMode": true,
       "noTools": true,
       "support": "supported"
     }

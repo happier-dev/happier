@@ -151,7 +151,9 @@ type ClaudeJsonlLineRecordParams = Readonly<{
     fileRelPath: string;
     lineStartOffsetBytes: number;
     lineValue: unknown;
+    /** A page can only advance after representing the complete source row. */
     maxItems?: number;
+    scriptResultId?: string;
 }>;
 
 type ClaudeJsonlContentSearchProjection = Readonly<{
@@ -263,16 +265,7 @@ type ClaudeJsonlLineProjection = Readonly<{
     countedEventIndices?: readonly number[];
 }>;
 
-function projectClaudeJsonlLine(params: Readonly<{
-    fileRelPath: string;
-    lineStartOffsetBytes: number;
-    lineValue: unknown;
-    /**
-     * A page can only advance after representing the complete source row. When
-     * its remaining item budget cannot admit every canonical part, the caller
-     * receives one explicit marker rather than a partial row.
-     */
-    maxItems?: number;
+function projectClaudeJsonlLine(params: ClaudeJsonlLineRecordParams & Readonly<{
     /** Search needs their ordinal slots, not immutable transport snapshots. */
     countEventsOnly?: boolean;
 }>): ClaudeJsonlLineProjection {
@@ -280,7 +273,9 @@ function projectClaudeJsonlLine(params: Readonly<{
     // File paths stay private paging state; transcript item ids are source-local and recipient-safe.
     const { id: stableId, createdAtMs } = readClaudeJsonlLineIdentity(params);
 
-    const classification = classifyClaudeNativeTranscriptRow(projectClaudeTaskLifecycleToolResult(params.lineValue) ?? params.lineValue);
+    const classification = classifyClaudeNativeTranscriptRow(
+        projectClaudeTaskLifecycleToolResult(params.lineValue) ?? params.lineValue, params.scriptResultId,
+    );
     const localId = classification.row
         ? buildClaudeJsonlProviderFactLocalId(classification.row, {
             fileRelPath: params.fileRelPath,
@@ -430,6 +425,7 @@ function projectClaudeJsonlLine(params: Readonly<{
                     name: part.name,
                     input: part.input,
                     id: identity.id,
+                    ...(part.sidechainId ? { sidechainId: part.sidechainId } : {}),
                 }
                 : part.kind === 'tool_result'
                     ? {
@@ -437,6 +433,7 @@ function projectClaudeJsonlLine(params: Readonly<{
                         callId: part.callId,
                         output: part.output,
                         id: identity.id,
+                        ...(part.sidechainId ? { sidechainId: part.sidechainId } : {}),
                         ...(part.isError === undefined ? {} : { isError: part.isError }),
                     }
                     : null;

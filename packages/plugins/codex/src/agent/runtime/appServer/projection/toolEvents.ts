@@ -350,79 +350,189 @@ export function projectCodexAppServerToolEventsFromNotification(params: Readonly
   });
 }
 
-function isYieldedCodeModeOutput(output: unknown): boolean {
-  // Codex rust-v0.162.1 CodeModeToolOutput prepends this native status to
-  // either a string or input_text content. Script-authored output follows it.
+type ToolCall = Extract<CodexAppServerProjectedToolEvent, { type: 'tool-call' }>;
+type ToolResult = Extract<CodexAppServerProjectedToolEvent, { type: 'tool-result' }>;
+
+type ScriptCell = {
+  call: ToolCall;
+  cellId?: string;
+  output: unknown[];
+  result?: ToolResult;
+  childCount: number;
+  deferred: CodexAppServerProjectedToolEvent[];
+  passThrough: boolean;
+  published: boolean;
+  finished?: boolean;
+};
+
+function readScriptStatus(output: unknown): string | undefined {
+  // Codex rust-v0.162.1 emits a separate header content item before script output.
   const first = Array.isArray(output) ? asRecord(output[0]) : null;
-  const status = typeof output === 'string' ? output : first?.type === 'input_text' ? first.text : null;
-  return typeof status === 'string' && status.startsWith('Script running with cell ID ');
+  const text = typeof output === 'string' ? output : first?.type === 'input_text' ? first.text : null;
+  return typeof text === 'string' ? text.split('\n', 1)[0] : undefined;
 }
+
+function hasScriptOutput(result: ToolResult): boolean {
+  if (result.isError || readScriptStatus(result.output) !== 'Script completed') return true;
+  if (Array.isArray(result.output)) return result.output.length > 1;
+  return typeof result.output !== 'string' || result.output.trim() !== 'Script completed';
+}
+
+// Only elide a bare call with literal arguments. Unrecognized JavaScript keeps
+// its Script card so computation, errors and script-authored output stay visible.
+const SCRIPT_LITERAL = String.raw`(?:"(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|-?\d+(?:\.\d+)?|true|false|null)`;
+const SCRIPT_PROPERTY = String.raw`(?:[\w$]+|"[^"]+"|'[^']+')\s*:\s*${SCRIPT_LITERAL}`;
+const SINGLE_LITERAL_TOOL_CALL = new RegExp(
+  String.raw`^\s*(?:await\s+)?tools(?:\.[\w$]+)+\(\s*(?:\{\s*(?:${SCRIPT_PROPERTY}(?:\s*,\s*${SCRIPT_PROPERTY})*\s*,?)?\s*\})?\s*\)\s*;?\s*$`,
+);
 
 /** One admitted turn's typed and raw views describe the same native tools. */
 export function createCodexAppServerToolEventProjector() {
   const published = new Set<string>();
-  const scripts = new Map<string, {
-    scopeId: string;
-    call: CodexAppServerProjectedToolEvent;
-    result?: Extract<CodexAppServerProjectedToolEvent, { type: 'tool-result' }>;
-    hasNativeTools: boolean;
+  const scopes = new Map<string, {
+    scripts: Map<string, ScriptCell>;
+    open: Set<ScriptCell>;
+    cells: Map<string, ScriptCell>;
+    waits: Map<string, ScriptCell>;
+    children: Map<string, ScriptCell>;
   }>();
+  const publishedChildParents = new Map<string, string>();
   const eventKey = (scopeId: string, type: string, callId: string) => JSON.stringify([scopeId, type, callId]);
   const admit = (scopeId: string, events: CodexAppServerProjectedToolEvent[], raw = false) => events.filter(event => {
     const key = eventKey(scopeId, event.type, event.callId);
     if (published.has(key)) return false;
     if (raw && event.type === 'tool-result' && !published.has(eventKey(scopeId, 'tool-call', event.callId))) return false;
+    if (event.type === 'tool-result') publishedChildParents.delete(eventKey(scopeId, 'tool-call', event.callId));
     published.add(key);
     return true;
   });
+  const publishScript = (script: ScriptCell, events: CodexAppServerProjectedToolEvent[]) => {
+    if (script.published) return;
+    script.published = true;
+    events.push({
+      ...script.call, name: 'Script',
+      input: { code: script.call.input, language: 'javascript', origin: 'native', ...(script.cellId ? { cellId: script.cellId } : {}) },
+    }, ...script.deferred.map(event => ({ ...event, sidechainId: script.call.callId })));
+    script.deferred.length = 0;
+  };
+  const finishScript = (script: ScriptCell, events: CodexAppServerProjectedToolEvent[]) => {
+    if (script.finished) return;
+    script.finished = true;
+    if (script.passThrough && script.childCount === 1 && script.result && !hasScriptOutput(script.result)
+      && script.output.length === 1 && !script.published) {
+      events.push(...script.deferred);
+      script.deferred.length = 0;
+      return;
+    }
+    publishScript(script, events);
+    if (script.result) {
+      events.push({ ...script.result, callId: script.call.callId,
+        output: { output: script.output.length <= 1 ? script.output[0] ?? script.result.output : script.output } });
+    }
+  };
   return {
-    clear: () => { published.clear(); scripts.clear(); },
+    clear: () => { published.clear(); scopes.clear(); publishedChildParents.clear(); },
     project(params: Parameters<typeof projectCodexAppServerToolEventsFromNotification>[0] & Readonly<{
       scopeId: string;
+      codeModeOnly?: boolean;
       /** A settled turn can finish an already published tool, never introduce a new call. */
       lateResultOnly?: boolean;
     }>): CodexAppServerProjectedToolEvent[] {
+      const { scopeId } = params;
+      const projected: CodexAppServerProjectedToolEvent[] = [];
+      const scope = scopes.get(scopeId);
       if (params.method === 'turn/completed' || params.method === 'turn/interrupted') {
-        const fallback: CodexAppServerProjectedToolEvent[] = [];
-        for (const [key, script] of scripts) {
-          if (script.scopeId !== params.scopeId) continue;
-          scripts.delete(key);
-          // Code-mode exec is an envelope, not a second command. Retain it
-          // only when native origin is unaccounted for (including ambiguous
-          // yielded cells). Never parse its JavaScript or match command text.
-          if (!script.hasNativeTools) fallback.push(script.call, ...(script.result ? [script.result] : []));
-        }
-        return admit(params.scopeId, fallback);
-      }
-      const events = projectCodexAppServerToolEventsFromNotification(params);
-      if (params.lateResultOnly) {
-        return admit(params.scopeId, events.filter(event => event.type === 'tool-result'), true);
-      }
-      const native: CodexAppServerProjectedToolEvent[] = [];
-      for (const event of events) {
-        const key = eventKey(params.scopeId, 'script', event.callId);
-        if (event.type === 'tool-call' && event.name === 'exec') {
-          if (!scripts.has(key) && !published.has(eventKey(params.scopeId, 'tool-call', event.callId))) {
-            scripts.set(key, { scopeId: params.scopeId, call: event, hasNativeTools: false });
+        if (scope) {
+          for (const script of scope.scripts.values()) finishScript(script, projected);
+          for (const [callId, script] of scope.children) {
+            if (script.published && !published.has(eventKey(scopeId, 'tool-result', callId))) {
+              publishedChildParents.set(eventKey(scopeId, 'tool-call', callId), script.call.callId);
+            }
           }
-          continue;
+          scopes.delete(scopeId);
         }
-        const script = scripts.get(key);
-        if (script && event.type === 'tool-result') {
-          script.result = event;
-          continue;
-        }
-        if (event.type === 'tool-call' && !published.has(eventKey(params.scopeId, event.type, event.callId))) {
-          // A yielded response does not finish the cell. Without an originating
-          // exec id, only a single eligible envelope accounts for a native call.
-          // Typed/raw echoes of that same native identity cannot reattribute it.
-          const candidates = [...scripts.values()].filter(pending =>
-            pending.scopeId === params.scopeId && (!pending.result || isYieldedCodeModeOutput(pending.result.output)));
-          if (candidates.length === 1) candidates[0]!.hasNativeTools = true;
-        }
-        native.push(event);
+        return admit(scopeId, projected);
       }
-      return admit(params.scopeId, native, params.method === 'rawResponseItem/completed');
+
+      const raw = params.method === 'rawResponseItem/completed';
+      const item = raw ? readProviderEventItemRecord(params.notificationParams) : null;
+      const id = item ? trimStringValue(item.call_id) : null;
+      if (!params.lateResultOnly && id && item) {
+        if (item.type === 'custom_tool_call' && item.name === 'exec' && typeof item.input === 'string' && !item.namespace) {
+          const active = scope ?? { scripts: new Map(), open: new Set(), cells: new Map(), waits: new Map(), children: new Map() };
+          if (!active.scripts.has(id) && !published.has(eventKey(scopeId, 'tool-call', id))) {
+            const script: ScriptCell = {
+              call: { type: 'tool-call', callId: id, name: 'exec', input: item.input, sidechainId: null },
+              output: [], childCount: 0, deferred: [], published: false,
+              passThrough: params.codeModeOnly === true && SINGLE_LITERAL_TOOL_CALL.test(item.input),
+            };
+            active.scripts.set(id, script);
+            active.open.add(script);
+            scopes.set(scopeId, active);
+          }
+          return [];
+        }
+        if (scope && item.type === 'function_call' && item.name === 'wait' && !item.namespace) {
+          let cellId: string | null = null;
+          if (typeof item.arguments === 'string') {
+            try { cellId = trimStringValue(asRecord(JSON.parse(item.arguments))?.cell_id); } catch { /* Uncorrelated function. */ }
+          }
+          const script = cellId ? scope.cells.get(cellId) : undefined;
+          if (script) {
+            scope.waits.set(id, script);
+            return [];
+          }
+        }
+        const script = item.type === 'custom_tool_call_output' ? scope?.scripts.get(id)
+          : item.type === 'function_call_output' ? scope?.waits.get(id) : undefined;
+        if (scope && script && !published.has(eventKey(scopeId, 'script-output', id))) {
+          published.add(eventKey(scopeId, 'script-output', id));
+          const status = readScriptStatus(item.output);
+          script.result = { type: 'tool-result', callId: id, sidechainId: null, output: item.output,
+            ...(status?.startsWith('Script failed') || status === 'Script terminated' ? { isError: true } : {}) };
+          const cellId = /^Script running with cell ID (\S+)$/.exec(status ?? '')?.[1];
+          if (cellId) {
+            script.cellId = cellId;
+            scope.cells.set(cellId, script);
+            // Keep yielded output if the host reported more than a status header.
+            if (Array.isArray(item.output) ? item.output.length > 1 : status !== item.output) script.output.push(item.output);
+            if (!script.passThrough || script.output.length) publishScript(script, projected);
+          } else {
+            scope.open.delete(script);
+            script.output.push(item.output);
+            finishScript(script, projected);
+          }
+          return admit(scopeId, projected);
+        }
+        if (script) return [];
+      }
+
+      for (const event of projectCodexAppServerToolEventsFromNotification(params)) {
+        const key = eventKey(scopeId, event.type, event.callId);
+        if (published.has(key) || (params.lateResultOnly && event.type === 'tool-call')) continue;
+        const childKey = eventKey(scopeId, 'tool-call', event.callId);
+        let script = scope?.children.get(event.callId);
+        if (event.type === 'tool-call') {
+          if (script) continue;
+          if (scope?.open.size === 1) {
+            script = scope.open.values().next().value;
+            if (script) {
+              scope.children.set(event.callId, script);
+              script.childCount += 1;
+            }
+          }
+        }
+        if (!script) {
+          const parent = publishedChildParents.get(childKey);
+          projected.push(parent ? { ...event, sidechainId: parent } : event);
+        } else if (script.passThrough && !script.published && script.childCount === 1 && scopes.has(scopeId)) {
+          projected.push(event);
+        } else {
+          publishScript(script, projected);
+          projected.push({ ...event, sidechainId: script.call.callId });
+        }
+      }
+      return admit(scopeId, projected, raw);
     },
   };
 }

@@ -7,6 +7,13 @@ import {
 } from './runtimeKinds.js';
 
 describe('runtimeKinds', () => {
+  it('preserves explicit enablement and disablement of native Code Mode across Agent runtime kinds', () => {
+    expect(resolveAgentRuntimeControlSurface('claude', 'agentSdk')?.tools.nativeCodeMode).toBe(false);
+    expect(resolveAgentRuntimeControlSurface('claude', 'unifiedTerminal')?.tools.nativeCodeMode).toBe(true);
+    expect(resolveAgentRuntimeControlSurface('codex', 'appServer')?.tools.nativeCodeMode).toBe(true);
+    expect(resolveAgentRuntimeControlSurface('codex', 'acp')?.tools.nativeCodeMode).toBe(false);
+  });
+
   it('replaces compaction descriptors atomically for the selected runtime kind', () => {
     expect(resolveAgentRuntimeControlSurface('claude', 'agentSdk')?.sessionCapabilities.compaction).toEqual({
       events: true, manual: true, idle: { mode: 'host', defaultEnabled: true, defaultMinContextTokens: 200000 },

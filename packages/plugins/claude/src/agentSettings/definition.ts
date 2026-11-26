@@ -47,6 +47,7 @@ const BOOLEAN_ANALYTICS = {
   privacy: 'safe',
   identityScope: 'person',
 } as const;
+export const CLAUDE_CODE_MODE_SETTING_KEY = 'claudeCodeModeEnabled';
 
 const ENUM_ANALYTICS = {
   trackCurrentState: true,
@@ -146,6 +147,19 @@ const CLAUDE_AGENT_SETTINGS_FIELDS = [
     ),
     schema: { type: 'boolean', description: 'Enable Claude unified terminal runtime' },
     default: false,
+    analytics: BOOLEAN_ANALYTICS,
+    presentation: { control: 'switch' },
+  },
+  {
+    id: CLAUDE_CODE_MODE_SETTING_KEY,
+    title: fieldTitle(CLAUDE_CODE_MODE_SETTING_KEY, 'Code Mode'),
+    description: fieldDescription(
+      CLAUDE_CODE_MODE_SETTING_KEY,
+      "Claude writes one script that calls several tools, and you see each call inside it. Works in the unified terminal with Claude's own model services; a session keeps the mode it started with.",
+    ),
+    schema: { type: 'boolean', description: 'Enable Claude native Code Mode' },
+    default: false,
+    availability: { when: { fact: 'host.feature', operator: 'enabled', value: 'sessions.codeMode' } },
     analytics: BOOLEAN_ANALYTICS,
     presentation: { control: 'switch' },
   },
@@ -576,6 +590,7 @@ export const CLAUDE_AGENT_SETTINGS_CONTRIBUTION = {
         },
         fields: [
           'claudeUnifiedTerminalEnabled',
+          CLAUDE_CODE_MODE_SETTING_KEY,
           'claudeUnifiedTerminalHost',
           'claudeUnifiedTerminalResumeChoice',
           'claudeUnifiedTerminalQuestionResponseLocation',
@@ -593,6 +608,7 @@ type ClaudeSettingsDefaults = Record<typeof CLAUDE_SESSION_RETENTION_SETTING_ID,
   claudeCodeExperimentalAgentTeamsEnabled: boolean;
   claudeCodeIncludeInNativeHistory: boolean;
   claudeUnifiedTerminalEnabled: boolean;
+  claudeCodeModeEnabled: boolean;
   claudeUnifiedTerminalHost: ClaudeUnifiedTerminalHost;
   claudeUnifiedTerminalResumeChoice: ClaudeUnifiedTerminalResumeChoice;
   claudeUnifiedTerminalQuestionResponseLocation: ClaudeUnifiedTerminalResponseLocation;

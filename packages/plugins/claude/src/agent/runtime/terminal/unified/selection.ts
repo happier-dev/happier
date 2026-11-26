@@ -55,16 +55,20 @@ export type ClaudeUnifiedTerminalSelectionReason =
   | 'captured_descriptor' | 'feature_disabled' | 'windows_hidden_console_default' | 'setting_override' | 'account_setting'
   | 'setting_unavailable';
 
+export function readClaudeRuntimeDescriptorAgent(descriptor: RuntimeDescriptorV1 | undefined): RuntimeDescriptorV1['agent'] | null {
+  return descriptor?.v === 1 && descriptor.agentId === 'claude' ? descriptor.agent : null;
+}
+
 /** The selected Claude owner writes this intent; the opener and native host consume it. */
 export function readClaudeTerminalRuntimeSelection(descriptor: RuntimeDescriptorV1 | undefined): Readonly<{
   mode: 'agentSdk' | 'unifiedTerminal';
   /** The host the Session asked for (persisted in its descriptor), not the adapter's kind. */
   host?: Exclude<TerminalHostPreference, 'auto'>;
 }> | null {
-  if (descriptor?.v !== 1 || descriptor.agentId !== 'claude') return null;
-  const mode = descriptor.agent.backendMode;
+  const agent = readClaudeRuntimeDescriptorAgent(descriptor);
+  const mode = agent?.backendMode;
   if (mode !== 'agentSdk' && mode !== 'unifiedTerminal') return null;
-  const host = descriptor.agent.terminalHostKind;
+  const host = agent?.terminalHostKind;
   return {
     mode,
     ...(host === 'herdr' || host === 'tmux' || host === 'zellij' || host === 'windows_console' ? { host } : {}),

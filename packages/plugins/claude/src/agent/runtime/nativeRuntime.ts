@@ -63,7 +63,7 @@ import {
   parseClaudeTerminalRawSpawnOptionOverrides,
   partitionClaudeTerminalUserArgs,
 } from './terminal/argv.js';
-import { isClaudeUnifiedTerminalSelected, readClaudeTerminalRuntimeSelection } from './terminal/unified/selection.js';
+import { isClaudeUnifiedTerminalSelected, readClaudeRuntimeDescriptorAgent, readClaudeTerminalRuntimeSelection } from './terminal/unified/selection.js';
 import type {
   ClaudeUnifiedPromptDeliveryIdentity,
   ClaudeUnifiedPromptDeliveryOutcome,
@@ -144,6 +144,7 @@ type ClaudeNativePromptCustodyOperations =
   }>;
 
 export type ClaudeNativeSessionOperations = ClaudeRuntimeTurnOperations & Readonly<{
+  codeModeActive?: boolean;
   compact?: AgentSessionRuntime['compact'];
   refreshSkills?: AgentSessionRuntime['refreshSkills'];
   prepareTerminalPresentation?: AgentSessionRuntime['prepareTerminalPresentation'];
@@ -791,17 +792,18 @@ export function createClaudeNativeSessionRuntimeFromOperations(
   // Claude minted this id; presence only, bytes preserved.
   const initialProviderSessionIdRaw = operations.readProviderIdentity().sessionId;
   const initialProviderSessionId = readClaudeProviderIdentityValue(initialProviderSessionIdRaw) ?? undefined;
-  const sourceRuntimeDescriptor = request.runtimeDescriptorV1;
-  const sourceRuntimeAgent = sourceRuntimeDescriptor?.agent;
+  const sourceRuntimeDescriptor = request.runtimeDescriptorV1 ?? (operations.codeModeActive === true
+    ? { v: 1 as const, agentId: 'claude', agent: { backendMode: 'unifiedTerminal' } }
+    : undefined);
+  const sourceRuntimeAgent = readClaudeRuntimeDescriptorAgent(sourceRuntimeDescriptor);
   const runtimeDescriptorV1 = sourceRuntimeDescriptor
-    && sourceRuntimeDescriptor.v === 1
-    && sourceRuntimeDescriptor.agentId === 'claude'
     && sourceRuntimeAgent
     && typeof sourceRuntimeAgent === 'object'
     ? Object.freeze({
         ...sourceRuntimeDescriptor,
         agent: Object.freeze({
           ...sourceRuntimeAgent,
+          ...(operations.codeModeActive === true ? { codeModeActive: true } : {}),
           configDir: resolveClaudeConfigDir(resolveClaudeNativeBaseLaunchEnvironment({
             launchEnvironment: request.launchEnvironment,
             exec: context.services.exec,

@@ -24,6 +24,7 @@ import { CLAUDE_PROVIDER_HELPER_ENV_KEYS } from '../providerBinding/adapter.js';
 import { readClaudePoolNativeWaitingPreferenceFromEnv } from '../auth/services/runtime/env.js';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import { CLAUDE_CODE_MODE_TOOL } from './codeModeEligibility.js';
 
 export type ClaudeHelperModelEnv = Readonly<Partial<Record<typeof CLAUDE_PROVIDER_HELPER_ENV_KEYS[number], string>>>;
 
@@ -56,18 +57,23 @@ const CLAUDE_NATIVE_TOOL_SPELLINGS = new Map([
   'TeamCreate', 'TeamDelete', 'TodoRead', 'TodoWrite', 'ToolSearch', 'WebFetch', 'WebSearch', 'Write',
 ].map(name => [name.toLowerCase(), name]));
 
-function projectClaudeNativeToolRules(allowedTools: readonly string[]) {
+function projectClaudeNativeToolRules(allowedTools: readonly string[], confined = false) {
   const builtins = new Set<string>();
-  const rules = allowedTools.map(rule => {
+  const rules: string[] = [];
+  for (const rule of allowedTools) {
     const parsed = parseSessionPermissionToolIdentifier(rule);
-    if (parsed.name.toLowerCase().startsWith('mcp__')) return rule;
+    const normalizedName = parsed.name.toLowerCase();
+    if (confined && normalizedName === CLAUDE_CODE_MODE_TOOL.toLowerCase()) continue;
+    if (normalizedName.startsWith('mcp__')) {
+      rules.push(rule);
+      continue;
+    }
     const name = isSessionPermissionShellToolName(parsed.name) ? 'Bash'
-      : CLAUDE_NATIVE_TOOL_SPELLINGS.get(parsed.name.toLowerCase()) ?? parsed.name;
+      : CLAUDE_NATIVE_TOOL_SPELLINGS.get(normalizedName) ?? parsed.name;
     const match = matchSessionPermissionToolIdentifier(rule, name);
-    if (!match) return rule;
-    builtins.add(name);
-    return match.kind === 'tool' ? name : `${name}(${match.spec})`;
-  });
+    if (match) builtins.add(name);
+    rules.push(!match ? rule : match.kind === 'tool' ? name : `${name}(${match.spec})`);
+  }
   return { builtins: [...builtins], rules };
 }
 
@@ -97,7 +103,7 @@ export function resolveClaudeNativeToolPolicyArgs(
   }
   // --tools is a native allow-only list of built-in names, including an empty list.
   // Preserve scoped arguments while using native names; PreToolUse enforces scope.
-  const { builtins, rules } = projectClaudeNativeToolRules(policy.allowedTools ?? []);
+  const { builtins, rules } = projectClaudeNativeToolRules(policy.allowedTools ?? [], true);
   return [...confinedArgs, '--tools', builtins.join(','), '--allowedTools', rules.join(','),
     '--permission-mode', 'dontAsk'];
 }
@@ -283,11 +289,12 @@ export function resolveClaudeLaunchSettingsOverlayArgs(input: Readonly<{
       }
     }
     const deny = [...rules(basePermissions.deny), ...rules(permissions.deny),
+      ...(input.unlistedTools === 'deny' ? [CLAUDE_CODE_MODE_TOOL] : []),
       ...(input.workspaceWrites === 'deny' ? ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'Bash'] : []), ...mcpDeny];
     mergedSettings.permissions = {
       ...permissions,
       allow: input.unlistedTools === 'deny'
-        ? projectClaudeNativeToolRules(input.allowedTools ?? []).rules
+        ? projectClaudeNativeToolRules(input.allowedTools ?? [], true).rules
         : [...new Set([...existingAllow, ...(buildClaudeHookSettingsOverlay().permissions?.allow ?? [])])],
       ...(input.unlistedTools === 'deny' ? { defaultMode: 'dontAsk', disableBypassPermissionsMode: 'disable' } : {}),
       ...(mcpAsk.length ? { ask: [...new Set([...rules(basePermissions.ask), ...rules(permissions.ask), ...mcpAsk])] } : {}),

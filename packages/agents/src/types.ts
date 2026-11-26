@@ -150,7 +150,8 @@ export type AgentToolsConfig = Readonly<{
     support: AgentToolsSupportLevel;
     noTools?: PluginAgentToolsCapabilityV2['noTools'];
     mcpToolControl?: Readonly<{ off: 'hidden' | 'blocked'; approval: 'native' | 'host' }>;
-    mcpToolLoading?: 'every_turn' | 'on_demand';
+    mcpToolLoading?: PluginAgentToolsCapabilityV2['mcpToolLoading'];
+    nativeCodeMode?: PluginAgentToolsCapabilityV2['nativeCodeMode'];
     mcpToolCallIdMetaKey?: string;
 }>;
 

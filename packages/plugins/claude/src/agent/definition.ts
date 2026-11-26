@@ -81,7 +81,7 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
       defaultKind: 'agentSdk',
       byKind: {
         agentSdk: { kind: 'agentSdk', overrides: { sessionCapabilities: { compaction: CLAUDE_SDK_COMPACTION_CAPABILITY } } },
-        unifiedTerminal: { kind: 'unifiedTerminal', overrides: { sessionCapabilities: { compaction: CLAUDE_NATIVE_COMPACTION_CAPABILITY } } },
+        unifiedTerminal: { kind: 'unifiedTerminal', overrides: { tools: { nativeCodeMode: true }, sessionCapabilities: { compaction: CLAUDE_NATIVE_COMPACTION_CAPABILITY } } },
       },
     },
     handoff: { vendorStateTransfer: 'supported' },
@@ -94,7 +94,7 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
       inFlightSteerSupported: true,
       terminalPromptInjectionSupported: true,
     },
-    tools: { delivery: 'native_mcp', support: 'supported', noTools: true, mcpToolControl: { off: 'hidden', approval: 'host' }, mcpToolCallIdMetaKey: 'claudecode/toolUseId' },
+    tools: { delivery: 'native_mcp', support: 'supported', noTools: true, nativeCodeMode: false, mcpToolControl: { off: 'hidden', approval: 'host' }, mcpToolCallIdMetaKey: 'claudecode/toolUseId' },
   },
   sessionModeDescriptor: {
     source: 'provider-native',

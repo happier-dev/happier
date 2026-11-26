@@ -9,6 +9,32 @@ function listOverrides(...args: Parameters<typeof buildCodexAppServerConfigOverr
 }
 
 describe('buildCodexAppServerConfigOverrides', () => {
+    it('uses the shared auto-approval catalog for the Code Mode bridge tools', () => {
+        const overrides = listOverrides({ happier: { command: 'happier-mcp' } });
+        const toolNames = ['tools_search', 'tools_describe', 'tools_call'];
+        expect(listHappierToolAutoApprovedNamesV1()).toEqual(expect.arrayContaining(toolNames));
+        expect(overrides).toEqual(expect.arrayContaining(toolNames.map(name =>
+            `mcp_servers.happier.tools.${name}.approval_mode="approve"`)));
+    });
+
+    it.each([
+        { setting: 'on', enabled: true, restricted: false, only: false, expected: ['features.code_mode.enabled=true'] },
+        { setting: 'on', enabled: undefined, restricted: false, only: false, expected: [] },
+        { setting: 'on', enabled: false, restricted: false, only: false, expected: [] },
+        { setting: 'on', enabled: true, restricted: true, only: true, expected: ['features.code_mode.enabled=false'] },
+        { setting: 'off', enabled: true, restricted: false, only: true, expected: [] },
+        { setting: 'off', enabled: true, restricted: false, only: false, expected: ['features.code_mode.enabled=false'] },
+        { setting: 'default', enabled: true, restricted: false, only: false, expected: [] },
+    ] as const)('applies native Code Mode preference $setting with gate=$enabled confined=$restricted required=$only', vector => {
+        const overrides = listOverrides({}, {
+            codexCodeModeEnabled: vector.setting,
+            sessionsCodeModeEnabled: vector.enabled,
+            codeModeOnly: vector.only,
+            unlistedTools: vector.restricted ? 'deny' : 'ask',
+        });
+        expect(overrides.filter(override => override.startsWith('features.code_mode.enabled='))).toEqual(vector.expected);
+        if (vector.restricted) expect(overrides).toContain('features.code_mode.excluded_tool_namespaces=["functions"]');
+    });
     it('preserves native image generation for an unrestricted Create-a-pet skill delivery', () => {
         // Create-a-pet includes hatch-pet without an allowedTools/unlistedTools policy.
         const overrides = listOverrides({}, {

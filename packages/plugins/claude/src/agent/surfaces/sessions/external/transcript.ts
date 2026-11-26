@@ -26,6 +26,7 @@ import {
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import { readClaudeToolResultMediaRequests } from '../../../transcripts/toolResultMedia.js';
+import { correlateClaudeCodeModeTranscriptRow } from '../../../transcripts/toolUseNames.js';
 import { isClaudeTaskLifecycleResultEnvelope, readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
 import { parseClaudeWorkflowFacts } from '../../../workflowRecords/correlation.js';
 import { classifyClaudeNativeTranscriptRow, projectClaudeNativeTranscriptObservation } from '../../../transcripts/nativeSemanticProjection.js';
@@ -82,6 +83,7 @@ type ClaudeForwardCursorV3 = Readonly<{
     sourceAnchorOffsetBytes: number;
     sourceAnchorSha256: string;
     sourceGeneration: string;
+    activeReplId?: string;
 }>;
 
 type ClaudeSourceItem = AgentExternalSessionTranscriptItem | AgentExternalSessionTerminalObservation;
@@ -659,6 +661,7 @@ function decodeForwardCursor(
             sourceAnchorOffsetBytes,
             sourceAnchorSha256,
             sourceGeneration,
+            ...(typeof record.activeReplId === 'string' ? { activeReplId: record.activeReplId } : {}),
         }
         : null;
 }
@@ -803,6 +806,7 @@ async function createForwardCursor(params: Readonly<{
     fileRelPath: string;
     offsetBytes: number | null;
     signal?: AbortSignal;
+    activeReplId?: string;
 }>): Promise<string | null> {
     if (params.offsetBytes === null) {
         throw new Error('Cannot establish Claude transcript tail boundary within the JSONL read budget.');
@@ -819,6 +823,7 @@ async function createForwardCursor(params: Readonly<{
         fileRelPath: params.fileRelPath,
         offsetBytes: params.offsetBytes,
         sourceAnchorOffsetBytes: params.offsetBytes,
+        ...(params.activeReplId ? { activeReplId: params.activeReplId } : {}),
         ...evidence,
     });
 }
@@ -912,6 +917,7 @@ function encodeForwardCursorEnvelopeProbe(params: Readonly<{
     fileRelPath: string;
     offsetBytes: number;
     sourceGeneration: string;
+    activeReplId?: string;
 }>): string {
     return encodeCursor({
         v: 3,
@@ -921,6 +927,7 @@ function encodeForwardCursorEnvelopeProbe(params: Readonly<{
         sourceAnchorOffsetBytes: params.offsetBytes,
         sourceAnchorSha256: 'A'.repeat(43),
         sourceGeneration: params.sourceGeneration,
+        ...(params.activeReplId ? { activeReplId: params.activeReplId } : {}),
     });
 }
 
@@ -935,12 +942,16 @@ function projectLines(params: Readonly<{
 }> {
     const items: ClaudeSourceItem[] = [];
     let unsupportedRecordCount = 0;
+    let activeReplId: string | undefined;
     for (const line of params.lines) {
         if (items.length >= params.maxItems) break;
+        const correlated = correlateClaudeCodeModeTranscriptRow(line.value, activeReplId);
+        activeReplId = correlated.activeReplId;
         const projected = projectForwardLine({
             fileRelPath: params.fileRelPath,
             lineStartOffsetBytes: line.startOffsetBytes,
-            lineValue: line.value,
+            lineValue: correlated.row,
+            scriptResultId: correlated.scriptResultId,
             maxItems: params.maxItems - items.length,
         }, params.projection, undefined, true);
         if (projected.disposition === 'unsupported') unsupportedRecordCount += 1;
@@ -1375,6 +1386,10 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
     const branch = params.projection === 'terminal' || read.items.length === 0 ? { offsets: null, partial: false }
         : await readClaudeExternalTranscriptBranch({ filePath: resolved.filePath, maxBytes: params.maxBytes, signal: params.signal,
             range: { startOffsetBytes: read.items[0]!.startOffsetBytes, endOffsetBytes: read.nextOffsetBytes } });
+    let activeReplId = decoded.v === 3 ? decoded.activeReplId : undefined;
+    const correlateLine = (line: typeof read.items[number]) => branch.offsets?.has(line.startOffsetBytes) === false
+        ? { row: line.value, activeReplId, scriptResultId: undefined }
+        : correlateClaudeCodeModeTranscriptRow(line.value, activeReplId);
     if (params.resultBudget || params.projection === 'terminal') {
         // The budget is measured against the cursor this page would actually
         // return, so the probe carries the file's real generation rather than a
@@ -1395,10 +1410,12 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
             throwIfAborted(params.signal);
             const line = read.items[index];
             if (!line) continue;
+            const correlated = correlateLine(line);
             const projected = projectForwardLine({
                 fileRelPath: resolved.fileRelPath,
                 lineStartOffsetBytes: line.startOffsetBytes,
-                lineValue: line.value,
+                lineValue: correlated.row,
+                scriptResultId: correlated.scriptResultId,
                 maxItems: maxItems - items.length,
             }, params.projection, branch.offsets, false, params.includeMediaReferences);
             const mapped = projected.items;
@@ -1419,6 +1436,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
                     fileRelPath: resolved.fileRelPath,
                     offsetBytes: proposedNextOffsetBytes,
                     sourceGeneration: forwardSourceGeneration,
+                    activeReplId: correlated.activeReplId,
                 }),
                 truncated: false,
                 hasMore: read.hitPageLimit || proposedNextOffsetBytes < read.nextOffsetBytes,
@@ -1438,6 +1456,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
             }
             items.splice(0, items.length, ...proposedItems);
             nextOffsetBytes = proposedNextOffsetBytes;
+            activeReplId = correlated.activeReplId;
         }
 
         const nextCursor = await createForwardCursor({
@@ -1445,6 +1464,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
             fileRelPath: resolved.fileRelPath,
             offsetBytes: nextOffsetBytes,
             signal: params.signal,
+            activeReplId,
         });
         if (!nextCursor) {
             return {
@@ -1497,10 +1517,13 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
     const maxItems = Math.max(1, Math.trunc(params.maxItems));
     for (const line of read.items) {
         if (projectedItems.length >= maxItems) break;
+        const correlated = correlateLine(line);
+        activeReplId = correlated.activeReplId;
         const projected = projectForwardLine({
             fileRelPath: resolved.fileRelPath,
             lineStartOffsetBytes: line.startOffsetBytes,
-            lineValue: line.value,
+            lineValue: correlated.row,
+            scriptResultId: correlated.scriptResultId,
             maxItems: maxItems - projectedItems.length,
         }, undefined, branch.offsets);
         if (projected.disposition === 'known_non_transcript') {
@@ -1518,6 +1541,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
         fileRelPath: resolved.fileRelPath,
         offsetBytes: read.nextOffsetBytes,
         signal: params.signal,
+        activeReplId,
     });
     if (!nextCursor) {
         return {

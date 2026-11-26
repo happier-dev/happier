@@ -4,21 +4,24 @@ import { AgentSessionRuntimeEventSchema } from '@happier-dev/plugin-sdk/agents/r
 import type { DisposableCodexAppServerClient } from './client.js';
 import { createCodexNativeEventFixture } from './client.test-support.js';
 import type { CodexAppServerEvent } from './core.js';
+import type { CodexCodeModePreference } from './config/overrides.js';
 import { createCodexNativeAppServerSessionRuntime } from './native.js';
 import { createCodexAppServerRuntime, startCodexAppServerRuntime, waitForCodexAppServerRuntimeTurnCompletion } from './runtime.js';
 
 // Codex 0.160.0's generated v2 schema: thread provenance and turn status/error.
 // Only the provider JSON-RPC transport and host publication boundary are replaced.
-function fixture() {
+function fixture(codeModePreference?: CodexCodeModePreference) {
   const handlers = new Map<string, (params: unknown) => void | Promise<void>>();
   const observations: AgentSessionSubagentObservation[] = [];
   const events: CodexAppServerEvent[] = [];
   const nativeEvents: AgentSessionRuntimeEvent[] = [];
   const nativeReceipts = createCodexNativeEventFixture();
+  const requests: Array<{ method: string; params: unknown }> = [];
   const client: DisposableCodexAppServerClient = {
     onNativeEvent: nativeReceipts.onNativeEvent,
     launchFeatures: { realtimeConversationAdvertised: false },
-    async request(method) {
+    async request(method, params) {
+      requests.push({ method, params });
       if (method === 'thread/start') return { thread: { id: 'parent' } };
       if (method === 'turn/start') return { turn: { id: 'parent-turn' } };
       return {};
@@ -33,14 +36,26 @@ function fixture() {
   }) } satisfies AgentSessionSubagentObservationPublisher;
   const runtime = createCodexAppServerRuntime({
     happierSessionId: 'session', directory: '/workspace',
+    codeModePreference,
     host: { baseProcessEnv: {}, logger: { debug: vi.fn(), warn: vi.fn() }, createClient: async () => client, subagents },
   });
   runtime.events.subscribe((event) => events.push(event));
   createCodexNativeAppServerSessionRuntime(runtime, 'session').watch((event) => nativeEvents.push(AgentSessionRuntimeEventSchema.parse(event)));
-  return { runtime, events, nativeEvents, observations, async notify(method: string, params: unknown) { nativeReceipts.publish(method, params); await handlers.get(method)?.(params); } };
+  return { runtime, events, nativeEvents, observations, requests, async notify(method: string, params: unknown) { nativeReceipts.publish(method, params); await handlers.get(method)?.(params); } };
 }
 
 describe('managed Codex native children', () => {
+  it.each([true, false])('binds the Code Mode override to the native thread when the feature is %s', async enabled => {
+    const f = fixture({ codexCodeModeEnabled: 'on', sessionsCodeModeEnabled: enabled });
+    try {
+      await startCodexAppServerRuntime(f.runtime);
+      const start = f.requests.find(request => request.method === 'thread/start');
+      expect(start).toBeDefined();
+      const config = (start!.params as { config?: Record<string, unknown> }).config;
+      expect(config?.['features.code_mode.enabled']).toBe(enabled ? true : undefined);
+    } finally { await f.runtime.dispose(); }
+  });
+
   it('publishes the native nickname on its first child transcript anchor only', async () => {
     const f = fixture();
     try {
@@ -114,19 +129,22 @@ describe('managed Codex native children', () => {
       else { await nativeScript(); await failedScript(); }
       await f.notify('turn/completed', { threadId: scope.threadId, turn: { id: scope.turnId, status: 'completed' } });
       if (!child) await waitForCodexAppServerRuntimeTurnCompletion(f.runtime);
-      const tools = f.nativeEvents.filter(event => (event.kind === 'tool-call' || event.kind === 'tool-result')
-        && (child ? event.sidechainId === 'child' : !event.sidechainId));
-      expect(tools).toEqual([
-        expect.objectContaining({ kind: 'tool-call', toolCallId: 'native-command', toolName: 'Bash' }),
-        expect.objectContaining({ kind: 'tool-result', toolCallId: 'native-command', output: { exit_code: 0, output: '/workspace' } }),
-        // The native stream has no originating exec id. Ambiguous wrappers
-        // remain visible rather than losing the independent failure.
-        ...(yielded && !nativeBeforeYield ? [
-          expect.objectContaining({ kind: 'tool-call', toolCallId: 'successful-script', toolName: 'exec' }),
-          expect.objectContaining({ kind: 'tool-result', toolCallId: 'successful-script', output: expect.any(Array) }),
-        ] : []),
-        expect.objectContaining({ kind: 'tool-call', toolCallId: 'failed-script', toolName: 'exec' }),
-        expect.objectContaining({ kind: 'tool-result', toolCallId: 'failed-script', output: 'Script failed before a native command existed' }),
+      const tools = f.nativeEvents.filter(event => event.kind === 'tool-call' || event.kind === 'tool-result')
+        .filter(event => ['native-command', 'successful-script', 'failed-script'].includes(event.toolCallId));
+      const parent = yielded && !nativeBeforeYield ? (child ? 'child' : undefined) : 'successful-script';
+      const command = tools.filter(event => event.toolCallId === 'native-command');
+      expect(command).toMatchObject([
+        { kind: 'tool-call', toolName: 'Bash' },
+        { kind: 'tool-result', output: { exit_code: 0, output: '/workspace' } },
+      ]);
+      expect(command.map(event => event.sidechainId || undefined)).toEqual([parent, parent]);
+      expect(tools.filter(event => event.toolCallId === 'successful-script')).toMatchObject([
+        { kind: 'tool-call', toolName: 'Script' },
+        { kind: 'tool-result', output: { output: yielded ? expect.any(Array) : 'Script completed' } },
+      ]);
+      expect(tools.filter(event => event.toolCallId === 'failed-script')).toMatchObject([
+        { kind: 'tool-call', toolName: 'Script' },
+        { kind: 'tool-result', output: { output: 'Script failed before a native command existed' }, isError: true },
       ]);
     } finally { await f.runtime.dispose(); }
   });
@@ -148,10 +166,13 @@ describe('managed Codex native children', () => {
       await notify({ type: 'commandExecution', id: 'call-pwd', command: 'pwd', exitCode: 101 }, 'item/completed');
       await notify({ type: 'custom_tool_call_output', call_id: 'code-wrapper', output: 'Script completed' });
       await f.notify('turn/completed', { threadId: 'child', turn: { id: 'child-turn', status: 'completed' } });
-      const tools = f.nativeEvents.filter((event) => (event.kind === 'tool-call' || event.kind === 'tool-result') && event.sidechainId === 'child');
+      const tools = f.nativeEvents.filter((event) => (event.kind === 'tool-call' || event.kind === 'tool-result')
+        && (event.sidechainId === 'child' || event.sidechainId === 'code-wrapper'));
       expect(tools).toEqual([
-        expect.objectContaining({ kind: 'tool-call', toolCallId: 'call-pwd', toolName: 'Bash', input: expect.objectContaining({ cmd: 'pwd' }) }),
-        expect.objectContaining({ kind: 'tool-result', toolCallId: 'call-pwd', output: { exit_code: 101, output: 'bubblewrap is unavailable' } }),
+        expect.objectContaining({ kind: 'tool-call', toolCallId: 'code-wrapper', toolName: 'Script', sidechainId: 'child' }),
+        expect.objectContaining({ kind: 'tool-call', toolCallId: 'call-pwd', toolName: 'Bash', sidechainId: 'code-wrapper', input: expect.objectContaining({ cmd: 'pwd' }) }),
+        expect.objectContaining({ kind: 'tool-result', toolCallId: 'call-pwd', sidechainId: 'code-wrapper', output: { exit_code: 101, output: 'bubblewrap is unavailable' } }),
+        expect.objectContaining({ kind: 'tool-result', toolCallId: 'code-wrapper', sidechainId: 'child', output: { output: 'Script completed' } }),
       ]);
       expect(tools.every((event) => !('turnId' in event))).toBe(true);
     } finally { await f.runtime.dispose(); }

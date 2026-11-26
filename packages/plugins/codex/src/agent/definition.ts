@@ -109,6 +109,7 @@ export const AGENT_DEFINITION = Object.freeze({
         mcp: {
           kind: 'mcp',
           overrides: {
+            tools: { nativeCodeMode: false },
             resume: { vendorResume: 'unsupported' as const },
             sessionCapabilities: {
               sessionFork: { conversation: 'unsupported' },
@@ -124,6 +125,7 @@ export const AGENT_DEFINITION = Object.freeze({
         acp: {
           kind: 'acp',
           overrides: {
+            tools: { nativeCodeMode: false },
             sessionCapabilities: {
               sessionFork: { conversation: 'unsupported' },
               sessionRollback: { conversation: 'unsupported' },
@@ -144,7 +146,7 @@ export const AGENT_DEFINITION = Object.freeze({
       attachStrategy: 'provider_attach',
       remoteWritable: true,
     },
-    tools: { delivery: 'native_mcp', support: 'supported', noTools: true,
+    tools: { delivery: 'native_mcp', support: 'supported', noTools: true, nativeCodeMode: true,
       mcpToolControl: { off: 'hidden' as const, approval: 'host' as const }, mcpToolCallIdMetaKey: 'callId' },
   },
   sessionModeDescriptor: { source: 'acp', semantics: 'policy-presets', runtimeSwitch: 'metadata-gating' } as const,

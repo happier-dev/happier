@@ -70,6 +70,8 @@ import {
 import { buildCodexExecutionRunBaseEnv } from '../../executionRuns/environment.js';
 import { readAgentStartupFailureDetails, readSessionStartupFailurePreview, sanitizeSessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/sessions';
 import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, codexConfigOverridesToThreadConfig, listCodexAppServerMcpServerNames } from './config/overrides.js';
+import type { CodexCodeModePreference } from './config/overrides.js';
+import { CODEX_CODE_MODE_SETTING_KEY } from '../../../agentSettings/definition.js';
 
 type CodexSharedAppServer = NonNullable<Awaited<ReturnType<typeof createCodexSharedAppServer>>>;
 
@@ -102,6 +104,17 @@ type CodexAccountUsageSourceContext = Awaited<
 >;
 
 type CodexAppServerLaunchRequest = AgentSessionOpenRequest | AgentExecutionRunOpenRequest;
+
+async function readCodeModePreference(
+  context: AgentSessionRuntimeContext | AgentExecutionRunRuntimeContextV1,
+  configuration: AgentSessionOpenRequest['configuration'],
+): Promise<CodexCodeModePreference> {
+  if (configuration?.unlistedTools === 'deny') return {};
+  const features = 'executionRun' in context ? context.executionRun.services.features : context.session?.services.features;
+  if (features?.isEnabled('sessions.codeMode') !== true) return {};
+  const value = await context.services.settings.forScope({ kind: 'account' }).get(CODEX_CODE_MODE_SETTING_KEY).catch(() => null);
+  return { sessionsCodeModeEnabled: true, ...(value === 'on' || value === 'off' ? { codexCodeModeEnabled: value } : {}) };
+}
 
 function readLaunchEnvironment(
   request: CodexAppServerLaunchRequest,
@@ -1051,9 +1064,10 @@ export async function openCodexNativeAppServerSession(
       code: 'codex_tool_restriction_unsupported_transport',
     }), 'client_start');
   }
+  const codeModePreference = appServerTransport === 'daemonProxy' ? {} : await readCodeModePreference(context, request.configuration);
   let providerSessionId = request.kind === 'resume' ? request.providerSessionId : null;
   if (request.kind === 'fork') {
-    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy, promptProfile: request.promptProfile });
+    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, ...codeModePreference, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy, promptProfile: request.promptProfile });
     const forkClient = await createCodexNativeAppServerClient({
       exec: context.services.exec,
       logger: context.services.logger,
@@ -1121,6 +1135,7 @@ export async function openCodexNativeAppServerSession(
     initialNativeSandbox: request.configuration?.nativeSandbox,
     initialPermissionMode: readPermissionMode(request),
     toolRestriction: request.configuration,
+    codeModePreference,
     ...(request.functionTools?.length ? { functionTools: request.functionTools } : {}),
     ...(request.promptProfile ? { promptProfile: request.promptProfile } : {}),
     ...(initialProviderBinding ? { initialProviderBinding } : {}),
@@ -1230,6 +1245,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
   request: AgentExecutionRunOpenRequest,
   context: AgentExecutionRunRuntimeContextV1,
 ): Promise<AgentExecutionRunConversationRuntimeV1> {
+  const codeModePreference = await readCodeModePreference(context, request.configuration);
   const processEnv = readLaunchEnvironment(request, context.services.exec);
   const initialProviderBinding = parseCodexProviderBindingEngineConfigV1(
     Object.prototype.hasOwnProperty.call(request, 'providerBinding')
@@ -1242,7 +1258,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
     if (!sourceProviderSessionId) {
       throw new Error('Codex detached fork requires an exact provider checkpoint.');
     }
-    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy });
+    const { processOverrides, mcpOverrides } = buildCodexAppServerConfigOverrides(request.mcpServers ?? {}, { ...request.configuration, ...codeModePreference, skills: request.skills, mcpToolPolicy: request.mcpToolPolicy });
     const forkClient = await createCodexNativeAppServerClient({
       exec: context.services.exec,
       logger: context.services.logger,
@@ -1292,6 +1308,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
     initialNativeSandbox: request.configuration?.nativeSandbox,
     initialPermissionMode: readPermissionMode(request),
     toolRestriction: request.configuration,
+    codeModePreference,
     ...(initialProviderBinding ? { initialProviderBinding } : {}),
     processEnv,
     ...(request.mcpServers ? { mcpServers: request.mcpServers } : {}),

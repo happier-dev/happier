@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { SessionPermissionsService } from '@happier-dev/plugin-sdk/sessions';
+import { SessionOwnerMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { join } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 import {
   openClaudeNativeUnifiedTerminalSession,
@@ -9,7 +12,8 @@ import {
 } from './nativeSession.js';
 import { getClaudeProjectPath, resolveClaudeProjectId } from '../../../surfaces/sessions/handoff/path.js';
 import { createClaudeNativeAgentSdkContext } from '../../nativeServices.js';
-import { withPermissionDecisionApplication } from '../../engine.testkit.js';
+import { createClaudeNativeSessionRuntimeFromOperations } from '../../nativeRuntime.js';
+import { createSessionHooksFixture, createTerminalHostFixture, withPermissionDecisionApplication } from '../../engine.testkit.js';
 import { buildClaudePermissionChoices } from '../../../permissions/permissionChoices.js';
 
 function createContext(requestDecision?: SessionPermissionsService['requestDecision']): AgentSessionRuntimeContext {
@@ -49,6 +53,55 @@ function createContext(requestDecision?: SessionPermissionsService['requestDecis
 }
 
 describe('openClaudeNativeUnifiedTerminalSession', () => {
+  it('captures Code Mode in a new runtime descriptor and retains it on exact resume', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'happier-claude-code-mode-'));
+    onTestFinished(() => rm(configDir, { recursive: true, force: true }));
+    const baseContext = createContext();
+    const terminalHost = createTerminalHostFixture().service;
+    const context: AgentSessionRuntimeContext = { ...baseContext, session: {
+      ...baseContext.session, services: {
+        ...baseContext.session.services, terminalHost, sessionHooks: createSessionHooksFixture().service,
+      },
+    } };
+    let enabled = true;
+    vi.mocked(context.services.settings.forScope).mockReturnValue({
+      ...context.services.settings.forScope({ kind: 'account' }),
+      get: vi.fn(async key => key === 'claudeCodeModeEnabled' ? enabled : null),
+    });
+    const base = {
+      sessionId: 'session', cwd: configDir,
+      launchEnvironment: { values: { HAPPIER_CLAUDE_CONFIG_DIR: configDir } },
+    };
+    const request = { ...base, kind: 'create' } as const;
+    const fresh = await openClaudeNativeUnifiedTerminalSession({ context, request });
+    const runtime = createClaudeNativeSessionRuntimeFromOperations(fresh, request, context);
+    const birth = runtime.runtimeDescriptorV1!;
+    try {
+      expect(birth.agent).toMatchObject({ codeModeActive: true });
+      expect(SessionOwnerMetadataV1Schema.parse({ v: 1, nativeSession: { runtimeDescriptorV1: birth } }))
+        .toMatchObject({ nativeSession: { runtimeDescriptorV1: { agent: { codeModeActive: true } } } });
+      expect(SessionOwnerMetadataV1Schema.safeParse({ v: 1, nativeSession: { codeModeActive: true } }).success).toBe(false);
+      await fresh.startProviderSession();
+      expect(terminalHost.createOrAttachHost).toHaveBeenCalledWith(expect.objectContaining({
+        launch: expect.objectContaining({ env: expect.objectContaining({ CLAUDE_CODE_EXPERIMENTAL_CODE_MODE: '1' }) }),
+      }));
+    } finally {
+      await runtime.dispose();
+    }
+    enabled = false;
+    const resumed = await openClaudeNativeUnifiedTerminalSession({
+      context,
+      request: {
+        ...base, kind: 'resume', providerSessionId: 'native',
+        runtimeDescriptorV1: birth,
+      },
+    });
+    try {
+      expect(resumed.codeModeActive).toBe(true);
+    } finally {
+      await resumed.disposeProviderSession('test_complete');
+    }
+  });
   it('keeps resumed transcript paths in each admitted Session home', () => {
     const cwd = '/tmp/claude-native-resume';
     const projectId = resolveClaudeProjectId(cwd);

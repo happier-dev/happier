@@ -7,6 +7,25 @@ import {
     projectClaudeJsonlLineToRawMessage,
 } from './projection.js';
 
+it('projects a native REPL and explicitly attributed inner calls as Script transcript facts', () => {
+    const lineValue = {
+        type: 'assistant', uuid: 'repl-row', sessionId: 'native', timestamp: '2026-11-26T12:00:00Z',
+        message: { role: 'assistant', content: [
+            { type: 'tool_use', id: 'script', name: 'REPL', input: { code: 'await tools.Read({});' } },
+            { type: 'tool_use', id: 'toolu_cc_child', name: 'Read', input: {}, parent_tool_use_id: 'script' },
+        ] },
+    };
+    const result = projectClaudeJsonlLineRecord({ fileRelPath: 'session.jsonl', lineStartOffsetBytes: 0, lineValue });
+    expect(result.items.map(item => item.raw.content)).toEqual([
+        expect.objectContaining({ type: 'acp', data: expect.objectContaining({
+            type: 'tool-call', callId: 'script', name: 'Script', input: { code: 'await tools.Read({});', language: 'javascript', origin: 'native' },
+        }) }),
+        expect.objectContaining({ type: 'acp', data: expect.objectContaining({
+            type: 'tool-call', callId: 'toolu_cc_child', name: 'Read', sidechainId: 'script',
+        }) }),
+    ]);
+});
+
 describe('Claude JSONL projection', () => {
     it.each([
         { body: 'command output\n'.repeat(100), native: { stdout: 'command output\n'.repeat(100), stderr: '', exitCode: 0, backgroundTaskId: 'job-1' } },

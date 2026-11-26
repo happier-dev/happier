@@ -42,6 +42,43 @@ function createHarness(captures: readonly string[], onEnter?: () => Promise<void
 describe('native occurrences through the generalized Claude dialog owner', () => {
 
   it.each([
+    { id: 'repl_approved', decision: 'approved', completion: 'PostToolUse' },
+    { id: 'toolu_cc_denied', decision: 'denied', completion: 'PostToolUseFailure' },
+    { id: 'repl_feedback', decision: 'denied', completion: 'PostToolUseFailure', feedback: 'Read the summary instead.' },
+  ] as const)('settles Code Mode tool permission $id and retires the exact hook occurrence', async (vector) => {
+    const h = createHarness([IDLE]);
+    const signal = new AbortController();
+    const data = { session_id: 'native', tool_name: 'Read', tool_input: { file_path: '/tmp/example' } };
+    const permissionHook = createClaudePermissionHookHandler(h.ctx, {
+      unifiedTerminalActive: true,
+      responseLocations: { question: 'app_only', permission: 'app_only' },
+      resolveToolUseId: h.handler.resolveToolUseId,
+      onPermissionLifecycle: h.handler.observeSessionHook,
+    });
+    let permission: ReturnType<typeof permissionHook> | undefined;
+    try {
+      await h.handler.observeSessionHook({ ...data, hook_event_name: 'PreToolUse', tool_use_id: vector.id });
+      permission = permissionHook({ ...data, hook_event_name: 'PermissionRequest' }, { signal: signal.signal });
+      await vi.waitFor(() => expect(h.pending[0]?.request.requestId).toBe(vector.id));
+      const feedback = 'feedback' in vector ? vector.feedback : undefined;
+      h.pending[0]!.resolve({
+        decision: vector.decision,
+        ...(feedback ? { nativeChoice: { requirementId: vector.id, choiceId: 'deny', feedback } } : {}),
+      });
+      await expect(permission).resolves.toMatchObject({ hookSpecificOutput: { decision: {
+        behavior: vector.decision === 'approved' ? 'allow' : 'deny',
+        ...(feedback ? { message: feedback } : {}),
+      } } });
+      await h.handler.observeSessionHook({ ...data, hook_event_name: vector.completion, tool_use_id: vector.id });
+      expect(h.handler.resolveToolUseId({ ...data, hook_event_name: 'PermissionRequest' })).toBeNull();
+    } finally {
+      signal.abort();
+      await permission;
+      await h.handler.dispose();
+    }
+  });
+
+  it.each([
     ['missing', {}, null],
     ['malformed', { command: 671 }, null],
     ['blank', { command: ' \n ' }, null],

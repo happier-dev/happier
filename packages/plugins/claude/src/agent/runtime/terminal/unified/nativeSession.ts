@@ -8,6 +8,7 @@ import type { TerminalHostPreference } from '@happier-dev/plugin-sdk/agents/runt
 import { join } from 'node:path';
 import {
   DEFAULT_CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_POLICY,
+  CLAUDE_CODE_MODE_SETTING_KEY,
 } from '../../../../agentSettings/definition.js';
 import {
   normalizeClaudeUnifiedTerminalHost,
@@ -40,6 +41,7 @@ import {
   resolveClaudeEffortForModel,
 } from '../../reasoningEffort.js';
 import { readClaudeTerminalRuntimeSelection } from './selection.js';
+import { CLAUDE_CODE_MODE_ENV, resolveClaudeCodeModeEligibility } from '../../codeModeEligibility.js';
 
 const CLAUDE_UNIFIED_TERMINAL_HOST_SETTING_KEY = 'claudeUnifiedTerminalHost';
 const CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE_SETTING_KEY = 'claudeUnifiedTerminalResumeChoice';
@@ -153,12 +155,13 @@ export async function openClaudeNativeUnifiedTerminalSession(
   if (input.request.kind === 'fork') {
     throw new Error(`Claude Unified Terminal native ${input.request.kind} opening is not yet available.`);
   }
-  const [hostSetting, resumeChoiceSetting, workspaceTrustSetting, questionLocation, permissionLocation] = await Promise.all([
+  const [hostSetting, resumeChoiceSetting, workspaceTrustSetting, questionLocation, permissionLocation, codeModeSetting] = await Promise.all([
     readSetting(input.context, CLAUDE_UNIFIED_TERMINAL_HOST_SETTING_KEY),
     readSetting(input.context, CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE_SETTING_KEY),
     readSetting(input.context, CLAUDE_UNIFIED_TERMINAL_WORKSPACE_TRUST_SETTING_KEY),
     readSetting(input.context, 'claudeUnifiedTerminalQuestionResponseLocation'),
     readSetting(input.context, 'claudeUnifiedTerminalPermissionResponseLocation'),
+    readSetting(input.context, CLAUDE_CODE_MODE_SETTING_KEY),
   ]);
   const launchSettings = await resolveClaudeNativeLaunchSettings({
     settings: input.context.services.settings.forScope({ kind: 'account' }),
@@ -170,7 +173,18 @@ export async function openClaudeNativeUnifiedTerminalSession(
     idleCompaction: input.request.idleCompaction,
     providerBinding: input.request.providerBinding,
   });
-  const launchEnv = resolveClaudeUnifiedTerminalLaunchEnvironment(launchSettings.launchEnv);
+  const codeMode = resolveClaudeCodeModeEligibility({
+    unlistedTools: input.request.configuration?.unlistedTools,
+    resumeDescriptor: input.request.kind === 'resume' ? input.request.runtimeDescriptorV1 : undefined,
+    sessionsCodeModeEnabled: input.context.session.services.features.isEnabled('sessions.codeMode'),
+    runtimeKind: 'unifiedTerminal',
+    launchEnv: launchSettings.launchEnv,
+    claudeCodeModeEnabled: codeModeSetting === true,
+  });
+  const launchEnv = resolveClaudeUnifiedTerminalLaunchEnvironment({
+    ...launchSettings.launchEnv,
+    [CLAUDE_CODE_MODE_ENV]: codeMode.active ? '1' : '0',
+  });
   const initialModelId = input.request.providerBinding?.model.id
     ?? input.request.configuration?.model.value
     ?? null;
@@ -189,7 +203,7 @@ export async function openClaudeNativeUnifiedTerminalSession(
     request: input.request,
     launchEnv,
   });
-  return createClaudeUnifiedTerminalTurnOperations({
+  const operations = createClaudeUnifiedTerminalTurnOperations({
     ctx: createClaudeNativeUnifiedTerminalContext(
       input.context,
     ),
@@ -233,4 +247,5 @@ export async function openClaudeNativeUnifiedTerminalSession(
     publishGoalWorkState: createClaudeNativeGoalWorkStatePublisher(input.context),
     observeTodoWrite: createClaudeTodoWriteObserver(input.context),
   });
+  return { ...operations, codeModeActive: codeMode.active };
 }

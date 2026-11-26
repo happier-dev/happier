@@ -20,6 +20,12 @@ export type CodexAppServerMcpServerConfig = Readonly<{
 
 type CodexToolRestrictionConfiguration = Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
 
+export type CodexCodeModePreference = Readonly<{
+    sessionsCodeModeEnabled?: boolean;
+    codexCodeModeEnabled?: 'default' | 'on' | 'off';
+    codeModeOnly?: boolean;
+}>;
+
 export function buildCodexPromptProfileConfig(
     promptProfile: AgentSessionOpenRequest['promptProfile'],
 ): Readonly<Record<string, number | boolean>> {
@@ -167,11 +173,17 @@ export function buildCodexAppServerConfigOverrides(
         functionTools?: AgentSessionOpenRequest['functionTools'];
         promptProfile?: AgentSessionOpenRequest['promptProfile'];
         mcpToolPolicy?: Readonly<Record<string, AgentSessionMcpToolPolicy>>;
-    }> & CodexToolRestrictionConfiguration = {},
+    }> & CodexToolRestrictionConfiguration & CodexCodeModePreference = {},
 ): Readonly<{ processOverrides: readonly string[]; mcpOverrides: readonly string[] }> {
     const serverNames = listCodexAppServerMcpServerNames(mcpServers, options);
     const injectedKeys = assignInjectedServerKeys(serverNames);
     const overrides = buildCodexUnlistedToolConfigOverrides(options);
+    if (options.unlistedTools !== 'deny' && options.sessionsCodeModeEnabled === true) {
+        if (options.codexCodeModeEnabled === 'on') overrides.push('features.code_mode.enabled=true');
+        if (options.codexCodeModeEnabled === 'off' && !options.codeModeOnly) {
+            overrides.push('features.code_mode.enabled=false');
+        }
+    }
     for (const [key, value] of Object.entries(buildCodexPromptProfileConfig(options.promptProfile))) {
         overrides.push(`${key}=${JSON.stringify(value)}`);
     }

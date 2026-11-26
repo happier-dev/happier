@@ -12,7 +12,7 @@ import {
 import { parseRawJsonLinesObject } from './parseRawJsonLines.js';
 import type { RawJSONLines } from './rawJsonLines.js';
 import { readClaudeJsonlRowTimestampMs } from './jsonlReplaySuppression.js';
-import { normalizeClaudeToolUseNamesInRawJsonLines } from './toolUseNames.js';
+import { correlateClaudeCodeModeTranscriptRow, normalizeClaudeToolUseNamesInRawJsonLines } from './toolUseNames.js';
 import { readClaudeCompactionMetadata } from './compactionMetadata.js';
 import {
   isClaudeInternalTranscriptMessage,
@@ -46,12 +46,14 @@ export type ClaudeNativeTranscriptContentPart =
       callId: string;
       name: string;
       input: unknown;
+      sidechainId?: string;
     }>
   | Readonly<{
       kind: 'tool_result';
       callId: string;
       output: unknown;
       isError?: boolean;
+      sidechainId?: string;
     }>
   | Readonly<{
       kind: 'unsupported';
@@ -281,7 +283,7 @@ export function withClaudeNativeToolResultMetadata(content: unknown, row: unknow
   return metadata === undefined ? projectedContent : { content: projectedContent, tool_use_result: projectedMetadata };
 }
 
-function readMessageContentParts(value: unknown, row: RawJSONLines): readonly ClaudeNativeTranscriptContentPart[] {
+function readMessageContentParts(value: unknown, row: RawJSONLines, scriptResultId?: string): readonly ClaudeNativeTranscriptContentPart[] {
   const directText = readTextContent(value);
   if (directText !== null) return [{ kind: 'text', text: directText }];
   if (value === undefined) return [];
@@ -321,6 +323,8 @@ function readMessageContentParts(value: unknown, row: RawJSONLines): readonly Cl
         : { kind: 'thinking', text });
       continue;
     }
+    const sidechainId = readString(valuePart.parent_tool_use_id ?? valuePart.parentToolUseId)
+      ?? readString(row?.parent_tool_use_id ?? row?.parentToolUseId);
     if (type === 'tool_use') {
       const callId = readString(valuePart.id);
       const name = readString(valuePart.name);
@@ -331,17 +335,20 @@ function readMessageContentParts(value: unknown, row: RawJSONLines): readonly Cl
             callId,
             name,
             input: valuePart.input ?? {},
+            ...(sidechainId ? { sidechainId } : {}),
           });
       continue;
     }
     if (type === 'tool_result') {
       const result = readClaudeNativeToolResultBlock(valuePart);
+      const output = result ? withClaudeNativeToolResultMetadata(result.content, row) : undefined;
       parts.push(result === null
         ? { kind: 'unsupported', source: 'tool_result' }
         : {
             kind: 'tool_result', callId: result.callId,
-            output: withClaudeNativeToolResultMetadata(result.content, row),
+            output: result.callId === scriptResultId ? { output } : output,
             ...(result.isError === undefined ? {} : { isError: result.isError }),
+            ...(sidechainId ? { sidechainId } : {}),
           });
       continue;
     }
@@ -405,8 +412,10 @@ function createBaseClassification(params: Readonly<{
  */
 export function classifyClaudeNativeTranscriptRow(
   lineValue: unknown,
+  scriptResultId?: string,
 ): ClaudeNativeTranscriptRowClassification {
-  const rawObject = parseJsonlLineValue(lineValue);
+  const correlated = correlateClaudeCodeModeTranscriptRow(parseJsonlLineValue(lineValue));
+  const rawObject = correlated.row;
   const rawTypeValue = isRecord(rawObject) ? rawObject.type : null;
   const rawType = typeof rawTypeValue === 'string' ? rawTypeValue : null;
 
@@ -527,7 +536,7 @@ export function classifyClaudeNativeTranscriptRow(
     visibility: 'visible',
     messageRole: resolveClaudeTranscriptMessageRole(row),
     content: { kind: 'message', text: readTextContentParts(readMessageRecord(row)?.content) },
-    semanticParts: readMessageContentParts(readMessageRecord(row)?.content, row),
+    semanticParts: readMessageContentParts(readMessageRecord(row)?.content, row, scriptResultId ?? correlated.scriptResultId),
   });
 
   if (row.type === 'system' && readString((row as Record<string, unknown>).subtype) === 'compact_boundary') {

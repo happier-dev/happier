@@ -153,6 +153,34 @@ async function rewriteInPlace(path: string, position: number, replacement: strin
 }
 
 describe('Claude external transcript continuity evidence', () => {
+    it('carries the open REPL across pages and clears it when the Script result arrives', async () => {
+        const fixture = await createTranscript(1, 0);
+        let cursor = await mintTailCursor(fixture);
+        const append = (type: 'assistant' | 'user', uuid: string, block: Record<string, unknown>) =>
+            appendFile(fixture.transcriptPath, JSON.stringify({ type, uuid, message: { role: type, content: [block] } }) + '\n');
+        const page = async () => {
+            const result = await readAfterClaudeExternalSessionTranscript({
+                source: fixture.source, env: fixture.env, providerSessionId: fixture.remoteSessionId,
+                cursor, maxBytes: 64 * 1024, maxItems: 1, projection: 'terminal',
+            });
+            expect(result.nextCursor).toBeTypeOf('string');
+            cursor = result.nextCursor!;
+            return result.items.map(item => item.raw.content);
+        };
+        await append('assistant', 'script', { type: 'tool_use', id: 'repl_outer', name: 'REPL', input: { code: 'await tools.Read({});' } });
+        expect(await page()).toMatchObject([{ data: { name: 'Script', callId: 'repl_outer' } }]);
+        await append('assistant', 'child', { type: 'tool_use', id: 'toolu_cc_inner', name: 'Read', input: {} });
+        expect(await page()).toMatchObject([{ data: { callId: 'toolu_cc_inner', sidechainId: 'repl_outer' } }]);
+        await append('user', 'child-result', { type: 'tool_result', tool_use_id: 'toolu_cc_inner', content: 'ok' });
+        expect(await page()).toMatchObject([{ data: { callId: 'toolu_cc_inner', sidechainId: 'repl_outer' } }]);
+        await append('user', 'script-result', { type: 'tool_result', tool_use_id: 'repl_outer', content: 'done' });
+        expect(await page()).toMatchObject([{ data: { callId: 'repl_outer', output: { output: 'done' } } }]);
+        await append('assistant', 'later', { type: 'tool_use', id: 'repl_later', name: 'Read', input: {} });
+        expect(await page()).toEqual([expect.objectContaining({
+            data: expect.not.objectContaining({ sidechainId: expect.anything() }),
+        })]);
+    });
+
     it('keeps current-tail and small append work bounded independently of native history size', async () => {
         const fixture = await createTranscript(16_000, 1024);
         const cursor = await mintTailCursor(fixture);

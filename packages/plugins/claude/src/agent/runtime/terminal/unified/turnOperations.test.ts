@@ -296,7 +296,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       ctx: createPluginContextFixture(terminalHost.service, createEventsFixture().service, { sessionHooks: hooks.service }),
       directory: '/tmp/claude-project', happierSessionId: 'unified-confined',
       hostPreference: 'zellij' as const, launchEnv: {}, permissionMode: 'yolo',
-      allowedTools: ['websearch', 'mcp__wilson__*'], unlistedTools: 'deny' as const,
+      allowedTools: ['websearch', 'REPL', 'mcp__wilson__*'], unlistedTools: 'deny' as const,
     };
     const operations = createClaudeUnifiedTerminalProviderOperations(params);
     try {
@@ -304,6 +304,9 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       const args = vi.mocked(terminalHost.service.createOrAttachHost).mock.calls[0]?.[0].launch?.args ?? [];
       expect(args[args.indexOf('--tools') + 1]).toBe('WebSearch');
       expect(args[args.indexOf('--allowedTools') + 1]).toBe('WebSearch,mcp__wilson__*');
+      const settingsPath = args[args.indexOf('--settings') + 1]!;
+      const settings = JSON.parse(await readFile(settingsPath, 'utf8'));
+      expect(settings.permissions.deny).toContain('REPL');
       expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
       expect(args).not.toContain('--allow-dangerously-skip-permissions');
       const pluginFiles = hooks.service.createPluginDir.mock.calls[0]?.[0].files ?? [];

@@ -143,8 +143,9 @@ export function createCodexNativeChildObserver(params: Readonly<{
       return;
     }
     for (const event of child.tools.project({ method, notificationParams, scopeId: key })) {
-      if (event.type === 'tool-call') params.publish({ kind: 'tool-call', sidechainId: childThreadId, toolCallId: event.callId, toolName: event.name, toolInput: event.input });
-      else params.publish({ kind: 'tool-result', sidechainId: childThreadId, toolCallId: event.callId, output: event.output, ...(event.isError === undefined ? {} : { isError: event.isError }) });
+      const sidechainId = event.sidechainId ?? childThreadId;
+      if (event.type === 'tool-call') params.publish({ kind: 'tool-call', sidechainId, toolCallId: event.callId, toolName: event.name, toolInput: event.input });
+      else params.publish({ kind: 'tool-result', sidechainId, toolCallId: event.callId, output: event.output, ...(event.isError === undefined ? {} : { isError: event.isError }) });
     }
     if (method === 'turn/completed' || method === 'turn/interrupted') {
       const outcome = readCodexTerminalOutcome(method, notificationParams);

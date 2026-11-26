@@ -356,7 +356,7 @@ describe('createCodexAppServerClient', () => {
         const codexHome = join(osBoundary.home, 'codex-home');
         await mkdir(codexHome, { recursive: true });
         await writeFile(join(codexHome, 'config.toml'), '[mcp_servers.usermcp]\ncommand = "/fixture/user-mcp"\n');
-        const open = async (variant: Readonly<{ model: string; permission: 'default' | 'read-only'; mcp: string; instructions: string }>) => {
+        const open = async (variant: Readonly<{ model: string; permission: 'default' | 'read-only'; mcp: string; instructions: string; codeMode: boolean }>) => {
             const capture = createCapturingExec({
                 async request(method, params): Promise<JsonValue> {
                     capture.requests.push({ method, params: params ?? {} });
@@ -369,8 +369,13 @@ describe('createCodexAppServerClient', () => {
             vi.spyOn(capture.exec, 'run').mockImplementation(async request => processResult(request.args.includes('--version')
                 ? 'codex-cli 0.130.0' : 'realtime_conversation under development false'));
             const context = { signal: new AbortController().signal, services: { exec: capture.exec,
-                logger: { debug() {}, warn() {} }, sessions: { current: null } },
-                session: { id: 'late-bind', services: {} } } as unknown as AgentSessionRuntimeContext;
+                logger: { debug() {}, warn() {} }, sessions: { current: null },
+                settings: { forScope: () => ({ get: async (key: string) => key === 'codexCodeModeEnabled' ? 'on' : null }) } },
+                session: { id: 'late-bind', services: {
+                    features: { isEnabled: (key: string) => key === 'sessions.codeMode' && variant.codeMode },
+                } },
+                workState: { publisher: () => ({ publish: async () => ({ status: 'applied', revision: 'fixture-plan' }) }) },
+            } as unknown as AgentSessionRuntimeContext;
             const runtime = await openCodexNativeAppServerSession({
                 kind: 'create', sessionId: 'late-bind', cwd: osBoundary.home,
                 launchEnvironment: { values: { CODEX_HOME: codexHome }, unset: [] },
@@ -382,8 +387,8 @@ describe('createCodexAppServerClient', () => {
             await runtime.dispose();
             return capture;
         };
-        const first = await open({ model: 'gpt-5.4', permission: 'default', mcp: 'alpha', instructions: 'first' });
-        const second = await open({ model: 'gpt-5.5', permission: 'read-only', mcp: 'beta', instructions: 'second' });
+        const first = await open({ model: 'gpt-5.4', permission: 'default', mcp: 'alpha', instructions: 'first', codeMode: true });
+        const second = await open({ model: 'gpt-5.5', permission: 'read-only', mcp: 'beta', instructions: 'second', codeMode: false });
 
         expect(first.specs).toHaveLength(1);
         expect(second.specs).toHaveLength(1);
@@ -393,7 +398,8 @@ describe('createCodexAppServerClient', () => {
             (capture.requests.find(request => request.method === 'thread/start')?.params as { config?: unknown } | undefined)?.config);
         expect(threadConfig(first)).toContain('/fixture/alpha');
         expect(threadConfig(second)).toContain('/fixture/beta');
-        expect(JSON.parse(threadConfig(first))).toMatchObject({ 'mcp_servers.usermcp.enabled': false });
+        expect(JSON.parse(threadConfig(first))).toMatchObject({ 'mcp_servers.usermcp.enabled': false, 'features.code_mode.enabled': true });
+        expect(JSON.parse(threadConfig(second))).not.toHaveProperty(['features.code_mode.enabled']);
     });
 
     it('leaves cold stdio admission available during a pending feature probe and after native readiness', async () => {
