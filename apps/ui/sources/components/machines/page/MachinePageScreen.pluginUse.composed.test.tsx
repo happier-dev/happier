@@ -17,6 +17,8 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
+import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
@@ -51,8 +53,11 @@ const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/act
 const { sync } = await import('@/sync/sync');
 
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let disposePluginUiBridge: (() => void) | undefined;
 afterEach(async () => {
     await standardCleanup();
+    disposePluginUiBridge?.();
+    disposePluginUiBridge = undefined;
     clearPluginAccountAvailabilityProjection();
     await connection?.dispose();
     connection = undefined;
@@ -62,6 +67,15 @@ afterEach(async () => {
 
 it('opens the addressed owner installed materialization Machine page for a Use viewer without Account installation census', async () => {
     installReactDomPortalBoundaryForTests();
+    // Metro's call-time host require and the mounted provider use one real plugin-ui instance.
+    // Resolve the Node require here and bridge it to the same Vite-transformed package instance.
+    const { createRequire } = getVitestNodeBuiltin<typeof import('node:module')>('node:module');
+    const { pathToFileURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
+    const requireFromUi = createRequire(import.meta.url);
+    const bridge = await loadVitestModuleForNodeRequire(
+        pathToFileURL(requireFromUi.resolve('@happier-dev/plugin-ui')), () => import('@happier-dev/plugin-ui'),
+    );
+    disposePluginUiBridge = bridge.dispose;
     await prepareSessionDraftPersistenceStorage();
     const serverIdentityId = 'srv_machine_plugin_use';
     const pluginId = 'acme.machine-use';
