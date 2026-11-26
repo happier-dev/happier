@@ -15,10 +15,9 @@ import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/plugin-sdk/error
 import { PluginError, isPluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import { ProtocolComposerAttachmentAuthorValueV1Schema, ActionOperationGetV1ResponseProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
-import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
+import { sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 import { SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1, SessionPullRequestWatchReadResultV1Schema,
-    SessionPullRequestConfiguredFixInputV1Schema, SessionPullRequestConfiguredFixResultV1Schema,
-    parseGithubConversationUrlV1 } from '@happier-dev/channels-protocol/v1';
+    SessionPullRequestConfiguredFixInputV1Schema, SessionPullRequestConfiguredFixResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import { buildTriageForgeEvidenceAttachmentDraftV1 } from '../composer/mutationPlan.js';
 import { readTriageActionExecutionPlacementV1, readTriageActionLaunchDirectoryV1, resolveTriageActionCheckoutV1, resolveTriageActionPlacementV1 } from './actionLaunch.js';
@@ -404,6 +403,7 @@ export async function runTriageConfiguredHandoffV1(
     }
     const invocation = custody.state.input;
     let deliveryFailure: TriageSessionDeliveryFailureDetailV1 | undefined;
+    let configuredFixWatchBindingId = retained?.state.configuredFixWatchBindingId;
     let effectPhase: 'create' | 'link' | 'send' = invocation.destination.kind === 'new' ? 'create' : 'link';
     let knownSession: ActionSessionAddressV1 | null = invocation.destination.kind === 'existing'
         ? { serverId: custody.state.serverId, sessionId: invocation.destination.sessionId }
@@ -414,34 +414,46 @@ export async function runTriageConfiguredHandoffV1(
         id: TActionId, value: PluginActionInputById[TActionId], executionOptions?: Parameters<TriageSessionActionInvokerV1>[2],
     ): Promise<PluginActionResultById[TActionId]> => {
         if (id === 'session.message.send') effectPhase = 'send';
-        const sendConfiguredFix = id === 'session.message.send' && input.task === 'fix' && primary?.workflowSubject === 'pullRequest';
+        const dispatchSessionAction = () => host.executeAction(id, value as unknown as JsonValue, { ...executionOptions, signal: options.signal });
         let result: unknown;
-        if (sendConfiguredFix) {
+        if (id === 'session.message.send' && input.task === 'fix' && primary?.workflowSubject === 'pullRequest') {
             const unavailableFix = () => new PluginError({ code: 'triage_configured_fix_unavailable',
-                message: 'Retain this Fix input and retry its current PR watch.', retryable: true });
-            const pullRequest = parseGithubConversationUrlV1(primary.display.locator.webUrl ?? '');
-            if (!knownSession || !reviewWorkspacePreparation || pullRequest?.kind !== 'githubPullRequest'
+                message: 'Retain this Fix input and retry when its original delivery target is available.', retryable: true });
+            if (!knownSession || !reviewWorkspacePreparation
                 || !('message' in value) || !('idempotencyKey' in value) || typeof value.idempotencyKey !== 'string') throw unavailableFix();
             const watch = { pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 };
             const watchOptions = { signal: options.signal, sessionAddress: knownSession };
             const watchState = SessionPullRequestWatchReadResultV1Schema.parse(await host.executeAction(watch,
                 { kind: 'get', sessionId: knownSession.sessionId }, watchOptions));
-            const bindings = watchState.kind === 'ready' && watchState.sessionId === knownSession.sessionId
-                ? watchState.bindings.filter(binding => binding.link.number === pullRequest.number
-                    && sameScmHostingRepositoryIdentity(
-                        normalizeScmHostingRepositoryIdentity({ kind: 'github', deployment: 'https://github.com', repository: binding.link.repository }),
-                        normalizeScmHostingRepositoryIdentity({ kind: 'github', deployment: 'https://github.com', repository: pullRequest.repository }))) : [];
-            const binding = bindings.length === 1 ? bindings[0] : undefined;
-            if (!binding || options.signal.aborted) throw unavailableFix();
-            const request = SessionPullRequestConfiguredFixInputV1Schema.parse({ kind: 'deliverConfiguredFix', sessionId: knownSession.sessionId,
-                bindingId: binding.bindingId, expectedRevision: binding.revision,
-                pullRequest: { repository: binding.link.repository, number: binding.link.number }, expectedHeadSha: reviewWorkspacePreparation.observed.headSha,
-                delivery: { idempotencyKey: value.idempotencyKey, text: value.message,
-                    ...('attachments' in value && value.attachments ? { attachments: value.attachments } : {}) } });
-            const delivered = SessionPullRequestConfiguredFixResultV1Schema.parse(await host.executeAction(watch, request, watchOptions));
-            if (delivered.kind !== 'configuredFixResult') throw unavailableFix();
-            result = delivered.result;
-        } else result = await host.executeAction(id, value as unknown as JsonValue, { ...executionOptions, signal: options.signal });
+            options.signal.throwIfAborted();
+            if (watchState.kind !== 'ready' || watchState.sessionId !== knownSession.sessionId) throw unavailableFix();
+
+            const sourceUrl = reviewWorkspacePreparation.lastKnownLocator.webUrl;
+            const matchingBindings = watchState.bindings.filter(({ link }) =>
+                (repository === undefined || link.provider === repository.kind)
+                && (sourceUrl === undefined || link.url === sourceUrl));
+            if (matchingBindings.length > 1 || (sourceUrl === undefined && matchingBindings.length > 0)) throw unavailableFix();
+            const binding = matchingBindings[0];
+            if (!binding && !verifiedReviewWorkspace) throw unavailableFix();
+            const bindingId = binding?.bindingId ?? null;
+            // A retry must stay with the owner that may already have accepted the input.
+            // Older uncertain PR Fix receipts could only have dispatched through Watch.
+            if (configuredFixWatchBindingId !== undefined ? configuredFixWatchBindingId !== bindingId
+                : retained?.state.uncertainPhase === 'send' && bindingId === null) throw unavailableFix();
+
+            configuredFixWatchBindingId = bindingId;
+            if (!binding) result = await dispatchSessionAction();
+            else {
+                const request = SessionPullRequestConfiguredFixInputV1Schema.parse({ kind: 'deliverConfiguredFix', sessionId: knownSession.sessionId,
+                    bindingId: binding.bindingId, expectedRevision: binding.revision,
+                    pullRequest: { repository: binding.link.repository, number: binding.link.number }, expectedHeadSha: reviewWorkspacePreparation.observed.headSha,
+                    delivery: { idempotencyKey: value.idempotencyKey, text: value.message,
+                        ...('attachments' in value && value.attachments ? { attachments: value.attachments } : {}) } });
+                const delivered = SessionPullRequestConfiguredFixResultV1Schema.parse(await host.executeAction(watch, request, watchOptions));
+                if (delivered.kind !== 'configuredFixResult') throw unavailableFix();
+                result = delivered.result;
+            }
+        } else result = await dispatchSessionAction();
         if (id === 'session.spawn_new' && typeof result === 'object' && result !== null && 'type' in result && result.type === 'success'
             && 'sessionId' in result && typeof result.sessionId === 'string') knownSession = { serverId: custody.state.serverId, sessionId: result.sessionId };
         return result as PluginActionResultById[TActionId];
@@ -496,7 +508,8 @@ export async function runTriageConfiguredHandoffV1(
         phase: result.type === 'linkPending' ? 'link' : 'send', session }, { ...custody,
         state: { ...custody.state, pending: { phase: result.type === 'linkPending' ? 'linkPending' : 'openPending',
             sessionId: result.sessionId, disposition: result.disposition }, uncertainPhase: result.type === 'linkPending' ? 'link' : 'send',
-            ...(deliveryFailure === undefined ? {} : { detail: deliveryFailure }) } });
+            ...(deliveryFailure === undefined ? {} : { detail: deliveryFailure }),
+            ...(configuredFixWatchBindingId === undefined ? {} : { configuredFixWatchBindingId }) } });
     if (result.deliveryResult === undefined) return finish({ kind: 'uncertain', phase: 'send', session }, custody);
     return finish({ kind: 'sendResult', session, result: SessionMessageSendResultV1ProtocolSchema.parse(result.deliveryResult) });
 }

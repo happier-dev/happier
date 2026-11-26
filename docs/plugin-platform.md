@@ -9415,17 +9415,20 @@ reader are retired rather than retained as competing producers. SDK/package
 publication and composed runtime validation remain integration boundaries;
 this describes development source, not a released availability claim.
 
-Configured PR Fix sends in 0.3 development use the same Channels Watch Action's
-`deliverConfiguredFix` arm. The caller retains choice, source preparation,
-linking and recovery; it supplies the exact Session, binding revision, PR,
-head and resolved SDK forge evidence with its delivery idempotency key and text.
+In 0.3 development, an existing-Session configured PR Fix verifies the selected
+source's PR and checkout. When the Session has no matching Watch binding, Triage
+uses the ordinary Session input Action. A matching binding sends through the
+Channels Watch Action's `deliverConfiguredFix` arm. Triage supplies the exact
+Session, binding revision, PR, head, attachments and delivery idempotency key.
 Channels checks the current native PR head, retains the configured cause on its
 existing input obligation, and reserves the same binding `activeRound` used by
 ingress. Channels sends and reads its own original input result; only an exact
 host start witness charges the shared fixing allowance. Accepted replay returns
 the retained canonical send result. Uncertain delivery retains the same host
-idempotency key for recovery; outstanding or exhausted work returns a typed
-hold. Compose-only drafts stay with the caller and never enter this send arm.
+idempotency key for recovery, and outstanding or exhausted work returns a typed
+hold. Triage retains the delivery owner in uncertain receipts so a retry cannot
+send the same input through a different owner. Compose-only drafts stay with the
+caller.
 The Action retains its existing UI/agent policy and confirmation.
 
 In development, exhausted Watch bindings contribute localized Continue/Stop

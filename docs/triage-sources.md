@@ -1558,14 +1558,14 @@ the person. The former `stopWhenMerged` setting had no effect on Watch
 admission and is no longer offered or written. Existing stored bindings and
 Account settings remain readable; the retired field is ignored.
 
-In 0.3 development, an existing-Session configured PR Fix keeps Triage's source
-preparation, linking and retry custody, but delegates its final send to Channels'
-`deliverConfiguredFix` Watch arm. The request carries the reviewed
-`expectedHeadSha` and the canonical prepared Session attachments, not a guessed
-head ref/repository. Channels checks the native head and owns send/start
-accounting; held or uncertain results never fall back to an ordinary Triage send.
-The host's immediate-caller attachment rule preserves Triage's declaring-plugin
-identity without changing the Channels sender or accepting caller qualification.
+In 0.3 development, an existing-Session configured PR Fix uses the selected
+source's checkout verification and Triage's existing link and delivery phases.
+Without a matching PR Watch, it sends through the ordinary Session input Action.
+An exact Watch match delegates delivery to Channels' `deliverConfiguredFix`
+with the verified head and prepared Session attachments. Channels checks the
+native head and owns Watch send and start accounting. The host's
+immediate-caller attachment rule preserves Triage's declaring-plugin identity.
+A retry of an uncertain send stays with its original delivery owner.
 
 The local-reproduction
 control opens the admitted source's existing local form with the Session's accepted

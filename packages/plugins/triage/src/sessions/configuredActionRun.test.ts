@@ -1629,13 +1629,23 @@ describe('configured action execution through the shared Session owner', () => {
         { delivery: 'send', exhausted: false, outcome: 'uncertain' }, { delivery: 'send', exhausted: false, outcome: 'outstanding' },
         { delivery: 'send', exhausted: false, outcome: 'accepted', requester: 'agent' },
         { delivery: 'send', exhausted: false, outcome: 'held', requester: 'agent' },
-    ] as const)('verifies an existing PR checkout before $delivery ($requester $exhausted $outcome)', async (scenario) => {
+        { delivery: 'send', exhausted: false, outcome: 'accepted', noWatch: true },
+        { delivery: 'send', exhausted: false, outcome: 'uncertain', noWatch: true },
+        { delivery: 'send', exhausted: false, outcome: 'held', noWatch: true, otherForge: true, requester: 'agent' },
+    ] as const)('verifies an existing PR checkout before $delivery ($requester $exhausted $outcome, no Watch: $noWatch)', async (scenario) => {
         const { delivery, exhausted, outcome } = scenario;
         const fromAgent = 'requester' in scenario;
+        const noWatch = 'noWatch' in scenario;
+        const otherForge = 'otherForge' in scenario;
+        const sourceRepository = otherForge ? { kind: 'gitlab', deployment: 'https://forge.example', repository: 'example/repository' } as const : repository;
+        const sourceWorkspace = { ...acceptedWorkspace, repository: sourceRepository };
         const effects: string[] = [];
         const selected = { entryRef: testkitEntryRef(), sourceInstanceId: entry.sourceInstance.sourceInstanceId };
-        const locator = testkitLocator({ webUrl: 'https://github.com/example/repository/pull/17' });
+        const locator = testkitLocator({ webUrl: otherForge ? 'https://forge.example/example/repository/-/merge_requests/17'
+            : 'https://github.com/example/repository/pull/17' });
         const watchRequests: JsonValue[] = [];
+        let hasWatch = !noWatch || otherForge;
+        const directRequests: JsonValue[] = [];
         const boundaryFailures: unknown[] = [];
         const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
         const contributor = { pluginId: selected.entryRef.source.pluginId, contributionId: selected.entryRef.source.localId,
@@ -1656,19 +1666,19 @@ describe('configured action execution through the shared Session owner', () => {
                     kinds: [{ id: selected.entryRef.kindId, displayName: 'Pull request', workflowSubject: 'pullRequest' }] }, surfaces: [],
                     operations: [{ point: { pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocol }, contributor,
                         role: 'prepareReviewWorkspace', action: { pluginId: selected.entryRef.source.pluginId, localId: 'prepare' } }] }] }] }] } }),
-            readSession: async () => ({ sessionId: 'session-a', serverId: 'server-a', acceptedWorkspace }),
+            readSession: async () => ({ sessionId: 'session-a', serverId: 'server-a', acceptedWorkspace: sourceWorkspace }),
             readComposer: async () => ({ status: 'ready', snapshot: { revision: 1, ref: { kind: 'session', sessionId: 'session-a' },
                 text: 'Existing draft', selection: { start: 0, end: 0 }, references: [], attachments: [], layout: 'wrap',
                 capabilities: { text: true, references: true, attachments: true, submit: true },
                 state: { focused: true, editable: true, submittable: true, submitting: false, running: false } } }),
             applyComposer: async () => { effects.push('applyComposer'); return { status: 'applied' }; },
-            executeAction: async (id: string | Readonly<{ pluginId: string; localId: string }>, value: JsonValue) => {
+            executeAction: async (id: string | Readonly<{ pluginId: string; localId: string }>, value: JsonValue, options?: PluginUiActionExecutionOptions) => {
                 if (typeof id !== 'string' && id.pluginId !== 'happier.triage') {
                     if (id.pluginId === 'happier.channels' && id.localId === 'session-pull-request-watch-v1') {
                         watchRequests.push(value);
                         try {
                             const request = SessionPullRequestWatchInputV1Schema.parse(value);
-                            if (request.kind === 'get') return watchState;
+                            if (request.kind === 'get') return hasWatch ? watchState : { ...watchState, bindings: [] };
                             expect(request).toMatchObject({ kind: 'deliverConfiguredFix',
                                 sessionId: 'session-a', bindingId: 'bound-pr', expectedRevision: 7,
                                 expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha,
@@ -1696,14 +1706,25 @@ describe('configured action execution through the shared Session owner', () => {
                 if (triageBoundaryActionId(id) === 'entries/reobserve-v1') return { kind: 'observed', entryRef: selected.entryRef,
                     observation: { sourceInstanceId: selected.sourceInstanceId, observedAtMs: 1, outcome: { kind: 'present', locator,
                         snapshot: testkitSnapshot({ reviewRevision: { baseSha: TESTKIT_OBSERVED_REVISION.baseSha, headSha: TESTKIT_OBSERVED_REVISION.headSha,
-                            nativeRevision: TESTKIT_OBSERVED_REVISION.nativeRevision } }), viewer: testkitViewer(), repository } } };
+                            nativeRevision: TESTKIT_OBSERVED_REVISION.nativeRevision } }), viewer: testkitViewer(), repository: sourceRepository } } };
                 if (triageBoundaryActionId(id) === 'entries/read-detail-v1') return { kind: 'read', instance: testkitConfiguredInstance(), linkedSessions: [] };
                 if (triageBoundaryActionId(id) === TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1) {
                     expect(value).toMatchObject({ session: { serverId: 'server-a', sessionId: 'session-a' }, entryRef: selected.entryRef });
                     return { kind: 'verified', checkout: acceptedWorkspace.checkout };
                 }
                 if (triageBoundaryActionId(id) === 'sessions/link-entry-v1') return { v: 1, status: 'linked' };
-                if (id === 'session.message.send') return { status: 'accepted', localId: 'verified-pr-input' };
+                if (id === 'session.message.send') {
+                    expect(options?.sessionAddress).toEqual({ serverId: 'server-a', sessionId: 'session-a' });
+                    expect(value).toMatchObject({ sessionId: 'session-a', idempotencyKey: expect.any(String),
+                        attachments: [expect.objectContaining({ value: expect.objectContaining({ value: expect.anything() }) })] });
+                    directRequests.push(value);
+                    if (outcome === 'uncertain' && directRequests.length === 1) {
+                        return { status: 'outcomeUnknown', localId: 'verified-pr-input' };
+                    }
+                    return outcome === 'held' ? { status: 'held', localId: 'verified-pr-input', code: 'session_input_target_unavailable',
+                        failureCause: { phase: 'session.message.send', errorClass: 'UnknownThrownValue', errorCode: 'held_by_person', httpStatus: null } }
+                        : { status: 'accepted', localId: 'verified-pr-input' };
+                }
                 throw new Error(`Unexpected creation or selection ${id}`);
             },
         };
@@ -1740,12 +1761,12 @@ describe('configured action execution through the shared Session owner', () => {
                             targetedContributions: { observeForSelf: () => ({
                                 readCurrent: async () => ({ contributions }), dispose() {},
                             }) },
-                            actions: { execute: async (id: Parameters<typeof hostTransport.executeAction>[0], value: JsonValue) => {
+                            actions: { execute: async (id: Parameters<typeof hostTransport.executeAction>[0], value: JsonValue, options?: PluginUiActionExecutionOptions) => {
                                 if (id === 'session.status.get') return { session: projectSessionSummaryV1({
                                     row: { id: address.sessionId, createdAt: 1, updatedAt: 2, active: false, activeAt: 1 },
                                     metadata: null, encryption: null,
-                                }), acceptedWorkspace };
-                                return hostTransport.executeAction(id, value);
+                                }), acceptedWorkspace: sourceWorkspace };
+                                return hostTransport.executeAction(id, value, options);
                             } },
                         },
                     } as unknown as PluginAccountActionContext); // Host transport to the portable Account handler.
@@ -1765,7 +1786,23 @@ describe('configured action execution through the shared Session owner', () => {
         } as unknown as TestAccountActionContext);
         expect(boundaryFailures).toEqual([]);
         if (fromAgent) expect(result).toMatchObject({ handoff: { kind: 'sendResult' } });
-        if (delivery === 'send') expect(watchRequests).toHaveLength(2);
+        if (delivery === 'send' && !noWatch) expect(watchRequests).toHaveLength(2);
+        if (noWatch && outcome === 'uncertain') {
+            expect(result).toMatchObject({ handoff: { kind: 'uncertain', phase: 'send' },
+                recovery: { state: { configuredFixWatchBindingId: null } } });
+            if (!('recovery' in result) || !result.recovery) throw new Error('Missing original input recovery');
+            const retry = () => handler(parseHandoffInput({ ...input, resumeStart: result.recovery }), {
+                ui: host, signal, sessionTargetsV1: { targets: [address] },
+            } as unknown as TestAccountActionContext);
+            expect(await retry()).toMatchObject({ handoff: { kind: 'sendResult', result: { status: 'accepted' } } });
+            expect(directRequests).toHaveLength(2);
+            expect(directRequests[1]).toEqual(directRequests[0]);
+            hasWatch = true;
+            expect(await retry()).toMatchObject({ handoff: { kind: 'uncertain', phase: 'send' } });
+            expect(directRequests).toHaveLength(2);
+            expect(effects).not.toContain('channels:deliverConfiguredFix');
+            return;
+        }
         if (exhausted || outcome === 'outstanding' || outcome === 'uncertain') {
             expect(effects).not.toContain('session.message.send');
             expect(result).toMatchObject({ handoff: { kind: 'uncertain', phase: 'send' } });
@@ -1776,6 +1813,13 @@ describe('configured action execution through the shared Session owner', () => {
                 } as unknown as TestAccountActionContext);
                 expect(retried).toMatchObject({ handoff: { kind: 'sendResult', result: { status: 'accepted', localId: 'verified-pr-input' } } });
                 expect(watchRequests[3]).toEqual(watchRequests[1]);
+
+                hasWatch = false;
+                const afterRemoval = await createTriageRunConfiguredActionHandler()(parseHandoffInput({ ...input, resumeStart: result.recovery }), {
+                    ui: host, signal: new AbortController().signal, sessionTargetsV1: { targets: [address] },
+                } as unknown as TestAccountActionContext);
+                expect(afterRemoval).toMatchObject({ handoff: { kind: 'uncertain', phase: 'send' },
+                    recovery: { state: { configuredFixWatchBindingId: 'bound-pr' } } });
                 expect(effects).not.toContain('session.message.send');
             }
             return;
@@ -1784,8 +1828,8 @@ describe('configured action execution through the shared Session owner', () => {
             : outcome === 'rejected' ? { kind: 'sendResult', result: { status: 'rejected', code: 'session_input_cancelled' } }
             : outcome === 'held' ? { kind: 'sendResult', result: { status: 'held', failureCause: { errorCode: 'held_by_person' } } }
             : { kind: 'sendResult', result: { status: 'accepted', localId: 'verified-pr-input' } } });
-        const effect = delivery === 'compose' ? 'applyComposer' : 'channels:deliverConfiguredFix';
-        expect(effects).not.toContain('session.message.send');
+        const effect = delivery === 'compose' ? 'applyComposer' : noWatch ? 'session.message.send' : 'channels:deliverConfiguredFix';
+        expect(effects.filter((id) => id === 'session.message.send')).toHaveLength(noWatch ? 1 : 0);
         expect(effects.indexOf(TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1)).toBeLessThan(effects.indexOf(effect));
         expect(effects).not.toContain('projects.list');
         expect(effects).not.toContain('session.spawn_new');

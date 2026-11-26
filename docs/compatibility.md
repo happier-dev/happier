@@ -12672,6 +12672,13 @@ scoped-clean 0.2 predecessor at `364d60bf067347f42e46e87c378af28ebfbd712d`
 has no Triage Protocol, Triage plugin or Plugin SDK at these paths; reverse
 development rollback is unsupported.
 
+The unreleased 0.3 Triage configured Session handoff adds optional
+`configuredFixWatchBindingId` to its closed recovery state. A string identifies
+the Watch binding that took the dispatch. Null identifies ordinary Session
+delivery. Older uncertain PR Fix receipts can only replay through Watch.
+Matching development Action declarations, runtime and clients refresh together.
+The recovery envelope carries no new Collection state or migration.
+
 The unreleased 0.3 `deployments.observation.get` Action adds a machine-placed
 read of recorded deployment identities for P50. Its input, result, nested
 Environment/Link/receipt headers and credential principal references use closed

@@ -91,6 +91,8 @@ const handoffRecovery = defineProtocolObject({
         pending: TriageStartEntrySessionResumeV1Schema.optional(),
         uncertainPhase: defineProtocolUnion([defineProtocolLiteral('create'), defineProtocolLiteral('link'), defineProtocolLiteral('send')]).optional(),
         detail: TriageSessionDeliveryFailureDetailV1Schema.optional(),
+        /** The send owner for an uncertain PR Fix dispatch. Null identifies ordinary Session delivery. */
+        configuredFixWatchBindingId: text.nullable().optional(),
     }, { policy: 'closed' }),
 }, { policy: 'closed' });
 export const TriageConfiguredStartRecoveryV1Schema = defineProtocolUnion([TriageLegacyConfiguredStartRecoveryV1Schema, handoffRecovery]);

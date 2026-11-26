@@ -176,7 +176,9 @@ Unreleased 0.3 source is integrating one configured **Fix in a session** flow
 for pull requests, hosted CI failures and selected local output. It uses the
 same configured action, profile and compose-or-send choice across entry points,
 not a separate CI launcher. An existing Session keeps its Agent. Compose leaves
-an unsent draft; an unavailable composer does not silently send it instead.
+an unsent draft. Send to an existing Session works with a verified checkout
+for the selected PR. When a matching PR Watch exists, Send follows its Watch
+policy.
 
 Provider text and selected output are quoted as evidence, not instructions
 that can choose permissions or approve actions. A pending approval or uncertain
