@@ -87,6 +87,33 @@ describe('IdentityConnectionGroupMappings list refusals', () => {
         expect(harness.requestsFor(LIST_PATH)).toHaveLength(2);
         expect(harness.requestsFor(continuation)).toHaveLength(1);
     });
+
+    it.each([
+        { code: 'team_authentication_required', status: 403, title: 'session.access.authenticationRequired', signIn: true },
+        { code: 'team_authentication_unavailable', status: 503, title: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
+    ])('presents one $code notice when mappings and the Group picker both refuse', async ({ code, status, title, signIn }) => {
+        const serverId = await harness.addHome({
+            name: 'Home', serverUrl: 'https://mapping-picker-home.example', accountId: 'owner', teamsEnabled: true,
+        });
+        const response = { status, body: { error: code } };
+        const mappingRead = createDeferred<void>();
+        harness.answer(serverId, `GET ${LIST_PATH}`, { ...response, respondAfter: mappingRead.promise });
+        harness.answer(serverId, '/v1/teams/groups/list', response);
+        const screen = await renderMappings(serverId);
+        try {
+            await screen.pressByTestIdAsync('identity-group-map-existing');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-native-error')).not.toBeNull());
+            expect(screen.getTextContent()).toContain('common.loading');
+        } finally {
+            await act(async () => mappingRead.resolve());
+        }
+
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).not.toContain('common.loading'));
+        expect(screen.getTextContent().split(title)).toHaveLength(2);
+        expect(screen.findByTestId('identity-group-native-sign-in')).toBeNull();
+        expect(screen.findByTestId('identity-group-bindings-sign-in') !== null).toBe(signIn);
+        expect(screen.findByTestId('identity-group-bindings-retry')).toBeNull();
+    });
 });
 
 describe('IdentityConnectionGroupMappings acknowledged writes', () => {

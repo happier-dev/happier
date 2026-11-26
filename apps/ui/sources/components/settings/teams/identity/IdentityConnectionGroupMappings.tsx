@@ -65,6 +65,10 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
         loadPage,
     });
     const nativeGroups = useTeamGroups({ scope: props.scope, address: props.address, archived: 'active', enabled: choosingTarget && props.mutationsAvailable });
+    const bindingsFailureCode = bindings.error?.code;
+    const groupSignInFailureAlreadyShown = (
+        bindingsFailureCode === 'team_authentication_required' || bindingsFailureCode === 'team_authentication_unavailable'
+    ) && nativeGroups.error?.code === bindingsFailureCode;
     const bindingsFailureLabel = bindings.error?.code === 'directory_group_mapping_invalid'
         ? t('identityAdministration.errorMissing')
         : bindings.error?.code === 'invalid_team_input'
@@ -138,7 +142,7 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
                 {choosingTarget && nativeGroups.status === 'loading' && nativeGroups.rows.length === 0 ? <SurfaceStateCard testID="identity-group-native-loading" kind="loading" size="line" title={t('common.loading')} /> : null}
                 {choosingTarget && nativeGroups.isCurrent && nativeGroups.rows.length === 0 ? <SurfaceStateCard testID="identity-group-native-empty" kind="empty" size="line" title={t('teams.groups.emptyTitle')} /> : null}
                 {choosingTarget ? nativeGroups.rows.map((group) => <Item key={group.id} testID={`identity-group-native-target:${group.id}`} title={openedGroupDisplayNames.get(group.id) ?? t('common.unavailable')} subtitle={t('teams.groups.memberCount', { count: group.memberCount })} disabled={pending !== null || !props.mutationsAvailable || !nativeGroups.isCurrent} onPress={() => void bind(group.id)} showChevron={false} />) : null}
-                {choosingTarget && nativeGroups.error ? <SurfaceStateCard testID="identity-group-native-error" kind="error" size="line" title={teamReadFailureLabel(nativeGroups.error)} action={readFailureAction(nativeGroups.error, { testIDPrefix: 'identity-group-native', reloadsFirstPage: true, onPress: () => void nativeGroups.reload() })} /> : null}
+                {choosingTarget && nativeGroups.error && !groupSignInFailureAlreadyShown ? <SurfaceStateCard testID="identity-group-native-error" kind="error" size="line" title={teamReadFailureLabel(nativeGroups.error)} action={readFailureAction(nativeGroups.error, { testIDPrefix: 'identity-group-native', reloadsFirstPage: true, onPress: () => void nativeGroups.reload() })} /> : null}
                 {choosingTarget && nativeGroups.hasMore && nativeGroups.status !== 'loading' && !nativeGroups.error ? <Item title={t('identityAdministration.loadMore')} loading={nativeGroups.status === 'loading_more'} disabled={nativeGroups.status === 'loading_more'} onPress={() => void nativeGroups.loadMore()} showChevron={false} /> : null}
             </ItemGroup>
             {bindings.error && bindingsFailureLabel ? <ItemGroup><SurfaceStateCard kind="error" size="line" title={bindingsFailureLabel} action={readFailureAction(bindings.error, { testIDPrefix: 'identity-group-bindings', reloadsFirstPage: true, onPress: () => void recoverBindings() })} /></ItemGroup> : null}
