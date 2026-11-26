@@ -202,10 +202,17 @@ export type StorageInventoryRead = Readonly<{
     /** Every page read so far, in the owner's order (largest first). */
     items: readonly StorageInventoryItemV1[];
     status: 'loading' | 'ready' | 'failed';
+    /** The owner's typed refusal while `status` is `failed`; `null` otherwise. */
+    failure: ArtifactActionFailure | null;
     retry: () => void;
     /** Reads the next page through the same Action; `null` when the owner reported no further page. */
     more: (() => void) | null;
     loadingMore: boolean;
+    /**
+     * The owner's typed refusal of the next page: the pages already read stay, and `more` asks for that same page
+     * again. `null` once a next page lands, or while none was refused.
+     */
+    moreFailure: ArtifactActionFailure | null;
 }>;
 
 type StorageInventorySelection = Readonly<Pick<StorageInventoryInputV1, 'scope' | 'kinds'> & {
@@ -237,16 +244,18 @@ export function useStorageInventoryRead(selection?: StorageInventorySelection): 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the selection's value, not its identity, keys the read.
     }), [key]);
     const [snapshot, setSnapshot] = React.useState<Readonly<{ client: ArtifactActionsClient; key: string; pages: readonly StorageInventoryV1[] }> | null>(null);
-    const [failed, setFailed] = React.useState<Readonly<{ client: ArtifactActionsClient; key: string }> | null>(null);
+    const [failed, setFailed] = React.useState<Readonly<{ client: ArtifactActionsClient; key: string; failure: ArtifactActionFailure }> | null>(null);
+    const [moreFailed, setMoreFailed] = React.useState<Readonly<{ client: ArtifactActionsClient; key: string; cursor: string;
+        failure: ArtifactActionFailure }> | null>(null);
     const [loadingMore, setLoadingMore] = React.useState(false);
     React.useEffect(() => {
         if (!client) return;
         let current = true;
         void client.storageUsage(input).then((outcome) => {
             if (!current) return;
-            if (outcome.ok) { setSnapshot({ client, key, pages: [outcome.value] }); setFailed(null); }
-            else setFailed({ client, key });
-        }, () => { if (current) setFailed({ client, key }); });
+            if (outcome.ok) { setSnapshot({ client, key, pages: [outcome.value] }); setFailed(null); setMoreFailed(null); }
+            else setFailed({ client, key, failure: outcome.failure });
+        }, () => { if (current) setFailed({ client, key, failure: { code: 'artifact_action_failed' } }); });
         return () => { current = false; };
     }, [client, input, key, storageRevision, attempt]);
     const pages = snapshot && snapshot.client === client && snapshot.key === key ? snapshot.pages : null;
@@ -254,17 +263,24 @@ export function useStorageInventoryRead(selection?: StorageInventorySelection): 
     const more = React.useCallback(() => {
         if (!client || !pages || !nextCursor || loadingMore) return;
         setLoadingMore(true);
+        // A refused next page keeps the pages already read and the same cursor: More (the Retry) asks for it again.
+        const refused = (failure: ArtifactActionFailure) => setMoreFailed({ client, key, cursor: nextCursor, failure });
         void client.storageUsage({ ...input, cursor: nextCursor }).then((outcome) => {
-            if (outcome.ok) setSnapshot((previous) => previous && previous.client === client && previous.key === key
+            if (!outcome.ok) { refused(outcome.failure); return; }
+            setMoreFailed(null);
+            setSnapshot((previous) => previous && previous.client === client && previous.key === key
                 ? { ...previous, pages: [...previous.pages, outcome.value] } : previous);
-        }).finally(() => setLoadingMore(false));
+        }, () => refused({ code: 'artifact_action_failed' })).finally(() => setLoadingMore(false));
     }, [client, input, key, loadingMore, nextCursor, pages]);
     const inventory = pages?.[0] ?? null;
     const items = React.useMemo(() => pages ? pages.flatMap((page) => page.page?.items ?? []) : NO_STORAGE_ITEMS, [pages]);
     const retry = React.useCallback(() => { setFailed(null); setAttempt((value) => value + 1); }, []);
-    const status = inventory !== null ? 'ready' : client !== null && failed?.client === client && failed.key === key ? 'failed' : 'loading';
-    return React.useMemo(() => ({ inventory, items, status, retry, more: nextCursor ? more : null, loadingMore }),
-        [inventory, items, status, retry, nextCursor, more, loadingMore]);
+    const failure = inventory === null && client !== null && failed?.client === client && failed.key === key ? failed.failure : null;
+    const status = inventory !== null ? 'ready' : failure !== null ? 'failed' : 'loading';
+    const moreFailure = moreFailed && moreFailed.client === client && moreFailed.key === key && moreFailed.cursor === nextCursor
+        ? moreFailed.failure : null;
+    return React.useMemo(() => ({ inventory, items, status, failure, retry, more: nextCursor ? more : null, loadingMore, moreFailure }),
+        [inventory, items, status, failure, retry, nextCursor, more, loadingMore, moreFailure]);
 }
 
 /** The Account's stored numbers alone (the Artifacts page header), from the same read. */

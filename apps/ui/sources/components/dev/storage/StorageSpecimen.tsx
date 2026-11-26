@@ -30,7 +30,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
  * Artifact limit), `map` (scene 1 Map), `art` (scene 1 opened from Artifacts), `nolimit`, `near`, `over`, `loading`,
  * `empty`, `unknown` (the read failed; one Artifact this device cannot decrypt) — scene 2. `discussionPane` and
  * `discussionPage`: the view scoped to one Discussion (scene 5 A, the Details pane at its width, and the phone's pushed
- * page). `deleteVersions` and `deleteAttachment`: the scene 3 confirmations over the view. Rows carry the server's
+ * page). `recovery` and `discussionRecovery`: a refused next page and a failed name read, each with its Retry, beside a
+ * file whose message the Home left out. `deleteVersions` and `deleteAttachment`: the scene 3 confirmations over the view. Rows carry the server's
  * admission facts (`viewerMayTrim`, `viewerMayRemove`) as the storage read owner reports them.
  */
 export const STORAGE_SPECIMEN_STATES = [
@@ -45,6 +46,8 @@ export const STORAGE_SPECIMEN_STATES = [
   'unknown',
   'discussionPane',
   'discussionPage',
+  'recovery',
+  'discussionRecovery',
   'deleteVersions',
   'deleteAttachment',
 ] as const;
@@ -102,6 +105,20 @@ function specimenFileMessage(id: string, blobId: string, name: string, author: R
   };
   return { message, discussionTitle };
 }
+
+/**
+ * The Discussion page after its reads went partly wrong (`discussionRecovery`): one file's message the Home left out
+ * for this viewer, two whose name read failed (they keep the kind's label), and a refused next page.
+ */
+function discussionRecoveryFiles(now: number): readonly DiscussionStorageFile[] {
+  return discussionFiles(now).map((file) => file.key === 'f3' ? { ...file, name: t('artifacts.browser.storageView.items.titles.discussionAttachments'), author: null, unavailable: true }
+    : file.key === 'f6' || file.key === 'f7' ? { ...file, name: t('artifacts.browser.storageView.items.titles.discussionAttachments'), author: null }
+      : file);
+}
+
+/** The refusals the recovery states show, as the storage and Discussions owners type them. */
+const SPECIMEN_MORE_FAILURE = { code: 'invalid_storage_inventory_cursor' } as const;
+const SPECIMEN_NAMES_FAILURE = { code: 'discussion_content_unavailable' } as const;
 
 function discussionFiles(now: number): readonly DiscussionStorageFile[] {
   const file = (key: string, name: string, author: string, ageDays: number, bytes: number, canRemove: boolean) =>
@@ -209,10 +226,11 @@ function labArtifacts(
 }
 
 /** The body with the filter a route would own (the specimen keeps the list as given). */
-function SpecimenBody(props: Omit<React.ComponentProps<typeof AccountStorageBody>, 'filter' | 'onFilter' | 'onMore'> & Readonly<{ initialFilter: AccountStorageItemFilter }>) {
-  const { initialFilter, ...rest } = props;
+function SpecimenBody(props: Omit<React.ComponentProps<typeof AccountStorageBody>, 'filter' | 'onFilter' | 'onMore'>
+  & Readonly<{ initialFilter: AccountStorageItemFilter; onMore?: (() => void) | null }>) {
+  const { initialFilter, onMore, ...rest } = props;
   const [filter, setFilter] = React.useState<AccountStorageItemFilter>(initialFilter);
-  return <AccountStorageBody {...rest} filter={filter} onFilter={setFilter} onMore={null} />;
+  return <AccountStorageBody {...rest} filter={filter} onFilter={setFilter} onMore={onMore ?? null} />;
 }
 
 export function StorageSpecimen(
@@ -237,10 +255,12 @@ export function StorageSpecimen(
       [discussionStorageMessageKey('specimen-discussion', 'specimen-message'),
         specimenFileMessage('specimen-message', 'blob-repro', 'checkout-bug-repro.mov', { accountId: 'mika', name: 'Mika Tanaka' }, 'Checkout bug triage', now)],
       [discussionStorageMessageKey('specimen-planning', 'specimen-trace'),
-        specimenFileMessage('specimen-trace', 'blob-trace', 'api-trace-export.har', { accountId: 'specimen-owner', name: 'You' }, 'Release planning', now)],
+        // `recovery`: the Home leaves this message out for the viewer.
+        props.state === 'recovery' ? null
+          : specimenFileMessage('specimen-trace', 'blob-trace', 'api-trace-export.har', { accountId: 'specimen-owner', name: 'You' }, 'Release planning', now)],
     ]);
     return projectAccountStorageItems(page, new Map(artifacts.map((artifact) => [artifact.id, artifact])), null, {
-      exact: { messages: exact, reading: false }, accountId: 'specimen-owner',
+      exact: { messages: exact, reading: false, failed: new Set(), failure: null, retry: null }, accountId: 'specimen-owner',
       from: (message, own) => own ? t('artifacts.browser.storageView.items.fromYou')
         : t('artifacts.browser.storageView.items.fromAuthor', { author: message.accountActor?.profile?.name ?? '' }),
     });
@@ -253,6 +273,8 @@ export function StorageSpecimen(
       failed?: boolean;
       loading?: boolean;
       empty?: boolean;
+      /** A refused next page and a failed name read, each with its Retry. */
+      recovery?: boolean;
     }> = {},
   ) => (
     <SpecimenBody
@@ -265,6 +287,8 @@ export function StorageSpecimen(
       items={options.loading || options.empty ? [] : items}
       itemsLoaded={!options.loading}
       {...(options.shape ? { initialShape: options.shape } : {})}
+      {...(options.recovery ? { onMore: NOOP, moreFailure: SPECIMEN_MORE_FAILURE, namesFailure: SPECIMEN_NAMES_FAILURE,
+        onRetryNames: NOOP } : {})}
     />
   );
   switch (props.state) {
@@ -291,6 +315,12 @@ export function StorageSpecimen(
     case 'discussionPage':
       return <DiscussionStorageView totalBytes={86.4 * MB} accountTotalBytes={LAB.totalBytes} fileCount={8} files={discussionFiles(now)}
         presentation="page" onShowInMessage={NOOP} onRemove={NOOP} />;
+    case 'recovery':
+      return body(LAB, { recovery: true });
+    case 'discussionRecovery':
+      return <DiscussionStorageView totalBytes={86.4 * MB} accountTotalBytes={LAB.totalBytes} fileCount={12} files={discussionRecoveryFiles(now)}
+        presentation="page" discussionTitle="Checkout bug triage" onShowInMessage={NOOP} onRemove={NOOP} onMore={NOOP}
+        moreFailure={SPECIMEN_MORE_FAILURE} namesFailure={SPECIMEN_NAMES_FAILURE} onRetryNames={NOOP} />;
     case 'deleteVersions':
       return <>{body(LAB)}<ConfirmOnMount open={OPEN_TRIM} /></>;
     case 'deleteAttachment':

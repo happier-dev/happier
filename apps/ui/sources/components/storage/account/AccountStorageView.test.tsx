@@ -253,7 +253,10 @@ async function serve(limit: number | null, options: Readonly<{
   pages?: readonly [readonly unknown[], readonly unknown[]];
   /** The read's summary in place of the default Account's. */
   summary?: StorageInventoryV1;
+  /** The Home refuses the first ask for the next page with its typed cursor refusal. */
+  refuseNextOnce?: boolean;
 }> = {}) {
+  let refuseNext = options.refuseNextOnce === true;
   inventoryReads = [];
   artifactListReads = 0;
   mutations = [];
@@ -278,6 +281,10 @@ async function serve(limit: number | null, options: Readonly<{
       if (request.path === '/v1/artifacts/storage/usage') {
         inventoryReads.push(request.url);
         const next = request.url.searchParams.get('cursor') === 'page-2';
+        if (next && refuseNext) {
+          refuseNext = false;
+          return Response.json({ error: 'invalid_storage_inventory_cursor' }, { status: 400 });
+        }
         return Response.json({ ...(options.summary ?? { ...inventory(limit), ...(options.counts ? { kinds: COUNTED_KINDS } : {}) }),
           ...(options.artifactBilledBytes === undefined ? {} : { artifactBilledBytes: options.artifactBilledBytes }),
           page: next ? { items: second } : { items: first, nextCursor: 'page-2' } });
@@ -427,6 +434,33 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
         expect(inventoryReads).toHaveLength(2);
         expect(inventoryReads[1]!.searchParams.get('cursor')).toBe('page-2');
         expect(textOf(screen.findHostByTestId(`storage:item:${UNKNOWN}:size`))).toBe('—');
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it('keeps the listed items when the Home refuses the next page, says so with its typed cause, and Retry asks for that page again', async () => {
+    const disconnect = await serve(null, { refuseNextOnce: true });
+    try {
+      const screen = await renderScreen(<AppPaneProvider><StorageSettingsRoute /></AppPaneProvider>);
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:collection:stage')).not.toBeNull());
+        await layOut(screen, 'storage:collection:stage');
+        await vi.waitFor(() => expect(itemOrder(screen)).toContain(LARGE));
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('storage:items:more'), 'onPress'); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:items:more-failed')).not.toBeNull());
+        expect(itemOrder(screen)).toContain(LARGE);
+        expect(screen.findHostByTestId('storage:items:more')).toBeNull();
+        const { Modal } = await import('@/modal');
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('storage:items:more-failed:details'), 'onPress'); });
+        expect(JSON.stringify(vi.mocked(Modal.alert).mock.calls.at(-1))).toContain('invalid_storage_inventory_cursor');
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('storage:items:more-failed:retry'), 'onPress'); });
+        await vi.waitFor(() => expect(itemOrder(screen)).toContain(UNKNOWN));
+        expect(inventoryReads.map((url) => url.searchParams.get('cursor'))).toEqual([null, 'page-2', 'page-2']);
+        expect(screen.findHostByTestId('storage:items:more-failed')).toBeNull();
       } finally {
         await screen.unmount();
       }
@@ -644,8 +678,9 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
         await vi.waitFor(() => expect(line(`discussionAttachments-${BLOB}`)).toBe(
           'artifacts.browser.storageView.kinds.itemNames.discussionAttachments · Checkout bug triage · '
           + 'artifacts.browser.storageView.items.fromAuthor(author=Mika Tanaka)'));
-        // A file the Home does not let this viewer read says only its kind.
-        expect(line(`discussionAttachments-${OTHER_BLOB}`)).toBe('artifacts.browser.storageView.kinds.itemNames.discussionAttachments');
+        // A file the Home does not let this viewer read says its kind and that it is not available to them, never why.
+        expect(line(`discussionAttachments-${OTHER_BLOB}`)).toBe(
+          'artifacts.browser.storageView.kinds.itemNames.discussionAttachments · artifacts.browser.storageView.items.messageUnavailable');
       } finally {
         await screen.unmount();
       }

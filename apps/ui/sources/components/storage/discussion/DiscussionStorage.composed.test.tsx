@@ -15,6 +15,7 @@ import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import {
+  captureActiveServerAccountScopeLifetime,
   getActiveServerAccountScope,
   retireActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
@@ -208,7 +209,15 @@ let removals: string[] = [];
 /** Every exact message read (`POST /v1/discussions/messages/read`), with the pairs it asked for. */
 let exactReads: Array<ReadonlyArray<Readonly<{ discussionId: string; messageId: string }>>> = [];
 
-async function serve(options: Readonly<{ offWindowReadable?: boolean }> = {}) {
+async function serve(options: Readonly<{
+  offWindowReadable?: boolean;
+  /** The Home refuses the first ask for the next page with its typed cursor refusal. */
+  refuseNextOnce?: boolean;
+  /** The first exact message read fails with the Discussion owner's typed refusal. */
+  failFirstExactRead?: boolean;
+}> = {}) {
+  let refuseNext = options.refuseNextOnce === true;
+  let failExact = options.failFirstExactRead === true;
   const readable = options.offWindowReadable ? [...WIRE_MESSAGES, OFF_WINDOW_MESSAGE] : WIRE_MESSAGES;
   scopedReads = [];
   accountReads = [];
@@ -244,6 +253,10 @@ async function serve(options: Readonly<{ offWindowReadable?: boolean }> = {}) {
         }
         scopedReads.push(request.url);
         const second = request.url.searchParams.get('cursor') === 'page-2';
+        if (second && refuseNext) {
+          refuseNext = false;
+          return Response.json({ error: 'invalid_storage_inventory_cursor' }, { status: 400 });
+        }
         return Response.json({
           ...summary(77.6 * MB),
           // The scope's whole count, across both pages.
@@ -256,6 +269,10 @@ async function serve(options: Readonly<{ offWindowReadable?: boolean }> = {}) {
       if (request.path === '/v1/discussions/messages/read' && request.method === 'POST') {
         const asked = (request.body as { messages: Array<{ discussionId: string; messageId: string }> }).messages;
         exactReads.push(asked);
+        if (failExact) {
+          failExact = false;
+          return Response.json({ error: 'discussion_content_unavailable' }, { status: 409 });
+        }
         // Unless the case makes it readable, `message-9` is not readable by this viewer: the Home leaves it out.
         const messages = readable.filter((message) => asked.some((pair) => pair.discussionId === DISCUSSION && pair.messageId === message.id));
         return Response.json({ discussions: messages.length === 0 ? [] : [{ discussionId: DISCUSSION,
@@ -640,6 +657,144 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
         expect(back).toHaveBeenCalledTimes(1);
         expect(rowMenus(page).get(VIDEO)).toEqual(expect.arrayContaining(['show']));
         expect(rowMenus(page).get(TRACE)).toContain('remove');
+      } finally {
+        await page.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it('lets an agent open the same scoped Storage pane through the mounted command the press opens', async () => {
+    const disconnect = await serve();
+    let header: ReturnType<typeof usePublishedPaneHeaderContent> = null;
+    try {
+      const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+      const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } =
+        await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+      const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+      const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+      function Publication() {
+        const commands = useCurrentUiContextComposedCommands();
+        usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+        return null;
+      }
+      const screen = await renderMountedCurrentUiContext(
+        <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+          <Publication />
+          <SurfaceStateSizeProvider size="pane">
+            <PaneHeaderSlotProvider>
+              <PaneHeaderSlotScope slotKey="discussionDetails">
+                <HeaderProbe onRead={(content) => { header = content; }} />
+                <DiscussionDetailsPanel actions={[]} storage={source()} />
+              </PaneHeaderSlotScope>
+            </PaneHeaderSlotProvider>
+          </SurfaceStateSizeProvider>
+        </CurrentUiContextCommandsProvider>,
+      );
+      try {
+        await vi.waitFor(() =>
+          expect(textOf(screen.findHostByTestId('discussion-details-storage'))).toContain(storage(77.6 * MB)),
+        );
+        const scope = getActiveServerAccountScope()!;
+        const executor = createDefaultActionExecutor();
+        const caller = { serverId: scope.serverId, surface: 'agent' as const, authority: 'account_automation' as const };
+        const read = await executor.execute('ui.current_context.read', {}, caller);
+        expect(read.ok).toBe(true);
+        const command = (read.ok ? read.result as { commands: readonly { id: string; title: string }[] } : { commands: [] })
+          .commands.find((row) => row.title === 'artifacts.browser.storageView.title');
+        expect(command).toBeDefined();
+        let result: Awaited<ReturnType<typeof executor.execute>> | undefined;
+        await act(async () => {
+          result = await executor.execute('ui.current_context.command.invoke', { commandId: command!.id }, caller);
+        });
+        expect(result).toMatchObject({ ok: true });
+        // The same pane the row's press opens, under the band that names it, over the same scoped read.
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:discussion')).not.toBeNull());
+        expect(header?.subpage?.title).toBe('artifacts.browser.storageView.title');
+        expect(scopedReads).toHaveLength(1);
+        expect(scopedReads.every((url) => url.searchParams.get('discussionId') === DISCUSSION)).toBe(true);
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it('keeps the files when the Home refuses the next page, says so with its typed cause, and Retry asks for that page again', async () => {
+    const disconnect = await serve({ refuseNextOnce: true, offWindowReadable: true });
+    try {
+      const screen = await renderScreen(
+        <AppPaneProvider>
+          <SurfaceStateSizeProvider size="pane">
+            <DiscussionDetailsPanel actions={[]} storage={source()} />
+          </SurfaceStateSizeProvider>
+        </AppPaneProvider>,
+      );
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('discussion-details-storage')).not.toBeNull());
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('discussion-details-storage'), 'onPress'); });
+        await layOut(screen);
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:discussion:more')).not.toBeNull());
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('storage:discussion:more'), 'onPress'); });
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:discussion:more-failed')).not.toBeNull());
+        // The page already read stays; its More gives way to the line that says the rest could not be read.
+        expect(screen.findHostByTestId(`storage:discussion:file:${VIDEO}`)).not.toBeNull();
+        expect(screen.findHostByTestId('storage:discussion:more')).toBeNull();
+        expect(textOf(screen.findHostByTestId('storage:discussion:more-failed'))).toContain('artifacts.browser.storageView.items.moreFailed');
+        const { Modal } = await import('@/modal');
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('storage:discussion:more-failed:details'), 'onPress'); });
+        expect(JSON.stringify(vi.mocked(Modal.alert).mock.calls.at(-1))).toContain('invalid_storage_inventory_cursor');
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('storage:discussion:more-failed:retry'), 'onPress'); });
+        await vi.waitFor(() => expect(screen.findHostByTestId(`storage:discussion:file:${ORPHAN}`)).not.toBeNull());
+        expect(scopedReads.map((url) => url.searchParams.get('cursor'))).toEqual([null, 'page-2', 'page-2']);
+        expect(screen.findHostByTestId('storage:discussion:more-failed')).toBeNull();
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it('tells a failed name read, retried once for the same messages, apart from a message the Home leaves out', async () => {
+    const disconnect = await serve({ failFirstExactRead: true });
+    try {
+      const scope = getActiveServerAccountScope()!;
+      const url = new URL(buildDiscussionStorageRouteHref({ serverId: scope.serverId, discussionId: DISCUSSION }), 'https://app.test');
+      routerMock.state = { pathname: url.pathname, params: Object.fromEntries(url.searchParams) };
+      const page = await renderScreen(<AppPaneProvider><DiscussionStorageRoute /></AppPaneProvider>);
+      try {
+        await layOut(page);
+        await vi.waitFor(() => expect(page.findHostByTestId('storage:discussion:names-failed')).not.toBeNull());
+        // The read failed: the rows keep the kind's name and stop waiting; one line says so and offers Retry.
+        expect(textOf(page.findHostByTestId(`storage:discussion:file:${VIDEO}`))).toContain(
+          'artifacts.browser.storageView.items.titles.discussionAttachments');
+        expect(textOf(page.findHostByTestId(`storage:discussion:file:${VIDEO}`))).not.toContain(
+          'artifacts.browser.storageView.items.messageUnavailable');
+        const { Modal } = await import('@/modal');
+        await act(async () => { invokeTestInstanceHandler(page.findHostByTestId('storage:discussion:names-failed:details'), 'onPress'); });
+        expect(JSON.stringify(vi.mocked(Modal.alert).mock.calls.at(-1))).toContain('discussion_content_unavailable');
+        await act(async () => {
+          invokeTestInstanceHandler(page.findHostByTestId('storage:discussion:names-failed:retry'), 'onPress');
+          invokeTestInstanceHandler(page.findHostByTestId('storage:discussion:names-failed:retry'), 'onPress');
+        });
+        await vi.waitFor(() => expect(textOf(page.findHostByTestId(`storage:discussion:file:${VIDEO}`))).toContain('checkout-bug-repro.mov'));
+        expect(page.findHostByTestId('storage:discussion:names-failed')).toBeNull();
+        // Retry asks for the same messages once, however often it is pressed.
+        expect(exactReads).toHaveLength(2);
+        expect(exactReads[1]).toEqual(exactReads[0]);
+
+        // The next page's message is one the Home leaves out for this viewer: that row says it is not available.
+        await act(async () => { invokeTestInstanceHandler(page.findHostByTestId('storage:discussion:more'), 'onPress'); });
+        await vi.waitFor(() => expect(textOf(page.findHostByTestId(`storage:discussion:file:${ORPHAN}`))).toContain(
+          'artifacts.browser.storageView.items.messageUnavailable'));
+        expect(page.findHostByTestId('storage:discussion:names-failed')).toBeNull();
+        // The count contract: one inventory read per page and one batched read per page, plus the one Retry.
+        expect(scopedReads).toHaveLength(2);
+        expect(exactReads).toHaveLength(3);
+        expect(exactReads[2]).toEqual([{ discussionId: DISCUSSION, messageId: 'message-9' }]);
       } finally {
         await page.unmount();
       }

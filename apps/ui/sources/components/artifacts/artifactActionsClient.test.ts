@@ -6,7 +6,7 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storage';
 import { useArtifacts } from '@/sync/store/hooks';
-import { useArtifactStorageUsage } from './artifactActionsClient';
+import { useArtifactStorageUsage, useStorageInventoryRead } from './artifactActionsClient';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 const initialState = getStorage().getState();
@@ -140,6 +140,44 @@ describe('Artifacts storage meter', () => {
             .map((request) => [request.home, request.accountId])).toEqual([
                 ['first', 'first-owner'], ['second', 'second-owner'],
             ]);
+        await hook.unmount();
+    });
+
+    it('keeps the storage owner\'s typed refusal of a first page, and of a next page while the first stays', async () => {
+        let refuseFirst = true;
+        const served = await serveActionHomes({
+            homes: [{ key: 'owner', serverUrl: 'https://storage-refusals.test', accountId: 'owner' }],
+            route: (request) => {
+                if (request.path !== '/v1/artifacts/storage/usage') return undefined;
+                if (refuseFirst) return Response.json({ error: 'discussion_not_found' }, { status: 404 });
+                return request.url.searchParams.get('cursor') === 'page-2'
+                    ? Response.json({ error: 'invalid_storage_inventory_cursor' }, { status: 400 })
+                    : Response.json({ ...inventory(100, null), page: { items: [], nextCursor: 'page-2' } });
+            },
+        });
+        disposeHome = served.dispose;
+        const scope = { serverId: served.homes.owner!.id, accountId: 'owner' };
+        const selection = { home: scope, followStorageRevision: false, scope: { kind: 'discussion' as const, discussionId: 'gone' } };
+        const hook = await renderHook(() => useStorageInventoryRead(selection));
+        await flushHookEffects();
+        expect(hook.getCurrent().status).toBe('failed');
+        expect(hook.getCurrent().failure?.code).toBe('discussion_not_found');
+
+        refuseFirst = false;
+        await act(async () => { hook.getCurrent().retry(); });
+        await flushHookEffects();
+        expect(hook.getCurrent().status).toBe('ready');
+        expect(hook.getCurrent().failure).toBeNull();
+        await act(async () => { hook.getCurrent().more?.(); });
+        await flushHookEffects();
+        // The page already read stays; the next page's refusal carries its own code, and More asks for the same page again.
+        expect(hook.getCurrent().inventory?.totalBytes).toBe(100);
+        expect(hook.getCurrent().moreFailure?.code).toBe('invalid_storage_inventory_cursor');
+        expect(hook.getCurrent().more).not.toBeNull();
+        await act(async () => { hook.getCurrent().more?.(); });
+        await flushHookEffects();
+        expect(served.requests.filter(request => request.path === '/v1/artifacts/storage/usage')
+            .map(request => request.url.searchParams.get('cursor'))).toEqual([null, null, 'page-2', 'page-2']);
         await hook.unmount();
     });
 });

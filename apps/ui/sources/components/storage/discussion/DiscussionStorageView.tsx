@@ -5,7 +5,9 @@ import { Collection, type CollectionAnatomy, type CollectionRowActions } from '@
 import { formatHappierDataBytes, useHappierCollection, type CompositionSegment } from '@happier-dev/plugin-ui/presentation';
 
 import { formatStorageDay } from '@/components/machines/storage/storageCategoryText';
+import type { ArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
 import { StorageCapacityRow } from '@/components/storage/StorageCapacityRow';
+import { StorageReadRetryLine } from '@/components/storage/StorageReadRetryLine';
 import { StorageSaySection } from '@/components/storage/StorageSayLine';
 import { StorageSizeCell } from '@/components/storage/StorageSizeBar';
 import { useStorageKindMarks } from '@/components/storage/storageKindMarks';
@@ -31,6 +33,8 @@ export type DiscussionStorageFile = Readonly<{
     name: string;
     /** Its message is still being read: the name shimmers in place of the kind's own label. */
     pending?: boolean;
+    /** The Home left its message out for this viewer: the row says it is not available, never why. */
+    unavailable?: boolean;
     /** Who sent its message; `null` while the message is not loaded on this device. */
     author: string | null;
     /** When the server stored it; `null` when it does not say. */
@@ -51,8 +55,10 @@ function fileIcon(name: string): IconName {
 
 function fileByline(file: DiscussionStorageFile): string {
     const date = file.at === null ? null : formatStorageDay(file.at);
-    if (file.author !== null && date !== null) return t('artifacts.browser.storageView.discussion.byline', { author: file.author, date });
-    return file.author ?? date ?? '';
+    // A message the Home left out takes the sender's place: what is true for this viewer, not why.
+    const author = file.unavailable === true ? t('artifacts.browser.storageView.items.messageUnavailable') : file.author;
+    if (author !== null && date !== null) return t('artifacts.browser.storageView.discussion.byline', { author, date });
+    return author ?? date ?? '';
 }
 
 type FileCommands = Readonly<{
@@ -88,6 +94,11 @@ export function DiscussionStorageView(props: Readonly<{
     /** Reads the owner's next page; `null` when it has none. */
     onMore?: (() => void) | null;
     loadingMore?: boolean;
+    /** The owner refused the next page: the rows stay, and the foot says so with Retry (`onMore` again). */
+    moreFailure?: ArtifactActionFailure | null;
+    /** A page's file names could not be read: one line says so with Retry (`onRetryNames`). */
+    namesFailure?: ArtifactActionFailure | null;
+    onRetryNames?: (() => void) | null;
     /** A removal is running: every row's Remove waits. */
     busy?: boolean;
     onShowInMessage?: ((file: DiscussionStorageFile) => void) | null;
@@ -160,6 +171,11 @@ export function DiscussionStorageView(props: Readonly<{
             ) : null}
             {/* The files are their own sheet, a section step under the sentence or the share, as in the Account's view. */}
             <ItemGroup>
+                {/* A failed name read heads the rows it leaves on the kind's label, on their sheet, as the foot's line does. */}
+                {props.namesFailure && props.onRetryNames ? (
+                    <StorageReadRetryLine testID="storage:discussion:names-failed" failure={props.namesFailure} onRetry={props.onRetryNames}
+                        reason={t('artifacts.browser.storageView.items.namesFailed')} />
+                ) : null}
                 <FileCommandsContext.Provider value={commands}>
                     <CoreCollectionScope>
                         <Collection<DiscussionStorageFile> testID="storage:discussion:files" model={model} anatomy={anatomy}
@@ -169,7 +185,10 @@ export function DiscussionStorageView(props: Readonly<{
                             loading={props.totalBytes === null && props.files.length === 0 && !props.onRetry} loadingRows={LOADING_ROWS} />
                     </CoreCollectionScope>
                 </FileCommandsContext.Provider>
-                {props.onMore ? (
+                {props.onMore && props.moreFailure ? (
+                    <StorageReadRetryLine testID="storage:discussion:more-failed" failure={props.moreFailure} onRetry={props.onMore}
+                        busy={props.loadingMore === true} reason={t('artifacts.browser.storageView.items.moreFailed')} />
+                ) : props.onMore ? (
                     <View style={stylesheet.foot}>
                         <TextLinkButton testID="storage:discussion:more" tone="strong" label={t('artifacts.browser.storageView.items.showMore')}
                             onPress={props.onMore} disabled={props.loadingMore === true} />

@@ -24,7 +24,7 @@ import { STORAGE_TREEMAP_MIN_NODE_PX } from '@happier-dev/protocol/storage/stora
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildDiscussionRouteHref } from '@/components/discussions/discussionRoutes';
 import { ArtifactQuotaNotice } from '@/components/artifacts/ArtifactQuotaNotice';
-import { createArtifactActionsClient, createMountedArtifactActionExecute, useStorageInventoryRead } from '@/components/artifacts/artifactActionsClient';
+import { createArtifactActionsClient, createMountedArtifactActionExecute, useStorageInventoryRead, type ArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
 import { presentArtifactActionFailure } from '@/components/artifacts/artifactActionFailure';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -58,6 +58,7 @@ import {
   StorageCapacityNote,
   StorageCapacityRow,
 } from '@/components/storage/StorageCapacityRow';
+import { StorageReadRetryLine } from '@/components/storage/StorageReadRetryLine';
 import { StorageSaySection } from '@/components/storage/StorageSayLine';
 import { StorageSizeCell, StorageSizeMeter } from '@/components/storage/StorageSizeBar';
 import { useStorageKindMarks, type StorageKindMark } from '@/components/storage/storageKindMarks';
@@ -161,7 +162,7 @@ export function AccountStorageView(props: Readonly<{ initialFilter: AccountStora
   return (
     <AccountStorageBody inventory={read.inventory} status={read.status} onRetry={read.retry} items={items}
       itemsLoaded={read.inventory !== null} filter={filter} onFilter={setFilter} onMore={read.more} loadingMore={read.loadingMore}
-      onChanged={read.retry} />
+      moreFailure={read.moreFailure} namesFailure={exact.failure} onRetryNames={exact.retry} onChanged={read.retry} />
   );
 }
 
@@ -179,6 +180,11 @@ export function AccountStorageBody(
     /** Reads the owner's next page; `null` when it has none. */
     onMore: (() => void) | null;
     loadingMore?: boolean;
+    /** The owner refused the next page: the listed items stay, and the foot says so with Retry (`onMore` again). */
+    moreFailure?: ArtifactActionFailure | null;
+    /** A page's Discussion file names could not be read: one line says so with Retry (`onRetryNames`). */
+    namesFailure?: ArtifactActionFailure | null;
+    onRetryNames?: (() => void) | null;
     /** A deletion from a row settled: the owner's numbers are read again. */
     onChanged?: () => void;
     /** The specimen's Map state; the person picks List or Map on a wide page. */
@@ -289,6 +295,9 @@ export function AccountStorageBody(
             onShape={phone ? undefined : chooseShape}
             onMore={props.onMore}
             loadingMore={props.loadingMore === true}
+            moreFailure={props.moreFailure ?? null}
+            namesFailure={props.namesFailure ?? null}
+            onRetryNames={props.onRetryNames ?? null}
             onChanged={props.onChanged}
             compact={phone}
           />
@@ -673,6 +682,9 @@ function AccountStorageItems(
     onShape?: (shape: 'list' | 'map') => void;
     onMore: (() => void) | null;
     loadingMore: boolean;
+    moreFailure: ArtifactActionFailure | null;
+    namesFailure: ArtifactActionFailure | null;
+    onRetryNames: (() => void) | null;
     onChanged?: () => void;
     compact: boolean;
   }>,
@@ -869,6 +881,11 @@ function AccountStorageItems(
       </ItemGroup>
       {/* The Map and the table share one sheet (lab scene 1 Map): the picture, its key, then the same rows. */}
       <ItemGroup header="none">
+        {/* A failed name read heads the rows it leaves on the kind's label, on their sheet, as the foot's line does. */}
+        {props.namesFailure && props.onRetryNames ? (
+          <StorageReadRetryLine testID="storage:items:names-failed" failure={props.namesFailure} onRetry={props.onRetryNames}
+            reason={t('artifacts.browser.storageView.items.namesFailed')} />
+        ) : null}
         {props.shape === 'map' && page.length > 0 ? (
           <StorageItemsMap items={page} onOpen={open} />
         ) : null}
@@ -902,7 +919,10 @@ function AccountStorageItems(
             />
           </CoreCollectionScope>
         </ItemCommandsContext.Provider>
-        {props.onMore ? (
+        {props.onMore && props.moreFailure ? (
+          <StorageReadRetryLine testID="storage:items:more-failed" failure={props.moreFailure} onRetry={props.onMore}
+            busy={props.loadingMore} reason={t('artifacts.browser.storageView.items.moreFailed')} />
+        ) : props.onMore ? (
           <View style={stylesheet.foot} testID="storage:items:foot">
             <TextLinkButton testID="storage:items:more" tone="strong" label={t('artifacts.browser.storageView.items.showMore')}
               onPress={props.onMore} disabled={props.loadingMore} />
@@ -1142,9 +1162,10 @@ function itemIcon(item: AccountStorageItem): IconName {
 /**
  * Where an item lives, never its kind again: an Artifact and its old versions live in Artifacts (› its folder); a
  * Discussion file in its Discussion, from whoever sent it ("Checkout bug triage · from Mika Tanaka"). A file whose
- * message the Home left out says nothing more.
+ * message the Home left out says only that it is not available to the viewer, never why.
  */
 function itemLocation(item: AccountStorageItem): string | null {
+  if (item.messageUnavailable) return t('artifacts.browser.storageView.items.messageUnavailable');
   if (item.discussionFile) return [item.discussionFile.discussionTitle, item.discussionFile.from].filter(Boolean).join(' · ');
   if (item.location.kind !== 'artifact') return null;
   return item.folderName

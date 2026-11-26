@@ -123,6 +123,8 @@ export type AccountStorageItem = Readonly<{
     discussionFile: AccountStorageDiscussionFile | null;
     /** An Artifact's header, or a Discussion file's message, this device has not read yet: its name shimmers. */
     pending: boolean;
+    /** The Home left a Discussion file's message out for this viewer: where it lives says it is not available. */
+    messageUnavailable: boolean;
     /** The personal folder its Artifact is filed in, for "where it lives" (Artifacts › Marketing). */
     folderName: string | null;
     /** The server admits this viewer removing the file (`viewerMayRemove`: the message's author or the Discussion's owner). */
@@ -184,7 +186,8 @@ export function projectAccountStorageItems(items: readonly StorageInventoryItemV
                 own,
             } : null,
             pending: artifactId !== null ? artifact === undefined
-                : messageKey !== null && exact === undefined && files?.exact.reading === true,
+                : messageKey !== null && exact === undefined && files?.exact.reading === true && !files.exact.failed.has(messageKey),
+            messageUnavailable: messageKey !== null && exact === null,
             folderName: row?.folderId ? names.get(row.folderId) ?? null : null,
             // Absent on the wire means not admitted: the view offers only what the producer grants.
             viewerMayRemove: item.viewerMayRemove === true,

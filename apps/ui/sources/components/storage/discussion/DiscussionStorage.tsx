@@ -58,7 +58,8 @@ export function useDiscussionStorageRead(
 /**
  * The read owner's files, in its order, each named by the message its triple points at (a folder's file by its path in
  * the folder): the Discussion's loaded message, or the page's exact read of it. A file whose message is still being
- * read shimmers; one the Home left out keeps the kind's own label. Size, date and admission are always the server's.
+ * read shimmers; one the Home left out keeps the kind's own label and says it is not available to the viewer; one whose
+ * read failed keeps the kind's label while the view offers Retry. Size, date and admission are always the server's.
  */
 export function projectDiscussionStorageFiles(items: readonly StorageInventoryItemV1[], messages: readonly DiscussionStorageMessage[] | null,
     authorLabel: DiscussionStorageSource['authorLabel'], exact: DiscussionStorageExactMessages): readonly DiscussionStorageFile[] {
@@ -71,7 +72,8 @@ export function projectDiscussionStorageFiles(items: readonly StorageInventoryIt
         return [{
             key: item.id,
             name: (message ? readDiscussionAttachmentName(message, blobId) : null) ?? t('artifacts.browser.storageView.items.titles.discussionAttachments'),
-            pending: message === undefined && exact.reading && !exact.messages.has(key),
+            pending: message === undefined && exact.reading && !exact.messages.has(key) && !exact.failed.has(key),
+            unavailable: message === undefined && exact.messages.get(key) === null,
             author: message ? authorLabel(message) : null,
             at: item.createdAt,
             bytes: item.storedSizeBytes,
@@ -156,7 +158,8 @@ function DiscussionStorage(props: Readonly<{
         <DiscussionStorageView totalBytes={read.inventory?.totalBytes ?? null} accountTotalBytes={props.accountTotalBytes}
             fileCount={read.inventory?.kinds?.discussionAttachments?.itemCount ?? null}
             files={files} presentation={props.presentation} discussionTitle={title} participant={props.participant === true} onRetry={failed ? read.retry : null} onMore={read.more}
-            loadingMore={read.loadingMore} busy={removal.busy} onShowInMessage={showInMessage} onRemove={remove} />
+            loadingMore={read.loadingMore} moreFailure={read.moreFailure} namesFailure={exact.failure} onRetryNames={exact.retry}
+            busy={removal.busy} onShowInMessage={showInMessage} onRemove={remove} />
     );
 }
 

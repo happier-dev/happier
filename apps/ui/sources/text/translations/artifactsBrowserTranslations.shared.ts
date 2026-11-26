@@ -257,6 +257,12 @@ export type ArtifactsBrowserTranslations = Readonly<{
             foot: (params: Readonly<{ shown: string; total: string }>) => string;
             showMore: string;
             nameNotReadable: string;
+            /** A next page the Home refused: the listed items stay, and Retry asks for it again. */
+            moreFailed: string;
+            /** A Discussion file's message read failed (not left out): one line offers Retry. */
+            namesFailed: string;
+            /** The Home left a Discussion file's message out for this viewer; never says why. */
+            messageUnavailable: string;
             where: string;
             mapHint: string;
             smaller: (params: Readonly<{ count: string }>) => string;
@@ -665,6 +671,9 @@ export const artifactsBrowserTranslationsEnglish = { en: {
                 foot: ({ shown, total }) => `The ${shown} biggest of ${total}`,
                 showMore: 'Show more',
                 nameNotReadable: 'Name not readable on this device',
+                moreFailed: 'The rest couldn’t be read.',
+                namesFailed: 'Some file names couldn’t be read.',
+                messageUnavailable: 'Not available to you',
                 where: 'Artifacts',
                 mapHint: 'Area is stored size · press a tile to open it',
                 smaller: ({ count }) => `${count} smaller`,

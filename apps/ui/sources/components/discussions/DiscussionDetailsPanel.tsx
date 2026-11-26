@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { usePaneHeaderSlotContent, type PaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
 import { useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { buildDiscussionStorageRouteHref } from '@/components/discussions/discussionRoutes';
@@ -18,6 +19,7 @@ import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { t } from '@/text';
 
 const NO_HEADER: PaneHeaderSlotContent = {};
+const STORAGE_DISCUSSION_OPEN_COMMAND = 'storage.discussion.open';
 
 /**
  * The Discussion page's Details tab: the same operations the header's ⋯ menu lists on a phone, as rows.
@@ -44,6 +46,13 @@ export function DiscussionDetailsPanel(
     if (phone) router.push(buildDiscussionStorageRouteHref({ serverId: scope.serverId, discussionId }) as Href);
     else setStorageOpen(true);
   }, [discussionId, phone, router, scope.serverId]);
+  // An agent opens the same Storage the row's press opens (the pane, or the phone's page) through the current UI.
+  useCurrentUiContextLocalCommands(React.useMemo(() => [{
+    key: STORAGE_DISCUSSION_OPEN_COMMAND,
+    title: t('artifacts.browser.storageView.title'),
+    description: "Open this Discussion's Storage: its files and their sizes, in the Details pane or as its own page on a phone.",
+    invoke: openStorage,
+  }], [openStorage]));
   if (inPane) return <DiscussionStoragePane source={props.storage} read={read} />;
   const settings = props.actions.filter(
     (action) => action.checked !== undefined || action.category !== undefined,
