@@ -34,11 +34,12 @@ export async function prepareTeamSetupPlan(params: Readonly<{
     target: TeamSetupTarget;
     preset?: MachineSetupPresetInput;
     repositories: readonly TeamSetupRepository[];
+    signal?: AbortSignal;
     isCurrent: () => boolean;
 }>): Promise<Readonly<{ ok: true; plan: TeamSetupPlan }> | ActionExecuteFailure | null> {
     const machine = params.preset ? await prepareMachineSetupPresetApplyInput({
         executeAction: params.executeAction,
-        context: params.context,
+        context: params.signal ? { ...params.context, signal: params.signal } : params.context,
         homeId: params.target.homeId,
         machineId: params.target.machineId,
         preset: params.preset,

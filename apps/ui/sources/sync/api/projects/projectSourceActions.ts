@@ -4,7 +4,7 @@ import {
     ProjectSourcesCreateInputV1Schema, ProjectSourcesCreateOutputV1Schema,
     ProjectSourcesUpdateInputV1Schema, ProjectSourcesUpdateOutputV1Schema,
     ProjectSourcesDeleteInputV1Schema, ProjectSourcesDeleteOutputV1Schema,
-    type ProjectSourcesFailureV1,
+    type ProjectSourceListItemV1, type ProjectSourcesFailureV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -14,6 +14,12 @@ import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestO
 import { changesProjectSourceAudienceV1, prepareProjectSourceUpdateV1, type ProjectSourceArtifactReadOptionsV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import { withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+
+export type ListedProjectSourceRequirements = Readonly<{
+    scope: ServerAccountScope;
+    rows: ReadonlyMap<string, ProjectSourceListItemV1>;
+}>;
 
 type SourceAccountPort = Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'credentialAuthorityKind' | 'request' | 'assertCurrent'> & Readonly<{
     workflowArtifacts: Readonly<{ read(artifactId: string, options?: ProjectSourceArtifactReadOptionsV1): ReturnType<LazyActionAccountContext['workflowArtifacts']['read']> }>;
@@ -22,6 +28,8 @@ type Schema<T> = Readonly<{ parse(value: unknown): T }>;
 
 /** Transport below the Action front door, bound to its authenticated Account channel. */
 export function createProjectSourceActionDeps(account: SourceAccountPort, options: Readonly<{
+    /** Reuse Source metadata admitted by the catalog for this requirement-name read. */
+    listedRequirements?: ListedProjectSourceRequirements;
     /** Keyholder delivery of the Source's deployment content to its committed audience (best effort). */
     prepareDeploymentRecipients?(input: Readonly<{ serverId: string; projectSourceId: string }>, context?: ActionExecutorContext): Promise<unknown>;
 }> = {}) {
@@ -93,7 +101,16 @@ export function createProjectSourceActionDeps(account: SourceAccountPort, option
         },
         projectSourcesRead: async (raw: Parameters<typeof ProjectSourcesReadInputV1Schema.parse>[0], context?: ActionExecutorContext) => {
             const input = ProjectSourcesReadInputV1Schema.parse(raw);
-            return inSourceHome(input.serverId, () => request(`/v1/projects/sources/${encodeURIComponent(input.sourceId)}?serverId=${encodeURIComponent(input.serverId)}`, 'GET', undefined, ProjectSourcesReadOutputV1Schema, context));
+            return inSourceHome(input.serverId, async () => {
+                context?.signal?.throwIfAborted();
+                const listed = options.listedRequirements;
+                const source = listed?.scope.accountId === account.accountId
+                    && areServerProfileIdentifiersEquivalent(listed.scope.serverId, account.serverId)
+                    ? listed.rows.get(input.sourceId) : undefined;
+                if (source) return { ok: true as const, source, canManage: false };
+                return request(`/v1/projects/sources/${encodeURIComponent(input.sourceId)}?serverId=${encodeURIComponent(input.serverId)}`,
+                    'GET', undefined, ProjectSourcesReadOutputV1Schema, context);
+            });
         },
         projectSourcesCreate: async (raw: Parameters<typeof ProjectSourcesCreateInputV1Schema.parse>[0], context?: ActionExecutorContext) => {
             const input = ProjectSourcesCreateInputV1Schema.parse(raw);

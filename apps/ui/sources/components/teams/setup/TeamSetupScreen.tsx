@@ -308,24 +308,28 @@ function TeamSetupPlanPage(
     const preset = presetRef.current;
     if (!prepareKey || !machineId || !homeId || !preset) return;
     const key = prepareKey;
+    const request = new AbortController();
+    const isCurrent = () => !request.signal.aborted && prepareKeyRef.current === key;
     void prepare({
         target: { serverId: context.scope.serverId, homeId, machineId },
         preset,
         repositories: [],
-        isCurrent: () => prepareKeyRef.current === key,
+        isCurrent,
+        signal: request.signal,
       })
       .then((result) => {
-        if (prepareKeyRef.current !== key || result === null) return;
+        if (!isCurrent() || result === null) return;
         setPrepared(
           result.ok
             ? { key, plan: result.plan, failure: null }
             : { key, plan: null, failure: result },
         );
       });
+    return () => request.abort();
   }, [context.scope.serverId, homeId, machineId, prepare, prepareKey]);
   const machinePlan = prepared?.key === prepareKey ? prepared : null;
 
-  const included = repositories.filter((source) => !excluded.has(source.id));
+  const included = React.useMemo(() => repositories.filter((source) => !excluded.has(source.id)), [repositories, excluded]);
   const requirementsEnabled = presented && !props.preview;
   const requirements = useSourceSetupRequirementNames(context.scope, included, requirementsEnabled);
   const hasPreset = !props.preview && resources.preset !== null;
@@ -476,7 +480,7 @@ function TeamSetupPlanPage(
       else updated.add(sourceId);
       return updated;
     }), []);
-  if (!props.preview && resources.sharedResources.status === 'ready' && sourcesState.status === 'ready' && sourcesState.coverage.complete
+  if (!props.preview && (!resources.credentialsEnabled || resources.credentials.isCurrent) && sourcesState.status === 'ready' && sourcesState.coverage.complete
     && !hasPreset && sourcesState.rows.length === 0 && sharedKeys.length === 0) {
     return (
       <>
@@ -618,6 +622,7 @@ export function TeamSetupPageView(
   }>,
 ) {
   const { teamName, machineId, machineLabel, run, repositories } = props;
+  const nameOf = React.useCallback(() => machineLabel ?? '', [machineLabel]);
   // Until the plan's first reads settle, one loading line stands for the whole plan, so its sections arrive together
   // instead of each pushing the next one down as its own read lands. The rows mount hidden meanwhile, so each found
   // checkout's own setup read (Ready, or a changed shared setup) answers before the plan shows. Kept once reached: a
@@ -908,7 +913,7 @@ export function TeamSetupPageView(
             <MachineSetupPlanReview
               testID="team-setup-tools-review"
               prepared={props.machinePlan.plan.machine}
-              nameOf={() => machineLabel ?? ''}
+              nameOf={nameOf}
               disabled={running}
             />
           ) : null}
@@ -965,7 +970,7 @@ export function TeamSetupPageView(
               onRetryRequirements={props.requirements?.retry}
               disabled={running || run.kind === 'done' || !!heldEntry}
               iconColor={theme.colors.text.secondary}
-              onToggle={(next) => props.onToggleRepository(source.id, next)}
+              onToggle={props.onToggleRepository}
               onCheckoutSetupSettled={arrived ? undefined : settleCheckout}
             />
           ))}
@@ -1081,7 +1086,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     onRetryRequirements?: () => void;
     disabled: boolean;
     iconColor: string;
-    onToggle: (included: boolean) => void;
+    onToggle: (sourceId: string, included: boolean) => void;
     /** Told once this row's checkout setup read has answered, while the plan is still arriving. */
     onCheckoutSetupSettled?: (checkoutId: string) => void;
   }>,
@@ -1178,7 +1183,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
             testID={`team-setup-repository-include:${props.source.id}`}
             value={props.included}
             disabled={props.disabled}
-            onValueChange={props.onToggle}
+            onValueChange={(next) => props.onToggle(props.source.id, next)}
             accessibilityLabel={nameWithOwner}
           />
         )

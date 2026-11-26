@@ -448,7 +448,8 @@ import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { projectUsageOptionFacts } from '@happier-dev/protocol/usage/usageFilterOptions';
 import { listProjectsForActions } from './listProjects';
 import { createUiProjectPagesList } from './projectPagesAction';
-import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
+import { PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
+import { createProjectSourceActionDeps, type ListedProjectSourceRequirements } from '@/sync/api/projects/projectSourceActions';
 import { createUiProjectSourceRecipientDelivery } from '@/sync/api/deployments/deploymentContentRecipients';
 import { createUiProjectSessionDefaultsActionDeps, createUiManagedSessionDefaultsContextLoader } from '@/sync/api/projects/projectSessionDefaultsActions';
 import { createUiPrepareSessionSpawnNewInput } from './prepareSessionSpawnNewInput';
@@ -807,6 +808,8 @@ type VoiceActionExecutorBinding = Readonly<{
   resolveServerNameForSessionId?: (sessionId: string) => string | null;
   openSession?: (sessionId: string, options?: OpenSessionOptions) => void | Promise<void>;
   runtimeActions?: CreateDefaultRuntimeActionExecutorInput;
+  /** Source rows from one mounted catalog read, used only by the setup requirements Action. */
+  listedProjectSourceRequirements?: ListedProjectSourceRequirements;
   /** Native/process task transport for local client Actions; admission stays with this executor. */
   homeRuntimeRunner?: SystemTaskRunner;
   /** Mounted presentation only; the existing blocking executor retains input and decision custody. */
@@ -3813,8 +3816,11 @@ type VoiceActionExecutorBinding = Readonly<{
         throw error;
       }
     },
-    ...(accountContext ? createProjectSourceActionDeps(accountContext, deploymentActionDeps?.deploymentAction
-      ? { prepareDeploymentRecipients: createUiProjectSourceRecipientDelivery(accountContext, deploymentActionDeps.deploymentAction) } : {}) : {}),
+    ...(accountContext ? createProjectSourceActionDeps(accountContext, {
+      listedRequirements: opts?.listedProjectSourceRequirements,
+      ...(deploymentActionDeps?.deploymentAction
+        ? { prepareDeploymentRecipients: createUiProjectSourceRecipientDelivery(accountContext, deploymentActionDeps.deploymentAction) } : {}),
+    }) : {}),
     ...(accountContext && homeDomainAction
       ? createUiProjectSessionDefaultsActionDeps(accountContext, homeDomainAction) : {}),
     ...(projectSourceTeamMove ? { projectSourcesMoveToTeam: projectSourceTeamMove.projectSourcesMoveToTeam } : {}),
@@ -5966,6 +5972,8 @@ export async function withDefaultActionExecuteContext<TResult>(
       throwIfAborted(context.signal);
       const listContributedActionDefinitions = context.contributedActionInvocation?.listContributedActionDefinitions ?? opts?.listContributedActionDefinitions;
       const result = await work(buildDefaultActionExecutor({ ...opts, archiveInvocation,
+        listedProjectSourceRequirements: executedActionId === PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1
+          ? opts?.listedProjectSourceRequirements : undefined,
         ...(context.voiceSpeechSource ? { voiceSpeechSource: context.voiceSpeechSource } : {}),
         ...(listContributedActionDefinitions ? { listContributedActionDefinitions } : {}),
         ...(context.openRoute ? { openRoute: context.openRoute } : {}) }, { ...account, settings }, followReadInputs), account, settings);

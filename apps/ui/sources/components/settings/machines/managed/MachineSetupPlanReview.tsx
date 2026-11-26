@@ -61,7 +61,7 @@ export function MachineSetupPlanReviewHeld(props: Readonly<{ testID: string }>) 
  * downtime, and where it runs. Setup apply and the Store's Software review both present it; their own chrome owns
  * the primary action. A fact a Machine didn't report stays "Not known", never quietly safe.
  */
-export function MachineSetupPlanReview(
+export const MachineSetupPlanReview = React.memo(function MachineSetupPlanReview(
   props: Readonly<{
     prepared: MachineSetupPreparedReview | Extract<MachineSetupPreparedRemove, { ok: true }>;
     nameOf: (machineId: string) => string;
@@ -424,7 +424,7 @@ export function MachineSetupPlanReview(
       {changesTailnet ? <TailnetConnectionWarning intent="join" testID={`${props.testID}.tailnet-warning`} /> : null}
     </>
   );
-}
+});
 
 /**
  * Every chosen Machine was offline, so nothing was planned: the typed failure says which ones, by Machine and

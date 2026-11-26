@@ -2,7 +2,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
+import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   applyProjectAccountRowsFixture,
@@ -17,6 +20,8 @@ import {
   installHomeGovernanceBoundaries,
   waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { t } from '@/text';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { teamProjectSourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
@@ -68,7 +73,7 @@ afterEach(async () => {
  * A cold Team Setup for one GitHub Source on the person's remembered Machine, whose daemon reports the GitHub CLI
  * signed in (one Machine id per test: the sign-in owner keeps reports per Machine for the app's lifetime) with a connected account available. `statusAnswered` holds that report back to order it after the plan.
  */
-async function openColdSetup(machineId: string, statusAnswered: Promise<void> = Promise.resolve(), options: Readonly<{ offline?: boolean }> = {}) {
+async function openColdSetup(machineId: string, statusAnswered: Promise<void> = Promise.resolve(), options: Readonly<{ offline?: boolean; countColdOpen?: boolean; requirementsDisabled?: boolean }> = {}) {
   let statusRequested: () => void = () => {};
   const requested = new Promise<void>((resolve) => { statusRequested = resolve; });
   const serverId = await homes.addHome({
@@ -78,6 +83,7 @@ async function openColdSetup(machineId: string, statusAnswered: Promise<void> = 
     accountId: 'member',
     currentAccount: true,
     teamsEnabled: true,
+    credentialResourcesEnabled: options.countColdOpen,
   });
   const scope = {
     serverId: resolveServerProfileScopeIdForIdentifier(serverId),
@@ -98,17 +104,39 @@ async function openColdSetup(machineId: string, statusAnswered: Promise<void> = 
   homes.answer(serverId, summary.path, {
     body: { teamId: team.id, kinds: [] },
   });
+  if (options.countColdOpen) homes.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, {
+    body: { resources: [], nextCursor: null, failures: [] },
+  });
+  const sourceIds = options.countColdOpen ? ['acme-web', 'acme-app', 'acme-docs'] : ['acme-web'];
+  const setupArtifactId = 'acme-docs-setup';
+  const sources = sourceIds.map(id => {
+    const source = teamProjectSourceFixture({ id, name: id, nameWithOwner: 'acme/' + id, teamId: team.id });
+    return id === 'acme-docs' ? {
+      ...source,
+      attachments: [{
+        purpose: 'setup' as const,
+        ref: { kind: 'doc' as const, artifactId: setupArtifactId },
+        contentRevision: { headerVersion: 1, bodyVersion: 1 },
+      }],
+    } : source;
+  });
+  if (options.countColdOpen) {
+    const header = { kind: 'project_setup.v1', title: 'Setup' };
+    homes.answer(serverId, `GET /v1/artifacts/${setupArtifactId}`, { body: createPlainArtifactHttpFixture({
+      id: setupArtifactId, isDecrypted: true, title: 'Setup', header, rawHeader: header,
+      body: JSON.stringify({ kind: 'project_setup.v1', manifest: { version: 1,
+        environmentVariables: [{ name: 'DOCS_TOKEN', kind: 'secret', required: true }],
+      } }),
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+    }, 'member') });
+  }
+  for (const source of sources) {
+    homes.answer(serverId, '/v1/projects/sources/' + source.id, { body: { ok: true, source, canManage: false } });
+  }
   homes.answer(serverId, '/v1/projects/sources', {
     body: {
       ok: true,
-      sources: [
-        teamProjectSourceFixture({
-          id: 'acme-web',
-          name: 'Web',
-          nameWithOwner: 'acme/web',
-          teamId: team.id,
-        }),
-      ],
+      sources,
       coverage: { complete: true, nextCursor: null },
     },
   });
@@ -128,8 +156,18 @@ async function openColdSetup(machineId: string, statusAnswered: Promise<void> = 
   applyProjectAccountRowsFixture(storage);
   // The Machine this person last chose for Team Setup, as their device remembers it.
   await storage.getState().activateSettingsScope(scope);
-  storage.getState().applySettingsForScope(scope, { ...storage.getState().settings, machineAdministrationTargetsLocalV1: {
-    [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines]: { serverIdentityId: 'srv_setup_sign_ins', machineId } } }, 1);
+  const settings = { ...storage.getState().settings, machineAdministrationTargetsLocalV1: {
+    [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines]: { serverIdentityId: 'srv_setup_sign_ins', machineId },
+  } };
+  if (options.requirementsDisabled) {
+    settings.actionsSettingsV1 = { v: 1, actions: {
+      [PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1]: { enabled: false },
+    } };
+    homes.answer(serverId, '/v2/account/settings', {
+      body: { content: { t: 'plain', v: settings }, version: 1 },
+    });
+  }
+  storage.getState().applySettingsForScope(scope, settings, 1);
   const { PLUGIN_MANIFEST: github } =
     await import('../../../../../../packages/plugins/scm-github/src/manifest');
   const definition = github.contributes!.systemTools!.find(
@@ -192,16 +230,21 @@ async function openColdSetup(machineId: string, statusAnswered: Promise<void> = 
     }
     throw new Error(`Unexpected fixture RPC ${method}`);
   });
+  const counts = createCommittedFiberRenderCounter();
+  let root: ReturnType<typeof readTestRendererRoot> | undefined;
   const screen = await renderScreen(
     <TeamSetupPlanProvider
       execute={createFrontDoorActionExecute()}
       context={{ surface: 'ui', serverId, expectedAccountId: 'member' }}
     >
-      <TeamSetupScreen serverId={serverId} teamId={team.id} />
+      <React.Profiler id="team-setup" onRender={() => { if (root) counts.onCommitRoot(root()); }}>
+        <TeamSetupScreen serverId={serverId} teamId={team.id} />
+      </React.Profiler>
     </TeamSetupPlanProvider>,
   );
+  root = readTestRendererRoot(screen.tree.root);
   const connected = `machine-setup-sign-in-connected:${toolId}`;
-  return { screen, serverId, scope, team, connected, requested };
+  return { screen, serverId, scope, team, connected, requested, counts, summaryPath: summary.path, setupArtifactId };
 }
 
 it('keeps the Sign-ins actions in place while the Team revalidates', async () => {
@@ -263,6 +306,47 @@ it('keeps the Sign-ins section in place and lands the plan when the chosen Machi
     expect(screen.findByTestId('machine-setup-sign-ins-offline')).not.toBeNull();
     expect(screen.findByTestId('machine-setup-sign-ins-loading')).toBeNull();
     expect(daemon.rpc.mock.calls.filter(([request]) => request.method === 'daemon.agents.signIn.status')).toHaveLength(0);
+  } finally {
+    await screen.unmount();
+  }
+});
+
+it('keeps a three-Source cold open to four Home reads and renders only the toggled repository', async () => {
+  const { screen, counts, summaryPath, setupArtifactId } = await openColdSetup('cost-devbox', Promise.resolve(), { countColdOpen: true });
+  try {
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-setup-run')).not.toBeNull());
+    const artifactPath = `/v1/artifacts/${setupArtifactId}`;
+    const paths = () => homes.requests.map(request => request.path.split('?')[0]);
+    await waitForHomeGovernance(() => expect(paths()).toContain(artifactPath));
+    expect.soft(paths().filter(path =>
+      path === '/v1/teams/get' || path.startsWith('/v1/projects/sources') || path === summaryPath
+      || path === TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1 || path === artifactPath).sort()).toEqual([
+      '/v1/teams/get', '/v1/projects/sources', TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, artifactPath,
+    ].sort());
+
+    counts.start();
+    const toggle = screen.findByTestId('team-setup-repository-include:acme-web');
+    expect(toggle?.props.value).toBe(true);
+    await act(async () => toggle?.props.onValueChange(false));
+    expect(screen.findByTestId('team-setup-repository-include:acme-web')?.props.value).toBe(false);
+    const rows = [...counts.read().renders].filter(([name]) => name.startsWith('TeamSetupRepositoryRow'));
+    expect(rows.reduce((sum, [, count]) => sum + count, 0), JSON.stringify([...counts.read().renders])).toBe(1);
+  } finally {
+    await screen.unmount();
+  }
+});
+
+it('keeps Action policy on requirement names projected from the Source list', async () => {
+  const { screen, setupArtifactId } = await openColdSetup('disabled-requirements', undefined,
+    { countColdOpen: true, requirementsDisabled: true });
+  try {
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('team-setup-run')).not.toBeNull());
+    await waitForHomeGovernance(() =>
+      expect(screen.getTextContent()).toContain(t('teams.join.setupPage.requirementsUnavailable')));
+    const artifactPath = `/v1/artifacts/${setupArtifactId}`;
+    expect(homes.requests.some(request => request.path.split('?')[0] === artifactPath)).toBe(false);
+    expect(screen.getTextContent()).not.toContain('DOCS_TOKEN');
   } finally {
     await screen.unmount();
   }

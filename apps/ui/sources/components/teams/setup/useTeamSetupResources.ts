@@ -15,11 +15,8 @@ export type TeamSetupResourceContext = Readonly<Pick<TeamSectionContext, 'scope'
     preview?: boolean;
 }>;
 
-/** Counts and names shared by Joined and the full setup page. */
-export function useTeamSetupResourceSummary(context: TeamSetupResourceContext) {
-    const sharedResources = useTeamSharedResourcesSummary({
-        scope: context.scope, address: context.address, enabled: !context.preview,
-    });
+/** Preset and Source detail shared by Joined and Setup. */
+function useTeamSetupResourceDetails(context: TeamSetupResourceContext) {
     const defaults = context.team.policy.managedDefaults;
     const managedDefaults = readManagedSessionDefaults({
         serverId: context.scope.serverId, teamId: context.address.teamId,
@@ -34,7 +31,6 @@ export function useTeamSetupResourceSummary(context: TeamSetupResourceContext) {
         repositoryFacts: false,
     });
     return {
-        sharedResources,
         defaults,
         managedDefaultsStatus: context.team.policy.managedDefaultsStatus,
         preset: !context.preview && placement?.kind === 'preset' ? preset : null,
@@ -42,9 +38,17 @@ export function useTeamSetupResourceSummary(context: TeamSetupResourceContext) {
     };
 }
 
+/** Joined includes the Home summary alongside the admitted preset and Sources. */
+export function useTeamSetupResourceSummary(context: TeamSetupResourceContext) {
+    const sharedResources = useTeamSharedResourcesSummary({
+        scope: context.scope, address: context.address, enabled: !context.preview,
+    });
+    return { ...useTeamSetupResourceDetails(context), sharedResources };
+}
+
 /** Setup also needs the credential choices for binding keys. */
 export function useTeamSetupResources(context: TeamSetupResourceContext) {
-    const summary = useTeamSetupResourceSummary(context);
+    const summary = useTeamSetupResourceDetails(context);
     const rows = summary.sources.state.rows;
     // Repository-free Sources still carry shared setup/defaults. Keep them visible;
     // only repository selectors can enter the native clone plan.

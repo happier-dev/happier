@@ -359,7 +359,7 @@ it('lists the keys the Team shares, each opening its own page', async () => {
     `/settings/teams/${encodeURIComponent(serverId)}/team-1/credentials/key-1`);
 });
 
-it('names the keys each listed repository\'s published setup needs, reading each Source once and no value', async () => {
+it('names the keys each listed repository\'s published setup needs, reusing the Source list and no value', async () => {
   const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
   const setup = (artifactId: string) => ({
     purpose: 'setup' as const, ref: { kind: 'doc' as const, artifactId }, contentRevision: { headerVersion: 1, bodyVersion: 1 },
@@ -396,41 +396,50 @@ it('names the keys each listed repository\'s published setup needs, reading each
   expect(rowText(stripe)).toContain('Storefront, Infra');
   expect(rowText('team-new-members-key-requirement:SENTRY_DSN')).not.toContain('Infra');
   expect(screen.findByTestId('team-new-members-keys-empty')).toBeNull();
-  expect([...sourceReads].sort()).toEqual(['source-docs', 'source-infra', 'source-web']);
+  expect(sourceReads).toEqual([]);
 });
 
-it('refreshes a changed Source without retrying an unchanged failed Source until asked', async () => {
+it('refreshes a changed Source publication without retrying an unchanged failed publication until asked', async () => {
   const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
   const { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
-  let currentInfra = infra;
+  const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+  const withSetup = (source: typeof web, artifactId: string) => ProjectSourceListItemV1Schema.parse({ ...source,
+    attachments: [{ purpose: 'setup', ref: { kind: 'doc', artifactId }, contentRevision: { headerVersion: 1, bodyVersion: 1 } }],
+  });
+  const publishedWeb = withSetup(web, 'setup-web');
+  const publishedInfra = withSetup(infra, 'setup-infra');
   let webAvailable = false;
-  const sourceReads: string[] = [];
-  const { screen, serverId } = await renderNewMembers([web, infra], true, undefined, (id) => {
-    account.home.answer(id, 'GET /v1/projects/sources/source-web', { select: () => {
-      sourceReads.push(web.id);
-      return webAvailable ? { body: { ok: true, source: web, canManage: true } } : { status: 503, body: {} };
-    } });
-    account.home.answer(id, 'GET /v1/projects/sources/source-infra', { select: () => {
-      sourceReads.push(infra.id);
-      return { body: { ok: true, source: currentInfra, canManage: true } };
-    } });
+  const artifactReads: string[] = [];
+  const { screen, serverId } = await renderNewMembers([publishedWeb, publishedInfra], true, undefined, (id) => {
+    for (const artifactId of ['setup-web', 'setup-infra']) {
+      account.home.answer(id, `GET /v1/artifacts/${artifactId}`, { select: () => {
+        artifactReads.push(artifactId);
+        if (artifactId === 'setup-web' && !webAvailable) return { status: 404, body: {} };
+        const header = { kind: 'project_setup.v1', title: 'Setup' };
+        return { body: createPlainArtifactHttpFixture({
+          id: artifactId, isDecrypted: true, title: 'Setup', header, rawHeader: header,
+          body: JSON.stringify({ kind: 'project_setup.v1', manifest: { version: 1 } }),
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+        }, 'admin') };
+      } });
+    }
   });
   const retry = 'team-new-members-keys-requirements-failed-retry';
   await waitForHomeGovernance(() => expect(screen.findByTestId(retry)).not.toBeNull());
-  expect([...sourceReads].sort()).toEqual([infra.id, web.id]);
+  expect([...artifactReads].sort()).toEqual(['setup-infra', 'setup-web']);
 
-  currentInfra = { ...infra, revision: infra.revision + 1, name: 'Infrastructure' };
   webAvailable = true;
   account.home.answer(serverId, '/v1/projects/sources', {
-    body: { ok: true, sources: [web, currentInfra], coverage: { complete: true, nextCursor: null } },
+    body: { ok: true, sources: [publishedWeb, { ...publishedInfra, revision: infra.revision + 1, name: 'Infrastructure' }],
+      coverage: { complete: true, nextCursor: null } },
   });
   await act(async () => publishHomeAccountChange(serverId, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]));
-  await waitForHomeGovernance(() => expect(sourceReads.filter(id => id === infra.id)).toHaveLength(2));
-  expect(sourceReads.filter(id => id === web.id)).toHaveLength(1);
+  await waitForHomeGovernance(() => expect(artifactReads.filter(id => id === 'setup-infra')).toHaveLength(2));
+  expect(artifactReads.filter(id => id === 'setup-web')).toHaveLength(1);
   expect(screen.findByTestId(retry)).not.toBeNull();
 
   await screen.pressByTestIdAsync(retry);
   await waitForHomeGovernance(() => expect(screen.findByTestId(retry)).toBeNull());
-  expect(sourceReads.filter(id => id === web.id)).toHaveLength(2);
-  expect(sourceReads.filter(id => id === infra.id)).toHaveLength(2);
+  expect(artifactReads.filter(id => id === 'setup-web')).toHaveLength(2);
+  expect(artifactReads.filter(id => id === 'setup-infra')).toHaveLength(2);
 });

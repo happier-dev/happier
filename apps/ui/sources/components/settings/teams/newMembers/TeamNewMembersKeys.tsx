@@ -19,12 +19,12 @@ import type { TeamSectionContext } from '../teamSectionContext';
 import { teamCredentialsPath, teamNewMembersPath } from '../teamsRoutes';
 import { useSourceSetupRequirementNames } from './useSourceSetupRequirementNames';
 
-type KeySource = Pick<ProjectSourceListItemV1, 'id' | 'revision' | 'name'>;
+type KeySource = ProjectSourceListItemV1;
 const NO_SOURCES: readonly KeySource[] = Object.freeze([]);
 
 /**
  * L5 Keys: the key names the listed repositories' published setup needs, then the keys this Team shares. Names come
- * from the Source owner's setup-requirements read, one per Source shown; shared keys come from the Team credentials
+ * from the Source owner's setup-requirements projection; shared keys come from the Team credentials
  * owner and open their own page. Names only: no value passes through this page.
  */
 export function TeamNewMembersKeys(props: Readonly<{ context: TeamSectionContext; sources?: readonly KeySource[] }>) {

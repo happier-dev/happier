@@ -3,7 +3,7 @@ import { SourceSetupRequirementsV1Schema } from '@happier-dev/protocol/projects/
 import { PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import type { ProjectSourceListItemV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
-import { useProjectSourceActionExecute } from '@/components/projects/sources/useProjectSources';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export type SourceSetupRequirementRead =
@@ -18,16 +18,14 @@ const LOADING: SourceSetupRequirementRead = Object.freeze({
 const FAILED: SourceSetupRequirementRead = Object.freeze({ status: 'failed' });
 
 /**
- * The env requirement names each listed Source's published setup declares, read through the Source owner's
- * `projects.sources.setupRequirements` Action: one read per Source shown, again only when that Source's revision
- * changes or when the person retries a failed read. Names only; no manifest is parsed here.
+ * Read requirement names from the Source rows already admitted by projects.sources.list.
+ * Published setup bodies still open through their source-scoped Artifact reader.
  */
 export function useSourceSetupRequirementNames(
   scope: ServerAccountScope,
-  sources: readonly Pick<ProjectSourceListItemV1, 'id' | 'revision'>[],
+  sources: readonly ProjectSourceListItemV1[],
   enabled: boolean,
 ) {
-  const execute = useProjectSourceActionExecute();
   const [entries, setEntries] = React.useState<ReadonlyMap<string, Entry>>(
     () => new Map(),
   );
@@ -64,49 +62,31 @@ export function useSourceSetupRequirementNames(
       known.current.set(source.id, { revision: source.revision, read });
       setEntries(new Map(known.current));
     };
+    const execute = createFrontDoorActionExecute(undefined, {
+      listedProjectSourceRequirements: {
+        scope: { serverId, accountId },
+        rows: new Map(due.map(source => [source.id, source])),
+      },
+    });
     for (const source of due) {
-      known.current.set(source.id, {
-        revision: source.revision,
-        read: LOADING,
-      });
-      void execute(
-        PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1,
-        { serverId, sourceId: source.id },
-        {
-          surface: 'ui',
-          serverId,
-          expectedAccountId: accountId,
-          signal: request.signal,
-        },
-      ).then(
-        (outcome) => {
-          const parsed = outcome.ok
-            ? SourceSetupRequirementsV1Schema.safeParse(outcome.result)
-            : null;
-          settle(
-            source,
-            !parsed?.success
-              ? FAILED
-              : {
-                  status: 'ready',
-                  names:
-                    parsed.data.kind === 'published' ? parsed.data.names : [],
-                },
-          );
-        },
-        () => settle(source, FAILED),
-      );
+      known.current.set(source.id, { revision: source.revision, read: LOADING });
+      void execute(PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, { serverId, sourceId: source.id }, {
+        surface: 'ui', serverId, expectedAccountId: accountId, signal: request.signal,
+      }).then(outcome => {
+        const parsed = outcome.ok ? SourceSetupRequirementsV1Schema.safeParse(outcome.result) : null;
+        settle(source, parsed?.success ? {
+          status: 'ready', names: parsed.data.kind === 'published' ? parsed.data.names : [],
+        } : FAILED);
+      }, () => settle(source, FAILED));
     }
     setEntries(new Map(known.current));
-  }, [enabled, execute, serverId, accountId, sources, attempt]);
+  }, [enabled, serverId, accountId, sources, attempt]);
 
   const retry = React.useCallback(() => {
-    for (const source of sources) {
-      if (known.current.get(source.id)?.read.status === 'failed') {
-        known.current.delete(source.id);
-      }
+    for (const [sourceId, entry] of known.current) {
+      if (entry.read.status === 'failed') known.current.delete(sourceId);
     }
     setAttempt((value) => value + 1);
-  }, [sources]);
+  }, []);
   return { entries, retry };
 }
