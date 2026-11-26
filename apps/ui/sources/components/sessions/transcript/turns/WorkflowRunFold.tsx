@@ -320,6 +320,7 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
               selectedNodeId={null}
               onSelectNode={props.onOpen ?? undefined}
               density="compact"
+              runStateInHeader
               testIDPrefix={`${testID}-map`}
             />
           )}

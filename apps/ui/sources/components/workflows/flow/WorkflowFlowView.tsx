@@ -76,6 +76,11 @@ export function WorkflowFlowView(props: Readonly<{
     /** `compact`: the live mini-map under a Work row — structure and state only. */
     density?: HappierWorkMapDensity;
     /**
+     * The card around a compact map already says the Run's state in its header (a Review round card): each
+     * step keeps its state mark and spoken name but not the visible word, so the state is said once.
+     */
+    runStateInHeader?: boolean;
+    /**
      * A workflow's shape with nothing to run (an example tile, lab `nav-N3`): the map's own type and
      * lane captions, without ordinals, result lines or run facts. Its size is the caller's `density`.
      */
@@ -125,6 +130,7 @@ export function WorkflowFlowView(props: Readonly<{
             onSelectOccurrence: occurrences.length > 1 ? props.onSelectOccurrence : undefined,
             agentMarkForNode: props.agentMarkForNode,
             compact,
+            stateWordShown: !(compact && props.runStateInHeader === true),
             preview: props.preview === true,
             notStartedLabel: props.notStartedLabel,
             notTaken: notTaken.has(node.nodeId),

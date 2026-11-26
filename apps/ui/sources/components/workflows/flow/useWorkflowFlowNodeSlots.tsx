@@ -182,6 +182,8 @@ type FlowNodeInputs = Readonly<{
     selectsOccurrence: boolean;
     agentMarkForNode: ((node: WorkflowFlowNode) => React.ReactNode | null) | undefined;
     compact: boolean;
+    /** False when the enclosing card's header already states the Run's state: a step shows its mark alone. */
+    stateWordShown: boolean;
     preview: boolean;
     notStartedLabel: string | undefined;
     /** The Run did not take the If alternative this node is, or sits in (`listWorkflowFlowNotTakenNodeIds`). */
@@ -311,7 +313,7 @@ function createNodeSlots(props: FlowNodeInputs) {
                                 blockKind={node.kind}
                                 context={props.invocationStatusContext}
                                 chrome="plain"
-                                markerOnly={runState.statusPresentation?.variant !== 'warning' && (runState.lifecycle === 'completed' || runState.lifecycle === 'failed'
+                                markerOnly={!props.stateWordShown || runState.statusPresentation?.variant !== 'warning' && (runState.lifecycle === 'completed' || runState.lifecycle === 'failed'
                                     || workflowLifecycleAwaitsDecision(runState.lifecycle))}
                             />}
                         </View>

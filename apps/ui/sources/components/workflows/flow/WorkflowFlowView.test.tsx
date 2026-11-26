@@ -254,6 +254,24 @@ describe('WorkflowFlowView map grammar (07 S14)', () => {
         expect(screen.findByTestId('flow-node-passed#otherwise-not-taken')).toBeNull();
     });
 
+    it('drops a compact step\'s state word only when the card above it already states the Run\'s state (R14 MUST 2)', async () => {
+        const projection = projectWorkflowFlow(definition);
+        const runStates = new Map([['passed', [{ nodeId: 'passed', invocationId: 'if-1', lifecycle: 'needs_attention' as const }]]]);
+        const word = 'workflows.runState.interrupted';
+        // Every other compact map (a Work row's mini-map) keeps the word beside the mark.
+        const plain = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
+            density="compact" runStates={runStates} />);
+        expect(plain.getTextContent()).toContain(word);
+        await plain.unmount();
+        const stated = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
+            density="compact" runStates={runStates} runStateInHeader />);
+        // The step keeps its mark and says the state as the mark's name, but not again as a visible word.
+        expect(stated.getTextContent()).not.toContain(word);
+        expect(stated.findByTestId('flow-node-passed-state-marker')).not.toBeNull();
+        expect(stated.findByTestId('flow-node-passed-state')?.props.accessibilityLabel).toBe(word);
+        await stated.unmount();
+    });
+
     it('takes nothing away before the If is decided', async () => {
         const projection = projectWorkflowFlow(definition);
         const screen = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
