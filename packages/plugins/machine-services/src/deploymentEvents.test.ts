@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
-import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/plugin-sdk/events';
+import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/plugin-sdk/events';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createDeploymentReceiptEventSourceAdapter, deploymentEventActions, deploymentEvents } from './deploymentEvents.js';
 
@@ -9,6 +9,19 @@ import { PLUGIN_MANIFEST as vercel } from '../../deploy-vercel/src/manifest.js';
 import { PLUGIN_MANIFEST as cloudflare } from '../../deploy-cloudflare/src/manifest.js';
 
 const pluginId = 'happier.machine.services';
+
+it('declares distinct review titles for the setup Actions folded into platform Create', () => {
+    const titles = Object.values(DEPLOYMENT_RECEIPT_EVENT_REFS_V1).map(ref => {
+        const event = deploymentEvents[ref.localId]!.declaration;
+        const action = deploymentEventActions[event.automation.source.setupActionRef.localId];
+        expect(action?.title).toEqual({
+            key: event.title.key.replace(/\.title$/u, '.setupTitle'), fallback: expect.any(String),
+        });
+        return action?.title.fallback;
+    });
+    expect(new Set(titles).size).toBe(titles.length);
+});
+
 const config = { v: 1, serverId: 'home', environmentId: 'environment-a', targetLinkId: 'target-a', observingSince: 1000,
     credentialPrincipal: { kind: 'account', accountId: 'owner',
         purpose: { consumer: { pluginId: 'happier.platform.test', localId: 'deploy' }, purpose: 'deploy.manage' },

@@ -43,19 +43,19 @@ async function readReceiptEnvironment(
 }
 const outcomes = {
     [changedEvent]: { completesActionIds: undefined, state: null, operation: null, schema: changedSchema, key: 'deploymentReceiptChanged',
-        title: 'Deployment or domain changed', description: 'The deployment or its serving domain changed.' },
+        setupTitle: 'Watch deployment and domain changes', title: 'Deployment or domain changed', description: 'The deployment or its serving domain changed.' },
     [DEPLOYMENT_FAILED_EVENT]: { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'failed', operation: null, schema: failedSchema, key: 'deploymentFailed',
-        title: 'Deployment failed', description: 'A deployment receipt settled as failed, with its recorded failure phase.' },
+        setupTitle: 'Watch for deployment failures', title: 'Deployment failed', description: 'A deployment receipt settled as failed, with its recorded failure phase.' },
     [ROLLBACK_COMPLETED_EVENT]: { completesActionIds: [DEPLOYMENT_ROLLBACK_ACTION_ID_V1], state: 'succeeded', operation: 'rollback', schema: rollbackSchema, key: 'rollbackCompleted',
-        title: 'Rollback completed', description: 'A rollback receipt settled successfully.' },
+        setupTitle: 'Watch for completed rollbacks', title: 'Rollback completed', description: 'A rollback receipt settled successfully.' },
     [DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded.localId]: { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'succeeded', operation: null, schema: outcomeSchema, key: 'deploymentSucceeded',
-        title: 'Deployment succeeded', description: 'A deployment receipt settled successfully.' },
+        setupTitle: 'Watch for successful deployments', title: 'Deployment succeeded', description: 'A deployment receipt settled successfully.' },
     'promotion-completed': { completesActionIds: [DEPLOYMENT_PROMOTE_ACTION_ID_V1], state: 'succeeded', operation: 'promote', schema: outcomeSchema, key: 'promotionCompleted',
-        title: 'Promotion completed', description: 'A promotion receipt settled successfully.' },
+        setupTitle: 'Watch for completed promotions', title: 'Promotion completed', description: 'A promotion receipt settled successfully.' },
     'deployment-cancelled': { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'cancelled', operation: null, schema: outcomeSchema, key: 'deploymentCancelled',
-        title: 'Deployment canceled', description: 'A deployment receipt settled as cancelled.' },
+        setupTitle: 'Watch for deployment cancellations', title: 'Deployment canceled', description: 'A deployment receipt settled as cancelled.' },
     'deployment-outcome-unknown': { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], state: 'outcome_unknown', operation: null, schema: outcomeSchema, key: 'deploymentOutcomeUnknown',
-        title: 'Deployment outcome unknown', description: 'A deployment receipt recorded an unknown outcome.' },
+        setupTitle: 'Watch for unconfirmed deployments', title: 'Deployment outcome unknown', description: 'A deployment receipt recorded an unknown outcome.' },
 } as const;
 type EventId = keyof typeof outcomes;
 const isEventId = (id: string): id is EventId => Object.hasOwn(outcomes, id);
@@ -64,7 +64,8 @@ const sourceId = (config: DeploymentReceiptEventSourceConfigV1, event: EventId) 
         ...(config.targetLinkId ? [config.targetLinkId] : []), ...(config.previewChildren ? ['previewChildren'] : [])])}`;
 
 const setupAction = (event: EventId) => ({
-    title: 'Choose deployment Environment', execution: { target: 'daemon' as const }, scopes: ['global', 'machine'] as const,
+    title: { key: `machineServices.events.${outcomes[event].key}.setupTitle`, fallback: outcomes[event].setupTitle },
+    execution: { target: 'daemon' as const }, scopes: ['global', 'machine'] as const,
     surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'] as const, dangerLevel: 'safe' as const, readOnly: true,
     inputSchema: setupSchema,
     resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, configSchema.jsonSchema),
