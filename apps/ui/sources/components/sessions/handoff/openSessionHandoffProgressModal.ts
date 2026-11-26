@@ -1,4 +1,5 @@
 import { Modal } from '@/modal';
+import type { BaseModalConfig } from '@/modal/types';
 import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperations/subscribeActionOperationByRequestId';
 import type { ActionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
@@ -13,6 +14,7 @@ export type SessionHandoffProgressPresentation = Readonly<{
 }>;
 
 export function openObservedSessionHandoffProgressModal(params: Readonly<{
+    commandBridge?: BaseModalConfig['commandBridge'];
     requestId: string;
     sessionId: string;
     serverId: string | null;
@@ -35,6 +37,7 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
         unsubscribe();
     };
     const modalId = Modal.show({
+        commandBridge: params.commandBridge,
         component: SessionHandoffProgressModal,
         props: {
             serverId: params.serverId,

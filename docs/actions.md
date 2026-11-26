@@ -11775,6 +11775,12 @@ In unreleased 0.3 source, each presented Workspace sync relationship row also
 publishes a Details command through that inventory. It opens the same details
 view as pressing the row and retires when the row leaves the presented surface.
 
+In unreleased 0.3 source, the Handoff picker publishes cancel, open Machine
+picker, configuration back and the enabled transfer-data draft control. Handoff
+progress publishes conflicts, Details and choose-another when those controls
+are shown. These commands use the same presentation handlers as the controls;
+starting, retrying or resuming a handoff remains with its semantic Actions.
+
 The mounted Sync conflict view also publishes Back, comparison choices, local source
 and target choices, and Ask Agent through that inventory. Ask Agent opens the
 same authored Session draft as the button. Resolution still uses its existing

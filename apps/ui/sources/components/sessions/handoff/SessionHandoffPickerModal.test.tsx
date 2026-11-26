@@ -22,6 +22,8 @@ import type { CustomModalChromeConfig } from '@/modal';
 import type { SessionHandoffPickerModalProps } from './SessionHandoffPickerModal';
 
 const pathBrowserModuleLoadedMock = vi.fn();
+// This renderer has no DOM; the real modal host uses the shared platform boundary.
+vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 vi.mock('@/components/ui/popover', async (importOriginal) => createInlinePopoverModuleMock(importOriginal));
 const handoffCapabilityRpc = vi.fn();
 let activeServerIdState = '';
@@ -67,7 +69,8 @@ function findElementByTestId(node: React.ReactNode, testID: string): React.React
 
 installSessionHandoffCommonModuleMocks({
     storage: async importOriginal => importOriginal(),
-    modal: async () => modalMock.module,
+    modal: () => ({ ...modalMock.module,
+        useVisibleModalKind: () => actualUseVisibleModalKind() }),
 });
 vi.doUnmock('@/components/ui/text/Text');
 const modalMock = createModalModuleMock({ confirmResult: true });
@@ -84,6 +87,8 @@ installSessionActionRpcBoundary((request) => {
     return handoffCapabilityRpc({ machineId: request.method.slice(0, separator), method, payload: request.params });
 });
 await loadSyncSingletonForTests();
+// Resolve outside the modal factory: the provider itself imports the modal module.
+const { useVisibleModalKind: actualUseVisibleModalKind } = await import('@/modal/ModalProvider');
 const { sync } = await import('@/sync/sync');
 const { storage } = await import('@/sync/domains/state/storage');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
@@ -1839,4 +1844,119 @@ describe('SessionHandoffPickerModal', () => {
         await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', allMachinesState[1]); });
         expect(screen.findByTestId('session-handoff-sandbox-preset-required')).toBeNull();
     });
+    it('publishes picker commands through its real modal opener', async () => {
+        await applyFixtureState();
+        const { Modal } = await import('@/modal/ModalManager');
+        modalMock.spies.show.mockImplementationOnce(Modal.show);
+        modalMock.spies.hide.mockImplementationOnce(Modal.hide);
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { useCurrentUiContextCommandBridge } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        const { openSessionHandoffPicker } = await import('./openSessionHandoffPicker');
+        let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+        let open: (() => ReturnType<typeof openSessionHandoffPicker>) | undefined;
+        function Opener() {
+            reader = useOptionalCurrentUiContextReader();
+            const commandBridge = useCurrentUiContextCommandBridge();
+            open = () => openSessionHandoffPicker({ sessionId: 'sess_1', serverId: homeA.id, commandBridge });
+            return null;
+        }
+        await renderMountedCurrentUiContext(<Opener />, { withModalProvider: true });
+        let pending: ReturnType<typeof openSessionHandoffPicker> | undefined;
+        await act(async () => { pending = open!(); });
+        const current = reader!;
+        expect(current.readCurrentUiContext()!.commands.map(command => command.title).sort()).toEqual([
+            'common.cancel', 'common.close', 'newSession.selectMachineTitle',
+        ]);
+        const address = current.readCurrentUiContext()!.commands.find(command => command.title === 'common.cancel')!.id;
+        const resolved = current.resolveCurrentUiCommand(address)!;
+        if (resolved.command.kind !== 'hostLocal') throw new Error('Expected local command');
+        await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+        expect(await pending).toBeNull();
+        expect(current.resolveCurrentUiCommand(address)).toBeNull();
+    });
+
+    it('publishes the complete picker inventory without starting a handoff', async () => {
+        await applyFixtureState();
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+        function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+        const onResolve = vi.fn();
+        const { createCommittedFiberRenderCounter, readTestRendererRoot } = await import('@/dev/testkit/performance/committedFiberCounts');
+        const { PlanOptionRow } = await import('@/components/ui/selectionList/SelectionListOptionRow');
+        const counter = createCommittedFiberRenderCounter();
+        let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
+        const picker = <SessionHandoffPickerModal sessionId="sess_1" serverId={homeA.id}
+            onClose={vi.fn()} setChrome={vi.fn()} onResolve={onResolve} />;
+        const tree = (unrelated: string) => <React.Profiler id="handoff-picker" onRender={() => { if (readRoot) counter.onCommitRoot(readRoot()); }}>
+            <Observe /><span>{unrelated}</span>{picker}</React.Profiler>;
+        const baseline = await renderScreenBase(tree('before'));
+        await baseline.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
+        await vi.waitFor(() => expect(baseline.findAllByType(PlanOptionRow).length).toBeGreaterThan(0));
+        readRoot = readTestRendererRoot(baseline.tree.root);
+        counter.start();
+        await baseline.update(tree('unrelated'));
+        counter.stop();
+        const baselineRowRenders = counter.read().rendersFor(PlanOptionRow);
+        console.info('Handoff Machine rows without publication:', baselineRowRenders);
+        await baseline.unmount();
+        readRoot = undefined;
+        const screen = await renderMountedCurrentUiContext(tree('before'));
+        await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
+        await vi.waitFor(() => expect(screen.findAllByType(PlanOptionRow).length).toBeGreaterThan(0));
+        readRoot = readTestRendererRoot(screen.tree.root);
+        counter.start();
+        await screen.update(tree('unrelated'));
+        counter.stop();
+        const publishedRowRenders = counter.read().rendersFor(PlanOptionRow);
+        console.info('Handoff Machine rows with publication:', publishedRowRenders);
+        expect(publishedRowRenders).toBeLessThanOrEqual(baselineRowRenders);
+        await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
+        const current = reader!;
+        expect(current.readCurrentUiContext()!.commands.map(command => command.title)).toEqual([
+            'common.cancel', 'newSession.selectMachineTitle',
+        ]);
+        const address = current.readCurrentUiContext()!.commands[0]!.id;
+        const command = current.resolveCurrentUiCommand(address)!;
+        if (command.command.kind !== 'hostLocal') throw new Error('Expected local command');
+        await act(async () => { await command.command.invoke({ signal: command.retirementSignal, context: { surface: 'agent' } }); });
+        expect(onResolve).toHaveBeenCalledWith(null);
+        await act(async () => { screen.findAllByType(MachineSelector)[0]!.props.onSelect(allMachinesState[0]); });
+        await vi.waitFor(() => expect(current.readCurrentUiContext()!.commands.map(command => command.title)).toEqual([
+            'common.cancel', 'newSession.selectMachineTitle', 'sessionHandoff.transferSessionData.title',
+        ]));
+        const transferAddress = current.readCurrentUiContext()!.commands[2]!.id;
+        const transfer = current.resolveCurrentUiCommand(transferAddress)!;
+        if (transfer.command.kind !== 'hostLocal') throw new Error('Expected local draft command');
+        await act(async () => { await transfer.command.invoke({ signal: transfer.retirementSignal, context: { surface: 'agent' } }); });
+        expect(screen.findByTestId('session-handoff-transfer-session-data')!.props.value).toBe(false);
+        await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
+        await vi.waitFor(() => expect(screen.findByTestId('new-session-machine-list')).not.toBeNull());
+        const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');
+        const machineList = screen.tree.findByType(NewSessionMachineSelectionContent);
+        await act(async () => {
+            invokeTestInstanceHandler(machineList, 'presentManagedMachineConfiguration', {
+                serverId: homeA.id, preset: null, accountId: 'account-a', startsSession: false,
+                onUse: machineList.props.onSelectManagedMachine,
+            });
+        });
+        expect(current.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['common.back']);
+        const backAddress = current.readCurrentUiContext()!.commands[0]!.id;
+        const back = current.resolveCurrentUiCommand(backAddress)!;
+        if (back.command.kind !== 'hostLocal') throw new Error('Expected local navigation command');
+        await act(async () => { await back.command.invoke({ signal: back.retirementSignal, context: { surface: 'agent' } }); });
+        expect(screen.tree.findAllByType(MachineSelector)).toHaveLength(1);
+        expect(current.resolveCurrentUiCommand(backAddress)).toBeNull();
+        await screen.update(<><Observe /><SessionHandoffPickerModal sessionId="sess_1" serverId={homeA.id}
+            onClose={vi.fn()} setChrome={vi.fn()} onResolve={onResolve} awaitingAdmission /></>);
+        expect(current.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['common.close']);
+        expect(current.resolveCurrentUiCommand(transferAddress)).toBeNull();
+        await screen.update(<Observe />);
+        expect(current.readCurrentUiContext()!.commands).toEqual([]);
+        expect(current.resolveCurrentUiCommand(address)).toBeNull();
+    });
+
+
 });

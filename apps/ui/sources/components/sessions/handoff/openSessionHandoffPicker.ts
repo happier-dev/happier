@@ -3,6 +3,7 @@ import type {
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { Modal } from '@/modal';
+import type { BaseModalConfig } from '@/modal/types';
 
 import { SessionHandoffPickerModalEntry } from './SessionHandoffPickerModalEntry';
 import type { SessionHandoffPickerModalProps } from './SessionHandoffPickerModal';
@@ -35,6 +36,7 @@ export type SessionHandoffPickerResult = (
 }>;
 
 export async function openSessionHandoffPicker(params: Readonly<{
+    commandBridge?: BaseModalConfig['commandBridge'];
     sessionId: string;
     sourceMachineId?: string | null;
     serverId: string | null;
@@ -70,6 +72,7 @@ export async function openSessionHandoffPicker(params: Readonly<{
         };
 
         modalId = Modal.show({
+            commandBridge: params.commandBridge,
             component: SessionHandoffPickerModalEntry,
             props: {
                 sessionId: params.sessionId,

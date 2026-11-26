@@ -1,4 +1,5 @@
 import { useMachineFavorites } from '@/sync/store/settingsWriters';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -593,6 +594,18 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
 
     useModalCardChrome(setChrome, chrome);
 
+    const toggleTransferSessionData = () => { if (!transferChoiceDisabled) setTransferSessionData(!transferSessionData); };
+    useCurrentUiContextLocalCommands(configurationRequest ? [
+        { key: 'back', title: t('common.back'), invoke: closeConfiguration },
+    ] : [
+        { key: 'cancel', title: t(awaitingAdmission || sourceUnavailable ? 'common.close' : 'common.cancel'), invoke: handleCancel },
+        ...(sourceUnavailable ? [{ key: 'continue', title: t('common.continue'), invoke: continueElsewhere }] : awaitingAdmission ? [] : [
+            { key: 'machine', title: t('newSession.selectMachineTitle'), invoke: () => { requestMachineMenuOpen(); } },
+            ...(!isSameMachine && !managedTarget && !transferChoiceDisabled ? [{ key: 'transfer-data',
+                title: t('sessionHandoff.transferSessionData.title'), invoke: toggleTransferSessionData }] : []),
+        ]),
+    ], { foregroundOverlay: true });
+
     if (configurationRequest) return (
         <View style={styles.body}>
             <React.Suspense fallback={null}>
@@ -709,7 +722,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                 accessibilityHint={transferChoiceDisabled ? t(transferHintKey) : t('sessionHandoff.transferSessionData.subtitle')}
                                 onValueChange={(value) => { if (!transferChoiceDisabled) setTransferSessionData(value); }} />}
                             disabled={transferChoiceDisabled}
-                            onPress={() => { if (!transferChoiceDisabled) setTransferSessionData(!transferSessionData); }}
+                            onPress={toggleTransferSessionData}
                             showChevron={false}
                         />
                         {inlineErrorCode === 'existing_session_state_unavailable' ? <Text testID="session-handoff-session-data-error" accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: theme.colors.text.destructive }}>{t('sessionHandoff.transferSessionData.sessionMissing')}</Text> : null}

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -732,6 +733,13 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
 
     useModalCardChrome(setChrome, chrome);
 
+    const openConflicts = () => onOpenConflicts?.(requestFailure?.workspacePreparation?.blockedRelationshipId ?? null);
+    useCurrentUiContextLocalCommands([
+        ...(requestFailure && onOpenConflicts ? [{ key: 'conflicts', title: t('workspaceSync.conflictsTitle'), invoke: openConflicts }] : []),
+        ...(hasTechnicalDetails ? [{ key: 'details', title: t('common.details'), invoke: () => setDetailsExpanded(!detailsExpanded) }] : []),
+        ...(creationFailed && onRetry ? [{ key: 'choose-another', title: t('sessionHandoff.failure.chooseAnotherMachine'), invoke: onClose }] : []),
+    ], { foregroundOverlay: true });
+
     return (
         <View style={styles.body}>
             <View style={styles.messageRow}>
@@ -752,7 +760,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                         testID="session-handoff-open-conflicts"
                         title={t('workspaceSync.conflictsTitle')}
                         accessibilityHint={t('sessionHandoff.failure.partialLinked')}
-                        onPress={() => onOpenConflicts(requestFailure.workspacePreparation?.blockedRelationshipId ?? null)}
+                        onPress={openConflicts}
                     />
                 </View>
             ) : null}

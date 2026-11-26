@@ -15,13 +15,14 @@ vi.doUnmock('@/components/ui/text/Text');
 const network = await installSessionOpsNetworkBoundary();
 await loadSyncSingletonForTests();
 let home: Awaited<ReturnType<typeof network.addHome>>;
+let commandConnection: Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness').restoreServerAccountForTest>> | undefined;
 const { renderScreen, standardCleanup } = await import('@/dev/testkit');
 beforeEach(async () => {
     home = await network.addHome('https://handoff-progress.example.test', 'account-1');
     network.resetRequests();
     network.respond(ACTION_OPERATION_RPC_METHODS_V1.cancel, { kind: 'requested' });
 });
-afterEach(() => standardCleanup());
+afterEach(async () => { await standardCleanup(); await commandConnection?.dispose(); commandConnection = undefined; });
 afterAll(() => network.dispose());
 
 function findProgressIndicators(screen: Awaited<ReturnType<typeof renderScreen>>) {
@@ -36,6 +37,44 @@ async function expandProgressDetails(screen: Awaited<ReturnType<typeof renderScr
 }
 
 describe('SessionHandoffProgressModal', () => {
+    it('publishes the complete recovery navigation inventory and retires addresses', async () => {
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        commandConnection = await restoreServerAccountForTest({ serverUrl: home.serverUrl, accountId: home.accountId, request: network.request });
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+        function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+        const close = vi.fn();
+        const conflicts = vi.fn();
+        const screen = await renderMountedCurrentUiContext(<><Observe /><SessionHandoffProgressModal
+            onClose={close} setChrome={vi.fn()} onOpenConflicts={conflicts}
+            requestFailure={{ ok: false, errorCode: 'workspace_sync_conflicts', error: 'Blocked' }} /></>);
+        const current = reader!;
+        const inventory = () => current.readCurrentUiContext()!.commands;
+        expect(inventory().map(command => command.title)).toEqual(['workspaceSync.conflictsTitle', 'common.details']);
+        const detailsAddress = inventory()[1]!.id;
+        const invoke = async (address: string) => {
+            const resolved = current.resolveCurrentUiCommand(address)!;
+            if (resolved.command.kind !== 'hostLocal') throw new Error('Expected local command');
+            await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+        };
+        await invoke(detailsAddress);
+        expect(screen.findByTestId('session-handoff-failure-technical-details')).toBeTruthy();
+        await screen.pressByTestIdAsync('session-handoff-progress-details-toggle');
+        expect(screen.findByTestId('session-handoff-progress-details-toggle')!.props.accessibilityState.expanded).toBe(false);
+        await invoke(inventory()[0]!.id);
+        expect(conflicts).toHaveBeenCalledWith(null);
+        await screen.update(<><Observe /><SessionHandoffProgressModal onClose={close} setChrome={vi.fn()} onRetry={vi.fn()}
+            requestFailure={{ ok: false, error: 'controller_unavailable', errorCode: 'controller_unavailable' }}
+            machineCreation={{ name: 'Draft', progress: { kind: 'failed', code: 'controller_unavailable' } }} /></>);
+        expect(inventory().map(command => command.title)).toEqual(['common.details', 'sessionHandoff.failure.chooseAnotherMachine']);
+        await invoke(inventory()[1]!.id);
+        expect(close).toHaveBeenCalledOnce();
+        await screen.update(<Observe />);
+        expect(inventory()).toEqual([]);
+        expect(current.resolveCurrentUiCommand(detailsAddress)).toBeNull();
+    });
     it('shows the destination Provider refusal alongside source recovery', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
         const screen = await renderScreen(<SessionHandoffProgressModal

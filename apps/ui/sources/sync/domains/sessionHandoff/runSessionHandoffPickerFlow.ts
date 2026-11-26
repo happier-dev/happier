@@ -42,6 +42,7 @@ type ExecuteAction = (
  * would ask a second time and would not be bound to what the daemon observed.
  */
 export async function runSessionHandoffPickerFlow(args: Readonly<{
+    commandBridge?: Parameters<typeof openSessionHandoffPicker>[0]['commandBridge'];
     execute: ExecuteAction;
     sessionId: string;
     sourceMachineId?: string | null;
@@ -87,6 +88,7 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
     } : undefined;
     let creationProgress: ManagedMachineCreationProgress | undefined;
     const openProgress = () => openObservedSessionHandoffProgressModal({
+        commandBridge: args.commandBridge,
         requestId,
         sessionId: args.sessionId,
         serverId: args.serverId,
@@ -264,6 +266,7 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
     }
     };
     const selection = await openSessionHandoffPicker({
+        commandBridge: args.commandBridge,
         sessionId: args.sessionId,
         sourceMachineId: args.sourceMachineId ?? null,
         serverId: args.serverId,

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -20,6 +21,7 @@ export function useSessionHandoffAction(input: Readonly<{
     execute: Parameters<typeof runSessionHandoffPickerFlow>[0]['execute'];
     placement: Parameters<typeof runSessionHandoffPickerFlow>[0]['placement'];
 }>) {
+    const commandBridge = useCurrentUiContextCommandBridge();
     const ownerMetadata = input.session ? readSessionOwnerMetadataView(input.session) : null;
     const sourceMachineId = React.useMemo(() => resolveSessionHandoffSourceMachineId({
         reachableMachineId: input.reachableMachineId, sessionMetadata: ownerMetadata,
@@ -37,8 +39,9 @@ export function useSessionHandoffAction(input: Readonly<{
             return null;
         }
         return runSessionHandoffPickerFlow({ execute: input.execute, sessionId: input.sessionId,
+            commandBridge,
             sourceMachineId, serverId: input.serverId, placement: input.placement,
         });
-    }, [input.execute, input.placement, input.serverId, input.sessionId, sourceMachineId, availability.available]);
+    }, [commandBridge, input.execute, input.placement, input.serverId, input.sessionId, sourceMachineId, availability.available]);
     return { availability, run, sourceMachineId };
 }
