@@ -1,6 +1,7 @@
 import type { ComputerRecordingControl } from './useSessionComputerRecording';
 import { BrowserRecordingCapsule } from '@/components/browser/recording/BrowserRecordingCapsule';
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { PixelRatio, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ComputerGrantStatusV1} from '@happier-dev/protocol/computer/v1';
@@ -510,15 +511,17 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
         </ComputerStateStage>
     ) : surfaceState === 'unavailable' || !stream.hasPlayer ? (
         <ComputerStateStage testID={`${testID}-unavailable`}>
-            <SurfaceStateCard
-                testID={`${testID}-unavailable-card`}
-                kind="unavailable"
-                iconName="eye-slash"
-                title={t('computerUse.presentation.unavailableTitle')}
-                reason={unavailableReason}
-                diagnosticCode={stream.diagnosticCode}
-                action={onRetryStream && stream.hasPlayer ? { label: t('common.retry'), onPress: onRetryStream } : undefined}
-            />
+            <ComputerStreamRetry onRetry={stream.hasPlayer ? onRetryStream : undefined}>{action => (
+                <SurfaceStateCard
+                    testID={`${testID}-unavailable-card`}
+                    kind="unavailable"
+                    iconName="eye-slash"
+                    title={t('computerUse.presentation.unavailableTitle')}
+                    reason={unavailableReason}
+                    diagnosticCode={stream.diagnosticCode}
+                    action={action}
+                />
+            )}</ComputerStreamRetry>
         </ComputerStateStage>
     ) : (
         <View style={stylesheet.fill} testID={`${testID}-${surfaceState}`}>
@@ -548,16 +551,16 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
                 />
             ) : null}
             {surfaceState === 'stalled' && !hasRecovery && !props.stopping ? (
-                <BrowserFrameStatusCapsule
-                    testID={`${testID}-stalled`}
-                    text={pausedAtMs
-                        ? t('computerUse.presentation.paused', { time: formatFrameTime(pausedAtMs) })
-                        : t('computerUse.presentation.stalled')}
-                    busy={stream.phase === 'reconnecting'}
-                    action={onRetryStream && stream.phase !== 'reconnecting'
-                        ? { label: t('common.retry'), onPress: onRetryStream }
-                        : undefined}
-                />
+                <ComputerStreamRetry onRetry={stream.phase !== 'reconnecting' ? onRetryStream : undefined}>{action => (
+                    <BrowserFrameStatusCapsule
+                        testID={`${testID}-stalled`}
+                        text={pausedAtMs
+                            ? t('computerUse.presentation.paused', { time: formatFrameTime(pausedAtMs) })
+                            : t('computerUse.presentation.stalled')}
+                        busy={stream.phase === 'reconnecting'}
+                        action={action}
+                    />
+                )}</ComputerStreamRetry>
             ) : null}
         </View>
     );
@@ -627,12 +630,9 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
                 ) : null}
             </View>}
             {pictureUp && hasRecovery ? (
-                <SurfaceFreshnessLine testID={`${testID}-recovery`} reason={recoveryReason} asOf={stopFailed ? undefined : pausedAtMs}
+                <ComputerRecoveryLine testID={`${testID}-recovery`} reason={recoveryReason} asOf={stopFailed ? undefined : pausedAtMs}
                     busy={stopFailed ? props.stopping : needsDriverRepair ? props.repairingDriver : props.checking} tone="warning" action={recoveryAction}
-                    actions={failureDetails ? [
-                        ...(recoveryAction ? [recoveryAction] : []),
-                        { label: t('common.details'), onPress: () => showActionFailureDetails(failureDetails) },
-                    ] : undefined} />
+                    failureDetails={failureDetails} />
             ) : pictureUp && props.stopping ? (
                 // Release waits for the Machine to drain and confirm; until it answers, say the press is under way.
                 <SurfaceFreshnessLine testID={`${testID}-stopping`} reason={t('computerUse.presentation.stopping')} busy />
@@ -673,4 +673,26 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
         </RemoteViewerHandBackScope>
         </GlassLivePictureBackdropContext.Provider>
     );
+}
+
+
+function ComputerRecoveryLine(props: React.ComponentProps<typeof SurfaceFreshnessLine> & Readonly<{
+    failureDetails: Parameters<typeof showActionFailureDetails>[0] | null;
+}>): React.ReactElement {
+    const { failureDetails, ...lineProps } = props;
+    const details = failureDetails ? { label: t('common.details'), onPress: () => showActionFailureDetails(failureDetails) } : undefined;
+    useCurrentUiContextLocalCommands(details ? [{ key: 'details', title: details.label, invoke: details.onPress }] : []);
+    return <SurfaceFreshnessLine {...lineProps} actions={details ? [
+        ...(lineProps.action ? [lineProps.action] : []), details,
+    ] : undefined} />;
+}
+
+
+function ComputerStreamRetry(props: Readonly<{
+    onRetry: (() => void) | undefined;
+    children: (action: React.ComponentProps<typeof SurfaceStateCard>['action']) => React.ReactNode;
+}>): React.ReactElement {
+    const action = props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined;
+    useCurrentUiContextLocalCommands(action ? [{ key: 'retry', title: action.label, invoke: action.onPress }] : []);
+    return <>{props.children(action)}</>;
 }

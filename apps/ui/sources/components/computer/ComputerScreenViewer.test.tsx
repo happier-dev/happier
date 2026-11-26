@@ -823,3 +823,106 @@ describe('ComputerScreenViewer', () => {
     expect(await reservedBy('none')).toBe(0);
   });
 });
+
+
+it('publishes only the visible stream retry and existing diagnostic disclosure, retiring stale addresses', async () => {
+  const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+  const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+  const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+  const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+  const { executeCurrentUiContextAction } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+  const home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://computer-retry.test', accountId: 'owner', currentAccount: true }],
+    route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+  const server = home.homes.a!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+  let retries = 0;
+  function Viewer({ held = false, diagnostic = false }) {
+    reader = useOptionalCurrentUiContextReader();
+    const [retrying, setRetrying] = React.useState(false);
+    return <ComputerScreenViewer {...props({ stream: {
+      machineName: 'mac-vm-1', onRetry: () => { retries++; setRetrying(true); },
+      playerState: { phase: retrying ? 'reconnecting' : 'error', selectedCodec: null, activeRenderer: null,
+        avccChunks: held ? [new Uint8Array([0])] : [], decodedFrames: held ? 1 : 0, droppedFrames: 0, bufferedBytes: 0,
+        ...(held ? { lastFrameUrl: 'blob:last-frame', lastFrameAtMs: 1 } : {}),
+        ...(diagnostic ? { diagnostic: { reasonCode: 'stream_encryption_material_unavailable' } } : {}) },
+    } })} />;
+  }
+  const screen = await renderMountedCurrentUiContext(<Viewer diagnostic />);
+  const commands = () => reader!.readCurrentUiContext()!.commands;
+  const invoke = (id: string) => executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: id }, context: { surface: 'agent' } });
+  try {
+    // Existing diagnostic disclosure is the control for this exact mounted fixture.
+    const control = commands().find(row => row.title.endsWith(': approvals.technicalDetails'));
+    expect(control).toBeDefined();
+    await act(async () => { expect(await invoke(control!.id)).toMatchObject({ ok: true }); });
+    expect(screen.findByTestId('v-unavailable-card-details-code')).toBeTruthy();
+    await screen.update(<Viewer key="retry" />);
+    expect(commands().map(row => row.title)).toEqual(['common.retry']);
+    const retry = commands()[0]!;
+    await act(async () => { expect(await invoke(retry.id)).toMatchObject({ ok: true }); });
+    expect(retries).toBe(1);
+    expect(screen.findByTestId('v-connecting')).toBeTruthy();
+    expect(commands()).toEqual([]);
+    await act(async () => { expect(await invoke(retry.id)).toMatchObject({ ok: false }); });
+    await screen.update(<Viewer key="held" held />);
+    expect(commands().map(row => row.title)).toEqual(['common.retry']);
+    await screen.pressByTestIdAsync('v-stalled-action');
+    expect(retries).toBe(2);
+    expect(commands()).toEqual([]);
+    await screen.update(<Viewer key="diagnostic" diagnostic />);
+    const titles = commands().map(row => row.title);
+    expect(titles.sort()).toEqual(['common.retry', 'computerUse.presentation.unavailableTitle: approvals.technicalDetails'].sort());
+    const details = commands().find(row => row.title.endsWith(': approvals.technicalDetails'))!;
+    await act(async () => { expect(await invoke(details.id)).toMatchObject({ ok: true }); });
+    expect(screen.getTextContent()).toContain('stream_encryption_material_unavailable');
+    await screen.pressByTestIdAsync('v-unavailable-card-details-toggle');
+    expect(screen.getTextContent()).not.toContain('stream_encryption_material_unavailable');
+    await screen.update(<Viewer key="gone" held />);
+    await act(async () => { expect(await invoke(details.id)).toMatchObject({ ok: false }); });
+  } finally { await screen.unmount(); await home.dispose(); }
+});
+
+
+it('opens the retained-picture failure Details through its visible mounted control', async () => {
+  const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+  const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+  const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+  const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+  const { executeCurrentUiContextAction } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+  const { installBrowserRuntimeForTests } = await import('@/dev/testkit/harness/browserRuntimeHarness');
+  const { installReactDomPortalBoundaryForTests } = await import('@/dev/testkit/mocks/reactDom');
+  const browser = await installBrowserRuntimeForTests({ url: 'https://computer-details.test/' });
+  const portal = installReactDomPortalBoundaryForTests();
+  const home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://computer-details-home.test', accountId: 'owner', currentAccount: true }],
+    route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+  const server = home.homes.a!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  const { Modal } = await import('@/modal');
+  let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+  function Reader() { reader = useOptionalCurrentUiContextReader(); return null; }
+  const failure = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Forbidden', requestId: 'details-reference',
+    effectAttempted: false, details: { reason: 'machine_offline' } } as const;
+  const viewer = <ComputerScreenViewer {...props({ failure: failure.errorCode, actionFailure: failure,
+    stream: { machineName: 'machine', playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
+      lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } },
+  })} />;
+  const screen = await renderMountedCurrentUiContext(<><Reader />{viewer}</>, { withModalProvider: true });
+  try {
+    const inventory = () => reader!.readCurrentUiContext()!.commands;
+    expect(inventory().map(row => row.title)).toEqual(['common.details']);
+    await screen.pressByTestIdAsync('v-recovery-action-1');
+    expect(screen.getTextContent()).toContain('details-reference');
+    await act(async () => { Modal.hideAll(); });
+    expect(screen.getTextContent()).not.toContain('details-reference');
+    const details = inventory()[0]!;
+    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: details.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+    expect(screen.getTextContent()).toContain('details-reference');
+    await act(async () => { Modal.hideAll(); });
+    await screen.update(<Reader />);
+    expect(inventory()).toEqual([]);
+    expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: details.id }, context: { surface: 'agent' } })).toMatchObject({ ok: false });
+  } finally { await act(async () => { Modal.hideAll(); }); await screen.unmount(); await home.dispose(); portal.restore(); browser.restore(); }
+});

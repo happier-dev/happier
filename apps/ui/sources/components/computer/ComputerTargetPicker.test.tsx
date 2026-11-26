@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { StyleSheet } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -16,7 +16,7 @@ const lumen = { target: { kind: 'window', displayId: ':0', pid: 10, windowId: 1 
 const screenTarget = { target: { kind: 'display', displayId: ':0' } } as const;
 const ready: ComputerTargetPickerState = { kind: 'ready', targets: [lumen, screenTarget], grants: { capture: 'granted', input: 'granted' } };
 
-function renderPicker(overrides: Partial<React.ComponentProps<typeof ComputerTargetPicker>> = {}) {
+function pickerProps(overrides: Partial<React.ComponentProps<typeof ComputerTargetPicker>> = {}) {
     const props: React.ComponentProps<typeof ComputerTargetPicker> = {
         machineName: 'Studio laptop', state: ready, selectedKey: null, onSelect: vi.fn(), sharing: false, noticeCode: null,
         canStopSharing: false, onShare: vi.fn(), onStopSharing: vi.fn(), onCancel: vi.fn(), onRetry: vi.fn(),
@@ -24,6 +24,11 @@ function renderPicker(overrides: Partial<React.ComponentProps<typeof ComputerTar
         agentName: 'Claude', policy: { asksBeforeScreenshots: true, asksBeforeInput: false }, onChangePolicy: vi.fn(),
         access: 'use', onAccessChange: vi.fn(), ...overrides,
     };
+    return props;
+}
+
+function renderPicker(overrides: Partial<React.ComponentProps<typeof ComputerTargetPicker>> = {}) {
+    const props = pickerProps(overrides);
     return { props, screen: renderScreen(<ComputerTargetPicker {...props} />) };
 }
 
@@ -249,4 +254,97 @@ describe('ComputerTargetPicker', () => {
         expect(other.getTextContent()).toContain('computerUse.picker.otherMachineTitle');
         expect(other.findByTestId('p-share')).toBeNull();
     });
+});
+
+
+it('publishes the complete pending choices and cancel, with press parity and retired addresses', async () => {
+    const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+    const { executeCurrentUiContextAction } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+    const { act } = await import('react-test-renderer');
+    const home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://computer-drafts.test', accountId: 'owner', currentAccount: true }],
+        route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+    let choice: string | null = null;
+    let access = 'use';
+    let canceled = false;
+    const props = pickerProps();
+    function Picker({ visible = true, denied = false, compact = false, switcher = false, sharing = false }) {
+        reader = useOptionalCurrentUiContextReader();
+        const [selectedKey, onSelect] = React.useState<string | null>(null);
+        const [draftAccess, onAccessChange] = React.useState<'see' | 'use'>('use');
+        choice = selectedKey; access = draftAccess;
+        return <ComputerTargetPicker {...props} state={visible ? { ...ready, grants: { capture: 'granted', input: denied ? 'denied' : 'granted' } } : { kind: 'loading' }}
+            selectedKey={selectedKey} onSelect={onSelect} access={draftAccess} onAccessChange={onAccessChange}
+            onCancel={() => { canceled = true; }} sharing={sharing} compact={compact} density={switcher ? 'switcher' : 'form'} />;
+    }
+    const screen = await renderMountedCurrentUiContext(<Picker />);
+    const commands = () => reader!.readCurrentUiContext()!.commands;
+    const invoke = (id: string) => executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: id }, context: { surface: 'agent' } });
+    try {
+        expect(commands().map(row => row.title).sort()).toEqual(['Sign in to Lumen', 'computerUse.picker.screenLabel:{"index":"1"}',
+            'computerUse.picker.accessSee', 'computerUse.picker.accessValue', 'common.cancel', 'computerUse.picker.policyChange'].sort());
+        const target = commands().find(row => row.title === 'Sign in to Lumen')!;
+        await act(async () => { expect(await invoke(target.id)).toMatchObject({ ok: true }); });
+        expect(choice).toBe(computerTargetKey(lumen.target));
+        await screen.pressByTestIdAsync('p-target:display');
+        expect(choice).toBe(computerTargetKey(screenTarget.target));
+        await act(async () => { expect(await invoke(target.id)).toMatchObject({ ok: true }); });
+        expect(choice).toBe(computerTargetKey(lumen.target));
+        await screen.pressByTestIdAsync('p-access:see');
+        expect(access).toBe('see');
+        const use = commands().find(row => row.title === 'computerUse.picker.accessValue')!;
+        await act(async () => { expect(await invoke(use.id)).toMatchObject({ ok: true }); });
+        expect(access).toBe('use');
+        const cancel = commands().find(row => row.title === 'common.cancel')!;
+        await act(async () => { expect(await invoke(cancel.id)).toMatchObject({ ok: true }); });
+        expect(canceled).toBe(true);
+        await screen.update(<Picker denied />);
+        const unavailable = commands().find(row => row.title === 'computerUse.picker.accessValue')!;
+        expect(unavailable.description).toContain('computerUse.permission.denied');
+        await act(async () => { expect(await invoke(unavailable.id)).toMatchObject({ ok: false, errorCode: 'unavailable', error: 'unavailable' }); });
+        await screen.update(<Picker sharing />);
+        expect(commands().map(row => row.title).sort()).toEqual(['Sign in to Lumen', 'computerUse.picker.screenLabel:{"index":"1"}',
+            'common.cancel', 'computerUse.picker.policyChange'].sort());
+        await screen.update(<Picker compact />);
+        expect(commands().some(row => row.title === 'common.cancel')).toBe(false);
+        await screen.update(<Picker switcher />);
+        expect(commands()).toEqual([]);
+        await screen.update(<Picker visible={false} />);
+        expect(commands()).toEqual([]);
+        await act(async () => { expect(await invoke(target.id)).toMatchObject({ ok: false }); });
+    } finally { await screen.unmount(); await home.dispose(); }
+});
+
+
+it('adds no target-row renders when unrelated mounted UI state changes', async () => {
+    const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://computer-row-counts.test', accountId: 'owner', currentAccount: true }],
+        route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const { createCommittedFiberRenderCounter, readTestRendererRoot } = await import('@/dev/testkit/performance/committedFiberCounts');
+    const { Item } = await import('@/components/ui/lists/Item');
+    const counter = createCommittedFiberRenderCounter();
+    let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
+    function Other() {
+        const [count, setCount] = React.useState(0);
+        return <Pressable testID="unrelated" accessibilityLabel={String(count)} onPress={() => setCount(count + 1)} />;
+    }
+    const screen = await renderMountedCurrentUiContext(<React.Profiler id="Computer rows" onRender={() => { if (readRoot) counter.onCommitRoot(readRoot()); }}>
+        <ComputerTargetPicker {...pickerProps({ compact: true })} /><Other />
+    </React.Profiler>);
+    try {
+        readRoot = readTestRendererRoot(screen.tree.root);
+        counter.start();
+        await screen.pressByTestIdAsync('unrelated');
+        expect(screen.findByTestId('unrelated')?.props.accessibilityLabel).toBe('1');
+        expect(counter.read().rendersFor(Item)).toBe(0);
+    } finally { counter.stop(); await screen.unmount(); await home.dispose(); }
 });

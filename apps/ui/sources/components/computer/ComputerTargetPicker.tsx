@@ -146,6 +146,17 @@ function sameName(appName: string | null | undefined, title: string): boolean {
     return typeof appName === 'string' && appName.trim().toLowerCase() === title.trim().toLowerCase();
 }
 
+function useTargetDraftCommands(
+    entries: readonly Readonly<{ entry: ComputerTargetEntry; label: string }>[],
+    onSelect: (key: string) => void,
+    draft: boolean,
+) {
+    useCurrentUiContextLocalCommands(draft ? entries.map(({ entry, label }) => {
+        const key = computerTargetKey(entry.target);
+        return { key, title: label, invoke: () => onSelect(key) };
+    }) : [], { foregroundOverlay: true });
+}
+
 function TargetRows(props: Readonly<{
     title: string;
     entries: readonly Readonly<{ entry: ComputerTargetEntry; label: string }>[];
@@ -165,6 +176,7 @@ function TargetRows(props: Readonly<{
 }>): React.ReactElement | null {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
+    useTargetDraftCommands(props.entries, props.onSelect, props.mark === 'radio');
     if (props.entries.length === 0) return null;
     return (
         <ItemGroup
@@ -233,6 +245,7 @@ function TargetTiles(props: Readonly<{
     action?: React.ReactNode;
     testID: string;
 }>): React.ReactElement | null {
+    useTargetDraftCommands(props.entries, props.onSelect, true);
     if (props.entries.length === 0) return null;
     return (
         <ItemGroup title={props.title} action={props.action} surface="none">
@@ -474,21 +487,8 @@ export function ComputerTargetPicker(props: Readonly<{
             </View>
         );
     }
-    const accessChoice = <ItemGroup>
-        <SegmentedChoiceItem
-            title={props.agentless ? t('computerUse.picker.accessMachine') : t('computerUse.picker.access', { agent: props.agentName })}
-            value={props.access}
-            onChange={props.onAccessChange}
-            options={[
-                { id: 'see', label: t('computerUse.picker.accessSee'), description: props.agentless ? t('computerUse.picker.accessSeeHintMachine') : t('computerUse.picker.accessSeeHint', { agent: props.agentName }) },
-                { id: 'use', label: t('computerUse.picker.accessValue'), description: props.agentless ? t('computerUse.picker.accessUseHintMachine') : t('computerUse.picker.accessUseHint', { agent: props.agentName }),
-                    ...(state.grants.input === 'denied' ? { unavailableReason: `${t('computerUse.permission.input')}: ${t('computerUse.permission.denied')}` } : {}) },
-            ]}
-            disabled={props.sharing}
-            testID={`${testID}-access`}
-            testIDPrefix={`${testID}-access`}
-        />
-    </ItemGroup>;
+    const accessChoice = <ComputerTargetAccessChoice access={props.access} onAccessChange={props.onAccessChange}
+        agentName={props.agentName} agentless={props.agentless} sharing={props.sharing} inputDenied={state.grants.input === 'denied'} testID={testID} />;
     const displayNotice = state.displays?.status === 'unavailable' ? (
         <ItemGroup title={t('computerUse.picker.screens')}>
             <SurfaceStateCard
@@ -672,7 +672,7 @@ export function ComputerTargetPicker(props: Readonly<{
                 ) : null}
                 {props.compact ? null : <View style={stylesheet.grow} />}
                 {props.compact ? null : (
-                    <RoundButton size="small" display="inverted" title={t('common.cancel')} onPress={props.onCancel} testID={`${testID}-cancel`} />
+                    <ComputerPickerCancel onPress={props.onCancel} testID={`${testID}-cancel`} />
                 )}
                 <RoundButton
                     size={props.compact ? 'normal' : 'small'}
@@ -701,4 +701,39 @@ function ComputerPolicyLink(props: Readonly<{ onPress: () => void; testID: strin
     ], { foregroundOverlay: true, unbound: 'local' });
     return <Text accessibilityRole="link" onPress={() => { void commands.invoke('policy'); }}
         style={stylesheet.policyLink} testID={props.testID}>{` ${t('computerUse.picker.policyChange')}`}</Text>;
+}
+
+
+function ComputerTargetAccessChoice(props: Readonly<{
+    access: ComputerAccessV1;
+    onAccessChange: (access: ComputerAccessV1) => void;
+    agentName: string;
+    agentless?: boolean;
+    sharing: boolean;
+    inputDenied: boolean;
+    testID: string;
+}>): React.ReactElement {
+    const options = [
+        { id: 'see' as const, label: t('computerUse.picker.accessSee'), description: props.agentless ? t('computerUse.picker.accessSeeHintMachine') : t('computerUse.picker.accessSeeHint', { agent: props.agentName }) },
+        { id: 'use' as const, label: t('computerUse.picker.accessValue'), description: props.agentless ? t('computerUse.picker.accessUseHintMachine') : t('computerUse.picker.accessUseHint', { agent: props.agentName }),
+            unavailableReason: props.inputDenied ? `${t('computerUse.permission.input')}: ${t('computerUse.permission.denied')}` : undefined },
+    ];
+    useCurrentUiContextLocalCommands(props.sharing ? [] : options.map(option => ({
+        key: option.id,
+        title: option.label,
+        description: option.unavailableReason ?? option.description,
+        invoke: () => option.unavailableReason
+            ? { ok: false as const, code: 'unavailable' as const, errorCode: 'unavailable', message: option.unavailableReason }
+            : props.onAccessChange(option.id),
+    })), { foregroundOverlay: true });
+    return <ItemGroup><SegmentedChoiceItem
+        title={props.agentless ? t('computerUse.picker.accessMachine') : t('computerUse.picker.access', { agent: props.agentName })}
+        value={props.access} onChange={props.onAccessChange} options={options} disabled={props.sharing}
+        testID={`${props.testID}-access`} testIDPrefix={`${props.testID}-access`} />
+    </ItemGroup>;
+}
+
+function ComputerPickerCancel(props: Readonly<{ onPress: () => void; testID: string }>): React.ReactElement {
+    useCurrentUiContextLocalCommands([{ key: 'cancel', title: t('common.cancel'), invoke: props.onPress }], { foregroundOverlay: true });
+    return <RoundButton size="small" display="inverted" title={t('common.cancel')} onPress={props.onPress} testID={props.testID} />;
 }

@@ -11794,6 +11794,13 @@ navigation, failure details, Back and a visible Discard draft. Destination choic
 that save a preference remain on `projects.worker.preferences.set`; mounted
 commands do not save preferences or start work.
 
+The Computer picker also publishes pending target and access choices and its visible
+Cancel control through that inventory. These choices update the same local draft
+as the picker; sharing still requires the person's confirmation. Disabled access
+choices preserve the picker's existing reason and refuse invocation.
+The Computer viewer also publishes its offered stream retry and recovery Details
+controls; retry uses the viewer's existing relay recovery handler.
+
 In unreleased 0.3 source, each Usage/Vitals scrub lens publishes a fixed command
 set rather than a command per chart bucket. Its chart-values command returns
 the latest exact bucket titles, totals and rows. Invoke it without input to
