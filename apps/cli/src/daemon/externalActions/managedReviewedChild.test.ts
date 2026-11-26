@@ -3,19 +3,17 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   readHostReviewedParentV1,
   type ActionExecutorContext,
 } from '@happier-dev/protocol/actions/actionExecutor';
-import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { projectServiceMoveStopInput } from '@/daemon/local/services/actions/projectServiceMoveChildren';
-import {
-  requesterActionContext,
-  type RequesterAccountActionContext,
-} from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { invokeAdmittedReviewedChild } from './managedReviewedChild';
 
 const selection = { kind: 'manifest' as const, name: 'worker' };
@@ -53,39 +51,52 @@ const parent = {
 };
 
 /** Home-bound Stop ingress whose requester custody opened the Account's own invocation. */
-function receiverContext(
+async function receiverContext(
   machineId = 'incumbent',
   actionId = 'localServices.actions.stopManaged',
-): ActionExecutorContext {
+): Promise<ActionExecutorContext> {
   const target = { kind: 'machine' as const, machineId };
-  // Only the host-local custody facet is read here; the Home root is a boundary fixture.
-  const authorization = {
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+    v: 1,
+    token: 'reviewed-move-stop',
     binding: {
       actionId,
       accountId: 'owner',
       custodianAccountId: 'owner',
       requestId: 'request',
       machineId,
+      installationId: 'incumbent-installation',
       serverIdentityId: 'home',
+      authentication: { kind: 'account', tokenEpoch: 1 },
+      accountEncryptionMode: 'plain',
+      requestEnvelopeDigest: 'a'.repeat(43),
       target,
     },
-    requesterAccountProjection: {
-      [requesterActionContext]: {} as RequesterAccountActionContext,
-    },
-  } as unknown as ExternalActionExecutionAuthorizationV1;
+  });
+  const requester = await admitRequesterAccountActionContext({
+    authorization,
+    credentials: { token: 'reviewed-move-owner', encryption: null },
+    serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
+    isCurrent: async () => true,
+  });
+  if (!requester) throw new Error('Missing reviewed Move requester custody');
+  onTestFinished(() => requester.dispose());
   return {
-    externalActionExecutionAuthorization: authorization,
+    externalActionExecutionAuthorization: requester.authorization,
     externalActionTarget: target,
     runtimeAccountId: 'owner',
     defaultSessionMachineId: machineId,
     actionRequestId: 'request',
     surface: 'ui',
-  } as ActionExecutorContext;
+  };
 }
 
 async function invoke(
-  overrides: Partial<Parameters<typeof invokeAdmittedReviewedChild>[0]> = {},
+  overrides: Partial<Omit<Parameters<typeof invokeAdmittedReviewedChild>[0], 'context'>> & {
+    context?: () => Promise<ActionExecutorContext>;
+  } = {},
 ) {
+  const { context, ...parameters } = overrides;
   const execute = vi.fn(
     async (_input: unknown, context: ActionExecutorContext) => ({
       ok: true as const,
@@ -97,14 +108,29 @@ async function invoke(
     requesterOwnedReview: true,
     actionId: 'localServices.actions.stopManaged',
     actionInput: projectServiceMoveStopInput(move),
-    context: receiverContext(),
+    context: await (context ? context() : receiverContext()),
     execute,
-    ...overrides,
+    ...parameters,
   });
   return { result, execute };
 }
 
 describe('Move original-Stop reviewed child admission', () => {
+  beforeEach(async () => {
+    const currentness = await createRequesterCurrentnessSocketHarness();
+    onTestFinished(() => currentness.close());
+    // Home HTTP is the boundary; requester admission and private custody stay real.
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      throw new Error('Unexpected reviewed Move Home read');
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
   it('admits the exact incumbent Stop the Move parent reviewed', async () => {
     const { result, execute } = await invoke();
     expect(result).toEqual({
@@ -150,19 +176,19 @@ describe('Move original-Stop reviewed child admission', () => {
     ],
     [
       'a different receiving Machine',
-      { context: receiverContext('other-machine') },
+      { context: () => receiverContext('other-machine') },
     ],
     [
       'a child the receiver did not recompute',
       {
         actionId: 'localServices.launcher.start' as const,
-        context: receiverContext('incumbent', 'localServices.launcher.start'),
+        context: () => receiverContext('incumbent', 'localServices.launcher.start'),
       },
     ],
     [
       'a Home binding for another Action',
       {
-        context: receiverContext(
+        context: () => receiverContext(
           'incumbent',
           'localServices.launcher.snapshot',
         ),
