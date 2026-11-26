@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as filesystem from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { BrowserOpenViewCommandV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import { installLocalServiceCensusFixture } from '../../local/services/inventory/platform/censusFixture.testkit';
 import { createSidecarCdpDiagnosticsRuntime } from './diagnostics/runtime';
@@ -24,7 +27,21 @@ vi.mock('node:fs/promises', async importOriginal => {
     const actual = await importOriginal<typeof import('node:fs/promises')>();
     return { ...actual, readFile: vi.fn(actual.readFile), readdir: vi.fn(actual.readdir), readlink: vi.fn(actual.readlink) };
 });
-beforeEach(() => installLocalServiceCensusFixture([{ pid: 42, ppid: process.pid, command: ['chromium'] }]));
+const actualFilesystem = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+let profileRoot: string;
+beforeEach(async () => {
+    profileRoot = await actualFilesystem.mkdtemp(join(tmpdir(), 'browser-product-source-'));
+    installLocalServiceCensusFixture([{ pid: 42, ppid: process.pid, command: ['chromium'] }]);
+    // The process census substitutes only procfs; retained profile storage uses the real filesystem.
+    for (const method of ['readFile', 'readdir', 'readlink'] as const) {
+        const procfs = vi.mocked(filesystem[method]).getMockImplementation()!;
+        // Node filesystem overloads share the same external boundary here.
+        vi.mocked(filesystem[method]).mockImplementation(((path: unknown, ...args: unknown[]) =>
+            Reflect.apply(String(path).startsWith('/proc/') || path === '/proc' ? procfs : actualFilesystem[method],
+                undefined, [path, ...args])) as never);
+    }
+});
+afterEach(async () => { await actualFilesystem.rm(profileRoot, { recursive: true, force: true }); });
 
 const MANAGED_PROVENANCE = {
     origin: 'managed_package' as const,
@@ -53,8 +70,8 @@ describe('browser sidecar product source owner', () => {
             kill() { queueMicrotask(() => this.emit('exit', 0, 'SIGTERM')); return true; }
         }
         const profileStore = createBrowserProfileStore({
-            storageRootDirectory: '/unused',
-            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: '/unused' }),
+            storageRootDirectory: profileRoot,
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: profileRoot }),
             removeDirectory: async () => undefined,
         });
         const connections = new Map<string, { emit: BrowserSidecarCdpEventSubscriber; pasted: string[] }>();
@@ -183,8 +200,8 @@ describe('browser sidecar product source owner', () => {
             kill() { queueMicrotask(() => this.emit('exit', 0, 'SIGTERM')); return true; }
         }
         const profileStore = createBrowserProfileStore({
-            storageRootDirectory: '/unused',
-            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: '/unused' }),
+            storageRootDirectory: profileRoot,
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: profileRoot }),
             removeDirectory: async () => undefined,
         });
         const factory = productSource.createProductBrowserSidecarControlAdapterFactory({
@@ -262,8 +279,8 @@ describe('browser sidecar product source owner', () => {
         const process = new StartingProcess();
         const removed: string[] = [];
         const profileStore = createBrowserProfileStore({
-            storageRootDirectory: '/unused',
-            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: '/unused' }),
+            storageRootDirectory: profileRoot,
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: profileRoot }),
             removeDirectory: async (directory) => {
                 expect(process.exited).toBe(true);
                 removed.push(directory);

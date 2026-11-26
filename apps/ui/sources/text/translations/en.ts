@@ -14031,6 +14031,8 @@ const enBrowserSurface = {
 };
 
 const enBrowserLaunchpad = {
+    closedAfterRestart: "The page was closed when the Machine’s daemon restarted.",
+    reopen: "Reopen",
   pane: {
     previewsFrom: ({ machine }: { machine: string }) =>
       `Previews from ${machine}`,

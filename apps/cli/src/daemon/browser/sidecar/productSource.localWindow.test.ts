@@ -35,23 +35,30 @@ it('launches a per-view local window through the same profile, CDP control and s
         resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
             discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
                 pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
-        createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
+        createLaunchOwnerFactory: input => {
+            let closeProcess = () => {};
+            return createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
             // Only the native process, GUI-session probe and CDP network boundaries are substituted.
             spawnProcess: (_executable, args) => {
                 launchedArgs.push([...args]);
                 const child = new EventEmitter();
                 const stderr = new PassThrough();
+                closeProcess = () => { child.emit('exit', 0, null); };
                 return Object.assign(child, { pid: 424242, stderr, stdio: [null, null, stderr, new PassThrough(), new PassThrough()], kill: () => { child.emit('exit', 0, 'SIGTERM'); return true; } });
             },
             connectTransport: async () => {
                 connected++;
                 return { transport: { openPage: async () => ({ targetId: 'target', sessionId: 'cdp' }),
                     dispatchPageCommand: async command => { commands.push(command.method); return {}; },
-                    dispatchBrowserCommand: async () => ({ success: true }),
+                    dispatchBrowserCommand: async command => {
+                        if (command.method === 'Browser.close') closeProcess();
+                        return { success: true };
+                    },
                     subscribeCdpEvents: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
                 } };
             },
-        }),
+        });
+        },
     })({ machineId: 'machine', resolveInputControl: () => control, readMachineMemory: () => ({ reported: true, totalBytes: 8 * 1024 ** 3,
         availableBytes: 8 * 1024 ** 3, usedBytes: 0, pressure: { level: 'calm', source: 'none' } }) });
     if (!runtime.ok) throw new Error(runtime.errorCode);

@@ -12102,6 +12102,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
   },
 
   browserLaunchpad: {
+    closedAfterRestart: "La page a été fermée lorsque le daemon de la Machine a redémarré.",
+    reopen: "Rouvrir",
     pane: {
       previewsFrom: ({ machine }: { machine: string }) => `Aperçus depuis ${machine}`,
       previews: 'Aperçus depuis cette machine',

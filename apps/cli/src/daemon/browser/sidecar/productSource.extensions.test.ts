@@ -10,10 +10,11 @@ import type { BrowserEventV1 } from '@happier-dev/protocol';
 import { createBrowserDaemonControlBroker } from '../control/broker';
 import { createBrowserDaemonViewDiscovery } from '../control/viewDiscovery';
 import { createBrowserExtensionService } from '../extensions/service';
-import { createBrowserProfileStore } from '../profiles/store';
+import { createBrowserProfileStore, deriveSessionBrowserProfileId } from '../profiles/store';
 import { createBrowserStoragePartitionOwner } from '../storage/partitions';
 import { createBrowserSidecarLaunchOwnerControlAdapterFactory } from './launchOwner';
 import { BrowserSidecarCdpTransportError } from './cdpTransport';
+import type { BrowserSidecarCdpEventSubscriber } from './controlAdapter';
 import { createProductBrowserSidecarControlAdapterFactory } from './productSource';
 
 describe('persistent browser profile launch', () => {
@@ -38,36 +39,50 @@ describe('persistent browser profile launch', () => {
             resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
                 discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
                     pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
-            createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
+            createLaunchOwnerFactory: input => {
+                let closeProcess = () => {};
+                const nativeTargets = new Set<string>();
+                const cdpListeners = new Set<BrowserSidecarCdpEventSubscriber>();
+                return createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
                 // Only the native process and CDP network boundaries are substituted.
                 spawnProcess: (_executable, args) => {
                     launches.push([...args]);
                     const child = new EventEmitter();
                     const stderr = new PassThrough();
+                    closeProcess = () => { child.emit('exit', 0, null); };
                     return Object.assign(child, { pid: 84, stderr, stdio: [null, null, stderr, new PassThrough(), new PassThrough()],
                         kill: () => { child.emit('exit', 0, 'SIGTERM'); return true; } });
                 },
                 connectTransport: async (_pipe, scope) => {
+                    let closeTransport = () => {};
                     const closed = new Promise<BrowserSidecarCdpTransportError>(resolve => {
                         // The native pipe closes when its containing launch is cancelled.
-                        scope?.signal?.addEventListener('abort', () => resolve(new BrowserSidecarCdpTransportError(
-                            'cdp_transport_closed', 'Browser sidecar CDP transport closed.')), { once: true });
+                        closeTransport = () => resolve(new BrowserSidecarCdpTransportError(
+                            'cdp_transport_closed', 'Browser sidecar CDP transport closed.'));
+                        scope?.signal?.addEventListener('abort', closeTransport, { once: true });
                     });
                     return { transport: { closed,
+                    subscribeCdpEvents: listener => { cdpListeners.add(listener); return () => { cdpListeners.delete(listener); }; },
                     openPage: async () => {
                         const page = ++openedPages;
+                        nativeTargets.add(`target_${page}`);
                         return { targetId: `target_${page}`, sessionId: `cdp_${page}` };
                     },
                     dispatchPageCommand: async () => ({}),
                     dispatchBrowserCommand: async (command: Readonly<{ method: string; params?: Record<string, unknown> }>) => {
-                        // Pending native cleanup must settle when the launch is cancelled.
-                        if (command.method === 'Browser.setDownloadBehavior' && command.params?.behavior === 'default'
-                            && !scope?.signal?.aborted) throw await closed;
+                        if (command.method === 'Target.closeTarget') nativeTargets.delete(String(command.params?.targetId));
+                        if (command.method === 'Browser.close') {
+                            for (const targetId of nativeTargets) for (const listener of cdpListeners) {
+                                listener({ method: 'Target.targetDestroyed', params: { targetId } });
+                            }
+                            nativeTargets.clear(); closeProcess(); closeTransport();
+                        }
                         return { success: true };
                     },
                     } };
                 },
-            }),
+            });
+            },
         });
         const runtime = await factory({ machineId: 'machine', readMachineMemory: () => ({ reported: true,
             totalBytes: 8 * 1024 ** 3, availableBytes: 8 * 1024 ** 3, usedBytes: 0,
@@ -128,7 +143,9 @@ describe('persistent browser profile launch', () => {
                 ...extensionView, commandId: 'disabled-popup', viewId: 'disabled-popup' }))
                 .toEqual({ status: 'unavailable', code: 'extension_disabled' });
             expect(runtime.extensions?.getProfileRuntime?.(profile.profileId)).toEqual({ active: false, extensionDirectories: [] });
-            expect(await profiles.purgeForSessionDeleted({ sessionId: 'session' })).toEqual({ purgedProfileIds: [], failedProfileIds: [] });
+            expect(await profiles.purgeForSessionDeleted({ sessionId: 'session' })).toEqual({
+                purgedProfileIds: [deriveSessionBrowserProfileId('session')], failedProfileIds: [],
+            });
             expect((await profiles.listExtensions(profile.profileId)).ok).toBe(true);
             expect(await open('session', profile.profileId)).toMatchObject({ status: 'dispatched' });
             expect(discovery.listViews('session').filter(view => view.viewId === 'view')).toEqual([

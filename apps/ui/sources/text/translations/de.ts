@@ -12136,6 +12136,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     browserLaunchpad: {
+    closedAfterRestart: "Die Seite wurde geschlossen, als der Daemon der Maschine neu gestartet wurde.",
+    reopen: "Erneut öffnen",
         pane: {
             previewsFrom: ({ machine }: { machine: string }) => `Vorschauen von ${machine}`,
             previews: 'Vorschauen von diesem Rechner',

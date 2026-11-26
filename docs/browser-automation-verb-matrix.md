@@ -636,6 +636,19 @@ HTML head admission and compression decoding are incremental; the HTML shell and
 without waiting for the upstream response to end.
 These are current 0.3 development-source contracts, not loaded-runtime certification.
 
+In unreleased 0.3 development source, a daemon restart closes the native page while
+retaining its profile directory. The Browser profile owner keeps one recoverable open
+command beside the Session's profile storage. Discovery and `browser.view.list` expose
+that binding as `closedAfterRestart` with a terminal `viewClosed` event. The Session
+Browser shows the existing state card with Reopen; pressing it invokes
+`browser.view.open` through the existing Action admission with that profile binding.
+It reloads the address retained at the last successful control command, rather than
+restoring in-page state. Explicit final-tab close, Session stop and Session deletion
+remove that binding. Older profile directories without a binding remain unknown.
+Load matching development Protocol, daemon and App sources for this optional field
+on the closed discovery record. No engine survives the daemon, and no page opens
+automatically.
+
 An agent's Session-owned Chromium profile is its browser workspace. Ephemeral
 storage retention does not make it private browsing: its owning Session may
 capture screenshots. Session-bound daemon Actions reject a different Session's

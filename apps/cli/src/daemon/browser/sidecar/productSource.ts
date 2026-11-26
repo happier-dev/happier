@@ -8,6 +8,7 @@ import type {
     BrowserSidecarErrorCodeV1,
 } from '@happier-dev/protocol';
 
+import { logger } from '@/ui/logger';
 import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
 import type { MachineResourcesPolicyReader } from '@/processes/toolIdleTimeouts';
 import { browserCommandDispatchFailure, isBrowserDaemonControlAdapterKind } from '../control/types';
@@ -88,6 +89,20 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             terminalViews: readonly BrowserDaemonViewV1[];
             profileId: string; extensionDirectories: readonly string[]; presentation: 'headless' | 'window' };
         const sessions = new Map<string, SessionLaunch>();
+        for (const command of await profileStore.readRetainedSessionPages()) {
+            const profileId = command.profileId ?? deriveSessionBrowserProfileId(command.browserSessionId);
+            if (command.profileId) await profileStore.loadPersistentProfile(profileId);
+            else profileStore.register({ profileId, storageMode: 'ephemeral',
+                owner: { kind: 'session', id: command.browserSessionId }, cleanupOnSessionClose: true });
+            sessions.set(command.browserSessionId, { profileId, closing: true, pendingCommands: 0,
+                extensionDirectories: [], presentation: 'headless', stop: async () => {}, terminalViews: [{
+                    browserSessionId: command.browserSessionId, viewId: command.viewId,
+                    sourceId: `restarted:${command.viewId}`, target: command.target, platform: command.platform,
+                    adapterKind: 'chromiumSidecar', closedAfterRestart: command,
+                    events: [{ kind: 'viewClosed', browserSessionId: command.browserSessionId, viewId: command.viewId,
+                        eventId: `restarted:${command.viewId}`, occurredAt: Date.now(), reasonCode: 'daemon_restarted' }],
+                }] });
+        }
         // A profile restart replaces a physical page, not the selected workspace view.
         // Keep that view discoverable until the finite replacement operation settles.
         const profileReplacements = new Map<string, { view: BrowserDaemonViewV1; closedEvent?: BrowserEventV1 }>();
@@ -312,7 +327,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 }));
             });
         async function dispatchSessionCommand(
-            command: Pick<BrowserCommandV1, 'commandId' | 'browserSessionId'> & Readonly<{ kind: BrowserCommandV1['kind']; profileId?: string }>,
+            command: Pick<BrowserCommandV1, 'commandId' | 'browserSessionId'> & Readonly<{ kind: BrowserCommandV1['kind']; profileId?: string; viewId?: string }>,
             scope: BrowserSidecarCdpCommandScope | undefined,
             dispatch: (result: Launched) => ReturnType<Launched['adapter']['dispatchCommand']>,
             presentation: 'headless' | 'window' = 'headless',
@@ -382,6 +397,28 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                 }
                 if (sessions.get(command.browserSessionId)?.closing || disposal) return failed(command, 'Browser session is closing.');
                 const dispatched = await dispatch(result);
+                if (dispatched.status === 'dispatched') {
+                    // Keep one recoverable page through the profile owner, including when a
+                    // closed tab leaves another page alive. Never replace the native result
+                    // with a metadata-write failure after the effect has already happened.
+                    try {
+                        const session = sessions.get(command.browserSessionId);
+                        const pages = session?.result?.adapter.listViews?.(command.browserSessionId) ?? [];
+                        const page = pages.find(page => page.viewId === command.viewId) ?? pages.at(-1);
+                        if (page && session) {
+                            const currentUrl = session.result?.contextCapture?.getNavigationState?.(page)?.currentUrl;
+                            const profile = profileStore.getProfile(session.profileId);
+                            const profileId = profile?.storageMode === 'user' || profile?.storageMode === 'plugin'
+                                ? profile.profileId : undefined;
+                            await profileStore.retainSessionPage({ kind: 'openView', commandId: command.commandId,
+                                browserSessionId: page.browserSessionId, viewId: page.viewId, platform: page.platform,
+                                target: page.target.kind === 'externalUrl' && currentUrl ? { ...page.target, url: currentUrl } : page.target,
+                                focus: true, ...(profileId ? { profileId } : {}) });
+                        } else if (command.kind === 'closeView') await profileStore.forgetSessionPage(command.browserSessionId);
+                    } catch {
+                        logger.warn('[browser] Restart recovery metadata could not be saved.');
+                    }
+                }
                 if (commandSession?.pendingCommands === 1
                     && result.adapter.listViews?.(command.browserSessionId).length === 0) {
                     // Retire the engine after the final in-flight command drains,
@@ -401,6 +438,7 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             stopSession: async browserSessionId => {
                 await sessions.get(browserSessionId)?.stop();
                 sessions.delete(browserSessionId);
+                await profileStore.forgetSessionPage(browserSessionId);
             },
             readResourceTargets,
             readProcessRoots: () => readResourceTargets().map(target => target.root),

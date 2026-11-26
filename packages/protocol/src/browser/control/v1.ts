@@ -202,6 +202,8 @@ export type DaemonBrowserControlDispatchResponseV1 = z.infer<
 
 /** Read-only projection of an owned view, never a CDP handle or a second view registry. */
 export const BrowserDaemonViewV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Closed by daemon restart; the owner retains the exact open/profile binding for Reopen. */
+  closedAfterRestart: z.optional(BrowserOpenViewCommandV1Schema),
   browserSessionId: IdSchema,
   viewId: IdSchema,
   sourceId: z.string().check(z.minLength(1)),

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { randomUUID } from '@/platform/randomUUID';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { createRemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
@@ -60,7 +62,7 @@ export function BrowserStreamedSurfaceRuntimeHost(props: Readonly<{
 type Discovery =
     | Readonly<{ status: 'idle' }>
     | Readonly<{ status: 'discovering' }>
-    | Readonly<{ status: 'ready'; view: BrowserDaemonViewV1 | null; machineId: string; scope: string }>
+    | Readonly<{ status: 'ready'; view: BrowserDaemonViewV1 | null; closedAfterRestart?: BrowserDaemonViewV1['closedAfterRestart']; machineId: string; scope: string }>
     | Readonly<{ status: 'failed'; reason: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }>['reason'] }>;
 
 /**
@@ -96,6 +98,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const viewId = view?.viewId ?? null;
     const {binding: accountBinding} = useServerCredentialAccountScopeBinding(serverId);
     const writeClipboard = useClipboardWrite(accountBinding?.scope ?? null, { enabled: input.enabled !== false });
+    const { executeForPresentation } = useMountedActionExecution(accountBinding?.scope ?? null);
     const [discovery, setDiscovery] = React.useState<Discovery>({ status: 'idle' });
     const [attempt, setAttempt] = React.useState(0);
     const [viewerMetadata, setViewerMetadata] = React.useState<Readonly<{
@@ -119,6 +122,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         discoveryBaseline.current = { scope: discoveryScope, views: reconciled.views };
         for (const event of reconciled.events) onBrowserEventRef.current?.(event);
         setDiscovery(previous => retainShallow(previous, { status: 'ready', machineId: requestedMachineId || sourceMachineId || '', scope: discoveryScope,
+            closedAfterRestart: reconciled.views.find(candidate => candidate.closedAfterRestart)?.closedAfterRestart,
             view: reconciled.views.find(candidate => candidate.viewId === viewId
                 && resolveBrowserDaemonStreamTarget(candidate) !== null) ?? null }));
     });
@@ -326,6 +330,25 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
             },
         }, writeClipboard) : undefined, [inputRelay, metadata?.viewerInput?.controlling, writeClipboard]);
     const retry = React.useCallback(() => setAttempt((current) => current + 1), []);
+    const closedAfterRestart = discovery.status === 'ready' && discovery.scope === discoveryScope
+        ? discovery.closedAfterRestart : undefined;
+    const reopen = useEventCallback(async () => {
+        if (!closedAfterRestart || !machineId) return;
+        const result = await executeForPresentation('browser.view.open', {
+            ...closedAfterRestart, commandId: randomUUID(),
+        }, { defaultSessionId: sessionRpcSessionId ?? browserSessionId ?? undefined,
+            externalActionTarget: { kind: 'machine', machineId } });
+        if (!result) return;
+        if (!result.ok) {
+            const presentation = presentActionExecutionFailure(result);
+            alertActionFailure({ reason: presentation.reason, code: result.errorCode, requestId: result.requestId,
+                context: Object.fromEntries(presentation.technicalDetails
+                    .filter(line => line.key !== 'code' && line.key !== 'requestId')
+                    .map(line => [line.key, line.value])) });
+            return;
+        }
+        retry();
+    });
     const machineName = input.machineName ?? null;
     const unavailableReason = discovery.status === 'failed' ? discovery.reason : undefined;
     // An open that went through has its page discovered next: that wait is still Connecting, and it
@@ -341,6 +364,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         // Before any view exists the empty Session Browser still explains what keeps the agent's
         // browser from opening: the typed first-use state of its open, or the one prerequisite
         // discovery names. Any other discovery failure stays quiet.
+        if (closedAfterRestart) return { machineName, playerState: null, closedAfterRestart, onReopen: reopen };
         if (!view) return firstUse || unavailableReason === 'managed_package_missing'
             ? { machineName, playerState: null, ...(unavailableReason === 'managed_package_missing' ? { unavailableReason } : {}),
                 ...(firstUse ? { firstUse } : {}), ...(firstUseTargetUrl ? { firstUseTargetUrl } : {}), onRetry: retry }
@@ -360,5 +384,5 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                     saveDownload, clipboardShortcut }
                 : null,
         };
-    }, [clipboardShortcut, discovery.status, firstUse, firstUseTargetUrl, machineName, metadata, playerState, retry, saveDownload, sendControl, sendInput, socket, sourceId, streamId, unavailableReason, view, viewerKey]);
+    }, [closedAfterRestart, reopen, clipboardShortcut, discovery.status, firstUse, firstUseTargetUrl, machineName, metadata, playerState, retry, saveDownload, sendControl, sendInput, socket, sourceId, streamId, unavailableReason, view, viewerKey]);
 }

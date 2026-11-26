@@ -10034,6 +10034,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     browserLaunchpad: {
+    closedAfterRestart: "機器的守護程式重新啟動時，頁面已關閉。",
+    reopen: "重新開啟",
         pane: {
             previewsFrom: ({ machine }: { machine: string }) => `來自 ${machine} 的預覽`,
             previews: '來自這台機器的預覽',

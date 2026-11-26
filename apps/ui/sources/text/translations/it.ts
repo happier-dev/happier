@@ -12485,6 +12485,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
   },
 
   browserLaunchpad: {
+    closedAfterRestart: "La pagina è stata chiusa al riavvio del daemon della macchina.",
+    reopen: "Riapri",
     pane: {
       previewsFrom: ({ machine }: { machine: string }) => `Anteprime da ${machine}`,
       previews: 'Anteprime da questa macchina',

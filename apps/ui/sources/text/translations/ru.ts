@@ -12116,6 +12116,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
   },
 
   browserLaunchpad: {
+    closedAfterRestart: "Страница закрылась при перезапуске демона машины.",
+    reopen: "Открыть снова",
     pane: {
       previewsFrom: ({ machine }: { machine: string }) => `Предпросмотры с ${machine}`,
       previews: 'Предпросмотры с этой машины',

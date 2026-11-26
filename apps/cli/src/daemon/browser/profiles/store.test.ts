@@ -82,9 +82,14 @@ describe('browser profile store disk purge', () => {
         owner: { kind: 'user', id: profileId } });
       const directory = previous.resolveProfileDirectory(profileId);
       await writeFile(join(directory, 'Cookies'), 'saved browser state');
+      await previous.retainSessionPage({ kind: 'openView', commandId: 'open', browserSessionId: sessionId,
+        viewId: 'view', profileId, platform: 'web', focus: true,
+        target: { kind: 'externalUrl', targetId: 'page', url: 'https://page.test/' } });
 
       const restarted = createStore();
+      expect(await restarted.readRetainedSessionPages()).toHaveLength(1);
       expect(await restarted.purgeForSessionDeleted({ sessionId })).toEqual({ purgedProfileIds: [], failedProfileIds: [] });
+      expect(await restarted.readRetainedSessionPages()).toEqual([]);
       expect(await restarted.loadPersistentProfile(profileId)).toEqual(saved);
       expect(await pathExists(join(directory, 'Cookies'))).toBe(true);
     } finally { await rm(root, { recursive: true, force: true }); }

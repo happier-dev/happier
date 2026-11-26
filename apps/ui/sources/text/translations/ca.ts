@@ -11445,6 +11445,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
     },
 
     browserLaunchpad: {
+    closedAfterRestart: "La pàgina es va tancar quan es va reiniciar el daemon de la màquina.",
+    reopen: "Torna a obrir",
         pane: {
             previewsFrom: ({ machine }: { machine: string }) => `Previsualitzacions de ${machine}`,
             previews: 'Previsualitzacions d’aquesta màquina',

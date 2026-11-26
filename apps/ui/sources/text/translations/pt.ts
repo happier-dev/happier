@@ -12381,6 +12381,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
   },
 
   browserLaunchpad: {
+    closedAfterRestart: "A página foi fechada quando o daemon da máquina reiniciou.",
+    reopen: "Reabrir",
     pane: {
       previewsFrom: ({ machine }: { machine: string }) => `Pré-visualizações de ${machine}`,
       previews: 'Pré-visualizações desta máquina',

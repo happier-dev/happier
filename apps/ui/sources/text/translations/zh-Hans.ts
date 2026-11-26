@@ -11899,6 +11899,8 @@ export const zhHans: TranslationStructure = {
   },
 
   browserLaunchpad: {
+    closedAfterRestart: "机器的守护进程重启时，页面已关闭。",
+    reopen: "重新打开",
     pane: {
       previewsFrom: ({ machine }: { machine: string }) => `来自 ${machine} 的预览`,
       previews: '来自这台机器的预览',

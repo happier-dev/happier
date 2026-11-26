@@ -73,6 +73,8 @@ const stylesheet = StyleSheet.create((theme) => ({
 export type BrowserStreamedSurfaceRuntime = Readonly<{
     /** Where the browser runs, for honest copy ("It runs on MacBook Pro"). */
     machineName: string | null;
+    closedAfterRestart?: Extract<import('@happier-dev/protocol/browser/control/v1').BrowserCommandV1, { kind: 'openView' }>;
+    onReopen?: () => Promise<void>;
     /** The player's state for this view's stream, or null when no stream could be opened. */
     playerState: (LiveStreamPlayerDisplayState & Readonly<{ avccChunks?: readonly Uint8Array[] }>) | null;
     /** The view's source is known and the stream is opening (no frame yet). */

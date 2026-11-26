@@ -12264,6 +12264,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
   },
 
   browserLaunchpad: {
+    closedAfterRestart: "La página se cerró cuando se reinició el daemon de la máquina.",
+    reopen: "Volver a abrir",
     pane: {
       previewsFrom: ({ machine }: { machine: string }) => `Vistas previas de ${machine}`,
       previews: 'Vistas previas de esta máquina',

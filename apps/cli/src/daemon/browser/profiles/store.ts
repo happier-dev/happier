@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { BrowserOpenViewCommandV1Schema, type BrowserCommandV1 } from '@happier-dev/protocol/browser/control/v1';
 import { lstat, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -51,6 +52,9 @@ export type BrowserProfileExtensionsResult =
 type BrowserProfileExtensionMutationResult = Readonly<{ ok: true }> | Extract<BrowserProfileExtensionsResult, { ok: false }>;
 
 export type BrowserProfileStore = Readonly<{
+  retainSessionPage(command: Extract<BrowserCommandV1, { kind: 'openView' }>): Promise<void>;
+  forgetSessionPage(sessionId: string): Promise<void>;
+  readRetainedSessionPages(): Promise<readonly Extract<BrowserCommandV1, { kind: 'openView' }>[]>;
   register(registration: BrowserProfileRegistration): BrowserProfileV1;
   registerPersistentProfile(registration: BrowserPersistentProfileRegistration): Promise<BrowserProfileV1>;
   loadPersistentProfile(profileId: string): Promise<BrowserProfileV1 | null>;
@@ -240,7 +244,34 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
     return { purgedProfileIds, failedProfileIds };
   }
 
+  async function forgetSessionPage(sessionId: string): Promise<void> {
+    await rm(join(resolveProfileDirectory(deriveSessionBrowserProfileId(sessionId)), 'session-page.json'), { force: true });
+  }
+
   return {
+    async retainSessionPage(command) {
+      await writeJsonAtomic(join(resolveProfileDirectory(deriveSessionBrowserProfileId(command.browserSessionId)), 'session-page.json'),
+        BrowserOpenViewCommandV1Schema.parse(command));
+    },
+    forgetSessionPage,
+    async readRetainedSessionPages() {
+      const entries = await readdir(profilesRoot, { withFileTypes: true }).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+        throw error;
+      });
+      const pages: Extract<BrowserCommandV1, { kind: 'openView' }>[] = [];
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const content = await readFile(join(profilesRoot, entry.name, 'session-page.json'), 'utf8').catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+          throw error;
+        });
+        if (!content) continue;
+        const command = BrowserOpenViewCommandV1Schema.parse(JSON.parse(content));
+        pages.push(command);
+      }
+      return pages;
+    },
     register(registration) {
       const profile = buildRegisteredProfile(registration);
       profilesById.set(profile.profileId, profile);
@@ -337,7 +368,14 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
           && profile.owner.id === input.sessionId
           && profile.lifecycleState !== 'unusable',
       );
-      return await purgeProfiles(targets, 'session_deleted');
+      const outcome = await purgeProfiles(targets, 'session_deleted');
+      try { await forgetSessionPage(input.sessionId); }
+      catch {
+        if (!outcome.failedProfileIds.includes(defaultProfileId)) {
+          return { ...outcome, failedProfileIds: [...outcome.failedProfileIds, defaultProfileId] };
+        }
+      }
+      return outcome;
     },
 
     async purgeForLogout() {

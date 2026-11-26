@@ -12561,6 +12561,8 @@ localTailscale: {
   },
 
   browserLaunchpad: {
+    closedAfterRestart: "マシンのデーモンが再起動したため、ページが閉じられました。",
+    reopen: "もう一度開く",
     pane: {
       previewsFrom: ({ machine }: { machine: string }) => `${machine} からのプレビュー`,
       previews: 'このマシンからのプレビュー',

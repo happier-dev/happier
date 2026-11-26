@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { act } from 'react-test-renderer';
@@ -49,7 +49,7 @@ import { createDaemonMachineLiveStreamCaptureAdapter } from '../../../../../cli/
 import { createMachineLiveStreamRelayTerminator } from '../../../../../cli/src/daemon/peer/mediation/stream/relay';
 import { createProductBrowserSidecarControlAdapterFactory } from '../../../../../cli/src/daemon/browser/sidecar/productSource';
 import { createBrowserSidecarLaunchOwnerControlAdapterFactory } from '../../../../../cli/src/daemon/browser/sidecar/launchOwner';
-import { createBrowserProfileStore } from '../../../../../cli/src/daemon/browser/profiles/store';
+import { createBrowserProfileStore, deriveSessionBrowserProfileId } from '../../../../../cli/src/daemon/browser/profiles/store';
 import { createBrowserStoragePartitionOwner } from '../../../../../cli/src/daemon/browser/storage/partitions';
 import { createBrowserDaemonControlBroker } from '../../../../../cli/src/daemon/browser/control/broker';
 import { createBrowserDaemonViewDiscovery } from '../../../../../cli/src/daemon/browser/control/viewDiscovery';
@@ -197,6 +197,122 @@ function daemonView(captureSource?: Record<string, unknown>) {
 }
 
 describe('useBrowserStreamedSurfaceRuntime', () => {
+    it.each([[undefined, false], ['saved-profile', false], ['saved-profile', true], [deriveSessionBrowserProfileId(view.browserSessionId), false]] as const)('reads a real restarted daemon page as closed, retaining its open command for recovery (%s, window=%s)', async (profileId, asWindow) => {
+        const root = await mkdtemp(join(tmpdir(), 'browser-restart-'));
+        const makeStore = () => createBrowserProfileStore({ storageRootDirectory: root,
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+        if (profileId) await makeStore().registerPersistentProfile({ profileId, storageMode: 'user', owner: { kind: 'user', id: 'person' } });
+        const profileDirectories: string[] = [];
+        const makeDaemon = () => createProductBrowserSidecarControlAdapterFactory({ profileStore: makeStore(), platform: 'linux',
+            localWindowHost: { platform: 'linux', env: { DISPLAY: ':0' }, uid: 1000,
+                execute: async () => 'User=1000\nActive=yes\nRemote=no\nType=x11\nDisplay=:0\n' },
+            resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/browser',
+                available: true, discoveryKind: 'managedRuntime', provenance: { origin: 'managed_package',
+                    pinnedVersion: '145.0.7632.6', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
+            createLaunchOwnerFactory: input => {
+                profileDirectories.push(input.profileDirectory);
+                let closeProcess = () => {};
+                return createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
+                    // Only the OS/engine boundary is substituted; lifecycle and discovery are real.
+                    spawnProcess: () => {
+                        const child = new EventEmitter();
+                        const stderr = new PassThrough();
+                        closeProcess = () => { child.emit('exit', 0, null); };
+                        return Object.assign(child, { pid: 123, stderr,
+                            stdio: [null, null, stderr, new PassThrough(), new PassThrough()],
+                            kill: () => { child.emit('exit', 0, 'SIGTERM'); return true; } });
+                    },
+                    connectTransport: async () => ({ transport: {
+                        openPage: async () => ({ targetId: 'target', sessionId: 'page' }),
+                        dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async command => {
+                            if (command.method === 'Browser.close') closeProcess();
+                            return { success: true };
+                        },
+                    } }),
+                });
+            },
+        })({ machineId: 'machine_1' });
+        const command = { kind: 'openView' as const, commandId: 'initial-open', focus: true, browserSessionId: view.browserSessionId,
+            viewId: view.viewId, platform: 'web' as const, target: view.target, ...(profileId ? { profileId } : {}) };
+        const original = await makeDaemon();
+        if (!original.ok) throw new Error(original.errorCode);
+        let restarted: Awaited<ReturnType<typeof makeDaemon>> | undefined;
+        let hook: { unmount(): Promise<void> } | undefined;
+        try {
+            if (asWindow) expect(await original.localWindow?.showAsWindow(command)).toMatchObject({ ok: true });
+            else expect(await original.adapter.dispatchCommand(command)).toMatchObject({ status: 'dispatched' });
+            await writeFile(join(profileDirectories[0]!, 'Cookies'), 'retained sign-in fixture');
+            await original.dispose?.();
+            restarted = await makeDaemon();
+            if (!restarted.ok) throw new Error(restarted.errorCode);
+            const broker = createBrowserDaemonControlBroker();
+            broker.registerAdapter(restarted.adapter);
+            const routes = createBrowserDaemonControlRoutes({ broker });
+            const execute = createBrowserDaemonRuntimeActionExecutor({ control: routes,
+                featureGate: { isEnabled: () => true, refresh: async () => {} } });
+            const agent = await execute({ actionId: 'browser.view.list', input: { machineId: 'machine_1',
+                browserSessionId: view.browserSessionId }, context: { defaultSessionId: view.browserSessionId } });
+            const { DaemonBrowserViewListResponseV1Schema } = await import('@happier-dev/protocol/browser/control/v1');
+            const status = DaemonBrowserViewListResponseV1Schema.parse(agent);
+            expect(routes.listViews('never-opened')).toEqual([]);
+            const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+            boundary.views = routes.listViews('never-opened');
+            const empty = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view: null,
+                browserSessionId: 'never-opened', machineId: 'machine_1', serverId }));
+            try { await flushHookEffects(); expect(empty.getCurrent()).toBeNull(); }
+            finally { await empty.unmount(); }
+            boundary.views = status.views;
+            let retainedState = applyBrowserControlEvent(createBrowserControlState(), daemonView().events[0]);
+            const rendered = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view,
+                browserSessionId: view.browserSessionId, machineId: 'machine_1', serverId,
+                onBrowserEvent: event => { retainedState = applyBrowserControlEvent(retainedState, event); } }));
+            hook = rendered;
+            await flushHookEffects();
+            expect(rendered.getCurrent()).toMatchObject({ closedAfterRestart: command, playerState: null });
+            expect(status.views).toMatchObject([{ closedAfterRestart: command }]);
+            expect(rendered.getCurrent()?.input).toBeUndefined();
+            expect(retainedState.viewsById[view.viewId]).toBeUndefined();
+            const activeDaemon = restarted;
+            boundary.actionDispatch = async (actionId, input) => {
+                const result = await execute({ actionId: RuntimeActionIdV1Schema.parse(actionId), input,
+                    context: { defaultSessionId: view.browserSessionId, surface: 'ui', authority: 'present_user' } });
+                boundary.views = routes.listViews(view.browserSessionId);
+                return result;
+            };
+            const actionHome = await network.addHome(home.serverUrl, home.accountId, { serverIdentityId: 'srv_browser_stream' });
+            const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+            await restoreServerAccountForTest({ serverUrl: home.serverUrl, serverIdentityId: 'srv_browser_stream',
+                credentials: { token: actionHome.token }, request: network.request });
+            const { BrowserLaunchpad, resolveAgentBrowserPrerequisite } = await import('../launchpad/BrowserLaunchpad');
+            const recovery = rendered.getCurrent();
+            const screen = await renderScreen(<BrowserLaunchpad rows={[]} platform="web"
+                agentBrowser={resolveAgentBrowserPrerequisite(recovery, null, undefined)} />);
+            try {
+                const card = screen.findByType(SurfaceStateCard);
+                expect(card.props.action).toBeDefined();
+                await act(async () => { await card.props.action.onPress(); });
+                expect(profileDirectories).toHaveLength(2);
+                expect(profileDirectories[1]).toBe(profileDirectories[0]);
+                expect(await readFile(join(profileDirectories[1]!, 'Cookies'), 'utf8')).toBe('retained sign-in fixture');
+                expect(activeDaemon.adapter.listViews?.(view.browserSessionId)).toHaveLength(1);
+                await flushHookEffects();
+                expect(rendered.getCurrent()?.closedAfterRestart).toBeUndefined();
+                expect(await activeDaemon.adapter.dispatchCommand({ kind: 'closeView', commandId: 'close',
+                    browserSessionId: view.browserSessionId, viewId: view.viewId })).toMatchObject({ status: 'dispatched' });
+                await activeDaemon.dispose?.();
+                const closed = await makeDaemon();
+                if (!closed.ok) throw new Error(closed.errorCode);
+                try { expect(closed.adapter.listTerminalViews?.(view.browserSessionId)).toEqual([]); }
+                finally { await closed.dispose?.(); }
+            } finally { await screen.unmount(); }
+        } finally {
+            await hook?.unmount();
+            if (restarted?.ok) await restarted.dispose?.();
+            await original.dispose?.();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('rediscovers the Session view when its Machine recovers, without reads for unrelated recovery', async () => {
         const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
         const { clearMachineRequestReachabilityForMachine } = await import('@/sync/domains/machines/reachability/machineReachability');
@@ -318,7 +434,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                     ? createPlainSharedMachineRowFixture({ id, custodianAccountId: 'machine-owner', role: boundary.sharedViewer })
                     : createPlainMachineRowFixture({ id, accountId: home.accountId }));
             }
-            if (boundary.actionDispatch && /^\/v1\/actions\/browser\.(goBack|goForward|reload|stop|navigate)$/.test(path)) {
+            if (boundary.actionDispatch && /^\/v1\/actions\/browser\.(goBack|goForward|reload|stop|navigate|view\.open)$/.test(path)) {
                 const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
                 const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
                 return Response.json({ v: 1, actionId: path.slice('/v1/actions/'.length), requestId: envelope.requestId,

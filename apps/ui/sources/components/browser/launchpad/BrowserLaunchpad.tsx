@@ -88,7 +88,7 @@ type ResolvedBrowserLaunchpadRow = BrowserLaunchpadRow & Readonly<{
  * in-app browser below still works, so this explains the agent's side and never blocks the page.
  */
 export type BrowserLaunchpadAgentBrowser = Readonly<{
-    reasonCode: 'managed_package_missing' | 'browser_runtime_provisioning_failed' | 'sandbox_unavailable';
+    reasonCode: 'managed_package_missing' | 'browser_runtime_provisioning_failed' | 'sandbox_unavailable' | 'daemon_restarted';
     agent: BrowserShellAgentPresence | null;
     onRetry?: () => void;
     /** Allow the sandbox on the Machine; resolves to its outcome, or null when the person declined. */
@@ -97,11 +97,12 @@ export type BrowserLaunchpadAgentBrowser = Readonly<{
 
 /** The first-use state wins over the discovery prerequisite: it is the more specific, newer fact. */
 export function resolveAgentBrowserPrerequisite(
-    runtime: Pick<BrowserStreamedSurfaceRuntime, 'firstUse' | 'unavailableReason' | 'onRetry'> | null | undefined,
+    runtime: Pick<BrowserStreamedSurfaceRuntime, 'firstUse' | 'unavailableReason' | 'onRetry' | 'closedAfterRestart' | 'onReopen'> | null | undefined,
     agent: BrowserShellAgentPresence | null,
     onAllowSandbox: BrowserLaunchpadAgentBrowser['onAllowSandbox'],
 ): BrowserLaunchpadAgentBrowser | undefined {
     if (!runtime) return undefined;
+    if (runtime.closedAfterRestart) return { reasonCode: 'daemon_restarted', agent, onRetry: runtime.onReopen };
     if (runtime.firstUse === 'installFailed') return { reasonCode: 'browser_runtime_provisioning_failed', agent };
     if (runtime.firstUse === 'sandboxUnavailable') return { reasonCode: 'sandbox_unavailable', agent, onAllowSandbox, onRetry: runtime.onRetry };
     return runtime.unavailableReason === 'managed_package_missing'
@@ -568,6 +569,12 @@ export function BrowserLaunchpad(props: Readonly<{
 function AgentBrowserPrerequisite(props: BrowserLaunchpadAgentBrowser & Readonly<{ testID: string }>): React.ReactElement {
     const identity = useBrowserSessionAgentIdentity(props.agent);
     const reason = resolveReasonCopy({ reasonCode: props.reasonCode, kind: 'browserLaunchpad' });
+    if (props.reasonCode === 'daemon_restarted') {
+        return <SurfaceStateCard testID={props.testID} kind="empty" iconName="browsers"
+            title={t('browserLaunchpad.closedAfterRestart')}
+            action={props.onRetry ? { label: t('browserLaunchpad.reopen'), onPress: props.onRetry } : undefined}
+            accessibilitySemantics="status" />;
+    }
     if (props.reasonCode === 'sandbox_unavailable') {
         return (
             <BrowserSandboxPrerequisite

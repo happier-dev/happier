@@ -12093,6 +12093,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
   },
 
   browserLaunchpad: {
+    closedAfterRestart: "Strona została zamknięta po ponownym uruchomieniu demona maszyny.",
+    reopen: "Otwórz ponownie",
     pane: {
       previewsFrom: ({ machine }: { machine: string }) => `Podglądy z ${machine}`,
       previews: 'Podglądy z tej maszyny',
