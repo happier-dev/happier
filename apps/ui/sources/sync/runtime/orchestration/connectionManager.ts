@@ -165,6 +165,18 @@ export function retireAppliedActiveServerCredentialAuthorityIfChanged(event: Hom
     return true;
 }
 
+/**
+ * Whether the focused runtime is applied and available with exactly these credentials on this
+ * Home. Applying them includes Sync's Account currentness read; a 401 or any credential change
+ * retires it, so this is the owner's positive admission of that credential.
+ */
+export function isAppliedActiveServerCredentialAdmitted(serverId: string, credentials: AuthCredentials): boolean {
+    return isAppliedActiveServerRuntimeAvailable()
+        && areServerProfileIdentifiersEquivalent(serverId, getAppliedActiveServerId())
+        && appliedCredentialScopeKey !== null
+        && appliedCredentialScopeKey === readCredentialScopeKey(credentials);
+}
+
 function startActiveIrohRecoveryLifecycle(runtime: IrohHomeTunnelRuntime): void {
     if (recoveryRuntime === runtime && recoveryUnsubscribe) return;
     recoveryUnsubscribe?.();

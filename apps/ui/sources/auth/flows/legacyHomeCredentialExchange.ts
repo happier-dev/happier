@@ -10,6 +10,7 @@ import {
 } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
+import { isAppliedActiveServerCredentialAdmitted } from '@/sync/runtime/orchestration/connectionManager';
 import { parseToken } from '@/utils/auth/parseToken';
 
 /** The Home the stored credential belongs to, captured before any request. */
@@ -29,6 +30,8 @@ const attempts = new Map<string, Promise<boolean>>();
  * proven with the Account key this device already stores (key-challenge v2, existing
  * Account only). Any failure keeps the stored 0.2 credential: it still serves ordinary
  * Home routes, so nobody is signed out. Resolves true once the replacement is stored.
+ * Runs only for a credential the connection owner currently admits on that Home, so a
+ * bearer the Home revoked (or never verified) is never traded for a new one.
  */
 export function exchangeLegacyHomeCredentialOnce(
   target: LegacyHomeCredentialExchangeTarget,
@@ -36,7 +39,8 @@ export function exchangeLegacyHomeCredentialOnce(
 ): Promise<boolean> {
   if (
     !isLegacyAuthCredentials(credentials) ||
-    !isLegacyHomeAccountToken(credentials.token)
+    !isLegacyHomeAccountToken(credentials.token) ||
+    !isAppliedActiveServerCredentialAdmitted(target.serverId, credentials)
   )
     return Promise.resolve(false);
   const key = `${target.serverId}\u0000${resolveAuthCredentialsScopeKey(credentials)}`;
@@ -73,7 +77,9 @@ async function exchange(
       requireExistingAccount: true,
       requireKeyChallengeV2: true,
     });
-    if (parseToken(issued.token) !== accountId) return false;
+    // A Home that answers with another pre-marker bearer is not upgraded; storing it would
+    // only re-arm this exchange under a new credential fingerprint.
+    if (parseToken(issued.token) !== accountId || isLegacyHomeAccountToken(issued.token)) return false;
     // Same Account, same key and custody: only the bearer changes, and only while this
     // Home still holds the credential the exchange started from.
     return await TokenStorage.setCredentialsForServerUrl(

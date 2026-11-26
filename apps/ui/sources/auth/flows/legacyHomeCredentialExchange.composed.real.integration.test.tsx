@@ -25,6 +25,7 @@ import { registerTeamRoutes } from '../../../../server/sources/app/teams/registe
 import { homeDomainActionPathForMethod } from '../../../../server/sources/app/api/routes/actions/homeDomainActionRoute';
 import { createAuthenticatedTestApp } from '../../../../server/sources/app/api/testkit/sqliteFastify';
 import type { Fastify as HomeApp } from '../../../../server/sources/app/api/types';
+import { db as homeDb } from '../../../../server/sources/storage/db';
 
 installTokenStorageWebPlatformMocks();
 const { renderScreen } = await import('@/dev/testkit');
@@ -44,7 +45,7 @@ const { Encryption } = await import('@/sync/encryption/encryption');
 const { parseToken, parseTokenPayload } =
   await import('@/utils/auth/parseToken');
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
-const { disconnectActiveServerConnection } =
+const { disconnectActiveServerConnection, switchConnectionToActiveServer } =
   await import('@/sync/runtime/orchestration/connectionManager');
 const { exchangeLegacyHomeCredentialOnce } =
   await import('./legacyHomeCredentialExchange');
@@ -81,6 +82,8 @@ beforeAll(async () => {
     initEncrypt: true,
     env: {
       AUTH_REQUIRED_LOGIN_PROVIDERS: '',
+      // Policy changes apply at the next sign-in, not after a cached eligibility answer.
+      AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: '0',
       HAPPIER_PUBLIC_SERVER_URL: homeUrl,
       HAPPIER_SERVER_IDENTITY_ID: homeIdentity,
       HAPPIER_FEATURE_TEAMS__ENABLED: '1',
@@ -241,6 +244,17 @@ async function ordinaryHomeStatus(
   ).status;
 }
 
+/**
+ * The connection owner applies the focused Home's stored credential. A successful apply is its
+ * positive admission (Account currentness read with these credentials); a refused one is not.
+ */
+async function admitStoredCredential(options: Readonly<{ mayRefuse?: true }> = {}) {
+  const applied = switchConnectionToActiveServer();
+  if (options.mayRefuse) await applied.catch(() => null);
+  else await applied;
+  requests.length = 0;
+}
+
 const authPaths = () =>
   requests.filter(
     (row) => row.path === '/v1/auth/challenge' || row.path === '/v1/auth',
@@ -252,6 +266,7 @@ describe('one-time exchange of a released 0.2 Home credential (real Home routes)
     async () => {
       const home = await focusHome();
       const released = await seedReleasedAccount(home.id);
+      await admitStoredCredential();
       expect(readLegacy(released.credentials.token)).toMatchObject({
         legacy: true,
         provenance: { kind: 'account' },
@@ -376,6 +391,7 @@ describe('one-time exchange of a released 0.2 Home credential (real Home routes)
     async (_label, failure) => {
       const home = await focusHome();
       const released = await seedReleasedAccount(home.id);
+      await admitStoredCredential();
       if ('env' in failure) database.resetEnv(failure.env);
       if ('status' in failure)
         intercept = (path) =>
@@ -426,7 +442,7 @@ describe('one-time exchange of a released 0.2 Home credential (real Home routes)
         { serverId: home.id },
         released.credentials,
       );
-      requests.length = 0;
+      await admitStoredCredential();
       let otherHomeId: string | null = null;
       intercept = async (path) => {
         if (path !== '/v1/auth') return null;
@@ -503,7 +519,7 @@ describe('one-time exchange of a released 0.2 Home credential (real Home routes)
         { serverId: home.id },
         mismatchedKey,
       );
-      requests.length = 0;
+      await admitStoredCredential({ mayRefuse: true });
       expect(
         await exchangeLegacyHomeCredentialOnce(
           { serverUrl: homeUrl, serverId: home.id },
@@ -524,7 +540,7 @@ describe('one-time exchange of a released 0.2 Home credential (real Home routes)
       const moved = await focusHome('srv_legacy_exchange_previous_identity', movedUrl);
       expect(await TokenStorage.setCredentialsForServerUrl(movedUrl, { serverId: moved.id },
         movedReleased.credentials)).toBe(true);
-      requests.length = 0;
+      await admitStoredCredential({ mayRefuse: true });
       expect(
         await exchangeLegacyHomeCredentialOnce(
           { serverUrl: movedUrl, serverId: moved.id },
@@ -537,6 +553,58 @@ describe('one-time exchange of a released 0.2 Home credential (real Home routes)
           serverId: moved.id,
         }),
       ).toEqual(movedReleased.credentials);
+    },
+    integrationTimeout,
+  );
+
+  it.each(['revoked', 'unverified'] as const)(
+    'never exchanges a %s 0.2 bearer the connection owner has not admitted',
+    async (state) => {
+      const home = await focusHome();
+      const released = await seedReleasedAccount(home.id);
+      if (state === 'revoked') {
+        // Sign out everywhere: every bearer issued before this epoch is retired at the Home.
+        await homeDb.account.update({ where: { id: released.accountId }, data: { tokenEpoch: { increment: 1 } } });
+      }
+      // The currentness read cannot answer (transient), while key-challenge sign-in still would.
+      intercept = (path) => path === '/v1/account/encryption/currentness'
+        ? Response.json({ error: 'unavailable' }, { status: 503 }) : null;
+
+      // A direct call without the owner's admission makes no request at all.
+      expect(await exchangeLegacyHomeCredentialOnce({ serverUrl: homeUrl, serverId: home.id },
+        released.credentials)).toBe(false);
+      expect(requests).toEqual([]);
+
+      // The real restore: the currentness read fails, so nothing is admitted and nothing exchanged.
+      screen = await renderScreen(<AuthProvider initialCredentials={released.credentials}><></></AuthProvider>);
+      await vi.waitFor(() => expect(requests.some((row) =>
+        row.path === '/v1/account/encryption/currentness' && row.status === 503)).toBe(true),
+      { timeout: integrationTimeout });
+      await switchConnectionToActiveServer().catch(() => null);
+      expect(authPaths()).toEqual([]);
+      expect(await TokenStorage.getCredentialsForServerUrl(homeUrl, { serverId: home.id }))
+        .toEqual(released.credentials);
+    },
+    integrationTimeout,
+  );
+
+  it(
+    'stores nothing and does not loop when the Home re-issues a pre-marker bearer',
+    async () => {
+      const home = await focusHome();
+      const released = await seedReleasedAccount(home.id);
+      await admitStoredCredential();
+      const reissued = await releasedTokenGenerator.new({ user: released.accountId, extras: { tokenEpoch: 0 } });
+      intercept = (path) => path === '/v1/auth' ? Response.json({ token: reissued }) : null;
+
+      expect(await exchangeLegacyHomeCredentialOnce({ serverUrl: homeUrl, serverId: home.id },
+        released.credentials)).toBe(false);
+      expect(await TokenStorage.getCredentialsForServerUrl(homeUrl, { serverId: home.id }))
+        .toEqual(released.credentials);
+      const attempted = requests.length;
+      expect(await exchangeLegacyHomeCredentialOnce({ serverUrl: homeUrl, serverId: home.id },
+        released.credentials)).toBe(false);
+      expect(requests.length).toBe(attempted);
     },
     integrationTimeout,
   );
