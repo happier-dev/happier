@@ -60,6 +60,8 @@ vi.mock('@/components/ui/code/diff/useIntraLineWordDiffConfig', () => ({
     }),
 }));
 
+const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
+
 describe('DiffReviewCommentsViewer', () => {
     beforeEach(() => {
         thresholds = { lineThreshold: 50_000, reviewCommentsLineThreshold: 50_000, byteThreshold: 120_000 };
@@ -69,7 +71,6 @@ describe('DiffReviewCommentsViewer', () => {
 
     it('keeps non-virtual rendering for small diffs when review comments are enabled', async () => {
         thresholds = { lineThreshold: 50_000, reviewCommentsLineThreshold: 50_000, byteThreshold: 120_000 };
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
@@ -84,7 +85,6 @@ describe('DiffReviewCommentsViewer', () => {
 
     it('enables virtualization for large diffs when review comments are enabled', async () => {
         thresholds = { lineThreshold: 50_000, reviewCommentsLineThreshold: 50_000, byteThreshold: 100 };
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
@@ -99,7 +99,6 @@ describe('DiffReviewCommentsViewer', () => {
 
     it('hides inactive line comment affordances for virtualized review diffs', async () => {
         thresholds = { lineThreshold: 50_000, reviewCommentsLineThreshold: 50_000, byteThreshold: 100 };
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
@@ -115,7 +114,6 @@ describe('DiffReviewCommentsViewer', () => {
 
     it('hides inactive line comment affordances for non-virtualized native review diffs', async () => {
         thresholds = { lineThreshold: 50_000, reviewCommentsLineThreshold: 50_000, byteThreshold: 120_000 };
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
@@ -131,7 +129,6 @@ describe('DiffReviewCommentsViewer', () => {
 
     it('uses the review-comments line threshold for medium diffs', async () => {
         thresholds = { lineThreshold: 50_000, reviewCommentsLineThreshold: 10, byteThreshold: 120_000 };
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
@@ -146,7 +143,6 @@ describe('DiffReviewCommentsViewer', () => {
 
     it('bounds large virtualized review diffs so native lists do not mount as unbounded content', async () => {
         thresholds = { lineThreshold: 50_000, reviewCommentsLineThreshold: 50_000, byteThreshold: 100 };
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
@@ -166,7 +162,6 @@ describe('DiffReviewCommentsViewer', () => {
 
     it('reuses precomputed diff lines and disables word segmentation for virtualized review diffs', async () => {
         thresholds = { lineThreshold: 50_000, reviewCommentsLineThreshold: 50_000, byteThreshold: 100 };
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
@@ -189,7 +184,6 @@ describe('DiffReviewCommentsViewer', () => {
             isCommentActive: () => false,
             renderAfterLine: () => null,
         };
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
@@ -205,7 +199,6 @@ describe('DiffReviewCommentsViewer', () => {
     });
 
     it('keeps equivalent parent rerenders from invalidating DiffViewer props', async () => {
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         function Wrapper(props: Readonly<{ tick: number }>) {
             return (
@@ -231,7 +224,6 @@ describe('DiffReviewCommentsViewer', () => {
 
     it('plumbs display configuration into DiffViewer', async () => {
         thresholds = { lineThreshold: 50_000, reviewCommentsLineThreshold: 50_000, byteThreshold: 120_000 };
-        const { DiffReviewCommentsViewer } = await import('./DiffReviewCommentsViewer');
 
         const screen = await renderScreen(<DiffReviewCommentsViewer
                     filePath="src/a.ts"
