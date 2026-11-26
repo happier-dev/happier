@@ -2574,7 +2574,7 @@ describe('opening a row into the source detail', () => {
         });
         await expect(shell.queryByText('The list could not be read')).resolves.toBeUndefined();
     });
-    it('summarizes multiple source failures after reading settles', async () => {
+    it('puts settled source attention and Retry in the toolbar over retained rows', async () => {
         let release!: () => void;
         const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
         const shell = await mountShell({ activeSurface: true, automaticDemandOnly: true, otherSourceEntry: true,
@@ -2586,7 +2586,13 @@ describe('opening a row into the source detail', () => {
         } finally {
             await act(async () => { release(); });
         }
-        await vi.waitFor(() => expect(document.body.textContent).toContain('2 sources need attention.'));
+        await vi.waitFor(async () => {
+            await expect(shell.getByText('2 sources need attention.')).resolves.toBeDefined();
+        });
+        await expect(shell.getByRole('button', { name: 'Another source matching entry' })).resolves.toBeDefined();
+        const refresh = document.querySelector('[aria-label="Refresh"]');
+        expect(refresh?.parentElement?.textContent).toContain('2 sources need attention.');
+        expect(refresh?.parentElement?.querySelector('[aria-label="Retry"]')).toBeTruthy();
         expect(document.body.textContent).not.toMatch(/could not be (read|reached)|Reading your sources/);
     });
 

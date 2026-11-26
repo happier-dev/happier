@@ -1,10 +1,7 @@
 import * as React from 'react';
-import { Button, Status, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { Button, Status, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
 
-import {
-  readTriageListFailureLine,
-  type TriageListShellFailureV1,
-} from './windowState.js';
+import type { TriageListFailureLineV1 } from './windowState.js';
 import type { TriageOutsideSourcesAttentionV1 } from '../../projection/sourceHealth.js';
 
 /** The press beside a failure line: it never outweighs the sentence it serves. */
@@ -25,15 +22,13 @@ export function TriageFailureLineAction(props: Readonly<{
 
 /** The failure beside retained rows: one line, with the one press that can help. */
 export function TriageListFailureStatus(props: Readonly<{
-  failure: TriageListShellFailureV1;
+  line: TriageListFailureLineV1;
   /** Read the sources again. */
   retry: React.ReactNode;
   /** Open the connections to fix one. Absent where this page has no source management. */
   manageSources?: React.ReactNode;
 }>): React.ReactElement {
-  const text = usePluginTranslation();
-  const { locale } = useSurfaceContext();
-  const line = readTriageListFailureLine(props.failure, text, locale);
+  const { line } = props;
   return <Status tone="warning" label={line.label}
     action={line.recovery === null ? undefined
       : line.recovery === 'manageSources' ? props.manageSources ?? props.retry : props.retry} />;

@@ -107,6 +107,9 @@ export type CollectionToolbarFreshness = Readonly<{
   label: string;
   pulsing?: boolean;
   indicator?: boolean;
+  action?: ReactNode;
+  /** The existing More item that carries this label when folded, instead of Refresh. */
+  foldedItemId?: string;
 }>;
 
 export type CollectionToolbarProps = Readonly<{
@@ -281,7 +284,8 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
   // A healthy freshness ("Updated just now") or a read in flight ("Refreshing") is the first thing the one row gives up:
   // its words go (Refresh still says them, and spins while it reads) before the toolbar folds, at the row width that needed it and
   // anything narrower, never cut to "R…". Words that warn are never given up.
-  const quietable = freshness != null && (freshness.tone === 'muted' || freshness.pulsing === true);
+  const quietable = freshness != null && freshness.action == null
+    && (freshness.tone === 'muted' || freshness.pulsing === true);
   const [quietBelowPx, setQuietBelowPx] = useState<number | null>(null);
   // Folded, the wide row is not drawn: what it learned about its width starts over when it is drawn again.
   useEffect(() => {
@@ -363,6 +367,7 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
             pulsing={freshness.pulsing}
             indicator={freshness.indicator}
             label={freshness.label}
+            action={freshness.action}
           />
         )}
         {refresh === undefined ? null : (
@@ -559,14 +564,16 @@ function MoreMenu(
           id: REFRESH_ITEM_ID,
           label: refresh.label,
           icon: 'refresh',
-          ...(freshness == null ? {} : { subtitle: freshness.label }),
+          ...(freshness == null || freshness.foldedItemId !== undefined ? {} : { subtitle: freshness.label }),
           ...(refresh.disabled === true || refresh.busy === true
             ? { disabled: true }
             : {}),
         };
   const items = [
     ...(refreshItem === null ? [] : [refreshItem]),
-    ...(more?.items ?? []),
+    ...(more?.items ?? []).map((item) => folded && freshness?.foldedItemId === item.id
+      ? { ...item, subtitle: freshness.label }
+      : item),
   ];
   // Folded, the wide row's pickers (Order) end the menu as named radio groups.
   const choices = folded ? props.refine?.foldedChoices : undefined;

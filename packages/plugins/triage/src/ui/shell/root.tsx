@@ -197,6 +197,7 @@ import {
   readTriageHostOutageV1,
   readTriageListReadFailureNotice,
   readTriageMachineUnreachableNoticeV1,
+  readTriageListFailureLine,
   readTriageRefreshPacingNotice,
   readTriageSourceFailureRowV1,
   resolveTriageListRefreshV1,
@@ -2224,8 +2225,20 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   };
   // While the host's band names the outage, retained rows keep their age in its usual place (QB-25(a)): the band says
   // why the list is read-only, the age says how old it is, and nothing above the rows comes or goes.
+  const sourceFailure = (hostSpeaksForOutage && rowCount > 0) || listWindow?.sourceMachineUnavailable || listWindow?.failure == null
+    ? null : readTriageListFailureLine(listWindow.failure, text, surfaceContext.locale);
+  const sourceAttention = rowCount > 0 && sourceFailure?.attention !== undefined ? sourceFailure : null;
   const freshness = state.kind !== 'window' ? null
-    : hostSpeaksForOutage ? (rowCount === 0 ? null : readAge) : state.sourceMachineUnavailable
+    : hostSpeaksForOutage ? (rowCount === 0 ? null : readAge)
+    : sourceAttention?.attention !== undefined ? {
+      tone: 'muted' as const, indicator: true, label: sourceAttention.attention,
+      ...(sourceAttention.recovery === 'manageSources' ? {
+        action: sourceManagementStatusAction, foldedItemId: 'manage-sources',
+      } : sourceAttention.recovery === 'retry' && refreshState.kind === 'available' ? {
+        action: <TriageFailureLineAction label={retryLabel} onPress={refreshPage} />,
+      } : {}),
+    }
+    : state.sourceMachineUnavailable
     ? rowCount === 0 ? null
       : { tone: 'warning' as const, pulsing: false, indicator: true,
         label: text('plugins.triage.surface.lastKnown', 'Showing the last known list') }
@@ -2668,8 +2681,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const listFailureStatus = hostSpeaksForOutage && rowCount > 0 ? null
     : listWindow?.sourceMachineUnavailable === true
     ? <Status tone="warning" label={readTriageMachineUnreachableNoticeV1(text).title} value={readAge?.label} />
-    : listWindow?.failure == null || coldMachineOutage ? null : (
-    <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
+    : sourceFailure === null || coldMachineOutage || sourceAttention !== null ? null : (
+    <TriageListFailureStatus line={sourceFailure} manageSources={sourceManagementStatusAction}
       retry={refreshState.kind === 'available' ? <TriageFailureLineAction label={retryLabel} onPress={refreshPage} /> : null} />
   );
   const failureLine = machineUnreachable === null ? listFailureStatus
@@ -3052,7 +3065,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           // lens, Refresh and Run on) leads, and the failure is said in words in the list's own place. The host's code
           // is a diagnostic behind Details, and a retry is offered only when the host says one can succeed.
           {...(emptyBelowPins === null ? {} : { afterRows: (
-            emptyBelowPins.kind === 'sourceFailure' && (listFailureStatus !== null || hostSpeaksForOutage) ? failureSlot : <EmptyState
+            emptyBelowPins.kind === 'sourceFailure' && (sourceAttention !== null || listFailureStatus !== null || hostSpeaksForOutage) ? failureSlot : <EmptyState
               title={text(readTriageListEmptyStateKeys(emptyBelowPins.kind).title, emptyBelowPins.title)}
               description={text(readTriageListEmptyStateKeys(emptyBelowPins.kind).description, emptyBelowPins.description)}
               {...emptyNextControls}

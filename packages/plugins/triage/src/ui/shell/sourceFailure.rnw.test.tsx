@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Button } from '@happier-dev/plugin-ui';
 
 import { TriageListFailureStatus, TriageOutsideSourcesNotice } from './sourceFailure.js';
-import { readTriageListFailureNotice, readTriageSourceFailureRowV1 } from './windowState.js';
+import { readTriageListFailureLine, readTriageListFailureNotice, readTriageSourceFailureRowV1 } from './windowState.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesResultV1Schema } from '../../actions/listEntriesProtocol.js';
 import { TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 } from '../../actions/savedViewsProtocol.js';
@@ -60,7 +60,7 @@ describe('source failure presentation', () => {
     expect(notice.details).toContain(source.code);
   });
   it('takes one line with one recovery press and no diagnostics row beside the rows', async () => {
-    const fixture = await mount(<TriageListFailureStatus failure={FAILURE}
+    const fixture = await mount(<TriageListFailureStatus line={readTriageListFailureLine(FAILURE)}
       retry={<Button title="Try again" onPress={() => {}} />} manageSources={<Button title="Manage sources" onPress={() => {}} />} />);
     await expect(fixture.findByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
     await expect(fixture.queryByRole('button', { name: 'Try again' })).resolves.toBeUndefined();
@@ -68,10 +68,10 @@ describe('source failure presentation', () => {
   });
 
   it.each([false, true])('offers retry when a failed connection can be read again (also needs repair: %s)', async (mixed) => {
-    const fixture = await mount(<TriageListFailureStatus failure={{ kind: 'sources', sources: [
+    const fixture = await mount(<TriageListFailureStatus line={readTriageListFailureLine({ kind: 'sources', sources: [
       ...(mixed ? FAILURE.sources : []),
       { sourceInstanceId: 'retryable', displayName: 'Retryable source', reason: 'Could not be reached just now.', retryable: true },
-    ] }} retry={<Button title="Try again" onPress={() => {}} />}
+    ] })} retry={<Button title="Try again" onPress={() => {}} />}
       manageSources={<Button title="Manage sources" onPress={() => {}} />} />);
     await expect(fixture.getByRole('button', { name: 'Try again' })).resolves.toBeDefined();
     await expect(fixture.queryByRole('button', { name: 'Manage sources' })).resolves.toBeUndefined();

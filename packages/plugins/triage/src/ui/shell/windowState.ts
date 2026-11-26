@@ -441,6 +441,8 @@ export function readTriageSourceFailureRowV1(
  */
 export type TriageListFailureLineV1 = Readonly<{
   label: string;
+  /** Short aggregate fact for the toolbar when the list has rows. */
+  attention?: string;
   recovery: 'retry' | 'manageSources' | null;
 }>;
 
@@ -496,6 +498,7 @@ function readUnpacedListFailureLine(
       : null;
     return Object.freeze({
       label: [machineReason, retained, attention].filter(Boolean).join(' '),
+      attention,
       recovery: retained !== null || machineUnreachable || needsConnectionChange ? 'manageSources' : 'retry',
     });
   }

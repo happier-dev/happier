@@ -7868,6 +7868,8 @@ describe('the Collection toolbar', () => {
       label: string;
       indicator?: boolean;
       pulsing?: boolean;
+      action?: React.ReactNode;
+      foldedItemId?: string;
     }> = {
       tone: 'muted',
       label: 'Up to date',
@@ -8393,6 +8395,28 @@ describe('the Collection toolbar', () => {
       [...view.container.querySelectorAll<HTMLElement>('[role="menuitem"]')][0]!.click();
     });
     expect(calls).toEqual(['refresh']);
+    view.unmount();
+  });
+
+  it('folds quiet source attention into its existing recovery item on a phone', () => {
+    const calls: string[] = [];
+    const label = '2 sources need attention.';
+    const view = mount({
+      search,
+      header: toolbarHeader(calls, {
+        tone: 'muted', label, foldedItemId: 'manage-sources',
+        action: <Button title="Manage sources" onPress={() => calls.push('manage-sources')} />,
+      }),
+      renderPopover: openPopover,
+    });
+    view.measure(390);
+    const toolbar = view.query('toolbar')!;
+    expect(toolbar.textContent).not.toContain(label);
+    act(() => button(toolbar, 'More')!.click());
+    const items = [...view.container.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(items.map(item => item.textContent)).toEqual(['Refresh', `Manage sources${label}`]);
+    act(() => items[1]!.click());
+    expect(calls).toEqual(['manage-sources']);
     view.unmount();
   });
 
