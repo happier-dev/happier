@@ -10,7 +10,8 @@ import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/accoun
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import Fastify from 'fastify';
-import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { installAxiosFastifyAdapter, installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PromptLibraryCatalogKeyV1Schema, PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 
@@ -244,6 +245,7 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
       approvalWaivedSurfaces: { 'session.role.set': ['agent'], 'session.notes.set': ['agent'],
         'session.roles.apply_to_reports': ['agent'] } } };
     const settings = accountSettingsParse(rawSettings);
+    onTestFinished(installAxiosRequestMethodAdapter());
     const scopeKey = runWithServerHttpBaseUrl(base, () => resolveAccountSettingsScopeKey(credentials));
     setActiveAccountSettingsSnapshot({ scopeKey, source: 'network',
       settings, rawSettings, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: 1,
@@ -277,6 +279,7 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
       ...(sessionId === child ? { manager: { sessionId: origin } } : {}) });
     axiosGet.mockImplementation(async (url: string) => {
       const path = new URL(url).pathname;
+      if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
       if (path === '/v1/account/encryption/currentness') {
         if (revokeDuringSigning) {
           authorityCurrent = false;
@@ -366,6 +369,13 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
       authorization: { principal: sourceKind === 'plugin'
         ? { kind: 'plugin', pluginId, sourceCustody: acceptedCustody! }
         : { kind: 'api', accountId: 'workflow-role-owner', principalId: 'workflow-role-owner', credentialId: 'workflow-api-token' },
+        ...(sourceKind === 'api' ? { externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+          v: 1, token: 'accepted-workflow-root', binding: { serverIdentityId: homeId,
+            accountId: 'workflow-role-owner', principalId: 'workflow-role-owner', credentialId: 'workflow-api-token',
+            grant: API_TOKEN_FULL_GRANT_V1, custodianAccountId: 'workflow-role-owner', machineId: 'machine',
+            installationId: 'installed', actionId: 'workflow.run.start', requestId: 'accepted-root',
+            requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' }, admittedMachineRole: 'manage' },
+        }) } : {}),
         admittedPermissionCeiling: 'default' } }),
       agentStartContext, workspaceWrites: 'allow' as const, actionRequestId: 'run-role-write' };
     const result = await executor.execute('session.role.set', { sessionId: origin, roleId: 'builder' }, context);
@@ -407,20 +417,20 @@ describe('credentialed Action policy binding before settings bootstrap', () => {
         .not.toEqual(acceptedCustody);
       const originalController = senderController;
       senderController = replacementRuntime.controller;
-      // A changed source refuses the next admission, not work already admitted
-      // under this Run's retained signed Session authority.
-      expect(await isAcceptedAuthorizationCurrent({ authorization })).toBe(false);
+      // A local plugin principal is immutable acceptance attribution; its Run
+      // remains admitted when the originating plugin load changes or closes.
+      expect(await isAcceptedAuthorizationCurrent({ authorization })).toBe(true);
       expect(await executor.execute('session.notes.set', { sessionId: origin, notes: 'Replaced source' }, context))
         .toEqual({ ok: true, result: { updated: true } });
       senderController = undefined;
-      expect(await isAcceptedAuthorizationCurrent({ authorization })).toBe(false);
+      expect(await isAcceptedAuthorizationCurrent({ authorization })).toBe(true);
       expect(await executor.execute('session.roles.apply_to_reports', { sessionId: origin }, context))
         .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
       senderController = originalController;
       revokeDuringSigning = true;
       expect(await executor.execute('session.notes.set', { sessionId: origin, notes: 'Revoked during signing' }, context))
         .toEqual({ ok: true, result: { updated: true } });
-      expect(await isAcceptedAuthorizationCurrent({ authorization })).toBe(false);
+      expect(await isAcceptedAuthorizationCurrent({ authorization })).toBe(true);
       expect(SessionRolesV1Schema.parse(metadata.work?.sessionRolesV1).notes).toBe('Revoked during signing');
       expect(reportCopyDeliveries).toBe(0);
       expect(childMetadata).toEqual(beforeCopy);
