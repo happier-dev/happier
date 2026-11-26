@@ -6,6 +6,8 @@ import { TRIAGE_DISPLAY_NAME } from './displayName.js';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createPluginActionPresentUserGate } from '@happier-dev/protocol';
+import { projectTargetActionApprovalInput, projectTargetActionApprovalOperandRows } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionInputV1Schema } from './actions/configuredActionRunProtocol.js';
 import { checkTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { PLUGIN_MANIFEST as GITHUB_MANIFEST, GITHUB_TRIAGE_ACTION_IDS_V1 } from '../../scm-github/src/manifest.js';
 import { GITHUB_FILE_VIEWED_ACTION_IDS_V1 } from '../../scm-github/src/triage/fileViewedContracts.js';
@@ -41,13 +43,35 @@ import { TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1 } from './actions/nativeFailur
 import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1 } from './composer/attachmentValue.js';
 import { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from './composer/openEntryDetails.js';
 import { createTestkitCorpusCollections } from './corpus/testkit/corpusCollections.test-support.js';
-import { testkitEntryRef } from './corpus/testkit/observations.test-support.js';
+import { TESTKIT_SOURCE_INSTANCE_ID, testkitEntryRef } from './corpus/testkit/observations.test-support.js';
 import { createTriageSetEntryPinnedActionHandler, listTriagePinnedEntries } from './actions/userMarks.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './internalTasks/configuration.js';
 
 const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
 
 describe('Triage plugin manifest', () => {
+  it.each([
+    { mode: 'start', choice: { kind: 'configured' }, launch: { kind: 'configured', launchMode: 'start' }, destination: 'single', expected: 'Start a new Session' },
+    { mode: 'send', choice: { kind: 'existing', session: { selector: 'self' } }, destination: 'single', expected: 'Send now' },
+    { mode: 'Add instructions', choice: { kind: 'configured' }, launch: { kind: 'configured', launchMode: 'review' }, destination: 'single', expected: 'Open a draft to add instructions' },
+    { mode: 'bulk start', choice: { kind: 'configured' }, destination: 'oneSessionPerEntry', expected: 'One new Session per entry' },
+  ])('describes $mode in the registered configured Action confirmation', ({ mode, choice, launch, destination, expected }) => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find(candidate => candidate.id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1);
+    const entry = { entryRef: testkitEntryRef({ entryId: 'issue-a', kindId: 'issue' }), sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID };
+    const input = TriageRunConfiguredActionInputV1Schema.parse({ v: 1, handoff: {
+      task: 'fix', configuredActionId: 'fix', agentChoice: { kind: 'configured' },
+      context: mode === 'send' ? { kind: 'entry', entry } : { kind: 'entries', entries: [entry], destination },
+      evidence: [{ kind: 'entry', entry }], sessionChoice: choice, delivery: mode === 'send' ? 'send' : 'configured',
+    }, ...(launch === undefined ? {} : { singleIntent: launch }),
+    ...(mode === 'send' ? { sendPresentation: { actionLabel: 'Resolve production alert', sessionTitle: 'Production investigation' } } : {}) });
+    const projection = projectTargetActionApprovalInput(input, []);
+    if (!action?.confirmation || !projection) throw new Error('The configured Action needs a reviewable confirmation');
+    const rows = projectTargetActionApprovalOperandRows(projection, action.confirmation.inputFields ?? []);
+    expect(rows.map(row => row.value)).toContain(expected);
+    expect(rows.map(row => row.value)).toContain(mode === 'send' ? 'Resolve production alert' : 'Fix');
+    if (mode === 'send') expect(rows.map(row => row.value)).toEqual(expect.arrayContaining(['Existing Session', 'Production investigation']));
+  });
+
   it('offers native failure investigation to MCP and CLI on the same answering client as Agent', () => {
     const action = PLUGIN_MANIFEST.contributes.actions.find(
       candidate => candidate.id === TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1,
