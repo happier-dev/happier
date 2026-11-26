@@ -1221,6 +1221,8 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
           : null,
         listMarkers: listExecutionRunMarkersForRehydration,
         isPidAlive: isPidPresent,
+        resolveDetachedWorkflowRequesterAccountId: runId =>
+          detachedExecutionRunManager?.captureWorkflowRequester(runId)?.bootstrap.attribution.accountId,
         resolveLiveAuthority: async (input) => {
           if (input.sessionId === null) {
             return detachedExecutionRunManager?.resolveLiveBrokerAuthority({

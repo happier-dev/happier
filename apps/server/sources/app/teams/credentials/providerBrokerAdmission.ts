@@ -166,11 +166,13 @@ export type TeamCredentialExecutionRunCurrentnessResolver = (input: Readonly<{
     workerMachineId: string;
     expectedIntent?: import('@happier-dev/protocol').ExecutionRunIntent;
     expectedOccurrenceId: string | null;
+    resolveWorkflowOrigin?: true;
     expectedDirectMaterialUse?: import('@happier-dev/protocol/teams').TeamCredentialDirectMaterialUseV1;
 }>) => Promise<
     | Readonly<{
         ok: true;
         parentSessionId: string | null;
+        workflowOriginSessionId?: string;
         occurrenceId: string;
         intent: import('@happier-dev/protocol').ExecutionRunIntent;
         runtimeState: 'active_turn' | 'idle';
@@ -238,7 +240,7 @@ function bindingFailure(
  */
 function brokerOperationConsumer(
     consumer: ProviderBrokerOpenRequestV1['consumer'],
-    executionRun: Pick<CurrentExecutionRun, 'parentSessionId' | 'teamCredentialProviderModel'> | null,
+    executionRun: Pick<CurrentExecutionRun, 'parentSessionId' | 'teamCredentialProviderModel' | 'workflowOriginSessionId'> | null,
     resourceId: string,
 ): TeamCredentialOperationConsumer | Failure {
     if (consumer.kind === 'session') return { kind: 'session', sessionId: consumer.sessionId };
@@ -252,7 +254,8 @@ function brokerOperationConsumer(
             : { kind: 'session', sessionId: executionRun.parentSessionId };
     }
     if (own.resourceId !== resourceId || own.deliveryMode !== 'brokered') return failure('operation_not_current');
-    return { kind: 'execution_run', parentSessionId: executionRun.parentSessionId, resourceId: own.resourceId };
+    return { kind: 'execution_run', parentSessionId: executionRun.parentSessionId, resourceId: own.resourceId,
+        ...(executionRun.workflowOriginSessionId !== undefined ? { workflowOriginSessionId: executionRun.workflowOriginSessionId } : {}) };
 }
 
 
@@ -419,21 +422,21 @@ function preparationChangeFailure(
 async function resolveOpenExecutionRunCurrentness(
     input: TeamCredentialProviderBrokerOpenInput,
     request: ProviderBrokerOpenRequestV1,
+    options?: Readonly<{ resolveWorkflowOrigin?: true; expectedOccurrenceId?: string }>,
 ): Promise<CurrentExecutionRun | Failure | null> {
     if (request.consumer.kind !== 'execution_run') return null;
     if (!input.resolveExecutionRunCurrentness) return failure('execution_run_authority_unavailable');
+    const expectedOccurrenceId = options?.expectedOccurrenceId ?? (request.refreshAuthority?.payload.consumer.kind === 'execution_run'
+        ? request.refreshAuthority.payload.executionRunOccurrenceId ?? null
+        : null);
     const current = await input.resolveExecutionRunCurrentness({
         executionRunId: request.consumer.executionRunId,
         requestingAccountId: input.actorAccountId,
         workerMachineId: request.initiatorMachineId,
-        expectedOccurrenceId: request.refreshAuthority?.payload.consumer.kind === 'execution_run'
-            ? request.refreshAuthority.payload.executionRunOccurrenceId ?? null
-            : null,
+        expectedOccurrenceId,
+        ...(options?.resolveWorkflowOrigin ? { resolveWorkflowOrigin: true } : {}),
     });
     if (!current.ok) return current;
-    const expectedOccurrenceId = request.refreshAuthority?.payload.consumer.kind === 'execution_run'
-        ? request.refreshAuthority.payload.executionRunOccurrenceId ?? null
-        : null;
     if (expectedOccurrenceId !== null && current.occurrenceId !== expectedOccurrenceId) {
         return closedFailure('operation_not_current', 'execution_run_occurrence_mismatch');
     }
@@ -837,7 +840,7 @@ async function preauthorizeTeamCredentialProviderBrokerOpen(
                 { expectedRevision: request.expectedResourceRevision, observedRevision: entitlement.resourceRevision });
         }
     }
-    const executionRun = await resolveOpenExecutionRunCurrentness(input, request);
+    const executionRun = await resolveOpenExecutionRunCurrentness(input, request, { resolveWorkflowOrigin: true });
     if (executionRun !== null && !executionRun.ok) return executionRun;
     const authorization = await inTx(tx => authorizeTeamCredentialProviderBrokerOpenDurableInTx(
         tx,
@@ -1010,8 +1013,13 @@ async function openTeamCredentialProviderBrokerWithPrincipal(
         return failure('resource_unavailable');
     }
 
-    const finalRun = await resolveOpenExecutionRunCurrentness(input, parsed.data);
+    const workflowOriginSessionId = preauthorized.executionRun?.workflowOriginSessionId;
+    const finalRun = await resolveOpenExecutionRunCurrentness(input, parsed.data,
+        workflowOriginSessionId !== undefined && preauthorized.executionRun
+            ? { expectedOccurrenceId: preauthorized.executionRun.occurrenceId } : undefined);
     if (finalRun !== null && !finalRun.ok) return finalRun;
+    const admittedRun = finalRun && workflowOriginSessionId !== undefined
+        ? { ...finalRun, workflowOriginSessionId } : finalRun;
     let currentPresence: Awaited<ReturnType<BrokerOpenPresenceReader>>;
     try {
         currentPresence = await input.readCurrentPresence({
@@ -1032,7 +1040,7 @@ async function openTeamCredentialProviderBrokerWithPrincipal(
                 brokerPresence: currentPresence.brokerPresence,
             },
             parsed.data,
-            finalRun,
+            admittedRun,
             selectedPoolMachineId,
             poolEligibleMachineIds,
             preProjection.initiatorEndpoint.custodianAccountId,

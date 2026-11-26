@@ -6,6 +6,7 @@ import type { Fastify } from '@/app/api/types';
 import type { ProviderBrokerAdmissionFailureCodeV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { TeamCredentialExecutionRunCurrentnessResolver } from './providerBrokerAdmission';
 import { db } from '@/storage/db';
+import { resolveAssignedWorkflowRunOriginSession } from '@/app/workflows/workflowRunService';
 
 type Failure = Readonly<{ ok: false; reasonCode: ProviderBrokerAdmissionFailureCodeV1; failureCause?: ActionFailureCauseV1 }>;
 
@@ -60,9 +61,25 @@ export function createExecutionRunBrokerCurrentnessResolver(input: Readonly<{
             || (request.expectedOccurrenceId !== null && parsed.data.occurrenceId !== request.expectedOccurrenceId)) {
             return failure('operation_not_current');
         }
+        let workflowOriginSessionId: string | undefined;
+        if (request.resolveWorkflowOrigin && parsed.data.parentSessionId === null && parsed.data.workflowRunId) {
+            if (!rpc.verifiedMachineInstallationId) return failure('operation_not_current', 'unverified_installation');
+            const origin = await resolveAssignedWorkflowRunOriginSession({
+                accountId: request.requestingAccountId,
+                installationId: rpc.verifiedMachineInstallationId,
+                workflowRunId: parsed.data.workflowRunId,
+            });
+            if (!origin.ok) return {
+                ok: false, reasonCode: 'operation_not_current',
+                failureCause: { phase: 'provider_broker.execution_run.workflow_origin',
+                    errorClass: 'Error', errorCode: origin.code, httpStatus: null },
+            };
+            workflowOriginSessionId = origin.originSessionId;
+        }
         return {
             ok: true,
             parentSessionId: parsed.data.parentSessionId,
+            ...(workflowOriginSessionId !== undefined ? { workflowOriginSessionId } : {}),
             occurrenceId: parsed.data.occurrenceId,
             intent: parsed.data.intent,
             runtimeState: parsed.data.runtimeState,

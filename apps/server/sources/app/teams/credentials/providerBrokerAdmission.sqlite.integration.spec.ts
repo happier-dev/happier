@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
+import { Server, type Socket } from 'socket.io';
 
 import {
     DIRECT_ROUTE_GRANT_TTL_MS,
@@ -13,6 +14,9 @@ import { db } from '@/storage/db';
 import { logger } from '@/utils/logging/log';
 import { createSessionPublisherPresence, expireSessionPublisherCandidates } from '@/app/presence/sessionPublisherPresence';
 import { readSessionDetail } from '@/app/api/routes/session/registerSessionListingRoutes';
+import { createServerRpcForwarder } from '@/app/api/socket/serverRpcForwarder';
+import { buildRpcMethodRoom } from '@/app/api/socket/rpc/rpcMethodRoom';
+import { qualifyCurrentAccountStoredContentSocket } from '@/app/api/testkit/accountStoredContentCompatibility';
 import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -27,6 +31,7 @@ import {
     admitSessionTeamCredentialBindingInTx,
     readSessionTeamCredentialBindingInTx,
     writeSessionTeamCredentialBindingsInTx,
+    grantRequiredTeamVisibilityAndValidateBindingInTx,
 } from './sessionBinding';
 import { updateTeamCredentialResourceInTx } from './resourceUpdate';
 import { createExecutionRunBrokerCurrentnessResolver } from './executionRunBrokerAuthorityResolver';
@@ -409,6 +414,7 @@ describe('Team credential Provider broker admission', () => {
                 HAPPIER_FEATURE_TEAMS__ENABLED: '1',
                 HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1',
                 HAPPIER_FEATURE_PROVIDERS__ENABLED: '1',
+                HAPPIER_FEATURE_SHARING_SESSION__ENABLED: '1',
                 // The Home offers email/password, so a restricted Team can
                 // accept it and a credential's evidence of it can be current.
                 HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED: '1',
@@ -4429,6 +4435,119 @@ describe('Team credential Provider broker admission', () => {
         });
         expect(renewed).toMatchObject({ ok: true, target: { brokerMachineId: opened.target.brokerMachineId } });
         expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(2);
+    });
+
+    it('admits detached reviewers in the assigned Workflow requester’s Session context', async () => {
+        const fixture = await createBrokerFixture('detached-reviewers');
+        const origin = await fixture.createSession();
+        const outsideTeam = await fixture.createSession('-outside-team');
+        const ownerSession = await db.session.create({ data: {
+            accountId: fixture.custodian.id, tag: 'detached-review-machine-owner',
+            metadata: '{}', primaryTeamId: fixture.team.id,
+        } });
+        await db.session.update({ where: { id: origin.id }, data: {
+            active: false, primaryTeamId: fixture.team.id, encryptionMode: 'plain',
+            currentStorageState: 'hosted',
+        } });
+        const installationId = crypto.randomUUID();
+        await db.machine.update({ where: { id: fixture.worker.id }, data: {
+            accountId: fixture.custodian.id, installationId,
+            metadata: encodePlainMachineStoredContent({ host: 'worker', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
+        } });
+        await expect(inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: fixture.custodian.id, machineId: fixture.worker.id,
+            principal: { kind: 'account', accountId: fixture.requester.id }, level: 'view',
+        }))).resolves.toMatchObject({ kind: 'saved' });
+        const createWorkflow = (session: typeof origin, assignmentInstallationId: string, state: 'running' | 'succeeded' = 'running') =>
+            db.automationRun.create({ data: {
+                id: crypto.randomUUID(), accountId: session.accountId, originKind: 'direct', causeKind: null,
+                originSessionId: session.id, claimedByMachineId: fixture.worker.id, state,
+                scheduledAt: new Date(0), dueAt: new Date(0),
+                workflowCustodyState: 'settled', workflowAcceptedSnapshotEnvelope: '{}',
+                assignments: { create: { machineId: fixture.worker.id, admittedMachineInstallationId: assignmentInstallationId } },
+            } });
+        const workflow = await createWorkflow(origin, installationId);
+        const unrelated = await createWorkflow(outsideTeam, installationId);
+        const otherAccount = await createWorkflow(ownerSession, installationId);
+        const otherInstallation = await createWorkflow(origin, crypto.randomUUID());
+        const terminal = await createWorkflow(origin, installationId, 'succeeded');
+
+        const [visibility, context] = await Promise.all(
+            (['team_visibility_required', 'team_context_required'] as const).map(async policy => {
+                const resource = await fixture.createResource(policy);
+                return db.teamCredentialResource.update({ where: { id: resource.id }, data: { sessionUsePolicy: policy } });
+            }),
+        );
+        await expect(inTx(tx => grantRequiredTeamVisibilityAndValidateBindingInTx(tx, {
+            accountId: fixture.requester.id, sessionId: origin.id, consentTeamId: fixture.team.id,
+            intent: { v: 1, slot: { kind: 'provider_model' }, resourceId: visibility.id,
+                expectedResourceRevision: visibility.revision, deliveryMode: 'brokered' },
+            authentication: TEST_AUTHENTICATION,
+        }))).resolves.toMatchObject({ ok: true });
+
+        const openReviewer = async (resource: typeof visibility, workflowRunId: string | undefined, verified = true) => {
+            const executionRunId = crypto.randomUUID();
+            const io = new Server();
+            // Substitute the authenticated socket and its worker ACK. Home
+            // still selects the socket and reads the installation from its data.
+            const target = {
+                id: crypto.randomUUID(), connected: true,
+                data: { clientType: 'machine-scoped', machineId: fixture.worker.id, userId: fixture.custodian.id,
+                    ...(verified ? { verifiedMachineInstallationId: installationId } : {}) },
+                timeout: () => ({
+                    emitWithAck: async (_event: string, request: { params: unknown }) => {
+                        const params = DaemonExecutionRunBrokerAuthorityRequestV1Schema.parse(request.params);
+                        return {
+                            status: 'current', requestNonce: params.requestNonce, serverIdentityId: params.serverIdentityId,
+                            workerMachineId: params.workerMachineId, requestingAccountId: params.requestingAccountId,
+                            executionRunId: params.executionRunId, occurrenceId: executionRunId, parentSessionId: null,
+                            workflowRunId, intent: 'agent', runtimeState: 'active_turn',
+                            teamCredentialProviderModel: { resourceId: resource.id, deliveryMode: 'brokered' },
+                        };
+                    },
+                }),
+            };
+            qualifyCurrentAccountStoredContentSocket(target);
+            const method = `${fixture.worker.id}:${RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE}`;
+            const room = buildRpcMethodRoom({ userId: fixture.custodian.id, method });
+            io.sockets.sockets.set(target.id, target as unknown as Socket);
+            io.sockets.adapter.rooms.set(room, new Set([target.id]));
+            try {
+                const resolveExecutionRunCurrentness = createExecutionRunBrokerCurrentnessResolver({
+                    app: { forwardRpcForUser: createServerRpcForwarder({ io }) },
+                    resolveServerIdentityId: async () => 'srv_detached_reviewers', createNonce: () => crypto.randomUUID(),
+                });
+                return await fixture.open({ resource, consumer: { kind: 'execution_run', executionRunId },
+                    authentication: TEST_AUTHENTICATION, resolveExecutionRunCurrentness });
+            } finally {
+                io.sockets.sockets.delete(target.id);
+                io.sockets.adapter.rooms.delete(room);
+            }
+        };
+        for (const resource of [visibility, context]) {
+            await expect(openReviewer(resource, workflow.id)).resolves.toMatchObject({ ok: true });
+            await expect(openReviewer(resource, unrelated.id)).resolves.toMatchObject({
+                ok: false, reasonCode: 'resource_forbidden', failureCause: { errorCode: resource.sessionUsePolicy },
+            });
+        }
+        for (const denied of [otherInstallation, otherAccount, terminal]) {
+            await expect(openReviewer(context, denied.id)).resolves.toMatchObject({
+                ok: false, reasonCode: 'operation_not_current', failureCause: { errorCode: 'run_not_found' },
+            });
+        }
+        await expect(openReviewer(context, workflow.id, false)).resolves.toMatchObject({
+            ok: false, reasonCode: 'operation_not_current',
+            failureCause: { phase: 'provider_broker.execution_run.unverified_installation' },
+        });
+        await expect(openReviewer(context, undefined)).resolves.toMatchObject({
+            ok: false, reasonCode: 'resource_forbidden', failureCause: { errorCode: 'team_context_required' },
+        });
+        await fixture.suspendRequester();
+        await expect(openReviewer(context, workflow.id)).resolves.toMatchObject({
+            ok: false, reasonCode: 'resource_forbidden',
+        });
     });
 
     it('admits an attached Run only on the selection its own Run owner attests, or its parent Session selection when it inherits', async () => {

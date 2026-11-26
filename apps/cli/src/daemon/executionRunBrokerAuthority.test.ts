@@ -97,6 +97,19 @@ describe('resolveDaemonExecutionRunBrokerAuthority', () => {
     expect(result).toMatchObject({ status: 'current', requestingAccountId: 'account-one', parentSessionId: 'session-one' });
   });
 
+  it('attests a Workflow reviewer under its admitted guest Account', async () => {
+    await expect(resolveDaemonExecutionRunBrokerAuthority(request, {
+      currentIdentity: { serverIdentityId: 'srv_home_one', accountId: 'worker-custodian', machineId: 'machine-one' },
+      listMarkers: async () => [{ runId: 'run-one', happySessionId: null, intent: 'voice_agent', status: 'running', pid: 41 }],
+      isPidAlive: async () => true,
+      resolveDetachedWorkflowRequesterAccountId: () => request.requestingAccountId,
+      resolveLiveAuthority: async () => ({ ...await liveCurrent(), parentSessionId: null, workflowRunId: 'review-workflow' }),
+    })).resolves.toMatchObject({
+      status: 'current', parentSessionId: null, requestingAccountId: request.requestingAccountId,
+      workflowRunId: 'review-workflow',
+    });
+  });
+
   it('never lends a detached custodian Run to a foreign recipient', async () => {
     let reads = 0;
     await expect(resolveDaemonExecutionRunBrokerAuthority(request, {

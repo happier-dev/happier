@@ -8,7 +8,7 @@ import { forwardRpcCall } from "./rpc/forwardRpcCall";
 import { readWebLatencyRequestId } from "@/utils/webLatencyTrace";
 
 export type ServerRpcForwardResult =
-    | Readonly<{ ok: true; result: unknown }>
+    | Readonly<{ ok: true; result: unknown; verifiedMachineInstallationId?: string }>
     | Readonly<{ ok: false; error: string; errorCode?: string }>;
 
 export type ForwardRpcForUser = (params: Readonly<{

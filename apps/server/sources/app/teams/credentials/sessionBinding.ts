@@ -1186,6 +1186,8 @@ export type TeamCredentialOperationConsumer =
         kind: "execution_run";
         /** The Run's host Session, or null for a detached Run. */
         parentSessionId: string | null;
+        /** Home-verified Workflow origin used only for this Run's credential policy. */
+        workflowOriginSessionId?: string;
         /** The resource this Run's own admitted operation names. */
         resourceId: string;
     }>;
@@ -1199,7 +1201,8 @@ export type TeamCredentialOperationConsumer =
  * parent Session's selection, so a Run on B beside a parent on A works and does
  * not follow later parent edits. An attached Run still runs in its parent
  * Session's context, so the parent's ownership and Session-use policy (Team
- * context and visibility) apply to it; a detached Run has no Session context.
+ * context and visibility) apply to it. A detached Run dispatched by an
+ * admitted Workflow uses that Workflow's verified origin for this policy.
  * A finite platform operation uses that same resource admission without Session context.
  */
 export async function admitTeamCredentialOperationBindingInTx(
@@ -1239,7 +1242,10 @@ export async function admitTeamCredentialOperationBindingInTx(
             ...placement,
         });
     }
-    return input.consumer.kind !== "execution_run" || input.consumer.parentSessionId === null
+    const policySessionId = input.consumer.kind === "execution_run"
+        ? input.consumer.parentSessionId ?? input.consumer.workflowOriginSessionId
+        : undefined;
+    return policySessionId === undefined
         ? await validatePlannedSessionTeamCredentialResourceInTx(tx, {
             accountId: input.accountId,
             resourceId: input.consumer.resourceId,
@@ -1249,7 +1255,7 @@ export async function admitTeamCredentialOperationBindingInTx(
             authentication: input.authentication,
         })
         : await validateExistingSessionTeamCredentialResourceInTx(tx, {
-            sessionId: input.consumer.parentSessionId,
+            sessionId: policySessionId,
             accountId: input.accountId,
             resourceId: input.consumer.resourceId,
             ...placement,

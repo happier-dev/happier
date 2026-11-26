@@ -23,6 +23,7 @@ export async function resolveDaemonExecutionRunBrokerAuthority(
     currentIdentity: Readonly<{ serverIdentityId: string; accountId: string; machineId: string }> | null;
     listMarkers: () => Promise<readonly AuthorityMarker[]>;
     isPidAlive: (pid: number) => boolean | Promise<boolean>;
+    resolveDetachedWorkflowRequesterAccountId?: (runId: string) => string | undefined;
     resolveLiveAuthority: (input: Readonly<{
       sessionId: string | null;
       requestingAccountId: string;
@@ -45,9 +46,11 @@ export async function resolveDaemonExecutionRunBrokerAuthority(
   }
   const marker = (await deps.listMarkers()).find(candidate => candidate.runId === request.executionRunId);
   if (!marker) return deny('not_found');
-  // Attached Runs borrow their exact parent Session's admitted requester
-  // context below. Detached Runs belong to this daemon's Account runtime.
-  if (marker.happySessionId === null && deps.currentIdentity.accountId !== request.requestingAccountId) {
+  // A detached Workflow reviewer keeps the admitted starter even when the
+  // Machine belongs to another Account. Ordinary detached Runs use the daemon.
+  if (marker.happySessionId === null
+    && (deps.resolveDetachedWorkflowRequesterAccountId?.(marker.runId) ?? deps.currentIdentity.accountId)
+      !== request.requestingAccountId) {
     return deny('identity_mismatch');
   }
   if (marker.status !== 'running') return deny('terminal');
@@ -87,6 +90,7 @@ export async function resolveDaemonExecutionRunBrokerAuthority(
     executionRunId: request.executionRunId,
     occurrenceId: live.occurrenceId,
     parentSessionId: live.parentSessionId,
+    ...(live.parentSessionId === null && live.workflowRunId ? { workflowRunId: live.workflowRunId } : {}),
     intent: live.intent,
     runtimeState: live.runtimeState,
     activeTurnId: live.activeTurnId ?? null,

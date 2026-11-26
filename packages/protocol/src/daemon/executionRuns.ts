@@ -34,6 +34,7 @@ import { TeamCredentialDirectMaterialUseV1Schema } from '../teams/credentials/di
 import { TeamCredentialRouteV1Schema } from '../teams/credentials/resourceV1.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../providers/ids.js';
+import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
 
 /**
@@ -72,6 +73,7 @@ export const DaemonExecutionRunBrokerAuthorityResponseV1Schema = lazyZodSchema((
     executionRunId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
     occurrenceId: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
     parentSessionId: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512))),
+    workflowRunId: z.optional(WorkflowRunIdV1Schema),
     intent: ExecutionRunIntentSchema,
     runtimeState: z.enum(['active_turn', 'idle']),
     activeTurnId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512)))),
@@ -120,6 +122,7 @@ export const SessionExecutionRunBrokerAuthorityResponseV1Schema = lazyZodSchema(
     activeTurnId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512)))),
     teamCredentialProviderModel: ExecutionRunTeamCredentialProviderModelAttestationV1Schema,
     actionInvocation: z.optional(ExternalActionRequesterInvocationV1Schema),
+    workflowRunId: z.optional(WorkflowRunIdV1Schema),
   }),
   z.strictObject({
     status: z.literal('not_current'),

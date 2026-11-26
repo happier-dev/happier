@@ -73,6 +73,7 @@ export type RpcForwardResult =
         answeringClientId?: string;
         answeringClientIds?: readonly string[];
         answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[];
+        verifiedMachineInstallationId?: string;
         transportAcknowledgement?: SocketRpcTransportAcknowledgementV1;
       }>
     | Readonly<{
@@ -634,6 +635,13 @@ async function executeRpcForwardCall(params: Readonly<{
             });
         }
         const response = guarded.value;
+        // Only the answering socket's authenticated installation can back a
+        // Workflow assignment lookup. The daemon ACK is just the Run witness.
+        const verifiedMachineInstallationId = params.authorization?.kind === 'machine.read.serverOrigin'
+            && params.method === `${params.authorization.machineId}:${RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE}`
+            && targetClientType === 'machine-scoped'
+            && targetMachineId === params.authorization.machineId
+            ? readVerifiedMachineSocketInstallationIdFromSocketData(targetData) : null;
         observeRpcCall({
             method: params.method,
             durationMs: Date.now() - callStartedAt,
@@ -644,6 +652,7 @@ async function executeRpcForwardCall(params: Readonly<{
             ok: true,
             result: envelope.success ? envelope.data.result : response,
             ...(params.answeringClient ? { answeringClientId: selection.target.id } : {}),
+            ...(verifiedMachineInstallationId ? { verifiedMachineInstallationId } : {}),
             ...(selection.clientIds ? { answeringClientIds: selection.clientIds, answeringClients: selection.clients } : {}),
             ...(envelope.success && envelope.data.acknowledgement
                 ? { transportAcknowledgement: envelope.data.acknowledgement }

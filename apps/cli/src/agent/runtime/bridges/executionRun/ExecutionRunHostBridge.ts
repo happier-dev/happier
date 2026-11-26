@@ -682,6 +682,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       executionRunId: run.runId,
       occurrenceId,
       parentSessionId: run.sessionId,
+      ...(run.sessionId === null && controller.kind === 'backend' && controller.workflowRunId
+        ? { workflowRunId: controller.workflowRunId } : {}),
       intent: run.intent,
       runtimeState,
       activeTurnId,
