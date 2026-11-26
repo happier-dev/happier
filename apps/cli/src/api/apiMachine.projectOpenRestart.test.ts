@@ -4,15 +4,19 @@ import { join } from 'node:path';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApiClient } from './api';
-import type { ApiMachineClient } from './apiMachine';
+import type { ApiMachineClient, ApiMachineClientLifecycleDependencies } from './apiMachine';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { writeCredentialsTokenOnly } from '@/persistence';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { buildDeploymentBackupActionInputV1, DeploymentBackupRunResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 
 const backupInput = () => buildDeploymentBackupActionInputV1('deployments.backups.run', {
@@ -47,22 +51,22 @@ describe('installed Machine Project Open receipt restart', () => {
         await rm(directory, { recursive: true, force: true });
     });
 
-    async function start() {
+    async function start(lifecycleDependencies?: ApiMachineClientLifecycleDependencies) {
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account',
             provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
         })).toString('base64url')}.signature`;
         await writeCredentialsTokenOnly({ token });
-        await readOrCreateInstallationIdentity();
+        const installation = await readOrCreateInstallationIdentity();
         const api = await ApiClient.create({ token, encryption: null });
         const client = await api.machineSyncClient({ id: 'worker', encryptionMode: 'plain', metadata: null,
-            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined, lifecycleDependencies);
         clients.push(client);
         client.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorCode: 'INVALID_REQUEST', errorMessage: 'Not used' }),
             stopSession: async () => ({ status: 'not_found' }), isSessionActive: async () => false,
             requestShutdown: () => {} });
         const rpc: unknown = Reflect.get(client, 'rpcHandlerManager');
         if (!(rpc instanceof RpcHandlerManager)) throw new Error('Missing registered Machine RPC owner');
-        return { client, rpc, get: async (operationId: string) => ActionOperationGetV1ResponseSchema.parse(
+        return { client, rpc, installation, get: async (operationId: string) => ActionOperationGetV1ResponseSchema.parse(
             await rpc.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get, { operationId })) };
     }
 
@@ -190,5 +194,63 @@ describe('installed Machine Project Open receipt restart', () => {
             readFile(join(configuration.activeServerDir, 'action-operations', name), 'utf8')));
         expect(ciphertexts).toHaveLength(2);
         expect(ciphertexts.join('')).not.toContain('/retained-private-project');
+    });
+
+    it('wires workspaceSync.materializeManagedProjectTarget into registered projects.open RPC handlers (PF8)', async () => {
+        const homeServerIdentityId = 'srv_pf8_managed_open';
+        await adoptServerProfileHomeConnectionDescriptor({
+            expectedProfileId: configuration.activeServerId,
+            createIfMissing: true,
+            observation: 'exact',
+            descriptor: {
+                v: 1,
+                homeServerIdentityId,
+                canonicalServerUrl: configuration.serverUrl,
+                revision: 1,
+                endpoints: [{ kind: 'https', url: configuration.serverUrl }],
+            },
+        });
+        let opened!: {
+            kind: 'opened';
+            workspace: { v: 2; kind: 'managed'; serverId: string; workspaceId: string; managedId: string;
+                controller: { machineId: string; installationId: string }; rootPath: string };
+            directory: string;
+            setup: 'notRequired';
+        };
+        const materializeManagedProjectTarget = vi.fn(async () => opened);
+        const machine = await start({
+            workspaceSyncHandoffAdapter: {} as NonNullable<ApiMachineClientLifecycleDependencies['workspaceSyncHandoffAdapter']>,
+            workspaceSync: { materializeManagedProjectTarget } as unknown as NonNullable<ApiMachineClientLifecycleDependencies['workspaceSync']>,
+        });
+        opened = { kind: 'opened', workspace: { v: 2, kind: 'managed', serverId: homeServerIdentityId, workspaceId: 'managed-ws',
+            managedId: 'lima-child', controller: { machineId: 'worker', installationId: machine.installation.installationId },
+            rootPath: '/workspace' }, directory: '/workspace', setup: 'notRequired' };
+        const request = OpenProjectInputV1Schema.parse({
+            serverId: homeServerIdentityId, machineId: 'worker',
+            source: { kind: 'workspace', workspaceId: 'source-ws' },
+            materialization: {
+                kind: 'sync', targetPath: '/workspace',
+                targetManaged: { managedId: 'lima-child', controller: { machineId: 'worker',
+                    installationId: machine.installation.installationId } },
+                workspaceAction: { kind: 'copy_once', contentPolicy: createDefaultWorkspaceContentPolicyV1() },
+            },
+        });
+        const rpcContext = {
+            machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'worker',
+                installationId: machine.installation.installationId, role: 'manage' as const, encryptionMode: 'plain' as const },
+            verifyMachineAdmissionCurrent: async () => true,
+        };
+        const result = await machine.rpc.invokeLocal(RPC_METHODS.PROJECTS_OPEN, request, {
+            admissionResult: { ok: true },
+            rpcContext,
+        });
+        expect(result).toEqual(opened);
+        expect(materializeManagedProjectTarget).toHaveBeenCalledTimes(1);
+        expect(materializeManagedProjectTarget).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: homeServerIdentityId, machineId: 'worker',
+            materialization: expect.objectContaining({ kind: 'sync',
+                targetManaged: { managedId: 'lima-child', controller: { machineId: 'worker',
+                    installationId: machine.installation.installationId } } }),
+        }), expect.objectContaining({ machineAdmission: rpcContext.machineAdmission }));
     });
 });

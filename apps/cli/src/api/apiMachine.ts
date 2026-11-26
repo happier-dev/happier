@@ -2651,6 +2651,10 @@ export class ApiMachineClient {
                         ...(this.lifecycleDependencies.workspaceSyncHandoffAdapter ? {
                             workspaceSyncAdapter: this.lifecycleDependencies.workspaceSyncHandoffAdapter,
                         } : {}),
+                        ...(this.lifecycleDependencies.workspaceSync?.materializeManagedProjectTarget ? {
+                            materializeManagedProjectTarget: (input, context) =>
+                                this.lifecycleDependencies.workspaceSync!.materializeManagedProjectTarget!(input, context),
+                        } : {}),
                         readCredentials: async () => {
                             if (configuration.activeServerId !== executionRunServerId) return null;
                             const credentials = await readStoredCredentialsForServerId(executionRunServerId).catch(() => null);
