@@ -39,7 +39,7 @@ export function machineSetupScriptCommandLines(scripts: readonly Readonly<{ body
 /** Count the same Plan operands that the grouped review describes. */
 export function countMachineSetupTargetChanges(
     target: MachineSetupReviewChangeTarget,
-    sourcePresentations?: MachineSetupTargetSourcePresentations['sources'],
+    sourcePresentations?: MachineSetupTargetSourcePresentations,
 ): number {
     let count = 0;
     visitMachineSetupTargetChanges(target, (_kind, _line, weight) => { count += weight ?? 1; }, sourcePresentations);
@@ -112,7 +112,7 @@ export function groupMachineSetupChanges(
         add,
         sourcePresentations?.find((presentation) =>
             presentation.homeId === target.homeId && presentation.machineId === target.machineId,
-        )?.sources,
+        ),
     );
     return MACHINE_SETUP_CHANGE_KINDS.flatMap(kind => {
         const group = groups.get(kind);
@@ -123,18 +123,20 @@ export function groupMachineSetupChanges(
 /** One projection of executable Plan facts; presentation never parses or resolves toolchain config. */
 function visitMachineSetupTargetChanges(target: MachineSetupReviewChangeTarget,
     add: (kind: MachineSetupChangeKind, change: LineFacts, weight?: number) => void,
-    sourcePresentations?: MachineSetupTargetSourcePresentations['sources'],
+    presentations?: MachineSetupTargetSourcePresentations,
 ): void {
     if ('recipePlans' in target) {
-        const openedSources = readMachineSetupTargetOpenedSources(target, sourcePresentations);
+        const openedSources = readMachineSetupTargetOpenedSources(target, presentations?.sources);
         const merged = mergeMachineSetupsV1(openedSources.map(source => source.setup));
         if (merged.ok) {
             const { toolchain, scripts } = merged.setup;
             if (toolchain) add('files', { machineId: target.machineId,
                 operand: `${toolchain.adapterId} · ${toolchain.config}`, removes: false });
-            for (const line of machineSetupScriptCommandLines(scripts)) {
-                add('commands', { machineId: target.machineId, operand: line.operand, removes: false });
-            }
+            // A prepared review lists exactly the Plan's scripts; a bare Apply input lists its own source bodies.
+            const lines = presentations?.scripts
+                ? presentations.scripts.map(script => 'body' in script ? `$ ${script.body.trim()}` : resolvePluginLocalizedStringV2Text(script.label))
+                : machineSetupScriptCommandLines(scripts).flatMap(line => line.operand ? [line.operand] : []);
+            for (const operand of lines) add('commands', { machineId: target.machineId, operand, removes: false });
         }
     }
     const plans = [

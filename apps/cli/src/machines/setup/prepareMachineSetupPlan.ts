@@ -261,7 +261,8 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
       ...(input.mode === 'effects' ? {
         steps: projectMachineSetupReviewedSteps(selectedPlans, executingSetups.flatMap(setup => setup.scripts ?? [])),
       } : {}),
-      ...(params.candidate === undefined ? {} : { presetUpdateEffects: {
+      // Every script this Plan runs, by source address, so Review shows exactly what Apply executes.
+      ...(params.candidate === undefined && input.mode !== 'effects' ? {} : { presetUpdateEffects: {
         toolchain: executingSetups.some(setup => setup.toolchain !== undefined),
         scripts: executingSetups.flatMap((setup, sourceIndex) => (setup.scripts ?? [])
           .flatMap((script, scriptIndex) => script.body ? [{ sourceIndex, scriptIndex }] : [])),

@@ -200,7 +200,7 @@ export function MachineSetupPlanReview(
               target,
               prepared.sourcePresentations?.find((entry) =>
                 entry.homeId === target.homeId && entry.machineId === target.machineId,
-              )?.sources,
+              ),
             ) + (agentsByTarget.get(target)?.length ?? 0) +
             ('recipePlans' in target ? factsOf(target.machineId)?.review?.apps ?? [] : []).filter(
               (app) => app.kind === 'new',

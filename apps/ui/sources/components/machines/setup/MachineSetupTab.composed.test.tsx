@@ -706,7 +706,11 @@ describe('Machine setup preparation', () => {
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
       const request = MachineSetupPlanInputV1Schema.parse(input);
       if (request.mode) proposed.push(request.sources);
-      return { desiredRevision: 3, sources: request.mode ? request.sources : planned, exclusions: [], support: [], recipePlans: [] };
+      // The receiving daemon addresses the one script its effects Apply runs: the attached preset's.
+      return { desiredRevision: 3, sources: request.mode ? request.sources : planned, exclusions: [], support: [], recipePlans: [],
+        ...(request.mode ? { review: { target: { homeId: 'srv_build', machineId: 'devbox' }, administratorRequired: null,
+          downtime: 'unknown' as const, steps: [{ planIndex: 0, stepId: 'script:0', label: 'Script 1' }],
+          presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 1, scriptIndex: 0 }] } } } : {}) };
     } }));
     const params = { executeAction: executor.execute, context: { surface: 'ui' as const },
       homeId: 'srv_build', machineId: 'devbox', preset: selected, isCurrent: () => true };
@@ -751,7 +755,8 @@ describe('Machine setup preparation', () => {
       contentEncryptionMode: 'plain' }, ...current.sources];
     // The review facts each target's Plan reports reach the review presenter unchanged.
     const targetSupport = [{ sourceIndex: 0, itemIndex: 0, status: 'unsupported' as const }];
-    const targetReview = { target: { homeId: 'srv_build', machineId: 'devbox' }, administratorRequired: true, downtime: 'possible' as const };
+    const targetReview = { target: { homeId: 'srv_build', machineId: 'devbox' }, administratorRequired: true, downtime: 'possible' as const,
+      presetUpdateEffects: { toolchain: false, scripts: [] } };
     const plans: unknown[] = [];
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
       plans.push(input);
@@ -767,7 +772,7 @@ describe('Machine setup preparation', () => {
       { homeId: 'srv_build', machineId: 'devbox', selectedMachineId: 'workflow-host', targets: [
         { homeId: 'srv_build', machineId: 'devbox', sources, mode: 'effects', appChildren },
       ] }]);
-    expect(prepared).toEqual({ sourcePresentations: [{ homeId: 'srv_build', machineId: 'devbox',
+    expect(prepared).toEqual({ sourcePresentations: [{ homeId: 'srv_build', machineId: 'devbox', scripts: [],
       sources: sources.map(source => source.kind === 'accountPresetOpaque' ? { kind: 'unavailable', source } : { kind: 'opened', source }) }], ok: true, review: { machineId: 'workflow-host', machines: [{ machineId: 'workflow-host', online: true }] },
       facts: [{ homeId: 'srv_build', machineId: 'devbox', support: targetSupport, review: targetReview }],
       input: { homeId: 'srv_build', machineId: 'workflow-host', targets: [
@@ -782,15 +787,18 @@ describe('Machine setup preparation', () => {
       { kind: 'direct', setup: {} },
     ], exclusions: [], support: [] });
     let changed = false;
+    // An effects Plan always reports its review; this preset runs no script.
+    const review = { target: { homeId: 'srv_build', machineId: 'devbox' }, administratorRequired: false, downtime: 'none' as const,
+      presetUpdateEffects: { toolchain: false, scripts: [] } };
     // This is the target-daemon transport boundary. Policy, Action admission,
     // schemas and the UI's source-copy preparation remain real.
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
       machineSetupPlan: async ({ input }) => {
         plans.push(input);
         const planInput = MachineSetupPlanInputV1Schema.parse(input);
-        if (planInput.mode === 'effects' && changed) return { ...current, recipePlans: [], sources: planInput.sources!.map(source =>
+        if (planInput.mode === 'effects' && changed) return { ...current, recipePlans: [], review, sources: planInput.sources!.map(source =>
           source.kind === 'accountPresetOpaque' ? { ...source, presetRevision: source.presetRevision + 1 } : source) };
-        return planInput.mode === 'effects' ? { ...current, sources: planInput.sources!, recipePlans: [] } : current;
+        return planInput.mode === 'effects' ? { ...current, sources: planInput.sources!, recipePlans: [], review } : current;
       },
     }));
     const context = { surface: 'ui' as const };
@@ -802,9 +810,9 @@ describe('Machine setup preparation', () => {
       contentEncryptionMode: 'plain' }, ...current.sources];
     expect(plans).toEqual([{ homeId: 'srv_build', machineId: 'devbox' },
       { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', sources }]);
-    // A Plan without review facts stays unknown: no review is invented.
-    expect(prepared).toEqual({ sourcePresentations: [{ homeId: 'srv_build', machineId: 'devbox',
-      sources: sources.map(source => source.kind === 'accountPresetOpaque' ? { kind: 'unavailable', source } : { kind: 'opened', source }) }], ok: true, facts: [{ homeId: 'srv_build', machineId: 'devbox', support: [] }],
+    // The Plan's own review facts reach the presenter unchanged; no review is invented.
+    expect(prepared).toEqual({ sourcePresentations: [{ homeId: 'srv_build', machineId: 'devbox', scripts: [],
+      sources: sources.map(source => source.kind === 'accountPresetOpaque' ? { kind: 'unavailable', source } : { kind: 'opened', source }) }], ok: true, facts: [{ homeId: 'srv_build', machineId: 'devbox', support: [], review }],
       input: { homeId: 'srv_build', machineId: 'devbox', targets: [
       { homeId: 'srv_build', machineId: 'devbox', sources, desiredRevision: 7, recipePlans: [], exclusions: [],
         preset: { id: selected.id, revision: selected.revision, name: selected.name } },

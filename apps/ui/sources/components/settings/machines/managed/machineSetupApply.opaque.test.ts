@@ -7,6 +7,13 @@ import { prepareTeamSetupPlan, runTeamSetupPlan } from '@/components/teams/setup
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 import { prepareMachineSetupPresetApplyInput } from './machineSetupApply';
+import { prepareMachineSetupSourcesApplyInput } from './machineSetupReview';
+import { countMachineSetupTargetChanges, groupMachineSetupChanges } from './machineSetupReviewChanges';
+
+// The receiving daemon addresses every script its effects Plan runs; these Plans run the preset's one script.
+const reviewOneScript = (machineId: string) => ({ target: { homeId: 'home', machineId }, administratorRequired: null,
+    downtime: 'unknown' as const, steps: [{ planIndex: 0, stepId: 'script:0', label: 'Script 1' }],
+    presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 0 }] } });
 
 it('projects a saved preset to the opaque Plan source without sending its opened setup', async () => {
     const setup = { scripts: [{ body: 'private setup body' }] };
@@ -18,7 +25,7 @@ it('projects a saved preset to the opaque Plan source without sending its opened
         const request = MachineSetupPlanInputV1Schema.parse(input);
         requests.push(request);
         return { ok: true as const, result: request.mode
-            ? { ...current, sources: request.sources, recipePlans: [] }
+            ? { ...current, sources: request.sources, recipePlans: [], review: reviewOneScript('machine') }
             : current };
     };
 
@@ -47,7 +54,7 @@ it('applies an unchanged Tools-only Team review with its declared-Agent child', 
             expect(actionId).toBe('machines.setup.plan');
             const request = MachineSetupPlanInputV1Schema.parse(input);
             return { ok: true, result: request.mode === 'effects' ? MachineSetupPlanResultV1Schema.parse({
-                ...current, sources: request.sources, recipePlans: [], appChildren,
+                ...current, sources: request.sources, recipePlans: [], appChildren, review: reviewOneScript(target.machineId),
             }) : current };
         },
         executeConfirmed: async (actionId, input) => {
@@ -65,4 +72,32 @@ it('applies an unchanged Tools-only Team review with its declared-Agent child', 
     const result = await runTeamSetupPlan({ executeAction, context, plan: prepared.plan });
 
     expect(result.machine).toEqual({ ok: true, result: { operationId: 'accepted-operation' } });
+});
+
+it('reviews exactly the scripts the Plan will run, including a retained copy this viewer cannot open', async () => {
+    const homeId = 'home';
+    const machineId = 'machine';
+    const sources = [
+        { kind: 'accountPresetOpaque' as const, presetId: 'retained', presetRevision: 1, contentEncryptionMode: 'e2ee' as const },
+        { kind: 'direct' as const, setup: { scripts: [{ body: 'echo already-done' }, { body: 'printf TEAM' }] } },
+    ];
+    const scriptLabel = (index: number) => ({ key: 'machinePresets.setup.scriptNumbered', fallback: 'Script {index}', params: { index } });
+    // Home Action execution is the transport boundary; the receiving daemon's Plan shape is mirrored exactly.
+    const executeAction = async (_actionId: unknown, input: unknown) => {
+        const request = MachineSetupPlanInputV1Schema.parse(input);
+        return { ok: true as const, result: MachineSetupPlanResultV1Schema.parse({ desiredRevision: 4, sources: request.sources,
+            exclusions: [], support: [], recipePlans: [], resolvedSources: [null, request.sources?.[1]],
+            review: { target: { homeId, machineId }, administratorRequired: null, downtime: 'unknown',
+                steps: [{ planIndex: 0, stepId: 'script:1', label: scriptLabel(2) }, { planIndex: 0, stepId: 'script:3', label: scriptLabel(4) }],
+                presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 1 }, { sourceIndex: 1, scriptIndex: 1 }] } } }) };
+    };
+
+    const prepared = await prepareMachineSetupSourcesApplyInput({ executeAction: executeAction as never, context: { surface: 'ui' },
+        homeId, machineId, combined: false, isCurrent: () => true, targets: [{ homeId, machineId, desiredRevision: 4, sources }] });
+    if (!prepared.ok) throw new Error(`Expected a prepared review: ${prepared.errorCode}`);
+
+    const commands = groupMachineSetupChanges(prepared.input.targets, prepared.sourcePresentations)
+        .find(group => group.kind === 'commands');
+    expect(commands?.lines.map(line => line.operand)).toEqual(['Script 2', '$ printf TEAM']);
+    expect(countMachineSetupTargetChanges(prepared.input.targets[0]!, prepared.sourcePresentations?.[0])).toBe(2);
 });

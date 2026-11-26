@@ -74,7 +74,7 @@ describe('Machine setup review changes', () => {
             { kind: 'opened', source: direct },
             { kind: 'opened', presetName: 'Historical preset', source: privateSource },
         ] }];
-        expect(countMachineSetupTargetChanges(plan, presentations[0]!.sources)).toBe(5);
+        expect(countMachineSetupTargetChanges(plan, presentations[0])).toBe(5);
         const groups = groupMachineSetupChanges([plan], presentations);
         expect(groups.find(group => group.kind === 'commands')?.lines.map(line => line.operand)).toEqual(['$ echo first', '$ echo second']);
         expect(groups.find(group => group.kind === 'packages')).toMatchObject({ added: 1, removed: 1,

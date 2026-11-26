@@ -678,6 +678,42 @@ describe('admitted Machine setup snapshot lifetime', () => {
       expect(launchedBodies()).toEqual(['printf CONTROL', 'echo candidate', 'echo candidate', 'exit 23']);
     }
   });
+  it('addresses every script its source-change Apply runs, including a retained preset the reviewer cannot open', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    const script = (body: string) => ({ body, affects: 'none' as const });
+    const settled = { kind: 'accountPreset' as const, presetId: 'settled-preset', presetRevision: 2, setupRevision: 0,
+      contentEncryptionMode: 'plain' as const, setup: { scripts: [script('echo settled')] } };
+    const retained = { ...settled, presetId: 'retained-pending', presetRevision: 1, setup: { scripts: [
+      script('echo retained-done'), script('echo retained-pending'),
+    ] } };
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(0));
+    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 0,
+      sources: [settled, retained, { kind: 'direct', setup: {} }], exclusions: [],
+      observedSourceFacts: { [`account:${retained.presetId}`]: { pendingScripts: [1] } } });
+    const reference = ({ setup: _setup, ...source }: typeof settled) => ({ ...source, kind: 'accountPresetOpaque' as const });
+    // Home is the HTTP boundary: retained copies need no resolution, only the creation-origin read.
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/resolve');
+      expect(body).toMatchObject({ purpose: 'creationOrigin' });
+      return { status: 200, data: { purpose: 'creationOrigin' } };
+    });
+    onTestFinished(() => post.mockRestore());
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({ input: { ...target, mode: 'effects',
+      sources: [reference(settled), reference(retained), { kind: 'direct', setup: { scripts: [script('printf TEAM')] } }] },
+    context: fixture.context('machines.setup.plan', 'source-change-review') }));
+    // Retained copies stay opaque to the reviewer, so the Plan's addresses are the only review of their scripts.
+    expect(plan.resolvedSources?.slice(0, 2)).toEqual([null, null]);
+    const reviewed = plan.review?.presetUpdateEffects?.scripts;
+    expect(reviewed).toEqual([{ sourceIndex: 1, scriptIndex: 1 }, { sourceIndex: 2, scriptIndex: 0 }]);
+
+    expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, plan),
+      context: fixture.context('machines.setup.apply', 'source-change-apply') })).toMatchObject({ operationId: expect.any(String) });
+
+    const local = [settled.setup, retained.setup, { scripts: [script('printf TEAM')] }];
+    expect(nativeTerminal.launches.map(launch => launch.args.at(-1)))
+      .toEqual(reviewed?.map(({ sourceIndex, scriptIndex }) => local[sourceIndex]?.scripts[scriptIndex]?.body));
+  });
   it('checks the admitted local copy without re-reading its preset authority', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
     const local = { kind: 'accountPreset' as const, presetId: 'retained-preset', presetRevision: 3,

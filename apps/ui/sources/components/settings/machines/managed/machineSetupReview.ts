@@ -3,6 +3,7 @@ import { machineSetupApplyTargetFromPlanV1, MachineSetupPlanResultV1Schema, Mach
     type MachineSetupPlanResultV1, type MachineSetupPlanInputV1, type MachineSetupPlanUnavailableTargetV1, type MachineSetupSourceApplyV1,
     type MachineSetupRemoveInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { type MachineSetupSourceV1, reviewMachineSetupSourceChangeV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import type { MachineSetupReviewedStepV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -30,10 +31,14 @@ export type MachineSetupTargetReviewFacts = Readonly<{
     sourceFacts?: MachineSetupPlanResultV1['sourceFacts']; removalOffers?: MachineSetupPlanResultV1['removalOffers'];
     recipeTitles?: MachineSetupPlanResultV1['recipeTitles'];
 }>;
+/** One script the Plan runs: its exact body when this viewer opened the copy, otherwise its native step label. */
+export type MachineSetupReviewScript = Readonly<{ body: string }> | Readonly<{ label: MachineSetupReviewedStepV1['label'] }>;
 export type MachineSetupTargetSourcePresentations = Readonly<{
     homeId: string;
     machineId: string;
     sources: readonly ManagedMachineSetupSourcePresentationV1[];
+    /** Exactly the scripts Apply runs on this target, in run order. */
+    scripts?: readonly MachineSetupReviewScript[];
 }>;
 export type MachineSetupPreparedApply = Readonly<{
     ok: true; input: MachineSetupApplyInputV1; review?: MachineSetupCombinedPlanResultV1['review'];
@@ -116,26 +121,40 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
             signal: params.context.signal,
         });
         if (!current()) return fail('continuation_retired');
-        if (expected.candidatePreset !== undefined) {
-            const effects = plan.review?.presetUpdateEffects;
-            if (!effects) return fail('plan_changed');
+        // The receiving Plan addresses every script Apply runs; Review shows exactly those, in run order.
+        // A Plan without addresses is reviewable only when every copy is opened: all their scripts are shown.
+        const scriptEffects = plan.review?.presetUpdateEffects;
+        if (!scriptEffects && (expected.candidatePreset !== undefined || presentations.some(entry => entry.kind !== 'opened')))
+            return fail('plan_changed');
+        let reviewedScripts: MachineSetupReviewScript[] | undefined;
+        if (scriptEffects) {
+            const scriptSteps = scriptEffects.scripts.length ? plan.review?.steps?.slice(-scriptEffects.scripts.length) ?? [] : [];
             const scriptIndicesBySource = new Map<number, Set<number>>();
-            for (const { sourceIndex, scriptIndex } of effects.scripts) {
+            reviewedScripts = [];
+            for (const [index, { sourceIndex, scriptIndex }] of scriptEffects.scripts.entries()) {
                 const presentation = presentations[sourceIndex];
-                if (presentation?.kind !== 'opened' || !presentation.source.setup.scripts?.[scriptIndex]?.body)
-                    return fail('managed_response_invalid');
-                const indices = scriptIndicesBySource.get(sourceIndex) ?? new Set<number>();
-                indices.add(scriptIndex);
-                scriptIndicesBySource.set(sourceIndex, indices);
+                const body = presentation?.kind === 'opened' ? presentation.source.setup.scripts?.[scriptIndex]?.body : undefined;
+                if (presentation?.kind === 'opened' && !body) return fail('managed_response_invalid');
+                if (body) {
+                    const indices = scriptIndicesBySource.get(sourceIndex) ?? new Set<number>();
+                    indices.add(scriptIndex);
+                    scriptIndicesBySource.set(sourceIndex, indices);
+                    reviewedScripts.push({ body });
+                    continue;
+                }
+                // A copy this viewer cannot open still runs: name it as its native step, never treat it as empty.
+                const step = scriptSteps.length === scriptEffects.scripts.length ? scriptSteps[index] : undefined;
+                if (!step) return fail('managed_response_invalid');
+                reviewedScripts.push({ label: step.label });
             }
-            if (effects.toolchain && !presentations.some(entry => entry.kind === 'opened' && entry.source.setup.toolchain))
+            if (scriptEffects.toolchain && !presentations.some(entry => entry.kind === 'opened' && entry.source.setup.toolchain))
                 return fail('managed_response_invalid');
             presentations = presentations.map((entry, sourceIndex) => {
                 if (entry.kind !== 'opened') return entry;
                 const { scripts, toolchain, ...setup } = entry.source.setup;
                 const indices = scriptIndicesBySource.get(sourceIndex);
                 return { ...entry, source: { ...entry.source, setup: { ...setup,
-                    ...(effects.toolchain && toolchain ? { toolchain } : {}),
+                    ...(scriptEffects.toolchain && toolchain ? { toolchain } : {}),
                     ...(indices && scripts ? { scripts: scripts.filter((_script, scriptIndex) => indices.has(scriptIndex)) } : {}),
                 } } };
             });
@@ -147,7 +166,7 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
             ...(effects.data.sourceFacts === undefined ? {} : { sourceFacts: effects.data.sourceFacts }),
             ...(effects.data.recipeTitles === undefined ? {} : { recipeTitles: effects.data.recipeTitles }),
             ...(effects.data.removalOffers === undefined ? {} : { removalOffers: effects.data.removalOffers }) });
-        sourcePresentations.push({ homeId: expected.homeId, machineId: expected.machineId, sources: presentations });
+        sourcePresentations.push({ homeId: expected.homeId, machineId: expected.machineId, sources: presentations, ...(reviewedScripts ? { scripts: reviewedScripts } : {}) });
     }
     if (!admitted.length) return { ok: false, errorCode: 'machine_offline', error: 'machine_offline', details: { targets: unavailableTargets } };
     if (combined?.success && combined.data.review.machineId === null) return fail('machine_unavailable');
