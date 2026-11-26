@@ -376,12 +376,34 @@
       "availabilityDisposition": "preview"
     },
     {
+      "manifestFamily": "databaseEngines",
+      "pluginApiRegistrationFamily": "databaseEngines",
+      "registrationHost": "daemon",
+      "definePluginAuthorKey": "databaseEngines",
+      "definePluginInputShape": "structured",
+      "definePluginClassification": "adapter",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#databaseEngines",
+      "availabilityDisposition": "available"
+    },
+    {
       "manifestFamily": "deploymentTargets",
-      "pluginApiRegistrationFamily": null,
-      "registrationHost": null,
+      "pluginApiRegistrationFamily": "deploymentTargets",
+      "registrationHost": "daemon",
       "definePluginAuthorKey": "deploymentTargets",
-      "definePluginInputShape": "descriptor",
-      "definePluginClassification": "descriptor-only",
+      "definePluginInputShape": "structured",
+      "definePluginClassification": "adapter",
       "authorEntrypoint": ".",
       "realm": "any",
       "lifecycle": [
@@ -1638,6 +1660,20 @@
       "availabilityDisposition": "available"
     },
     {
+      "serviceId": "databaseEngines",
+      "property": "databaseEngines",
+      "publicType": "DatabaseEnginesServiceV1",
+      "authorEntrypoints": [
+        "."
+      ],
+      "realms": [
+        "any"
+      ],
+      "producer": "src/databaseEngines.ts",
+      "lifecycle": "invocation-scoped",
+      "availabilityDisposition": "available"
+    },
+    {
       "serviceId": "deploymentDatabases",
       "property": "deploymentDatabases",
       "publicType": "DeploymentDatabasesServiceV1",
@@ -2214,6 +2250,14 @@
       "availabilityDisposition": "available"
     },
     {
+      "specifier": "./database",
+      "sourceModule": "src/database/index.ts",
+      "realm": "any",
+      "producer": "src/database/index.ts",
+      "lifecycle": "published",
+      "availabilityDisposition": "available"
+    },
+    {
       "specifier": "./deployment-targets",
       "sourceModule": "src/deployment-targets/index.ts",
       "realm": "any",
@@ -2304,7 +2348,7 @@
     {
       "specifier": "./machine-provisioners/ssh",
       "sourceModule": "src/machine-provisioners/ssh/index.ts",
-      "realm": "any",
+      "realm": "daemon",
       "producer": "src/machine-provisioners/ssh/index.ts",
       "lifecycle": "published",
       "availabilityDisposition": "available"
@@ -2514,6 +2558,14 @@
       "sourceModule": "src/ui/client/index.ts",
       "realm": "browser",
       "producer": "src/ui/client/index.ts",
+      "lifecycle": "published",
+      "availabilityDisposition": "available"
+    },
+    {
+      "specifier": "./usage",
+      "sourceModule": "src/usage/index.ts",
+      "realm": "any",
+      "producer": "src/usage/index.ts",
       "lifecycle": "published",
       "availabilityDisposition": "available"
     },

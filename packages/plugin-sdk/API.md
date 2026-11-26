@@ -2011,6 +2011,8 @@
 | `./database` | `TelemetryKeyFlowMeasureV1Schema` | value | any |
 | `./database` | `TelemetryMetricsActionReadInputV1ProtocolSchema` | value | any |
 | `./database` | `TelemetryMetricsActionReadResultV1ProtocolSchema` | value | any |
+| `./database` | `TelemetryMetricsOverviewInputV1` | type | any |
+| `./database` | `TelemetryMetricsOverviewResultV1` | type | any |
 | `./database` | `TelemetryMetricsReadInputV1` | type | any |
 | `./database` | `TelemetryMetricsReadInputV1Schema` | value | any |
 | `./database` | `TelemetryMetricsReadResultV1` | type | any |
