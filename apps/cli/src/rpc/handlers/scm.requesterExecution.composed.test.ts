@@ -1155,8 +1155,8 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     // A remote URL is not a path; one carrying a credential is refused as clone refuses it.
     git(cwd, 'remote', 'add', 'origin', join(f.memberRoot, 'origin.git'));
     expect(await f.invoke(RPC_METHODS.SCM_REMOTE_SET_URL, { cwd, name: 'origin',
-      fetchUrl: 'https://person:secret@forge.example/team/repo.git' }, 'member-account', 'use'))
-      .toMatchObject({ success: false, errorCode: 'INVALID_REQUEST', error: expect.stringContaining('embedded credentials') });
+      fetchUrl: 'https://person:synthetic-pass@forge.example/team/repo.git' }, 'member-account', 'use'))
+      .toMatchObject({ success: false, errorCode: 'INVALID_REQUEST', error: expect.stringContaining('Remove the password') });
     expect(git(cwd, 'config', 'remote.origin.url')).toBe(`${join(f.memberRoot, 'origin.git')}\n`);
     expect(daemonGit()).toEqual([]);
   });

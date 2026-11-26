@@ -239,6 +239,43 @@ function publishRequest(overrides: Partial<ScmHostingRepositoryPublishRequest> =
 }
 
 describe('git hosting repository publish operation', { timeout: 20_000 }, () => {
+    it('attaches the Azure fixture URL after repository creation', async () => {
+        const cloneUrl = 'https://happier-dev@dev.azure.com/happier-dev/platform/_git/next-repo';
+        const declaration = AZURE_PLUGIN_MANIFEST.contributes.scmHostingProviders![0]!;
+        const { title, ...definition } = declaration;
+        const providerId = `${AZURE_PLUGIN_MANIFEST.id}/${declaration.id}`;
+        let created = false;
+        const registry = createScmHostingProviderRegistry({
+            providers: [{ ...definition, pluginId: AZURE_PLUGIN_MANIFEST.id, displayName: typeof title === 'string' ? title : title.fallback }],
+            runtimeRegistrations: [{ pluginId: AZURE_PLUGIN_MANIFEST.id, occurrenceId: 'fixture', registration: {
+                id: declaration.id, adapter: { routing: azureDevopsOperationsAdapter, repositoryPublishing: azureDevopsOperationsAdapter },
+            } }],
+            configuredDeploymentsByProviderId: new Map([[providerId, { bases: ['https://dev.azure.com/happier-dev'], status: 'complete' }]]),
+        });
+        const runtimeServices: HostingProviderRuntimeServices = {
+            executeCommand: async ({ args }) => {
+                if (args[0] === 'devops') return { ok: true, exitCode: 0, stderr: '', stdout: JSON.stringify({ name: 'platform', visibility: 'private' }) };
+                if (args[0] === 'repos' && args[1] === 'create') {
+                    created = true;
+                    return { ok: true, exitCode: 0, stderr: '', stdout: JSON.stringify({ name: 'next-repo', project: { name: 'platform', visibility: 'private' }, remoteUrl: cloneUrl,
+                        webUrl: 'https://dev.azure.com/happier-dev/platform/_git/next-repo', defaultBranch: 'refs/heads/main' }) };
+                }
+                return { ok: false, exitCode: 1, stdout: '', stderr: 'synthetic repository not found' };
+            },
+        };
+        const cwd = mkdtempSync(join(tmpdir(), 'happier-azure-url-'));
+        try {
+            git(cwd, ['init']);
+            const actualContext = { ...context, cwd, detection: { ...context.detection, rootPath: cwd } };
+            const operation = createGitHostingRepositoryPublishOperation({ registry, runtimeServices });
+            const result = await publishWithRealGitRuntime(operation, { context: actualContext, request: publishRequest({ cwd, providerId,
+                providerKind: 'azure-devops', providerBaseUrl: 'https://dev.azure.com/happier-dev', owner: 'happier-dev/platform', repositoryName: 'next-repo' }) });
+            expect(created, JSON.stringify(result)).toBe(true);
+            expect(result).toMatchObject({ success: true, pushed: false, remote: { fetchUrl: cloneUrl } });
+            expect(git(cwd, ['config', '--get', 'remote.origin.url'])).toBe(cloneUrl);
+        } finally { rmSync(cwd, { recursive: true, force: true }); }
+    });
+
     it.each([
         { existingVisibility: 'public', requestedVisibility: 'private' },
         { existingVisibility: 'private', requestedVisibility: 'public' },
