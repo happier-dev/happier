@@ -75,6 +75,7 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
   beforeEach(async () => {
     const testDir = run.testDir(`fin-review-model-${randomUUID()}`);
     const bin = join(testDir, 'bin');
+    const managedToolsRoot = join(testDir, 'managed-tools');
     const nativeHome = join(testDir, 'native-home');
     await Promise.all([bin, nativeHome].map(path => mkdir(path, { recursive: true })));
     const nativeConfig = join(nativeHome, 'config');
@@ -197,15 +198,17 @@ else {
         id: 'dep.review-clawpatch', title: 'clawpatch', binaryName: 'clawpatch', sourcePreferenceDefault: 'managed-first',
         managedInstall: { kind: 'managed_package', packageName: 'clawpatch@0.8.4', binaryName: 'clawpatch' },
         manualInstallKind: 'none', manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false,
-      }, { processEnv: { ...process.env, HAPPIER_HOME_DIR: homeDir } });
+      }, { processEnv: { ...process.env, HAPPIER_HOME_DIR: homeDir, HAPPIER_MANAGED_TOOLS_ROOT: managedToolsRoot } });
       const packageDir = join(dirname(dirname(command)), 'workspace', 'node_modules', 'clawpatch');
       await mkdir(packageDir, { recursive: true });
       await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: 'clawpatch', version: '0.8.4', bin: { clawpatch: 'index.cjs' } }));
       await writeFile(join(packageDir, 'index.cjs'), await readFile(join(bin, 'clawpatch')));
     }, env: { ...features,
       HAPPIER_MUSE_PATH: executablePath, PATH: [bin, process.env.PATH].filter(Boolean).join(delimiter), MUSE_INSTALL_DIR: bin,
-      HAPPIER_JS_RUNTIME_PATH: undefined, HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined,
-      HAPPIER_MANAGED_TOOLS_ROOT: join(testDir, 'managed-tools'),
+      // Keep the seeded package ready through the native runtime boundary;
+      // setup would otherwise install a runtime and replace it with stock npm.
+      HAPPIER_JS_RUNTIME_PATH: process.execPath, HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined,
+      HAPPIER_MANAGED_TOOLS_ROOT: managedToolsRoot,
       HOME: nativeHome, XDG_CONFIG_HOME: join(nativeHome, 'config'), XDG_DATA_HOME: join(nativeHome, 'data'),
       XDG_CACHE_HOME: join(nativeHome, 'cache'), CODEX_HOME: join(nativeHome, 'codex'),
     } });
