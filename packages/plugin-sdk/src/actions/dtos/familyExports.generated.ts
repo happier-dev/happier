@@ -146,6 +146,7 @@ export type { SessionPermissionsActionInputById, SessionPermissionsActionResultB
 export type { SessionReadStateActionInputById, SessionReadStateActionResultById } from './sessionReadStateActionDtos.generated.js';
 export type { SessionTargetingActionInputById, SessionTargetingActionResultById } from './sessionTargetingActionDtos.generated.js';
 export type { SessionTerminalsActionInputById, SessionTerminalsActionResultById } from './sessionTerminalsActionDtos.generated.js';
+export type { SessionToolsActionInputById, SessionToolsActionResultById } from './sessionToolsActionDtos.generated.js';
 export type { SessionTranscriptsActionInputById, SessionTranscriptsActionResultById } from './sessionTranscriptsActionDtos.generated.js';
 export type { SettingsDeclarationsActionInputById, SettingsDeclarationsActionResultById } from './settingsDeclarationsActionDtos.generated.js';
 export type { SkillsActionInputById, SkillsActionResultById } from './skillsActionDtos.generated.js';

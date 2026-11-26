@@ -816,6 +816,8 @@
 | `./actions` | `SessionTerminalLayoutV1` | type | any |
 | `./actions` | `SessionTerminalsActionInputById` | type | any |
 | `./actions` | `SessionTerminalsActionResultById` | type | any |
+| `./actions` | `SessionToolsActionInputById` | type | any |
+| `./actions` | `SessionToolsActionResultById` | type | any |
 | `./actions` | `SessionTranscriptGetExternalShareableInputV1` | type | any |
 | `./actions` | `SessionTranscriptGetExternalShareableResultV1` | type | any |
 | `./actions` | `SessionTranscriptsActionInputById` | type | any |
@@ -2062,6 +2064,7 @@
 | `./events` | `EventSubscriptionTarget` | type | any |
 | `./events` | `EventsService` | type | any |
 | `./events` | `GITHUB_EVENT_SETUP_ACTIONS_V1` | value | any |
+| `./events` | `GITHUB_MANAGED_PREVIEW_EVENT_LOCAL_ID_V1` | value | any |
 | `./events` | `GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1` | value | any |
 | `./events` | `GuardStoppedEventV1` | type | any |
 | `./events` | `GuardStoppedEventV1ProtocolSchema` | value | any |
@@ -2827,6 +2830,7 @@
 | `./protocol` | `defineProtocolUtf8String` | value | any |
 | `./protocol` | `defineTriageCompositeIdentifierStringV1` | value | any |
 | `./protocol` | `defineTriageSingleLineStringV1` | value | any |
+| `./protocol` | `deploymentPreviewHeadNeedsRedeployV1` | value | any |
 | `./protocol` | `deploymentRevisionShortLabelV1` | value | any |
 | `./protocol` | `embedProtocolJsonSchema` | value | any |
 | `./protocol` | `encodeBase64` | value | any |
