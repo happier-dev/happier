@@ -203,8 +203,11 @@ export function createReviewCommentOperations(
             if (params.actor.kind === "workflow") throw new ReviewCommentOperationError("review_comment_permission_denied", "Workflow review authority does not include publication");
             if (params.reviewAccess?.level === "view") throw new ReviewCommentOperationError("review_comment_permission_denied", "Review Edit access is required to publish findings");
             const input = ReviewCommentPublicationTransportRequestV1Schema.parse(params.input);
+            const comments = new Map((await store.getSources({ ...params,
+                commentIds: input.entries.map(entry => entry.happierCommentId),
+            })).map(comment => [comment.structural.id, comment]));
             for (const entry of input.entries) {
-                const comment = await store.getSource({ ...params, commentId: entry.happierCommentId });
+                const comment = comments.get(entry.happierCommentId);
                 if (!comment) throw new ReviewCommentOperationError("review_comment_not_found", "Review comment not found");
                 assertReviewCommentSessionScope(params, comment.structural.sessionId);
             }

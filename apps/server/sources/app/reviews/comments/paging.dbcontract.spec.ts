@@ -5,6 +5,7 @@ import { db, initDbMysql, initDbPostgres } from '@/storage/db';
 import { buildReviewCommentCanonicalStorageValues } from './accountEncryptionMigrationPersistence';
 import { createSqlReviewCommentStore } from './store';
 import { createReviewCommentOperations } from './operations';
+import { claimReviewCommentPublication } from '@/testkit/reviewCommentPublicationTestkit';
 
 describe('Review comment structural SQL paging', () => {
     const accountId = `review-paging-${randomUUID()}`;
@@ -85,6 +86,58 @@ describe('Review comment structural SQL paging', () => {
             expect(reads).toEqual([1, 0]);
         } finally {
             db.$queryRaw = raw;
+        }
+    });
+
+    it('loads publication admission as one set for both claim and settlement', async () => {
+        const reviewId = randomUUID();
+        await db.artifact.create({ data: { id: reviewId, accountId,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+        const operations = createReviewCommentOperations(createSqlReviewCommentStore(), {
+            now: () => 2, createId: prefix => `${prefix}-${randomUUID()}`,
+        });
+        const principal = { accountId, storageMode: 'plain' as const, actor: { kind: 'user' as const, userId: accountId },
+            reviewAccess: { reviewId, ownerAccountId: accountId, level: 'owner' as const, encryptionMode: 'plain' as const } };
+        const comments = [];
+        for (let index = 0; index < 10; index++) {
+            comments.push((await operations.create({ ...principal, input: { reviewId,
+                anchor: { kind: 'file', filePath: `publication-${index}.ts` }, snapshot: { kind: 'none', capturedAt: 1 },
+                body: `Finding ${index}`, authorIntent: 'open', clientMutationId: `publication-${index}` } })).comment);
+        }
+        const request = { ...principal, input: { target: { providerId: 'github', configuredAccountId: 'github-account',
+            entryRef: { sourceId: 'github', kindId: 'pull-request', collisionScope: 'github:repo', entryId: '42' }, subtarget: null },
+            baseRevision: 'base', headRevision: 'head', verdict: null,
+            entries: comments.map((comment, index) => ({ happierCommentId: comment.id, expectedServerRevision: comment.serverRevision,
+                anchor: comment.anchor, snapshot: { kind: 'none' as const, capturedAt: 1 }, body: `Finding ${index}` })) } };
+        const sourceReads: number[] = [];
+        let appearanceReads = 0;
+        const raw = db.$queryRaw;
+        const findAppearances = db.reviewCommentAppearance.findMany;
+        // Observe genuine database boundaries without replacing SQL or admission logic.
+        db.$queryRaw = new Proxy(raw, { apply: async (target, thisArg, args) => {
+            const rows: unknown = await Reflect.apply(target, thisArg, args);
+            if (Array.isArray(rows) && rows.some(row => row && typeof row === 'object' && 'body_envelope_json' in row)) sourceReads.push(rows.length);
+            return rows;
+        } });
+        db.reviewCommentAppearance.findMany = new Proxy(findAppearances, { apply: (target, thisArg, args) => {
+            appearanceReads++;
+            return Reflect.apply(target, thisArg, args);
+        } });
+        try {
+            const claim = await claimReviewCommentPublication(operations, request);
+            expect(claim).toMatchObject({ disposition: 'dispatch' });
+            expect(claim.entries.map(entry => entry.happierCommentId)).toEqual(comments.map(comment => comment.id));
+            const settled = await claimReviewCommentPublication(operations, { ...request, input: { ...request.input,
+                settlement: { dispatchToken: claim.dispatchToken, result: { publicationPlanId: claim.publicationPlanId,
+                    entries: claim.entries.map(entry => ({ ...entry, outcome: { kind: 'failed' as const, code: 'provider-refused' } })),
+                    verdict: { kind: 'notRequested' as const } } } } });
+            expect(settled.priorResult?.entries).toHaveLength(comments.length);
+            console.info(`[review-publication-admission] selected=${comments.length} phases=claim,settlement sourceQueries=${sourceReads.length} appearanceQueries=${appearanceReads}`);
+            expect(sourceReads).toEqual([comments.length, comments.length]);
+            expect(appearanceReads).toBe(2);
+        } finally {
+            db.$queryRaw = raw;
+            db.reviewCommentAppearance.findMany = findAppearances;
         }
     });
 

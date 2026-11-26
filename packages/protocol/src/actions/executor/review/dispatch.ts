@@ -152,6 +152,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
               ctx.signal?.throwIfAborted();
               const result = await deps.reviewCommentAction({ actionId: 'reviews.comments.list',
                 input: ReviewCommentListActionRequestV1Schema.parse({ ...scope, includeHistory: true,
+                  ...('reviewId' in apply && apply.commentIds !== undefined ? { commentIds: apply.commentIds } : {}),
                   limit: REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, ...(cursor ? { cursor } : {}) }),
                 ...requestContext });
               const failure = readActionFailureEnvelope(result);

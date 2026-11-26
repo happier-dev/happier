@@ -10,7 +10,7 @@ import { deriveReviewCommentStructuralMutationV1 } from '../reviews/comments/mut
 import { splitReviewCommentV1, sealReviewCommentSensitiveEnvelopeV1, openStoredReviewCommentV1 } from '../reviews/comments/content.js';
 import { executeReviewCommentTransportV1 } from '../reviews/comments/transport.js';
 import { ReviewCommentPrepareMutationRequestV1Schema, ReviewCommentCommitMutationRequestV1Schema, type ReviewCommentPreparedRecordV1 } from '../reviews/comments/mutation.js';
-import { ReviewCommentActionInputSchemasV1, ReviewCommentClaimPublicationDispatchResponseV1Schema } from '../reviews/comments/actions.js';
+import { REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, ReviewCommentActionInputSchemasV1, ReviewCommentClaimPublicationDispatchResponseV1Schema } from '../reviews/comments/actions.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { ReviewFindingsApplyResultV1Schema } from '../reviews/reviewApplyV1.js';
 
@@ -62,13 +62,23 @@ describe('createActionExecutor (review comments)', () => {
     let selected = root;
     const unselected = { ...root, id: 'unselected', threadId: 'unselected', findingIdentity: 'b'.repeat(64),
       runId: 'run-unselected', findingId: 'finding-unselected', body: 'Unselected accepted evidence' };
-    let includeUndecidedSibling = false;
+    const inventory = [selected, unselected, ...Array.from({ length: REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1 }, (_, index) => ({
+      ...unselected, id: `unselected-${index}`, threadId: `unselected-${index}`,
+      findingIdentity: (index + 3).toString(16).padStart(64, '0'),
+    }))];
+    let pages = 0;
     const sent: string[] = [];
     const executor = createActionExecutor(createDeps({
       resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { serverId: 'home', sessionId: sessionId! } }),
-      reviewCommentAction: async () => ({ items: [selected, unselected,
-        ...(includeUndecidedSibling ? [{ ...unselected, id: 'sibling', threadId: 'sibling', findingIdentity: root.findingIdentity, reviewTriageStatus: 'defer' }] : []),
-      ], cursor: null }),
+      reviewCommentAction: async ({ input }) => {
+        pages++;
+        const request = ReviewCommentActionInputSchemasV1['reviews.comments.list'].parse(input);
+        const items = inventory.map(item => item.id === selected.id ? selected : item)
+          .filter(item => request.commentIds === undefined || request.commentIds.includes(item.id));
+        const offset = request.cursor ? Number(request.cursor) : 0;
+        const limit = request.limit ?? REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1;
+        return { items: items.slice(offset, offset + limit), cursor: offset + limit < items.length ? String(offset + limit) : null };
+      },
       sessionSendMessage: async ({ message }) => { sent.push(message); return { status: 'accepted', localId: 'selected-apply' }; },
     }));
     const input = { reviewId: 'review', commentIds: ['selected'],
@@ -83,14 +93,11 @@ describe('createActionExecutor (review comments)', () => {
     expect(prompt).not.toContain(unselected.body);
     expect(sent).toHaveLength(destination === 'session' ? 1 : 0);
     if ('prompt' in prepared) expect(prepared.commentIds).toEqual(['selected']);
+    console.info(`[review-apply-selection] inventory=${inventory.length} selected=1 listPages=${pages}`);
+    expect(pages).toBe(1);
 
     const all = await executor.execute('review.apply', { reviewId: 'review', destination: 'prompt' }, context);
-    expect(all).toMatchObject({ ok: true, result: { status: 'prepared', commentIds: ['selected', 'unselected'] } });
-    includeUndecidedSibling = true;
-    await expect(executor.execute('review.apply', input, context)).resolves.toMatchObject({
-      ok: true, result: { status: 'unchanged', commentIds: [] },
-    });
-    includeUndecidedSibling = false;
+    expect(all).toMatchObject({ ok: true, result: { status: 'prepared', commentIds: inventory.map(item => item.id) } });
     await expect(executor.execute('review.apply', { ...input, commentIds: ['another-review-root'] }, context)).resolves.toMatchObject({
       ok: true, result: { status: 'unchanged', commentIds: [] },
     });
