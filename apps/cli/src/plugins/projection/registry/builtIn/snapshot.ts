@@ -29,7 +29,10 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
   const installedPluginIds = params?.installedPluginIds === 'current'
     ? Object.entries(snapshot?.state.plugins ?? {}).flatMap(([id, installation]) => installation.state.enabled ? [id] : [])
     : params?.installedPluginIds ?? [];
-  const pluginIds = BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map(plugin => plugin.pluginId);
+  const pluginIds = [...new Set([
+    ...BUNDLED_FIRST_PARTY_PLUGIN_METADATA.map(plugin => plugin.pluginId),
+    ...installedPluginIds,
+  ])];
   let accountEnabledById: ReadonlyMap<string, boolean> | undefined;
   let accountIntents: Parameters<typeof withAccountPluginProjectScopes>[1] = [];
   let accountFailure: Parameters<typeof resolveBundledPluginEnablement>[0]['accountFailure'];
@@ -45,7 +48,7 @@ export async function readCurrentBundledPluginEnablement(params?: Readonly<{
       const { readCurrentAccountPluginEnablementIntents } = await import('@/plugins/runtime/accountPluginActivationSource');
       const intents = await readCurrentAccountPluginEnablementIntents({ credentials,
         serverUrl: params?.accountStorageDependencies?.resolveBaseUrl?.() ?? resolveServerHttpBaseUrl(),
-        pluginIds: [...pluginIds, ...installedPluginIds] });
+        pluginIds });
       accountEnabledById = new Map(pluginIds.map(pluginId => [pluginId, intents.get(pluginId)?.enabled ?? true]));
       accountIntents = intents;
     }

@@ -88,6 +88,60 @@ describe('bundled admission Account boundary', () => {
         }
     });
 
+    it('withdraws an external automatic prompt and its resource on Account disable and restores them together', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'external-prompt-intent-'));
+        const pluginId = 'acme.external-prompt';
+        const pluginRoot = join(happyHomeDir, 'plugin');
+        const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
+        const app = fastify();
+        let enabled = false;
+        app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
+            const pluginIds = readRequestedIntentPluginIds(request.body);
+            return { availabilityCursor: 1, pluginIds, failedPluginIds: [], intentReads: pluginIds.map(id => ({
+                pluginId: id,
+                response: { availabilityCursor: 1, hostingCapability: { enabled: false }, release: null,
+                    uiArtifacts: [], packageAssets: [], intent: id === pluginId ? {
+                        pluginId, desiredVersion: null, enabled, offlineUiHosting: 'disabled', writableCollections: [], revision: '9',
+                    } : null },
+            })) };
+        });
+        await app.ready();
+        const origin = 'http://external-prompt-intent.test';
+        const restore = installAxiosFastifyAdapter({ app, origin });
+        try {
+            await mkdir(dirname(manifestPath), { recursive: true });
+            await writeFile(manifestPath, JSON.stringify(createPluginManifestV2Fixture({
+                id: pluginId, entrypoints: { daemon: './daemon.mjs' }, contributes: {
+                    resources: [{ id: 'instructions', kind: 'prompt', path: './prompt.md', contentType: 'text/markdown' }],
+                    promptAssets: [{ id: 'automatic', kind: 'systemPrompt', resource: 'instructions',
+                        target: { kind: 'agent', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } }],
+                },
+            })));
+            await writeFile(join(pluginRoot, 'prompt.md'), 'Review the selected checkout.');
+            await writeFile(join(pluginRoot, 'daemon.mjs'), 'export function activate() {}');
+            await seedCurrentLocalPathPluginFixture({ happyHomeDir, pluginRoot, pluginId, manifestVersion: '1.0.0' });
+            const admit = () => resolveMergedContributionRegistry({ happyHomeDir, accountStorageDependencies: {
+                readCredentials: async () => ({ token: 'fixture', encryption: null }), resolveBaseUrl: () => origin,
+            } });
+            const disabled = await admit();
+            expect(disabled.activationTargets.some(target => target.pluginId === pluginId)).toBe(false);
+            expect(disabled.promptAssets?.some(asset => asset.pluginId === pluginId)).toBe(false);
+            expect(disabled.resources.some(resource => resource.pluginId === pluginId)).toBe(false);
+            expect(disabled.pluginEnablementById?.[pluginId]).toMatchObject({ accountEnabled: false, machineEnabled: true, enabled: false });
+            expect(disabled.agents.some(agent => agent.pluginId === 'happier.agent.codex')).toBe(true);
+            enabled = true;
+            const restored = await admit();
+            expect(restored.activationTargets.some(target => target.pluginId === pluginId)).toBe(true);
+            expect(restored.promptAssets?.some(asset => asset.pluginId === pluginId && asset.definition.id === 'automatic')).toBe(true);
+            expect(restored.resources.some(resource => resource.pluginId === pluginId && resource.definition.id === 'instructions')).toBe(true);
+            expect(restored.pluginEnablementById?.[pluginId]).toMatchObject({ accountEnabled: true, machineEnabled: true, enabled: true });
+        } finally {
+            restore();
+            await app.close();
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    });
+
     it('keeps withdrawn bundled references unavailable when exact Agent discovery expands installed peers', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'bundled-reference-withdrawal-'));
         const pluginId = 'acme.account-consumer';
