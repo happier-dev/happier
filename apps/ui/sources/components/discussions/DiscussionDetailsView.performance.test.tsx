@@ -53,7 +53,8 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 // Observe settled disclosures; the default native animation boundary leaves timing callbacks pending.
 vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated'))
     .createReanimatedModuleMock({ settleTimingCallbacks: true }));
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+const approvalRouterPush = vi.hoisted(() => vi.fn());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: approvalRouterPush } }).module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 vi.mock('@legendapp/list/react-native', async importOriginal => {
     const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
@@ -415,7 +416,7 @@ it.each(['pending', 'failed'] as const)('shows readable cold-thread messages whe
     }
 });
 
-it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post from %s before historical approval paging settles', async arrival => {
+it.each(['inventory-page', 'catch-up', 'fallback'] as const)('mounts a cold private Post from %s before historical approval paging settles', async arrival => {
     const sockets: Socket[] = [];
     const { serverId, serverIdentityId, repository, fixture, newMessage } = await prepareLongDiscussion(value => {
         sockets.push(value);
@@ -430,7 +431,7 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
     const actionArgs = { discussionId: 'committed-thread', localId: 'original-return',
         content: { v: 1 as const, parts: [{ t: 'text' as const, text: 'A private answer' }] },
         replyTarget: { kind: 'message' as const, messageId: question.id } };
-    const approval = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    const openApproval = { v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
         createdBy: { surface: 'agent', sessionId }, requestedSurface: 'agent', actionId: 'discussion.reply',
         actionArgs, discussionDraftReview: true, summary: 'Review the answer',
         executionOriginV1: buildApprovalExecutionOriginV1({ actionId: 'discussion.reply', input: actionArgs,
@@ -439,7 +440,10 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
                 actionCaller: { kind: 'host' }, defaultSessionId: sessionId, defaultSessionMachineId: 'machine',
                 actionRequestId: actionArgs.localId,
                 discussionReplyReturn: { serverId: serverIdentityId, requestLocalId: 'original-input', acceptedTurnId: 'turn' } } }),
-    });
+    };
+    // A retained legacy request needs its full page; the same attention row must not expose an inline decision.
+    const { ApprovalRequestV1Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+    const approval = arrival === 'fallback' ? ApprovalRequestV1Schema.parse({ ...openApproval, v: 1 }) : ApprovalRequestV2Schema.parse(openApproval);
     const artifactId = '11111111-1111-4111-8111-111111112919';
     const artifact = createPlainArtifactHttpFixture({ id: artifactId, header: buildApprovalRequestArtifactHeaderV1(approval),
         title: approval.summary, body: JSON.stringify(approval), isDecrypted: true,
@@ -450,8 +454,8 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
     let changed = false;
     // The Inbox reads open requests. Fill that actual selected inventory so the
     // current private draft cannot wait for its trailing pages to complete.
-    const oldRequest = ApprovalRequestV2Schema.parse({ ...approval, updatedAtMs: 2,
-        executionOriginV1: { ...approval.executionOriginV1, sessionId: 'unrelated-history' } });
+    const oldRequest = ApprovalRequestV2Schema.parse({ ...openApproval, updatedAtMs: 2,
+        executionOriginV1: { ...openApproval.executionOriginV1, sessionId: 'unrelated-history' } });
     const oldArtifact = createPlainArtifactHttpFixture({ id: '11111111-1111-4111-8111-111111112918',
         header: buildApprovalRequestArtifactHeaderV1(oldRequest), title: oldRequest.summary,
         body: JSON.stringify(oldRequest), isDecrypted: true, headerVersion: 1, bodyVersion: 1,
@@ -466,7 +470,7 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
             inventoryRequested.resolve();
             await releaseInventory.promise;
         }
-        return { body: await createArtifactListHttpResponse(url, arrival === 'inventory-page'
+        return { body: await createArtifactListHttpResponse(url, arrival !== 'catch-up'
             ? [newest, ...historical] : historical).json() };
     } });
     homes.answer(serverId, 'POST /v1/artifacts/read', { select: async body => {
@@ -481,10 +485,19 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
         && Number(new URL(request.url).searchParams.get('after') ?? 0) < 1 ? [{
         cursor: 1, kind: 'artifact', entityId: artifactId, changedAt: 1000, hint: null,
     }] : [], nextCursor: changed ? 1 : 0 } }) });
-    const screen = await renderScreen(<AppPaneProvider>
+    const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+    const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    function Publication() {
+        const commands = useCurrentUiContextComposedCommands();
+        usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+        return null;
+    }
+    const screen = await renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}><Publication /><AppPaneProvider>
         <DiscussionDetailsView target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }}
             active standaloneSurface />
-    </AppPaneProvider>);
+    </AppPaneProvider></CurrentUiContextCommandsProvider>);
     try {
         await inventoryRequested.promise;
         await vi.waitFor(() => expect(repository.getSnapshot().threads['committed-thread']?.messages).toHaveLength(301));
@@ -505,7 +518,35 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
         }
         const { storage } = await import('@/sync/domains/state/storage');
         await vi.waitFor(() => expect(storage.getState().artifacts[artifactId]?.body).toBe(JSON.stringify(approval)));
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+        const executor = createDefaultActionExecutor();
+        const readCommands = async () => {
+            const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+            if (!read.ok) throw new Error('Expected Discussion approval context');
+            return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+        };
+        const { t } = await import('@/text');
+        if (arrival === 'fallback') {
+            await vi.waitFor(() => expect(screen.findHostByTestId('session-discussion-waiting-approval-review')).not.toBeNull());
+            const inventory = await readCommands();
+            expect(inventory.map(command => command.title).sort()).toEqual([t('approvals.review'), t('workflows.start.runPatternTitle')].sort());
+            const reviewCommand = inventory.find(command => command.title === t('approvals.review'))!;
+            approvalRouterPush.mockClear();
+            await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+                { commandId: reviewCommand.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+            const commandRoute = approvalRouterPush.mock.calls.at(-1)?.[0];
+            expect(commandRoute).toMatch(/^\/inbox\/approvals\/[^?]+\?/);
+            expect(commandRoute).toContain(`serverId=${encodeURIComponent(serverId)}`);
+            await screen.pressByTestIdAsync('session-discussion-waiting-approval-review');
+            expect(approvalRouterPush.mock.calls.at(-1)?.[0]).toBe(commandRoute);
+            await screen.unmount();
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: reviewCommand.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: false });
+            return;
+        }
         await vi.waitFor(() => expect(screen.findHostByTestId('session-discussion-waiting-approval-approve')).not.toBeNull());
+        expect((await readCommands()).map(command => command.title)).toEqual([t('workflows.start.runPatternTitle')]);
         expect(screen.findHostByTestId('session-discussion-waiting-approval-decline')).not.toBeNull();
         // A rich approval must scroll with the conversation. In the composer band
         // it can consume the entire host and give the real list a zero-height viewport.
@@ -525,6 +566,50 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
         expect(storage.getState().artifactInventoryKindsLoaded).not.toContain('approval_request.v1');
         expect(bodyReads.filter(ids => ids.includes(artifactId))).toEqual([[artifactId]]);
     } finally { releaseInventory.resolve(); await screen.unmount(); }
+});
+
+it('publishes the default unavailable-request review only while its waiting card is displayed', async () => {
+    const { serverId } = await prepareDiscussionHome();
+    const { DiscussionWaitingApprovalCard } = await import('./DiscussionWaitingApprovalCard');
+    const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+    const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+    const { t } = await import('@/text');
+    function Publication() {
+        const commands = useCurrentUiContextComposedCommands();
+        usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+        return null;
+    }
+    function Surface({ visible = true }) {
+        return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}><Publication />
+            {visible ? <DiscussionWaitingApprovalCard approvalId="unavailable-approval" serverId={serverId} /> : null}
+        </CurrentUiContextCommandsProvider>;
+    }
+    const show = vi.spyOn(Modal, 'show').mockReturnValue('waiting-review');
+    const screen = await renderMountedCurrentUiContext(<Surface />);
+    const executor = createDefaultActionExecutor();
+    const readCommands = async () => {
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        if (!read.ok) throw new Error('Expected Discussion waiting-card context');
+        return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+    };
+    const inventory = await readCommands();
+    expect(inventory.map(command => command.title)).toEqual([t('approvals.review')]);
+    await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+        { commandId: inventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+    expect(show.mock.calls.at(-1)?.[0].props).toMatchObject({ artifactId: 'unavailable-approval', serverId });
+    const modal = show.mock.calls.at(-1)?.[0];
+    await act(async () => { modal?.onRequestClose?.(); });
+    await screen.pressByTestIdAsync('session-discussion-waiting-approval-review');
+    expect(show.mock.calls.at(-1)?.[0].props).toMatchObject({ artifactId: 'unavailable-approval', serverId });
+    await screen.update(<Surface visible={false} />);
+    expect(await readCommands()).toEqual([]);
+    expect(await executor.execute('ui.current_context.command.invoke', { commandId: inventory[0]!.id }, { surface: 'agent' }))
+        .toMatchObject({ ok: false });
+    await screen.unmount();
 });
 
 it('keeps phone-covered and unfocused messages unread while the active Discussion stays live', async () => {

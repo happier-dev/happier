@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useRouter, type Href } from 'expo-router';
@@ -61,15 +62,24 @@ function WaitingApprovalReview(props: Readonly<{ approvalId: string; serverId: s
     setReviewRequested(true);
     review.reopen();
   }, [review.reopen]);
-  return <View><SurfaceStateCard
+  return <View><DiscussionWaitingApprovalNotice
+    title={props.title ?? t('session.collaboration.discussion.home.approvalPending')}
+    onReview={openReview}
+  />{props.onDismiss ? <ApprovalDecisionFooter isDeciding={false}
+    testIDPrefix="session-discussion-waiting-approval" onDismiss={props.onDismiss} /> : null}</View>;
+}
+
+/** Only the mounted fallback publishes Review; an inline decision never mounts this notice. */
+export function DiscussionWaitingApprovalNotice(props: Readonly<{ title: string; onReview: () => void }>) {
+  useCurrentUiContextLocalCommands([{ key: 'approval.review', title: t('approvals.review'), invoke: props.onReview }]);
+  return <SurfaceStateCard
     testID="session-discussion-waiting-approval"
     size="line"
     kind="warning"
     accessibilitySemantics="status"
-    title={props.title ?? t('session.collaboration.discussion.home.approvalPending')}
-    action={{ testID: 'session-discussion-waiting-approval-review', label: t('approvals.review'), onPress: openReview }}
-  />{props.onDismiss ? <ApprovalDecisionFooter isDeciding={false}
-    testIDPrefix="session-discussion-waiting-approval" onDismiss={props.onDismiss} /> : null}</View>;
+    title={props.title}
+    action={{ testID: 'session-discussion-waiting-approval-review', label: t('approvals.review'), onPress: props.onReview }}
+  />;
 }
 
 type BuiltInApproval = Extract<ParsedApprovalArtifactBodyV1, { family: 'built_in' }>;

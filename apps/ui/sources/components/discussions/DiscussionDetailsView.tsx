@@ -68,7 +68,7 @@ import { DetailsTabHeader, type DetailsTabHeaderMetaFact } from '@/components/ap
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { getStorage, selectSessionDisplayNameSource, useSessionDisplayNameProjections, useDiscussionRequesterApprovals, type SessionDisplayNameSource } from '@/sync/domains/state/storage';
 import { ApprovalRequesterThreadCard } from '@/components/approvals/ApprovalRequesterThreadCard';
-import { DiscussionWaitingApprovalCard } from './DiscussionWaitingApprovalCard';
+import { DiscussionWaitingApprovalCard, DiscussionWaitingApprovalNotice } from './DiscussionWaitingApprovalCard';
 import { DiscussionParticipantRequestLine } from '@/components/discussions/DiscussionParticipantRequestLine';
 import { useDestinationPageTitle } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
@@ -1478,15 +1478,11 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
     const waitingApprovalCard = waitingApprovalId && attention ? <View style={[styles.stateLine, threadColumn, items.length > 0 ? styles.threadTextLine : null]}>
         {/* The waiting draft or request is decided here like a Session decides its own; one that needs its page keeps the line. */}
         <DiscussionWaitingApprovalCard approvalId={waitingApprovalId} serverId={props.scope.serverId} returnHref={buildDiscussionRouteHref({ target: { kind: 'discussion', address: { serverId: props.target.address.serverId }, discussionId } })}
-            fallback={<SurfaceStateCard
-                testID="session-discussion-waiting-approval"
-                size="line"
-                kind="warning"
-                accessibilitySemantics="status"
+            fallback={<DiscussionWaitingApprovalNotice
                 title={attention.attentionReason === 'draft_waiting'
                     ? t('session.collaboration.discussion.home.draftWaiting')
                     : t('session.collaboration.discussion.home.approvalPending')}
-                action={{ testID: 'session-discussion-waiting-approval-review', label: t('approvals.review'), onPress: reviewWaiting }}
+                onReview={reviewWaiting}
             />} />
     </View> : null;
     return <DiscussionSurfaceFrame dataKey={dataKey} eligibleMessageIds={selectableMessages.map(message => message.id)}
