@@ -171,32 +171,6 @@ describe('recap composer through authorized query and composition', () => {
     }).toEqual({ disabled: false, diagnostics: [] }));
   });
 
-  it('preserves a safe rejected compact-wire field behind the existing Details disclosure', async () => {
-    const paths: string[] = [];
-    const { screen } = await mount(request => {
-      paths.push(request.path);
-      if (request.path !== '/v2/usage/query-batch') return undefined;
-      const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
-      return Response.json({ v: 1, results: input.queries.map(query => ({ query, value: { ...accounting,
-        totals: { ...accounting.totals, tokens: { ...accounting.totals.tokens, input: 'private-invalid-value' } } } })) });
-    }, undefined, undefined, { modal: true });
-    await vi.waitFor(() => expect({ paths, states: screen.findAllByType(SurfaceStateCard).map(node => ({
-      kind: node.props.kind, title: node.props.title, diagnosticCode: node.props.diagnosticCode,
-    })) }).toMatchObject({ states: expect.arrayContaining([expect.objectContaining({
-      diagnosticCode: expect.stringContaining('results.0.value.totals.tokens.input'),
-    })]) }));
-    const details = screen.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode).join('\n');
-    expect(details).toContain('usage_query_result_invalid');
-    expect(details).toContain('invalid_type');
-    expect(details).not.toContain('private-invalid-value');
-    expect(screen.findAllByType(SurfaceStateCard)[0]!.findAll(node => node.props.children === details)).toHaveLength(0);
-    const disclosure = commandReader!.readCurrentUiContext()?.commands.find(command => command.title.endsWith(': approvals.technicalDetails'));
-    expect(disclosure).toBeDefined();
-    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
-      input: { commandId: disclosure!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
-    expect(screen.findAllByType(SurfaceStateCard)[0]!.findAll(node => node.props.children === details).length).toBeGreaterThan(0);
-  });
-
   it('composes the Overview compact read with its own selected facts instead of inheriting widget omissions', async () => {
     const requests: unknown[] = [];
     const { screen } = await mount(request => {

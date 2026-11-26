@@ -2955,9 +2955,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         // take the previous progress as a successful terminal answer.
                         throw failure;
                     }
-                    // A malformed answer settles through the Resource's typed refusal. Publishing
-                    // a finished projection here can let an Action take that fallback first.
-                    if (code !== 'usage_query_result_invalid' && !options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
+                    // Settle retained facts for the mounted view before rejecting the read.
+                    if (!options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
                         await Promise.resolve(progressContent).catch(() => undefined);
                         const shown = entry.getSnapshot().value;
                         const batch = shown ? decodeUsageQueryResource(shown) : undefined;
