@@ -104,6 +104,8 @@ describe('ActionIdSchema', () => {
    */
   it('registers the Account Security family and the single API-token create intent', () => {
     expect(ACTION_ID_FAMILIES_V1.account_security).toEqual([
+      'account.terminals.approve',
+      'account.devices.approve',
       'account.encryption.historicalKey.forget',
       'account.encryption.automationTemplates.recover',
       'account.security.get',
