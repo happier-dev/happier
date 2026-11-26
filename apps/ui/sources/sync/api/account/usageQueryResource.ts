@@ -238,7 +238,7 @@ function reconcileQuotaRead(input: Readonly<{
                     ? isConnectedServiceQuotaObservationFresh({ observedAtMs: value.current.observedAtMs,
                         nowMs: Date.now(), maxAgeMs: value.current.staleAfterMs }) ? 'available' : 'stale'
                     : 'partial'
-                : value?.current && wasConnectedServiceQuotaObserved(value.current) ? 'stale' : 'pending',
+                : 'pending',
         ...(value?.current && wasConnectedServiceQuotaObserved(value.current) ? { asOfMs: value.current.fetchedAtMs } : {}),
         ...(errorCode ? { errorCode } : {}),
     } };

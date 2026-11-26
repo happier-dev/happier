@@ -4043,7 +4043,8 @@ describe('usage query captured Resource adapter', () => {
     try {
       await expect.poll(() => first.getSnapshot().value && sliceOf(first).quota?.[0]?.current).toEqual(record);
       // The useful current reading does not wait for an unrelated historical backfill.
-      expect(sliceOf(first).sources.find(state => state.source.startsWith('quota:'))?.status).toBe('stale');
+      expect(sliceOf(first).pending).toBe(true);
+      expect(sliceOf(first).sources.find(state => state.source.startsWith('quota:'))?.status).toBe('pending');
       stopFirst();
       const returning = entryFor(2000);
       const stopReturning = returning.subscribe(() => {}, false);
@@ -4051,6 +4052,12 @@ describe('usage query captured Resource adapter', () => {
         await expect.poll(() => returning.getSnapshot().value !== undefined).toBe(true);
         expect(sliceOf(returning).quota?.[0]?.current).toEqual(record);
         expect(projectUsagePlans(sliceOf(returning).quota, now, undefined, sliceOf(returning).sources).tightest?.window.remainingFraction).toBe(0.6);
+        expect(sliceOf(returning).quota?.[0]?.pageFacts).toBeUndefined();
+        history.resolve();
+        await expect.poll(() => returning.getSnapshot().pending).toBe('idle');
+        expect(sliceOf(returning).quota?.[0]?.current).toEqual(record);
+        expect(sliceOf(returning).pending).toBe(false);
+        expect(sliceOf(returning).sources.find(state => state.source.startsWith('quota:'))?.status).toBe('available');
       } finally { stopReturning(); }
     } finally { history.resolve(); stopFirst(); }
   });
@@ -6859,6 +6866,7 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => slice()?.quota?.[0]?.current).toEqual(snapshot);
       expect(projectUsagePlans(slice()?.quota, now).accounts[0]?.headline?.remainingFraction).toBe(0.6);
       expect(entry.getSnapshot().pending).toBe('initial');
+      expect(slice()?.pending, 'the held quota history must still own pending').toBe(true);
       const historyDrains = () => home!.requests.filter(request => request.method === 'GET'
         && request.path === '/v4/connect/qualified/provider-account-usage/history'
         && 'history' in parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
@@ -6910,9 +6918,11 @@ describe('usage query captured Resource adapter', () => {
       expect(screen.findByTestId('quota-capacity.cell.ready')?.props.accessibilityLabel).toContain('60%');
       expect(slice()?.quota?.[0]?.current).toEqual(snapshot);
       expect(entry.getSnapshot().pending).toBe('initial');
+      expect(slice()?.pending, 'the held quota history must still own pending').toBe(true);
       history.resolve(Response.json({ entries: [], nextCursor: null }));
       accounting.resolve(Response.json(value));
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(slice()?.pending, 'terminal quota operands cannot keep the slice pending').toBe(false);
       if (!failureFirst) expect.soft(historyDrains(),
         'Quota arrivals age the admitted finite history read without starting replacement drains').toBe(1);
       expect(slowState()).toMatchObject({ status: 'error', errorCode: 'snapshot_read_failed' });
@@ -7357,7 +7367,8 @@ describe('usage query captured Resource adapter', () => {
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
     const exact = normalizeUsageQuery({ ...daily, period: { relative: '7days' }, includeQuotaExactHistory: true });
     type Batch = Awaited<ReturnType<typeof readUiUsageQueryBatch>>;
-    const quotaFor = (batch: Batch, query: typeof daily) => batch.results.find(slice => slice.key === getUsageQueryKey(query))?.quota?.[0];
+    const sliceFor = (batch: Batch | undefined, query: typeof daily) => batch?.results.find(slice => slice.key === getUsageQueryKey(query));
+    const quotaFor = (batch: Batch | undefined, query: typeof daily) => sliceFor(batch, query)?.quota?.[0];
 
     if (scenario === 'unobserved sibling on exact upgrade') {
       const exactResponse = createDeferred<Response>();
@@ -7402,8 +7413,8 @@ describe('usage query captured Resource adapter', () => {
 
     if (scenario !== 'ready') {
       const sibling = scenario === 'current-only sibling' ? normalizeUsageQuery({ ...daily, includeQuotaHistory: false }) : daily;
-      const qualifiedState = (batch: Batch | undefined, query: typeof daily) => batch?.results
-        .find(slice => slice.key === getUsageQueryKey(query))?.sources.find(state => state.source.startsWith('quota:'));
+      const qualifiedState = (batch: Batch | undefined, query: typeof daily) => sliceFor(batch, query)
+        ?.sources.find(state => state.source.startsWith('quota:'));
       const unavailable = () => Response.json({ error: 'provider_account_usage_read_failed' }, { status: 500 });
       const exactResponse = createDeferred<Response>();
       const witnessResponse = scenario === 'shared failure' ? createDeferred<Response>() : undefined;
@@ -7416,7 +7427,10 @@ describe('usage query captured Resource adapter', () => {
       try {
         await expect.poll(() => exactRanges.length).toBe(1);
         expect(qualifiedState(progress, sibling)?.status).toBe('available');
-        expect(qualifiedState(progress, exact)?.status).toBe('stale');
+        expect(quotaFor(progress, sibling)?.current).toEqual(current);
+        expect(qualifiedState(progress, exact)?.status).toBe('pending');
+        expect(quotaFor(progress, exact)?.current).toEqual(current);
+        expect(sliceFor(progress, exact)?.pending).toBe(true);
         if (witnessResponse) {
           // A shared Pending witness fails with the same transport error while
           // the exact demand is still waiting.
@@ -7431,6 +7445,10 @@ describe('usage query captured Resource adapter', () => {
         await reading;
       }
       expect.soft(qualifiedState(failed, exact)).toMatchObject({ status: 'stale', errorCode: 'provider_account_usage_read_failed' });
+      expect.soft(quotaFor(failed, exact)?.current).toEqual(current);
+      expect.soft(sliceFor(failed, exact)?.pending).toBe(false);
+      expect.soft(quotaFor(failed, sibling)?.current).toEqual(current);
+      expect.soft(sliceFor(failed, sibling)?.pending).toBe(false);
       if (scenario === 'shared failure') {
         expect(qualifiedState(failed, sibling)).toMatchObject({ status: 'stale', errorCode: 'provider_account_usage_read_failed' });
       } else {
@@ -7533,17 +7551,18 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => historyRanges.length).toBeGreaterThan(1);
       expect(historyRanges[0]).toEqual({ startAtMs: Date.parse('2026-10-05T00:00:00Z'), endAtMs: now });
       expect(entry.getSnapshot().pending).toBe('initial');
-      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]).toMatchObject({ accounting: value,
+      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]).toMatchObject({ accounting: value, pending: true,
         quota: [{ source, current: snapshot, unusedCapacity: { historyStatus: 'not_loaded' } }] });
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.quota?.[0]?.pageProjection).toBeUndefined();
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources)
-        .toContainEqual(expect.objectContaining({ source: expect.stringMatching(/^quota:/), status: 'stale' }));
+        .toContainEqual(expect.objectContaining({ source: expect.stringMatching(/^quota:/), status: 'pending' }));
       later.resolve(Response.json({ entries: [], nextCursor: null }));
       // Capacity history has answered even while the independent Pending-work
       // facet is still outstanding. It cannot keep every account "Still reading".
       await expect.poll(() => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources
         .find(source => source.source.startsWith('quota:'))?.status).toBe('available');
       const projected = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.quota?.[0];
+      expect(projected?.current).toEqual(snapshot);
       expect(projected?.history).toBeUndefined();
       expect(projected?.pageProjection).toBeUndefined();
       expect(projected?.pageFacts).toMatchObject({ historyStatus: 'complete',
@@ -7553,7 +7572,9 @@ describe('usage query captured Resource adapter', () => {
         .toContainEqual(expect.objectContaining({ source: 'quota', status: 'available' }));
       pending.resolve(Response.json({ entries: [] }));
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
-      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources)
+      const settled = decodeUsageQueryResource(entry.getSnapshot().value!).results[0];
+      expect(settled).toMatchObject({ pending: false, quota: [{ current: snapshot }] });
+      expect(settled?.sources)
         .toContainEqual(expect.objectContaining({ source: expect.stringMatching(/^quota:/), status: 'available' }));
       sourceRefusal = 500;
       await entry.refresh();
