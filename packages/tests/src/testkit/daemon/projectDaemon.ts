@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { getCACertificates, setDefaultCACertificates } from 'node:tls';
@@ -373,7 +373,9 @@ export async function startProjectDaemonFixture(params: Readonly<{
         preserveRuntimeOnRestart?: boolean;
         pairedHome?: Readonly<{ homeDir: string; serverId: string; machineId: string }>;
       }> = {}) {
-        const directory = join(params.testDir, account.name);
+        const accountDir = join(params.testDir, account.name);
+        await mkdir(accountDir, { recursive: true });
+        const directory = await mkdtemp(join(accountDir, 'machine-'));
         const homeDir = options.pairedHome?.homeDir ?? join(directory, 'home');
         const workspaceDir = options.workspaceDir ?? join(directory, 'workspace');
         const claudeConfigDir = join(homeDir, '.claude');
