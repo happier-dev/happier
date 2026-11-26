@@ -858,15 +858,28 @@ it.each(['cold', 'cold with projection replacement', 'pinned Machine mount', 'un
         if (!registered) throw new Error('Expected the Tasks handler');
         const handler = vi.fn(registered as PluginClientActionHandler);
         const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(rpcHomes.get('server-client-action')!.id));
+        const pinned = mode === 'pinned Machine mount';
+        // Use the release owner's custody for Account client projections.
+        publishClientActionAvailabilityFixture(lifetime.scope, manifest);
+        const accountAdmission = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution(manifest.id);
+        if (accountAdmission.kind !== 'available') throw new Error('Expected fixture Account release custody');
+        const settledManifest = mode === 'cold with projection replacement'
+            ? { ...manifest, version: `${manifest.version}-replacement` } : manifest;
+        publishClientActionAvailabilityFixture(lifetime.scope, settledManifest);
+        const settledAdmission = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution(manifest.id);
+        if (settledAdmission.kind !== 'available') throw new Error('Expected replacement Account release custody');
+        clearPluginAccountAvailabilityProjection();
         const activation = createClientActionActivation({ ...identity, pluginVersion: manifest.version,
+            accountPlacement: !pinned, accountClient: true,
+            ...(pinned ? {} : { occurrenceId: accountAdmission.custodyId }),
             accountLifetime: lifetime, accountAvailabilityStartsCold: true, handler, inputSchema: declaration.inputSchema });
         const settledHandler = vi.fn(registered as PluginClientActionHandler);
         const replacement = mode === 'cold with projection replacement'
-            ? createClientActionActivation({ ...identity, pluginVersion: manifest.version,
+            ? createClientActionActivation({ ...identity, pluginVersion: settledManifest.version,
+                accountPlacement: true, accountClient: true,
                 accountLifetime: lifetime, accountAvailabilityStartsCold: true, handler: settledHandler,
-                inputSchema: declaration.inputSchema, occurrenceId: 'settled-tasks-occurrence' })
+                inputSchema: declaration.inputSchema, occurrenceId: settledAdmission.custodyId })
             : activation;
-        const pinned = mode === 'pinned Machine mount';
         const memory = new AbortController();
         onTestFinished(() => memory.abort());
         const open = vi.fn<import('./openPluginSurface').PluginSurfaceOpenHandler>(async () => ({ ok: true }));
@@ -923,7 +936,7 @@ it.each(['cold', 'cold with projection replacement', 'pinned Machine mount', 'un
                 expect((await activation.composition.reconcile([replacement.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
                 publication = replacement;
             }
-            publishClientActionAvailabilityFixture(lifetime.scope, manifest, enabled);
+            publishClientActionAvailabilityFixture(lifetime.scope, settledManifest, enabled);
         }
         const outcome = await invocation;
         const admission = owner.readCurrentAccountExecution(manifest.id);
@@ -947,7 +960,7 @@ it.each(['cold', 'cold with projection replacement', 'pinned Machine mount', 'un
             const launch = TriageTaskDraftLaunchV1Schema.parse(open.mock.calls[0]?.[0].input);
             const fixture = await createPluginUiTestkit({
                 identity: { instanceId: 'tasks-from-review', mountNonce: 'launch' },
-                authorPlugin: { id: manifest.id, version: manifest.version },
+                authorPlugin: { id: manifest.id, version: settledManifest.version },
                 surface: null,
                 surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination',
                     destination: { pluginId: manifest.id, localId: 'tasks' }, container: 'appPage' } }),
@@ -966,7 +979,7 @@ it.each(['cold', 'cold with projection replacement', 'pinned Machine mount', 'un
                     occurrenceId: pinned ? activation.action.occurrenceId : admission.custodyId,
                     ...(pinned ? { executionOrigin: activation.activation.executionOrigin } : {}),
                     artifactDigest: `sha256:${'b'.repeat(64)}`,
-                }, pinned ? undefined : { admission, pluginVersion: manifest.version });
+                }, pinned ? undefined : { admission, pluginVersion: settledManifest.version });
                 const shared = usePluginUiEphemeralSharedScopeBinding({ ...scopeIdentity, mountLifetime });
                 const node = renderSurface({ ...fixture.context, launchInput: launch });
                 if (!React.isValidElement(node)) throw new Error('Expected a Tasks surface');

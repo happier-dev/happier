@@ -10,7 +10,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { evaluateContributionAvailability, resolveInvocationContributionPolicyFacts } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import { arePluginMachineExecutionOriginsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { projectActionFailureCauseV1, withActionAutomationNoticesV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import { createPluginActionCallerContext, PLUGIN_ACTION_CALLER_AUTHORITY } from './pluginActionCallerContext';
@@ -2564,9 +2564,21 @@ async function executeContributedAction(
     // initial declaration only determines whether this is a client Action.
     let accountExecution: SettledPluginAccountExecution | undefined;
     const accountLifetime = input.actionAccountLifetime;
+    const initialAction = input.resolveContributedAction?.(identity);
+    const machineClientOrigin = initialAction?.execution.target === 'client'
+        && !readPluginUiAccountExecutableOrigin(initialAction) ? initialAction.executionOrigin : null;
+    // A Machine-projected client executable belongs to that exact occurrence,
+    // regardless of which adapter invokes it. Home scope remains Account-owned.
+    if (machineClientOrigin && accountLifetime) {
+        input = { ...input, contributedAction: input.contributedAction ?? {
+            machineId: getPluginMachineExecutionOriginRef(machineClientOrigin).machineId,
+            serverId: accountLifetime.scope.serverId,
+            accountLifetime,
+        } };
+    }
     if (!input.admissionOnly && input.clientAction && accountLifetime
-        && !isPluginSurfaceClientActionOccurrencePinned(input)
-        && input.resolveContributedAction?.(identity)?.execution.target === 'client') {
+        && !machineClientOrigin && !isPluginSurfaceClientActionOccurrencePinned(input)
+        && initialAction?.execution.target === 'client') {
         const retirement = new AbortController();
         const link = accountLifetime.onRetire(() => retirement.abort());
         const cancellation = mergeAbortSignals([input.signal, retirement.signal]);

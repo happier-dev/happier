@@ -2517,6 +2517,11 @@ describe('current UI context Voice tool port', () => {
     });
 
     it('activates and dispatches the public-authoring review Action through the generic executable projection on web, iOS, and Android', async () => {
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://current-ui-public.test',
+            accountId: 'current-ui-account', request: homes.request });
+        const lifetime = (await import('@/sync/domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected current Account for Machine-contributed Voice Action');
         const composition = getInstalledPluginUiClientExecutableComposition();
         // Switching OS inputs also switches the real credential owner's storage
         // backend. Supply only browser-origin persistence, not credential readers.
@@ -2562,6 +2567,8 @@ describe('current UI context Voice tool port', () => {
                                 : null
                         ),
                         invocationSurface: 'voice',
+                        // Machine-contributed client Actions retain occurrence custody even with an Account lifetime.
+                        actionAccountLifetime: lifetime,
                         clientAction: {
                             openSurface,
                         },
@@ -2585,6 +2592,7 @@ describe('current UI context Voice tool port', () => {
             await composition.unload();
             if (originalLocalStorage) Object.defineProperty(globalThis, 'localStorage', originalLocalStorage);
             else Reflect.deleteProperty(globalThis, 'localStorage');
+            await connection.dispose();
         }
     });
 
