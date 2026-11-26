@@ -1,7 +1,9 @@
-import { afterEach, expect, it } from 'vitest';
-import type { TelemetryKeyFlowConfigV1, TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
+import { afterEach, expect, it, vi } from 'vitest';
+import { TELEMETRY_METRICS_READ_ACTION_ID_V1, type TelemetryKeyFlowConfigV1, type TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import {
   createProviderSettingsAccountHarness,
   createProviderSettingsHarness,
@@ -22,6 +24,8 @@ const { ServiceCheckResponseTrend } = await import('./ServiceCheckResponseTrend'
 const { StackedSeriesChart } = await import('@happier-dev/plugin-ui/presentation');
 const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
 const { ServiceCheckCollectorTrendReaderContext } = await import('./useServiceCheckCollectorTrend');
+const { readTelemetryCheckHistory } = await import('./telemetryMetricSeries');
+const { createFrontDoorUiActionExecutor } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 
 afterEach(async () => {
   standardCleanup();
@@ -55,15 +59,18 @@ function row(kind: 'keyFlow' | 'http', config: TelemetryKeyFlowConfigV1 = keyFlo
   } as never;
 }
 
+const evidence: TelemetryMetricsReadResultV1['result']['evidence'] = { v: 1, items: [
+  { source: { kind: 'entry', label: 'Collector metrics' }, author: { kind: 'process' }, text: 'Request history' },
+] };
 const read: TelemetryMetricsReadResultV1 = {
-  result: { status: 'down', observedAt: NOW, evidence: { v: 1, items: [] } } as never,
+  result: { status: 'down', observedAt: NOW, evidence },
   routes: [
-    { method: 'POST', route: '/checkout', result: { status: 'down', observedAt: NOW, evidence: { v: 1, items: [] },
+    { method: 'POST', route: '/checkout', result: { status: 'down', observedAt: NOW, evidence,
       measurements: { measure: 'p95', value: 1420, unit: 'ms', basis: 'metric_points', producers: [], window: { since: NOW - 24 * HOUR, until: NOW },
-        completeness: 'complete', reasons: [], p95Ms: 1420, errorRate: 0.024, requestCount: 961 } } as never },
-    { method: 'GET', route: '/api/cart', result: { status: 'up', observedAt: NOW, evidence: { v: 1, items: [] },
+        completeness: 'complete', reasons: [], p95Ms: 1420, errorRate: 0.024, requestCount: 961 } } },
+    { method: 'GET', route: '/api/cart', result: { status: 'up', observedAt: NOW, evidence,
       measurements: { measure: 'p95', value: 96, unit: 'ms', basis: 'metric_points', producers: [], window: { since: NOW - 24 * HOUR, until: NOW },
-        completeness: 'complete', reasons: [], p95Ms: 96, errorRate: 0.003, requestCount: 2410 } } as never },
+        completeness: 'complete', reasons: [], p95Ms: 96, errorRate: 0.003, requestCount: 2410 } } },
   ],
   trend: [
     { since: NOW - 3 * HOUR, until: NOW - 2 * HOUR, unit: 'ms', value: 310, p95: 310, errorRate: 0.003, count: 400 },
@@ -96,13 +103,22 @@ it('opens a Key flow check and reads its trend and routes from its collector onc
 });
 
 it('Monitoring loads the selected 24 h response for an error-rate flow whose latest check did not report latency', async () => {
-  const { calls, reader } = recordingReader();
   const config: TelemetryKeyFlowConfigV1 = { ...keyFlow,
     measure: { ...keyFlow.measure, statistic: 'errorRate' }, threshold: { operator: 'above', value: 0.01 } };
   const check = row('keyFlow', config, { status: 'degraded', observedAt: NOW, evidence: { kind: 'none' } });
   const scope = { serverId: 'server-1', accountId: 'account-1' };
+  const calls: unknown[] = [];
+  const history = { ...read, trend: read.trend.map((interval) => ({ ...interval, unit: '1' as const, value: interval.errorRate })) };
+  const executor = createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
+    async invokeContributedAction(request) {
+      calls.push({ action: request.action, target: request.context.externalActionTarget,
+        serverId: request.context.serverId, input: request.input });
+      return { ok: true, result: history };
+    },
+  }), scope.accountId);
+  const execute = createFrontDoorUiActionExecutor(executor, { serverId: scope.serverId, expectedAccountId: scope.accountId });
   const screen = await renderScreen(
-    <ServiceCheckCollectorTrendReaderContext.Provider value={reader}>
+    <ServiceCheckCollectorTrendReaderContext.Provider value={(input, signal) => readTelemetryCheckHistory(input, execute, { signal })}>
       <ItemList><ServiceCheckList rows={[check]} scope={scope} grouping="attention"
         selection={{ selectedKey: null, onSelect() {}, onSelectedRow() {} }}
         testID="monitoring-history" accessibilityLabel="Monitoring" /></ItemList>
@@ -111,12 +127,18 @@ it('Monitoring loads the selected 24 h response for an error-rate flow whose lat
   const id = 'services.checks.row.automation-keyFlow.trigger-1';
   expect(screen.findByTestId(`${id}:column:recent`)).not.toBeNull();
   expect(screen.findByTestId(`${id}:column:uptime`)).not.toBeNull();
-  expect(calls).toEqual([{ scope, collectorMachineId: 'collector-b', config, since: NOW - 24 * HOUR, until: NOW }]);
-  expect(screen.tree.root.findByType(StackedSeriesChart).props.series).toEqual([
+  expect(calls).toEqual([{
+    action: parseQualifiedPluginActionId(TELEMETRY_METRICS_READ_ACTION_ID_V1),
+    target: { kind: 'machine', machineId: 'collector-b' },
+    serverId: scope.serverId,
+    input: { serverId: scope.serverId, environmentId: config.environmentId, serviceName: config.serviceName,
+      measure: config.measure, since: NOW - 24 * HOUR, until: NOW },
+  }]);
+  await vi.waitFor(() => expect(screen.tree.root.findByType(StackedSeriesChart).props.series).toEqual([
     expect.objectContaining({ points: read.trend.map(interval => ({
       id: JSON.stringify([interval.since, interval.until]), x: interval.until, y: interval.p95,
     })) }),
-  ]);
+  ]));
 });
 
 it('every other check keeps its retained response chart and reads no collector', async () => {

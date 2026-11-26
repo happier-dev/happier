@@ -4,6 +4,7 @@ import { createServiceColumnSource } from '../../../../../../packages/plugin-sdk
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { normalizePluginInstalledUiDeclarations } from '@/sync/domains/plugins/ui/projection';
 import { resolveHappierCollectionTableColumns } from '@happier-dev/plugin-ui/presentation';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -16,12 +17,12 @@ it('Services admits public service columns under qualified field identity withou
   const source = createServiceColumnSource(() => reads++);
   const manifest = PluginManifestV2Schema.parse(source.manifest);
   const projection = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined, {
-    id: manifest.id, displayName: manifest.displayName, version: manifest.version, enabled: true,
+    id: manifest.id, displayName: resolvePluginLocalizedStringV2Text(manifest.displayName), version: manifest.version, enabled: true,
     source: { kind: 'bundled', locator: manifest.id },
   });
   const columns = deploymentEnvironmentColumns(false, projection);
   expect(columns.map(column => column.key)).toEqual(['lastDeploy', 'runsOn', 'com.acme.requests/requests', 'state']);
-  expect(columns.at(2)).toMatchObject({ title: 'Requests', subtitle: '24 h', source: manifest.displayName,
+  expect(columns.at(2)).toMatchObject({ title: 'Requests', subtitle: '24 h', source: resolvePluginLocalizedStringV2Text(manifest.displayName),
     minWidth: 112, align: 'end', priority: 20, defaultHidden: true });
   expect(deploymentEnvironmentColumns(false, normalizePluginInstalledUiDeclarations({})).map(column => column.key))
     .toEqual(['lastDeploy', 'runsOn', 'state']);
@@ -31,19 +32,43 @@ it('Services admits public service columns under qualified field identity withou
 it('keeps State ahead of Requests when the Services columns narrow', () => {
   const manifest = PluginManifestV2Schema.parse(createServiceColumnSource(() => {}).manifest);
   const projection = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined, {
-    id: manifest.id, displayName: manifest.displayName, version: manifest.version, enabled: true,
+    id: manifest.id, displayName: resolvePluginLocalizedStringV2Text(manifest.displayName), version: manifest.version, enabled: true,
     source: { kind: 'bundled', locator: manifest.id },
   });
   const columns = [
     { key: 'title', minWidth: 200, priority: 0, flex: true },
-    ...deploymentEnvironmentColumns(false, projection).map(column => ({
-      key: column.key, minWidth: column.minWidth ?? 0, priority: column.priority ?? 0,
-    })),
+    ...deploymentEnvironmentColumns(false, projection),
   ];
   const gap = 8;
   const visible = (availableWidth: number) => resolveHappierCollectionTableColumns({
     columns, availableWidth, gap,
   }).map(column => column.key);
   expect(visible(850)).toContain('com.acme.requests/requests');
+  expect(visible(350)).toEqual(['title', 'state']);
+});
+
+it('fits a service contribution with omitted width and priority using the Collection column defaults', () => {
+  const authored = createServiceColumnSource().manifest;
+  const manifest = PluginManifestV2Schema.parse(authored);
+  const declarations = projectPluginPortableUiDeclarationsV1(manifest);
+  const projection = normalizePluginInstalledUiDeclarations(declarations);
+  const extension = Object.values(projection.listExtensionsById)[0]!;
+  const field = extension.listExtension.filterFields![0]!;
+  const withoutLayout = {
+    ...projection,
+    listExtensionsById: {
+      [extension.id]: { ...extension, listExtension: { ...extension.listExtension, filterFields: [{
+        ...field, column: { title: 'Requests' },
+      }] } },
+    },
+  };
+  const columns = [
+    { key: 'title', minWidth: 200, priority: 0, flex: true },
+    ...deploymentEnvironmentColumns(true, withoutLayout),
+  ];
+  const visible = (availableWidth: number) => resolveHappierCollectionTableColumns({
+    columns, availableWidth, gap: 8,
+  }).map(column => column.key);
+  expect(visible(700)).toContain('com.acme.requests/requests');
   expect(visible(350)).toEqual(['title', 'state']);
 });

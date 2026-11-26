@@ -4,6 +4,7 @@ import { admitPluginListFilterFieldV1, admitPluginListFilterFieldValueV1, type A
 import type { PluginCollectionListExtensionV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { t, usePreferredLanguage } from '@/text';
+import { resolveCollectionExtensionColumnLayout } from './collectionColumns';
 
 type Reader<Row> = (row: Row) => unknown;
 type RowDetail<Row> = Readonly<{
@@ -71,8 +72,7 @@ export function useCollectionListExtensions<Row>(
                         ...(column.qualifier ? { subtitle: localize(pluginId, column.qualifier) } : {}),
                         description: localize(pluginId, field.title),
                         source: projection?.installedPackagesById[pluginId]?.displayName ?? pluginId,
-                        minWidth: column.width ?? 112,
-                        priority: column.priority ?? 0,
+                        ...resolveCollectionExtensionColumnLayout(column),
                         align: column.align,
                         defaultHidden: column.defaultHidden ?? true,
                         render,

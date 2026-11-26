@@ -2,6 +2,11 @@ import { resolveNavigationPlacements, type NavigationPlacementPreferences } from
 
 export type CollectionColumnDeclaration = Readonly<{ id: string; title: string; primary?: boolean; defaultHidden?: boolean }>;
 
+/** Minimum layout for an authored column whose presentation leaves dimensions optional. */
+export function resolveCollectionExtensionColumnLayout(column: Readonly<{ width?: number; priority?: number }>) {
+    return { minWidth: column.width ?? 112, priority: column.priority ?? 0 };
+}
+
 /** Column policy is a two-placement binding of the existing navigation placement owner. */
 export function resolveCollectionColumns(columns: readonly CollectionColumnDeclaration[], preferences?: NavigationPlacementPreferences) {
     const primary = columns.find(column => column.primary);

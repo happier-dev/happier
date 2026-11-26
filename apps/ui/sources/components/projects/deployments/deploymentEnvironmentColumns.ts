@@ -3,6 +3,7 @@ import { admitPluginListFilterFieldV1, type AdmittedPluginListFilterFieldV1 } fr
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { resolveCollectionExtensionColumnLayout } from '@/components/ui/lists/collection/collectionColumns';
 
 export type DeploymentEnvironmentBuiltinColumn = Readonly<{
   key: 'lastDeploy' | 'runsOn' | 'state';
@@ -20,9 +21,9 @@ export type DeploymentEnvironmentResourceColumn = Readonly<{
   title: string;
   description: string;
   source: string;
-  minWidth?: number;
+  minWidth: number;
   maxWidth?: number;
-  priority?: number;
+  priority: number;
   align?: 'start' | 'end';
   defaultHidden?: boolean;
   listColumn: true;
@@ -59,9 +60,9 @@ export function deploymentEnvironmentFields(hereMachine: boolean, projection?: P
         ...(subtitle === undefined ? {} : { subtitle }),
         description: subtitle ?? localize(extension.pluginId, field.title),
         source,
-        ...(column.width === undefined ? {} : { minWidth: column.width, maxWidth: column.width }),
+        ...resolveCollectionExtensionColumnLayout(column),
+        ...(column.width === undefined ? {} : { maxWidth: column.width }),
         ...(column.align === undefined ? {} : { align: column.align }),
-        ...(column.priority === undefined ? {} : { priority: column.priority }),
         ...(column.defaultHidden === undefined ? {} : { defaultHidden: column.defaultHidden }),
         listColumn: true as const, pluginId: extension.pluginId, field: admitted.field }];
     }));

@@ -166,10 +166,11 @@ it('collects only mounted Services fields into one Resource batch and releases h
         id: 'requests', title: 'Requests', source: { resource: 'status' }, value: { kind: 'number', unit: '{request}' },
     } });
     if (admitted.kind !== 'admitted') throw new Error('Expected public number field');
+    const { field } = admitted;
     const ids = Array.from({ length: 40 }, (_, index) => `environment-${index}`);
     function Cell(props: Readonly<{ id: string; collector: string | null }>) {
         const value = useServiceColumnValue({ environmentId: props.id, collectorMachineId: props.collector,
-            pluginId: harness.pluginId, field: admitted.field });
+            pluginId: harness.pluginId, field });
         return <Text testID={props.id}>{String(value?.value ?? 'unknown')}</Text>;
     }
     function App(props: Readonly<{ shown: boolean; collectors?: boolean }>) {

@@ -32,6 +32,7 @@ import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurr
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Modal } from '@/modal';
@@ -101,7 +102,7 @@ describe('declared setting Action writer', () => {
             const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
             const manifest = PluginManifestV2Schema.parse(createServiceColumnSource().manifest);
             const projection = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined, {
-                id: manifest.id, displayName: manifest.displayName, version: manifest.version, enabled: true,
+                id: manifest.id, displayName: resolvePluginLocalizedStringV2Text(manifest.displayName), version: manifest.version, enabled: true,
                 source: { kind: 'bundled', locator: manifest.id },
             });
             const { serverId } = account.scope;
