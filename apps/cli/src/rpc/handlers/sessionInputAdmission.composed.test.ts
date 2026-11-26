@@ -1,15 +1,33 @@
 import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deriveSessionCreationTagV1, SessionSpawnNewInputV2Schema, SessionSpawnNewResultV1Schema, normalizeActionsSettingsV1, type ActionExecutorContext } from '@happier-dev/protocol';
+import { deriveSessionCreationTagV1, FeaturesResponseSchema, SessionSpawnNewInputV2Schema, SessionSpawnNewResultV1Schema, normalizeActionsSettingsV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 
 import { configuration, reloadConfiguration } from '@/configuration';
-import { decrypt, encrypt, encodeBase64 } from '@/api/encryption';
+import { decrypt, encrypt, encodeBase64, decodeBase64 } from '@/api/encryption';
+import { socketRpcCodec } from '@happier-dev/sync-client';
+import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { getDaemonMachineAdmissionTransport, installDaemonMachineAdmissionTransport } from '@/daemon/machineAdmissionTransport';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createCliActionExecutorFromCredentials, type CliActionMachineAdmissionTransport } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema, emptyConnectedAccountCatalogRecordV1, sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot, createSessionCreationTargetPreparationRpcResult, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
+import { createLocalMachineActionTransportFixture } from '@/testkit/apiMachineTransport';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import type { CapabilitiesDetectResponse } from '@/capabilities/types';
+import { TeamSummaryV1Schema, resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams/projections';
+import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams/capabilities';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { registerSessionSpawnNewRpcHandlers } from './sessionLifecycle';
 import { createMachineSessionDirectTargetTransport } from './sessionServerStartLifecycleAdapter';
 import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createSpawnNewSessionLifecycleActionHandler';
@@ -17,10 +35,15 @@ import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract'
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { cmdSessionCreate } from '@/cli/commands/session/create';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
-import { SIGNED_ROOT_ACTION_EXECUTE_PATH, SignedRootActionExecuteRequestSchema } from '@/daemon/externalActions/signedRootActionControl';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { projectAdmittedExternalActionMachineContext } from '@/daemon/externalActions/execution';
 import { createCliActionDeps, type SessionSpawnDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOnHappySessionWebhook } from '@/daemon/sessions/onHappySessionWebhook';
@@ -32,10 +55,11 @@ import { refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority } from '@/daemon
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import type { TrackedSession } from '@/daemon/types';
 import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '@/daemon/processSupervision/sessionRunnerRespawnDescriptor';
-import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
+import { clearDaemonStateForTestTeardown, writeDaemonState, type StoredCredentials } from '@/persistence';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 
-const boundary = vi.hoisted(() => ({ readCredentials: vi.fn(), readDaemonState: vi.fn(), fetchSession: vi.fn(), currentness: vi.fn() }));
+const boundary = vi.hoisted(() => ({ readCredentials: vi.fn(), readDaemonState: vi.fn(), createSocket: vi.fn() }));
 // Filesystem credential/settings reads and HTTP requests are system boundaries.
 // The RPC adapter, Action executor, creator, crypto and send admission stay real.
 vi.mock('@/persistence', async (original) => ({
@@ -45,23 +69,16 @@ vi.mock('@/persistence', async (original) => ({
 }));
 vi.mock('axios', async (original) => ({
   ...await original<typeof import('axios')>(),
-  default: { ...(await original<typeof import('axios')>()).default, get: vi.fn(), post: vi.fn() },
+  default: { ...(await original<typeof import('axios')>()).default, get: vi.fn(), post: vi.fn(), request: vi.fn() },
 }));
-vi.mock('@/session/transport/http/sessionsHttp', async (original) => ({
-  ...await original<typeof import('@/session/transport/http/sessionsHttp')>(),
-  fetchSessionById: boundary.fetchSession,
-}));
-vi.mock('@/api/client/connectedServiceCredentialApi', async (original) => ({
-  ...await original<typeof import('@/api/client/connectedServiceCredentialApi')>(),
-  fetchAccountEncryptionCurrentness: boundary.currentness,
-}));
-vi.mock('@/auth/validateStoredAuthTokenAgainstActiveServer', () => ({
-  validateStoredAuthTokenAgainstActiveServer: async () => ({ state: 'valid' }),
-}));
+vi.mock('socket.io-client', async original => ({ ...await original<typeof import('socket.io-client')>(), io: boundary.createSocket }));
 
 const secret = new Uint8Array(32).fill(7);
+const accountCrypto = createAccountScopedCryptoMaterialSnapshotV1({
+  accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret },
+});
 const credentials = {
-  token: `${Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'account-admission-test' })).toString('base64url')}.signature`,
+  token: `${Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'account-admission-test', tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
   credentialProvenance: 'stored_session' as const,
   encryption: { type: 'legacy' as const, secret },
 };
@@ -76,44 +93,158 @@ const agentContext = {
 
 describe('daemon RPC to protected Session input admission composition', () => {
   let release: (() => void) | undefined;
-  let registrationHome: string | undefined;
+  let accountMode: 'plain' | 'e2ee';
+  let sessionRecord: ReturnType<typeof createSessionRecordFixture>;
+  let fixtureHome: string;
+  let envScope: ReturnType<typeof createEnvKeyScope>;
+  let installation: Awaited<ReturnType<typeof readOrCreateInstallationIdentity>>;
+  const readAccountHttp = (url: string) => {
+    const path = new URL(url).pathname;
+    if (path === '/v1/features' || path === '/v1/features/authenticated') return FeaturesResponseSchema.parse({
+      features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_session_admission' } },
+    });
+    if (path === '/v1/account/profile') return { id: 'account-admission-test' };
+    if (path === '/v1/account/encryption/currentness') return createAccountEncryptionCurrentnessFixture({
+      mode: accountMode,
+      contentKeyFingerprint: accountMode === 'e2ee'
+        ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(accountCrypto.contentPublicKeyFingerprint) : null,
+    });
+    if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`) return ConnectedAccountCatalogRowReadResponseV1Schema.parse({
+      status: 'present', revision: 0, content: sealConnectedAccountCatalogContentV1({
+        mode: accountMode, material: accountMode === 'plain' ? null : accountCrypto.material,
+        record: emptyConnectedAccountCatalogRecordV1('purposes'),
+      }),
+    });
+    if (path === '/v1/account/encryption') return { mode: accountMode, updatedAt: 0 };
+    if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] });
+    if (path === `/v1/machines/${machineId}`) {
+      const metadata = MachinePublishedMetadataV1Schema.parse({
+        host: 'fixture', platform: process.platform, happyCliVersion: '0.0.0-test',
+        homeDir: fixtureHome, happyHomeDir: fixtureHome,
+        installationPublicKey: installation.publicKey,
+      });
+      return { machine: {
+        ...createAvailableSessionSpawnMachineSnapshot(machineId), kind: 'persistent', active: true,
+        installationId: installation.installationId, installationPublicKey: Buffer.from(installation.publicKey, 'base64url').toString('base64'),
+        runnerContentKeyBinding: null,
+        managedMachineRef: null, storageMode: accountMode,
+        dataEncryptionKey: accountMode === 'e2ee' ? null : createAvailableSessionSpawnMachineSnapshot(machineId).dataEncryptionKey,
+        metadata: accountMode === 'e2ee' ? encodeBase64(encrypt(secret, 'legacy', metadata)) : encodePlainMachineStoredContent(metadata), metadataVersion: 0,
+        daemonState: null, daemonStateVersion: 0,
+        access: { custodian: { accountId: 'account-admission-test', displayName: 'Test Account' },
+          role: 'manage', resourceMode: accountMode, accessState: 'ready' },
+      } };
+    }
+    if (path === '/v2/account/settings') return { version: 0, content: sealAccountSettingsV2RawContent({
+      credentials: accountMode === 'plain' ? { ...credentials, encryption: null } : credentials,
+      raw: {}, envelopeKind: accountMode === 'plain' ? 'plain' : 'encrypted',
+      randomBytes,
+    }) };
+    if (path === `/v2/sessions/${sessionId}`) return { session: { ...createSessionNotificationContextFixture(sessionId), ...sessionRecord } };
+    return undefined;
+  };
+  const fetchAccountHttp = async (input: string | URL | Request) => {
+    const data = readAccountHttp(input instanceof Request ? input.url : String(input));
+    return data === undefined ? new Response('', { status: 404 }) : Response.json(data);
+  };
   const admitted: Parameters<CliActionMachineAdmissionTransport>[0][] = [];
   const transport: CliActionMachineAdmissionTransport = async (request) => {
     admitted.push(request);
     return { status: 'accepted', localId: request.localId };
   };
+  function createMachineTransport() {
+    const local = createLocalMachineActionTransportFixture(machineId);
+    return { ...local, invoke: async (...args: Parameters<typeof local.invoke>) => {
+      const [method, request] = args;
+      if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+        || method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE) {
+        return createSessionCreationTargetPreparationRpcResult(SessionCreationTargetPreparationRequestV1Schema.parse(request));
+      }
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+        return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+          projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+            codex: { id: 'codex', title: 'Codex', capabilities: { sessions: {
+              open: ['create'], delivery: ['newTurn'], cancel: true,
+            } } },
+          } } });
+      }
+      if (method === RPC_METHODS.CAPABILITIES_DETECT) return {
+        protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: {
+          installed: true, version: '1.2.3', latestVersion: null, update: { supported: false, command: null },
+          signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+          install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+        } } },
+      } satisfies CapabilitiesDetectResponse;
+      return local.invoke(...args);
+    } };
+  }
   beforeEach(async () => {
-    vi.clearAllMocks();
-    registrationHome = await mkdtemp(join(tmpdir(), 'happier-session-admission-home-'));
-    vi.stubEnv('HAPPIER_HOME_DIR', registrationHome);
+    fixtureHome = await mkdtemp(join(tmpdir(), 'happier-input-admission-'));
+    envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    envScope.patch({ HAPPIER_HOME_DIR: fixtureHome });
     reloadConfiguration();
+    installation = await readOrCreateInstallationIdentity();
+    vi.clearAllMocks();
     admitted.length = 0;
     boundary.readCredentials.mockResolvedValue(credentials);
     await updateMachineRegistration(() => ({ machineId }));
-    boundary.currentness.mockResolvedValue(createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }));
-    boundary.fetchSession.mockResolvedValue(createSessionRecordFixture({
+    accountMode = 'e2ee';
+    boundary.createSocket.mockImplementation(() => {
+      return createApiSessionSocketStub({
+      emitWithAck: async (event, payload) => {
+        if (event !== SOCKET_RPC_EVENTS.CALL) return resolveApiSessionSocketDefaultAck(event, payload);
+        const call = payload as SocketRpcRequestPayload;
+        const content = accountMode === 'plain' ? { mode: 'plain' as const } : { mode: 'e2ee' as const, cipher: {
+          encryptRaw: async (value: unknown) => encodeBase64(encrypt(secret, 'legacy', value)),
+          decryptRaw: async (value: string) => decrypt(secret, 'legacy', decodeBase64(value)),
+        } };
+        const decoded = await socketRpcCodec.decodeRequestParams(content, call.params, call.method);
+        const method = call.method.startsWith(`${machineId}:`) ? call.method.slice(machineId.length + 1) : call.method;
+        const result = await createMachineTransport().invoke(method, decoded.params);
+        return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+      },
+      });
+    });
+    sessionRecord = createSessionRecordFixture({
       id: sessionId, active: true, encryptionMode: 'e2ee',
       metadata: encodeBase64(encrypt(secret, 'legacy', { machineId, permissionMode: 'yolo' })),
-    }));
+    });
     vi.mocked(axios.get).mockImplementation(async (url) => {
-      if (String(url).endsWith('/v1/account/settings')) return { status: 200, data: { settings: null, settingsVersion: 0 } };
+      const data = readAccountHttp(String(url));
+      if (data !== undefined) return { status: 200, data };
       throw new Error(`Unexpected HTTP GET: ${String(url)}`);
     });
-    vi.mocked(axios.post).mockImplementation(async (url) => {
+    vi.mocked(axios.request).mockImplementation(async (request) => {
+      if (!request.url) throw new Error('Expected fixture HTTP URL');
+      if ((request.method ?? 'get').toLowerCase() === 'get') return axios.get(request.url, request);
+      if (request.method?.toLowerCase() === 'post') return axios.post(request.url, request.data, request);
+      throw new Error(`Unexpected HTTP method: ${request.method}`);
+    });
+    vi.mocked(axios.post).mockImplementation(async (url, body) => {
+      const availability = absentAccountPluginAvailabilityHttpResponse(String(url), body);
+      if (availability) return availability;
+      if (String(url).endsWith('/v1/home/governance/get')) return { status: 200, data: { homeDefaults: null } };
+      if (String(url).endsWith('/v1/teams/get')) return { status: 200, data: TeamSummaryV1Schema.parse({
+        id: 'team-admission-test', name: 'Test Team', description: null, logo: null, archivedAt: null, recovery: null,
+        policy: { v: 1, sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed', defaultSessionHistoryAccess: 'from_membership',
+          admissionMode: 'invite_only', authenticationPolicy: null, managedDefaults: null, homeDefaults: null },
+        managedDefaultsGroupIds: [], viewerRole: 'owner', capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true },
+        admission: resolveTeamAdmissionProjectionV1(), counts: null,
+      }) };
       if (String(url).endsWith('/v2/sessions/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
+      if (accountMode === 'plain' && String(url).endsWith(`/v2/sessions/${sessionId}/pending`)) return { status: 200, data: { didWrite: true } };
       throw new Error(`Unexpected HTTP POST: ${String(url)}`);
     });
-    // Feature fetch is the other network boundary. No server is contacted.
-    vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
+    // Fetch-based Account clients share the same HTTP fixture as Axios.
+    vi.stubGlobal('fetch', fetchAccountHttp);
   });
   afterEach(async () => {
     release?.(); release = undefined;
     await clearDaemonStateForTestTeardown({ includeLockFile: false });
     vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
+    envScope.restore();
     reloadConfiguration();
-    if (registrationHome) await rm(registrationHome, { recursive: true, force: true });
-    registrationHome = undefined;
+    await rm(fixtureHome, { recursive: true, force: true });
   });
 
   function registerSpawnBoundary(mode: 'plain' | 'e2ee' = 'e2ee', launch?: SessionSpawnDirectTargetTransport['spawnedSession']['spawn']) {
@@ -128,19 +259,20 @@ describe('daemon RPC to protected Session input admission composition', () => {
         spawnedSession: {
           spawn: async (request) => {
             spawned = true;
-            boundary.fetchSession.mockResolvedValue(createSessionRecordFixture({
+            sessionRecord = createSessionRecordFixture({
               id: sessionId, active: true, encryptionMode: mode,
               metadata: mode === 'e2ee' ? encodeBase64(encrypt(secret, 'legacy', {
                 machineId, permissionMode: 'yolo', sessionCreationCorrespondenceV1: request.sessionCreationCorrespondence,
               })) : JSON.stringify({ machineId, permissionMode: 'yolo', sessionCreationCorrespondenceV1: request.sessionCreationCorrespondence }),
-            }));
+            });
             if (launch) return await launch(request);
             return { type: 'success', sessionId, sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
           },
           resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }),
         },
       };
-    registerSessionSpawnNewRpcHandlers({ rpcHandlerManager, sessionSpawnDirectTargetTransport });
+    registerSessionSpawnNewRpcHandlers({ rpcHandlerManager, sessionSpawnDirectTargetTransport,
+      machineActionDirectTargetTransport: createMachineTransport() });
     const spawn = handlers.get(RPC_METHODS.SESSION_SPAWN_NEW);
     expect(spawn).toBeDefined();
     // The authenticated human RPC ingress stamps this authority; an unstamped
@@ -178,18 +310,19 @@ describe('daemon RPC to protected Session input admission composition', () => {
         // direct transport and lifecycle attribution all use their real owners.
         spawnSession: async options => {
           launched.push(options);
-          boundary.fetchSession.mockResolvedValue(createSessionRecordFixture({
+          sessionRecord = createSessionRecordFixture({
             id: sessionId, active: true, encryptionMode: 'e2ee',
             metadata: encodeBase64(encrypt(secret, 'legacy', {
               machineId, permissionMode: 'yolo', sessionCreationCorrespondenceV1: options.sessionCreationCorrespondence,
             })),
-          }));
+          });
           return { type: 'success', sessionId,
             sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
         },
       });
       registerSessionSpawnNewRpcHandlers({
         rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
+        machineActionDirectTargetTransport: createMachineTransport(),
         sessionSpawnDirectTargetTransport: createMachineSessionDirectTargetTransport({ machineId,
           spawnLifecycleHandler: async (request, context) => {
             // Withdraw after real target/creation preparation, immediately before
@@ -222,14 +355,19 @@ describe('daemon RPC to protected Session input admission composition', () => {
         expect(admitted).toEqual([]);
         return;
       }
-      const result = SessionSpawnNewResultV1Schema.parse(response);
       if (currentness === 'withdrawn') {
-        expect(result).toMatchObject({ type: 'error', code: 'incompatible_target',
-          incompatibleTarget: { reason: 'daemon_rpc_unavailable' }, retryable: false });
+        // The real lifecycle owns the admission refusal; the registered RPC
+        // returns the strict creation DTO consumed by the public Machine caller.
+        expect(SessionSpawnNewResultV1Schema.parse(response)).toEqual({
+          type: 'error', code: 'spawn_failed', retryable: true,
+          launchError: { kind: 'launch_error', code: 'requester_machine_admission_unavailable',
+            message: 'Requester Machine admission unavailable' },
+        });
         expect(launched).toEqual([]);
         expect(admitted).toEqual([]);
         return;
       }
+      const result = SessionSpawnNewResultV1Schema.parse(response);
       expect(result).toMatchObject({ type: 'success', sessionId, initialInput: { status: 'accepted' } });
       expect(launched).toHaveLength(1);
       expect(launched[0]).toMatchObject({ requesterWorkAttributionV1: {
@@ -372,12 +510,7 @@ describe('daemon RPC to protected Session input admission composition', () => {
 
   it('admits a plain Account human initial prompt without a Machine transport', async () => {
     boundary.readCredentials.mockResolvedValue({ ...credentials, encryption: null });
-    boundary.currentness.mockResolvedValue(createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
-    vi.mocked(axios.post).mockImplementation(async (url) => {
-      if (String(url).endsWith('/v2/sessions/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
-      if (String(url).endsWith(`/v2/sessions/${sessionId}/pending`)) return { status: 200, data: { didWrite: true } };
-      throw new Error(`Unexpected HTTP POST: ${String(url)}`);
-    });
+    accountMode = 'plain';
     const { spawn, wasSpawned } = registerSpawnBoundary('plain');
     await expect(spawn(spawnInput())).resolves.toMatchObject({
       type: 'success', sessionId, initialInput: { status: 'accepted' },
@@ -390,7 +523,7 @@ describe('daemon RPC to protected Session input admission composition', () => {
 
   it('still refuses a plain Account plugin initial prompt before creation without Machine admission', async () => {
     const plainCredentials = { ...credentials, encryption: null };
-    boundary.currentness.mockResolvedValue(createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
+    accountMode = 'plain';
     const deps = createCliActionDeps({ token: credentials.token, credentials: plainCredentials, sessionId, mode: 'plain', ctx: null });
     const input = spawnInput();
     if (!input.creationKey) throw new Error('Expected fixture creation key');
@@ -402,69 +535,109 @@ describe('daemon RPC to protected Session input admission composition', () => {
       callerSurface: 'plugin',
     })).rejects.toMatchObject({ code: 'DAEMON_RPC_UNAVAILABLE' });
     expect(admitted).toEqual([]);
-    expect(vi.mocked(axios.post).mock.calls).toEqual([]);
+    expect(vi.mocked(axios.post).mock.calls.filter(([url]) => String(url).includes('/sessions/'))).toEqual([]);
   }, 120_000);
 
-  it.each(['plain', 'e2ee'] as const)('routes CLI create --prompt for a %s Account through signed daemon Actions', async (mode) => {
+  it.each(['plain', 'e2ee'] as const)('routes CLI create --prompt for a %s Account through Home-admitted daemon Actions', async (mode) => {
     const accountCredentials = mode === 'plain' ? { ...credentials, encryption: null } : credentials;
     boundary.readCredentials.mockResolvedValue(accountCredentials);
-    boundary.currentness.mockResolvedValue(createAccountEncryptionCurrentnessFixture({ mode }));
+    accountMode = mode;
     const daemonState = { pid: process.pid, httpPort: 12345, controlToken: 'synthetic-control-token',
       startedAt: Date.now(), startedWithCliVersion: '0.0.0-test', machineId, accountId: 'account-admission-test' };
-    // Explicit-Home daemon discovery reads the publication from disk; the control
-    // HTTP boundary below consumes the same state through its credential port.
+    // Explicit-Home daemon discovery reads this publication from disk before
+    // dispatching the original Action through Home admission.
     writeDaemonState(daemonState);
     boundary.readDaemonState.mockResolvedValue(daemonState);
     const { sessionSpawnDirectTargetTransport } = registerSpawnBoundary(mode);
-    const signedRequests: unknown[] = [];
-    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
-      if (!String(input).endsWith(SIGNED_ROOT_ACTION_EXECUTE_PATH)) return new Response('', { status: 404 });
-      const request = SignedRootActionExecuteRequestSchema.parse(JSON.parse(String(init?.body)));
-      signedRequests.push(request);
-      expect(new Headers(init?.headers).get('x-happier-daemon-token')).toBe('synthetic-control-token');
-      // The authenticated daemon owns its Machine socket, after CLI dispatch.
-      release = installDaemonMachineAdmissionTransport({ serverId: configuration.activeServerId, transport });
-      // Signed root control invokes the Action owner directly. RPC's stricter
-      // creation-key envelope is a different ingress and cannot stand in for it.
-      const executor = createCliActionExecutorFromCredentials({
-        credentials: accountCredentials, sessionSpawnDirectTargetTransport,
-      });
-      const execution = await executeExternalAction({
-        actionId: request.actionId,
-        envelope: {
-          v: 1, input: request.input,
-          ...(request.target ? { target: request.target } : {}),
-          ...(request.actionRequestId ? { requestId: request.actionRequestId } : {}),
-        },
-        principal: { authority: 'present_user' }, surface: 'cli',
-        currentMachineId: machineId, currentServerId: configuration.activeServerId,
-        resolveTarget: async ({ target }) => target ?? null,
-        executor,
-      });
-      if (execution.kind === 'invalid_request' || execution.response.v !== 1) {
-        throw new Error('Expected a valid signed root Action response');
-      }
-      return Response.json(execution.response.execution);
+    const admittedRequests: unknown[] = [];
+    let boundaryFailure: unknown;
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      if (String(input) === 'http://127.0.0.1:12345/ping') return Response.json({ status: 'ok' });
+      return fetchAccountHttp(input);
     });
-    vi.mocked(axios.post).mockImplementation(async (url) => {
-      if (String(url).endsWith('/v2/sessions/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
-      if (mode === 'plain' && String(url).endsWith(`/v2/sessions/${sessionId}/pending`)) return { status: 200, data: { didWrite: true } };
-      throw new Error(`Unexpected HTTP POST: ${String(url)}`);
+    const defaultPost = vi.mocked(axios.post).getMockImplementation();
+    if (!defaultPost) throw new Error('Expected Account HTTP boundary');
+    const createExecutor = (executorCredentials: StoredCredentials) => {
+      const executor = createCliActionExecutorFromCredentials({
+        credentials: executorCredentials, sessionSpawnDirectTargetTransport,
+        machineActionDirectTargetTransport: createMachineTransport(),
+        externalActionMachineInstallationId: installation.installationId,
+        externalActionMachineRequestPrivateKey: installation.privateKey,
+      });
+      // Mirror the installed HTTP executor's ingress through the canonical
+      // projection of Home-admitted facts, including local directory preflight.
+      return { ...executor, execute: (actionId: Parameters<typeof executor.execute>[0],
+        input: unknown, context?: Parameters<typeof executor.execute>[2]) => executor.execute(actionId, input,
+          projectAdmittedExternalActionMachineContext(context, machineId, mode)) };
+    };
+    vi.mocked(axios.post).mockImplementation(async (url, raw, config) => {
+      try {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/actions/session.spawn_new/execution-authorization/verify') return { status: 200, data: { ok: true } };
+      if (path !== '/v1/actions/session.spawn_new/execution-authorization' && path !== '/v1/actions/session.spawn_new') {
+        return defaultPost(url, raw, config);
+      }
+      expect(config?.headers?.Authorization).toBe(`Bearer ${accountCredentials.token}`);
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(raw);
+       const projectSessionDefaultsAdmission = projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1({
+         actionId: 'session.spawn_new', envelope: request.envelope,
+       });
+      if (path.endsWith('/execution-authorization')) return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({
+        v: 1, token: 'home-session-spawn-proof', binding: {
+          accountId: 'account-admission-test', authentication: { kind: 'account', tokenEpoch: 0 },
+          serverIdentityId: 'srv_session_admission', machineId, custodianAccountId: 'account-admission-test',
+          installationId: installation.installationId, actionId: 'session.spawn_new',
+          requestId: request.envelope.requestId, target: request.envelope.target,
+          accountEncryptionMode: mode, admittedMachineRole: 'manage',
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+           ...(projectSessionDefaultsAdmission === undefined ? {} : { projectSessionDefaultsAdmission }),
+           ...(request.envelope.v === 2 && request.envelope.machineRuntimeDemand !== undefined
+             ? { machineRuntimeDemand: request.envelope.machineRuntimeDemand } : {}),
+        },
+      }) };
+      admittedRequests.push(request);
+      release = installDaemonMachineAdmissionTransport({ serverId: configuration.activeServerId, transport });
+      const execution = await executeExternalAction({
+        actionId: 'session.spawn_new', envelope: request.envelope, executionAuthorization: request.executionAuthorization,
+        principal: { accountId: 'account-admission-test', authority: 'present_user', authentication: { kind: 'account', tokenEpoch: 0 } },
+        currentMachineId: machineId, currentServerId: configuration.activeServerId,
+        currentAccountId: 'account-admission-test', currentInstallationId: installation.installationId,
+        externalActionMachineRequestPrivateKey: installation.privateKey,
+        verifyExecutionAuthorization: input => verifyExternalActionExecutionAuthorizationCurrent({ ...input,
+          installationId: installation.installationId, privateKey: installation.privateKey,
+          serverHttpBaseUrl: configuration.serverUrl }),
+        prepareRequesterAccountContext: input => prepareRequesterAccountActionContext({
+          ...input, purpose: { kind: 'external_action' }, machineId, installationId: installation.installationId,
+          installationPrivateKey: decodeBase64(installation.privateKey, 'base64url'),
+          serverId: configuration.activeServerId, serverIdentityId: 'srv_session_admission', serverHttpBaseUrl: configuration.serverUrl,
+          ownCredentials: accountCredentials, isCurrent: async () => true,
+          createExecutor: context => createExecutor(context.credentials),
+        }),
+        resolveTarget: async ({ target }) => target ?? null,
+        executor: createExecutor(accountCredentials),
+      });
+      if (execution.kind === 'invalid_request') throw new Error(`Home-admitted Action refused: ${execution.errorCode}`);
+      return { status: 200, data: execution.response };
+      } catch (error) { boundaryFailure = error; throw error; }
     });
     const output = captureStdoutJsonOutput<unknown>();
     try {
       await cmdSessionCreate(['create', '--machine-id', machineId, '--agent', 'codex', '--connected-services-json', '{"v":2,"bindingsByServiceId":{}}', '--prompt', 'CLI first prompt', '--spawn-attempt-id', 'r9-cli-spawn', '--json'], {
         readCredentialsFn: async () => accountCredentials,
       });
+      if (boundaryFailure) throw boundaryFailure;
       const envelope = output.json();
       expect(envelope, JSON.stringify(envelope)).toMatchObject({ ok: true, kind: 'session_create', data: { session: { id: sessionId } } });
-      expect(signedRequests).toEqual([expect.objectContaining({
-        actionId: 'session.spawn_new', actionRequestId: 'r9-cli-spawn',
-        target: { kind: 'machine', machineId }, input: expect.objectContaining({ initialInput: { text: 'CLI first prompt' } }),
+      expect(admittedRequests).toEqual([expect.objectContaining({
+        executionAuthorization: expect.objectContaining({ binding: expect.objectContaining({ actionId: 'session.spawn_new', requestId: 'r9-cli-spawn' }) }),
+        envelope: expect.objectContaining({ requestId: 'r9-cli-spawn', target: { kind: 'machine', machineId } }),
       })]);
       expect(admitted).toHaveLength(mode === 'e2ee' ? 1 : 0);
       if (mode === 'e2ee') {
-        expect(admitted[0]?.content.t).toBe('encrypted');
+        const content = admitted[0]?.content;
+        expect(content?.t).toBe('encrypted');
+        if (content?.t !== 'encrypted') throw new Error('Expected protected CLI initial input');
+        expect(decrypt(secret, 'legacy', decodeBase64(content.c))).toMatchObject({ content: { text: 'CLI first prompt' } });
       } else {
         const pendingBody = vi.mocked(axios.post).mock.calls.find(([url]) => String(url).endsWith('/pending'))?.[1];
         expect(pendingBody).toMatchObject({ content: { t: 'plain', v: { content: { text: 'CLI first prompt' } } } });
@@ -500,7 +673,15 @@ describe('daemon RPC to protected Session input admission composition', () => {
     }
   });
 
-  it('surfaces a definite actionable PluginError from the native runner SessionHandle.send entry point', async () => {
+  it('preserves a typed Home admission outage from the native runner SessionHandle.send entry point', async () => {
+    const defaultPost = vi.mocked(axios.post).getMockImplementation();
+    if (!defaultPost) throw new Error('Expected Account HTTP boundary');
+    vi.mocked(axios.post).mockImplementation(async (url, body, config) => {
+      if (new URL(String(url)).pathname === '/v1/actions/session.message.send/execution-authorization') {
+        return { status: 503, data: { error: 'server_unavailable' } };
+      }
+      return defaultPost(url, body, config);
+    });
     const { createNativeAgentSessionServices } = await import('@/agent/runtime/registry/engineRegistry/nativeAgentSessionInteractions');
     const services = createNativeAgentSessionServices({
       credentials, permissionHandler: null, pluginId: 'acme.agent', contributionId: 'runtime',
@@ -510,7 +691,9 @@ describe('daemon RPC to protected Session input admission composition', () => {
     });
     if (!services.sessions.current) throw new Error('Expected the native runner Session handle');
     await expect(services.sessions.current.send({ kind: 'userText', text: 'runner protected input', idempotencyKey: 'runner-input' }))
-      .rejects.toMatchObject({ code: 'machine_admission_transport_unavailable', message: expect.stringContaining('daemon'), retryable: true });
+      .resolves.toEqual({ status: 'rejected', code: 'session_input_target_unavailable',
+        failureCause: { phase: 'session.message.requester_dispatch', errorClass: 'UnknownThrownValue',
+          errorCode: 'server_unavailable', httpStatus: null } });
     expect(admitted).toEqual([]);
   });
 });
