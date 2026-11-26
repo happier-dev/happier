@@ -1150,7 +1150,11 @@ describe('WorkflowsColumn', () => {
     });
 
     // HUNT3-1125 pattern B: an inline Workflow's Run reads that Workflow's name by exact id, never the inline page.
-    it('names inline-Workflow Runs from one exact read per Workflow, including one beyond the first inline page', async () => {
+    it.each(['scope', 'latest answer', 'demand ended', 'unmounted'] as const)(
+        'reads 15 inline Workflow names by exact ID and handles %s', async scenario => {
+        const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { publishHomeAccountChangeForRouting } = await import('@/sync/runtime/orchestration/homeAccountChange');
         const [{ AutomationDefinitionDetailSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema },
             { createWorkflowDefinitionFixture }] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'),
             import('@happier-dev/protocol/automations/automationWorkflowRecipeV2'), import('@/dev/testkit/fixtures/workflowRunFixtures')]);
@@ -1159,7 +1163,8 @@ describe('WorkflowsColumn', () => {
             blocks: [{ kind: 'step', id: 'first', document: { text: 'Summarize the day', references: [], attachments: [] },
                 input: [], result: { kind: 'text' } }],
         });
-        const named = [['inline-alpha', 'Alpha digest'], ['inline-bravo', 'Bravo digest'], ['inline-charlie', 'Charlie digest']] as const;
+        const named = Array.from({ length: 15 }, (_, index) => [`inline-${index}`, `Digest ${index}`] as const);
+        const editedId = named[0]![0];
         const details = named.map(([id, name]) => AutomationDefinitionDetailSchema.parse({ id, name, description: null, enabled: true,
             workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null,
             templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 5,
@@ -1172,6 +1177,8 @@ describe('WorkflowsColumn', () => {
                 schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } }],
         }));
         const automationRequests: string[] = [];
+        let deferEdited = false;
+        const edits: Array<{ answer: ReturnType<typeof createDeferred<Response>>; signal: AbortSignal | null | undefined }> = [];
         automationDefinitionResponse = async (url, init) => {
             automationRequests.push(`${init?.method ?? 'GET'} ${url.pathname}`);
             // The inline page holds the two newest; the older Charlie is only on the next page.
@@ -1181,6 +1188,12 @@ describe('WorkflowsColumn', () => {
                     : { automations: details.slice(0, 2), nextCursor: 'older-inline' });
             }
             const detail = details.find(candidate => url.pathname === `/v3/automations/${candidate.id}`);
+            if (deferEdited && detail?.id === editedId) {
+                // Allow a reply from the HTTP boundary even after the caller has withdrawn demand.
+                const answer = createDeferred<Response>();
+                edits.push({ answer, signal: init?.signal });
+                return answer.promise;
+            }
             return detail ? Response.json(detail) : undefined;
         };
         const runRows = named.map(([automationId]) => ({ ...waiting, id: `run-${automationId}`, sourceArtifactId: null,
@@ -1196,17 +1209,69 @@ describe('WorkflowsColumn', () => {
             ...settings.collectionDisplayPreferencesV1, workflowRun: { groupBy: 'workflow' },
         } } });
         routeState.pathname = '/workflows/runs';
-        const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
-            <WorkflowsRunsRoute />
-        </AppShellColumnContext.Provider>, { wrapper: TestAuth });
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Run of run-inline-charlie'));
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Charlie digest'));
-        expect(screen.getTextContent()).toContain('Alpha digest');
-        expect(screen.getTextContent()).toContain('Bravo digest');
-        // Exactly one exact read per visible inline Workflow, and no inline page read for names.
-        expect(automationRequests.filter(request => request === 'POST /v3/automations/query')).toEqual([]);
-        expect([...automationRequests].sort()).toEqual(named.map(([id]) => `GET /v3/automations/${id}`).sort());
-        await screen.unmount();
+        const renderRuns = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+            <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                <WorkflowsRunsRoute />
+            </AppShellColumnContext.Provider>
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(renderRuns(true), { wrapper: TestAuth });
+        const shownReads = named.map(([id]) => `GET /v3/automations/${id}`).sort();
+        const publish = async (id: string) => {
+            await act(async () => {
+                const event = publishHomeAccountChangeForRouting(boundary!.serverId, [id],
+                    { source: 'socket', changeKinds: ['automation'] });
+                expect(event.workflowDefinitionAutomationIds).toEqual([id]);
+            });
+            await flushHookEffects({ frames: 2 });
+        };
+        let mounted = true;
+        try {
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('Digest 14'));
+            expect(screen.getTextContent()).toContain('Digest 0');
+            expect([...automationRequests].sort()).toEqual(shownReads);
+
+            if (scenario === 'scope') {
+                await publish('unshown-automation');
+                expect(automationRequests.slice(15)).toEqual([]);
+                await publish(editedId);
+                await vi.waitFor(() => expect(automationRequests.slice(15)).toEqual([shownReads[0]]));
+                // A mixed wake supplies raw ids but cannot narrow the trigger scope.
+                await act(async () => {
+                    publishHomeAccountChangeForRouting(boundary!.serverId, ['unshown-automation', 'share'],
+                        { source: 'socket', changeKinds: ['automation', 'share'] });
+                });
+                await vi.waitFor(() => expect(automationRequests.slice(16).sort()).toEqual(shownReads));
+                await act(async () => {
+                    publishHomeAccountChangeForRouting(boundary!.serverId, undefined, { source: 'connected', changesCatchUp: true });
+                });
+                await vi.waitFor(() => expect(automationRequests.slice(31).sort()).toEqual(shownReads));
+                return;
+            }
+
+            deferEdited = true;
+            await publish(editedId);
+            await vi.waitFor(() => expect(edits).toHaveLength(1));
+            if (scenario === 'latest answer') {
+                await publish(editedId);
+                await vi.waitFor(() => expect(edits).toHaveLength(2));
+                await act(async () => edits[1]!.answer.resolve(Response.json({ ...details[0], name: 'A newest digest' })));
+                await vi.waitFor(() => expect(screen.getTextContent()).toContain('A newest digest'));
+                await act(async () => edits[0]!.answer.resolve(Response.json({ ...details[0], name: 'A outdated digest' })));
+                expect(screen.getTextContent()).toContain('A newest digest');
+                expect(screen.getTextContent()).not.toContain('A outdated digest');
+            } else {
+                if (scenario === 'unmounted') {
+                    await screen.unmount();
+                    mounted = false;
+                } else {
+                    await screen.update(renderRuns(false));
+                }
+                expect(edits[0]!.signal?.aborted).toBe(true);
+            }
+        } finally {
+            if (mounted) await screen.unmount();
+            for (const { answer } of edits) answer.resolve(Response.json(details[0]));
+        }
     });
 
     it('groups Runs by saved Workflow title or a distinct label for each unavailable Workflow', async () => {

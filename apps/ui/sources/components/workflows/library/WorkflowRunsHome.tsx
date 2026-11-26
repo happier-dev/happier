@@ -20,6 +20,7 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { StatusWord } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -74,7 +75,8 @@ const readKey = (row: WorkflowRunCollectionRow) => row.key;
  */
 export function WorkflowRunsHome(): React.ReactElement {
   const focused = useIsFocused();
-  const model = useWorkflowRunCollection(focused);
+  const presented = useLayoutPresentationActive();
+  const model = useWorkflowRunCollection(focused && presented);
   const header = useWorkflowRunCollectionHeader(
     model,
     'workflow-runs-space',
