@@ -1013,7 +1013,7 @@ describe("automation trigger-set CRUD", () => {
         await db.automationRun.update({ where: { id: admitted.id }, data: { state: "interrupted" } });
         const page = await listAutomationRuns({ accountId: account.id, automationId: created.id, limit: 1 });
         expect(page?.runs.map(toAutomationRunV3ListApiDto)).toEqual([
-            expect.objectContaining({ id: admitted.id, state: "running", workflowRunState: "interrupted" }),
+            expect.objectContaining({ id: admitted.id, state: "failed", workflowRunState: "interrupted" }),
         ]);
     });
 
@@ -1215,8 +1215,7 @@ describe("automation trigger-set CRUD", () => {
                 data: {
                     automationId: automation.id,
                     accountId: account.id,
-                    // The retained Automation projection maps an interrupted
-                    // Workflow Run to running and preserves the raw cursor.
+                    // The public occurrence projection preserves the raw cursor.
                     state: "interrupted",
                     causeKind: "manual",
                     causeOccurredAt: new Date(base + 2),
@@ -1233,7 +1232,7 @@ describe("automation trigger-set CRUD", () => {
         });
         const expectedFirst = { runs: [expect.objectContaining({ id: currentOnly.id, state: "interrupted" })], nextCursor: currentOnly.id };
         expect(first).toEqual(expectedFirst);
-        expect(toAutomationRunV3ListApiDto(first!.runs[0]!).state).toBe("running");
+        expect(toAutomationRunV3ListApiDto(first!.runs[0]!).state).toBe("failed");
         await expect(listAutomationRuns({
             accountId: account.id, automationId: automation.id, limit: 1,
         })).resolves.toEqual(expectedFirst);

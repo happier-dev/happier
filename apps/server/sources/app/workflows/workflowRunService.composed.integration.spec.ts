@@ -2311,9 +2311,13 @@ describe("workflowRunService (integration)", () => {
             { id: nativeId, runId, sequence: 2n, parentRecordId: rootId, memberOrdinal: 1n, lifecycle: "needs_attention", contentEnvelope: nativeEnvelope(false) },
             { id: randomUUID(), runId, sequence: 3n, parentRecordId: stableId, memberOrdinal: 0n, lifecycle: "cancelled", contentEnvelope: "settled-parallel-loser" },
         ] });
-        await db.automationRun.update({ where: { id: runId }, data: { state: "interrupted", revision: 7, attempt: 1,
-            claimedByMachineId: seeded.machineId, workflowCheckpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 4n) } });
-        expect((await getWorkflowRun({ ...seeded, runId })).run.availability.resumeBoundary).toBe(false);
+        await db.automationRun.update({ where: { id: runId }, data: { state: "running", revision: 6, attempt: 1,
+            claimedByMachineId: seeded.machineId } });
+        await transitionWorkflowRun({ ...seeded, runId, parentAttempt: 1, expectedRevision: 6, state: "interrupted",
+            errorCode: "workflow_step_timeout", checkpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 4n) });
+        expect((await getWorkflowRun({ ...seeded, runId })).run).toMatchObject({
+            state: "interrupted", errorCode: "workflow_step_timeout", availability: { resumeBoundary: false },
+        });
         const stable = await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: stableId } });
         const observation = await commitWorkflowInvocationFactOwner({ ...seeded, runId, invocationId: nativeId, invocationAttempt: 0n,
             expectedRevision: 7, expectedContentRevision: 0n, expectedLifecycle: "needs_attention", lifecycle: "completed",
@@ -2322,11 +2326,15 @@ describe("workflowRunService (integration)", () => {
         expect((await getWorkflowRun({ ...seeded, runId })).run).toMatchObject({ state: "interrupted", revision: observation.parentRevision,
             availability: { resumeBoundary: true } });
         const listed = await listWorkflowRuns({ accountId: seeded.accountId, pageByteLimit: 64_000 });
-        expect(listed.runs.find(run => run.id === runId)?.availability.resumeBoundary).toBe(true);
+        expect(listed.runs.find(run => run.id === runId)).toMatchObject({
+            state: "interrupted", errorCode: "workflow_step_timeout", availability: { resumeBoundary: true },
+        });
         await expect(resumeWorkflowRunBoundary({ ...seeded, runId, expectedRevision: observation.parentRevision - 1 })).rejects.toMatchObject({ code: "currentness_conflict" });
         await expect(resumeWorkflowRunBoundary({ ...seeded, runId, expectedRevision: observation.parentRevision })).resolves.toMatchObject({ run: { state: "queued", revision: observation.parentRevision + 1 } });
         await expect(resumeWorkflowRunBoundary({ ...seeded, runId, expectedRevision: observation.parentRevision })).rejects.toMatchObject({ code: "currentness_conflict" });
-        expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({ workflowResumeRequestedRevision: observation.parentRevision + 1 });
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({
+            workflowResumeRequestedRevision: observation.parentRevision + 1, errorCode: null,
+        });
         expect(await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: nativeId } })).toEqual(completed);
         expect(await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: stableId } })).toEqual(stable);
         expect(await db.workflowRunInvocation.count({ where: { runId } })).toBe(4);

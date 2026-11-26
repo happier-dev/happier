@@ -27,7 +27,7 @@ import type {
     AutomationTargetType,
     AutomationTriggerItem,
 } from "./automationTypes";
-import { projectAutomationRunState } from "./automationTypes";
+import { projectAutomationOccurrenceState } from "./automationTypes";
 import { decodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import { decodeAutomationRunLifecycleConfiguration } from "./automationRunLifecycleConfigurationCodec";
 import { decodeAutomationActionTriggerConfiguration } from "./automationActionTriggerConfiguration";
@@ -367,7 +367,7 @@ export function toAutomationRunV3ListApiDto(item: AutomationRunApiListInput) {
     return AutomationV3RunListItemSchema.parse({
         id: item.id, automationId: item.automationId, revision: item.revision,
         triggerId: item.triggerId, triggerRetired,
-        state: projectAutomationRunState(item.state), cause: toAutomationRunCauseApiDto(item), dueAt: item.dueAt.getTime(),
+        state: projectAutomationOccurrenceState(item.state), cause: toAutomationRunCauseApiDto(item), dueAt: item.dueAt.getTime(),
         ...(item.workflowCustodyState != null ? { workflowRunState: item.state } : {}),
         claimedAt: item.claimedAt?.getTime() ?? null, startedAt: item.startedAt?.getTime() ?? null,
         finishedAt: item.finishedAt?.getTime() ?? null, claimedByMachineId: item.claimedByMachineId,

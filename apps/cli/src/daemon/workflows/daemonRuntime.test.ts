@@ -1877,6 +1877,9 @@ describe('production daemon scheduled service command operation', () => {
         await Promise.race([opened, coordinating]);
         expect(launches).toBe(0);
         expect(await coordinating).toMatchObject({ state: 'interrupted', reason: 'access_denied' });
+        expect(storage.calls).toContainEqual(expect.objectContaining({
+          operation: 'transition', state: 'interrupted', errorCode: 'access_denied',
+        }));
         const failedLeaves = storage.rows().filter(row => row.index.parentRecordId !== null);
         expect(failedLeaves).toMatchObject([{ index: { lifecycle: 'failed' } }]);
         expect(failedLeaves.map(row => openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',

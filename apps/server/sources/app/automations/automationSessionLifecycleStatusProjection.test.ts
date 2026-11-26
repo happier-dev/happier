@@ -68,8 +68,7 @@ describe("Automation Session lifecycle status projection", () => {
             },
         ]);
         const automationRuns = [
-            // Workflow control states retain their physical identity while
-            // the public Automation status uses its canonical active state.
+            // The trigger fired and its Workflow is still open for Retry.
             {
                 id: "workflow-run-interrupted",
                 state: "interrupted",
@@ -144,7 +143,7 @@ describe("Automation Session lifecycle status projection", () => {
             "trigger-unavailable": { state: "sourceUnavailable", runId: null },
             "trigger-finished-without-run": { state: "finished", runId: null },
             "trigger-triggered": { state: "triggered", runId: "run-triggered" },
-            "trigger-running": { state: "running", runId: "workflow-run-interrupted" },
+            "trigger-running": { state: "triggered", runId: "workflow-run-interrupted" },
             "trigger-finished": { state: "finished", runId: "run-finished" },
         });
     });

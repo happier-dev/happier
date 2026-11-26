@@ -2497,6 +2497,7 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
             },
             select: {
                 state: true,
+                errorCode: true,
                 originKind: true,
                 workflowCheckpointEnvelope: true,
                 workflowCheckpointEnvelopeBytes: true,
@@ -2526,6 +2527,11 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
             : null;
         const storedCheckpoint = encodeStoredText(params.checkpointEnvelope);
         const storedResult = params.resultEnvelope === undefined ? undefined : encodeStoredText(params.resultEnvelope);
+        const errorCode = previous.errorCode === WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1
+            ? previous.errorCode
+            : params.state === "failed" || params.state === "interrupted"
+                ? params.errorCode
+                : previous.state === "interrupted" ? null : undefined;
         const updated = await tx.automationRun.updateMany({
             where: {
                 id: params.runId,
@@ -2542,7 +2548,7 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
                 ? { workflowCustodyState: "settled", revision: { increment: 1 } }
                 : {
                     state: params.state,
-                    ...(params.state === "failed" && params.errorCode !== undefined ? { errorCode: params.errorCode } : {}),
+                    ...(errorCode !== undefined ? { errorCode } : {}),
                     workflowCheckpointEnvelope: storedCheckpoint.value,
                     workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes,
                     ...(storedResult !== undefined ? { resultEnvelope: storedResult.value, resultEnvelopeBytes: storedResult.bytes } : {}),
@@ -2616,6 +2622,7 @@ async function controlWorkflowRun(params: Readonly<{
                 state: { in: [...transition.eligibleStates] },
             }, data: {
                 state: transition.state,
+                ...(current.state === "interrupted" ? { errorCode: null } : {}),
                 revision: { increment: 1 },
                 workflowResumeRequestedRevision: transition.recordResume ? params.expectedRevision + 1 : null,
                 ...(transition.clearClaim ? { claimedByMachineId: null, claimedAt: null, leaseExpiresAt: null } : {}),
@@ -2730,7 +2737,10 @@ export async function cancelWorkflowRunTx(
         },
         data: {
             state: settlesNow ? terminalState : current.state,
-            ...(params.cause === WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 ? { errorCode: params.cause } : {}),
+            ...(params.cause === WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1
+                ? { errorCode: params.cause }
+                : settlesNow && current.state === "interrupted" && current.errorCode !== WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1
+                    ? { errorCode: null } : {}),
             revision: { increment: 1 },
             workflowResumeRequestedRevision: null,
             ...(settlesNow ? {
@@ -2966,7 +2976,7 @@ export async function recoverWorkflowInvocations(params: Readonly<{
         const storedCheckpoint = encodeStoredText(params.checkpointEnvelope);
         const changed = await tx.automationRun.updateMany({
             where: { id: params.runId, accountId: ownerAccountId, revision: params.expectedRevision, state: "interrupted" },
-            data: { revision: { increment: 1 }, state: "queued", claimedByMachineId: null, claimedAt: null, leaseExpiresAt: null, workflowCheckpointEnvelope: storedCheckpoint.value, workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes, workflowCustodyState: "pending", finishedAt: null },
+            data: { revision: { increment: 1 }, state: "queued", errorCode: null, claimedByMachineId: null, claimedAt: null, leaseExpiresAt: null, workflowCheckpointEnvelope: storedCheckpoint.value, workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes, workflowCustodyState: "pending", finishedAt: null },
         });
         if (changed.count !== 1) throw new WorkflowRunServiceError("currentness_conflict");
         const maximum = await tx.workflowRunInvocation.aggregate({ where: { runId: params.runId }, _max: { sequence: true } });

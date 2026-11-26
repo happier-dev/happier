@@ -2512,7 +2512,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         accountCurrentness: encryption.witness,
         expectedRevision: durableStore.revision,
         state: terminalState, checkpointEnvelope,
-        ...(terminalState === 'failed' && result.reason ? { errorCode: result.reason } : {}),
+        ...((terminalState === 'failed' || terminalState === 'interrupted') && result.reason ? { errorCode: result.reason } : {}),
         discussionRound: await durableStore.readDiscussionRoundProgress(),
         ...(resultEnvelope ? { resultEnvelope } : {}),
         ...(custodyState ? { custodyState } : {}),

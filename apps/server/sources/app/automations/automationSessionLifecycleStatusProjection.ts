@@ -10,10 +10,9 @@ import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/
 import { AUTOMATION_SESSION_LIFECYCLE_TERMINAL_NO_RUN_ACTIONS } from "./automationSessionLifecycleTerminalTruth";
 import { decodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
 import {
-    projectAutomationRunState,
+    projectAutomationOccurrenceState,
     isTerminalAutomationRunState,
     type AutomationTriggerSummarySource,
-    type AutomationRunState,
     type AutomationTriggerItem,
 } from "./automationTypes";
 
@@ -42,10 +41,10 @@ function sourceKey(sessionId: string, turnId: string): string {
 }
 
 function admittedStatus(
-    run: Readonly<{ id: string; state: AutomationRunState }>,
+    run: LifecycleStatusRun,
 ): AutomationSessionLifecycleTriggerStatus {
     if (isTerminalAutomationRunState(run.state)) return { state: "finished", runId: run.id };
-    return run.state === "running"
+    return projectAutomationOccurrenceState(run.state) === "running"
         ? { state: "running", runId: run.id }
         : { state: "triggered", runId: run.id };
 }
@@ -70,7 +69,7 @@ export async function loadAutomationSessionLifecycleStatusProjections(params: Re
     const id = workflowRunSqlIdentifier;
     const textType = prismaRuntime.raw(getDbProviderFromEnv(process.env, "postgres") === "mysql" ? "CHAR" : "TEXT");
     const applicableRunStates = Object.values(StoredAutomationRunState)
-        .filter((state) => projectAutomationRunState(state) !== null);
+        .filter((state) => projectAutomationOccurrenceState(state) !== null);
     const [sessionPages, turnPages, receiptPages, runPages] = await Promise.all([
         Promise.all(automationPortableQueryChunks({ values: sourceSessionIds, bindingsPerValue: 1 })
             .map((page) => client.session.findMany({
@@ -135,18 +134,9 @@ export async function loadAutomationSessionLifecycleStatusProjections(params: Re
         sourceKey(turn.sessionId, turn.turnId),
         turn.status,
     ]));
-    type LegacyLifecycleRun = Omit<(typeof runPages)[number][number], "state"> & Readonly<{
-        state: AutomationRunState;
-    }>;
-    const latestRunByTrigger = new Map<string, LegacyLifecycleRun>();
+    const latestRunByTrigger = new Map<string, LifecycleStatusRun>();
     for (const run of runPages.flat()) {
-        const state = projectAutomationRunState(run.state);
-        if (
-            state !== null
-            && run.triggerId !== null
-        ) {
-            latestRunByTrigger.set(run.triggerId, { ...run, state });
-        }
+        if (run.triggerId !== null) latestRunByTrigger.set(run.triggerId, run);
     }
     const receiptStatusBySource = new Map<string, AutomationSessionLifecycleTriggerStatus>();
     for (const receipt of receiptPages.flat()) {

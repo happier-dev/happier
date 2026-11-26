@@ -4,11 +4,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { createAccountWorkflowTriggerActions } from "@happier-dev/protocol/actions";
 import {
     AutomationDefinitionDetailSchema, AutomationDefinitionDetailsResponseSchema,
+    AutomationV3RunDetailSchema, AutomationV3RunListResponseSchema,
 } from "@happier-dev/protocol/automations/automationApiV3";
 import { WorkflowTriggerListResultV1Schema } from "@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { resolveWorkflowRunAccessInTx } from "@/app/workflows/workflowRunAccess";
+import { transitionWorkflowRun } from "@/app/workflows/workflowRunService";
+import { sealWorkflowCheckpointStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from "@happier-dev/protocol/workflows";
 import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { removeMachineAccessGrantInTx } from "@/app/machines/machineAccess";
 import { admitDueAutomationScheduleTriggerTx } from "@/app/automations/automationRunQueueService";
@@ -155,7 +158,38 @@ describe("Automation current transport and retained 0.2 data", () => {
             } finally {
                 stopObserving();
             }
-            await db.automationRun.update({ where: { id: runId }, data: { state: "interrupted", leaseExpiresAt: dueAt } });
+            const running = await db.automationRun.update({ where: { id: runId },
+                data: { claimedByMachineId: machine.id, leaseExpiresAt: dueAt } });
+            const readOccurrences = async () => {
+                const response = await app.inject({ method: "GET", url: `/v3/automations/${automation.id}/runs`, headers });
+                expect(response.statusCode, response.body).toBe(200);
+                return AutomationV3RunListResponseSchema.parse(response.json()).runs;
+            };
+            expect(await readOccurrences()).toContainEqual(expect.objectContaining({
+                id: runId, state: "running", workflowRunState: "running", errorCode: null,
+            }));
+            const code = "credential_scope_denied";
+            const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
+                mode: "plain",
+                binding: { v: 1, purpose: "checkpoint", accountId: account.id, runId },
+                checkpoint: { kind: "happier.workflow-checkpoint.v1", rootRecordId: randomUUID(), nextSequence: "1",
+                    frontier: { nextBlockOrdinal: 0, paused: false } },
+            }));
+            const interruption = await transitionWorkflowRun({
+                accountId: account.id, runId, machineId: machine.id, parentAttempt: running.attempt,
+                expectedRevision: running.revision, state: "interrupted", errorCode: code, checkpointEnvelope,
+                accountCurrentness: { mode: "plain", version: 1, contentKeyFingerprint: null },
+            });
+            expect(interruption).toMatchObject({ state: "interrupted", errorCode: code, finishedAt: null });
+            expect(await readOccurrences()).toContainEqual(expect.objectContaining({
+                id: runId, state: "failed", workflowRunState: "interrupted",
+                cause: expect.objectContaining({ kind: "trigger" }), errorCode: code, finishedAt: null,
+            }));
+            const exact = await app.inject({ method: "GET", url: `/v3/automations/${automation.id}/runs/${runId}`, headers });
+            expect(exact.statusCode, exact.body).toBe(200);
+            expect(AutomationV3RunDetailSchema.parse(exact.json())).toMatchObject({
+                id: runId, state: "failed", workflowRunState: "interrupted", errorCode: code,
+            });
             // A cadence edit retains an open prior occurrence as the incumbent.
             await db.automationTrigger.update({ where: { id: trigger.id }, data: { revision: { increment: 1 } } });
             expect(await readSet({ automationId: automation.id })).toHaveProperty("scheduleHolds", expect.arrayContaining([
@@ -163,6 +197,9 @@ describe("Automation current transport and retained 0.2 data", () => {
             ]));
             const cancelled = await app.inject({ method: "POST", url: `/v3/automations/runs/${runId}/cancel`, headers });
             expect(cancelled.statusCode, cancelled.body).toBe(200);
+            expect(await readOccurrences()).toContainEqual(expect.objectContaining({
+                id: runId, state: "cancelled", workflowRunState: "cancelled", errorCode: null,
+            }));
             expect(await readSet()).toHaveProperty("scheduleHolds", [
                 { triggerId: privateTrigger.id, reason: "open_occurrence" },
             ]);

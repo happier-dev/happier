@@ -563,13 +563,13 @@ describe("Automation API projections", () => {
         }, "plain")).toThrow("Automation stored content is invalid");
     });
 
-    it.each(['waiting_for_review', 'pause_requested', 'paused', 'interrupted'] as const)(
-        "projects a Workflow %s Run through the retained Automation receipt and detail vocabulary", state => {
+    it.each([['waiting_for_review', 'running'], ['pause_requested', 'running'], ['paused', 'running'], ['interrupted', 'failed']] as const)(
+        "projects a Workflow %s Run through the retained Automation receipt and detail vocabulary as %s", (state, occurrenceState) => {
             const run = { ...manualRun(), state, workflowCustodyState: 'pending' as const, resultEnvelope: null };
-            expect(toAutomationRunV3ListApiDto(run)).toMatchObject({ id: run.id, state: 'running', workflowRunState: state });
+            expect(toAutomationRunV3ListApiDto(run)).toMatchObject({ id: run.id, state: occurrenceState, workflowRunState: state });
             expect(toAutomationRunV3DetailApiDto(run, 'plain')).toMatchObject({
                 id: run.id,
-                state: 'running',
+                state: occurrenceState,
                 workflowRunState: state,
             });
         },
