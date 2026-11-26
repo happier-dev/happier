@@ -29,6 +29,7 @@ import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useDiscussionInviteCandidates } from './useDiscussionInviteCandidates';
 import { SharePrincipalVisual } from '@happier-dev/plugin-ui/components';
 import type { SharePrincipalPresentation } from '@/components/sharing/shareSheetTypes';
+import { useChosenSharePrincipalPresentations } from '@/components/sharing/useChosenSharePrincipalPresentations';
 import { t } from '@/text';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -65,6 +66,7 @@ export type ExecutableParticipantSectionOption = SelectionListOption & Readonly<
 type ExecutableParticipantSection = Omit<Extract<SelectionListSectionDescriptor, { kind: 'static' }>, 'options'> & Readonly<{
   options: readonly ExecutableParticipantSectionOption[];
 }>;
+const NO_CHOSEN_PEOPLE: readonly SharePrincipalPresentation[] = Object.freeze([]);
 
 /** The option id of a Session participant; the same id marks it chosen in a multi-choice list. */
 export function executableParticipantOptionId(
@@ -327,6 +329,9 @@ export function useExecutableParticipantSections(
   // (its own pagination and cancellation); the viewer is never offered to themselves.
   const people = input.people;
   const viewerAccountId = input.accountLifetime.scope.accountId;
+  const [chosenNames, rememberChosen] = useChosenSharePrincipalPresentations(input.accountLifetime.scope, input.accountLifetime);
+  const chosenPeople = React.useMemo(() => people?.chosen.map(principal => chosenNames[principal.key] ?? principal)
+    ?? NO_CHOSEN_PEOPLE, [chosenNames, people?.chosen]);
   const resolvePeople = candidates.people.resolve;
   const browsePeople = candidates.candidates;
   const peopleSection = React.useMemo<SelectionListSectionDescriptor | null>(() => {
@@ -341,20 +346,23 @@ export function useExecutableParticipantSections(
         accessibilityLabel: principal.accessibilityLabel,
         icon: () => <SharePrincipalVisual host={SHARE_SHEET_HOST} principal={principal} testID={`discussion-invite-person-visual-${ref.accountId}`} />,
         disabled: busy,
-        onSelect: () => people.onChoose({ kind: 'account', accountId: ref.accountId }) }];
+        onSelect: () => {
+          rememberChosen(principal);
+          people.onChoose({ kind: 'account', accountId: ref.accountId });
+        } }];
     };
     const principals = (rows: typeof browsePeople) => rows.flatMap(candidate => candidate.kind === 'account' ? [candidate.principal] : []);
     return {
       kind: 'dynamic', id: 'people', title: people.title,
-      resolverKey: JSON.stringify(['people', candidates.people.resolverKey ?? 'account', busy, people.chosen.map(principal => principal.key)]),
+      resolverKey: JSON.stringify(['people', candidates.people.resolverKey ?? 'account', busy, chosenPeople]),
       resultFiltering: 'provider', resultTransition: 'none', loadingSkeletonRows: 1,
       resolve: async (query, signal) => ({
         options: query.trim()
           ? principals(await resolvePeople(query, signal)).flatMap(toOption)
-          : [...people.chosen, ...principals(browsePeople).filter(principal => !people.chosen.some(chosen => chosen.key === principal.key))].flatMap(toOption),
+          : [...chosenPeople, ...principals(browsePeople).filter(principal => !people.chosen.some(chosen => chosen.key === principal.key))].flatMap(toOption),
       }),
     };
-  }, [browsePeople, busy, candidates.people.resolverKey, input.enabled, people, resolvePeople, viewerAccountId]);
+  }, [browsePeople, busy, candidates.people.resolverKey, chosenPeople, input.enabled, people, rememberChosen, resolvePeople, viewerAccountId]);
   // Add an agent (lab dpRev `add`): the consumer Session's Machine and folder, else the caller's Machine,
   // else the first launchable one. Read once at the press; nothing here subscribes to the Session.
   const consumerSessionId = input.consumerSessionId ?? null;

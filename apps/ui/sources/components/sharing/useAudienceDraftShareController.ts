@@ -5,6 +5,7 @@ import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSes
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
 import { presentSharePrincipal } from './sharePrincipalPresentation';
 import { useShareViewerProfile } from './useShareViewerProfile';
+import { useChosenSharePrincipalPresentations } from './useChosenSharePrincipalPresentations';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type {
     ShareGrantRowModel,
@@ -44,7 +45,7 @@ export function useAudienceDraftShareController(input: Readonly<{
     const [query, setQuery] = React.useState('');
     const [notice, setNotice] = React.useState<ShareUiReason | undefined>();
     // Names come from the host's retained audience, then from the candidate row the person chose.
-    const [chosenNames, setChosenNames] = React.useState<Readonly<Record<string, SharePrincipalPresentation>>>({});
+    const [chosenNames, rememberChosen] = useChosenSharePrincipalPresentations(scope);
     // Directory rows are resolved once and cached by the list, so the handlers they captured outlive
     // the draft that produced them. Reading the current draft through a ref keeps every choice additive.
     const draftRef = React.useRef(draft);
@@ -102,7 +103,7 @@ export function useAudienceDraftShareController(input: Readonly<{
                 const presentation = seen.current.get(key) ?? directorySectionsRef.current
                     .flatMap((section) => section.candidates)
                     .find((candidate) => candidate.principal.key === key)?.principal;
-                if (presentation) setChosenNames((current) => current[key] === presentation ? current : { ...current, [key]: presentation });
+                if (presentation) rememberChosen(presentation);
                 onChange([...draftRef.current, principal]);
             },
             // Nothing is written until Save, so there is no mutation to retry and no level to change.
@@ -114,7 +115,7 @@ export function useAudienceDraftShareController(input: Readonly<{
             cancelRemove: () => {},
             explain: setNotice,
         };
-    }, [directory.loadMore, directory.retry, onChange]);
+    }, [directory.loadMore, directory.retry, onChange, rememberChosen]);
 
     return {
         model: {

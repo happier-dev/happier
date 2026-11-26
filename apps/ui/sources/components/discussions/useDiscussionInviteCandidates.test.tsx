@@ -3,7 +3,7 @@ import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePre
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
-import { renderHook, standardCleanup, createDeferred, createMachineFixture, createSessionAccessFixture } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup, createDeferred, createMachineFixture, createSessionAccessFixture } from '@/dev/testkit';
 import { createSessionListQuerySourceHarness, type SessionListQuerySourceHarness } from '@/dev/testkit/harness/sessionListQuerySourceHarness';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
@@ -27,6 +27,8 @@ import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionRea
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
+import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
+import { SelectionList } from '@/components/ui/selectionList';
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -43,6 +45,34 @@ async function captureHome(serverId: string) {
 }
 
 describe('Discussion Invite source composition', () => {
+    it('keeps the chosen directory person named after clearing search, within the captured Home', async () => {
+        const home = boundary.serverIds[1]!;
+        const accountLifetime = await captureHome(home);
+        boundary.setRows(home, []);
+        boundary.http.answer(home, '/v1/user/search', { body: { users: [{ ...user('person'), firstName: 'Ada', username: 'ada' }], nextCursor: null } });
+        function People({ lifetime }: Readonly<{ lifetime: typeof accountLifetime }>) {
+            const [chosen, setChosen] = React.useState<readonly Readonly<{ kind: 'account'; accountId: string }>[]>([]);
+            const [query, setQuery] = React.useState('ada');
+            const who = useExecutableParticipantSections({ accountLifetime: lifetime, enabled: true,
+                sessionsContext: 'Reviewer', onChoose: () => undefined,
+                people: { title: 'People', chosen: chosen.map(ref => presentSharePrincipal({ ref })),
+                    onChoose: ref => { setChosen([ref]); setQuery(''); } } });
+            return <SelectionList testID="chosen-people" inputValue={query} onChangeInputValue={setQuery}
+                rootStep={{ id: 'people', inputPlaceholder: 'Find people', sections: who.peopleSection ? [who.peopleSection] : [] }}
+                onSelect={() => undefined} onRequestClose={() => undefined} />;
+        }
+        const screen = await renderScreen(<People lifetime={accountLifetime} />);
+        await vi.waitFor(() => expect(screen.findByTestId('discussion-invite-person-person')).not.toBeNull());
+        await screen.pressByTestIdAsync('discussion-invite-person-person');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('@ada'));
+        expect(screen.getTextContent()).not.toContain(t('accountDisplay.unnamed'));
+        expect(boundary.http.requests.filter(request => request.path.startsWith('/v1/user/profiles'))).toHaveLength(0);
+        const otherLifetime = await captureHome(boundary.serverIds[0]!);
+        await screen.update(<People lifetime={otherLifetime} />);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('accountDisplay.unnamed')));
+        expect(screen.getTextContent()).not.toContain('@ada');
+        await screen.unmount();
+    });
     it.each(['selected', 'unselected'] as const)('loads an uncached Session title from the candidate query for both its picker and sent mention on a %s Home', async (selection) => {
         const home = boundary.serverIds[1]!;
         const lifetime = await captureHome(home);
