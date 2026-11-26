@@ -4,6 +4,7 @@ vi.mock('socket.io-client', async importOriginal =>
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -51,6 +52,13 @@ it.each(['accepted', 'plan_changed', 'settled'] as const)('uses the first Instal
   } });
   const nativeInputs: unknown[] = [];
   const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+    actionAutomations: createActionAutomationHttpPortV1({
+      accountId: 'updates-owner',
+      async request(path, { method }) {
+        expect([method, path]).toEqual(['GET', AUTOMATION_ACTION_INDEX_HTTP_PATH_V1]);
+        return { v: 1, rows: [] };
+      },
+    }),
     // Installed native host boundary: admission and exact-input consent remain in the real receiving executor.
     machineSetupUpdatesApply: async ({ input }) => {
       nativeInputs.push(input);
@@ -90,7 +98,9 @@ it.each(['accepted', 'plan_changed', 'settled'] as const)('uses the first Instal
   let apply: Promise<void> | undefined;
   await act(async () => { apply = hook.getCurrent().review.apply(); });
   // A second pending Install would leave the first decision without a visible progress/outcome.
-  await vi.waitFor(() => expect(hook.getCurrent().review.review.kind).toBe(outcome === 'plan_changed' ? 'failed' : 'installing'));
+  await vi.waitFor(() => expect(hook.getCurrent().review.review).toMatchObject(outcome === 'plan_changed'
+    ? { kind: 'failed', failure: { errorCode: 'plan_changed' } }
+    : { kind: 'installing', operationId: 'updates-operation' }));
   await act(async () => { await apply; });
   expect(nativeInputs).toEqual([{ homeId, machineId, scope: 'all', plan }]);
   expect(homes.artifacts(serverId).list()).toEqual([]);
