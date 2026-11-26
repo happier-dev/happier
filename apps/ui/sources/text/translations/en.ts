@@ -5904,7 +5904,11 @@ const enSettingsAttachments = {
 };
 
 const enSettingsSourceControl = {
-    gitIdentity: {"title": "Git identity", "description": "Commits made from Happier use this name and email; a repository’s own setting wins. Leave both empty to use Git configuration.", "email": "Email"},
+    gitIdentity: {"title": "Git identity", "description": "Commits made from Happier use this name and email; a repository’s own setting wins. Leave both empty to use Git configuration.", "email": "Email",
+        committingAs: ({ name, email }: { name: string; email: string }) => `Committing as ${name} <${email}>`,
+        repositorySource: 'Repository configuration', nativeSource: 'Machine Git configuration',
+        required: 'Add your name and email to author this commit.', saveAndCommit: 'Save and commit',
+    },
   page: {
     description: 'How commits, pushes and diffs work in your sessions, and how Happier explains changes.',
     commits: {

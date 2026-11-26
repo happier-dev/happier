@@ -31,12 +31,14 @@ import { t } from '@/text';
 import { GitProposedCommitsCard } from './GitProposedCommitsCard';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { GitProposalHighlight } from './SessionRightPanelGitCommitTab';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 export type SessionRightPanelGitCommitTabContentProps = Readonly<{
     theme: any;
     sessionId: string;
     serverId?: string;
     sessionPath: string | null;
+    gitIdentityHostingServices?: readonly PluginContributionIdentityV1[];
     scmSnapshot: ScmWorkingSnapshot;
 
 
@@ -58,7 +60,7 @@ export type SessionRightPanelGitCommitTabContentProps = Readonly<{
     commitDraftMessage: string;
     onCommitDraftMessageChange: (value: string) => void;
     /** Resolves with the commit's outcome, so a landed commit can fold into its line (lab GC). */
-    onCommitFromMessage: (message: string) => Promise<Readonly<{ ok: boolean; commitSha?: string | null }>> | undefined;
+    onCommitFromMessage: (message: string) => Promise<Readonly<{ ok: boolean; errorCode?: string; commitSha?: string | null }>> | undefined;
     commitMessageGeneratorEnabled: boolean;
     onGenerateCommitMessageSuggestion: () => Promise<
         | { ok: true; message: string }
@@ -386,6 +388,8 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             sessionId={props.sessionId}
             serverId={props.serverId}
             sessionPath={props.sessionPath}
+            gitIdentityHostingServices={props.gitIdentityHostingServices}
+            active={props.active}
             backendLabel={props.backendLabel}
             commitActionLabel={props.commitActionLabel}
             scmSnapshot={props.scmSnapshot}

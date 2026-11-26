@@ -59,6 +59,11 @@ import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import type { AgentId } from '@/agents/catalog/catalog';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { useSessionScmGitIdentity } from '@/hooks/session/sourceControl/useSessionScmGitIdentity';
+import { useActiveServerAccountScope, useProfile } from '@/sync/store/hooks';
+import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { GitIdentitySetting } from '@/components/settings/sourceControl/GitIdentitySetting';
 
 /** A selected commit proposal over the list (lab WT4-C2): its exact paths, split-file notes and number. */
 export type GitProposalHighlight = Readonly<{
@@ -72,6 +77,8 @@ export type SessionRightPanelGitCommitTabProps = Readonly<{
     sessionId: string;
     serverId?: string;
     sessionPath: string | null;
+    gitIdentityHostingServices?: readonly PluginContributionIdentityV1[];
+    active?: boolean;
     backendLabel: string;
     commitActionLabel: string;
     scmSnapshot: ScmWorkingSnapshot | null;
@@ -120,7 +127,7 @@ export type SessionRightPanelGitCommitTabProps = Readonly<{
     commitDraftMessage: string;
     onCommitDraftMessageChange: (value: string) => void;
     /** Resolves with the commit's outcome when it is awaited (the success moment plays on `ok`). */
-    onCommitFromMessage: (message: string) => Promise<Readonly<{ ok: boolean }>> | void | undefined;
+    onCommitFromMessage: ScmCommitComposerCardProps['onCommitFromMessage'];
     commitMessageGeneratorEnabled: boolean;
     onGenerateCommitMessageSuggestion: () => Promise<
         | { ok: true; message: string }
@@ -323,6 +330,11 @@ export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPane
                     }}
                 >
                     <CommitComposerFooter
+                        sessionId={props.sessionId}
+                        serverId={props.serverId}
+                        sessionPath={props.sessionPath}
+                        active={props.active}
+                        gitIdentityHostingServices={props.gitIdentityHostingServices}
                         theme={props.theme}
                         commitActionLabel={commitActionLabel}
                         selectionSummary={selectionSummary}
@@ -402,6 +414,11 @@ const CommitFlightChip = React.memo(function CommitFlightChip(props: Readonly<{
 });
 
 const CommitComposerFooter = React.memo((props: Readonly<{
+    sessionId: string;
+    serverId?: string;
+    sessionPath: string | null;
+    active?: boolean;
+    gitIdentityHostingServices?: readonly PluginContributionIdentityV1[];
     theme: any;
     commitActionLabel: string;
     externalDraftMessage: string;
@@ -410,7 +427,7 @@ const CommitComposerFooter = React.memo((props: Readonly<{
     status: string | null;
     commitAllowed: boolean;
     commitBlockedMessage: string | null;
-    onCommitFromMessage: (message: string) => unknown;
+    onCommitFromMessage: ScmCommitComposerCardProps['onCommitFromMessage'];
     commitMessageGeneratorEnabled: boolean;
     onGenerateCommitMessageSuggestion: () => Promise<
         | { ok: true; message: string }
@@ -427,6 +444,18 @@ const CommitComposerFooter = React.memo((props: Readonly<{
     onEnterSelectionMode?: () => void;
     onExitSelectionMode?: () => void;
 }>) => {
+    const accountScope = useActiveServerAccountScope(props.serverId);
+    const gitIdentity = useSessionScmGitIdentity({ sessionId: props.sessionId, serverId: props.serverId,
+        accountId: accountScope?.accountId, sessionPath: props.sessionPath, enabled: props.active !== false });
+    const hostingAccount = useProfile(profile => props.active !== false && accountScope
+        ? profile.connectedAccountsV4.find(account => props.gitIdentityHostingServices?.some(service => (
+            service.pluginId === account.ref.service.pluginId
+            && service.localId === account.ref.service.localId)
+        )) : undefined, ['connectedAccountsV4']);
+    const identityContextKey = JSON.stringify([accountScope?.serverId, accountScope?.accountId, props.serverId, props.sessionId, props.sessionPath]);
+    const currentIdentityContext = React.useRef(identityContextKey);
+    currentIdentityContext.current = identityContextKey;
+    const mountedRef = useMountedRef();
     const [localDraftMessage, setLocalDraftMessage] = React.useState(() => String(props.externalDraftMessage ?? ''));
     const dirtyRef = React.useRef(false);
 
@@ -457,9 +486,10 @@ const CommitComposerFooter = React.memo((props: Readonly<{
         // Persist any pending draft immediately before committing.
         debouncedPersist.flush();
         dirtyRef.current = false;
-        props.onCommitFromMessage(message);
+        return props.onCommitFromMessage(message);
     }, [debouncedPersist, props]);
 
+    const canCommitAfterIdentitySave = props.commitAllowed && !props.busy && localDraftMessage.trim().length > 0;
     return (
         <ScmCommitComposerCard
             theme={props.theme}
@@ -471,6 +501,14 @@ const CommitComposerFooter = React.memo((props: Readonly<{
             commitAllowed={props.commitAllowed}
             commitBlockedMessage={props.commitBlockedMessage}
             onCommitFromMessage={onCommitFromMessage}
+            gitIdentity={{ resolution: gitIdentity.resolution, requireIdentity: gitIdentity.requireIdentity,
+                repair: onSaved => <GitIdentitySetting key={identityContextKey} presentation="commit" serverId={props.serverId}
+                    initialValue={{ name: hostingAccount?.displayName ?? '', email: hostingAccount?.providerIdentity?.email ?? '' }}
+                    saveLabel={canCommitAfterIdentitySave ? t('settingsSourceControl.gitIdentity.saveAndCommit') : t('common.save')}
+                    onSaved={async () => {
+                        await gitIdentity.refresh();
+                        if (mountedRef.current && currentIdentityContext.current === identityContextKey) await onSaved();
+                    }} /> }}
             commitMessageGeneratorEnabled={props.commitMessageGeneratorEnabled}
             onGenerateCommitMessageSuggestion={props.onGenerateCommitMessageSuggestion}
             onCancelCommitMessageSuggestion={props.onCancelCommitMessageSuggestion}

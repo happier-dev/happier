@@ -9,7 +9,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
-import { installSessionPaneRuntimeTestHarness } from '../sessionPaneRuntimeTestHarness';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '../sessionPaneRuntimeTestHarness';
 
 installSessionDetailsPanelCommonModuleMocks({
     text: async () => {
@@ -45,6 +45,7 @@ function configureSocket(socket: import('socket.io-client').Socket) {
         return { ok: true, result: await rpc(payload.method.slice(payload.method.indexOf(':') + 1), payload.params) };
     });
 }
+await prepareSessionPaneRuntimeForTests();
 const runtime = installSessionPaneRuntimeTestHarness({ configureSocket, features: () => createRootLayoutFeaturesResponse() });
 function createSnapshot(isRepo = true): ScmWorkingSnapshot {
     return {

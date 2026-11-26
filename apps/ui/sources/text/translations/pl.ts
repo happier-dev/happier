@@ -5398,7 +5398,11 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
   },
 
   settingsSourceControl: {
-    gitIdentity: {"title": "Tożsamość Git", "description": "Commity z Happier używają tego imienia i adresu e-mail; ustawienia repozytorium mają pierwszeństwo. Pozostaw oba pola puste, aby używać konfiguracji Git.", "email": "E-mail"},
+    gitIdentity: {"title": "Tożsamość Git", "description": "Commity z Happier używają tego imienia i adresu e-mail; ustawienia repozytorium mają pierwszeństwo. Pozostaw oba pola puste, aby używać konfiguracji Git.", "email": "E-mail",
+        committingAs: ({ name, email }: { name: string; email: string }) => `Commit jako ${name} <${email}>`,
+        repositorySource: 'Konfiguracja repozytorium', nativeSource: 'Konfiguracja Git maszyny',
+        required: 'Dodaj imię i adres e-mail autora tego commita.', saveAndCommit: 'Zapisz i utwórz commit',
+    },
     page: {
       description: "Jak działają commity, pushe i diffy w twoich sesjach oraz jak Happier objaśnia zmiany.",
       commits: {

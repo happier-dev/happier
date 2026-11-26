@@ -28,6 +28,20 @@ describe('commit result survives refresh failure', () => {
         alert.mockReset();
         confirm.mockClear();
     });
+    it('returns the missing Git identity refusal for inline repair and preserves the selection', async () => {
+        rpc.mockResolvedValueOnce({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED,
+            error: 'A Git identity is required' });
+        const refreshScmData = vi.fn(async () => {});
+        const result = await executeScmCommit({
+            sessionId: 's1', serverId: harness.serverId, repoPath: '/repo', commitMessage: 'commit', scmCommitStrategy: 'atomic',
+            commitSelectionPaths: ['a.txt'], commitSelectionPatches: [], refreshScmData, loadCommitHistory: async () => {},
+            setScmOperationBusy: vi.fn(), setScmOperationStatus: vi.fn(), tracking: null,
+        });
+        expect(result).toEqual({ ok: false, errorCode: SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED });
+        expect(storage.getState().getSessionProjectScmCommitSelectionPaths('s1', harness.serverId)).toEqual(['a.txt']);
+        expect(refreshScmData).not.toHaveBeenCalled();
+        expect(alert).not.toHaveBeenCalled();
+    });
     it.each(['status', 'history', 'feedback', 'reporting'] as const)('preserves success and only retries refresh after %s fails', async (failure) => {
         const refreshScmData = vi.fn(async () => {});
         const loadCommitHistory = vi.fn(async () => {});

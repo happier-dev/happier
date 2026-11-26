@@ -8,7 +8,7 @@ import { createScmCapabilities, type ScmWorkingSnapshot } from '@happier-dev/pro
 import { createMachineFixture, createSessionFixture, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
-import { installSessionPaneRuntimeTestHarness } from '../sessionPaneRuntimeTestHarness';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '../sessionPaneRuntimeTestHarness';
 
 installSessionDetailsPanelCommonModuleMocks({
     text: async () => {
@@ -16,6 +16,7 @@ installSessionDetailsPanelCommonModuleMocks({
         return createTextModuleMock({ translate: (key) => key });
     },
 });
+await prepareSessionPaneRuntimeForTests();
 const runtime = installSessionPaneRuntimeTestHarness();
 function createSnapshot(isRepo = true): ScmWorkingSnapshot {
     return {

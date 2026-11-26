@@ -5228,7 +5228,11 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
     },
 
     settingsSourceControl: {
-    gitIdentity: {"title": "Identitat de Git", "description": "Els commits del Happier fan servir aquest nom i correu; preval la configuració del repositori. Deixa els dos camps buits per fer servir la configuració de Git.", "email": "Correu electrònic"},
+    gitIdentity: {"title": "Identitat de Git", "description": "Els commits del Happier fan servir aquest nom i correu; preval la configuració del repositori. Deixa els dos camps buits per fer servir la configuració de Git.", "email": "Correu electrònic",
+        committingAs: ({ name, email }: { name: string; email: string }) => `Commit com a ${name} <${email}>`,
+        repositorySource: 'Configuració del repositori', nativeSource: 'Configuració de Git de la màquina',
+        required: 'Afegeix el teu nom i correu per crear aquest commit.', saveAndCommit: 'Desa i crea el commit',
+    },
         page: {
             description: "Com funcionen els commits, els pushes i els diffs a les teves sessions, i com Happier explica els canvis.",
             commits: {

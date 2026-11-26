@@ -40,6 +40,55 @@ const theme = {
 };
 
 describe('ScmCommitComposerCard', () => {
+    it.each(['person', 'repository', 'native'] as const)('shows the resolved %s author before committing', async (source) => {
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+        const screen = await renderScreen(<ScmCommitComposerCard theme={theme} commitActionLabel="Commit"
+            draftMessage="My draft" onDraftMessageChange={() => {}} busy={false} status={null}
+            commitAllowed commitBlockedMessage={null} onCommitFromMessage={() => {}}
+            gitIdentity={{ resolution: { source, identity: { name: 'Alex', email: 'alex@example.test' } },
+                repair: () => null, requireIdentity: () => {} }} />);
+        expect(screen.tree.findByProps({ testID: 'scm-commit-identity' }).props.children).toContain('Alex');
+        expect(screen.tree.findByProps({ testID: 'scm-commit-identity' }).props.children).toContain('alex@example.test');
+        const sources = screen.tree.findAllByProps({ testID: 'scm-commit-identity-source' });
+        expect(sources).toHaveLength(source === 'person' ? 0 : 1);
+        if (source !== 'person') expect(sources[0]!.props.children).toBe(`settingsSourceControl.gitIdentity.${source}Source`);
+    });
+    it.each(['none', 'native'] as const)('shows inline repair and disables commit for %s without an identity', async (source) => {
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+        const screen = await renderScreen(<ScmCommitComposerCard theme={theme} commitActionLabel="Commit"
+            draftMessage="My draft" onDraftMessageChange={() => {}} busy={false} status={null}
+            commitAllowed commitBlockedMessage={null} onCommitFromMessage={() => {}}
+            gitIdentity={{ resolution: { source, identity: null }, repair: () => React.createElement('IdentityRepair', { testID: 'identity-repair' }),
+                requireIdentity: () => {} }} />);
+        expect(screen.tree.findByProps({ testID: 'identity-repair' })).toBeTruthy();
+        expect(screen.tree.findByProps({ testID: 'scm-commit-submit' }).props.disabled).toBe(true);
+    });
+    it('routes a commit identity refusal to the same repair state without discarding the message', async () => {
+        const requireIdentity = vi.fn();
+        const onDraftMessageChange = vi.fn();
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+        const screen = await renderScreen(<ScmCommitComposerCard theme={theme} commitActionLabel="Commit"
+            draftMessage="My draft" onDraftMessageChange={onDraftMessageChange} busy={false} status={null}
+            commitAllowed commitBlockedMessage={null}
+            onCommitFromMessage={async () => ({ ok: false, errorCode: 'COMMIT_IDENTITY_REQUIRED' })}
+            gitIdentity={{ resolution: null, repair: () => null, requireIdentity }} />);
+        await pressTestInstanceAsync(screen.tree.findByProps({ testID: 'scm-commit-submit' }));
+        expect(requireIdentity).toHaveBeenCalledOnce();
+        expect(onDraftMessageChange).not.toHaveBeenCalled();
+    });
+    it('commits the current message after the inline repair saves', async () => {
+        const commit = vi.fn(async () => ({ ok: true }));
+        const { ScmCommitComposerCard } = await import('./ScmCommitComposerCard');
+        const screen = await renderScreen(<ScmCommitComposerCard theme={theme} commitActionLabel="Commit"
+            draftMessage="My draft" onDraftMessageChange={() => {}} busy={false} status={null}
+            commitAllowed commitBlockedMessage={null} onCommitFromMessage={commit}
+            gitIdentity={{ resolution: { source: 'none', identity: null },
+                repair: onSaved => React.createElement('IdentityRepair', { testID: 'identity-repair', onSave: onSaved }),
+                requireIdentity: () => {} }} />);
+        const { act } = await import('react-test-renderer');
+        await act(async () => { await screen.tree.findByProps({ testID: 'identity-repair' }).props.onSave(); });
+        expect(commit).toHaveBeenCalledExactlyOnceWith('My draft');
+    });
     it('does not apply an observation retired by the authenticated host scope', async () => {
         const onDraftMessageChange = vi.fn();
         const { Modal } = await import('@/modal');

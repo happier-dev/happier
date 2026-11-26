@@ -5158,7 +5158,11 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     settingsSourceControl: {
-    gitIdentity: {"title": "Git-Identität", "description": "Commits aus Happier verwenden diesen Namen und diese E-Mail; die Einstellung des Repositorys hat Vorrang. Beide Felder leer lassen, um die Git-Konfiguration zu verwenden.", "email": "E-Mail"},
+    gitIdentity: {"title": "Git-Identität", "description": "Commits aus Happier verwenden diesen Namen und diese E-Mail; die Einstellung des Repositorys hat Vorrang. Beide Felder leer lassen, um die Git-Konfiguration zu verwenden.", "email": "E-Mail",
+        committingAs: ({ name, email }: { name: string; email: string }) => `Commit als ${name} <${email}>`,
+        repositorySource: 'Repository-Konfiguration', nativeSource: 'Git-Konfiguration der Maschine',
+        required: 'Füge deinen Namen und deine E-Mail als Autor dieses Commits hinzu.', saveAndCommit: 'Speichern und committen',
+    },
         page: {
             description: "Wie Commits, Pushes und Diffs in deinen Sitzungen funktionieren und wie Happier Änderungen erklärt.",
             commits: {

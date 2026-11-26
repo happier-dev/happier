@@ -27,7 +27,11 @@ never inherit the Machine's global/system identity. Missing commit identity
 retains `COMMIT_IDENTITY_REQUIRED`. Amend and cherry-pick preserve their original
 author semantics. Backend Describe retains optional `gitIdentity` and adds the
 optional `gitIdentityResolution` (identity and resolver source). Older responses
-without that projection leave the commit author line unknown. The same resolver supplies the retained Session and Execution
+without that projection leave the commit author line unknown. The commit view
+reads Describe once on open, once per repository change and once after saving
+identity; pending Describe reads are shared with write admission. Periodic status
+refreshes do no identity work. Missing identity is repaired through the same
+Account setting beside the commit composer. The same resolver supplies the retained Session and Execution
 Run launch overlay described in [CLI architecture](cli-architecture.md#agent-git-identity-at-native-launch-03-development).
 Match unpublished 0.3 Protocol, SDK and requester/receiver sources; no shim,
 feature gate, credential field or wire epoch is introduced.

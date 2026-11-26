@@ -5277,7 +5277,11 @@ export const ru: TranslationStructure = {
   },
 
   settingsSourceControl: {
-    gitIdentity: {"title": "Идентификация Git", "description": "Коммиты из Happier используют эти имя и почту; настройки репозитория имеют приоритет. Оставьте оба поля пустыми для использования конфигурации Git.", "email": "Электронная почта"},
+    gitIdentity: {"title": "Идентификация Git", "description": "Коммиты из Happier используют эти имя и почту; настройки репозитория имеют приоритет. Оставьте оба поля пустыми для использования конфигурации Git.", "email": "Электронная почта",
+        committingAs: ({ name, email }: { name: string; email: string }) => `Автор коммита: ${name} <${email}>`,
+        repositorySource: 'Настройки репозитория', nativeSource: 'Настройки Git машины',
+        required: 'Укажите своё имя и почту для создания этого коммита.', saveAndCommit: 'Сохранить и создать коммит',
+    },
     page: {
       description: "Как работают коммиты, пуши и диффы в ваших сессиях и как Happier объясняет изменения.",
       commits: {

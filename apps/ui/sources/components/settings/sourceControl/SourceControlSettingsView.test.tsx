@@ -146,6 +146,40 @@ const { AgentInputChipPickerPopover } = await import('@/components/sessions/agen
 const { LLM_TASK_RUNNER_AUTO_OPTION_ID } = await import('@/components/settings/llmTasks/LlmTaskRunnerPicker');
 
 describe('SourceControlSettingsView', () => {
+    it('keeps off-Home commit repair from writing the active Account identity', async () => {
+        await restoreViewAccount();
+        const { GitIdentitySetting } = await import('./GitIdentitySetting');
+        const onSaved = vi.fn(async () => {});
+        const screen = await renderView(<GitIdentitySetting presentation="commit" serverId="another-home"
+            initialValue={{ name: 'Alex Hosting', email: 'alex@hosting.test' }} onSaved={onSaved} />);
+        try {
+            expect(screen.findByTestId('settings.sourceControl.gitIdentity.save')!.props.disabled).toBe(true);
+            expect(storage.getState().settings.scmGitIdentity).toBeNull();
+            expect(onSaved).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+    it('repairs a missing commit identity with hosting prefill through the same Settings Action before continuing', async () => {
+        await restoreViewAccount();
+        const { GitIdentitySetting } = await import('./GitIdentitySetting');
+        const continueCommit = vi.fn(async () => {
+            expect(storage.getState().settings.scmGitIdentity).toEqual({ name: 'Alex Hosting', email: 'alex@hosting.test' });
+        });
+        const screen = await renderView(<GitIdentitySetting presentation="commit"
+            initialValue={{ name: 'Alex Hosting', email: 'alex@hosting.test' }} onSaved={continueCommit} />);
+        try {
+            expect(screen.findByTestId('settings.sourceControl.gitIdentity.name')!.props.value).toBe('Alex Hosting');
+            expect(screen.findByTestId('settings.sourceControl.gitIdentity.email')!.props.value).toBe('alex@hosting.test');
+            expect(storage.getState().settings.scmGitIdentity).toBeNull();
+            await act(async () => screen.findByTestId('settings.sourceControl.gitIdentity.email')!.props.onChangeText(''));
+            expect(screen.findByTestId('settings.sourceControl.gitIdentity.save')!.props.disabled).toBe(true);
+            await act(async () => screen.findByTestId('settings.sourceControl.gitIdentity.email')!.props.onChangeText('alex@hosting.test'));
+            await act(async () => screen.findByTestId('settings.sourceControl.gitIdentity.name')!.props.onChangeText('<invalid>'));
+            expect(screen.findByTestId('settings.sourceControl.gitIdentity.save')!.props.disabled).toBe(true);
+            await act(async () => screen.findByTestId('settings.sourceControl.gitIdentity.name')!.props.onChangeText('Alex Hosting'));
+            await screen.pressByTestIdAsync('settings.sourceControl.gitIdentity.save');
+            await vi.waitFor(() => expect(continueCommit).toHaveBeenCalledOnce());
+        } finally { await screen.unmount(); }
+    });
     it('saves both Git identity fields together and allows clearing the preference', async () => {
         await restoreViewAccount();
         const screen = await renderView(<SourceControlSettingsView />);

@@ -5304,7 +5304,11 @@ export const zhHans: TranslationStructure = {
   },
 
   settingsSourceControl: {
-    gitIdentity: {"title": "Git 身份", "description": "从 Happier 创建的提交使用此姓名和邮箱；仓库自身的设置优先。两项留空则使用 Git 配置。", "email": "邮箱"},
+    gitIdentity: {"title": "Git 身份", "description": "从 Happier 创建的提交使用此姓名和邮箱；仓库自身的设置优先。两项留空则使用 Git 配置。", "email": "邮箱",
+        committingAs: ({ name, email }: { name: string; email: string }) => `提交作者：${name} <${email}>`,
+        repositorySource: '仓库配置', nativeSource: '机器的 Git 配置',
+        required: '请添加你的姓名和邮箱以创建此提交。', saveAndCommit: '保存并提交',
+    },
     page: {
       description: "会话中的提交、推送和差异如何工作，以及 Happier 如何解释更改。",
       commits: {

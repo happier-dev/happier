@@ -11,6 +11,8 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import type { ScmGitIdentityResolution } from '@happier-dev/protocol/scm/gitIdentity';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 
 // One glyph size for the composer's action row, so its spinner and icons agree.
 const COMPOSER_GLYPH_SIZE_PX = 16;
@@ -26,7 +28,12 @@ export type ScmCommitComposerCardProps = Readonly<{
     placeholder?: string;
     commitAllowed: boolean;
     commitBlockedMessage: string | null;
-    onCommitFromMessage: (message: string) => void;
+    onCommitFromMessage: (message: string) => void | Promise<Readonly<{ ok: boolean; errorCode?: string }> | void>;
+    gitIdentity?: Readonly<{
+        resolution: ScmGitIdentityResolution | null;
+        repair: (onSaved: () => Promise<void>) => React.ReactNode;
+        requireIdentity: () => void;
+    }>;
     selectionSummary?: Readonly<{ fileCount: number; linesAdded: number; linesRemoved: number }> | null;
     selectionCount?: number;
     onClearSelection?: () => void;
@@ -93,7 +100,9 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
     // The message box stands on the pane's text edge, with the change rows above it.
     const contentInsetPx = usePaneContentInsetPx();
     const trimmedMessage = String(props.draftMessage ?? '').trim();
-    const commitDisabled = props.busy || !props.commitAllowed || trimmedMessage.length === 0;
+    const resolution = props.gitIdentity?.resolution;
+    const identityRequired = resolution != null && resolution.identity === null;
+    const commitDisabled = props.busy || !props.commitAllowed || trimmedMessage.length === 0 || identityRequired;
     const variant = props.variant ?? 'card';
     const generatorEnabled = props.commitMessageGeneratorEnabled === true && typeof props.onGenerateCommitMessageSuggestion === 'function';
     const [generating, setGenerating] = React.useState(false);
@@ -101,6 +110,18 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
     const mountedRef = useMountedRef();
     const currentDraftRef = React.useRef(props);
     currentDraftRef.current = props;
+
+    const onCommit = async (message: string) => {
+        const current = currentDraftRef.current;
+        const result = await current.onCommitFromMessage(message);
+        if (result?.errorCode === SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED) current.gitIdentity?.requireIdentity();
+        return result;
+    };
+    const onIdentitySaved = async () => {
+        const current = currentDraftRef.current;
+        if (!mountedRef.current || current.busy || !current.commitAllowed || !current.draftMessage.trim()) return;
+        await onCommit(current.draftMessage.trim());
+    };
 
     const onGenerate = React.useCallback(async () => {
         if (!generatorEnabled || !props.onGenerateCommitMessageSuggestion) return;
@@ -199,6 +220,28 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                                 });
                             }} />
                     ) : null}
+                </View>
+            ) : null}
+            {resolution?.identity ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                    <Text testID="scm-commit-identity" style={{ ...Typography.variant('meta'), color: props.theme.colors.text.secondary }}>
+                        {t('settingsSourceControl.gitIdentity.committingAs', resolution.identity)}
+                    </Text>
+                    {resolution.source === 'repository' || resolution.source === 'native' ? <>
+                        <Text style={{ ...Typography.variant('meta'), color: props.theme.colors.text.secondary }}>{' · '}</Text>
+                        <Text testID="scm-commit-identity-source" style={{ ...Typography.variant('meta'), color: props.theme.colors.text.secondary }}>
+                            {resolution.source === 'repository'
+                                ? t('settingsSourceControl.gitIdentity.repositorySource')
+                                : t('settingsSourceControl.gitIdentity.nativeSource')}
+                        </Text>
+                    </> : null}
+                </View>
+            ) : identityRequired ? (
+                <View>
+                    <Text testID="scm-commit-identity-required" style={{ ...Typography.variant('meta'), color: props.theme.colors.text.secondary }}>
+                        {t('settingsSourceControl.gitIdentity.required')}
+                    </Text>
+                    {props.gitIdentity?.repair(onIdentitySaved)}
                 </View>
             ) : null}
             {/* One field (lab p-changes GIT / p-overview Local changes): the message, and under it the
@@ -300,7 +343,7 @@ export const ScmCommitComposerCard = React.memo((props: ScmCommitComposerCardPro
                         icon={props.busy
                             ? <ActivitySpinner size={iconMatchedSpinnerSize(COMPOSER_GLYPH_SIZE_PX)} color={props.theme.colors.text.secondary} />
                             : undefined}
-                        onPress={() => props.onCommitFromMessage(trimmedMessage)}
+                        onPress={() => onCommit(trimmedMessage)}
                     />
                 </View>
             </View>

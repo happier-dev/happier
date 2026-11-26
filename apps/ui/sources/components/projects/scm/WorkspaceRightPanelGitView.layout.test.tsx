@@ -8,10 +8,13 @@ import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { createScmCapabilities} from '@happier-dev/protocol/scm/capabilities';
 import { type ScmLogEntry } from '@happier-dev/protocol/scm';
+import type { ScmLogListResponse } from '@happier-dev/protocol/scm';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -48,11 +51,10 @@ vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
         prepareSessionDataKeyEnvelopesForScope: unexpected, prepareSessionDataKeyEnvelopesDetached: unexpected };
 });
 // The native list runtime needs a viewport; render its slots at the framework boundary.
-vi.mock('@legendapp/list/react-native', () => ({
-    LegendList: (props: Readonly<{ ListHeaderComponent?: React.ReactNode; ListFooterComponent?: React.ReactNode; ListEmptyComponent?: React.ReactNode }>) => (
-        <React.Fragment>{props.ListHeaderComponent}{props.ListEmptyComponent}{props.ListFooterComponent}</React.Fragment>
-    ),
-}));
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: false });
+});
 // Machine SCM is the RPC boundary; the controller, store, history and view remain real.
 vi.mock('@/sync/ops/scm/machineScm', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/ops/scm/machineScm')>(),
@@ -67,16 +69,10 @@ vi.mock('@/sync/ops/scm/machineScm', async (importOriginal) => ({
         entries: [{ sha: 'abc123', shortSha: 'abc123', subject: 'Saved project change', body: '', authorName: 'Ada', authorEmail: '', timestamp: 1 }],
     })),
 }));
-// The session placement's public SCM RPC facade is its transport boundary.
-vi.mock('@/sync/ops', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/ops')>(),
-    sessionScmLogList: vi.fn(),
-    sessionScmBranchCheckout: vi.fn(),
-}));
-vi.mock('@/sync/ops/sessionScm', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/ops/sessionScm')>(),
-    sessionScmStatusSnapshot: vi.fn(),
-}));
+vi.mock('socket.io-client', async (importOriginal) => (
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal)
+));
+await prepareSessionPaneRuntimeForTests();
 
 const scope = { serverId: 's1', machineId: 'm1', rootPath: '/repo' };
 const snapshot = {
@@ -107,31 +103,6 @@ describe('project Git presentation', () => {
         } });
         storage.getState().updateWorkspaceScmSnapshot(scope, snapshot);
         storage.getState().updateWorkspaceScmSnapshotError(scope, null);
-    });
-
-    it('reconciles an unknown branch switch through the real branch consumer', async () => {
-        projectManager.clear();
-        storage.getState().applySessions([createSessionFixture({ id: 'branch-session', active: true,
-            metadata: { path: '/repo', host: 'localhost', machineId: 'm1' } })]);
-        const before = { ...snapshot, capabilities: { ...snapshot.capabilities, writeBranchCheckout: true } };
-        storage.getState().updateSessionProjectScmSnapshot('branch-session', before);
-        const { sessionScmBranchCheckout } = await import('@/sync/ops');
-        const { sessionScmStatusSnapshot } = await import('@/sync/ops/sessionScm');
-        vi.mocked(sessionScmBranchCheckout).mockReset().mockImplementationOnce(async () => {
-            vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({ success: true, snapshot: {
-                ...before, branch: { ...before.branch, head: 'feature' },
-            } });
-            return { success: false, outcome: { v: 1, kind: 'outcome_unknown', errorCode: 'COMMAND_OUTCOME_UNKNOWN',
-                reconciliation: { kind: 'repository_status', cwd: '/repo' }, nextActions: [{ kind: 'refresh' }] } };
-        });
-        const { GitBranchButton } = await import('@/components/sessions/panes/git/branches/GitBranchButton');
-        const { WorkspaceScmBranchPopover } = await import('@/components/workspaces/scm/branches/WorkspaceScmBranchPopover');
-        const screen = await renderScreen(<GitBranchButton sessionId="branch-session" snapshot={before} />);
-        // Activate the real menu's published item callback; no branch service or mutation logic is mocked.
-        await act(async () => { await screen.findByType(WorkspaceScmBranchPopover).props.onSelectItem('branch:feature'); });
-        expect(storage.getState().getSessionProjectScmSnapshot('branch-session')?.branch.head).toBe('feature');
-        expect(storage.getState().getSessionProjectScmOperationLog('branch-session')[0]?.outcome?.kind).toBe('outcome_unknown');
-        expect(sessionScmBranchCheckout).toHaveBeenCalledOnce();
     });
 
     it('reconciles an unknown Undo without repeating the write or losing its outcome', async () => {
@@ -328,36 +299,6 @@ describe('project Git presentation', () => {
         expect(screen.getTextContent()).not.toContain('Saved project change');
     });
 
-    it('refreshes the session timeline after HEAD moves during an earlier read', async () => {
-        storage.setState(storage.getInitialState(), true);
-        projectManager.clear();
-        storage.setState({ settings: { ...storage.getState().settings, scmGitPaneLayout: 'unified', scmFilesAutoRefreshIntervalMs: 0 } });
-        storage.getState().applySessions([createSessionFixture({ id: 'history-session', active: true,
-            metadata: { path: '/repo', host: 'localhost', machineId: 'm1' } })]);
-        storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: Date.now() })]);
-        storage.getState().updateSessionProjectScmSnapshot('history-session', {
-            ...snapshot, branch: { ...snapshot.branch, headOid: 'a'.repeat(40) },
-        });
-        const { sessionScmLogList } = await import('@/sync/ops');
-        let completeInitialLog!: (value: Awaited<ReturnType<typeof sessionScmLogList>>) => void;
-        vi.mocked(sessionScmLogList).mockImplementationOnce(() => new Promise((resolve) => { completeInitialLog = resolve; }));
-        vi.mocked(sessionScmLogList).mockResolvedValue({ success: true,
-            entries: [{ sha: 'parent', shortSha: 'parent', subject: 'Previous session commit', body: '', authorName: 'Ada', authorEmail: '', timestamp: 1 }] });
-        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
-        const { SessionRightPanelGitView } = await import('@/components/sessions/panes/git/SessionRightPanelGitView');
-        const screen = await renderScreen(<AppPaneProvider><SessionRightPanelGitView sessionId="history-session" scopeId="session:history-session" /></AppPaneProvider>);
-        await act(async () => {
-            storage.getState().updateSessionProjectScmSnapshot('history-session', {
-                ...snapshot, branch: { ...snapshot.branch, headOid: 'b'.repeat(40) },
-            });
-        });
-        await act(async () => {
-            completeInitialLog({ success: true, entries: [{ sha: 'old', shortSha: 'old', subject: 'Saved session change', body: '', authorName: 'Ada', authorEmail: '', timestamp: 1 }] });
-        });
-        expect(screen.getTextContent()).toContain('Previous session commit');
-        expect(screen.getTextContent()).not.toContain('Saved session change');
-    });
-
     it('offers the shared pane preference without unsupported project tree choices', async () => {
         const { GitDisplayOptions } = await import('@/components/sessions/panes/git/display/GitDisplayMenu');
         const screen = await renderScreen(<GitDisplayOptions testIDPrefix="project-display" paneOnly />);
@@ -411,5 +352,75 @@ describe('project Git presentation', () => {
         await screen.update(renderHistory([{ ...entries[0], sha: 'new-head' }, ...entries], 'repo-incoming', incoming));
         await act(async () => { layout('incoming-2', 150); });
         expect(scrollTo).toHaveBeenLastCalledWith({ y: 155, animated: false });
+    });
+});
+
+describe('qualified Session Git presentation', () => {
+    const sessionId = 'layout-session';
+    let currentSnapshot: ScmWorkingSnapshot = snapshot;
+    const readLog = vi.fn<() => Promise<ScmLogListResponse>>();
+    const checkout = vi.fn<() => Promise<unknown>>();
+    const rpc = vi.fn(async (method: string): Promise<unknown> => {
+        if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: currentSnapshot };
+        if (method === RPC_METHODS.SCM_LOG_LIST) return readLog();
+        if (method === RPC_METHODS.SCM_BRANCH_CHECKOUT) return checkout();
+        return { success: false, errorCode: 'FEATURE_UNSUPPORTED' };
+    });
+    const runtime = installSessionPaneRuntimeTestHarness({ sessionId, rpc });
+    beforeEach(async () => {
+        // The Workspace cases above own direct Machine boundary fixtures. These Session cases
+        // use the real SCM facade and the Account harness's Socket transport instead.
+        const actual = await vi.importActual<typeof import('@/sync/ops/scm/machineScm')>('@/sync/ops/scm/machineScm');
+        const { machineScmStatusSnapshot, machineScmLogList } = await import('@/sync/ops/scm/machineScm');
+        vi.mocked(machineScmStatusSnapshot).mockReset().mockImplementation(actual.machineScmStatusSnapshot);
+        vi.mocked(machineScmLogList).mockReset().mockImplementation(actual.machineScmLogList);
+        projectManager.clear();
+        currentSnapshot = snapshot;
+        rpc.mockClear();
+        readLog.mockReset().mockResolvedValue({ success: true, entries: [] });
+        checkout.mockReset().mockResolvedValue({ success: true });
+        storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId: runtime.serverId, active: true,
+            metadata: { path: '/repo', host: 'localhost', machineId: 'm1' } })]);
+        storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', activeAt: Date.now() })], true,
+            { sourceServerId: runtime.serverId });
+        storage.getState().applySettingsLocal({ scmGitPaneLayout: 'unified', scmFilesAutoRefreshIntervalMs: 0 });
+    });
+
+    it('reconciles an unknown branch switch through the real branch consumer', async () => {
+        const before = { ...snapshot, capabilities: { ...snapshot.capabilities, writeBranchCheckout: true } };
+        currentSnapshot = before;
+        storage.getState().updateSessionProjectScmSnapshot(sessionId, before, runtime.serverId);
+        checkout.mockImplementationOnce(async () => {
+            currentSnapshot = { ...before, branch: { ...before.branch, head: 'feature' } };
+            return { success: false, outcome: { v: 1, kind: 'outcome_unknown', errorCode: 'COMMAND_OUTCOME_UNKNOWN',
+                reconciliation: { kind: 'repository_status', cwd: '/repo' }, nextActions: [{ kind: 'refresh' }] } };
+        });
+        const { GitBranchButton } = await import('@/components/sessions/panes/git/branches/GitBranchButton');
+        const { WorkspaceScmBranchPopover } = await import('@/components/workspaces/scm/branches/WorkspaceScmBranchPopover');
+        const screen = await renderScreen(<runtime.Wrapper><GitBranchButton sessionId={sessionId} serverId={runtime.serverId} snapshot={before} /></runtime.Wrapper>);
+        await act(async () => { await screen.findByType(WorkspaceScmBranchPopover).props.onSelectItem('branch:feature'); });
+        expect(storage.getState().getSessionProjectScmSnapshot(sessionId, runtime.serverId)?.branch.head).toBe('feature');
+        expect(storage.getState().getSessionProjectScmOperationLog(sessionId, runtime.serverId)[0]?.outcome?.kind).toBe('outcome_unknown');
+        expect(rpc.mock.calls.filter(([method]) => method === RPC_METHODS.SCM_BRANCH_CHECKOUT)).toHaveLength(1);
+    });
+
+    it('refreshes the session timeline after HEAD moves during an earlier read', async () => {
+        currentSnapshot = { ...snapshot, branch: { ...snapshot.branch, headOid: 'a'.repeat(40) } };
+        storage.getState().updateSessionProjectScmSnapshot(sessionId, currentSnapshot, runtime.serverId);
+        let completeInitialLog!: (value: ScmLogListResponse) => void;
+        readLog.mockImplementationOnce(() => new Promise((resolve) => { completeInitialLog = resolve; }));
+        readLog.mockResolvedValue({ success: true,
+            entries: [{ sha: 'parent', shortSha: 'parent', subject: 'Previous session commit', body: '', authorName: 'Ada', authorEmail: '', timestamp: 1 }] });
+        const { SessionRightPanelGitView } = await import('@/components/sessions/panes/git/SessionRightPanelGitView');
+        const screen = await renderScreen(<runtime.Wrapper><SessionRightPanelGitView sessionId={sessionId} serverId={runtime.serverId} scopeId={`session:${sessionId}`} /></runtime.Wrapper>);
+        await act(async () => {
+            currentSnapshot = { ...snapshot, branch: { ...snapshot.branch, headOid: 'b'.repeat(40) } };
+            storage.getState().updateSessionProjectScmSnapshot(sessionId, currentSnapshot, runtime.serverId);
+        });
+        await act(async () => {
+            completeInitialLog({ success: true, entries: [{ sha: 'old', shortSha: 'old', subject: 'Saved session change', body: '', authorName: 'Ada', authorEmail: '', timestamp: 1 }] });
+        });
+        expect(screen.getTextContent()).toContain('Previous session commit');
+        expect(screen.getTextContent()).not.toContain('Saved session change');
     });
 });

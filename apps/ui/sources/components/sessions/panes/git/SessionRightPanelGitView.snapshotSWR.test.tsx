@@ -6,7 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
-import { installSessionPaneRuntimeTestHarness } from '../sessionPaneRuntimeTestHarness';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '../sessionPaneRuntimeTestHarness';
 
 installSessionDetailsPanelCommonModuleMocks({
     text: async () => {
@@ -27,6 +27,7 @@ const rpc = vi.fn(async (method: string, _input: unknown) => {
 vi.mock('socket.io-client', async (importOriginal) => (
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal)
 ));
+await prepareSessionPaneRuntimeForTests();
 const runtime = installSessionPaneRuntimeTestHarness({ rpc });
 function createSnapshot(isRepo = true): ScmWorkingSnapshot {
     return {
@@ -71,6 +72,7 @@ describe('SessionRightPanelGitView (snapshot SWR)', () => {
         try {
             await renderScreen(<runtime.Wrapper><SessionRightPanelGitView sessionId="s1" serverId={runtime.serverId} scopeId="session:s1" /></runtime.Wrapper>);
             await flushHookEffects({ cycles: 2, turns: 2 });
+            await act(async () => { await vi.advanceTimersByTimeAsync(0); });
             const count = rpc.mock.calls.filter(([method]) => method === RPC_METHODS.SCM_STATUS_SNAPSHOT).length;
             expect(count).toBeGreaterThan(0);
             await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });

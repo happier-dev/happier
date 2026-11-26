@@ -29,8 +29,9 @@ export async function executeScmCommit(input: {
     setScmOperationStatus: (status: string | null) => void;
     tracking: ScmOperationTracker | null;
     shouldContinue?: () => boolean;
-}): Promise<{ ok: boolean }> {
+}): Promise<{ ok: boolean; errorCode?: string }> {
     let didSucceed = false;
+    let failureErrorCode: string | undefined;
     let createdCommitSha: string | undefined;
     const showRefreshFailure = (error: unknown, preservedOutcome?: ScmOperationOutcome) => {
         const refreshMessage = createdCommitSha ? t('files.commitRefreshFailed', { sha: createdCommitSha }) : preservedOutcome?.message;
@@ -107,6 +108,9 @@ export async function executeScmCommit(input: {
                     storage.getState().clearSessionProjectScmCommitSelectionPatches(input.sessionId, input.serverId);
                 }
                 if (outcome.kind !== 'succeeded') {
+                    failureErrorCode = response.errorCode;
+                    // The composer repairs this prerequisite beside the message and selection.
+                    if (failureErrorCode === SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED) return;
                     const errorMessage = buildScmCommitFailureMessage({
                         ...response,
                         errorCode: response.errorCode,
@@ -182,5 +186,5 @@ export async function executeScmCommit(input: {
         return { ok: false };
     }
 
-    return { ok: didSucceed };
+    return { ok: didSucceed, ...(failureErrorCode ? { errorCode: failureErrorCode } : {}) };
 }

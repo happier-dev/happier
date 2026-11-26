@@ -194,6 +194,9 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         machineId: project?.key.machineId ?? ownerMetadata?.machineId ?? null,
         serverId: props.serverId ?? project?.key.serverId ?? activeServerSnapshot.serverId,
     });
+    const gitIdentityHostingServices = React.useMemo(() => contributionCatalog.hostingProviders.flatMap(provider => (
+        provider.authService ? [provider.authService] : []
+    )), [contributionCatalog.hostingProviders]);
     const backendUiRegistry = React.useMemo(
         () => createScmUiBackendRegistry(contributionCatalog),
         [contributionCatalog],
@@ -744,6 +747,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             sessionId={props.sessionId}
             serverId={props.serverId}
             sessionPath={sessionPath}
+            gitIdentityHostingServices={gitIdentityHostingServices}
             scmSnapshot={effectiveScmSnapshot}
             commitSelectionPaths={commitSelectionPaths}
             commitSelectionPatches={commitSelectionPatches}

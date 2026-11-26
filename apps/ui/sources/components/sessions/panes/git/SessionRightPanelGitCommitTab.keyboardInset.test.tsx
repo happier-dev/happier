@@ -49,6 +49,9 @@ function getStyleValue(node: ReactTestInstance, key: string): unknown {
     return undefined;
 }
 
+// Cold component transforms are setup, separate from the keyboard layout interaction.
+await import('./SessionRightPanelGitCommitTab');
+
 describe('SessionRightPanelGitCommitTab (keyboard inset)', () => {
     it('offsets the commit composer footer by the native keyboard height', async () => {
         const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');

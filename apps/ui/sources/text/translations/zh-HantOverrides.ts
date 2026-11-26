@@ -4705,7 +4705,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     settingsSourceControl: {
-    gitIdentity: {"title": "Git 身分", "description": "從 Happier 建立的提交使用此姓名和電子郵件；儲存庫本身的設定優先。兩項留空則使用 Git 設定。", "email": "電子郵件"},
+    gitIdentity: {"title": "Git 身分", "description": "從 Happier 建立的提交使用此姓名和電子郵件；儲存庫本身的設定優先。兩項留空則使用 Git 設定。", "email": "電子郵件",
+        committingAs: ({ name, email }: { name: string; email: string }) => `提交作者：${name} <${email}>`,
+        repositorySource: '儲存庫設定', nativeSource: '機器的 Git 設定',
+        required: '請新增你的姓名和電子郵件以建立此提交。', saveAndCommit: '儲存並提交',
+    },
         page: {
             description: "工作階段中的提交、推送和差異如何運作，以及 Happier 如何解釋變更。",
             commits: {

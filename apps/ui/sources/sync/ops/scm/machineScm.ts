@@ -224,6 +224,10 @@ export async function runMachineScmRpc<
     }
     return await runScmRpcWithAdmission<T>({
         method, request: payload,
+        describeScope: JSON.stringify([options?.workspace ?? null,
+            options?.serverId ?? storage.getState().settingsScope?.serverId,
+            options?.accountId ?? storage.getState().settingsScope?.accountId,
+            machineId, options?.authorization ?? null]),
         call: (rpcMethod, rpcPayload) => machineRpcWithServerScope<unknown, object>({
             machineId: workspace?.controller.machineId ?? machineId,
             method: rpcMethod,

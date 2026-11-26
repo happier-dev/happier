@@ -5884,7 +5884,11 @@ localTailscale: {
   },
 
   settingsSourceControl: {
-    gitIdentity: {"title": "Git の作成者情報", "description": "Happier のコミットにはこの名前とメールアドレスを使います。リポジトリの設定が優先されます。両方を空にすると Git の設定を使います。", "email": "メールアドレス"},
+    gitIdentity: {"title": "Git の作成者情報", "description": "Happier のコミットにはこの名前とメールアドレスを使います。リポジトリの設定が優先されます。両方を空にすると Git の設定を使います。", "email": "メールアドレス",
+        committingAs: ({ name, email }: { name: string; email: string }) => `作成者：${name} <${email}>`,
+        repositorySource: 'リポジトリの設定', nativeSource: 'マシンの Git 設定',
+        required: 'このコミットの作成者名とメールアドレスを追加してください。', saveAndCommit: '保存してコミット',
+    },
     page: {
       description: "セッションでのコミット、プッシュ、差分の動作と、Happier による変更の説明。",
       commits: {

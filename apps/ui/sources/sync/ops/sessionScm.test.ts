@@ -71,6 +71,9 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
+// Prepare the lazy Action graph during collection; the first write still uses its real executor.
+await import('@/sync/ops/actions/defaultActionExecutor');
+
 type SessionFixture = ReturnType<typeof createSessionFixture>;
 type MachineFixture = ReturnType<typeof createMachineFixture>;
 type SessionProjectResolver = (sessionId: string) => { key?: { machineId?: string; path?: string } } | null;
@@ -114,6 +117,66 @@ describe('sessionScm', () => {
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(accountScope.serverId);
     });
+    it('commit identity reads once on open, never on status refresh, once on repository change and once after Save', async () => {
+        getStateMock.mockReturnValue(createSessionScmState({
+            session: createSessionFixture({ id: 'session-1', metadata: baseSessionMetadata }),
+            machines: [createMachineFixture({ id: 'machine-1', active: true })],
+        }));
+        const { ScmBackendDescribeResponseSchema } = await import('@happier-dev/protocol/scm');
+        machineRpcMock.mockResolvedValue(ScmBackendDescribeResponseSchema.parse({ success: true,
+            gitIdentityResolution: { source: 'person', identity: { name: 'Person', email: 'person@example.test' } } }));
+        const { renderHook, act } = await import('@/dev/testkit/hooks/renderHook');
+        const { useSessionScmGitIdentity } = await import('@/hooks/session/sourceControl/useSessionScmGitIdentity');
+        const { sessionScmStatusSnapshot } = await import('./sessionScm');
+        const props = { sessionId: 'session-1', sessionPath: '/repo/a', enabled: true };
+        const hook = await renderHook(useSessionScmGitIdentity, { initialProps: props });
+        const count = () => machineRpcMock.mock.calls.filter(call => call[1] === RPC_METHODS.SCM_BACKEND_DESCRIBE).length;
+        expect(count()).toBe(1);
+        expect(hook.getCurrent().resolution).toMatchObject({ source: 'person', identity: { name: 'Person' } });
+        await hook.rerender({ ...props, enabled: false });
+        await hook.rerender(props);
+        expect(count()).toBe(1);
+        await sessionScmStatusSnapshot('session-1', { cwd: '/repo/a' });
+        await hook.rerender(props);
+        expect(count()).toBe(1);
+        await hook.rerender({ ...props, sessionPath: '/repo/b' });
+        expect(count()).toBe(2);
+        await act(async () => { await hook.getCurrent().refresh(); });
+        expect(count()).toBe(3);
+        machineRpcMock.mockRejectedValueOnce(new Error('description unavailable'));
+        await act(async () => { await hook.getCurrent().refresh(); });
+        expect(hook.getCurrent().resolution).toBeNull();
+        await hook.rerender({ ...props, sessionPath: '/repo/b' });
+        expect(count()).toBe(4);
+        await act(async () => { hook.getCurrent().requireIdentity(); });
+        expect(hook.getCurrent().resolution).toEqual({ source: 'none', identity: null });
+        expect(count()).toBe(4);
+        let finish!: (value: unknown) => void;
+        machineRpcMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        await hook.rerender({ ...props, sessionPath: '/repo/c' });
+        await act(async () => { hook.getCurrent().requireIdentity(); });
+        await act(async () => { finish(ScmBackendDescribeResponseSchema.parse({ success: true })); });
+        expect(hook.getCurrent().resolution).toEqual({ source: 'none', identity: null });
+        expect(count()).toBe(5);
+        machineRpcMock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+        await hook.rerender({ ...props, sessionPath: '/repo/d' });
+        await act(async () => { hook.getCurrent().requireIdentity(); });
+        const savedIdentity = { name: 'Saved Person', email: 'saved@example.test' };
+        const savedState = createSessionScmState({
+            session: createSessionFixture({ id: 'session-1', metadata: baseSessionMetadata }),
+            machines: [createMachineFixture({ id: 'machine-1', active: true })],
+        });
+        getStateMock.mockReturnValue({ ...savedState, settings: { ...savedState.settings, scmGitIdentity: savedIdentity } });
+        machineRpcMock.mockResolvedValueOnce(ScmBackendDescribeResponseSchema.parse({ success: true,
+            gitIdentityResolution: { source: 'person', identity: savedIdentity } }));
+        await act(async () => { await hook.getCurrent().refresh(); });
+        await act(async () => { finish(ScmBackendDescribeResponseSchema.parse({ success: true,
+            gitIdentityResolution: { source: 'none', identity: null } })); });
+        expect(hook.getCurrent().resolution).toEqual({ source: 'person', identity: savedIdentity });
+        expect(count()).toBe(7);
+        await hook.unmount();
+    });
+
     it('admits private Work evidence only under the exact Session transport authorization', async () => {
         getStateMock.mockReturnValue(createSessionScmState({
             session: createSessionFixture({ id: 'session-1', metadata: baseSessionMetadata }),

@@ -6,6 +6,13 @@ import { snapshotToScmStatusFiles } from '@/scm/scmStatusFiles';
 import { mapProtocolSnapshotToUiSnapshot } from '@/scm/core/snapshotMappers';
 
 describe('SCM producer policy admission', () => {
+    it('preserves a typed transport refusal from the shared describe read', async () => {
+        const refusal = { ok: false as const, errorCode: 'permission_denied', error: 'Permission denied',
+            details: { reason: 'machine_access_denied' } };
+        expect(await runScmRpcWithAdmission({ method: RPC_METHODS.SCM_BACKEND_DESCRIBE, request: { cwd: '/repo' },
+            describeScope: 'account:machine:refused-repo', call: async () => refusal })).toEqual(refusal);
+    });
+
     it('normalizes compact status facts before Git pane and file consumers receive them', async () => {
         const wire = { success: true, snapshot: {
                 projectKey: 'machine:/repo', fetchedAt: 1,
@@ -50,6 +57,19 @@ describe('SCM producer policy admission', () => {
             { fullPath: 'binary.bin', linesAdded: 0, linesRemoved: 0, isBinary: true, isComplete: false },
             { fullPath: 'both.txt', linesAdded: 5, linesRemoved: 6, isBinary: false, isComplete: true },
         ]);
+    });
+
+    it('shares one in-flight describe between the open commit view and write admission', async () => {
+        let complete!: (value: unknown) => void;
+        const description = new Promise<unknown>(resolve => { complete = resolve; });
+        const call = vi.fn(async (method: string) => method === RPC_METHODS.SCM_BACKEND_DESCRIBE ? description : { success: true });
+        const common = { call, describeScope: 'account:machine:repo', request: { cwd: '/repo' } };
+        const view = runScmRpcWithAdmission({ ...common, method: RPC_METHODS.SCM_BACKEND_DESCRIBE });
+        const write = runScmRpcWithAdmission({ ...common, method: RPC_METHODS.SCM_COMMIT_CREATE, request: { ...common.request, mode: 'amend' as const } });
+        expect(call.mock.calls.filter(([method]) => method === RPC_METHODS.SCM_BACKEND_DESCRIBE)).toHaveLength(1);
+        complete({ success: true, capabilities: createScmCapabilities({ writeCommitAmend: true }) });
+        expect(await view).toMatchObject({ success: true });
+        expect(await write).toMatchObject({ success: true });
     });
 
     it('prevents an older daemon from silently ignoring advanced write policy', async () => {
