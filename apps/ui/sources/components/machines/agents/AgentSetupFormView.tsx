@@ -27,7 +27,7 @@ import { presentAgentInstallJobFailure, presentAgentInstallJobRpcFailure } from 
 import { AgentInstallJobRpcError } from '@/agents/machineAgents/installJobs/api';
 import { AGENT_INSTALL_JOB_VERIFY_STEP_ID, buildAgentInstallJobCliStepId } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { canPerformMachineAgentAction, isMachineAgentInstalledBySetup, resolveAgentSetupPhase, resolveMachineAgentStatus, type AgentSetupPhase } from './machineAgentPresentation';
-import { formatMachineAgentStatus } from './machineAgentCopy';
+import { formatMachineAgentExecutionState, formatMachineAgentStatus } from './machineAgentCopy';
 
 /** Exact choices from the connected-account chooser, or the Agent's own login. */
 export type AgentSignInChoice = Readonly<{ kind: 'service'; serviceId: string; serviceTitle: string; option: SelectionListOption }> | Readonly<{ kind: 'native' }>;
@@ -367,7 +367,7 @@ function ReadySetupRows(props: AgentSetupFormViewProps & Readonly<{ phase: Agent
                 <Item
                     testID={`${testID}.signInRow`}
                     title={t('machineAgents.setupSignInTitle')}
-                    subtitle={describeSignedIn(agent) ?? t('machineAgents.signedInHere')}
+                    subtitle={describeSignedIn(agent) ?? formatMachineAgentExecutionState('ready')}
                     rightElement={canChange ? (
                         <RoundButton testID={`${testID}.changeSignIn`} size="small" display="secondary" title={t('machineAgents.setupChangeSignIn')} onPress={() => setChanging(true)} />
                     ) : undefined}

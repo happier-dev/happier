@@ -14,6 +14,7 @@ import {
   AgentSetupFormView,
   type AgentSetupFormHandlers,
 } from './AgentSetupFormView';
+import { MachineAgentRow } from './MachineAgentRow';
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -84,6 +85,36 @@ function readyAgent() {
 }
 
 describe('AgentSetupFormView ready (full layout)', () => {
+  it('keeps a ready agent usable without claiming authentication when the inventory requires no sign-in', async () => {
+    // Public Machine inventory captured from clawpatch: readiness does not imply authentication.
+    const facts = MachineAgentInventoryItemSchema.parse({
+      agentId: 'clawpatch', title: 'clawpatch', installed: true,
+      version: null, latestVersion: null,
+      update: { supported: false, command: null },
+      signIn: { status: 'unknown', required: false, loginSupport: 'unsupported' },
+      platform: { supported: true },
+      install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null },
+      dependencies: [],
+    });
+    const agent = projectMachineAgent({
+      agentId: 'clawpatch', title: 'clawpatch', facts,
+      checking: false, stale: false, connectedServices: [], job: null,
+    });
+    const onStartSession = vi.fn();
+    const screen = await renderScreen(<>
+      <MachineAgentRow testID="agent" agent={agent} mark={null} onAction={noop} />
+      <AgentSetupFormView testID="f" agent={agent} machineName="nl2" layout="full"
+        handlers={{ ...HANDLERS, onStartSession }} />
+    </>);
+
+    expect(agent.state).toBe('ready');
+    expect(screen.getTextContent()).toContain('Ready');
+    expect(screen.getTextContent()).not.toContain('Signed in');
+    expect(screen.findAllByTestId('f.changeSignIn')).toHaveLength(0);
+    await pressTestInstanceAsync(screen.findByTestId('f.startSession'));
+    expect(onStartSession).toHaveBeenCalledOnce();
+  });
+
   it('offers every available account and pool from the canonical chooser and submits the exact selected target', async () => {
     const base = readyAgent();
     const serviceId = 'acme.agent/account';
@@ -125,6 +156,7 @@ describe('AgentSetupFormView ready (full layout)', () => {
     expect(screen.findAllByTestId('f.signInRow').length).toBeGreaterThan(0);
     expect(screen.findAllByTestId('f.cliRow').length).toBeGreaterThan(0);
     expect(screen.getTextContent()).toContain('2.1.296');
+    expect(screen.getTextContent()).toContain('ai1@happier.dev');
     expect(screen.findAllByTestId('f.way.native')).toHaveLength(0);
 
     await pressTestInstanceAsync(

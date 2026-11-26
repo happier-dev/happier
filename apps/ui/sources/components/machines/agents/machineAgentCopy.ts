@@ -8,7 +8,7 @@ import type { MachineAgentRowAction, MachineAgentStatus } from './machineAgentPr
 /** Read-only wording for the execution prerequisite already decided by the inventory owner. */
 export function formatMachineAgentExecutionState(state: MachineAgentExecutionStateV1): string {
     switch (state) {
-        case 'ready': return t('machineAgents.signedInHere');
+        case 'ready': return t('status.ready');
         case 'needsSignIn': return t('machineAgents.needsSignIn');
         case 'notInstalled': return t('machineAgents.notInstalled');
         case 'unsupported': return t('machineAgents.unsupported');
