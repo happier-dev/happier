@@ -16,10 +16,14 @@ vi.mock('node:fs/promises', async importOriginal => {
   return { ...actual, rm: vi.fn(actual.rm) };
 });
 
-const probe = vi.hoisted(() => ({ encoders: ' V..... libx264 H.264 encoder\n', calls: 0 }));
+const probe = vi.hoisted(() => ({ encoders: ' V..... libx264 H.264 encoder\n', calls: 0, softwareUnavailable: false }));
 vi.mock('node:child_process', async importOriginal => ({
   ...await importOriginal<typeof import('node:child_process')>(),
-  execFile: vi.fn((_path: string, _args: readonly string[], _options: object, callback: (error: Error | null, stdout: string, stderr: string) => void) => { probe.calls++; callback(_args.includes('-encoders') ? null : new Error('hardware unavailable'), probe.encoders, ''); }),
+  execFile: vi.fn((_path: string, _args: readonly string[], _options: object, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+    probe.calls++;
+    const available = _args.includes('-encoders') || (_args.includes('libx264') && !probe.softwareUnavailable);
+    callback(available ? null : new Error('encoder unavailable'), probe.encoders, '');
+  }),
 }));
 
 const recording: RecordingSession = {
@@ -38,12 +42,27 @@ describe('recording encoder output ownership', () => {
       const before = probe.calls;
       const formats = await Promise.all([resolveRecordingOutputFormat(binary), resolveRecordingOutputFormat(binary)]);
       expect(formats.map(format => format.mimeType)).toEqual(['video/mp4', 'video/mp4']);
-      expect(probe.calls - before).toBe(1);
+      expect(probe.calls - before).toBe(2);
       probe.encoders = ' V..... libvpx VP8 encoder\n';
       writeFileSync(binary, 'replacement executable identity');
       expect(await resolveRecordingOutputFormat(binary)).toMatchObject({ mimeType: 'video/webm', encoder: 'libvpx', container: 'webm' });
-      expect(probe.calls - before).toBe(2);
+      expect(probe.calls - before).toBe(3);
     } finally {
+      probe.encoders = ' V..... libx264 H.264 encoder\n';
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to truthful WebM when listed software H.264 cannot produce MP4', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-software-encoder-'));
+    const binary = join(directory, 'encoder');
+    try {
+      writeFileSync(binary, 'software build with unavailable runtime dependency');
+      probe.softwareUnavailable = true;
+      probe.encoders = ' V..... libx264 H.264 encoder\n V..... libvpx VP8 encoder\n';
+      expect(await resolveRecordingOutputFormat(binary)).toMatchObject({ mimeType: 'video/webm', encoder: 'libvpx', container: 'webm' });
+    } finally {
+      probe.softwareUnavailable = false;
       probe.encoders = ' V..... libx264 H.264 encoder\n';
       await rm(directory, { recursive: true, force: true });
     }

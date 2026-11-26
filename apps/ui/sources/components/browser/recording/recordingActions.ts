@@ -2,6 +2,7 @@ import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executo
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { RecordingSaveFailureV1Schema } from '@happier-dev/protocol/recording/results';
+import { BrowserRecordingOutcomeReasonV1Schema } from '@happier-dev/protocol/browser/recording/v1';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -39,13 +40,18 @@ export function presentRecordingStopOutcome(answer: unknown): void {
         return;
     }
     const saveFailure = RecordingSaveFailureV1Schema.safeParse((answer as { saveFailure?: unknown }).saveFailure).data;
+    const reason = BrowserRecordingOutcomeReasonV1Schema.safeParse((answer as { reason?: unknown }).reason).data;
     // A recording kept in the Session's files was saved; only its place in the conversation is missing.
-    Modal.alert(t(saveFailure === 'transcript_attach_failed' ? 'browserRecording.failure.notInConversationTitle'
-        : 'browserRecording.failure.notSavedTitle'), saveFailure === 'workspace_write_failed'
+    alertActionFailure({
+        title: t(saveFailure === 'transcript_attach_failed' ? 'browserRecording.failure.notInConversationTitle'
+        : 'browserRecording.failure.notSavedTitle'), reason: saveFailure === 'workspace_write_failed'
         ? t('browserRecording.failure.notSavedGone')
         : saveFailure === 'transcript_attach_failed'
             ? t('browserRecording.failure.notSavedInFiles')
-            : t('browserRecording.failure.notSavedBody'));
+            : t('browserRecording.failure.notSavedBody'),
+        code: saveFailure ?? reason ?? 'action_failed',
+        context: { status: 'failed', ...(reason ? { reason } : {}) },
+    });
 }
 
 export function presentBrowserRecordingActionFailure(action: 'start' | 'stop' | 'discard', outcome?: unknown): void {

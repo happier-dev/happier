@@ -23,6 +23,16 @@ function shown() {
 describe('recording failure presentation', () => {
   beforeEach(() => alert.mockReset());
 
+  it('reveals the stopped capture cause through Technical details without inventing a request id', () => {
+    presentRecordingStopOutcome({ status: 'failed', reason: 'capture_failed' });
+    const details = shown().buttons?.find((button: { text: string }) => button.text === t('approvals.technicalDetails'));
+    expect(details).toBeDefined();
+    alert.mockReset();
+    details?.onPress();
+    expect(shown().body).toContain('capture_failed');
+    expect(shown().body).not.toContain('requestId');
+  });
+
   // The daemon's START admission (sessionMediaHost admitSave): nothing was captured in either case.
   it.each([
     ['recording_session_not_owned', 'browserRecording.failure.sessionNotOwned'],
@@ -61,7 +71,7 @@ describe('recording failure presentation', () => {
         // A recording kept in the Session's files was saved: only its place in the conversation is missing.
         title: t(saveFailure === 'transcript_attach_failed' ? 'browserRecording.failure.notInConversationTitle' : 'browserRecording.failure.notSavedTitle'),
         body: t(key),
-        buttons: undefined,
+        buttons: expect.any(Array),
       });
       expect(body).not.toBe(t('browserRecording.failure.stopBody'));
     },

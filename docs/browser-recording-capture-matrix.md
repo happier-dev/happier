@@ -332,13 +332,18 @@ it is never cited as proof for a desktop WebView recording, and vice-versa.
 
 The shared daemon encoder owns format selection for Browser stream/CDP and Computer
 recordings. It queries the existing managed executable, preferring software H.264
-(`libx264`, then `libopenh264`) over listed hardware encoders. Hardware candidates
-must also successfully encode one generated frame; a compiled-in encoder without
-its device or driver does not establish support. With no usable H.264 candidate,
+(`libx264`, then `libopenh264`) over listed hardware encoders. Every H.264 candidate
+must successfully encode one generated frame through the fragmented MP4 muxer;
+a compiled-in encoder without its runtime library, device or driver does not
+establish support. With no usable H.264 candidate,
 the existing libvpx/WebM arguments remain unchanged. No encoder or system-tool
 dependency is added. The result is shared per executable filesystem identity
 (path, device, inode, size, modification and change timestamps); replacement
 invalidates it without a timer or polling.
+
+Failed Stop results expose the daemon's typed outcome reason and, when supplied,
+save-failure code through the existing Technical details alert for Browser and
+Computer. No request id is fabricated when the lifecycle result supplies none.
 
 Start capabilities and recording results carry the selected MIME. Stream adapters
 pass the produced MIME to the existing Session-media writer, so stored references

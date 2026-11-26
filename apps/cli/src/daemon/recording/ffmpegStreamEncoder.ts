@@ -82,11 +82,12 @@ export async function resolveRecordingOutputFormat(binaryPath: string): Promise<
     const encoders = new Set([...listing.matchAll(/^\s*V[.A-Z]{5}\s+(\S+)\s/gmu)].map(match => match[1]));
     for (const encoder of H264_ENCODERS) {
       if (!encoders.has(encoder)) continue;
-      // A compiled hardware wrapper may exist without its GPU/driver. Probe one
-      // ordinary frame once with this identity, never per recording or frame.
-      const usable = encoder === 'libx264' || encoder === 'libopenh264' || await new Promise<boolean>(resolve => {
+      // Listing proves compilation, not runtime usability (including software
+      // libraries). Exercise encoding and the actual MP4 muxer once per identity.
+      const usable = await new Promise<boolean>(resolve => {
         execFile(binaryPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=s=1280x720',
-          '-frames:v', '1', '-an', '-c:v', encoder, '-pix_fmt', 'yuv420p', '-f', 'null', '-'],
+          '-frames:v', '1', '-an', '-c:v', encoder, '-pix_fmt', 'yuv420p',
+          '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1'],
         { windowsHide: true }, error => resolve(!error));
       });
       if (usable) return { encoder, mimeType: 'video/mp4', container: 'mp4' };
