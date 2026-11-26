@@ -2,7 +2,9 @@ import { expect, it } from 'vitest';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { createDeploymentEnvironmentDetailV1 } from '../testing/v1.js';
 import { createProjectSourceTeamMovePreparationV1 } from './projectSourceTeamMove.js';
 
 const homeRefusal = {
@@ -76,4 +78,47 @@ it.each([
     expect(await preparation.prepareHostReviewedChildren({
         actionId: PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, input, context: {},
     })).toEqual(expected);
+});
+
+it.each(['Machine access', 'Workflows'] as const)('preserves the typed %s inventory refusal during Source Move review', async (port) => {
+    const accountId = 'account';
+    const input = { serverId: 'home', sourceId: 'source', teamId: 'team', expectedRevision: 2, requestKey: 'source-move' };
+    const environment = createDeploymentEnvironmentHeaderV1({ serverId: input.serverId, projectSourceId: input.sourceId,
+        ...(port === 'Workflows' ? { deletedAtMs: 2000 } : {}) });
+    const { content } = createDeploymentEnvironmentDetailV1({ environment });
+    const artifact = {
+        artifactId: environment.contentArtifactId, revision: { headerVersion: 1, bodyVersion: 1 },
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Staging' }, body: JSON.stringify(content),
+    };
+    const workflowRefusal = { ...homeRefusal, errorCode: 'run_access_denied', error: 'Workflow reads are denied' } as const;
+    const unexpectedRead = async (): Promise<never> => { throw new Error('Read after inventory refusal'); };
+    const preparation = createProjectSourceTeamMovePreparationV1({
+        accountId, credentialAuthorityKind: 'account', assertCurrent: () => {},
+    }, {
+        projectSourcesRead: async () => ProjectSourcesReadOutputV1Schema.parse({
+            ok: true, canManage: true, source: {
+                id: input.sourceId, revision: input.expectedRevision, name: 'Source',
+                owner: { kind: 'account', accountId }, audience: [], createdByAccountId: accountId,
+            },
+        }),
+        deploymentAction: async (actionId) => {
+            if (actionId === 'deployments.environments.list') return { ok: true, items: [environment], nextCursor: null };
+            if (actionId === 'deployments.environments.get') return {
+                ok: true, environment, targetLinks: [], retainedTargetLinkCleanupCompleteIds: [],
+            };
+            if (actionId === 'deployments.receipts.list') return { ok: true, items: [], nextCursor: null };
+            return unexpectedRead();
+        },
+        machineAccessAction: port === 'Machine access' ? async () => homeRefusal : unexpectedRead,
+        workflowAction: async () => workflowRefusal,
+        readApiTokens: async () => [],
+        readDefaults: async () => ({
+            ok: true, projectSourceId: input.sourceId, sourceRevision: input.expectedRevision, revision: 0, content: null,
+        }),
+        readArtifactContents: async ids => ids.map(() => ({ status: 'fulfilled', value: artifact })),
+        isSameHome: (left, right) => left === right,
+    });
+    expect(await preparation.prepareHostReviewedChildren({
+        actionId: PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, input, context: {},
+    }), port).toEqual(port === 'Machine access' ? homeRefusal : workflowRefusal);
 });

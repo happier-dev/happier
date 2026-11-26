@@ -46,7 +46,11 @@ export function selectProjectSourceTeamMoveApiTokensV1(tokens: readonly AccountA
 /** One demanded, Source-scoped inventory for this Action invocation and its review. */
 export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourceTeamMoveAccountV1, raw: unknown,
     context: ActionExecutorContext, ports: ProjectSourceTeamMoveReadPortsV1) {
-    const input = ProjectSourcesMoveToTeamInputV1Schema.parse(raw);
+    return readProjectSourceTeamMoveInventory(account, ProjectSourcesMoveToTeamInputV1Schema.parse(raw), context, ports);
+}
+
+async function readProjectSourceTeamMoveInventory(account: ProjectSourceTeamMoveAccountV1, input: ProjectSourcesMoveToTeamInputV1,
+    context: ActionExecutorContext, ports: ProjectSourceTeamMoveReadPortsV1) {
     await account.assertCurrent(context);
     context.signal?.throwIfAborted();
     if (account.credentialAuthorityKind !== 'account' && account.credentialAuthorityKind !== 'terminal') refuse('action_forbidden');
@@ -161,6 +165,8 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
     const machineAccess = await Promise.all([...machines].map(async ([machineId, roles]) => {
         const response = await ports.machineAccessAction({ actionId: 'machines.access.grants.list',
             input: { serverId: input.serverId, machineId }, context, ...(context.signal ? { signal: context.signal } : {}) });
+        const failure = readActionFailureEnvelope(response);
+        if (failure) throw new ProjectSourceTeamMoveReadFailure(failure);
         const access = MachineAccessGrantsListResultV1Schema.parse(response);
         if ('kind' in access) return refuse(access.code);
         if (!access.canManage) return refuse('access_denied');
@@ -172,7 +178,7 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
     const triggerSets: WorkflowTriggerSetV1[] = [];
     if (headers.length) {
         const triggerResponse = await ports.workflowAction({ actionId: 'workflow.trigger.list', input: { scope: 'account_all' }, context, ...(context.signal ? { signal: context.signal } : {}) });
-        if ('errorCode' in triggerResponse) refuse(triggerResponse.errorCode);
+        if ('errorCode' in triggerResponse) throw new ProjectSourceTeamMoveReadFailure(triggerResponse);
         triggerSets.push(...WorkflowTriggerListResultV1Schema.parse(triggerResponse).sets);
     }
     if (triggerSets.some(set => set.health !== 'available')) refuse('source_unavailable');
@@ -206,7 +212,7 @@ export function createProjectSourceTeamMovePreparationV1(account: ProjectSourceT
         const input = ProjectSourcesMoveToTeamInputV1Schema.parse(withoutClientActionInput(raw));
         const key = projectSourceTeamMoveInputKey(input);
         if (preparation && preparation.key !== key) throw new ProjectSourceTeamMoveReadFailure(moveFailure('plan_changed'));
-        preparation ??= { key, value: readProjectSourceTeamMoveInventoryV1(account, input, context, ports) };
+        preparation ??= { key, value: readProjectSourceTeamMoveInventory(account, input, context, ports) };
         return preparation.value;
     };
     const prepareFailure = (error: unknown): ActionExecuteFailure => {
