@@ -10,6 +10,7 @@ import { ManagedControllerReportV1Schema, ManagedMachineActionInputSchemasV1, Ma
 import { QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { TeamsListInputV1Schema, TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { JsonValue } from '@happier-dev/protocol';
 
@@ -122,13 +123,13 @@ describe('managed inventory CLI Home adapter', () => {
   }
 
   function executor(overrides: Partial<Pick<Parameters<typeof createAccountServerActionDeps>[0],
-    'serverIdentityId' | 'resolveServerFeaturesSnapshot' | 'isCredentialCurrent' | 'credentials'>> = {}) {
+    'serverIdentityId' | 'resolveServerFeaturesSnapshot' | 'isCredentialCurrent' | 'credentials'>> = {}, token = 'bound') {
     return createCliActionExecutor({
-      token: 'bound', sessionId: 'cli-global', serverId: 'route-home', serverHttpBaseUrl: 'http://home.test',
+      token, sessionId: 'cli-global', serverId: 'route-home', serverHttpBaseUrl: 'http://home.test',
       mode: 'plain', ctx: null,
       ...(overrides.credentials ? { credentials: overrides.credentials } : {}),
       accountServerActionDeps: createAccountServerActionDeps({
-        token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test', ...overrides,
+        token, serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test', ...overrides,
       }),
     });
   }
@@ -979,9 +980,29 @@ describe('managed inventory CLI Home adapter', () => {
 
   it.each(['cli', 'agent', 'mcp'] as const)('invokes Home inventory, preset edits, pools and sharing through the real %s adapter', async surface => {
     const seen: Array<{ url: string; body: unknown; authorization?: string }> = [];
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 7,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    const authorization = `Bearer ${token}`;
     const preset = { id: 'preset-1', homeId: 'srv_home', revision: 2,
       owner: { kind: 'account', accountId: 'owner' }, controller: machine.controller, contentEncryptionMode: 'plain', recipients: [],
-      content: { t: 'plain', v: { v: 1, name: 'Changed', launch: machine.launch } } };
+      content: { t: 'plain', v: { v: 1, name: 'Changed', launch: { ...machine.launch, choices: {
+        store: '/srv/lima', image: 'https://example.test/lima.img', arch: 'x86_64', vmType: 'qemu',
+        cpus: 2, memoryGiB: 4, diskGiB: 10, mounts: [],
+      } } } } };
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } });
+    app.get('/v1/features', async () => features);
+    app.get('/v1/features/authenticated', async () => features);
+    app.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, async () => ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
+    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture());
+    app.post('/v1/machines/presets/get', async request => {
+      seen.push({ url: request.url, body: request.body, authorization: request.headers.authorization });
+      return { kind: 'found', preset: { ...preset, revision: 1,
+        content: { ...preset.content, v: { ...preset.content.v, name: 'Original' } } } };
+    });
+    app.post('/v1/machines/presets/recipient-census', async () => ({ kind: 'ready', contentEncryptionMode: 'plain', recipients: [] }));
+    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () =>
+      PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1, hostingCapability: { enabled: false },
+        intent: null, release: null, uiArtifacts: [], packageAssets: [] }));
     app.post('/v1/machines/managed/actions/get', async request => {
       seen.push({ url: request.url, body: request.body, authorization: request.headers.authorization });
       return machine;
@@ -1000,7 +1021,9 @@ describe('managed inventory CLI Home adapter', () => {
       seen.push({ url: request.url, body: request.body, authorization: request.headers.authorization });
       return resolvedPool;
     });
-    const cli = executor();
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({ actionsSettingsV1: policy }),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(token) });
+    const cli = executor({ credentials: decodeStoredCredentials({ token }) ?? undefined }, token);
     await expect(invoke(cli, surface, 'machines.managed.get', { homeId: 'srv_home', managedId: machine.id }))
       .resolves.toEqual({ ok: true, result: machine });
     const edit = { homeId: 'srv_home', id: preset.id, expectedRevision: 1, patch: { content: preset.content, recipients: preset.recipients } };
@@ -1013,10 +1036,11 @@ describe('managed inventory CLI Home adapter', () => {
     await expect(invoke(cli, surface, 'machines.pools.resolve', poolInput))
       .resolves.toEqual({ ok: true, result: resolvedPool });
     expect(seen).toEqual([
-      { url: '/v1/machines/managed/actions/get', body: { homeId: 'srv_home', managedId: machine.id }, authorization: 'Bearer bound' },
-      { url: '/v1/machines/presets/update', body: edit, authorization: 'Bearer bound' },
-      { url: '/v1/machines/controller-1/access', body: { principal }, authorization: 'Bearer bound' },
-      { url: '/v1/machines/pools/resolve', body: poolInput, authorization: 'Bearer bound' },
+      { url: '/v1/machines/managed/actions/get', body: { homeId: 'srv_home', managedId: machine.id }, authorization },
+      { url: '/v1/machines/presets/get', body: { homeId: 'srv_home', id: preset.id }, authorization },
+      { url: '/v1/machines/presets/update', body: { ...edit, patch: { ...edit.patch, configurationRevision: 0, setupRevision: 0 } }, authorization },
+      { url: '/v1/machines/controller-1/access', body: { principal }, authorization },
+      { url: '/v1/machines/pools/resolve', body: poolInput, authorization },
     ]);
   });
 

@@ -38,7 +38,8 @@ export async function settleManagedNativeIntent<T extends (NativeIntentReport<Na
     catch (error) {
         const result = error instanceof ManagedMachineNativeEffectGuardRefusal
             ? { kind: 'refused' as const, code: error.code }
-            : { kind: 'unknown' as const, code: NATIVE_INTENT_UNCONFIRMED };
+            : { kind: 'unknown' as const,
+                code: error instanceof ManagedMachineControllerError ? error.code : NATIVE_INTENT_UNCONFIRMED };
         try { await input.report({ result }); }
         catch (reportError) { input.onReportFailure(reportError); }
         throw error;
