@@ -9,7 +9,7 @@ import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automation
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowActionOutputSchemasV1, WorkflowInvocationGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import type { ActionExecutorDeps, WorkflowActionExecute, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
-import { createWorkflowActorConsentPortV1, isWorkflowTriggerAgentCallerV1, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import { createWorkflowActorConsentPortV1, isWorkflowTriggerAgentCallerV1, readWorkflowTriggerSessionCapabilities, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import type { ActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { AutomationTemplateRetainedSessionV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
@@ -32,7 +32,7 @@ import {
     type SessionPullRequestBindingInputV1,
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SessionGoalRolePolicyDecisionV1Schema, type SessionGoalGetRequestV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
+import type { SessionGoalGetRequestV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { ExternalActionTargetV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1, WORKFLOW_RUN_RESUME_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -146,17 +146,13 @@ export function createUiTriggerSessionResolver(account: LazyActionAccountContext
         const facts = { project: { machineId, directory }, ...(selection?.success ? { executionSelection: selection.data } : {}) };
         if (session.active !== true) return { ...facts, nativeGoalOwner: false };
         if (options?.checkNativeGoalOwner !== true) return { ...facts, nativeGoalOwner: null };
-        const observed = await withActionAccountRequestSignal(account, caller?.signal, signal => sessionRpcWithServerScope<unknown, SessionGoalGetRequestV1>({
-            sessionId, serverId: account.serverId, method: SESSION_RPC_METHODS.SESSION_GOAL_GET,
-            payload: { capabilitiesOnly: true, ...(options.rolePolicy === undefined ? {} : { rolePolicy: options.rolePolicy }) },
-            timeoutMs: null, signal,
-        })).catch(() => null);
+        const capabilities = await readWorkflowTriggerSessionCapabilities(payload =>
+            withActionAccountRequestSignal(account, caller?.signal, signal => sessionRpcWithServerScope<unknown, SessionGoalGetRequestV1>({
+                sessionId, serverId: account.serverId, method: SESSION_RPC_METHODS.SESSION_GOAL_GET,
+                payload, timeoutMs: null, signal,
+            })).catch(() => null), options.rolePolicy);
         account.assertCurrent();
-        const nativeGoalOwner = observed !== null && typeof observed === 'object' && 'nativeGoalOwner' in observed
-            && typeof observed.nativeGoalOwner === 'boolean' ? observed.nativeGoalOwner : null;
-        const rolePolicy = SessionGoalRolePolicyDecisionV1Schema.safeParse(observed !== null
-            && typeof observed === 'object' && 'rolePolicy' in observed ? observed.rolePolicy : undefined);
-        return { ...facts, nativeGoalOwner, ...(rolePolicy.success ? { rolePolicy: rolePolicy.data } : {}) };
+        return { ...facts, ...capabilities };
     };
 }
 

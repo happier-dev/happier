@@ -23,7 +23,6 @@ import { resolveExplicitSessionSpawnMachineTarget } from '@happier-dev/protocol/
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
-import { SessionGoalRolePolicyDecisionV1Schema, type SessionGoalRolePolicyDecisionV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { createWorkflowHostActionContractReader, type ReadLocalWorkflowActionSpec } from './workflowHostActionContract';
 import type { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
 import type { doesWorkflowImmediateEligibleStepTargetSession } from '@/daemon/workflows/coordinator';
@@ -41,7 +40,7 @@ import type { createWorkflowRunActionOwner } from './workflowRunActions';
 import type { ReadCombinedRunHostV1, WorkflowAccountRunActionDeps, WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 import type { CombinedMachineSetupInvocationRead } from '@/machines/setup/composeMachineSetup';
-import { createWorkflowActorConsentPortV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import { createWorkflowActorConsentPortV1, readWorkflowTriggerSessionCapabilities } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import type { WorkflowActionAutomationChecksV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
@@ -158,27 +157,17 @@ export function createCliWorkflowFamily(
     const candidatePath = normalizeStringValue(metadata?.path) ?? normalizeStringValue(transport.rawSession.path) ?? '';
     const directory = machineId ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath : null;
     if (!machineId || !directory) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
-    let nativeGoalOwner: boolean | null = transport.rawSession.active === true ? null : false;
-    let rolePolicy: SessionGoalRolePolicyDecisionV1 | undefined;
-    if (options?.checkNativeGoalOwner === true && transport.rawSession.active === true) {
-      const result = await callSessionRpcForTransport(transport, SESSION_RPC_METHODS.SESSION_GOAL_GET,
-        { capabilitiesOnly: true, ...(options.rolePolicy === undefined ? {} : { rolePolicy: options.rolePolicy }) },
-        caller?.signal, null);
-      if (result !== null && typeof result === 'object' && 'rolePolicy' in result) {
-        const parsedRolePolicy = SessionGoalRolePolicyDecisionV1Schema.safeParse(result.rolePolicy);
-        if (parsedRolePolicy.success) rolePolicy = parsedRolePolicy.data;
-      }
-      if (result !== null && typeof result === 'object' && 'nativeGoalOwner' in result && typeof result.nativeGoalOwner === 'boolean') {
-        nativeGoalOwner = result.nativeGoalOwner;
-      }
-    }
+    const active = transport.rawSession.active === true;
+    const capabilities = active && options?.checkNativeGoalOwner === true
+      ? await readWorkflowTriggerSessionCapabilities(payload => callSessionRpcForTransport(
+        transport, SESSION_RPC_METHODS.SESSION_GOAL_GET, payload, caller?.signal, null), options.rolePolicy)
+      : { nativeGoalOwner: active ? null : false };
     const { resolveBackendTargetFromSessionMetadata } = await import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata");
     const agentTarget = await resolveWorkflowSessionAgentTarget(metadata, resolveBackendTargetFromSessionMetadata(metadata));
     const selection = agentTarget ? WorkflowStepExecutionSelectionSchema.safeParse({
       agentTarget, ...(metadata?.permissionMode ? { permissionMode: metadata.permissionMode } : {}),
     }) : null;
-    return { project: { machineId, directory }, nativeGoalOwner,
-      ...(rolePolicy === undefined ? {} : { rolePolicy }),
+    return { project: { machineId, directory }, ...capabilities,
       ...(selection?.success ? { executionSelection: selection.data } : {}) };
   };
 

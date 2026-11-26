@@ -82,7 +82,7 @@ import { normalizeWorkflowActionThrownError, parseWorkflowActionInput } from './
 import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
-import type { SessionExecutionRunRolePolicyRequestV1, SessionGoalRolePolicyDecisionV1 } from '../../sessions/work/state/sessionWorkStateRpc.js';
+import { SessionGoalRolePolicyDecisionV1Schema, type SessionExecutionRunRolePolicyRequestV1, type SessionGoalGetRequestV1, type SessionGoalRolePolicyDecisionV1 } from '../../sessions/work/state/sessionWorkStateRpc.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { readWorkflowTriggerActionConsent, readWorkflowTriggerActorConsentSteps } from './workflowTriggerConsent.js';
 import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActions.js';
@@ -435,6 +435,22 @@ export async function removeWorkflowTriggersForDefinition(
 }
 
 /** Trigger semantics compose the one Automation owner; no trigger storage or claim policy lives here. */
+export async function readWorkflowTriggerSessionCapabilities(
+  read: (request: SessionGoalGetRequestV1) => Promise<unknown>,
+  roleRequest?: SessionExecutionRunRolePolicyRequestV1,
+): Promise<Readonly<{ nativeGoalOwner: boolean | null; rolePolicy?: SessionGoalRolePolicyDecisionV1 }>> {
+  const goal = await read({ capabilitiesOnly: true });
+  const nativeGoalOwner = goal !== null && typeof goal === 'object' && 'nativeGoalOwner' in goal
+    && typeof goal.nativeGoalOwner === 'boolean' ? goal.nativeGoalOwner : null;
+  if (nativeGoalOwner !== false || roleRequest === undefined) return { nativeGoalOwner };
+  // The Role arm never waits for the runtime, so its incidental Goal bit
+  // cannot establish native ownership. Only fallback admission needs Role policy.
+  const role = await read({ capabilitiesOnly: true, rolePolicy: roleRequest });
+  const decision = SessionGoalRolePolicyDecisionV1Schema.safeParse(role !== null
+    && typeof role === 'object' && 'rolePolicy' in role ? role.rolePolicy : undefined);
+  return { nativeGoalOwner, ...(decision.success ? { rolePolicy: decision.data } : {}) };
+}
+
 export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDependencies): WorkflowTriggerActions {
   const detachPullRequests = async (
     row: Pick<AutomationDefinitionListResponse['automations'][number], 'id' | 'scopeSessionId'> &

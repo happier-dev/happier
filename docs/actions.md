@@ -11000,8 +11000,9 @@ does not require a reachable Machine. Host-dependent facts do reach a Machine:
 another caller's write (agent-start policy and materializer) is relayed to the
 authorized host, and Keep going on an opened Session reads native-goal ownership over
 that Session's `session.goal.get`. An unreachable host yields typed `target_unavailable`
-when native Goal ownership cannot be established. Keep going admission also
-consumes the live runtime's selected-surface Role-policy result from that read.
+when native Goal ownership cannot be established. After the Goal-only read
+settles with no native owner, Keep going admission uses a separate non-waiting
+read for the live runtime's selected-surface Role-policy result when needed.
 A proven workspace-write refusal returns `role_policy_unenforceable` before the
 trigger is added. An undecidable or omitted Role-policy result allows arming
 once ordinary Session admission succeeds. The same Role-policy decision protects
