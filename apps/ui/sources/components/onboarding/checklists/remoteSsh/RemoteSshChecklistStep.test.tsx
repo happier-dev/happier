@@ -380,6 +380,7 @@ describe('RemoteSshChecklistStep', () => {
 
         await chooseAuthMethod(screen, 'keyfile');
 
+        await screen.pressByTestIdAsync('remote-ssh-step-ssh-sshPrivateKeyMaterialOpen');
         await act(async () => {
             screen.changeTextByTestId('remote-ssh-step-ssh-sshPrivateKeyMaterialInput', 'MY_PRIVATE_KEY');
         });

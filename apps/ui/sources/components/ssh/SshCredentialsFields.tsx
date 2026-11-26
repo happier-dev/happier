@@ -10,6 +10,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MachineEnrollFieldLabel, MachineEnrollFieldSupport, MachineEnrollTextField } from '@/components/ui/forms/MachineEnrollTextField';
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 export type SshAuthMode = 'agent' | 'keyfile' | 'password';
@@ -183,9 +184,25 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
         </>
     );
 
+    const [pasteKeyOpen, setPasteKeyOpen] = React.useState(false);
     const renderPrivateKeyPasteField = () => {
         if (!props.onChangePrivateKeyMaterial) {
             return null;
+        }
+        // A step offers pasting as a quiet way beside the path (lab direction A "New host"), so the key's choice keeps
+        // the form short; a pasted key keeps its field open.
+        if (stepLayout && !pasteKeyOpen && !props.privateKeyMaterial) {
+            return (
+                <View style={{ alignItems: 'flex-start' }}>
+                    <TextLinkButton
+                        testID={testIDs.sshPrivateKeyMaterial ? `${testIDs.sshPrivateKeyMaterial}-open` : resolveTestID('sshPrivateKeyMaterialOpen')}
+                        label={t('settings.machineEnrollRemoteSshPrivateKeyMaterialLabel')}
+                        expanded={false}
+                        disabled={formDisabled}
+                        onPress={() => setPasteKeyOpen(true)}
+                    />
+                </View>
+            );
         }
         return (
             <MachineEnrollTextField
