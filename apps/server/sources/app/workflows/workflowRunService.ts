@@ -2789,35 +2789,37 @@ export async function cancelWorkflowRunTx(
 }
 
 type CancelWorkflowRunInput = Readonly<{ accountId: string; runId: string; expectedRevision: number }>;
-type CancelWorkflowRunResult = Awaited<ReturnType<typeof cancelWorkflowRunTx>>;
+const workflowRunCancellationTransaction = {
+    // Ordered publication locks/replay and mode/control/row predicates fence this mutation.
+    isolationLevel: "ReadCommitted",
+    transactionClass: "workflow-cancel-run",
+} as const;
 
-/** Ordinary Run edit and Machine custody both enter the same cancellation transition. */
-export function cancelWorkflowRun(params: CancelWorkflowRunInput & { machineId: string }): Promise<Pick<CancelWorkflowRunResult, "intent">>;
-export function cancelWorkflowRun(params: CancelWorkflowRunInput & { machineId?: never }): Promise<CancelWorkflowRunResult>;
-export async function cancelWorkflowRun(params: CancelWorkflowRunInput & { machineId?: string }) {
+/** Stop using the caller's existing Run edit authority. */
+export async function cancelWorkflowRun({ accountId, runId, expectedRevision }: CancelWorkflowRunInput) {
     return await inTx(async (tx) => {
-        if (params.machineId) {
-            if (!await isMachineOwnedByAccountInTx(tx, { actorAccountId: params.accountId, machineId: params.machineId })) {
-                throw new WorkflowRunServiceError("run_not_found");
-            }
-            const run = await tx.automationRun.findFirst({
-                where: { id: params.runId, ...workflowRunPlacementWhere(params.machineId), accountId: { not: params.accountId } },
-                select: { accountId: true },
-            });
-            if (!run) throw new WorkflowRunServiceError("run_not_found");
-            const accountEncryptionMode = await loadAccountModeTx(tx, run.accountId, params.runId);
-            const { intent } = await cancelWorkflowRunTx(tx, { ...params, accountId: run.accountId, accountEncryptionMode,
-                cause: WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 });
-            return { intent };
+        const access = await resolveEditableWorkflowRunAccessTx(tx, { actorAccountId: accountId, runId });
+        const accountEncryptionMode = await loadAccountModeTx(tx, access.ownerAccountId, runId);
+        return await cancelWorkflowRunTx(tx, { accountId: access.ownerAccountId, runId, expectedRevision, accountEncryptionMode });
+    }, workflowRunCancellationTransaction);
+}
+
+/** Stop a foreign Run on a Machine the caller owns and return only the intent. */
+export async function cancelWorkflowRunAsMachineOwner({ accountId, runId, expectedRevision, machineId }: CancelWorkflowRunInput & Readonly<{ machineId: string }>) {
+    return await inTx(async (tx) => {
+        if (!await isMachineOwnedByAccountInTx(tx, { actorAccountId: accountId, machineId })) {
+            throw new WorkflowRunServiceError("run_not_found");
         }
-        const access = await resolveEditableWorkflowRunAccessTx(tx, { actorAccountId: params.accountId, runId: params.runId });
-        const accountEncryptionMode = await loadAccountModeTx(tx, access.ownerAccountId, params.runId);
-        return await cancelWorkflowRunTx(tx, { ...params, accountId: access.ownerAccountId, accountEncryptionMode });
-    }, {
-        // Ordered publication locks/replay and mode/control/row predicates fence this mutation.
-        isolationLevel: "ReadCommitted",
-        transactionClass: "workflow-cancel-run",
-    });
+        const run = await tx.automationRun.findFirst({
+            where: { id: runId, ...workflowRunPlacementWhere(machineId), accountId: { not: accountId } },
+            select: { accountId: true },
+        });
+        if (!run) throw new WorkflowRunServiceError("run_not_found");
+        const accountEncryptionMode = await loadAccountModeTx(tx, run.accountId, runId);
+        const { intent } = await cancelWorkflowRunTx(tx, { accountId: run.accountId, runId, expectedRevision, machineId, accountEncryptionMode,
+            cause: WORKFLOW_RUN_STOPPED_BY_MACHINE_OWNER_V1 });
+        return { intent };
+    }, workflowRunCancellationTransaction);
 }
 
 const workflowRunWaitSelect = {

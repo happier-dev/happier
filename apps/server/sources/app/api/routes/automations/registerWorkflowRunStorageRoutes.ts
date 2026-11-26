@@ -35,6 +35,7 @@ import {
     pauseWorkflowRun,
     resumeWorkflowRunBoundary,
     cancelWorkflowRun,
+    cancelWorkflowRunAsMachineOwner,
     waitWorkflowRun,
     recoverWorkflowInvocations,
     resolveAutomationWorkflowAcceptedSnapshot,
@@ -211,7 +212,7 @@ export function registerWorkflowRunStorageRoutes(
                 case "resume": return await resumeWorkflowRunBoundary({ accountId: request.userId, runId: body.runId, expectedRevision: body.expectedRevision });
                 case "cancel": {
                     const input = { accountId: request.userId, runId: body.runId, expectedRevision: body.expectedRevision };
-                    return body.machineId ? await cancelWorkflowRun({ ...input, machineId: body.machineId }) : await cancelWorkflowRun(input);
+                    return body.machineId ? await cancelWorkflowRunAsMachineOwner({ ...input, machineId: body.machineId }) : await cancelWorkflowRun(input);
                 }
                 case "list": {
                     const input = { accountId: request.userId, ...body.request, pageByteLimit: body.pageByteLimit };
