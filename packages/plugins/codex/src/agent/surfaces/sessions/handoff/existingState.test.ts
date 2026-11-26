@@ -136,6 +136,31 @@ describe('Codex existing-state handoff', () => {
     });
   });
 
+  it.each([
+    { plan: 'plus', credentialStore: 'file', available: true },
+    { plan: 'business', credentialStore: 'file', available: false },
+    { plan: 'unrecognized', credentialStore: 'file', available: false },
+    { plan: 'plus', credentialStore: 'auto', available: false },
+  ])('uses read-only configured state with $plan auth and credential store $credentialStore', async ({ plan, credentialStore, available }) => {
+    const f = await fixture();
+    const planClaims = { 'https://api.openai.com/auth': { chatgpt_plan_type: plan } };
+    const idToken = `fixture.${Buffer.from(JSON.stringify(planClaims)).toString('base64url')}.signature`;
+    await writeFile(join(f.codexHome, 'auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: { id_token: idToken } }));
+    await writeFile(join(f.codexHome, 'config.toml'), `sqlite_home = "../native-state"\ncli_auth_credentials_store = "${credentialStore}"\n`);
+    const decoy = join(f.root, 'decoy');
+    const before = await readFile(f.databasePath);
+
+    const result = await resolveExisting({
+      ...f.params,
+      metadata: { ...f.params.metadata, externalSessionSource: { kind: 'codexHome', home: 'user' } },
+      environmentVariables: { CODEX_HOME: f.codexHome, CODEX_SQLITE_HOME: decoy },
+    });
+    expect(result.ok).toBe(available);
+    if (!available) expect(result).toMatchObject({ ok: false, code: 'existing_session_state_unavailable' });
+    expect(await readFile(f.databasePath)).toEqual(before);
+    await expect(access(decoy)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('does not resurrect daemon native homes omitted from a supplied target child environment', async () => {
     const f = await fixture();
     const childHome = join(f.root, 'child-home');

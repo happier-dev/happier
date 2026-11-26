@@ -556,7 +556,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
         try {
           const verified = await verifyCodexNativeAppServerClient({ ...request, exec: params.exec, signal: params.signal,
             transport: { ...transport, realtimeConversationAdvertised } }, client, executable);
-          return bindCodexNativeRuntimeStore(verified, runtimeStore, request.cwd);
+          return bindCodexNativeRuntimeStore(verified, runtimeStore);
         } catch (error) {
           await dispose().catch(() => undefined);
           throw error;
@@ -578,7 +578,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
           realtimeConversationAdvertised,
         },
       });
-      return bindCodexNativeRuntimeStore(client, runtimeStore, request.cwd);
+      return bindCodexNativeRuntimeStore(client, runtimeStore);
     },
     dispose,
   };

@@ -481,13 +481,13 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
         params.onStartupWaiting,
     );
     const verified = await verifyCodexNativeAppServerClient({ ...params, configOverrides: ready.configOverrides }, ready.client, resolvedSystemTool.executable);
-    return bindCodexNativeRuntimeStore(verified, ready.store, params.cwd);
+    return bindCodexNativeRuntimeStore(verified, ready.store);
 }
 
 /** Local resume and fork use the store of the native process receiving the request. */
-export function bindCodexNativeRuntimeStore(client: DisposableCodexAppServerClient, store: CodexRuntimeStore | null, cwd = process.cwd()): DisposableCodexAppServerClient {
+export function bindCodexNativeRuntimeStore(client: DisposableCodexAppServerClient, store: CodexRuntimeStore | null): DisposableCodexAppServerClient {
     if (!store) return client;
-    const resolveStore = (options?: CodexAppServerRequestOptions) => proveCodexNativeRuntimeStore({ store, cwd,
+    const resolveStore = (options?: CodexAppServerRequestOptions) => proveCodexNativeRuntimeStore({ store,
         request: (method, value) => client.request(method, value, options) });
     return {
         ...client,

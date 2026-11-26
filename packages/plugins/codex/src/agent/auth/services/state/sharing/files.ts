@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { canonicalAbsolutePathsEqual, expandHomePath, readConnectedAccountNativeHomeState, resolveConfiguredNativeHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import { parse as parseToml } from 'smol-toml';
 import { CODEX_NATIVE_HOME } from '../../../../nativeHome.js';
+import { isCodexAuthFileKnownUnmanaged } from '../../runtime/auth/accountId.js';
 
 export function resolveCodexConfiguredSqliteHome(params: Readonly<{
   codexSqliteHome: string | null | undefined;
@@ -28,6 +29,7 @@ type CodexRuntimeHomeInput = Readonly<{
 
 type CodexRuntimeHomeEnvironment = Readonly<{ CODEX_HOME: string; CODEX_SQLITE_HOME?: string }>;
 export type CodexRuntimeStore = Readonly<{
+  cwd: string;
   environment: CodexRuntimeHomeEnvironment;
   sqliteHome: string | null;
   sqliteHomeOverride: string | null;
@@ -45,6 +47,15 @@ async function mayExist(path: string): Promise<boolean> {
 async function readUserConfig(codexHome: string): Promise<ReturnType<typeof parseToml>> {
   try { return parseToml(await readFile(join(codexHome, 'config.toml'), 'utf8')); }
   catch (error) { if (missing(error)) return {}; throw error; }
+}
+
+async function mayLoadCloudConfig(codexHome: string): Promise<boolean> {
+  try {
+    const auth = await readFile(join(codexHome, 'auth.json'), 'utf8');
+    return !isCodexAuthFileKnownUnmanaged(JSON.parse(auth));
+  } catch (error) {
+    return !missing(error);
+  }
 }
 
 async function hasUnresolvedProjectConfig(cwd: string, codexHome: string): Promise<boolean> {
@@ -78,11 +89,13 @@ async function resolveNativeSqliteHome(params: CodexRuntimeHomeInput, environmen
     ];
     if ((await Promise.all([
       ...systemConfig,
-      join(codexHome, 'auth.json'), join(codexHome, 'cloud-config-bundle-cache.json'),
+      join(codexHome, 'cloud-config-bundle-cache.json'),
     ].map(mayExist))).some(Boolean)) return null;
     if (userConfig.profile !== undefined || userConfig.project_root_markers !== undefined
       || userConfig.cli_auth_credentials_store === 'keyring'
+      || userConfig.cli_auth_credentials_store === 'auto'
       || params.configOverrides?.some(value => /^\s*(?:profile|cli_auth_credentials_store|project_root_markers)\s*=/u.test(value))
+      || await mayLoadCloudConfig(codexHome)
       || await hasUnresolvedProjectConfig(cwd, codexHome)) return null;
 
     // Codex 0.162.1 resolves config paths against their layer, then falls
@@ -132,6 +145,7 @@ export async function resolveCodexRuntimeStore(params: CodexRuntimeHomeInput): P
   const { environment, pin } = await projectCodexRuntimeHome(params);
   const override = params.configOverrides?.findLast(value => /^\s*sqlite_home\s*=/u.test(value));
   return Object.freeze({
+    cwd: resolve(params.cwd),
     environment,
     sqliteHome: await resolveNativeSqliteHome(params, environment, pin, override),
     sqliteHomeOverride: pin && !override ? `sqlite_home=${JSON.stringify(pin)}` : null,
@@ -162,7 +176,6 @@ function readNativeAbsolutePath(raw: unknown): string | null {
 export async function proveCodexNativeRuntimeStore(params: Readonly<{
   store: CodexRuntimeStore;
   request: (method: string, params?: unknown) => Promise<unknown>;
-  cwd: string;
 }>): Promise<CodexRuntimeStore> {
   if (params.store.sqliteHome) return params.store;
   try {
@@ -170,7 +183,7 @@ export async function proveCodexNativeRuntimeStore(params: Readonly<{
     // exposes requirements separately and omits environment/default values.
     const [required, configured] = await Promise.all([
       params.request('configRequirements/read'),
-      params.request('config/read', { cwd: params.cwd }),
+      params.request('config/read', { cwd: params.store.cwd }),
     ]);
     const requirements = asRecord(required)?.requirements;
     if (requirements !== null && !asRecord(requirements)) return params.store;

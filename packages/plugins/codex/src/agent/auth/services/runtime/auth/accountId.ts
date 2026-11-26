@@ -23,6 +23,18 @@ function decodeJwtPayload(value: unknown): Record<string, unknown> | null {
   }
 }
 
+/** Codex only loads cloud configuration for managed workspace plans. */
+export function isCodexAuthFileKnownUnmanaged(value: unknown): boolean {
+  const auth = readRecord(value);
+  if (!auth) return false;
+  if (auth.auth_mode === 'apikey' || (auth.auth_mode == null && readString(auth.OPENAI_API_KEY))) return true;
+  if (auth.auth_mode != null && auth.auth_mode !== 'chatgpt') return false;
+
+  const claims = decodeJwtPayload(readRecord(auth.tokens)?.id_token);
+  const planType = readRecord(claims?.['https://api.openai.com/auth'])?.chatgpt_plan_type;
+  return classifyCodexUsageAccountScope(planType) === 'personal';
+}
+
 export type CodexAuthStoreProviderAccountIdProof =
   | Readonly<{ status: 'resolved'; accountId: string; accountEmail?: string }>
   | Readonly<{ status: 'missing' }>

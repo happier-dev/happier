@@ -171,9 +171,10 @@ describe('createCodexSharedAppServer', () => {
         return { async waitForExit() { return (await this.wait()).termination; }, wait: () => exited, dispose: async () => { await peer?.close(); } };
       },
     } as unknown as ExecService; // A process can exit while a descendant retains the transport.
-    const server = await createCodexSharedAppServer({ exec, processEnv: {}, platform: 'linux' });
+    const processEnv = { CODEX_HOME: osBoundary.home };
+    const server = await createCodexSharedAppServer({ exec, processEnv, platform: 'linux' });
     if (!server) throw new Error('Expected shared native server');
-    const opening = server.createClient({ cwd: osBoundary.home, processEnv: {}, configOverrides: [], disableUserMcpServers: false });
+    const opening = server.createClient({ cwd: osBoundary.home, processEnv, configOverrides: [], disableUserMcpServers: false });
     const outcome = opening.then(client => ({ client }), error => ({ error }));
     let settled = false;
     void outcome.then(() => { settled = true; });
@@ -378,8 +379,14 @@ describe('createCodexSharedAppServer', () => {
     } finally { await client?.dispose(); await server.dispose(); }
   });
 
-  it.skipIf(process.platform === 'win32')('keeps native initialization diagnostics on both the initial and subsequent shared clients', async () => {
+  it.skipIf(process.platform === 'win32')('keeps native startup diagnostics and SQLite scope across shared clients', async () => {
     const logger = { debug: vi.fn() };
+    const processEnv = { CODEX_HOME: osBoundary.home };
+    const laterDirectory = join(osBoundary.home, 'later');
+    const runtimeRoot = join(osBoundary.home, 'native-sqlite');
+    const otherRoot = join(osBoundary.home, 'other-sqlite');
+    await mkdir(laterDirectory);
+    await writeFile(join(osBoundary.home, 'config.toml'), 'profile = "fixture"\n');
     const result: PluginProcessResult = { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
       stdout: new TextEncoder().encode('codex-cli 0.162.1'), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
     let peer: Awaited<ReturnType<typeof createCodexControlSocketFixture>> | undefined;
@@ -388,8 +395,15 @@ describe('createCodexSharedAppServer', () => {
     // Substitute only the executable boundary; shared startup and both native
     // client initializations use real sockets and the production logger path.
     const spawn = vi.fn(async (request: Parameters<ExecService['spawn']>[0]) => {
-      peer = await createCodexControlSocketFixture(request.args[request.args.indexOf('--listen') + 1]!.slice('unix://'.length), message =>
-        message.method === 'initialize' ? {} : message.id === undefined ? undefined : { pong: true });
+      peer = await createCodexControlSocketFixture(request.args[request.args.indexOf('--listen') + 1]!.slice('unix://'.length), message => {
+        if (message.method === 'initialize') return {};
+        if (message.method === 'configRequirements/read') return { requirements: null };
+        if (message.method === 'config/read') {
+          const cwd = (message.params as { cwd: string }).cwd;
+          return { config: { sqlite_home: cwd === osBoundary.home ? runtimeRoot : otherRoot } };
+        }
+        return message.id === undefined ? undefined : { pong: true };
+      });
       return { async waitForExit() { return (await this.wait()).termination; }, wait: () => exited,
         dispose: async () => { await peer?.close(); finish(result); } };
     });
@@ -397,14 +411,16 @@ describe('createCodexSharedAppServer', () => {
       systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
       clients: { connectJsonRpc: connectFixtureClient }, run: async () => result, spawn,
     } as unknown as ExecService;
-    const server = await createCodexSharedAppServer({ exec, logger, processEnv: {}, platform: 'linux' });
+    const server = await createCodexSharedAppServer({ exec, logger, processEnv, platform: 'linux' });
     if (!server) throw new Error('Expected shared native server');
     const clients: Awaited<ReturnType<typeof server.createClient>>[] = [];
     try {
       for (let index = 0; index < 2; index++) {
-        const client = await server.createClient({ cwd: osBoundary.home, processEnv: {}, configOverrides: [], disableUserMcpServers: false });
+        const cwd = index === 0 ? osBoundary.home : laterDirectory;
+        const client = await server.createClient({ cwd, processEnv, configOverrides: [], disableUserMcpServers: false });
         clients.push(client);
         await expect(client.request('test/ping')).resolves.toEqual({ pong: true });
+        await expect(client.readRuntimeSqliteHome?.()).resolves.toBe(runtimeRoot);
         expect(logger.debug.mock.calls.filter(([message, fields]) => message === 'Codex startup phase' && fields?.phase === 'initialize')).toHaveLength(index + 1);
       }
       expect(spawn).toHaveBeenCalledTimes(1);
