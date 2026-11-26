@@ -64,6 +64,12 @@ vi.mock(
   async () =>
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module,
 );
+// Portal placement and window measurement are the platform boundary; keep the capacity field real.
+vi.mock('@/components/ui/popover', async importOriginal =>
+  (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal, {
+    maxHeight: 320, maxWidth: 280, placement: 'bottom', presentation: 'sheet',
+  }));
+
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 const machineHttp = vi.hoisted(() => ({
   read: null as null | (() => Response),
@@ -424,9 +430,14 @@ describe('Machine › Work from your projects through the Machine policy Actions
     const resolved = reader.resolveCurrentUiCommand(address)!;
     if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
     await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
-    expect(screen.findAll(node => node.props.open === true).length).toBeGreaterThan(0);
+    expect(screen.findAll(node => node.props?.open === true).length).toBeGreaterThan(0);
+    const popover = screen.find(node => node.props?.open === true && typeof node.props.onRequestClose === 'function');
+    await act(async () => { popover.props.onRequestClose(); });
+    await screen.pressByTestIdAsync('work.capacity.row');
+    expect(screen.findAll(node => node.props?.open === true).length).toBeGreaterThan(0);
     await screen.unmount();
     expect(reader.resolveCurrentUiCommand(address)).toBeNull();
+    expect(resolved.retirementSignal.aborted).toBe(true);
     } finally { await screen.unmount(); }
   });
 
@@ -542,7 +553,11 @@ describe('Machine › Work from your projects through the Machine policy Actions
     expect(vi.mocked(Modal.show).mock.lastCall?.[0].props).toMatchObject({ operationId: 'own-1' });
     await screen.unmount();
     expect(reader.resolveCurrentUiCommand(rowCommand.id)).toBeNull();
-    } finally { await screen.unmount(); }
+    } finally {
+      await screen.unmount();
+      const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+      actionOperationStore.reset();
+    }
 
   });
 
