@@ -35,6 +35,39 @@ afterEach(async () => {
 });
 
 describe('SelectionList mounted commands', () => {
+    it('publishes only opted-in presentation choices and retires filtered addresses', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://selection-drafts.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const selected: string[] = [];
+        const rootStep: SelectionListStep = { id: 'root', inputPlaceholder: 'Search', sections: [{ kind: 'static', id: 'choices', options: [
+            { id: 'draft', label: 'Draft target', onSelect: () => selected.push('draft') },
+            { id: 'configure', label: 'Configure sandbox', onSelect: () => selected.push('configure') },
+            { id: 'disabled', label: 'Offline target', disabled: true, },
+            { id: 'acquire', label: 'Acquire Machine', onSelect: () => selected.push('acquire') },
+        ] }] };
+        const screen = await renderMountedCurrentUiContext(<SelectionList rootStep={rootStep} onSelect={() => {}}
+            onRequestClose={() => {}} currentUiContextCommandScope="drafts" currentUiContextPresentationOptionIds={new Set(['draft', 'configure', 'disabled'])} disableTransitions />);
+        const reader = readCurrentUiContextActionReader({ surface: 'agent' })!;
+        const commands = () => reader.readCurrentUiContext()!.commands;
+        expect(commands().map(command => command.title)).toEqual(['Draft target', 'Configure sandbox', 'Search', 'Close']);
+        const draftAddress = commands()[0]!.id;
+        const invoke = async (address: string, input?: PluginUiJsonValueV1) => {
+            const resolved = reader.resolveCurrentUiCommand(address)!;
+            if (resolved.command.kind !== 'hostLocal') throw new Error('Expected local command');
+            await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' }, input }); });
+        };
+        await invoke(draftAddress);
+        await invoke(commands()[1]!.id);
+        expect(selected).toEqual(['draft', 'configure']);
+        await invoke(commands()[2]!.id, { value: 'Configure' });
+        expect(commands().map(command => command.title)).toEqual(['Configure sandbox', 'Search', 'Close']);
+        expect(reader.resolveCurrentUiCommand(draftAddress)).toBeNull();
+        await screen.unmount();
+        expect(reader.resolveCurrentUiCommand(draftAddress)).toBeNull();
+    });
+
     it('shares visible option activation, search and back with UI and retires removed choices', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://selection-command.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });

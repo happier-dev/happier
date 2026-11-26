@@ -297,6 +297,9 @@ export type SelectionListProps = Readonly<{
     themeSurface?: ThemeSelectionSurfaceBinding;
     /** Opt this mounted chooser into the current page's shared UI/agent command path. */
     currentUiContextCommandScope?: string;
+    /** When supplied, publishes individual presentation choices instead of all-options activation.
+     * The domain option owner supplies the eligible ids; filtering and disabled state remain list-owned. */
+    currentUiContextPresentationOptionIds?: ReadonlySet<string>;
     /** The containing overlay opts in; inline lists keep the page's command projection. */
     currentUiContextForegroundOverlay?: boolean;
     /** `none` lays the picker flat on its host; the default paints the base surface. */

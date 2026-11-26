@@ -1016,16 +1016,24 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         || inputMode === 'value';
     const localCommands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(() => {
         if (!commandScope) return [];
-        const options = renderPlan.filter(isFocusableSectionPlan).flatMap(section => section.options.map(option => ({
-            id: option.id, label: option.label, ...(option.subtitle ? { subtitle: option.subtitle } : {}),
-            ...(option.disabled ? { disabled: true } : {}),
-        })));
-        return [
-            { key: 'activate', title: currentStep.title ?? props.listAccessibilityLabel ?? t('common.choose'),
-                description: `${commandScope}.activate ${JSON.stringify(options)}; input: {id}`, invoke: (input, context, invocation) => {
+        const visibleOptions = renderPlan.filter(isFocusableSectionPlan).flatMap(section => section.options);
+        const presentationOptionIds = props.currentUiContextPresentationOptionIds;
+        const activationCommands: readonly CurrentUiContextLocalCommand[] = presentationOptionIds
+            ? visibleOptions.filter(option => !option.disabled && presentationOptionIds.has(option.id)).map(option => ({
+                key: `option:${option.id}`, title: option.label,
+                description: `${commandScope}.option:${option.id}`,
+                invoke: (_input, context, invocation) => handleActivate(option.id, context, invocation),
+            }))
+            : [{ key: 'activate', title: currentStep.title ?? props.listAccessibilityLabel ?? t('common.choose'),
+                description: `${commandScope}.activate ${JSON.stringify(visibleOptions.map(option => ({
+                    id: option.id, label: option.label, ...(option.subtitle ? { subtitle: option.subtitle } : {}),
+                    ...(option.disabled ? { disabled: true } : {}),
+                })))}; input: {id}`, invoke: (input, context, invocation) => {
                     if (!isJsonObject(input) || typeof input.id !== 'string') return false;
                     return handleActivate(input.id, context, invocation);
-                } },
+                } }];
+        return [
+            ...activationCommands,
             ...(showSearchHeader && !currentStep.inputReadOnly ? [{ key: 'search', title: currentStep.inputPlaceholder ?? props.rootStep.inputPlaceholder ?? t('common.search'),
                 description: `${commandScope}.search; input: {value}`, invoke: (input: Parameters<CurrentUiContextLocalCommand['invoke']>[0]) => {
                     if (!isJsonObject(input) || typeof input.value !== 'string') return false;
@@ -1035,7 +1043,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 description: `${commandScope}.back`, invoke: stack.popStep }] : []),
             { key: 'close', title: t('common.close'), description: `${commandScope}.close`, invoke: (_input, context) => { props.onRequestClose(context); } },
         ];
-    }, [commandScope, currentStep, handleActivate, props.listAccessibilityLabel, props.onRequestClose, props.rootStep.title, props.rootStep.inputPlaceholder, renderPlan, setInputValue, showSearchHeader, stack.canPop, stack.popStep]);
+    }, [commandScope, currentStep, handleActivate, props.currentUiContextPresentationOptionIds, props.listAccessibilityLabel, props.onRequestClose, props.rootStep.title, props.rootStep.inputPlaceholder, renderPlan, setInputValue, showSearchHeader, stack.canPop, stack.popStep]);
 
     const stabilizeHeight = props.heightBehavior === 'stabilizedContentHeight';
     const stabilizedHeightReleaseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -90,6 +90,8 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
     bodyFooter?: React.ReactNode;
     /** Exposes the list to an agent's UI commands under this scope, as `MachineSelector` does. */
     currentUiContextCommandScope?: string;
+    /** Opt-in only where the selection callbacks set local drafts. */
+    currentUiContextDraftCommandScope?: string;
     currentUiContextForegroundOverlay?: boolean;
     /**
      * A host's choice that is no particular Machine ("Your usual Machine", "Auto"), listed first and
@@ -194,7 +196,8 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
                 onConfigure={props.onConfigureManagedMachine} presentConfiguration={props.presentManagedMachineConfiguration} /></React.Suspense> : null}
         <SelectionList
             testID={props.testID ?? 'new-session-machine-list'}
-            currentUiContextCommandScope={props.currentUiContextCommandScope}
+            currentUiContextCommandScope={props.currentUiContextDraftCommandScope ?? props.currentUiContextCommandScope}
+            currentUiContextPresentationOptionIds={props.currentUiContextDraftCommandScope ? listModel.presentationOptionIds : undefined}
             currentUiContextForegroundOverlay={props.currentUiContextForegroundOverlay}
             rootStep={rootStep}
             selectedOptionId={selectedOptionId}

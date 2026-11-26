@@ -44,6 +44,8 @@ export function SessionHandoffMachineSelectionContent(props: Props) {
     };
 
     return <NewSessionMachineSelectionContent
+        currentUiContextDraftCommandScope="session.handoff.target"
+        currentUiContextForegroundOverlay
         groups={groups}
         poolGroups={poolGroups}
         selectedMachine={props.selectedMachine}

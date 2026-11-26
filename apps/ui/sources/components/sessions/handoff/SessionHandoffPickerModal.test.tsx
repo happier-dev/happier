@@ -1913,6 +1913,12 @@ describe('SessionHandoffPickerModal', () => {
         const publishedRowRenders = counter.read().rendersFor(PlanOptionRow);
         console.info('Handoff Machine rows with publication:', publishedRowRenders);
         expect(publishedRowRenders).toBeLessThanOrEqual(baselineRowRenders);
+        const targetCommands = reader!.readCurrentUiContext()!.commands;
+        expect(targetCommands.map(command => command.title)).toEqual([
+            'common.cancel', 'newSession.selectMachineTitle', 'Source machine',
+            'Target machine', 'newSession.machinePicker.searchPlaceholder', 'common.close',
+        ]);
+        const targetAddress = targetCommands[3]!.id;
         await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
         const current = reader!;
         expect(current.readCurrentUiContext()!.commands.map(command => command.title)).toEqual([
@@ -1935,6 +1941,13 @@ describe('SessionHandoffPickerModal', () => {
         await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
         await vi.waitFor(() => expect(screen.findByTestId('new-session-machine-list')).not.toBeNull());
         const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');
+        const targetCommand = current.resolveCurrentUiCommand(current.readCurrentUiContext()!.commands.find(command => command.description === 'session.handoff.target.option:machine_target')!.id)!
+        if (targetCommand.command.kind !== 'hostLocal') throw new Error('Expected target draft');
+        await act(async () => { await targetCommand.command.invoke({ signal: targetCommand.retirementSignal, context: { surface: 'agent' } }); });
+        expect(screen.findAllByType(MachineSelector)[0]!.props.selectedMachine.id).toBe('machine_target');
+        expect(current.resolveCurrentUiCommand(targetAddress)).toBeNull();
+        await screen.pressByTestIdAsync('session-handoff-machine-dropdown-trigger');
+        await vi.waitFor(() => expect(screen.findByTestId('new-session-machine-list')).not.toBeNull());
         const machineList = screen.tree.findByType(NewSessionMachineSelectionContent);
         await act(async () => {
             invokeTestInstanceHandler(machineList, 'presentManagedMachineConfiguration', {

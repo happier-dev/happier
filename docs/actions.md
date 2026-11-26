@@ -11802,7 +11802,11 @@ publishes a Details command through that inventory. It opens the same details
 view as pressing the row and retires when the row leaves the presented surface.
 
 In unreleased 0.3 source, the Handoff picker publishes cancel, open Machine
-picker, configuration back and the enabled transfer-data draft control. Handoff
+picker, individual target Machine/sandbox configuration choices, configuration
+back and the enabled transfer-data draft control. The shared Machine selector
+marks presentation options once; Handoff opts in with its local draft callbacks.
+Acquisition, pool resolution and persisted favourites have no draft command, and
+this picker exposes no all-options activation command. Handoff
 progress publishes conflicts, Details and choose-another when those controls
 are shown. These commands use the same presentation handlers as the controls;
 starting, retrying or resuming a handoff remains with its semantic Actions.

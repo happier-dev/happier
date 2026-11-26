@@ -84,6 +84,7 @@ import {
 
 type MachineSelectionListModel = Readonly<{
     rootStep: SelectionListStep;
+    presentationOptionIds: ReadonlySet<string>;
     selectedOptionId: string | null;
     /** Selected root option metadata remains available when its section is folded. */
     selectedOption: SelectionListOption | null;
@@ -653,6 +654,9 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
     // list redraws only the rows that changed (its row retention compares options by identity).
     const rowOptionsRef = React.useRef(new Map<string, RetainedMachineOption>());
     const model = React.useMemo(() => {
+        // Only existing Machine drafts and managed configuration/draft offers are presentation.
+        // Pool resolution, enrollment, acquisition and favourite accessories stay outside this set.
+        const presentationOptionIds = new Set<string>();
         const previousRowOptions = rowOptionsRef.current;
         const nextRowOptions = new Map<string, RetainedMachineOption>();
         rowOptionsRef.current = nextRowOptions;
@@ -796,6 +800,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         const hasPools = poolGroups.some((group) => group.pools.length > 0);
         const temporaryComputers = purpose === 'session' ? params.temporaryComputers ?? [] : [];
         const managedMachines = supportsManagedMachineSelection(purpose) ? params.managedMachines ?? [] : [];
+        for (const offer of managedMachines) presentationOptionIds.add(offer.id);
         const managedPlacementPreset = params.managedPlacementPreset;
         const managedOptionId = supportsManagedMachineSelection(purpose) && params.selectedManagedMachine
             ? managedMachineSelectionOptionId(params.selectedManagedMachine.selection)
@@ -1046,6 +1051,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             : null;
         if (params.groups.length === 0 && !hasPools) {
             return {
+                presentationOptionIds,
                 selectedOptionId: managedOptionId ?? (temporaryComputer?.selected ? temporaryComputerOptionId : null),
                 rootStep: {
                     id: 'machine-root',
@@ -1085,6 +1091,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     const availability = resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability, purpose, resolveMachinePlacementFacts, params.workerSubject, scopeForServer(group.serverId));
                     const presentation = params.resolveMachinePresentation?.(machine);
                     const isFavorite = bucketModel.favoriteMachineIdSet.has(machine.id);
+                    presentationOptionIds.add(machine.id);
                     return retainMachineRowOption(previousRowOptions, nextRowOptions, `${group.serverId}|${bucket.id}|${machine.id}`, [
                         machine, group.serverId, params.serverId, presentation?.title, presentation?.subtitle, machineNames.get(machine.id),
                         availability.selectable, availability.reason, JSON.stringify(availability.copySetupAction ?? null), params.workerPlacement?.workspace,
@@ -1154,6 +1161,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             for (const section of [managedMachineSection, temporaryComputerSection, connectSection]) if (section) sections.push(section);
 
             return {
+                presentationOptionIds,
                 selectedOptionId: managedOptionId ?? (temporaryComputer?.selected
                     ? temporaryComputerOptionId
                     : params.selectedMachine?.id ?? null),
@@ -1197,6 +1205,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 options = group.machines.map((machine) => {
                     const availability = resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability, purpose, resolveMachinePlacementFacts, params.workerSubject, scopeForServer(group.serverId));
                     const presentation = params.resolveMachinePresentation?.(machine);
+                    presentationOptionIds.add(`${group.serverId}::${machine.id}`);
                     return retainMachineRowOption(previousRowOptions, nextRowOptions, `${group.serverId}::${machine.id}`, [
                         machine, group.serverId, presentation?.title, presentation?.subtitle, machineNames.get(machine.id),
                         availability.selectable, availability.reason, JSON.stringify(availability.copySetupAction ?? null), params.workerPlacement?.workspace,
@@ -1291,6 +1300,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 : null);
 
         return {
+            presentationOptionIds,
             selectedOptionId,
             rootStep: {
                 id: 'machine-root',

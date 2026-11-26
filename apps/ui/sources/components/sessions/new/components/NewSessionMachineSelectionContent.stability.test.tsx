@@ -20,6 +20,35 @@ beforeEach(async () => { await home.reset(); });
 afterEach(() => standardCleanup());
 
 describe('New Session open Machine picker publication', () => {
+    it('offers managed configuration as a draft command without pool acquisition or favourite commands', async () => {
+        const serverId = await home.addHome({ name: 'Studio', serverUrl: 'https://picker-draft.test',
+            serverIdentityId: 'srv_picker_draft', accountId: 'owner', currentAccount: true });
+        const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverProfiles');
+        storage.setState({ profileScope: { serverId, accountId: 'owner' }, settingsScope: { serverId, accountId: 'owner' } });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        function DraftPicker() {
+            const [configured, setConfigured] = React.useState(false);
+            return <><span>{String(configured)}</span><NewSessionMachineSelectionContent
+                groups={[]} selectedMachine={null} selectedServerId={null} recentMachines={[]} favoriteMachines={[]}
+                onSelectMachine={() => {}} onSelectScopedMachine={() => {}} onSelectManagedMachine={() => {}}
+                managedMachines={[{ id: 'sandbox-preset', homeId: 'srv_picker_draft', kind: 'preset', title: 'Sandbox preset',
+                    onSelect: () => setConfigured(true) }]}
+                currentUiContextDraftCommandScope="draft-picker" showSearch={false} /></>;
+        }
+        const screen = await renderMountedCurrentUiContext(<DraftPicker />);
+        const reader = readCurrentUiContextActionReader({ surface: 'agent' })!;
+        const commands = reader.readCurrentUiContext()!.commands;
+        expect(commands.map(command => command.title)).toEqual(['Sandbox preset', 'Close']);
+        const resolved = reader.resolveCurrentUiCommand(commands[0]!.id)!;
+        if (resolved.command.kind !== 'hostLocal') throw new Error('Expected draft command');
+        await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+        expect(screen.getTextContent()).toContain('true');
+        await screen.unmount();
+        expect(reader.resolveCurrentUiCommand(commands[0]!.id)).toBeNull();
+    });
     it('settles the real managed-offer projection when its host rerenders with current callbacks', async () => {
         const serverId = await home.addHome({ name: 'Studio', serverUrl: 'https://picker-stability.test',
             serverIdentityId: 'srv_picker_stability', accountId: 'owner', currentAccount: true });
