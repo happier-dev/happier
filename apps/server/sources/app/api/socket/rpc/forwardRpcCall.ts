@@ -225,6 +225,7 @@ async function executeRpcForwardCall(params: Readonly<{
     receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
     /** Exact admitted receiver when placement owns routing independently of a source context. */
     admittedMachineTarget?: Pick<SocketRpcMachineAdmissionContextV1, 'machineId' | 'custodianAccountId' | 'installationId'>;
+    disconnectedMachineDiagnostic?: MachineAvailabilityDiagnosticV1;
     /** Home producer runs under the selected target guard; null leaves existing Machine routing unchanged. */
     createMachineAdmission?: (input: Readonly<{ target: RpcAckResponseEmitter }>) => Promise<SocketRpcMachineAdmissionContextV1 | null>;
     transportResponseEnvelopeVersion?: 1;
@@ -380,19 +381,20 @@ async function executeRpcForwardCall(params: Readonly<{
             };
         }
         if (params.answeringClient) return { ok: false, error: 'Answering client unavailable', errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+        const machineAdmission = params.receivingMachineAdmission ?? params.machineAdmission;
         const presence = params.isTargetUnavailable ? null : await readMachineRpcTargetPresence({
             io: params.io,
             userId: params.targetUserId,
             method: params.sessionDecisionTargetMethod ?? params.method,
             fetchTimeoutMs: resolveRpcClusterFetchTimeoutMs(params.method),
-            machineAdmission: params.receivingMachineAdmission ?? params.machineAdmission,
+            machineAdmission,
         });
         return recordMethodUnavailable({
             method: params.method,
             callStartedAt,
             targetUnavailable: params.isTargetUnavailable ? await params.isTargetUnavailable() : presence === 'disconnected',
-            ...(params.admittedMachineTarget && presence === 'disconnected'
-                ? { machineAvailabilityDiagnostic: MACHINE_OFFLINE_AVAILABILITY_DIAGNOSTIC } : {}),
+            ...((params.admittedMachineTarget || machineAdmission) && presence === 'disconnected'
+                ? { machineAvailabilityDiagnostic: params.disconnectedMachineDiagnostic ?? MACHINE_OFFLINE_AVAILABILITY_DIAGNOSTIC } : {}),
             // A failed census, guard rejection or cancelled wake is not method absence.
             methodNotFound: methodRegistrationAbsent && presence === 'method-absent' && !params.callerLifetime,
         });

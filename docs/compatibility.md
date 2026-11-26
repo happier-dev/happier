@@ -3155,6 +3155,14 @@ the offline diagnostic. A request whose daemon acknowledgment is lost keeps its
 existing unknown outcome. This unreleased 0.3 contract uses the existing wire
 fields, presence timers, and persisted state.
 
+Direct Machine RPC admission and relay replies carry the diagnostic in
+`machineAvailabilityDiagnostic` alongside the existing refusal metadata. The
+socket client exposes it as `RpcError.details`. For an authorized requester,
+`machine_stopped` and `machine_suspended` report the managed provider's last
+observation when the Machine is unreachable. Start and Resume use their
+existing Action admission. Load matching Protocol, Home and client readers for
+the expanded diagnostic vocabulary.
+
 Mounted plugin Actions and their Action watches on the Machine RPC carrier
 also use the registered method to establish reachability after Home admits
 the requester's Machine access. A fresh retry can reach the authenticated

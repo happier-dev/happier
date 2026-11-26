@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import type { Socket } from 'socket.io';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { socketRpcCodec } from '@happier-dev/sync-client';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, MACHINE_PLAIN_DATA_KEY_MARKER,
     buildAccountStoredContentCompatibilitySocketAuthV1, decodeBase64, encodePlainMachineStoredContent } from '@happier-dev/protocol';
@@ -102,6 +105,90 @@ describe('Socket RPC request admission cost', () => {
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             expect(effect).toHaveBeenCalledTimes(16);
         } finally { stopObserving(); db.$transaction = transaction; }
+    });
+
+    it('carries only authorized Machine availability facts through direct admission and forwarding at the existing IO cost', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: owner.id, installationId: randomUUID(), active: false,
+            metadata: encodePlainMachineStoredContent({ host: 'availability', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/availability', happyHomeDir: '/availability/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+        } });
+        const compatibility = evaluateAccountStoredContentSocketCompatibility(
+            buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)).evaluation;
+        const discover = vi.fn(async () => []);
+        const io = createSocketRoomDiscoveryHarness(discover);
+        const method = `${machine.id}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS}`;
+        const caller = (accountId: string) => {
+            const socket = createAuthenticatedFakeSocket({ id: accountId, data: {
+                clientType: 'user-scoped', accountStoredContentCompatibility: compatibility,
+            } });
+            registerSocketRpcHandlers({ userId: accountId, socket: socket as unknown as Socket, io });
+            return socket;
+        };
+        const ownerSocket = caller(owner.id);
+        const guestSocket = caller(guest.id);
+        const call = async (socket: typeof ownerSocket, path: string) => {
+            const callback = vi.fn();
+            const prepare = vi.spyOn(DatabaseSync.prototype, 'prepare');
+            const exec = vi.spyOn(DatabaseSync.prototype, 'exec');
+            let requests = 0;
+            const stopObserving = observeSqliteRequests({ before: () => { requests++; } });
+            discover.mockClear();
+            try {
+                await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: {} }, callback);
+                expect(callback).toHaveBeenCalledTimes(1);
+                const guest = socket === guestSocket;
+                // Measured on the same fixture before adding the diagnostic. Count
+                // physical SQLite statements, Prisma requests and room lookups.
+                expect([prepare.mock.calls.length + exec.mock.calls.length, requests, discover.mock.calls.length], path)
+                    .toEqual([guest ? 16 : 3, guest ? 2 : 1, path.endsWith('/forward') && !path.startsWith('unshared/')
+                        && !path.startsWith('withdrawn/') ? 2 : 0]);
+                return callback.mock.calls[0][0] as unknown;
+            } finally {
+                stopObserving();
+                prepare.mockRestore();
+                exec.mockRestore();
+            }
+        };
+        const forbidden = {
+            ok: false, error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            effectAttempted: false,
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'access_denied', httpStatus: 403 },
+        };
+        const compare = async (response: unknown, reason: string) => {
+            const diagnostic = { reason, requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+            expect.soft(response).toMatchObject({ ok: false, machineAvailabilityDiagnostic: diagnostic });
+            await expect.soft(socketRpcCodec.decodeResult({ mode: 'plain' }, response, 'availability')).rejects
+                .toMatchObject({ details: diagnostic });
+        };
+        await compare(await call(ownerSocket, 'unmanaged/direct'), 'machine_offline');
+        const managed = await db.managedMachine.create({ data: {
+            homeId: 'home', custodianAccountId: owner.id, enrolledMachineId: machine.id,
+            admittedActionRequestId: randomUUID(), admittedInput: {}, launch: {}, retention: { kind: 'until-delete' },
+            wakeOnAcceptedMessage: false,
+        } });
+        for (const power of ['running', 'stopped', 'suspended'] as const) {
+            await db.managedMachine.update({ where: { id: managed.id }, data: {
+                observation: { observedAt: 1, availability: 'present', power },
+            } });
+            for (const active of [false, true]) {
+                await db.machine.update({ where: { id: machine.id }, data: { active } });
+                const path = active ? 'forward' : 'direct';
+                await compare(await call(ownerSocket, `${power}/${path}`), power === 'running' ? 'machine_offline' : `machine_${power}`);
+                if (power === 'stopped') {
+                    expect(await call(guestSocket, `unshared/${path}`)).toStrictEqual(forbidden);
+                    const grant = await db.machineGrant.create({ data: {
+                        principalKind: 'account', machineId: machine.id, accountId: guest.id, accessLevel: 'view', createdByAccountId: owner.id,
+                    } });
+                    await compare(await call(guestSocket, `use/${path}`), 'machine_stopped');
+                    await db.machineGrant.delete({ where: { id: grant.id } });
+                    expect(await call(guestSocket, `withdrawn/${path}`)).toStrictEqual(forbidden);
+                }
+            }
+        }
     });
 
     // OWNER-RULINGS 2026-11-16 "Remove overbuilt re-reads": target selection is a local match; the receiver's

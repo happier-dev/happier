@@ -38,7 +38,7 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from './machineAccessEffects';
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
 import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineAudienceAccountIdsInTx, readMachineAudienceAccountIdsForMachinesInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
-import { classifyMachineAvailabilityState, readMachineOnlineAvailabilityDiagnostic } from './machineStateGuards';
+import { classifyMachineAvailabilityState, readManagedMachineDisconnectedDiagnostic, readMachineOnlineAvailabilityDiagnostic } from './machineStateGuards';
 import { MACHINE_PERMISSION_FACTS_SELECT, machineGrantRelationsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, readMachineRoleGraphForMachinesInTx, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx, readManagedGuestEdgesInTx, closeOverManagedGuests } from './machineRole';
 import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -58,7 +58,7 @@ const refusal = (code: MachineAccessRefusalCode): MachineAccessRefusalV1 => ({ k
 
 const MACHINE_RESOURCE_FACTS_SELECT = {
         id: true, kind: true, accountId: true, metadata: true, metadataVersion: true,
-        managedResource: { select: { custodianAccountId: true, controllerMachineId: true } },
+        managedResource: { select: { custodianAccountId: true, controllerMachineId: true, observation: true } },
         daemonState: true, daemonStateVersion: true, dataEncryptionKey: true,
         installationId: true, active: true, revokedAt: true, replacedByMachineId: true,
         operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true,
@@ -411,6 +411,7 @@ export async function readMachineDataKeyForCallerInTx(tx: Tx, input: MachineActo
 export interface MachineAdmissionInput extends MachineActor, Partial<MachineOperationRequesterContext> {
     requiredRole?: MachineAccessRoleV1;
     requireOnline?: boolean;
+    retainDisconnectedDiagnostic?: boolean;
     rpcMethod?: string;
     /** Reviewed composite effects retain role custody while checking their actual operation. */
     operationRpcMethod?: string;
@@ -695,7 +696,9 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
     // Grants decide admission; liveness only follows it. A caller refused while the Machine
     // runs keeps that refusal while it is stopped, so "unavailable" never stands in for "refused".
     const onlineDiagnostic = readMachineOnlineAvailabilityDiagnostic(row, input.requireOnline);
-    if (onlineDiagnostic) return { kind: 'denied', code: 'machine_unavailable', diagnostic: onlineDiagnostic };
+    const disconnectedDiagnostic = onlineDiagnostic || input.retainDisconnectedDiagnostic
+        ? readManagedMachineDisconnectedDiagnostic(row.managedResource?.observation) : undefined;
+    if (onlineDiagnostic) return { kind: 'denied', code: 'machine_unavailable', diagnostic: disconnectedDiagnostic ?? onlineDiagnostic };
     if (!isMachineOperationSupportedForRequester({ actorAccountId: input.actorAccountId, machine: row,
         rpcMethod: input.operationRpcMethod ?? method, actionId: operationActionId,
         callerAuthority: input.callerAuthority, sessionActionOrigin: input.sessionActionOrigin,
@@ -706,7 +709,8 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
     if (access.accessState !== 'ready') return { kind: 'denied', code: 'recipient_key_pending' };
     return { kind: 'admitted', actorAccountId: input.actorAccountId, custodianAccountId: row.accountId,
         machineId: row.id, installationId: row.installationId, role: access.role, encryptionMode: access.encryptionMode,
-        ...(input.purpose === 'workflow' ? { availability: 'available' as const } : {}) };
+        ...(input.purpose === 'workflow' ? { availability: 'available' as const } : {}),
+        ...(input.retainDisconnectedDiagnostic && disconnectedDiagnostic ? { disconnectedDiagnostic } : {}) };
 }
 export async function resolveMachineAdmission(input: MachineAdmissionInput): Promise<MachineAdmission> { return inTx(tx => resolveMachineAdmissionInTx(tx, input)); }
 /**

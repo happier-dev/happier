@@ -367,6 +367,7 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
         ? await readAdmittedExternalActionHandoffMachineInTx(db, root)
         : await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: root.accountId,
             machineId: root.machineId, actionId: root.actionId, executionBinding: root, envelope: body.envelope,
+            retainDisconnectedDiagnostic: true,
             authentication: { authenticationAuthority: current.authority, authenticationEvidence: current.authenticationEvidence } });
     if (!admission || admission.kind !== 'admitted' || admission.installationId !== root.installationId
         || admission.custodianAccountId !== root.custodianAccountId) return refuseRootRelay('machine_admission_after_principal');

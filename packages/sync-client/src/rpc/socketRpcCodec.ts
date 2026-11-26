@@ -13,8 +13,11 @@ export type SocketRpcContent =
 export type SocketRpcRequestBinding = Readonly<{ method: string; callId: string }>;
 export type DecodedSocketRpcRequest = Readonly<{ params: unknown; callId: string | null }>;
 
-function acknowledgementError(error: string, errorCode?: string, failureCause?: unknown, details?: unknown, effectAttempted?: unknown, answeringClients?: unknown) {
-  const failure = createRpcCallError({ error, errorCode, failureCause, effectAttempted,
+function acknowledgementError(
+  error: string, errorCode?: string, failureCause?: unknown, details?: unknown, effectAttempted?: unknown,
+  answeringClients?: unknown, machineAvailabilityDiagnostic?: unknown,
+) {
+  const failure = createRpcCallError({ error, errorCode, failureCause, effectAttempted, machineAvailabilityDiagnostic,
     details: errorCode === RPC_ERROR_CODES.CLIENT_AMBIGUOUS ? { clients: answeringClients } : details });
   // Reserved refusal codes in an actual error acknowledgement prove the call
   // did not reach handler execution. Local response-decoding errors do not.
@@ -68,7 +71,7 @@ function interpretDecodedResult(value: unknown): unknown {
 }
 async function decodeResult(content: SocketRpcContent, acknowledgement: unknown, callId: string): Promise<unknown> {
   if (!acknowledgement || typeof acknowledgement !== 'object') throw createRpcCallError({ error: 'Invalid RPC acknowledgement' });
-  const ack = acknowledgement as { ok?: unknown; result?: unknown; error?: unknown; errorCode?: unknown; failureCause?: unknown; details?: unknown; effectAttempted?: unknown; answeringClients?: unknown };
+  const ack = acknowledgement as { ok?: unknown; result?: unknown; error?: unknown; errorCode?: unknown; failureCause?: unknown; details?: unknown; effectAttempted?: unknown; answeringClients?: unknown; machineAvailabilityDiagnostic?: unknown };
   if (ack.ok === true) {
     if (content.mode === 'plain') return interpretDecodedResult(ack.result);
     if (isRecord(ack.result) && typeof ack.result.error === 'string' && typeof ack.result.errorCode === 'string') {
@@ -85,6 +88,7 @@ async function decodeResult(content: SocketRpcContent, acknowledgement: unknown,
     ack.details,
     ack.effectAttempted,
     ack.answeringClients,
+    ack.machineAvailabilityDiagnostic,
   );
 }
 /** Responders encode their raw result; the relay owns the outer acknowledgement. */

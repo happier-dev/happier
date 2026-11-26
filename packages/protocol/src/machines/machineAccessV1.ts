@@ -121,6 +121,8 @@ export type MachineKeyPreparationResultV1 = z.infer<typeof MachineKeyPreparation
 export const MachineAvailabilityDiagnosticV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ reason: z.literal('machine_setup_requires_manage'), requiredFact: z.literal('machine_manage_role'), remedy: z.literal('request_machine_manage_access') }),
   z.strictObject({ reason: z.literal('machine_offline'), requiredFact: z.literal('machine_online'), remedy: z.literal('reconnect_machine') }),
+  z.strictObject({ reason: z.literal('machine_stopped'), requiredFact: z.literal('machine_online'), remedy: z.literal('reconnect_machine') }),
+  z.strictObject({ reason: z.literal('machine_suspended'), requiredFact: z.literal('machine_online'), remedy: z.literal('reconnect_machine') }),
   z.strictObject({ reason: z.literal('machine_installation_missing'), requiredFact: z.literal('machine_installation'), remedy: z.literal('register_machine') }),
   z.strictObject({ reason: z.literal('machine_revoked'), requiredFact: z.literal('machine_registration'), remedy: z.literal('register_machine') }),
   z.strictObject({ reason: z.literal('machine_replaced'), requiredFact: z.literal('current_machine'), remedy: z.literal('select_current_machine') }),
@@ -129,7 +131,9 @@ export type MachineAvailabilityDiagnosticV1 = z.infer<typeof MachineAvailability
 
 /** Internal result only; no public parser can mint an admission. */
 export type MachineAdmission =
-  | Readonly<{ kind: 'admitted'; actorAccountId: string; custodianAccountId: string; machineId: string; installationId: string; role: MachineAccessRoleV1; encryptionMode: 'plain' | 'e2ee' }>
+  | Readonly<{ kind: 'admitted'; actorAccountId: string; custodianAccountId: string; machineId: string; installationId: string; role: MachineAccessRoleV1; encryptionMode: 'plain' | 'e2ee';
+      /** Request-local observation for relay refusal. Do not send in the installation admission context. */
+      disconnectedDiagnostic?: MachineAvailabilityDiagnosticV1 }>
   | Readonly<{ kind: 'denied'; code: MachineAccessRefusalCode; diagnostic?: MachineAvailabilityDiagnosticV1;
       /** Internal admission evidence; public transports project it into their existing refusal envelope. */
       requiredRole?: 'manage' }>;

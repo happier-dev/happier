@@ -1992,6 +1992,14 @@ export type OperationOutputActionResultById = {
                     requiredFact: 'machine_manage_role';
                     remedy: 'request_machine_manage_access';
                 } | {
+                    reason: 'machine_stopped';
+                    requiredFact: 'machine_online';
+                    remedy: 'reconnect_machine';
+                } | {
+                    reason: 'machine_suspended';
+                    requiredFact: 'machine_online';
+                    remedy: 'reconnect_machine';
+                } | {
                     remedy: string;
                     status?: 'outcome_unknown' | 'recoveryRequired' | 'refused' | 'rolledBack' | undefined;
                     failure?: undefined | {
@@ -5005,6 +5013,14 @@ export type OperationOutputActionResultById = {
                     reason: 'machine_setup_requires_manage';
                     requiredFact: 'machine_manage_role';
                     remedy: 'request_machine_manage_access';
+                } | {
+                    reason: 'machine_stopped';
+                    requiredFact: 'machine_online';
+                    remedy: 'reconnect_machine';
+                } | {
+                    reason: 'machine_suspended';
+                    requiredFact: 'machine_online';
+                    remedy: 'reconnect_machine';
                 } | {
                     remedy: string;
                     status?: 'outcome_unknown' | 'recoveryRequired' | 'refused' | 'rolledBack' | undefined;

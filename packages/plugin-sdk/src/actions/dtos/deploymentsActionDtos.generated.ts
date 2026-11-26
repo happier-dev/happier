@@ -6333,6 +6333,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -6574,6 +6582,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -6846,6 +6862,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -7130,6 +7154,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -7365,6 +7397,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -7448,6 +7488,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -7784,6 +7832,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -10205,6 +10261,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -10288,6 +10352,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -10487,6 +10559,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -10666,6 +10746,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -10749,6 +10837,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -11980,6 +12076,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -12109,6 +12213,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -12327,6 +12439,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -12428,6 +12548,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -12762,6 +12890,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -12975,6 +13111,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -13070,6 +13214,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -13185,6 +13337,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -13298,6 +13458,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -14493,6 +14661,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -14606,6 +14782,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -14727,6 +14911,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -14824,6 +15016,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -15504,6 +15704,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -15746,6 +15954,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -15829,6 +16045,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -16134,6 +16358,14 @@ export type DeploymentsActionResultById = {
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
         } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
             remedy: 'share_machine_with_source_owner';
@@ -16258,6 +16490,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';
@@ -16721,6 +16961,14 @@ export type DeploymentsActionResultById = {
             reason: 'machine_setup_requires_manage';
             requiredFact: 'machine_manage_role';
             remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'machine_stopped';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_suspended';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
         } | {
             reason: 'source_machine_access_missing';
             requiredFact: 'source_machine_use';

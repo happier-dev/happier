@@ -35,7 +35,7 @@ import { SessionFollowSourceKeyPrepareAuthorizationV1Schema } from '@happier-dev
 import { resolveEphemeralRunnerMachineRpcAuthority, type EphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { isUiBrowserAutomationDispatchMethod } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 import { isCurrentUiContextClientRpcMethod, isSessionUiActionClientRpcMethod, isVoiceRunActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
-import { type MachineAccessRefusalCode, type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { type MachineAccessRefusalCode, type MachineAvailabilityDiagnosticV1, type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
     ManagedActivityReadRequestV1Schema, ManagedAdmissionDrainConfirmRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
@@ -731,8 +731,12 @@ function writeSocketRegisteredRpcMethods(socket: Socket, methods: ReadonlySet<st
 
 type RpcExecutionRefusalReason = ExternalActionAuthorizationRefusalPhase | 'deployment_archive_sender' | 'execution_sender';
 
-function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode, phase?: string, nativeErrorReason?: RpcExecutionRefusalReason): Readonly<{
+function buildForbiddenRpcResponse(
+    reason?: MachineAccessRefusalCode, phase?: string, nativeErrorReason?: RpcExecutionRefusalReason,
+    machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1,
+): Readonly<{
     ok: false; error: string; errorCode: string; failureCause?: ActionFailureCauseV1; effectAttempted?: false;
+    machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1;
 }> {
     return {
         ok: false,
@@ -741,6 +745,7 @@ function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode, phase?: st
         ...(reason || phase ? { failureCause: { phase: phase ?? 'rpc.admission.machine', errorClass: 'Error' as const,
             errorCode: reason ?? RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403,
             ...(nativeErrorReason ? { nativeErrorReason } : {}) } } : {}),
+        ...(machineAvailabilityDiagnostic ? { machineAvailabilityDiagnostic } : {}),
         // A typed admission refusal is never forwarded, so the receiver did nothing.
         ...(reason || phase ? { effectAttempted: false as const } : {}),
     };
@@ -1132,6 +1137,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
         let callerRequestId: string | undefined;
         let cancellation: ActiveSocketRpcCancellation | undefined;
         let machineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
+        let disconnectedMachineDiagnostic: MachineAvailabilityDiagnosticV1 | undefined;
         let receivingMachineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
         let sessionBrowserAuthorization: SocketRpcSessionBrowserAuthorizationContext | undefined;
         let forwardStartedAt: number | undefined;
@@ -2231,14 +2237,18 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         machineId: machinePrefix,
                         operationRpcMethod: rpcMethod, ...requester,
                         ...(requiredRole ? { requiredRole } : actionPolicy ? { actionId: actionPolicy } : { rpcMethod }),
-                        requireOnline: finiteWake?.kind === 'ready' ? false : requireOnline });
+                        requireOnline: finiteWake?.kind === 'ready' ? false : requireOnline,
+                        retainDisconnectedDiagnostic: true });
                     if (!admitted || admitted.kind !== 'admitted') {
                         logDeploymentChildRefusal('machine_admission');
-                        callback?.(buildForbiddenRpcResponse(admitted?.kind === 'denied' ? admitted.code : undefined));
+                        callback?.(admitted?.kind === 'denied'
+                            ? buildForbiddenRpcResponse(admitted.code, undefined, undefined, admitted.diagnostic)
+                            : buildForbiddenRpcResponse());
                         return;
                     }
-                    const { kind: _kind, ...context } = admitted;
+                    const { kind: _kind, disconnectedDiagnostic, ...context } = admitted;
                     machineAdmission = context;
+                    disconnectedMachineDiagnostic = disconnectedDiagnostic;
                     machineAdmissionGuard = createCurrentMachineAdmissionTargetGuard(context,
                         reverseClientContinuation ? params.socket : undefined);
                 }
@@ -2402,7 +2412,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     ? { callerLifetime: { signal: cancellation.controller.signal, isCurrent: finiteWake.isCurrent } } : {}),
                 authorization,
                 ...(machineAdmission ? { machineAdmission } : {}),
-                ...(receivingMachineAdmission ? { receivingMachineAdmission } : {}),
+                ...(disconnectedMachineDiagnostic ? { disconnectedMachineDiagnostic } : {}),
+                ...(workspaceSyncSourceWriterTargetRouting ? { receivingMachineAdmission } : {}),
                 ...(protectedRawSession ? { createMachineAdmission: protectedRawSession.createMachineAdmission } : {}),
                 ...(transferRouting ? { transferRouting } : {}),
                 ...(workspaceSyncSourceRouting ? { workspaceSyncSourceRouting } : {}),

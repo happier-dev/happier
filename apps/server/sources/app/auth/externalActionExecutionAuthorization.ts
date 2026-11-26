@@ -418,6 +418,7 @@ type ExternalActionExecutionMachineAdmissionInput = ExternalActionManagedAdmissi
         machineId: string;
         actionId: string;
         requireOnline?: boolean;
+        retainDisconnectedDiagnostic?: boolean;
         workflowAdmission?: WorkflowExternalActionAdmission;
         managedCreationAdmission?: ManagedCreationChildAdmission;
         capturedMachineAdmission?: SocketRpcMachineAdmissionContextV1;
@@ -615,6 +616,7 @@ async function resolveExternalActionExecutionMachineAccessInTx(
             ?? (input.executionBinding ? readExternalActionBindingAuthority(input.executionBinding) : undefined),
         sessionActionOrigin: input.sessionActionOrigin ?? input.executionBinding?.sessionActionOrigin,
         executionBinding: input.executionBinding, sessionSpawnAdmission,
+        retainDisconnectedDiagnostic: input.retainDisconnectedDiagnostic,
         // These exact inventory reads need the live Agent. Refuse at mint before
         // the requester seals credentials for an installation that cannot answer.
         requireOnline: input.requireOnline ?? (input.carrier === 'select' && isLiveAgentInventoryActionIdV1(input.actionId)),

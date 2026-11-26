@@ -9,6 +9,13 @@ export const MACHINE_OFFLINE_AVAILABILITY_DIAGNOSTIC = {
     reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine',
 } as const satisfies MachineAvailabilityDiagnosticV1;
 
+/** The stored observation is written by the managed Machine provider owner. */
+export function readManagedMachineDisconnectedDiagnostic(observation: unknown): MachineAvailabilityDiagnosticV1 | undefined {
+    const power = observation && typeof observation === 'object' && 'power' in observation ? observation.power : undefined;
+    if (power !== 'stopped' && power !== 'suspended') return undefined;
+    return { ...MACHINE_OFFLINE_AVAILABILITY_DIAGNOSTIC, reason: power === 'stopped' ? 'machine_stopped' : 'machine_suspended' };
+}
+
 /** For admissions that require the published online observation. */
 export function readMachineOnlineAvailabilityDiagnostic(machine: Readonly<{ active: boolean }>, requireOnline?: boolean): MachineAvailabilityDiagnosticV1 | undefined {
     return requireOnline === true && !machine.active

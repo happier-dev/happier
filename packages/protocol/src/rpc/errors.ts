@@ -97,11 +97,14 @@ export function isRpcError(error: unknown): error is RpcError {
   return carrier.name === 'RpcError' && typeof carrier.rpcErrorCode === 'string' && carrier.rpcErrorCode.trim().length > 0;
 }
 
-export function createRpcCallError(opts: { error: string; errorCode?: string | null | undefined; failureCause?: unknown; effectAttempted?: unknown; details?: unknown }): Error {
+export function createRpcCallError(opts: {
+  error: string; errorCode?: string | null | undefined; failureCause?: unknown; effectAttempted?: unknown;
+  details?: unknown; machineAvailabilityDiagnostic?: unknown;
+}): Error {
   const failureCause = ActionFailureCauseV1Schema.safeParse(opts.failureCause);
   // Home owns availability; retain only its closed diagnostic, never infer one from the code.
-  const availability = opts.errorCode === 'target_unavailable' && opts.details !== undefined
-    ? MachineAvailabilityDiagnosticV1Schema.safeParse(opts.details) : undefined;
+  const diagnostic = opts.machineAvailabilityDiagnostic ?? (opts.errorCode === 'target_unavailable' ? opts.details : undefined);
+  const availability = diagnostic === undefined ? undefined : MachineAvailabilityDiagnosticV1Schema.safeParse(diagnostic);
   const finiteCommand = readFiniteCommandFailureDetailsV1(opts.errorCode, opts.details);
   const clients = (opts.errorCode === 'client_ambiguous' || opts.errorCode === RPC_ERROR_CODES.CLIENT_AMBIGUOUS)
     && opts.details && typeof opts.details === 'object'
@@ -110,7 +113,7 @@ export function createRpcCallError(opts: { error: string; errorCode?: string | n
     ? new RpcError(opts.error, opts.errorCode, failureCause.success ? failureCause.data : undefined)
     : Object.assign(new Error(opts.error), failureCause.success ? { failureCause: failureCause.data } : {});
   if (typeof opts.effectAttempted === 'boolean') Object.assign(failure, { effectAttempted: opts.effectAttempted });
-  if (availability?.success) return Object.assign(failure, { ok: false, errorCode: 'target_unavailable', error: opts.error, details: availability.data });
+  if (availability?.success) return Object.assign(failure, { ok: false, errorCode: opts.errorCode, error: opts.error, details: availability.data });
   if (clients?.success) return Object.assign(failure, { details: { clients: clients.data } });
   return finiteCommand ? Object.assign(failure, { details: finiteCommand }) : failure;
 }

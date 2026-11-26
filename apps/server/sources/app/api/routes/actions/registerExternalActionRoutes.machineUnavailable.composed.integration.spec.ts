@@ -31,7 +31,7 @@ beforeAll(async () => {
 afterAll(async () => { if (harness) await harness.close(); });
 
 async function withActionRelayFixture(
-    options: Readonly<{ active?: boolean; withoutInstallation?: boolean }>,
+    options: Parameters<typeof createActionRelayFixture>[0],
     run: (fixture: Awaited<ReturnType<typeof createActionRelayFixture>>) => Promise<void>,
 ) {
     const fixture = await createActionRelayFixture(options);
@@ -39,7 +39,9 @@ async function withActionRelayFixture(
     finally { await fixture.close(); }
 }
 
-async function createActionRelayFixture(options: Readonly<{ active?: boolean; withoutInstallation?: boolean }>) {
+async function createActionRelayFixture(options: Readonly<{
+    active?: boolean; withoutInstallation?: boolean; power?: 'stopped' | 'suspended';
+}>) {
     const account = await db.account.create({ data: { encryptionMode: 'plain' } });
     const installationId = crypto.randomUUID();
     const keys = tweetnacl.sign.keyPair();
@@ -50,6 +52,11 @@ async function createActionRelayFixture(options: Readonly<{ active?: boolean; wi
         active: options.active ?? false,
         operationProtocolCapabilitiesRevision: 1,
         operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+    if (options.power) await db.managedMachine.create({ data: {
+        homeId, custodianAccountId: account.id, enrolledMachineId: machine.id,
+        admittedActionRequestId: crypto.randomUUID(), admittedInput: {}, launch: {}, retention: { kind: 'until-delete' },
+        observation: { observedAt: 1, availability: 'present', power: options.power }, wakeOnAcceptedMessage: false,
+    } });
     const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
     const app: AppFastify = createAuthenticatedTestApp({ authentication: 'real' });
     const sockets = startTeamCredentialActionSocketPresence(app);
@@ -96,9 +103,13 @@ it.each<{
     active?: boolean;
     withoutInstallation?: boolean;
     mint?: boolean;
+    power?: 'stopped' | 'suspended';
     inventoryActionId?: 'agents.models.list' | 'agents.config_options.list';
 }>([
     { entry: 'retained offline', diagnostic: offline },
+    ...(['stopped', 'suspended'] as const).map(power => ({
+        entry: `managed observation ${power}`, power, diagnostic: { ...offline, reason: `machine_${power}` },
+    })),
     { entry: 'stale online without a route', active: true, diagnostic: offline },
     { entry: 'retained without installation', withoutInstallation: true, diagnostic: missingInstallation },
     { entry: 'authorization mint without installation', mint: true, withoutInstallation: true, diagnostic: missingInstallation },

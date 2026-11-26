@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ClientActionRpcFailureCodeV1Schema, ActionFailureCauseV1Schema, projectActionFailureCauseV1, readActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc/errors';
-import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import type { MachineAdmission, MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, parseExternalActionDaemonDispatchResult, type ExternalActionActionIdV1, type ExternalActionCredentialScopeDiagnosticV1, type ExternalActionDaemonDispatchRequest, type ParsedExternalActionDaemonDispatchResult, type ExternalActionDaemonPlacementV1, type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1, type ExternalActionRequestEnvelope, type ExternalActionServerPrincipalV1, prepareExternalActionResponseEnvelopeV1, isExternalActionRequestVersionAllowedForAccountModeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { evaluateApiTokenGrantV1, type ApiTokenGrantDenialReasonV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -99,7 +99,8 @@ export type ExternalActionDaemonDispatchResult =
         machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1 }>;
 
 type ExternalActionDispatchMachineAdmission = SocketRpcMachineAdmissionContextV1
-    & import('@/app/auth/externalActionManagedAdmission').ManagedActionMachineAdmissionFacts;
+    & import('@/app/auth/externalActionManagedAdmission').ManagedActionMachineAdmissionFacts
+    & Pick<Extract<MachineAdmission, { kind: 'admitted' }>, 'disconnectedDiagnostic'>;
 
 export type ExternalActionDaemonDispatcher = (
     request: Readonly<{
@@ -431,6 +432,7 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
                     machineId: params.machineId,
                     actionId: params.actionId,
                     carrier: 'home_relay',
+                    retainDisconnectedDiagnostic: true,
                     callerAuthority: params.callerAuthority,
                     sessionActionOrigin: params.sessionActionOrigin,
                     executionBinding: params.executionBinding,
@@ -442,7 +444,7 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
                 })
                 : await resolveMachineAdmission({ actorAccountId: params.accountId,
                     machineId: params.machineId, callerAuthority: params.callerAuthority,
-                    sessionActionOrigin: params.sessionActionOrigin, requireOnline: false });
+                    sessionActionOrigin: params.sessionActionOrigin, requireOnline: false, retainDisconnectedDiagnostic: true });
         if (!admission || admission.kind !== 'admitted') {
             if (admission?.diagnostic) return { kind: 'unavailable', diagnostic: admission.diagnostic };
             if (admission?.code === 'machine_unavailable') return 'unavailable';
@@ -965,7 +967,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let machineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
         if (capturedMachineAdmission) {
             const { managedCreationRecovery: _recovery, managedAcquireDelegation: _delegation,
-                sessionPresetAcquisition: _sessionPreset, ...publicAdmission } = capturedMachineAdmission;
+                sessionPresetAcquisition: _sessionPreset, disconnectedDiagnostic: _diagnostic, ...publicAdmission } = capturedMachineAdmission;
             machineAdmission = publicAdmission;
         }
         const placement: ExternalActionDaemonPlacementV1 = {
@@ -1028,6 +1030,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             ...requesterContext,
             ...(machineAdmission ? { machineAdmission } : {}),
             admittedMachineTarget: capturedMachineAdmission ?? currentAuthorization.binding,
+            ...(capturedMachineAdmission?.disconnectedDiagnostic
+                ? { disconnectedMachineDiagnostic: capturedMachineAdmission.disconnectedDiagnostic } : {}),
         } as const;
         let forwarded: DispatchPhaseResult<RpcForwardResult>;
         let submittedUnknown = false;
