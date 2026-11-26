@@ -205,6 +205,11 @@ export function readProjectServiceStartApprovalDisplayV1(header: ApprovalArtifac
   return serviceName && machineId && requestId && accountId && serverId ? { serviceName, machineId, requestId, accountId, serverId } : null;
 }
 
+/** Bind the requirement in the existing header/body correspondence. Older readers cannot match this shape. */
+function personRequiredApprovalArtifactSubjectKey(subjectKey: string | null) {
+  return { deciderRequirement: 'person', subjectKey } as const;
+}
+
 export function buildApprovalRequestArtifactHeaderV1(
   request: ApprovalRequest,
   options: Readonly<{ legacyServerId?: string | null }> = {},
@@ -224,7 +229,9 @@ export function buildApprovalRequestArtifactHeaderV1(
     approvalStatus: request.status,
     actionId: request.actionId,
     ...(targetKind ? { approvalTargetKind: targetKind } : {}),
-    ...(approvalSubjectKey ? { approvalSubjectKey } : {}),
+    ...(request.v === 2 && request.deciderRequirement === 'person'
+      ? { approvalSubjectKey: personRequiredApprovalArtifactSubjectKey(approvalSubjectKey) }
+      : approvalSubjectKey ? { approvalSubjectKey } : {}),
     ...(subjectIndexKey ? { subjectIndexKey } : {}),
     ...(projectServiceStart ? { projectServiceStart } : {}),
     ...(sessionId ? { sessions: [sessionId], sessionId } : {}),
@@ -254,8 +261,10 @@ export function approvalRequestArtifactHeaderMatches(
     && header.actionId === request.actionId
     && (header.approvalTargetKind === undefined
       || header.approvalTargetKind === approvalObservationTargetKind(origin?.target, sessionId, origin?.machineId))
-    && (request.actionId === 'localServices.launcher.start' && header.approvalSubjectKey === undefined
-      || optionalExactStringMatches(header.approvalSubjectKey, approvalSubjectKey))
+    && (request.v === 2 && request.deciderRequirement === 'person'
+      ? sameStrictJsonValue(header.approvalSubjectKey, personRequiredApprovalArtifactSubjectKey(approvalSubjectKey))
+      : request.actionId === 'localServices.launcher.start' && header.approvalSubjectKey === undefined
+        || optionalExactStringMatches(header.approvalSubjectKey, approvalSubjectKey))
     && sessionBindingMatches(header, sessionId || null)
     && (options.ignoreListFacts === true || header.approvalListFacts === undefined || listFactsEqual(header.approvalListFacts, deriveApprovalArtifactListFactsV1(request)))
     && (header.workflowRunId === undefined
@@ -617,7 +626,9 @@ export async function listApprovalArtifactsV1(params: Readonly<{
         return (!params.actionId || (header.kind === APPROVAL_ARTIFACT_KINDS_V1.targetAction ? 'action.invoke' : header.actionId) === params.actionId)
           && (!sessionId || header.sessionId === sessionId)
           && (!workflowRunId || indexedWorkflowRunId === undefined || indexedWorkflowRunId === workflowRunId)
-          && (!params.subjectKey || header.approvalSubjectKey === params.subjectKey);
+          && (!params.subjectKey || header.approvalSubjectKey === params.subjectKey
+            || header.kind === APPROVAL_ARTIFACT_KINDS_V1.builtIn
+              && sameStrictJsonValue(header.approvalSubjectKey, personRequiredApprovalArtifactSubjectKey(params.subjectKey)));
       }, ...(cursor ? { cursor } : {}) });
     for (const artifact of page.items) {
       if (items.length >= maxItems) break;

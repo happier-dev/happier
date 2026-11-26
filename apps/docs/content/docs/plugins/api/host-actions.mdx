@@ -17,7 +17,7 @@ const result = await context.services.actions.execute('action.spec.get', {
 
 The Action service validates the exact input and result contract for each id. Use the input guidance below when it is present; the TypeScript API remains the final typed contract.
 
-Every row separates **Request admission** from its canonical **Decision/effect authority**. In 0.3 development source, eligible host Agent, MCP and plugin invocations may request a `present_user` Action through the existing human approval flow. The human decides, and only the human-approved execution receives the host-stamped present-user authority required for the effect; the requester cannot self-approve or waive that floor. API-token callers cannot request these security effects and receive `present_user_required`, even with `approve` scope. Decision Actions separately check the deciding credential and the target Action's authority. Input-dependent human requirements still apply, such as explicit missing-directory consent. Caller authority is host-stamped: Action input can never supply, widen, or narrow it.
+Every row separates **Request admission** from its canonical **Decision/effect authority**. In 0.3 development source, eligible host Agent, MCP and plugin invocations may request a `present_user` Action through the existing human approval flow. The human decides, and only the human-approved execution receives the host-stamped present-user authority required for the effect; the requester cannot self-approve or waive that floor. API-token callers cannot request these security effects and receive `present_user_required`, even with `approve` scope. Decision Actions separately check the deciding credential and the target Action's authority. Input-dependent human requirements still apply, such as explicit missing-directory consent. Caller authority is host-stamped: Action input can never supply, widen, or narrow it. When a built-in approval request has `deciderRequirement` set to `person`, its fresh approval requires a present-user credential on every route; rejection and cancellation retain the existing withdrawal rules.
 
 In 0.3 development source, client-placed host Actions invoked through an admitted daemon host reach one connected app through the existing machine reverse channel. The app preserves the admitted surface and authority and uses its current mounted owners. Missing connected handlers return typed unavailable; a lost response after dispatch returns `outcome_uncertain` without automatic retry. CLI availability follows each Action's declared surfaces and connected-client requirements. Plugin-declared client Actions retain their separate artifact and plugin-occurrence dispatch contract. See [Actions, tools and commands](/plugins/api/actions-tools-commands#host-actions-that-run-in-a-connected-app).
 
@@ -18276,6 +18276,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sharedWithTeamId` (text): Shared with team id
 - `workflowRunId` (text): Workflow run id
 - `sourceSessionId` (text): Source session id
+- `updated` (json): Updated
 - `reviewIds` (text_list): Review ids
 - `spaceId` (text): Space id
 - `spaceMembershipMode` (select): Space membership mode

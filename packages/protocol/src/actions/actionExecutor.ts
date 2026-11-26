@@ -394,7 +394,7 @@ import {
 import { projectActionSpecSchemaSections } from './actionSpecSections.js';
 import { parseInputTypeOptionsSourceId } from '../inputs/inputTypes.js';
 import { readInputFieldOptionsSourceId } from '../inputs/inputTypeRuntime.js';
-import { isSharedRequesterActionV1, isSignedCliMachineGrantReviewInvocationV1, resolveActionApprovalRouting, type ActionApprovalPolicyScopeV1, type ActionApprovalRoutingDecision } from './actionApprovalPolicy.js';
+import { isSharedRequesterActionV1, isSignedCliMachineGrantReviewInvocationV1, readActionApprovalDeciderRequirement, resolveActionApprovalRouting, type ActionApprovalPolicyScopeV1, type ActionApprovalRoutingDecision } from './actionApprovalPolicy.js';
 import { readActionCallerLedSubtreeSessionIds } from './executor/sessionLedSubtree.js';
 import { resolveApprovalRequestApproveAdmission, readPluginInstallApprovalPendingReview } from './actionApprovalPresentation.js';
 import { resolveRequestedSessionModeId } from './sessionModeIds.js';
@@ -965,6 +965,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     approval: NonNullable<ApprovalRequestV2['approval']>; sharedRequesterRequest: boolean;
     discussionDraftReview?: true;
     humanApprovalRequired?: boolean;
+    deciderRequirement?: ApprovalRequestV2['deciderRequirement'];
     sessionCreationDirectoryApproval?: ApprovalRequestV2['sessionCreationDirectoryApproval'];
     handoffTargetReplacementApproval?: ApprovalRequestV2['handoffTargetReplacementApproval'];
     /** The scope admission's result for this invocation; the Session resource rung keys on it. */
@@ -1002,8 +1003,10 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     const approvalOrigin = projectActionApprovalOrigin(actionId,
       resolveApprovalOriginForRequest(ctx.approvalOrigin, requestingSessionId));
     const automaticChecks = automaticChecksFor(ctx, args.humanApprovalRequired !== false);
+    const { deciderRequirement } = args;
     let proposedRequest: ApprovalRequestV2 = {
       v: 2, status: 'open', createdAtMs: now, updatedAtMs: now,
+      ...(deciderRequirement ? { deciderRequirement } : {}),
       createdBy: { surface: mapApprovalCreatedBySurface(ctx.surface ?? null), ...(pluginCaller ?? {}),
         ...(requestingSessionId ? { sessionId: requestingSessionId } : {}) },
       ...(requestedSurface ? { requestedSurface } : {}), ...(approvalOrigin ? { origin: approvalOrigin } : {}),
@@ -2786,7 +2789,9 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     const existingAdmission = options?.prepared;
     let workflowSessionScope = existingAdmission ? existingAdmission.workflowSessionScope : options?.workflowSessionScope;
     // Public ingress normalized the caller; replay/continuation contexts are host-owned.
-    let ctx: ActionExecutorContext = withHostReviewedChildAction(existingAdmission?.context ?? context ?? {});
+    const { approvalDeciderRequirement, ...invocationContext } = existingAdmission?.context ?? context ?? {};
+    const creatorDeciderRequirement = existingAdmission?.creatorDeciderRequirement ?? approvalDeciderRequirement;
+    let ctx: ActionExecutorContext = withHostReviewedChildAction(invocationContext);
 
     const attestationFailure = existingAdmission ? null : sessionAttestedContextCallerFailure(actionId, input, ctx);
     if (attestationFailure) return attestationFailure;
@@ -2958,6 +2963,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       const created = await createActionApprovalRequest({ actionId, input: valueFreeInput, actionArgs: valueFreeInput,
         preview: { actionId, actionArgs: valueFreeInput, confidentialInputs: { kind: 'action_inputs', paths } },
         context: promptContext, approval: { flow: 'deferred', result: 'required' }, hostChild: hostInternal,
+        deciderRequirement: readActionApprovalDeciderRequirement(spec, admittedInput, creatorDeciderRequirement),
         onEffectDispatch: options?.onEffectDispatch,
         sharedRequesterRequest: !delegatesApprovalClassificationToResolvedAction(actionId) && isSharedRequesterActionV1(ctx),
       });
@@ -4004,6 +4010,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         spec,
         input: admittedInput,
         context,
+        approvalReplay: options?.approvalReplay === true || !!ctx.approvedActionReplay?.artifactId,
+        deciderRequirement: creatorDeciderRequirement,
         settings: approvalSettings ?? deps.readActionsSettings?.(context) ?? context.actionsSettings,
         // Input-only in-flow consent answers its designed review; a newly discovered
         // mandatory consequence still needs this owner's exact carried review.
@@ -4040,7 +4048,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       ? { required: false, flow: 'deferred' as const, result: 'none' as const }
       : resolveBaseApprovalRouting(ctx, readHostReviewedChildOperationV1(ctx, actionId, admittedInput));
     let invokeReviewedOperationChild: NonNullable<Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>>>['invokeReviewedChild'];
-    if (baseApprovalRouting.required && !childrenPreparation.requiredByPolicy && deps.readApprovedOperation) {
+    if (baseApprovalRouting.required && !baseApprovalRouting.deciderRequirement
+      && !childrenPreparation.requiredByPolicy && deps.readApprovedOperation) {
       let approvedOperation: Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>> = null;
       try {
         approvedOperation = await deps.readApprovedOperation({ ...(workflowRunId ? { runId: workflowRunId } : {}),
@@ -4137,7 +4146,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       if (requiredHandoffTargetApproval) ctx = { ...ctx, handoffTargetReplacementApproval: requiredHandoffTargetApproval };
     }
     if ((approvalRouting.required || approvalRouting.uiConfirmationRequired) && !isApprovalAction
-      && (ctx.interactivePresentation === 'unavailable' || carriesOwnReview && noConfirmationPresenter)) {
+      && (!approvalRouting.deciderRequirement && ctx.interactivePresentation === 'unavailable'
+        || carriesOwnReview && noConfirmationPresenter)) {
       if (!carriesOwnReview) return reviewRefusal(null);
       const review = await prepareCurrentApproval(true);
       if (review && 'ok' in review) return review;
@@ -4166,6 +4176,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       ...(hostInternal ? { hostInternal: true } : {}),
       ...(workflowSessionScope === undefined ? {} : { workflowSessionScope }),
       ...(approvalScope ? { approvalScope } : {}),
+      ...(creatorDeciderRequirement ? { creatorDeciderRequirement } : {}),
       ...(approvalSettings ? { approvalSettings } : {}),
       ...('automationSubjects' in scopeAdmission && scopeAdmission.automationSubjects
         ? { automationSubjects: scopeAdmission.automationSubjects } : {}),
@@ -4196,9 +4207,10 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       // This is a review projection, not an admitted effect. Its ordinary run
       // must still enter the incumbent approval owner; it grants no bypass.
       const reviewInput = projectNativeJsonValueForTransport(admittedInput);
-      return ready({ actionId, input: reviewInput, context: ctx, ...reviewClassification,
+      const reviewContext = creatorDeciderRequirement ? { ...ctx, approvalDeciderRequirement: creatorDeciderRequirement } : ctx;
+      return ready({ actionId, input: reviewInput, context: reviewContext, ...reviewClassification,
         ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}) },
-      () => executeCoreTerminal(actionId, reviewInput, ctx, true, legacyMetadataLabel,
+      () => executeCoreTerminal(actionId, reviewInput, reviewContext, true, legacyMetadataLabel,
         undefined, false, undefined, false, undefined, hostInternal));
     }
 
@@ -4425,6 +4437,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         const created = await createActionApprovalRequest({ actionId, input: admittedInput,
           actionArgs: preparedApproval.actionArgs, preview: preparedApproval.preview, context: ctx, hostChild: hostInternal,
           onEffectDispatch: options?.onEffectDispatch,
+          deciderRequirement: approvalRouting.deciderRequirement,
           approval: { flow: approvalRouting.flow, result: approvalRouting.result,
             ...(baseApprovalRouting.profile ? { profile: baseApprovalRouting.profile } : {}) }, sharedRequesterRequest,
           ...(discussionDraftReviewRequired ? { discussionDraftReview: true } : {}),
@@ -7853,6 +7866,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           context: { surface: ctx.surface, authority: resolveHostStampedAuthority(ctx), actionCaller: ctx.actionCaller },
           requiredByPolicy: true,
           explicitApprovalRequest: true,
+          deciderRequirement: creatorDeciderRequirement,
         });
         const request: ApprovalRequestV2 = {
           v: 2,
@@ -7864,6 +7878,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           ...(approvalOrigin ? { origin: approvalOrigin } : {}),
           executionOriginV1,
           requestInputDigest: computeActionInputApprovalDigestV1(targetActionId, targetArgs),
+          ...(approvalRouting.deciderRequirement ? { deciderRequirement: approvalRouting.deciderRequirement } : {}),
           ...(requesterConfirmation ? { requesterConfirmation } : {}),
           approval: { flow: approvalRouting.flow, result: approvalRouting.result },
           actionId: targetActionId,
@@ -8039,8 +8054,9 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           if (!admitted?.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           narrowedActionArgs = admitted.data;
         }
-        // Live CLI decisions require a person. Scoped credentials cannot
-        // approve person-class targets.
+        // Keep the existing live CLI admission rule.
+        // Scoped credentials cannot approve person-class targets.
+        const personDeciderRequired = existing.v === 2 && existing.deciderRequirement === 'person';
         if ((!withdrawal && readLiveCliApprovalOriginScope(existing) !== null
           && resolveHostStampedAuthority(ctx) !== 'present_user')
           || (decision === 'approve' && ctx.externalActionCredential && requestedSpec
@@ -8108,6 +8124,12 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
             return withApprovalResultDeliveryV1(forwarded, settled?.delivery);
           }
         }
+        // Open decisions forwarded above are admitted by their receiving executor.
+        // An already accepted approval is spent using its stored decision.
+        if (personDeciderRequired && decision === 'approve' && existing.status === 'open'
+          && resolveHostStampedAuthority(ctx) !== 'present_user') {
+          return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
+        }
         if (decision === 'approve' && existing.v === 2 && existing.status === 'open' && existing.automaticChecks) {
           const settled = await approveApprovalAutomaticChecks(artifactId, existing, ctx, {
             ...(triggerConsent ? { triggerConsent } : {}),
@@ -8118,12 +8140,12 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         }
         if (triggerConsent && (existing.v !== 2 || !existing.automaticChecks)) return { ok: false,
           errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        const isCancelableApproved = decision === 'cancel' && existing.v === 2
+          && existing.status === 'approved' && isApprovalRequestExecutionApproved(existing) && !existing.execution;
         const isRecoverableApproved = decision === 'approve'
           && existing.status === 'approved'
           && isApprovalRequestExecutionApproved(existing)
           && !existing.execution;
-        const isCancelableApproved = decision === 'cancel' && existing.v === 2
-          && existing.status === 'approved' && isApprovalRequestExecutionApproved(existing) && !existing.execution;
 
         let settleDiscussionReview: (() => Promise<ActionExecuteFailure | null>) | undefined;
         if (decision !== 'approve' && existing.v === 2 && existing.actionId === 'discussion.reply'

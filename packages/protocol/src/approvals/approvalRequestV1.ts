@@ -765,6 +765,7 @@ export type ApprovalRequestV1 = z.infer<typeof ApprovalRequestV1Schema>;
 export const ApprovalRequestV2Schema: z.ZodMiniObject<{
   v: z.ZodMiniLiteral<2>;
   status: typeof ApprovalRequestV2StatusSchema;
+  deciderRequirement: z.ZodMiniOptional<z.ZodMiniLiteral<'person'>>;
   createdAtMs: z.ZodMiniNumber;
   updatedAtMs: z.ZodMiniNumber;
   createdBy: typeof ApprovalRequestCreatedBySchema;
@@ -790,6 +791,8 @@ export const ApprovalRequestV2Schema: z.ZodMiniObject<{
 }, z.core.$strict> = lazyZodSchema(() => z.strictObject({
   v: z.literal(2),
   status: ApprovalRequestV2StatusSchema,
+  /** Fixed by approval admission and carried through every decision and replay. */
+  deciderRequirement: z.optional(z.literal('person')),
   createdAtMs: z.number().check(z.int(), z.minimum(0)),
   updatedAtMs: z.number().check(z.int(), z.minimum(0)),
   createdBy: ApprovalRequestCreatedBySchema,

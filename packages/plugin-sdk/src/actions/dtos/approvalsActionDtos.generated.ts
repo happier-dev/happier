@@ -174,11 +174,11 @@ export type ApprovalsActionResultById = {
                             actionId: string;
                             requestId: string;
                             phase: 'after' | 'before';
+                            machineId?: string | undefined;
+                            originRunId?: string | undefined;
                             status?: 'failed' | 'succeeded' | undefined;
                             outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                             errorCode?: string | undefined;
-                            machineId?: string | undefined;
-                            originRunId?: string | undefined;
                         };
                     } | {
                         kind: 'trigger';
@@ -884,6 +884,7 @@ export type ApprovalsActionResultById = {
                     };
                 }[];
             };
+            deciderRequirement?: 'person' | undefined;
             requestedSurface?: string | undefined;
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
@@ -1129,11 +1130,11 @@ export type ApprovalsActionResultById = {
                             actionId: string;
                             requestId: string;
                             phase: 'after' | 'before';
+                            machineId?: string | undefined;
+                            originRunId?: string | undefined;
                             status?: 'failed' | 'succeeded' | undefined;
                             outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                             errorCode?: string | undefined;
-                            machineId?: string | undefined;
-                            originRunId?: string | undefined;
                         };
                     } | {
                         kind: 'trigger';
@@ -1989,11 +1990,11 @@ export type ApprovalsActionResultById = {
                             actionId: string;
                             requestId: string;
                             phase: 'after' | 'before';
+                            machineId?: string | undefined;
+                            originRunId?: string | undefined;
                             status?: 'failed' | 'succeeded' | undefined;
                             outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                             errorCode?: string | undefined;
-                            machineId?: string | undefined;
-                            originRunId?: string | undefined;
                         };
                     } | {
                         kind: 'trigger';
@@ -2620,6 +2621,7 @@ export type ApprovalsActionResultById = {
                 kind: 'machine';
                 machineId: string;
             };
+            deciderRequirement?: 'person' | undefined;
             requestedSurface?: string | undefined;
             sessionCreationDirectoryApproval?: undefined | {
                 v: 1;

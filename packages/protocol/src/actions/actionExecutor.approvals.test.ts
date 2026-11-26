@@ -24,6 +24,9 @@ import { WorkflowDefinitionV1Schema } from '../workflows/workflowV1.js';
 import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '../automations/automationWorkflowRecipeV2.js';
 import { resolveWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionResolverV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
+import { assertApprovalRequestCreationBinding, deriveManagedStartApprovalRequestIdV1 } from '../approvals/creation.js';
+import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
+import { readApprovalArtifactSubjectIndexedKindV1 } from '../approvals/approvalArtifactKindV1.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
 import { createWidgetDefinitionArtifactPortV1 } from '../widgets/widgetDefinitionArtifactV1.js';
 import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
@@ -3761,7 +3764,11 @@ describe('createActionExecutor (approvals)', () => {
     },
   );
 
-  it.each(['cli', 'agent'] as const)('executes an approved %s session delete at the deciding app after its originating Session is stopped', async (surface) => {
+  it.each([
+    { surface: 'cli', deciderRequirement: undefined },
+    { surface: 'agent', deciderRequirement: undefined },
+    { surface: 'agent', deciderRequirement: 'person' },
+  ] as const)('runs app replay as the deciding person ($surface, $deciderRequirement)', async ({ surface, deciderRequirement }) => {
     let storedRequest: ApprovalRequest | null = null;
     const homeDomainAction = vi.fn(async () => ({ success: true as const }));
     const executor = createExecutor({
@@ -3785,12 +3792,14 @@ describe('createActionExecutor (approvals)', () => {
     await expect(executor.execute('session.delete', { sessionId: 'stopped-session' }, {
       surface, authority: 'account_automation', actionCaller: { kind: 'host' }, actionsSettings: defaultActionsSettings,
       runtimeAccountId: 'delete-account', serverIdentityId: 'delete-home',
+      approvalDeciderRequirement: deciderRequirement,
     })).resolves.toMatchObject({ ok: true, result: {
       kind: 'approval_request_created', artifactId: 'stopped-session-delete',
     } });
     expect(storedRequest).toMatchObject({ actionId: 'session.delete', actionArgs: { sessionId: 'stopped-session' },
       executionOriginV1: { surface, caller: { kind: 'host' } } });
     expect(storedRequest && resolveApprovalExecutor(storedRequest)).toEqual({ kind: 'app', placement: 'account' });
+    if (deciderRequirement) expect(storedRequest).toHaveProperty('deciderRequirement', deciderRequirement);
     expect(homeDomainAction).not.toHaveBeenCalled();
 
     const decision = await executor.execute('approval.request.decide', {
@@ -4164,7 +4173,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         actionId: 'review.start',
-        actionArgs: expect.objectContaining({ sessionId: 's1', engineIds: ['x'], instructions: 'y' }),
+        actionArgs: expect.objectContaining({ sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'x' }], instructions: 'y' }),
       }),
     }));
   });
@@ -4647,6 +4656,168 @@ describe('createActionExecutor (approvals)', () => {
     expect(storedRequest).toMatchObject({ status: 'approved', decision: { authority: 'present_user' } });
     expect(approvalsUpdate).toHaveBeenCalledOnce();
     expect(approvalRequestApprovedReplay).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { flow: 'blocking', deciderRequirement: undefined },
+    { flow: 'blocking', deciderRequirement: 'person' },
+    { flow: 'deferred', deciderRequirement: 'person' },
+  ] as const)('decides an approval with $flow custody from stored admission ($deciderRequirement)', async ({ flow, deciderRequirement }) => {
+    const managedStart = { homeId: 'home', managedId: 'guest', expectedRevision: 1, intent: 'start', when: 'now' };
+    const proposal = ApprovalRequestV2Schema.parse(createApprovalRequest('open', {
+      ...(flow === 'blocking' ? { actionId: 'machines.managed.power.set', actionArgs: managedStart }
+        : { actionId: 'session.message.send', actionArgs: { sessionId: 's1', message: 'Reviewed message' } }),
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+      approval: { flow, result: 'required' },
+    }));
+    const { sessionId: _session, ...machineOrigin } = proposal.executionOriginV1;
+    let stored = ApprovalRequestV2Schema.parse({ ...proposal, ...(deciderRequirement ? { deciderRequirement } : {}),
+      executionOriginV1: flow === 'blocking' ? { ...machineOrigin, accountId: 'owner',
+        requestId: deriveManagedStartApprovalRequestIdV1(managedStart), target: { kind: 'machine', machineId: 'machine-1' },
+      } : { ...proposal.executionOriginV1, accountId: 'owner' },
+    });
+    if (flow === 'blocking') expect(readLiveCliApprovalOriginScope(stored)).not.toBeNull();
+    else expect(resolveApprovalExecutor(stored)).toMatchObject({ kind: 'daemon' });
+
+    const liveDelivery = vi.fn(async () => ({ ok: true as const, result: { ok: true, status: 'executed' } }));
+    const send = vi.fn(async () => ({ status: 'accepted' as const, localId: 'person-only' }));
+    const forAccount = (accountId: string): ReturnType<typeof createExecutor> => createExecutor({
+      approvalsGet: async () => accountId === 'owner' ? stored : null,
+      approvalsUpdate: async ({ request }) => {
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next);
+        if (!transition.ok) return transition;
+        stored = next;
+        return { ok: true };
+      },
+      approvalRequestApprovedReplay: flow === 'blocking' ? liveDelivery : async ({ artifactId }) =>
+        owner.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'account_automation' }),
+      sessionSendMessage: send,
+    });
+    const owner = forAccount('owner');
+    const input = { artifactId: 'person-only', decision: 'approve' };
+    const person = { surface: flow === 'blocking' ? 'ui' as const : 'rpc' as const, authority: 'present_user' as const, runtimeAccountId: 'owner', actionCaller: { kind: 'host' as const } };
+    const nonPerson = { ...person, surface: 'rpc' as const, authority: 'account_automation' as const };
+    const agentSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+      approvalWaivedSurfaces: { 'approval.request.decide': ['agent', 'mcp'] } });
+    for (const context of [
+      nonPerson,
+      { ...nonPerson, surface: 'agent' as const, defaultSessionId: 'deciding-session', actionsSettings: agentSettings },
+      { ...nonPerson, surface: 'mcp' as const, defaultSessionId: 'deciding-session', actionsSettings: agentSettings },
+      { ...nonPerson, surface: 'api' as const, externalActionCredential: { accountId: 'owner',
+        principalId: 'principal', credentialId: 'credential', grant: { ...API_TOKEN_FULL_GRANT_V1, approve: true } } },
+    ]) {
+      const refused = await owner.execute('approval.request.decide', input, context);
+      expect(refused, context.surface).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    }
+    await expect(forAccount('other').execute('approval.request.decide', input, { ...person, runtimeAccountId: 'other' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'approval_not_found' });
+    expect(stored.status).toBe('open');
+    expect(liveDelivery).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+
+    const accepted = await owner.execute('approval.request.decide', input, person);
+    expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(stored.deciderRequirement).toBe(deciderRequirement);
+    expect(stored).toMatchObject({ decision: { authority: 'present_user' } });
+    if (flow === 'deferred') {
+      const replay = await owner.replayApprovedApprovalRequest({ artifactId: 'person-only',
+        callerAuthority: 'account_automation' });
+      expect(replay).toEqual(accepted);
+      expect(send).toHaveBeenCalledOnce();
+    } else expect(liveDelivery).toHaveBeenCalledOnce();
+  });
+
+  it('binds the created decider requirement and refuses to add or remove it during decisions and reads', () => {
+    const legacy = ApprovalRequestV2Schema.parse(createApprovalRequest('open'));
+    const marked = ApprovalRequestV2Schema.parse({ ...legacy, deciderRequirement: 'person' });
+    const { deciderRequirement: _removed, ...stripped } = marked;
+    expect(ApprovalRequestV2Schema.safeParse({ ...legacy, deciderRequirement: 'automation' }).success).toBe(false);
+    expect(() => assertApprovalRequestCreationBinding(marked, stripped)).toThrow('approval_request_conflict');
+    expect(() => assertApprovalRequestCreationBinding(legacy, marked)).toThrow('approval_request_conflict');
+    const markedHeader = buildApprovalRequestArtifactHeaderV1(marked);
+    const legacyHeader = buildApprovalRequestArtifactHeaderV1(legacy);
+    expect(readApprovalArtifactSubjectIndexedKindV1(markedHeader)).toBe(readApprovalArtifactSubjectIndexedKindV1(legacyHeader));
+    expect(approvalArtifactBodyMatchesHeaderV1(legacyHeader, JSON.stringify(legacy))).toMatchObject({ request: legacy });
+    expect(approvalArtifactBodyMatchesHeaderV1(markedHeader, JSON.stringify(marked))).toMatchObject({ request: marked });
+    expect(approvalArtifactBodyMatchesHeaderV1(markedHeader, JSON.stringify(stripped))).toBeNull();
+    expect(approvalArtifactBodyMatchesHeaderV1(legacyHeader, JSON.stringify(marked))).toBeNull();
+    expect(decideApprovalRequestTransition(marked, stripped)).toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+    expect(decideApprovalRequestTransition(legacy, marked)).toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+  });
+
+  it('keeps an explicit deferred managed Start decidable by automation even with the policy request ID', async () => {
+    const actionId = 'machines.managed.power.set';
+    const actionArgs = { homeId: 'home', managedId: 'guest', expectedRevision: 1, intent: 'start', when: 'now' };
+    const actionRequestId = deriveManagedStartApprovalRequestIdV1(actionArgs);
+    let stored: ApprovalRequestV2 | undefined;
+    const executor = createExecutor({
+      approvalsCreate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'explicit-start' };
+      },
+      approvalsGet: async () => stored ?? null,
+      approvalsUpdate: async ({ request }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      approvalRequestApprovedReplay: async () => ({ ok: true, result: { ok: true, status: 'executed' } }),
+    });
+    const result = await executor.execute('approval.request.create', {
+      actionId, actionArgs, summary: 'Start managed Machine', createdBy: { surface: 'cli' },
+    }, {
+      surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+      actionRequestId, serverId: 'home', runtimeAccountId: 'owner',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(stored).toMatchObject({
+      actionId, actionArgs, approval: { flow: 'deferred' },
+      executionOriginV1: { authority: 'account_automation', caller: { kind: 'host' },
+        requestId: actionRequestId, surface: 'cli', target: { kind: 'machine', machineId: 'machine-1' } },
+    });
+    expect(stored?.executionOriginV1.externalActionExecutionAuthorization).toBeUndefined();
+    expect(stored).not.toHaveProperty('deciderRequirement');
+    expect(await executor.execute('approval.request.decide', { artifactId: 'explicit-start', decision: 'approve' },
+      { surface: 'rpc', authority: 'account_automation', actionCaller: { kind: 'host' },
+        approvalDeciderRequirement: 'person' })).toMatchObject({ ok: true, result: { status: 'executed' } });
+  });
+
+
+  it('captures the trusted creation context as the stored decider requirement and honors explicit Deny', async () => {
+    let stored: ApprovalRequest | undefined;
+    const sessionAttentionSet = vi.fn(async ({ sessionId, request }: Parameters<NonNullable<ActionExecutorDeps['sessionAttentionSet']>>[0]) =>
+      ({ standing: { sessionId, standing: request.standing, updatedAt: 10 } }));
+    const owner = createExecutor({
+      sessionAttentionSet,
+      approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'person-only' }; },
+    });
+    await expect(owner.execute('approval.request.create', {
+      actionId: 'session.message.send', actionArgs: { sessionId: 's1', message: 'Reviewed message' },
+      summary: 'Send a message', createdBy: { surface: 'cli' },
+    }, { surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+      approvalDeciderRequirement: 'person' })).resolves.toMatchObject({ ok: true });
+    expect(stored).toHaveProperty('deciderRequirement', 'person');
+
+    stored = undefined;
+    const id = 'session.attention.set';
+    const input = { sessionId: 's1', standing: false };
+    const context = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      approvalDeciderRequirement: 'person' } as const;
+    await expect(owner.execute(id, input, { ...context, actionsSettings: ActionsSettingsV1Schema.parse({
+      v: 1, actions: { [id]: { disabledSurfaces: ['agent'] } },
+    }) })).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(stored).toBeUndefined();
+    expect(sessionAttentionSet).not.toHaveBeenCalled();
+
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [id]: ['agent'] } });
+    await expect(owner.execute(id, input, { ...context, actionsSettings: settings, interactivePresentation: 'unavailable' }))
+      .resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(stored).toHaveProperty('deciderRequirement', 'person');
+    expect(sessionAttentionSet).not.toHaveBeenCalled();
+    const { approvalDeciderRequirement: _removed, ...legacyContext } = context;
+    await expect(owner.execute(id, input, { ...legacyContext, actionsSettings: settings })).resolves.toMatchObject({ ok: true });
+    expect(sessionAttentionSet).toHaveBeenCalledOnce();
   });
 
   it.each(['deferred', 'blocking'] as const)('delegates the present-user decision at the correct Artifact stage with %s custody', async flow => {
@@ -5937,4 +6108,42 @@ describe('createActionExecutor (approvals)', () => {
       expect(runtimeActionExecute).not.toHaveBeenCalled();
     });
   });
+});
+
+
+it.each([
+  { decision: 'reject', status: 'open', flow: 'blocking' },
+  { decision: 'cancel', status: 'open', flow: 'blocking' },
+  { decision: 'reject', status: 'open', flow: 'deferred' },
+  { decision: 'cancel', status: 'open', flow: 'deferred' },
+  { decision: 'cancel', status: 'approved', flow: 'deferred' },
+] as const)('F2 automation $decision on $status person-required $flow follows withdrawal rules', async ({ decision, status, flow }) => {
+  const managedStart = { homeId: 'home', managedId: 'guest', expectedRevision: 1, intent: 'start', when: 'now' };
+  const proposal = ApprovalRequestV2Schema.parse(createApprovalRequest(status, {
+    ...(flow === 'blocking' ? { actionId: 'machines.managed.power.set',
+      actionArgs: managedStart,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli' } : {}),
+    approval: { flow, result: 'required' },
+  }));
+  const { sessionId: _session, ...machineOrigin } = proposal.executionOriginV1;
+  let stored = ApprovalRequestV2Schema.parse({ ...proposal, deciderRequirement: 'person',
+    executionOriginV1: flow === 'blocking' ? { ...machineOrigin, accountId: 'owner',
+      requestId: deriveManagedStartApprovalRequestIdV1(managedStart), target: { kind: 'machine', machineId: 'machine-1' } }
+      : { ...proposal.executionOriginV1, accountId: 'owner' },
+  });
+  const executor = createExecutor({ approvalsGet: async () => stored,
+    approvalsUpdate: async ({ request }) => {
+      const next = ApprovalRequestV2Schema.parse(request);
+      const transition = decideApprovalRequestTransition(stored, next);
+      if (!transition.ok) return transition;
+      stored = next;
+      return { ok: true };
+    },
+  });
+  const result = await executor.execute('approval.request.decide', { artifactId: 'person-withdrawal', decision },
+    { surface: 'rpc', authority: 'account_automation', actionCaller: { kind: 'host' }, runtimeAccountId: 'owner' });
+  const expectedStatus = status === 'approved' ? 'failed' : decision === 'reject' ? 'rejected' : 'canceled';
+  expect(result).toMatchObject({ ok: true, result: { status: expectedStatus } });
+  expect(stored).toMatchObject({ status: expectedStatus, deciderRequirement: 'person' });
+  if (status === 'approved') expect(stored.execution).toMatchObject({ errorCode: 'approval_canceled', effectAttempted: false });
 });

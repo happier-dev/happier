@@ -1257,6 +1257,9 @@ export type ActionExecutorContext = Readonly<{
 
   /** Host-only diagnostic correlation, separate from retry and approval identity. Never wire input. */
   operationRequestId?: string;
+  /** Trusted creator's requirement for an approval created by this invocation. Never wire input. */
+  approvalDeciderRequirement?: ApprovalRequestV2['deciderRequirement'];
+
   /** Stable identity for one externally retryable action invocation. */
   actionRequestId?: string | null;
 

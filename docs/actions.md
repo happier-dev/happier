@@ -9726,6 +9726,19 @@ scoped to the mounted Account's own Session store.
 
 ## Approval is decided in one place
 
+In 0.3 development, a trusted creator can record `deciderRequirement: 'person'`
+when creating a built-in approval request. An Action declares the consequence
+of its admitted input through `approvalPolicy.deciderRequirementForInput`.
+Automation and explicit approval requests with this requirement create an Ask
+even with standing Allow or `bypassApprovals`. A present person’s direct
+invocation keeps its existing routing and in-place confirmation. The decision
+executor reads the stored requirement and accepts fresh approval only from
+present-person credentials; reject and cancel retain the existing withdrawal rules.
+The requirement is fixed for the life of the Artifact. Deferred replay consumes
+the accepted decision. Requests created without the field use the existing
+decision rules. Use matching development clients, daemon and SDK declarations
+for the closed request shape.
+
 ### Database access in 0.3 development
 
 `database.access.read` describes access for the selected database. Worktree and

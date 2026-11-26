@@ -23,7 +23,7 @@ export { readActionFailurePresentationV1, projectActionFailureForAgentV1, type A
 /** Approval conflicts expose only the compared subject's fixed field names. */
 export const ApprovalRequestConflictFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   mismatches: z.array(z.enum(['v', 'actionId', 'requestInputDigest', 'actionArgs',
-    'executionOriginV1', 'requesterConfirmation', 'createdBy'])).check(z.minLength(1)),
+    'executionOriginV1', 'requesterConfirmation', 'createdBy', 'deciderRequirement'])).check(z.minLength(1)),
 }));
 export type ApprovalRequestConflictFieldV1 = z.infer<typeof ApprovalRequestConflictFailureDetailsV1Schema>['mismatches'][number];
 

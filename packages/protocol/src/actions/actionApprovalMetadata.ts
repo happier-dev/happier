@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import type { ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { ActionSurfaceSchema } from './metadata.js';
 import { ApprovalProfileResolutionV1Schema } from './approvalProfiles.js';
 
@@ -10,6 +11,9 @@ export const ActionApprovalPolicySchema = lazyZodSchema(() => z.strictObject({
     z.custom<(input: unknown, caller: Readonly<{ kind: string }> | undefined) => boolean>(value => typeof value === 'function')])),
   uiConfirmation: z.optional(z.enum(['policy', 'direct'])),
   uiConfirmationForInput: z.optional(z.custom<(input: unknown) => boolean>((value) => typeof value === 'function')),
+  /** The admitted input requires a decision by a person, including when standing consent allows it. */
+  deciderRequirementForInput: z.optional(z.custom<(input: unknown) => ApprovalRequestV2['deciderRequirement']>(
+    (value) => typeof value === 'function')),
   agentDefault: z.optional(z.enum(['egress', 'authority'])),
   /** The Agent/MCP Ask default applies only to inputs with this consequence; Settings Require/Waive still decide. */
   agentDefaultForInput: z.optional(z.custom<(input: unknown) => boolean>((value) => typeof value === 'function')),

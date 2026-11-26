@@ -10,6 +10,7 @@ import {
   type ActionsSettingsV1,
 } from './actionSettings.js';
 import { getActionSpec } from './actionSpecs.js';
+import { ApprovalProfileV1Schema } from './approvalProfiles.js';
 import { FILESYSTEM_ACTION_IDS } from './filesystemActionFamily.js';
 import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionIds.js';
 import { MCP_SERVER_ACTION_SPECS_V1 } from './specs/mcpServers.js';
@@ -72,6 +73,34 @@ it.each(['agent', 'mcp'] as const)('asks before a %s applies Review fixes unless
   const required = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: [surface] } },
     approvalWaivedSurfaces: { [actionId]: [surface] } });
   expect(resolveActionApprovalRouting({ ...args, settings: required }).required).toBe(true);
+});
+
+it.each(['account', 'profile', 'session'] as const)('keeps the person-required Ask with an Allow from %s', consent => {
+  const actionId = 'review.apply';
+  const sessionId = 'review-session';
+  const allow = { [actionId]: ['agent'] };
+  const unmarkedSpec = getActionSpec(actionId);
+  const spec = { ...unmarkedSpec, approvalPolicy: { ...unmarkedSpec.approvalPolicy,
+    deciderRequirementForInput: (input: unknown) =>
+      typeof input === 'object' && input !== null && 'needsPerson' in input && input.needsPerson === true
+        ? 'person' as const : undefined } };
+  const context = { surface: 'agent', authority: 'account_automation',
+    actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+    ...(consent === 'profile' ? { approvalProfile: { profile: ApprovalProfileV1Schema.parse({
+      id: 'custom-allow', name: 'Allow review', approvalWaivedSurfaces: allow,
+    }), resolution: { status: 'available', requestedId: 'custom-allow' } } } : {}),
+    ...(consent === 'session' ? { sessionApprovalConsents: { sessionId, rows: [
+      { actionId, audience: 'agent', mode: 'allowed' },
+    ] } } : {}),
+  } as const;
+  const settings = consent === 'account' ? normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: allow }) : EMPTY_SETTINGS;
+  const input = { sessionId, reviewId: 'review', needsPerson: true };
+  const args = { actionId, spec, context, settings, input } as const;
+  const before = resolveActionApprovalRouting({ ...args, spec: unmarkedSpec });
+  expect(before.required).toBe(false);
+  expect(resolveActionApprovalRouting({ ...args, input: { ...input, needsPerson: false } })).toEqual(before);
+  expect(resolveActionApprovalRouting(args)).toMatchObject({ required: true, deciderRequirement: 'person',
+    result: 'required' });
 });
 
 it('routes a host-prepared review through the same own-UI disposition while retaining input acquisition', () => {
@@ -5490,5 +5519,36 @@ describe('plugin-surface approval posture (§4.1)', () => {
         context: approvalContext('plugin'),
       }).required,
     ).toBe(true);
+  });
+});
+
+
+describe('F1 person-decider routing', () => {
+  const actionId = 'review.apply';
+  const unmarkedSpec = getActionSpec(actionId);
+  const spec = { ...unmarkedSpec, approvalPolicy: { ...unmarkedSpec.approvalPolicy,
+    deciderRequirementForInput: () => 'person' as const } };
+  const input = { sessionId: 'review-session', reviewId: 'review' };
+  it.each(['ui', 'cli', 'voice'] as const)('%s person keeps unmarked routing and one in-place confirmation', surface => {
+    const context = { surface, authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    const args = { actionId, context, settings: EMPTY_SETTINGS, input, defaultUiConfirmation: true } as const;
+    const before = resolveActionApprovalRouting({ ...args, spec: unmarkedSpec });
+    expect(resolveActionApprovalRouting({ ...args, spec })).toEqual(before);
+    const confirmed = { ...args, reviewAdmitted: true };
+    expect(resolveActionApprovalRouting({ ...confirmed, spec })).toEqual(
+      resolveActionApprovalRouting({ ...confirmed, spec: unmarkedSpec }));
+    expect(resolveActionApprovalRouting({ ...confirmed, spec }).required).toBe(false);
+  });
+  it('explicit approval requests retain the person requirement even for a present person', () => {
+    expect(resolveActionApprovalRouting({ actionId, spec, input, settings: EMPTY_SETTINGS,
+      context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
+      explicitApprovalRequest: true })).toMatchObject({ required: true, deciderRequirement: 'person' });
+  });
+  it('bypassApprovals does not waive the marked automation person requirement', () => {
+    const context = { surface: 'agent', authority: 'account_automation', bypassApprovals: true,
+      actionCaller: { kind: 'session', sessionId: 'review-session', starterDepth: 0, turnDepth: 0 } } as const;
+    const args = { actionId, input, settings: EMPTY_SETTINGS, context } as const;
+    expect(resolveActionApprovalRouting({ ...args, spec: unmarkedSpec }).required).toBe(false);
+    expect(resolveActionApprovalRouting({ ...args, spec })).toMatchObject({ required: true, deciderRequirement: 'person' });
   });
 });

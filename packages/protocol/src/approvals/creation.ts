@@ -192,6 +192,7 @@ export function assertApprovalRequestCreationBinding(request: ApprovalRequestV2,
   const mismatches: ApprovalRequestConflictFieldV1[] = [];
   if (request.actionId !== proposed.actionId) mismatches.push('actionId');
   if (request.requestInputDigest !== proposed.requestInputDigest) mismatches.push('requestInputDigest');
+  if (request.deciderRequirement !== proposed.deciderRequirement) mismatches.push('deciderRequirement');
   if (!sameStrictJsonValue(request.actionArgs, subject.actionArgs, { omitUndefinedObjectMembers: true }))
     mismatches.push('actionArgs');
   if (!sameStrictJsonValue(creationOriginSubject(request), creationOriginSubject(subject)))

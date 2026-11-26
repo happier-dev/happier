@@ -31,6 +31,7 @@ export { isAgentOrUnresolvedSurface } from './actionApprovalSurface.js';
 
 export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
+  deciderRequirement?: ActionExecutorContext['approvalDeciderRequirement'];
   /** Local product review, presented by the UI host without an approval Artifact. */
   uiConfirmationRequired?: true;
   /** The executor can present this exact operation through its bound Session port. */
@@ -87,6 +88,10 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   targetApproval?: Pick<ActionTargetApprovalV1, 'databaseAgentLevel'>;
   context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'defaultSessionId' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfile' | 'approvalProfileTeamOrGroupDerived' | 'approvalProfileChange' | 'workflowTriggerMutationAdmission' | 'actionsSettings' | 'sessionApprovalConsents'> | null;
   requiredByPolicy?: boolean;
+  /** A replay consumes the recorded decision instead of resolving a fresh Ask. */
+  approvalReplay?: boolean;
+  /** Trusted, invocation-specific requirement supplied by the admitting host. */
+  deciderRequirement?: ActionExecutorContext['approvalDeciderRequirement'];
   /** Host fact: the receiving signed root owns this invocation's Ask, so the local host creates none. */
   approvalOwner?: 'receiver' | 'local';
   /** Explicit Artifact creation requests approval, independently of target execution defaults. */
@@ -341,8 +346,17 @@ function resolveUnwiredApprovalDefault(
   return requiresDefaultApprovalFloor(actionId, context, undefined, input);
 }
 
+export function readActionApprovalDeciderRequirement(spec: ActionSpec, input: unknown,
+  hostRequirement?: ActionExecutorContext['approvalDeciderRequirement']): ActionExecutorContext['approvalDeciderRequirement'] {
+  return hostRequirement ?? spec.approvalPolicy?.deciderRequirementForInput?.(input);
+}
+
 export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingArgs): ActionApprovalRoutingDecision {
   const policy = args.spec.approvalPolicy;
+  const approvalControl = isApprovalAction(args.actionId);
+  const deciderRequirement = args.approvalReplay || args.approvalOwner === 'receiver' || approvalControl
+    || (!args.explicitApprovalRequest && args.context?.authority === 'present_user')
+    ? undefined : readActionApprovalDeciderRequirement(args.spec, args.input, args.deciderRequirement);
   const policyActionId = args.profileActionId ?? args.actionId;
   // The caller's approval profile replaces the Account rows of the Actions it names. Everything
   // below decides once on the merged settings, with the same floors and person-class defaults.
@@ -391,7 +405,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   // The person's profile-control Ask joins the carrier's native confirmation;
   // a carrier waiver cannot waive that consequence or create self-approval.
   const preparedReviewRequired = args.reviewRequired === true && !args.reviewAdmitted;
-  const uiConfirmationRequired = !args.inputRequired && directReviewInvocation && (preparedReviewRequired
+  const uiConfirmationRequired = !deciderRequirement && !args.inputRequired && directReviewInvocation && (preparedReviewRequired
     || !args.reviewAdmitted && !args.context?.bypassApprovals
     && (args.requiredByPolicy === true || args.childReviewRequired || profileControlRequired || explicitPreference === true
       // A legacy marker answers only the default; exact admitted consent answers Ask above.
@@ -426,7 +440,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
         ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input)
         : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input));
   // Approval replay answers the admitted operation once; a profile is never a new authority.
-  const required = !isApprovalAction(args.actionId)
+  const required = deciderRequirement !== undefined || !approvalControl
     && (args.inputRequired || !directReviewInvocation && preparedReviewRequired || (args.context?.bypassApprovals === true
       ? false
       : requiredByPolicy || (!directReviewInvocation && profileControlRequired)));
@@ -476,7 +490,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
 
   // A bound Session can answer its own permission through the native prompt.
   // If that port has no live witness, Artifact fallback keeps its own flow.
-  const sessionId = args.hasSessionActionConfirmation && required && !args.explicitApprovalRequest
+  const sessionId = !deciderRequirement && args.hasSessionActionConfirmation && required && !args.explicitApprovalRequest
     && !args.inputRequired && !preparedReviewRequired && args.context?.surface === 'agent'
     && args.context.authority === 'account_automation' && args.spec.executionPlacement === 'session'
     && args.spec.approvalResultCustody !== 'live_only' && args.spec.projectSessionConfirmation
@@ -486,11 +500,12 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
 
   return {
     required: required === true,
+    ...(deciderRequirement ? { deciderRequirement } : {}),
     ...(uiConfirmationRequired ? { uiConfirmationRequired: true as const } : {}),
     ...(sessionId && sessionPreview != null ? { sessionConfirmation: { sessionId, preview: sessionPreview } } : {}),
     ...(args.inputRequired ? { inputRequired: true as const } : {}),
     flow,
-    result: args.inputRequired || preparedReviewRequired ? 'required' : args.spec.approval.result,
+    result: deciderRequirement || args.inputRequired || preparedReviewRequired ? 'required' : args.spec.approval.result,
     ...(profile ? { profile } : {}),
   };
 }
