@@ -11,6 +11,7 @@ import { buildReviewCommentFixture, createDeferred, createRootLayoutFeaturesResp
 import { createMachineFixture, createPlainMachineRowFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { HomeCredentialMutationEvent } from '@/auth/storage/tokenStorage';
@@ -102,8 +103,22 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
-async function setupHomes(focusReview: boolean, beforeReviewResponse?: (read: number) => void | Promise<void>) {
+async function setupHomes(focusReview: boolean, beforeReviewResponse?: (read: number) => void | Promise<void>, reviewId?: string) {
     let reviewReads = 0;
+    if (reviewId) servedComment = { ...comment, reviewId, runId: 'earlier-review-run', findingId: 'earlier-finding-local',
+        roundOrdinal: 1, findingIdentity: 'a'.repeat(64),
+        appearances: [{ roundOrdinal: 2, reviewerId: 'reviewer-1', sessionId: SESSION_ID, runId: RUN_ID }],
+    };
+    const findingsPayload: ReviewFindingsV2 = reviewId ? { ...payload, findings: payload.findings.map(finding => ({
+        ...finding, comment: { id: comment.id, reviewId, serverRevision: comment.serverRevision, state: comment.state },
+    })) } : payload;
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-1', encryptionMode: 'plain' });
+    if (reviewId) artifacts.replaceStoredRow(createPlainArtifactHttpFixture({
+        id: reviewId, title: 'Bound Review', isDecrypted: true, storageMode: 'plain',
+        header: { kind: 'review.v1', v: 1, reviewId, title: 'Bound Review' },
+        body: JSON.stringify({ v: 1, rounds: [] }), headerVersion: 1, bodyVersion: 1,
+        seq: 1, createdAt: 1, updatedAt: 1,
+    }, 'account-1'));
     // Exercise actual recipient Account-pending custody; an owned Session sends through its Machine Action.
     const sessionHttp = createSessionMetadataHttpBoundary(() => ({ [SESSION_ID]: createSessionFixture({ id: SESSION_ID, accessLevel: 'edit', active: true, pendingVersion: 2 }) }));
     const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
@@ -119,6 +134,9 @@ async function setupHomes(focusReview: boolean, beforeReviewResponse?: (read: nu
             if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
             if (request.home === 'review') {
                 const init = { method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) };
+                if (request.path.startsWith('/v1/artifacts')) return artifacts.handle(request.path + request.url.search, {
+                    ...init, headers: request.headers,
+                }) ?? undefined;
                 const sessionResponse = sessionHttp.handle(request.url, init);
                 if (sessionResponse) return sessionResponse;
                 if (request.path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machine.id, accountId: 'account-1', machine })]);
@@ -150,7 +168,7 @@ async function setupHomes(focusReview: boolean, beforeReviewResponse?: (read: nu
     } });
     const scope = { serverId: served.homes.review!.id, accountId: 'account-1' };
     const screen = await renderScreen(<ReviewFindingsMessageCard
-        serverId={scope.serverId} payload={payload} sessionId={SESSION_ID} canSendMessages presentation="page"
+        serverId={scope.serverId} payload={findingsPayload} sessionId={SESSION_ID} canSendMessages presentation="page"
     />);
     await vi.waitFor(async () => {
         await flushHookEffects();
@@ -160,8 +178,11 @@ async function setupHomes(focusReview: boolean, beforeReviewResponse?: (read: nu
 }
 
 describe('ReviewFindingsMessageCard final submit Account custody', () => {
-    it('persists Implement fixes only in the qualified nonfocused Home outbox', async () => {
-        const { homes, scope, screen, requests } = await setupHomes(false);
+    it.each([
+        { kind: 'legacy unbound Session/run', reviewId: undefined },
+        { kind: 'bound Review/run', reviewId: 'bound-review' },
+    ])('preserves $kind scope and persists Implement fixes only in the qualified nonfocused Home outbox', async ({ reviewId }) => {
+        const { homes, scope, screen, requests } = await setupHomes(false, undefined, reviewId);
         const otherScope = { serverId: homes.other!.id, accountId: 'other-account' };
         await act(async () => { await screen.pressByTestIdAsync('review-findings-publish-accepted'); });
 
@@ -174,6 +195,22 @@ describe('ReviewFindingsMessageCard final submit Account custody', () => {
             ]);
         });
         expect(await loadPendingOutboxForSession(SESSION_ID, otherScope)).toEqual([]);
+        const commentReads = requests.filter(request => request.path === '/v1/reviews/comments' && request.method === 'GET');
+        expect(commentReads.length).toBeGreaterThan(0);
+        const readScopes = commentReads.map(request => ({
+            reviewId: request.url.searchParams.get('reviewId'),
+            sessionId: request.url.searchParams.get('sessionId'),
+            runId: request.url.searchParams.get('runId'),
+        }));
+        expect(readScopes).toContainEqual({ reviewId: reviewId ?? null, sessionId: reviewId ? null : SESSION_ID, runId: RUN_ID });
+        // Bound Implement uses the Review Action's full finding inventory; legacy Implement
+        // retains its original Session/run adapter. Neither path infers a Review from a local id.
+        if (reviewId) expect(readScopes).toContainEqual({ reviewId, sessionId: null, runId: null });
+        for (const [index, request] of commentReads.entries()) {
+            expect(request).toMatchObject({ home: 'review', accountId: 'account-1' });
+            expect(readScopes[index]).toMatchObject({ reviewId: reviewId ?? null, sessionId: reviewId ? null : SESSION_ID });
+            expect(reviewId ? [RUN_ID, null] : [RUN_ID]).toContain(readScopes[index]!.runId);
+        }
         for (const request of requests.filter((request) => request.path.endsWith('/pending') && request.method === 'POST')) {
             expect(request).toMatchObject({ home: 'review', accountId: 'account-1' });
         }
