@@ -6549,6 +6549,7 @@ const fileViewerTranslations = { de: {
         downloading: ({ loaded, total }) => `${loaded} von ${total} MB werden geladen`,
         loadStopped: ({ name }) => `Laden von ${name} angehalten`,
         loadAgain: 'Erneut laden',
+        recordingCantPlay: "Dieses Gerät kann diese Aufnahme nicht abspielen.",
         videoCantPlayTitle: "Dieses Video kann hier nicht abgespielt werden",
         audioCantPlayTitle: "Dieses Audio kann hier nicht abgespielt werden",
         mediaCantPlayBody: "Dieses Gerät unterstützt die Kodierung nicht. Lade die Datei herunter oder öffne sie in deiner Standard-App.",

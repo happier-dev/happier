@@ -6561,6 +6561,7 @@ const fileViewerTranslations = { pl: {
         downloading: ({ loaded, total }) => `Pobieranie ${loaded} z ${total} MB`,
         loadStopped: ({ name }) => `Zatrzymano wczytywanie ${name}`,
         loadAgain: 'Wczytaj ponownie',
+        recordingCantPlay: "To urządzenie nie może odtworzyć tego nagrania.",
         videoCantPlayTitle: "Tego wideo nie można tu odtworzyć",
         audioCantPlayTitle: "Tego dźwięku nie można tu odtworzyć",
         mediaCantPlayBody: "To urządzenie nie obsługuje jego kodowania. Pobierz plik lub otwórz go w domyślnej aplikacji.",

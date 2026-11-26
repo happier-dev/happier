@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
+
 /**
  * The one host video-preview player configuration shared by SessionMedia and
  * draft Composer staged media. Callers own only their opaque source lookup;
@@ -17,6 +20,14 @@ export const SessionMediaVideoPreview = React.memo(function SessionMediaVideoPre
         instance.timeUpdateEventInterval = 0;
     });
 
+    const [failedPlayer, setFailedPlayer] = React.useState<VideoPlayer | null>(null);
+    React.useEffect(() => {
+        const subscription = player.addListener('statusChange', (event) => {
+            if (event.status === 'error') setFailedPlayer(player);
+        });
+        return () => subscription.remove();
+    }, [player]);
+
     React.useEffect(() => {
         player.loop = false;
         player.muted = true;
@@ -27,6 +38,15 @@ export const SessionMediaVideoPreview = React.memo(function SessionMediaVideoPre
     React.useEffect(() => () => {
         try { player.pause(); } catch {}
     }, [player]);
+
+    if (failedPlayer === player || player.status === 'error') {
+        return <SurfaceStateCard
+            testID="session-media-video-cant-play"
+            kind="unavailable"
+            size="line"
+            title={t('files.viewer.recordingCantPlay')}
+        />;
+    }
 
     return (
         <VideoView

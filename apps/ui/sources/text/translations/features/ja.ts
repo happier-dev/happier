@@ -6494,6 +6494,7 @@ const fileViewerTranslations = { ja: {
         downloading: ({ loaded, total }) => `ダウンロード中 ${loaded} / ${total} MB`,
         loadStopped: ({ name }) => `${name} の読み込みを停止しました`,
         loadAgain: 'もう一度読み込む',
+        recordingCantPlay: "このデバイスではこの録画を再生できません。",
         videoCantPlayTitle: "この動画はここでは再生できません",
         audioCantPlayTitle: "この音声はここでは再生できません",
         mediaCantPlayBody: "このデバイスはこのエンコード形式に対応していません。ダウンロードするか、既定のアプリで開いてください。",

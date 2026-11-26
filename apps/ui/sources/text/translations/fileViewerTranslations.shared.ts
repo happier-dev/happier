@@ -80,6 +80,8 @@ export type FileViewerTranslations = Readonly<{
     ) => string;
     loadStopped: (params: Readonly<{ name: string }>) => string;
     loadAgain: string;
+    recordingCantPlay: string;
+      recordingCantPlay: "This device can't play this recording.",
     videoCantPlayTitle: string;
     audioCantPlayTitle: string;
     mediaCantPlayBody: string;
