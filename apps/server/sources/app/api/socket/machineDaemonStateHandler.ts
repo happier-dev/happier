@@ -7,6 +7,7 @@ import { resolveMachineAdmissionInTx, resolveMachineAccessForActorsInTx } from '
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { recordMachineAliveInTx } from '@/app/presence/presenceRecorder';
 import { readMachineDevcontainerChildInTx } from '@/app/machines/managed/managedRows';
+import { readManagedWakeControllerPublicationAccountIdsInTx } from '@/app/machines/managed/managedWakeAvailability';
 import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { buildUpdateMachineUpdate, eventRouter } from '@/app/events/eventRouter';
 import { serializeMachineKeyBasis } from '@/app/machines/machineSerialization';
@@ -182,7 +183,9 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                     acknowledgeRead(tx, observed);
                     return null;
                 }
-                const recipientAccountIds = await acquireMachinePublicationLocksInTx(tx, machineId);
+                const guestAccountIds = observed.machine.active ? [] :
+                    await readManagedWakeControllerPublicationAccountIdsInTx(tx, [machineId]);
+                const recipientAccountIds = await acquireMachinePublicationLocksInTx(tx, machineId, guestAccountIds);
                 const current = await readContent(tx);
                 if (current.kind !== 'change_required') {
                     acknowledgeRead(tx, current);

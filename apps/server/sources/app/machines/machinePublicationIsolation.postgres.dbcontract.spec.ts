@@ -1,8 +1,11 @@
 import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { Socket } from 'socket.io';
+import tweetnacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-    encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+    computeContentPublicKeyFingerprint, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER,
+    sealEncryptedDataKeyEnvelopeV1, signMachineInstallationProof } from '@happier-dev/protocol';
 import { packSessionDataKeyBundleV0, serializeSessionDataKeyValue, SESSION_DATA_KEY_NONCE_BYTES } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -11,8 +14,11 @@ import { observeLazyPrismaQuery } from '@/app/changes/accountPublicationContenti
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
 import { transitionMachineContentKeyInTx } from './transitionMachineContentKeyInTx';
-import { createSocketRoomDiscoveryHarness } from '@/app/api/testkit/socketHarness';
+import { createFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from '@/app/api/testkit/socketHarness';
+import { registerMachineDaemonStateHandler } from '@/app/api/socket/machineDaemonStateHandler';
+import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from '@/app/api/socket/machineSocketInstallationProof';
 import { getMachineSocketRoom } from '@/app/api/socketRooms';
+import { prepareDeploymentAppMachineRevocationInTx } from '@/app/deployments/deploymentAppRevocation';
 
 // Genuine AES-GCM fixture boundary; framing and value encoding stay protocol-owned.
 function encryptFixtureContent(value: unknown, dataKey: Uint8Array): Uint8Array {
@@ -87,6 +93,103 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Machine publica
             await db.account.delete({ where: { id: account.id } });
         } };
     }
+
+    it.each(['revoke', 'replace', 'clear', 'presence recovery', 'automatic replacement', 'deployment revocation'] as const)(
+        '%s publishes to the retained guest audience across Accounts', async operation => {
+        const current = await fixture();
+        const guestOwner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guestId = randomUUID();
+        try {
+            const controller = await db.machine.update({ where: { id: current.old.id }, data: {
+                active: false, installationId: randomUUID(),
+                ...(operation === 'clear' ? { replacedByMachineId: current.replacement.id } : {}),
+            } });
+            await db.machine.create({ data: { id: guestId, accountId: guestOwner.id,
+                metadata: encodePlainMachineStoredContent({ host: 'guest' }),
+                dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+            await db.managedMachine.create({ data: {
+                homeId: `srv_${'a'.repeat(32)}`, custodianAccountId: current.account.id,
+                controllerMachineId: controller.id, controllerInstallationId: controller.installationId,
+                admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'confirmed-absent',
+                creationState: 'active', launch: {}, enrolledMachineId: guestId, desired: 'delete',
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            } });
+
+            let replacementId = current.replacement.id;
+            if (operation === 'deployment revocation') {
+                const source = await db.projectSource.create({ data: { createdByAccountId: current.account.id,
+                    name: 'Controller revocation', audience: [], attachments: [] } });
+                const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: current.account.id,
+                    header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: controller.dataEncryptionKey! } });
+                const content = { contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+                const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.id,
+                    createdByAccountId: current.account.id, controllerMachineId: current.replacement.id,
+                    protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', ...content } });
+                const target = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
+                    createdByAccountId: current.account.id, role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server',
+                    targetKind: 'ownServer', state: 'configured', ...content } });
+                const deployment = await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: target.id,
+                    requestedByAccountId: current.account.id, requestKey: randomUUID(), actionOperationId: randomUUID(),
+                    operation: 'deploy', state: 'succeeded', ...content } });
+                try {
+                    await db.machine.update({ where: { id: controller.id }, data: { deploymentAppDeploymentId: deployment.id } });
+                    await inTx(async tx => {
+                        const revoke = await prepareDeploymentAppMachineRevocationInTx(tx, { environmentId: environment.id,
+                            publicationAccountIds: [current.account.id] });
+                        await revoke();
+                    });
+                } finally {
+                    await db.deployment.delete({ where: { id: deployment.id } });
+                    await db.deploymentTargetLink.delete({ where: { id: target.id } });
+                    await db.deploymentEnvironment.delete({ where: { id: environment.id } });
+                    await db.artifact.delete({ where: { id: artifact.id } });
+                    await db.projectSource.delete({ where: { id: source.id } });
+                }
+            } else if (operation === 'automatic replacement') {
+                const installation = tweetnacl.sign.keyPair();
+                replacementId = randomUUID();
+                const identity = { installationId: randomUUID(), replacesMachineId: controller.id, replacementReason: 'reauth' as const,
+                    contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(current.binding.contentPublicKey) };
+                const response = await current.app.inject({ method: 'POST', url: '/v1/machines', headers: current.headers,
+                    payload: { ...identity, id: replacementId, metadata: controller.metadata,
+                        dataEncryptionKey: encodeBase64(controller.dataEncryptionKey!),
+                        installationPublicKey: Buffer.from(installation.publicKey).toString('base64url'),
+                        installationProof: signMachineInstallationProof({ payload: { version: 1, ...identity,
+                            accountId: current.account.id, machineId: replacementId }, privateKey: installation.secretKey }) } });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toMatchObject({ machineReplacement: { status: 'applied', replacesMachineId: controller.id } });
+            } else if (operation === 'presence recovery') {
+                const socket = createFakeSocket({ data: { clientType: 'machine-scoped', machineId: controller.id,
+                    [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: controller.installationId } });
+                registerMachineDaemonStateHandler(current.account.id, socket as unknown as Socket);
+                const handler = getSocketHandler(socket, 'machine-update-state');
+                const daemonState = encodeBase64(encryptFixtureContent({ status: 'ready' }, randomBytes(32)));
+                const callback = vi.fn();
+                await handler({ machineId: controller.id, daemonState, expectedVersion: controller.daemonStateVersion,
+                    expectedDataEncryptionKey: encodeBase64(controller.dataEncryptionKey!) }, callback);
+                expect(callback).toHaveBeenCalledWith({ result: 'success', version: controller.daemonStateVersion + 1, daemonState });
+            } else {
+                const url = `/v1/machines/${controller.id}/${operation === 'revoke' ? 'revoke' : 'replacement'}`;
+                const response = await current.app.inject({ method: operation === 'clear' ? 'DELETE' : 'POST',
+                    url, headers: current.headers, ...(operation === 'replace'
+                        ? { payload: { replacementMachineId: current.replacement.id } } : {}),
+                });
+                expect(response.statusCode, response.body).toBe(200);
+            }
+            const persisted = await db.machine.findUniqueOrThrow({ where: { id: controller.id } });
+            if (operation === 'revoke' || operation === 'deployment revocation') expect(persisted.revokedAt).toBeInstanceOf(Date);
+            else if (operation === 'presence recovery') expect(persisted.active).toBe(true);
+            else expect(persisted.replacedByMachineId).toBe(operation === 'clear' ? null : replacementId);
+            const recipients = await db.accountChange.findMany({ where: { kind: 'machine', entityId: guestId },
+                select: { accountId: true }, orderBy: { accountId: 'asc' } });
+            expect(recipients.map(recipient => recipient.accountId)).toEqual([current.account.id, guestOwner.id].sort());
+        } finally {
+            await db.managedMachine.deleteMany({ where: { enrolledMachineId: guestId } });
+            await db.machine.deleteMany({ where: { id: guestId } });
+            await db.account.delete({ where: { id: guestOwner.id } });
+            await current.close();
+        }
+    });
 
     it.each(['replace', 'clear', 'revoke', 'content-key'] as const)('%s commits across a hot Account cursor', async operation => {
         const current = await fixture();

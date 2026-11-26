@@ -39,13 +39,29 @@ export async function withManagedWakeAvailabilityInTx<T extends Readonly<{ manag
     });
 }
 
+/** The structural guest audience shared by admission and semantic controller publication. */
+async function readManagedWakeControllerAudiencesInTx(tx: Tx, controllerMachineIds: readonly string[]) {
+    const enrolledMachineIds: string[] = [];
+    for (const ids of portableQueryChunks({ values: [...new Set(controllerMachineIds)], bindingsPerValue: 1 })) {
+        const resources = await tx.managedMachine.findMany({
+            where: { controllerMachineId: { in: [...ids] }, enrolledMachineId: { not: null } },
+            select: { enrolledMachineId: true },
+        });
+        for (const resource of resources) {
+            if (resource.enrolledMachineId) enrolledMachineIds.push(resource.enrolledMachineId);
+        }
+    }
+    return readMachineAudienceAccountIdsForMachinesInTx(tx, enrolledMachineIds);
+}
+
+export async function readManagedWakeControllerPublicationAccountIdsInTx(tx: Tx, controllerMachineIds: readonly string[]): Promise<string[]> {
+    const audiences = await readManagedWakeControllerAudiencesInTx(tx, controllerMachineIds);
+    return [...new Set([...audiences.values()].flat())];
+}
+
 /** Semantic controller transitions wake existing exact guest readers, never ordinary heartbeat renewal. */
 export async function invalidateManagedWakeControllerInTx(tx: Tx, controllerMachineId: string): Promise<void> {
-    const resources = await tx.managedMachine.findMany({ where: { controllerMachineId, enrolledMachineId: { not: null } },
-        select: { enrolledMachineId: true } });
-    const machineIds = resources.flatMap(resource => resource.enrolledMachineId ? [resource.enrolledMachineId] : []);
-    const audiences = await readMachineAudienceAccountIdsForMachinesInTx(tx, machineIds);
-    for (const machineId of machineIds) await markAccountsChanged(tx, {
-        accountIds: audiences.get(machineId) ?? [], kind: 'machine', entityId: machineId,
+    for (const [machineId, accountIds] of await readManagedWakeControllerAudiencesInTx(tx, [controllerMachineId])) await markAccountsChanged(tx, {
+        accountIds, kind: 'machine', entityId: machineId,
     });
 }

@@ -19,6 +19,8 @@ import {
 
 export interface WorkflowPublicationScope {
     accountId: string;
+    /** Publication recipients of a composed owner outside the Workflow graph. */
+    additionalAccountIds?: readonly string[];
     /** Composed list projection, admitted with the Workflow's complete publication cohort. */
     discussionId?: string;
     runIds?: readonly string[];
@@ -163,7 +165,8 @@ export async function getWorkflowPublicationAudienceInTx(tx: Tx, scope: Workflow
         ...followDestinations.map(edge => edge.destinationSessionId),
         ...runs.flatMap(run => [run.originSessionId, run.producedSessionId].filter((id): id is string => id !== null)),
     ])].sort();
-    const accountIds = new Set([scope.accountId, ...runs.map(run => run.accountId), ...automationAudience.accountIds]);
+    const accountIds = new Set([scope.accountId, ...runs.map(run => run.accountId), ...automationAudience.accountIds,
+        ...scope.additionalAccountIds ?? []]);
     // Each census rereads live authority. Runs with the same frozen authority
     // inputs share that decision only within this capture, recheck or precommit.
     const runAudiences = new Set<string>();

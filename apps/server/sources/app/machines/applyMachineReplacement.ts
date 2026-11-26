@@ -11,7 +11,7 @@ import { catchUpAutomationRunLifecycleSourcesForRestoredMachineTx } from "@/app/
 import { acquireWorkflowPublicationLocksInTx } from "@/app/workflows/acquireWorkflowPublicationLocksInTx";
 import { readMachineDevcontainerChildInTx } from './managed/managedRows';
 import { resolveMachineAccessInTx } from './machineAccess';
-import { invalidateManagedWakeControllerInTx } from './managed/managedWakeAvailability';
+import { invalidateManagedWakeControllerInTx, readManagedWakeControllerPublicationAccountIdsInTx } from './managed/managedWakeAvailability';
 
 export type ApplyMachineReplacementParams = Readonly<{
     tx: Tx;
@@ -34,7 +34,8 @@ export class MachineReplacementWriteConflictError extends Error {
 export async function applyMachineReplacement(params: ApplyMachineReplacementParams): Promise<void> {
     // Reciprocal replacements touch different rows. The existing Account admission
     // serializes their one write-boundary validation before either row changes.
-    await acquireAccountChangePublicationLocksInTx(params.tx, [params.accountId], {
+    const guestAccountIds = await readManagedWakeControllerPublicationAccountIdsInTx(params.tx, [params.oldMachineId]);
+    await acquireAccountChangePublicationLocksInTx(params.tx, [params.accountId, ...guestAccountIds], {
         includeSingleAccount: true, intent: 'serializing',
     });
     const machines = await params.tx.machine.findMany({ where: { id: { in: [params.oldMachineId, params.replacementMachineId] } } }).then(decodeMachineStoredContent);
@@ -139,6 +140,7 @@ export async function clearMachineReplacement(params: Readonly<{
 }>): Promise<void> {
     await acquireWorkflowPublicationLocksInTx(params.tx, {
         accountId: params.accountId,
+        additionalAccountIds: await readManagedWakeControllerPublicationAccountIdsInTx(params.tx, [params.oldMachineId]),
         automationWhere: { accountId: params.accountId, enabled: true, deletedAt: null,
             assignments: { some: { machineId: params.oldMachineId, enabled: true } } },
         sourceTriggerWhere: { enabled: true, remainingOccurrences: 1, automation: { accountId: params.accountId,

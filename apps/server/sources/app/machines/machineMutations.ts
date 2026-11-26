@@ -14,11 +14,12 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { readMachineAccessKeySessionBindingsInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { serializeMachineKeyBasis } from "./machineSerialization";
 import { acquireManagedMachinePublicationAccountsInTx, readMachineDevcontainerChildInTx, readManagedMachineInTx,
-    readManagedRowDeclarationBodiesInTx, type ManagedDeclarationBodies } from './managed/managedRows';
+    readManagedAdmissionState, readManagedRowDeclarationBodiesInTx, type ManagedDeclarationBodies } from './managed/managedRows';
 import { linkMachineEnrollmentInTx } from './machineEnrollment';
 import { isDeploymentAppEnrollmentCorrelationV1, type MachineEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import { resolveMachineAccessInTx } from './machineAccess';
-import { withManagedWakeAvailabilityInTx, invalidateManagedWakeControllerInTx } from './managed/managedWakeAvailability';
+import { withManagedWakeAvailabilityInTx, invalidateManagedWakeControllerInTx,
+    readManagedWakeControllerPublicationAccountIdsInTx } from './managed/managedWakeAvailability';
 
 import {
     applyVerifiedMachineRegistrationReplacement,
@@ -66,6 +67,7 @@ export function recheckMachineStoredContentMutationAdmissionInTx(tx: Tx, input: 
 /** Persistent registration fences its predicates; Runner creation keeps activation's content admission. */
 export async function acquireMachineRegistrationAccountsInTx(tx: Tx, input: Readonly<{
     accountId: string; machineId: string; kind?: MachineKind; managedEnrollment?: MachineEnrollmentCorrelationV1;
+    installationIdentity?: VerifiedMachineInstallationIdentity | null;
     declarationBodies?: ManagedDeclarationBodies;
 }>): Promise<ManagedDeclarationBodies | undefined> {
     const intent = isPersistentMachine(input) ? 'exclusive' : 'content';
@@ -73,11 +75,24 @@ export async function acquireMachineRegistrationAccountsInTx(tx: Tx, input: Read
         ? input.managedEnrollment : undefined;
     const declarationBodies = input.declarationBodies ?? (intent === 'exclusive' && managedEnrollment
         ? await readManagedRowDeclarationBodiesInTx(tx, await readManagedMachineInTx(tx, managedEnrollment)) : undefined);
+    const replacesMachineId = input.installationIdentity?.replacesMachineId;
+    const replacesMachine = replacesMachineId && replacesMachineId !== input.machineId && intent === 'exclusive'
+        ? await tx.machine.findFirst({ where: { id: replacesMachineId, accountId: input.accountId, kind: 'persistent' },
+            select: { id: true } })
+        : null;
+    const replacementControllers = replacesMachine ? [replacesMachine.id] : [];
     if (managedEnrollment) {
         await acquireManagedMachinePublicationAccountsInTx(tx, managedEnrollment,
-            { intent, additionalAccountIds: [input.accountId], additionalMachineIds: [input.machineId] });
+            { intent, additionalAccountIds: [input.accountId], additionalMachineIds: [input.machineId],
+                readAdditionalAccountIdsInTx: (client, row) => {
+                    const previousId = readManagedAdmissionState(row.admittedInput).replacementEnrollment?.machineId;
+                    return readManagedWakeControllerPublicationAccountIdsInTx(client,
+                        previousId && previousId !== input.machineId ? [...replacementControllers, previousId] : replacementControllers);
+                },
+            });
     } else {
-        await acquireAccountChangePublicationLocksInTx(tx, [input.accountId], { includeSingleAccount: true, intent });
+        const guestAccountIds = await readManagedWakeControllerPublicationAccountIdsInTx(tx, replacementControllers);
+        await acquireAccountChangePublicationLocksInTx(tx, [input.accountId, ...guestAccountIds], { includeSingleAccount: true, intent });
     }
     return declarationBodies;
 }

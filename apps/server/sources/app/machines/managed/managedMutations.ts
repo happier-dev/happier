@@ -46,6 +46,7 @@ import {
 } from "./managedRows";
 import { readStoredOpaquePresetLaunch } from './managedMachineProjection';
 import { markManagedMachineOfflineInTx, publishInactiveMachines } from '@/app/presence/timeout';
+import { readManagedWakeControllerPublicationAccountIdsInTx } from './managedWakeAvailability';
 import { closeInstalledMachinePublishersInTx, readInstalledMachinePublisherAccountIdsInTx } from '@/app/presence/sessionPublisherPresence';
 
 /** Admission/control returns the exact retained opaque envelope, never a latest Preset read. */
@@ -788,7 +789,12 @@ export async function reportManagedIntent(canonical: ManagedControllerIntentRepo
         intent: 'content',
         async readAdditionalAccountIdsInTx(tx, row) {
             const scope = endedGuest(row, readManagedIntentReportAuthority(row, canonical)?.intent, canonical.observation);
-            return scope ? readInstalledMachinePublisherAccountIdsInTx(tx, scope) : [];
+            if (!scope) return [];
+            const [publisherAccounts, guestAccounts] = await Promise.all([
+                readInstalledMachinePublisherAccountIdsInTx(tx, scope),
+                readManagedWakeControllerPublicationAccountIdsInTx(tx, [scope.machineId]),
+            ]);
+            return [...publisherAccounts, ...guestAccounts];
         },
     } : undefined);
 }

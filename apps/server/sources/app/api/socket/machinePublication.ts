@@ -15,14 +15,14 @@ import { db } from '@/storage/db';
 import { log } from '@/utils/logging/log';
 import * as privacyKit from 'privacy-kit';
 
-export async function acquireMachinePublicationLocksInTx(tx: Tx, machineId: string): Promise<string[]> {
+export async function acquireMachinePublicationLocksInTx(tx: Tx, machineId: string, additionalAccountIds: readonly string[] = []): Promise<string[]> {
     // SQLite already admits one writer. PostgreSQL/MySQL use the same ordered
     // Account fence as the publication that follows the Machine CAS.
     if (getDbProviderFromEnv(process.env, "postgres") === "sqlite") {
         return resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
     }
     const hintedAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, machineId);
-    await acquireAccountChangePublicationLocksInTx(tx, hintedAccountIds, { includeSingleAccount: true });
+    await acquireAccountChangePublicationLocksInTx(tx, [...hintedAccountIds, ...additionalAccountIds], { includeSingleAccount: true });
     // KEY SHARE admits concurrent content publishers. Read the revision and
     // installation only after the Machine row itself excludes another writer.
     await lockMachinePublicationInTx(tx, machineId);

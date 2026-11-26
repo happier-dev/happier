@@ -13,6 +13,7 @@ import { acquireWorkflowPublicationLocksInTx } from "@/app/workflows/acquireWork
 import { getWorkflowPublicationAudienceInTx, type WorkflowPublicationScope, type WorkflowPublicationAudience } from "@/app/workflows/workflowPublicationAudience";
 import type { AccountEncryptionInconsistencyReason } from "@/app/encryption/accountContentKeyAdmission";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { readManagedWakeControllerPublicationAccountIdsInTx } from "@/app/machines/managed/managedWakeAvailability";
 import { cancelWorkflowRunTx, WorkflowRunServiceError } from "@/app/workflows/workflowRunService";
 import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/portableQueryChunks";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
@@ -44,14 +45,15 @@ async function machineAssignmentRemovalPublicationScope(tx: Tx,
     params: Readonly<{ accountId: string; machineId: string }>,
 ): Promise<Readonly<{ scope: WorkflowPublicationScope; contentAccountIds: readonly string[] }>> {
     // Exact assigned definitions and open Runs determine their real content-fence owners.
-    const [definitions, runs] = await Promise.all([
+    const [definitions, runs, additionalAccountIds] = await Promise.all([
         tx.automation.findMany({ where: { assignments: { some: { machineId: params.machineId } } },
             select: { id: true, accountId: true } }),
         tx.automationRun.findMany({ where: { assignments: { some: { machineId: params.machineId } },
             state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] } }, select: { id: true, accountId: true } }),
+        readManagedWakeControllerPublicationAccountIdsInTx(tx, [params.machineId]),
     ]);
     const contentAccountIds = [...new Set([params.accountId, ...definitions.map(row => row.accountId), ...runs.map(row => row.accountId)])].sort();
-    return { contentAccountIds, scope: { accountId: params.accountId,
+    return { contentAccountIds, scope: { accountId: params.accountId, additionalAccountIds,
         automationIds: definitions.map(row => row.id), runIds: runs.map(row => row.id),
         machineTargets: contentAccountIds.map(accountId => ({ accountId, machineId: params.machineId })),
     } };

@@ -582,7 +582,9 @@ export function machinesRoutes(app: Fastify) {
             let updated: UpdatedMachineResponse;
             try {
                 updated = await inTx(async (tx) => {
-                    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
+                    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, {
+                        accountId: userId, machineId: id, managedEnrollment, installationIdentity: verifiedInstallationIdentity,
+                    });
                     await requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
                     const current = await tx.machine.findFirst({
                         where: {
@@ -728,7 +730,9 @@ export function machinesRoutes(app: Fastify) {
             let machineReplacement: MachineRegistrationReplacementResult | null = null;
             try {
                 const created = await inTx(async (tx) => {
-                    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
+                    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, {
+                        accountId: userId, machineId: id, managedEnrollment, installationIdentity: verifiedInstallationIdentity,
+                    });
                     await requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
                     const registered = await createMachineWithInstallationIdentityInTx(tx, {
                     accountId: userId,
@@ -780,7 +784,9 @@ export function machinesRoutes(app: Fastify) {
                         {
                             try {
                                 rejoinedMachine = await inTx(async tx => {
-                                    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
+                                    const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, {
+                                        accountId: userId, machineId: id, managedEnrollment, installationIdentity: verifiedInstallationIdentity,
+                                    });
                                     await requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment, declarationBodies });
                                     const current = await tx.machine.findUnique({ where: { accountId_id: { accountId: userId, id } } }).then(decodeMachineStoredContent);
                                     if (!current || current.revokedAt) throw new ManagedMachineError("enrollment_retired");

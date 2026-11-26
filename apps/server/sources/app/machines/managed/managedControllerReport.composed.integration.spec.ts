@@ -80,8 +80,11 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
     };
 
     it.each(['signed-credential', 'api-token', 'api-token-grant', 'machine-grant', 'controller-retired', 'controller-retired-unreviewed',
-        'publication', 'legacy-missing', 'legacy-mismatched', 'MR-R1 lost bound report response', 'MR-R4 registration after Cancel'] as const)(
-        'settles or explains a signed submitted Lima report (%s)', async withdrawal => {
+        'publication', 'legacy-missing', 'legacy-mismatched', 'MR-R1 lost bound report response', 'MR-R4 registration after Cancel',
+        'nested managed guest'] as const)(
+        'settles or explains a signed submitted Lima report (%s)', async scenario => {
+        const nestedGuestScenario = scenario === 'nested managed guest';
+        const withdrawal = nestedGuestScenario ? 'signed-credential' : scenario;
         // Configurator admissions retain reviewed facts; Action/Session-originated
         // admissions may not, and report them with the issued native fact.
         const retired = withdrawal === 'controller-retired' || withdrawal === 'controller-retired-unreviewed';
@@ -490,7 +493,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             } });
             // This real Lima declaration admits Start/Stop/Delete. Resume and
             // Suspend are exercised by the controller fixture that supports them.
-            const intents = withdrawal === 'signed-credential'
+            const intents = nestedGuestScenario ? ['stop'] as const : withdrawal === 'signed-credential'
                 ? ['start', 'stop', 'delete'] as const : ['stop', 'delete'] as const;
             for (const intent of intents) {
                 const actionId = intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
@@ -535,6 +538,20 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 const controlReport = { ...correlation, result: { kind: 'confirmed' }, observation };
                 expect(await controlClient.post('/v1/machines/managed/controller/submit-intent', correlation,
                     ManagedControllerSubmitOutputV1Schema)).toMatchObject({ submitted: true });
+                let nestedWake: { enrolledId: string; guestId: string; guestAccountId: string } | undefined;
+                if (nestedGuestScenario) {
+                    const { controller: enrolled } = await createController(account.id);
+                    const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+                    const { controller: nestedGuest } = await createController(custodian.id);
+                    const parent = await db.managedMachine.update({ where: { id: controlled.id },
+                        data: { enrolledMachineId: enrolled.machineId } });
+                    await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
+                        controllerMachineId: enrolled.machineId, controllerInstallationId: enrolled.installationId,
+                        admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', launch: parent.launch!,
+                        enrolledMachineId: nestedGuest.machineId, desired: 'stop', wakeOnAcceptedMessage: false,
+                        retention: { kind: 'until-delete' } } });
+                    nestedWake = { enrolledId: enrolled.machineId, guestId: nestedGuest.machineId, guestAccountId: custodian.id };
+                }
                 if (withdrawal === 'machine-grant') await db.machineGrant.deleteMany({
                     where: { principalKind: 'account', machineId: controller.machineId, accountId: controlActor.id },
                 });
@@ -566,6 +583,17 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                     expect(ManagedControllerSubmitOutputV1Schema.parse(replay.json())).toMatchObject({
                         submitted: false, machine: { id: controlled.id, submittedNativeEffect: { requestId: controlRequestId } },
                     });
+                }
+                if (nestedWake) {
+                    const settled = await signedPost(controlReport);
+                    expect(settled.statusCode, settled.body).toBe(200);
+                    expect(ManagedControllerMachineOutputV1Schema.parse(settled.json()).machine).toMatchObject({ observation });
+                    expect(await db.machine.findUniqueOrThrow({ where: { id: nestedWake.enrolledId } })).toMatchObject({ active: false });
+                    expect(await db.accountChange.findMany({ where: { entityId: nestedWake.guestId, kind: 'machine' },
+                        select: { accountId: true }, orderBy: { accountId: 'asc' } })).toEqual(
+                        [account.id, viewer.id, nestedWake.guestAccountId].sort().map(accountId => ({ accountId })),
+                    );
+                    return;
                 }
                 // An independent Inspect can settle custody before the original
                 // native command reports its newer outcome. Both are facts of
