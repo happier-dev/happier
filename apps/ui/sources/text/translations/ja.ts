@@ -8910,6 +8910,7 @@ localTailscale: {
         requester_session_custody_unavailable: "このマシンでこのセッションへのアクセスを復元できませんでした。セッションを再開してもう一度お試しください。",
         requester_session_bootstrap_mismatch: "このマシンは別のリクエストのアクセスを復元しました。セッションを再開してもう一度開始してください。",
         requester_session_bootstrap_not_current: "このマシンでのこのセッションへのアクセスは最新ではありません。セッションを再開して更新してください。",
+        context_source_unavailable: "親セッションのコンテキストを利用できなかったため、新しいセッションを開始できませんでした。",
         database_transaction_timeout: "このセッションの作成中にサーバーがタイムアウトしました。もう一度開始してください。",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "このステップを開始するには、このマシンで Happier を再読み込みする必要があります",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "再開に必要なエージェントのネイティブ状態が見つかりません。",

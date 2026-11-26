@@ -455,6 +455,13 @@ describe('canonical Run page occurrence target', () => {
         expect(screen.getTextContent()).not.toContain('plugin_action_execution_placement_unavailable');
     });
 
+    it('explains when a spawned step could not read its lead Session context', async () => {
+        const screen = await respond(run({ errorCode: 'context_source_unavailable' }));
+
+        expect(screen.getTextContent()).toContain('session.startFailure.cause.context_source_unavailable');
+        expect(screen.getTextContent()).not.toContain('errors.operationFailed');
+    });
+
     it('renders retired exact-turn history from the immutable cause', async () => {
         const triggerId = AutomationTriggerIdSchema.parse('turn-trigger-retired');
         const screen = await respond(run({ triggerId, triggerRetired: true, cause: {

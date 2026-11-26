@@ -8292,6 +8292,7 @@ export const zhHans: TranslationStructure = {
         requester_session_custody_unavailable: "无法在这台机器上恢复你对此会话的访问权限。请恢复会话以重试。",
         requester_session_bootstrap_mismatch: "这台机器恢复的是另一个请求的访问权限。请恢复会话以重新开始。",
         requester_session_bootstrap_not_current: "你在这台机器上对此会话的访问权限已失效。请恢复会话以更新它。",
+        context_source_unavailable: "主会话的上下文不可用，无法启动新会话。",
         database_transaction_timeout: "服务器在创建此会话时超时。请尝试重新启动会话。",
         SOURCE_RUNTIME_RELOAD_REQUIRED: "需要在这台机器上重新加载 Happier，才能开始此步骤",
         AGENT_RESUME_PROVIDER_STATE_MISSING: "缺少恢复所需的智能体原生状态。",

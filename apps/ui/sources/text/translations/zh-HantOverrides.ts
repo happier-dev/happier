@@ -7114,6 +7114,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               requester_session_custody_unavailable: "無法在這台機器上還原你對此工作階段的存取權。請繼續工作階段以重試。",
               requester_session_bootstrap_mismatch: "這台機器還原的是另一個要求的存取權。請繼續工作階段以重新開始。",
               requester_session_bootstrap_not_current: "你在這台機器上對此工作階段的存取權已失效。請繼續工作階段以更新它。",
+              context_source_unavailable: "主工作階段的上下文無法使用，因此未能啟動新的工作階段。",
               database_transaction_timeout: "伺服器在建立此工作階段時逾時。請嘗試重新啟動工作階段。",
               SOURCE_RUNTIME_RELOAD_REQUIRED: "需要在這台機器上重新載入 Happier，才能開始此步驟",
               AGENT_RESUME_PROVIDER_STATE_MISSING: "缺少繼續所需的代理程式原生狀態。",

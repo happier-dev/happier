@@ -10021,6 +10021,7 @@ const enSession = {
       requester_session_custody_unavailable: 'Your access to this session couldn’t be restored on this machine. Resume the session to try again.',
       requester_session_bootstrap_mismatch: 'This machine restored access for a different request. Resume the session to start it again.',
       requester_session_bootstrap_not_current: 'Your access to this session on this machine is no longer current. Resume the session to renew it.',
+      context_source_unavailable: "The new session couldn’t start because the lead session’s context was unavailable.",
       database_transaction_timeout: "The server timed out while creating this session. Try starting it again.",
       SOURCE_RUNTIME_RELOAD_REQUIRED: 'This machine needs a Happier reload before the step can start',
       AGENT_RESUME_PROVIDER_STATE_MISSING: 'The native agent state needed to resume is missing.',
