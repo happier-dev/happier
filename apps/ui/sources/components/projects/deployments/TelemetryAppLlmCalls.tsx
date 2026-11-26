@@ -35,6 +35,7 @@ import { t } from '@/text';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 
 import { TelemetryCard } from './TelemetryCard';
+import { usageSeriesTitle } from '@/components/settings/usage/widgets/usageChartLabels';
 import {
   readTelemetryCaptureCostsSnapshot,
   readTelemetryCaptureListSnapshot,
@@ -209,8 +210,8 @@ export function TelemetryAppLlmCalls(
     <View style={styles.body} testID="project-deployments.telemetry.llm">
       {filters}
       {usageCard('usage_cost_facts', 'project-deployments.telemetry.llm.costFacts', t('usage.cost'))}
-      {/* Titled as Usage and Home title this widget; its caption says the measure and period once. */}
-      {usageCard('usage_daily', 'project-deployments.telemetry.llm.daily', t('usage.widgets.usage_daily'))}
+      {/* Titled by its bars' bucket, as Usage titles this chart; its caption says the measure and period once. */}
+      {usageCard('usage_daily', 'project-deployments.telemetry.llm.daily', usageSeriesTitle(granularity))}
       {routeRows.length > 0 ? <TelemetryCard testID="project-deployments.telemetry.llm.routes.frame" title={t('deploymentTelemetry.llm.byRoute')}>
         <UsageBreakdownsBody theme={chartTheme} spacing={theme.space} testID="project-deployments.telemetry.llm.routes" model={{
           namedByCard: true,

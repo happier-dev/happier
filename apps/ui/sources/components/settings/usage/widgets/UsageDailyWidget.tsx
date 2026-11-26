@@ -17,6 +17,7 @@ import { formatUsageCalendarDate, formatUsageWeeklyBucketLabel, resolveUsageShow
 import { usageCostKindPhrase, usagePageCostTrend } from '../usageCostPresentation';
 import { useUsageDrill } from '../usageDrill';
 import { useUsageChartDetails } from './usageMountedControls';
+import { usageSeriesTitle } from './usageChartLabels';
 import {
   fillUsageMixCalendar,
   fillUsageTrendCalendar,
@@ -240,10 +241,12 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     return usageAxisTicks(labels, running ? t('usage.today') : undefined);
   }, [series, metric, byAgent, props.query.granularity, props.query.timeZoneOffsetMinutes, weekly, range]);
   const measure = `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} · ${usagePeriodPhrase(props.query)}`;
-  // A long period draws one bar per week: the card is named for its bars ("Weekly usage"), never "Daily usage · by week"
-  // (USAGE-ACCEPT 1121 #16). A name the person gave the widget still wins at the frame.
-  const weeklyIdentity = React.useMemo(() => weekly ? { title: t('usage.board.page.weeklyUsage') } : null, [weekly]);
-  useWidgetFrameBodyIdentity(weeklyIdentity);
+  // The card is named for the bars it draws ("Weekly usage" for a year, "Hourly usage" for Today, "Daily usage" for
+  // days), never a bucket it does not draw (USAGE-ACCEPT 1121 #16, N1, J-B78); before the read the catalog's
+  // bucket-neutral name stands. A name the person gave the widget still wins at the frame.
+  const bucket = range?.granularity ?? props.query.granularity;
+  const seriesIdentity = React.useMemo(() => bucket !== undefined ? { title: usageSeriesTitle(bucket) } : null, [bucket]);
+  useWidgetFrameBodyIdentity(seriesIdentity);
   // The frame's subtitle is the same from the first paint: whether the bars split by agent is only known once the
   // read answers, and the legend says it then. The chart's own label (for assistive technology) names the split.
   useWidgetFrameBodyCaption(measure);
@@ -269,7 +272,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     <View testID={`${props.testID}.drawn`}>
     <UsageDailyChart theme={chartTheme} gap={theme.space.s10} testID={props.testID} chart={{
         ...details,
-        label: weeklyIdentity ? `${weeklyIdentity.title} · ${caption}` : caption,
+        label: seriesIdentity ? `${seriesIdentity.title} · ${caption}` : caption,
         series: drawnSeries,
         size: compact ? 'tile' : 'full',
         viewportHeight: height,

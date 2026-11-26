@@ -151,3 +151,18 @@ export function usageAtmosphereLabels(query: Pick<UsageQuery, 'timeZoneOffsetMin
     values: { ...usageChartValuesLabels(), weekColumn: t('usage.board.charts.weekColumn'), peakColumn: t('usage.board.charts.peakColumn'),
       notRecorded: t('usage.board.charts.notRecorded') } };
 }
+
+/**
+ * The usage-over-time chart's name, said by the bucket its bars draw: a title never names a bucket the chart does not
+ * draw ("Hourly usage" for Today, "Weekly usage" for a year). The Usage page card and the Environment's LLM calls card
+ * both title the chart from here (design review N1, Usage ruling 11-26); the catalog and Gallery name the widget
+ * without a bucket ("Usage over time", J-B78) until its body knows which it draws.
+ */
+export function usageSeriesTitle(granularity: UsageQuery['granularity']): string {
+  switch (granularity) {
+    case 'hour': return t('usage.board.page.hourlyUsage');
+    case 'week': return t('usage.board.page.weeklyUsage');
+    case 'month': return t('usage.board.page.monthlyUsage');
+    default: return t('usage.board.page.dailyUsage');
+  }
+}

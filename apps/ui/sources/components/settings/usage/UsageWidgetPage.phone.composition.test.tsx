@@ -319,7 +319,8 @@ it('holds the Cost facts figures during the first read and announces one named l
       .some(line => line.props.testID === 'usage-page.header.reading')).toBe(true));
     const pending = () => phone.findAllByType(HappierDataMetric).filter(metric => metric.props.pending === true);
     await waitForHomeGovernance(() => expect(pending().length).toBeGreaterThan(0));
-    expect(pending().map(metric => metric.props.size)).toEqual(['hero', 'stat', 'stat', 'stat', 'stat']);
+    // The lead and one row of two figures: the common settled shape once the lead says its fact (J-B77).
+    expect(pending().map(metric => metric.props.size)).toEqual(['hero', 'stat', 'stat']);
     const loading = phone.findByType(UsageCostFactsReading);
     const announcements = findAllHostTestInstances(loading, ({ props }) => {
       const role = props.role ?? props.accessibilityRole;

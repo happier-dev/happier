@@ -20391,7 +20391,7 @@ const enFriends = {
 
 const enUsage = {
   widgets: {
-    usage_daily: "Daily usage",
+    usage_daily: "Usage over time",
     usage_period_summary: "Period summary",
     usage_cost_facts: "Cost facts",
     usage_flow: "Usage flow",
@@ -20493,6 +20493,9 @@ const enUsage = {
       byAgent: "by agent",
       byModel: "by model",
       weeklyUsage: "Weekly usage",
+      dailyUsage: "Daily usage",
+      hourlyUsage: "Hourly usage",
+      monthlyUsage: "Monthly usage",
       thisSession: "This session",
       noUsageTitle: "No usage in this period",
       noUsageReason: "Sessions you run on any machine show up here.",
@@ -20651,7 +20654,7 @@ const enUsage = {
       sessionRecipientFigure: "Your usage",
       machinesCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'machine', plural: 'machines' })}`,
       agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'agent', plural: 'agents' })}`,
-      purposeDaily: "How much you used each day, by agent.",
+      purposeDaily: "How much you used over time, by agent.",
       purposeSummary: "The period in one look: total, change and what it bought.",
       purposeCostFacts: "What you paid, kept apart by how each amount is known.",
       purposeFlow: "How your usage moved over time, by agent or model.",

@@ -16920,7 +16920,7 @@ settingsSession: {
 
     usage: {
         widgets: {
-          usage_daily: "Использование по дням",
+          usage_daily: "Использование во времени",
           usage_period_summary: "Сводка за период",
           usage_cost_facts: "Данные о стоимости",
           usage_flow: "Поток использования",
@@ -17014,6 +17014,9 @@ settingsSession: {
             byModel: "по моделям",
       thisSession: "Эта сессия",
             weeklyUsage: "Использование по неделям",
+            dailyUsage: "Использование по дням",
+            hourlyUsage: "Использование по часам",
+            monthlyUsage: "Использование по месяцам",
             noUsageTitle: "За этот период использования нет",
             noUsageReason: "Здесь появятся сеансы с любой вашей машины.",
             nothingYetTitle: "Пока ничего",
@@ -17171,7 +17174,7 @@ settingsSession: {
             sessionRecipientFigure: "Ваше использование",
             machinesCount: ({ count }: { count: string | number }) => `Машин: ${count}`,
             agentsCount: ({ count }: { count: string | number }) => `Агентов: ${count}`,
-            purposeDaily: "Сколько вы использовали за каждый день, по агентам.",
+            purposeDaily: "Сколько вы использовали во времени, по агентам.",
             purposeSummary: "Период одним взглядом: итог, изменение и результат.",
             purposeCostFacts: "Сколько вы заплатили, раздельно по источнику каждой суммы.",
             purposeFlow: "Как менялось использование со временем, по агентам или моделям.",

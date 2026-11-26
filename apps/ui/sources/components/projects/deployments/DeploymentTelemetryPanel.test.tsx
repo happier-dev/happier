@@ -1149,11 +1149,14 @@ describe('Environment Telemetry capability views', () => {
       ]);
       // Priced with the viewer's Usage prices and drawn by Usage's own bodies: the provider's figure stays its own fact.
       expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('$0.0042');
-      // Worth at API prices: $0.0018 of gpt-5-mini and $0.001 of embeddings.
-      expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('$0.0028');
+      // Worth at API prices: $0.0018 of gpt-5-mini and $0.001 of embeddings, said once as the card's lead (D2).
+      expect(textIn('project-deployments.telemetry.llm.costFacts').match(/\$0\.0028/g)).toHaveLength(1);
+      expect(textIn('project-deployments.telemetry.llm.costFacts')).not.toContain('Value at current API prices');
       // An app's calls have no agents: the provider reported that cost.
       expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('Provider-reported cost');
       expect(screen.findByTestId('project-deployments.telemetry.llm.daily.drawn')).not.toBeNull();
+      // A day's window draws hours, so the chart is named by its bucket (N1).
+      expect(textIn('project-deployments.telemetry.llm.daily.frame')).toContain('Hourly usage');
       // Routes rank by the cost they draw, not by tokens.
       const routes = textIn('project-deployments.telemetry.llm.routes');
       expect(routes.indexOf('POST /checkout')).toBeGreaterThanOrEqual(0);

@@ -16975,7 +16975,7 @@ settingsSession: {
 
     usage: {
         widgets: {
-          usage_daily: "Uso diario",
+          usage_daily: "Uso a lo largo del tiempo",
           usage_period_summary: "Resumen del período",
           usage_cost_facts: "Datos de costes",
           usage_flow: "Flujo de uso",
@@ -17069,6 +17069,9 @@ settingsSession: {
             byModel: "por modelo",
       thisSession: "Esta sesión",
             weeklyUsage: "Uso semanal",
+            dailyUsage: "Uso diario",
+            hourlyUsage: "Uso por hora",
+            monthlyUsage: "Uso mensual",
             noUsageTitle: "Sin uso en este periodo",
             noUsageReason: "Las sesiones que ejecutes en cualquier máquina aparecen aquí.",
             nothingYetTitle: "Nada todavía",
@@ -17226,7 +17229,7 @@ settingsSession: {
             sessionRecipientFigure: "Tu uso",
             machinesCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'máquina', plural: 'máquinas' })}`,
             agentsCount: ({ count }: { count: string | number }) => `${count} ${plural({ count: Number(count), singular: 'agente', plural: 'agentes' })}`,
-            purposeDaily: "Cuánto usaste cada día, por agente.",
+            purposeDaily: "Cuánto usaste a lo largo del tiempo, por agente.",
             purposeSummary: "El periodo de un vistazo: total, cambio y lo que obtuviste.",
             purposeCostFacts: "Lo que pagaste, separado según cómo se conoce cada importe.",
             purposeFlow: "Cómo evolucionó tu uso en el tiempo, por agente o modelo.",

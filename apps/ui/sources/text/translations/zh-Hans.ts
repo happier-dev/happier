@@ -16617,7 +16617,7 @@ settingsSession: {
 
     usage: {
         widgets: {
-          usage_daily: "每日用量",
+          usage_daily: "用量趋势",
           usage_period_summary: "期间摘要",
           usage_cost_facts: "费用数据",
           usage_flow: "用量流向",
@@ -16711,6 +16711,9 @@ settingsSession: {
             byModel: "按模型",
       thisSession: "此会话",
             weeklyUsage: "每周用量",
+            dailyUsage: "每日用量",
+            hourlyUsage: "每小时用量",
+            monthlyUsage: "每月用量",
             noUsageTitle: "此期间没有用量",
             noUsageReason: "你在任何机器上运行的会话都会显示在这里。",
             nothingYetTitle: "暂无内容",
@@ -16868,7 +16871,7 @@ settingsSession: {
             sessionRecipientFigure: "你的用量",
             machinesCount: ({ count }: { count: string | number }) => `${count} 台机器`,
             agentsCount: ({ count }: { count: string | number }) => `${count} 个代理`,
-            purposeDaily: "每天的用量，按代理划分。",
+            purposeDaily: "用量随时间的变化，按代理划分。",
             purposeSummary: "一眼看清本期：总量、变化和收获。",
             purposeCostFacts: "你支付的金额，按每笔金额的来源分开。",
             purposeFlow: "用量随时间的变化，按代理或模型。",

@@ -28,6 +28,7 @@ import { formatUsageDurationCompact } from './usageHowYouWorkPresentation';
 import { UsageFootprintWidget } from './UsageFootprintWidget';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
 import { UsageCostFactsWidget } from './UsageCostFactsWidget';
+import { UsageWidgetBody } from './UsageWidgetBody';
 import { UsageSourceCoverageWidget, UsageUnpricedWidget } from './UsageSourcePanels';
 import { UsageDailyWidget } from './UsageDailyWidget';
 import { UsageFlowWidget } from './UsageFlowWidget';
@@ -130,12 +131,13 @@ describe('one selected money basis across Usage bodies', () => {
     </>);
     const localQualifier = t('usage.board.page.tokensFromParts');
     const sharedQualifier = t(allFromParts ? 'usage.board.page.tokensFromPartsOnce' : 'usage.board.page.tokensFromPartsSome');
+    // The lead says the reported money once (D2), the estimated fact stands beneath; neither repeats the qualifier.
     const captions = screen.findAllByType(HappierDataMetric)
-      .filter(metric => String(metric.props.testID).startsWith('parts-facts.fact.'));
+      .filter(metric => /^parts-facts\.(total|fact\.)/.test(String(metric.props.testID)));
     expect.soft(captions.map(metric => [
       metric.props.testID, metric.props.caption.includes(localQualifier),
     ])).toEqual([
-      ['parts-facts.fact.reported', false], ['parts-facts.fact.estimated', false],
+      ['parts-facts.total', false], ['parts-facts.fact.estimated', false],
     ]);
     const rows = screen.findByType(RankedRows).props.rows as readonly { id: string; value: number; annotation?: string }[];
     expect.soft(Object.fromEntries(rows.map(row => [row.id, [row.value, row.annotation?.includes(localQualifier) ?? false]])))
@@ -288,11 +290,63 @@ describe('one selected money basis across Usage bodies', () => {
     const total = metrics.find(metric => metric.props.testID === 'facts.total')!;
     expect(total.props.size).toBe('hero');
     expect(total.props.value).toBe(summary.props.value);
-    expect(total.props.caption).toBe(summary.props.caption);
-    // The separate facts stay beneath as supporting detail, each with its own token basis.
-    expect(metrics.find(metric => metric.props.testID === 'facts.fact.reported')?.props.size).toBe('stat');
+    // The lead says the page cost's basis, then the token basis of the fact it is (Usage ruling 11-26 on D2).
+    expect(String(total.props.caption).startsWith(String(summary.props.caption))).toBe(true);
+    // That fact is not said again beneath it; the other facts stay as supporting detail, each with its token basis.
+    expect(metrics.find(metric => metric.props.testID === 'facts.fact.reported')).toBeUndefined();
     expect(metrics.find(metric => metric.props.testID === 'facts.fact.invoice')?.props.value).toBe(0.2);
   });
+
+  it.each([
+    // The same admitted money: the lead says it once.
+    { name: 'the same amount', amount: 3, absorbed: true },
+    // Distinct admitted amounts stay their own facts, however alike they print (J-B76): no tolerance.
+    { name: 'a different amount by a billionth', amount: 3.000000001, absorbed: false },
+    { name: 'a different amount that prints alike', amount: 3.0000004, absorbed: false },
+  ])('takes into the lead only the fact that is its exact money: $name', async ({ amount, absorbed }) => {
+    const props = mountedCosts();
+    const facts = (props.slice.costFactTotals ?? []).map(fact => fact.kind === 'reported' ? { ...fact, amountUsd: amount } : fact);
+    const screen = await renderScreen(<UsageCostFactsWidget {...props} slice={{ ...props.slice, costFactTotals: facts }}
+      id="usage_cost_facts" testID="facts" />);
+    const metrics = screen.findAllByType(HappierDataMetric);
+    expect(metrics.find(metric => metric.props.testID === 'facts.total')?.props.value).toBe(3);
+    expect(metrics.some(metric => metric.props.testID === 'facts.fact.reported')).toBe(!absorbed);
+  });
+
+  // Usage ruling 11-26 (J-B77): the first read holds two figures; a scope whose only fact is the lead's money lands with
+  // none, the lead carrying that fact's token basis. That one collapse is the accepted glitch; a same-scope refresh keeps
+  // the settled lead and basis and never shows the pending figures again.
+  it('holds two figures on the first read, lands a sole absorbed fact as the lead alone, and keeps it through a refresh', async () => {
+    const props = mountedCosts();
+    const soleFacts = (props.slice.costFactTotals ?? []).filter(fact => fact.kind === 'reported');
+    expect(soleFacts).toHaveLength(1);
+    const sole = { ...props.slice, costFactTotals: soleFacts };
+    const authority = { serverId: 'home', accountId: 'usage-account' };
+    const body = (slice: typeof sole | null, pending: boolean) => <UsageWidgetBody id="usage_cost_facts" input={{}}
+      serverId="home" testID="mounted" facts={{ authority, query: props.query, slice, pending, error: null, refresh: async () => {} }} />;
+    const screen = await renderScreen(body(null, true));
+    const metrics = () => screen.findAllByType(HappierDataMetric);
+    const pendingStats = () => metrics().filter(metric => metric.props.pending === true && metric.props.size === 'stat');
+    const factCells = () => metrics().filter(metric => String(metric.props.testID).startsWith('mounted.fact.'));
+    const lead = () => metrics().find(metric => metric.props.testID === 'mounted.total');
+    expect(pendingStats()).toHaveLength(2);
+    expect(lead()).toBeUndefined();
+    await screen.update(body(sole, false));
+    expect(pendingStats()).toHaveLength(0);
+    expect(factCells()).toHaveLength(0);
+    expect(lead()?.props.value).toBe(3);
+    const settledCaption = String(lead()!.props.caption);
+    // The lead carries the absorbed fact's token basis beside the page cost's basis.
+    const basis = t('usage.board.page.factCostTokens', { tokens: formatTokenCount(soleFacts[0]!.tokens.total) });
+    expect(settledCaption).toContain(basis);
+    // Same scope, refreshing: the settled lead and its basis stay; the pending figures do not come back.
+    await screen.update(body(sole, true));
+    expect(pendingStats()).toHaveLength(0);
+    expect(factCells()).toHaveLength(0);
+    expect(lead()?.props.value).toBe(3);
+    expect(String(lead()!.props.caption)).toBe(settledCaption);
+  });
+
 
   it('carries incomplete accounting and its admitted cause into the Agent river share, including during refresh', async () => {
     const base = mountedCosts(false, 12);
@@ -500,13 +554,14 @@ describe('one selected money basis across Usage bodies', () => {
       setPreferredLanguageFromSettings('fr');
       await preloadTranslations();
       const screen = await renderScreen(<UsageCostFactsWidget {...mountedCosts(false, 2093005)} id="usage_cost_facts" testID="facts" />);
-      expect(screen.findAllByType(ChartDatum).find(row => row.props.testID === 'facts.fact.reported.detail')?.props.datum.subtitle).toContain('4\u202f186\u202f010');
+      // The lead says the reported money (D2), so its exact token basis opens from the lead.
+      expect(screen.findAllByType(ChartDatum).find(row => row.props.testID === 'facts.total.detail')?.props.datum.subtitle).toContain('4\u202f186\u202f010');
     } finally { setPreferredLanguageFromSettings(previous); await preloadTranslations(); }
   });
   it('reveals the exact token basis of a money fact whose inline token caption is abbreviated', async () => {
     const props = mountedCosts(false, 2093005);
     const screen = await renderScreen(<UsageCostFactsWidget {...props} id="usage_cost_facts" testID="facts" />);
-    const reported = screen.findAllByType(ChartDatum).find(row => row.props.testID === 'facts.fact.reported.detail');
+    const reported = screen.findAllByType(ChartDatum).find(row => row.props.testID === 'facts.total.detail');
     expect(reported?.props.datum.subtitle).toContain('4,186,010');
     expect(screen.getTextContent()).toContain('4.2M');
   });
@@ -814,8 +869,11 @@ describe('one selected money basis across Usage bodies', () => {
     expect(metrics.find(metric => metric.props.testID === 'whole-summary.hero')?.props.value).toBe(selected ?? '—');
     expect(metrics.find(metric => metric.props.testID === 'whole-efficiency.perMtok')?.props.value)
       .toBe(selected === null ? '—' : selected / total.tokens.total * 1e6);
-    expect(metrics.find(metric => metric.props.testID === 'whole-facts.fact.reported')?.props.value).toBe(7);
-    expect(metrics.find(metric => metric.props.testID === 'whole-facts.fact.estimated')?.props.value).toBe(6);
+    // Each kind of money is said once in Cost facts: by the lead when it is that money (D2), else by its fact.
+    const said = metrics.filter(metric => /^whole-facts\.(total|fact\.)/.test(String(metric.props.testID)))
+      .map(metric => metric.props.value);
+    expect(said.filter(value => value === 7)).toHaveLength(1);
+    expect(said.filter(value => value === 6)).toHaveLength(1);
     expect(screen.findByType(RankedRows).props.rows[0].value).toBe(selected);
     const chart = screen.findByType(StackedSeriesChart);
     const points: { y: number | null }[] = chart.props.series.flatMap((entry: { points: { y: number | null }[] }) => entry.points);
@@ -1137,7 +1195,9 @@ describe('one selected money basis across Usage bodies', () => {
     const metrics = screen.findAllByType(HappierDataMetric);
     expect(metrics.find(metric => metric.props.testID === 'summary.hero')?.props.value).toBe(3);
     expect(metrics.find(metric => metric.props.testID === 'facts.fact.invoice')?.props.value).toBe(0.2);
-    expect(metrics.find(metric => metric.props.testID === 'facts.fact.reported')?.props.value).toBe(3);
+    // The reported money is the lead's, said once there (D2).
+    expect(metrics.find(metric => metric.props.testID === 'facts.total')?.props.value).toBe(3);
+    expect(metrics.find(metric => metric.props.testID === 'facts.fact.reported')).toBeUndefined();
     expect(screen.findAllByType(StackedSeriesChart).map(chart => chart.props.series.reduce(
       (sum: number, entry: { points: { y: number }[] }) => sum + entry.points[0]!.y, 0))).toEqual([3, 3]);
     expect(screen.findByType(RankedRows).props.rows.map((row: { value: number }) => row.value)).toEqual([3]);

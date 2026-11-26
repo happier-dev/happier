@@ -127,7 +127,7 @@ const nativeMetadata = {
     project_sessions: { title: 'Sessions', titleKey: 'projects.widgets.sessions', icon: 'chats-circle' },
     project_changes: { title: 'Local changes', titleKey: 'projects.widgets.localChanges', icon: 'git-branch' },
     project_automations: { title: 'Automations', titleKey: 'workflows.triggers.section.title', icon: 'tree-structure' },
-    usage_daily: { title: 'Daily usage', titleKey: 'usage.widgets.usage_daily', descriptionKey: 'usage.board.page.purposeDaily', icon: 'chart-bar' },
+    usage_daily: { title: 'Usage over time', titleKey: 'usage.widgets.usage_daily', descriptionKey: 'usage.board.page.purposeDaily', icon: 'chart-bar' },
     usage_period_summary: { title: 'Period summary', titleKey: 'usage.widgets.usage_period_summary', descriptionKey: 'usage.board.page.purposeSummary', icon: 'squares-four' },
     usage_cost_facts: { title: 'Cost facts', titleKey: 'usage.widgets.usage_cost_facts', descriptionKey: 'usage.board.page.purposeCostFacts', icon: 'currency-dollar' },
     usage_flow: { title: 'Usage flow', titleKey: 'usage.widgets.usage_flow', descriptionKey: 'usage.board.page.purposeFlow', icon: 'chart-line' },

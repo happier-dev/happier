@@ -17252,7 +17252,7 @@ settingsSession: {
 
     usage: {
         widgets: {
-          usage_daily: "日別の使用量",
+          usage_daily: "使用量の推移",
           usage_period_summary: "期間の概要",
           usage_cost_facts: "コスト情報",
           usage_flow: "使用量の推移",
@@ -17346,6 +17346,9 @@ settingsSession: {
             byModel: "モデル別",
       thisSession: "このセッション",
             weeklyUsage: "週別の使用量",
+            dailyUsage: "日別の使用量",
+            hourlyUsage: "時間別の使用量",
+            monthlyUsage: "月別の使用量",
             noUsageTitle: "この期間の使用はありません",
             noUsageReason: "どのマシンで実行したセッションもここに表示されます。",
             nothingYetTitle: "まだありません",
@@ -17503,7 +17506,7 @@ settingsSession: {
             sessionRecipientFigure: "あなたの使用量",
             machinesCount: ({ count }: { count: string | number }) => `${count} 台のマシン`,
             agentsCount: ({ count }: { count: string | number }) => `${count} エージェント`,
-            purposeDaily: "日ごとの使用量（エージェント別）。",
+            purposeDaily: "期間中の使用量の推移（エージェント別）。",
             purposeSummary: "期間をひと目で：合計、増減、得られた成果。",
             purposeCostFacts: "支払った金額を、金額の根拠ごとに分けて表示。",
             purposeFlow: "使用量の推移（エージェント別またはモデル別）。",

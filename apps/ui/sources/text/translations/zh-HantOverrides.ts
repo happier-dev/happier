@@ -13934,6 +13934,11 @@ settingsSession: {
             emptyScopedTitle: '此範圍內沒有原生來源',
             emptyScopedReason: '選擇已連線的機器並包含原生用量，即可查看其來源清單。期間和指標不會篩選清單。',
         }, page: {
+            purposeDaily: '用量隨時間的變化，按代理劃分。',
+            dailyUsage: '每日用量',
+            hourlyUsage: '每小時用量',
+            weeklyUsage: '每週用量',
+            monthlyUsage: '每月用量',
             scopeReadRefused: "無法查看此範圍內的用量。",
             changeScope: "變更範圍",
             sessionRecipientSubtitle: "你的帳號在此工作階段中的用量。",
@@ -14030,7 +14035,7 @@ settingsSession: {
             nightClear: '清除夜間時段',
         } },
         widgets: {
-          usage_daily: "每日用量",
+          usage_daily: "用量趨勢",
           usage_period_summary: "期間摘要",
           usage_cost_facts: "費用資料",
           usage_flow: "用量流向",

@@ -16814,7 +16814,7 @@ settingsSession: {
 
   usage: {
     widgets: { usage_source_coverage: "Pokrycie", usage_unpriced: "Bez ceny",
-      usage_daily: "Dzienne użycie",
+      usage_daily: "Użycie w czasie",
       usage_period_summary: "Podsumowanie okresu",
       usage_cost_facts: "Dane o kosztach",
       usage_flow: "Przepływ użycia",
@@ -17183,6 +17183,9 @@ settingsSession: {
       byAgent: "według agenta",
       byModel: "według modelu",
       weeklyUsage: "Tygodniowe użycie",
+      dailyUsage: "Dzienne użycie",
+      hourlyUsage: "Godzinowe użycie",
+      monthlyUsage: "Miesięczne użycie",
       thisSession: "Ta sesja",
       noUsageTitle: "Brak użycia w tym okresie",
       noUsageReason: "Sesje uruchamiane na dowolnej maszynie pojawią się tutaj.",
@@ -17341,7 +17344,7 @@ settingsSession: {
       sessionRecipientFigure: "Twoje użycie",
       machinesCount: ({ count }: { count: string | number }) => `Maszyny: ${count}`,
       agentsCount: ({ count }: { count: string | number }) => `Agenci: ${count}`,
-      purposeDaily: "Dzienne użycie z podziałem na agentów.",
+      purposeDaily: "Użycie w czasie z podziałem na agentów.",
       purposeSummary: "Okres w jednym spojrzeniu: suma, zmiana i efekty.",
       purposeCostFacts: "Zapłacone kwoty, oddzielone według źródła informacji.",
       purposeFlow: "Zmiany użycia w czasie, według agenta lub modelu.",

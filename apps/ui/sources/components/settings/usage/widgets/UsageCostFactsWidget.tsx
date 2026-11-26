@@ -51,6 +51,38 @@ const KIND_TITLE: Readonly<
 };
 
 /** A fact's name: App calls have no agents, so what the provider reported says who reported it. */
+type CostFact = NonNullable<UsageBodyProps['slice']['costFactTotals']>[number];
+
+/** The tokens a money fact was counted on, as its caption says them; null for money with no counted tokens. */
+function costFactTokensCaption(fact: CostFact, tokens: string | null): string | null {
+  if (fact.amountUsd === null || tokens === null) return null;
+  // The tokens on the rows that carried this money, not every token of the Agents that reported it.
+  return fact.kind === 'api_equivalent'
+    ? t('usage.board.page.factApiTokens', { tokens })
+    : t('usage.board.page.factCostTokens', { tokens });
+}
+
+/**
+ * A fact's figure with its exact values a press or hover away when the ink rounds them (4.2M tokens, $0.0028): one rule
+ * for the facts and for the lead that says one of them.
+ */
+function withExactBasis(figure: React.ReactElement, fact: CostFact, appCalls: boolean, testID: string): React.ReactElement {
+  const tokens = resolveUsageMeasuredTokens(fact.tokens);
+  const exactTokens = formatHappierDataValue(tokens.total, getPreferredLanguage());
+  const exactAmount = fact.amountUsd === null ? null : formatHappierDataValue(fact.amountUsd, getPreferredLanguage());
+  const hiddenPrecision = !formatTokenCount(tokens.total).includes(exactTokens)
+    || exactAmount !== null && !formatUsageCost(fact.amountUsd!, fact.currency).includes(exactAmount);
+  if (!hiddenPrecision) return figure;
+  return <ChartDatum testID={testID}
+    datum={{ label: costFactTitle(fact.kind, appCalls),
+      value: exactAmount === null ? `${exactTokens} ${t('usage.board.page.tokensUnit')}` : `${fact.currency} ${exactAmount}`,
+      subtitle: [costFactTokensCaption(fact, exactTokens),
+        tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
+        fact.complete ? null : t('usage.board.page.factIncomplete')].filter(Boolean).join(' · ') }}>
+    {figure}
+  </ChartDatum>;
+}
+
 function costFactTitle(kind: UsageAnalyticsCostFactKind, appCalls: boolean): string {
   return kind === 'reported' && appCalls ? t('usage.board.page.factReportedByProvider') : t(KIND_TITLE[kind]);
 }
@@ -72,6 +104,13 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
         ? fact.eventCount > 0 || (resolveUsageMeasuredTokens(fact.tokens).total ?? 0) > 0
         : fact.eventCount > 0 || fact.amountUsd !== null && fact.amountUsd > 0)
   ));
+  // The lead is the page cost. When exactly one displayed fact is that same money (its kind, its currency and its
+  // amount), the lead says it once and carries that fact's token basis; the fact is not said again beneath it (design
+  // review D2, Usage ruling 11-26, J-B76). Two figures that only print alike are never the same fact.
+  const leadMatches = total ? facts.filter((fact) => fact.kind === total.selection.kind
+    && fact.currency === total.selection.currency && fact.amountUsd === total.amountUsd) : [];
+  const leadFact = leadMatches.length === 1 ? leadMatches[0] : undefined;
+  const shownFacts = leadFact ? facts.filter((fact) => fact !== leadFact) : facts;
   // One qualifier, said once: when every fact is partial the band says so once, not under each figure (R9).
   const partialOnce = facts.length > 1 && facts.every((fact) => !fact.complete);
   // The same for token totals added up from their parts: once under the figures, never after each one (USAGE-ACCEPT 1121 #13).
@@ -81,9 +120,15 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   // The prices behind API-equivalent money live with the money they make (U10); unpriced models
   // are exactly the case where there are no money facts yet.
   const prices = <UsageModelPricesLine slice={props.slice} serverId={props.serverId} testID={`${props.testID}.prices`} />;
-  const lead = total ? <HappierDataMetric testID={`${props.testID}.total`} theme={chartTheme} size="hero"
-    label={t('usage.cost')} value={total.amountUsd} caption={usagePageCostCaption(total)}
+  const leadTokens = leadFact ? resolveUsageMeasuredTokens(leadFact.tokens).total : null;
+  // The qualifier comes before the token basis, so a two-line caption never cuts it off (J-B77).
+  const leadCaption = total === null ? '' : [usagePageCostCaption(total),
+    leadFact && !leadFact.complete && !partialOnce ? t('usage.board.page.factIncomplete') : null,
+    leadFact ? costFactTokensCaption(leadFact, leadTokens === null ? null : formatTokenCount(leadTokens)) : null].filter(Boolean).join(' · ');
+  const leadFigure = total ? <HappierDataMetric testID={`${props.testID}.total`} theme={chartTheme} size="hero"
+    label={t('usage.cost')} value={total.amountUsd} caption={leadCaption}
     valueFormatter={(value) => formatUsageCost(value, total.selection.currency)} /> : null;
+  const lead = leadFigure && leadFact ? withExactBasis(leadFigure, leadFact, appCalls, `${props.testID}.total.detail`) : leadFigure;
   if (facts.length === 0 && lead)
     return (
       <View style={styles.body} testID={`${props.testID}.costFacts`}>
@@ -107,13 +152,9 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   return (
     <View style={styles.body} testID={`${props.testID}.costFacts`}>
       {lead}
-      <View style={styles.grid}>
-        {facts.map((fact) => {
+      {shownFacts.length > 0 ? <View style={styles.grid}>
+        {shownFacts.map((fact) => {
           const tokens = resolveUsageMeasuredTokens(fact.tokens);
-          const exactTokens = formatHappierDataValue(tokens.total, getPreferredLanguage());
-          const exactAmount = fact.amountUsd === null ? null : formatHappierDataValue(fact.amountUsd, getPreferredLanguage());
-          const hiddenPrecision = !formatTokenCount(tokens.total).includes(exactTokens)
-            || exactAmount !== null && !formatUsageCost(fact.amountUsd!, fact.currency).includes(exactAmount);
           const figure = <HappierDataMetric
               testID={`${props.testID}.fact.${fact.kind}`}
               theme={chartTheme}
@@ -129,33 +170,24 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
                   ? formatTokenCount
                   : (value) => formatUsageCost(value, fact.currency)
               }
+              // The qualifier leads, so the two-line caption never cuts it off (J-B77).
               caption={[
+                fact.complete || partialOnce ? null : t('usage.board.page.factIncomplete'),
                 fact.amountUsd === null
                   ? t('usage.board.page.factUnpricedOverlap')
                   // Money with no counted tokens (an Agent that reports cost only) has no token line, never "— tokens".
-                  : tokens.total === null ? null
-                  : fact.kind === 'api_equivalent'
-                    ? t('usage.board.page.factApiTokens', { tokens: formatTokenCount(tokens.total) })
-                    // The tokens on the rows that carried this money, not every token of the Agents that reported it.
-                    : t('usage.board.page.factCostTokens', { tokens: formatTokenCount(tokens.total) }),
-                fact.complete || partialOnce ? null : t('usage.board.page.factIncomplete'),
+                  : costFactTokensCaption(fact, tokens.total === null ? null : formatTokenCount(tokens.total)),
               ]
                 .filter(Boolean)
                 .join(' · ')}
             />;
-          return <View key={`${fact.kind}:${fact.currency}`} style={styles.cell}>
-            {hiddenPrecision ? <ChartDatum testID={`${props.testID}.fact.${fact.kind}.detail`}
-              datum={{ label: costFactTitle(fact.kind, appCalls),
-                value: exactAmount === null ? `${exactTokens} ${t('usage.board.page.tokensUnit')}` : `${fact.currency} ${exactAmount}`,
-                subtitle: [fact.amountUsd === null ? null : fact.kind === 'api_equivalent'
-                  ? t('usage.board.page.factApiTokens', { tokens: exactTokens }) : t('usage.board.page.factCostTokens', { tokens: exactTokens }),
-                  tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
-                  fact.complete ? null : t('usage.board.page.factIncomplete')].filter(Boolean).join(' · ') }}>
-              {figure}
-            </ChartDatum> : figure}
+          // Unpriced tokens are said with a sentence, not a figure's basis: that cell takes its own line, so the
+          // sentence is never cut short beside a money figure (design review D2).
+          return <View key={`${fact.kind}:${fact.currency}`} style={[styles.cell, fact.amountUsd === null ? styles.sentenceCell : null]}>
+            {withExactBasis(figure, fact, appCalls, `${props.testID}.fact.${fact.kind}.detail`)}
           </View>;
         })}
-      </View>
+      </View> : null}
       {/* The figures count overlapping populations, so they never present as parts of one sum. */}
       {facts.length > 1 || fromPartsNote ? (
         <UsageBodyNote testID={`${props.testID}.partial`}>
@@ -198,8 +230,10 @@ export function UsageCostFactsReading(props: Readonly<{ testID: string }>) {
       aria-busy
     >
       <HappierDataMetric theme={chartTheme} size="hero" pending decorative label={t('usage.cost')} value={0} caption={HELD_LINE} />
+      {/* The lead says the fact it is, so the settled grid holds the other money: one row of two figures is the
+          common landing at 1440 and 390 (design review D2, J-B77). A warm read keeps its remembered room. */}
       <View style={styles.grid}>
-        {[0, 1, 2, 3].map((index) => (
+        {[0, 1].map((index) => (
           <View key={index} style={styles.cell}>
             <HappierDataMetric theme={chartTheme} size="stat" pending decorative showLabel label={HELD_LINE} value={0} caption={HELD_LINE} />
           </View>
@@ -220,4 +254,5 @@ const styles = StyleSheet.create((theme) => ({
   grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 24, rowGap: 18 },
   // Two figures share a phone row (lab d2views P, 2×2): two bases and the gap fit a 390 px sheet's column.
   cell: { flexGrow: 1, flexBasis: 128, minWidth: 0 },
+  sentenceCell: { flexBasis: '100%' },
 }));

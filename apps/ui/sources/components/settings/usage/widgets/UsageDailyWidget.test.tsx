@@ -190,12 +190,13 @@ describe('Daily period chart', () => {
     expect(lent.at(-1)?.title).toBe(t('usage.board.page.weeklyUsage'));
     expect(chart.props.label).toContain(t('usage.board.page.weeklyUsage'));
   });
-  it('keeps the definition name for daily bars', async () => {
+  it('names the card for its daily bars once the read says them; the catalog name stays bucket-neutral (J-B78)', async () => {
     const lent: (WidgetFrameBodyIdentity | null)[] = [];
     await renderScreen(<WidgetFrameBodyIdentityContext.Provider value={(identity) => { lent.push(identity); }}>
       <UsageDailyWidget {...fixture([10, 30], start + 2 * day)} />
     </WidgetFrameBodyIdentityContext.Provider>);
-    expect(lent.every((identity) => identity === null)).toBe(true);
+    expect(lent.at(-1)?.title).toBe(t('usage.board.page.dailyUsage'));
+    expect(t('usage.widgets.usage_daily')).not.toBe(t('usage.board.page.dailyUsage'));
   });
   it('rises on first data and draws retained bars immediately on a revisit, keeping change motion', async () => {
     const props = fixture([10, 30], start + 2 * day);
