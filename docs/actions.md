@@ -7905,8 +7905,10 @@ controller-free row. The Home checks the new controller's exact installation.
 An immediate Stop on a controller-free row returns `controller_unavailable` and
 asks the owner to re-attach a controller. Managed Exec also returns
 `controller_unavailable` before dispatch when the row has no controller.
-The owner's original Account proof can carry the exact Delete through cleanup
-on the Account's own daemon. Other signed native follow-ups bind the signer to
+The owner's original Account proof can carry the exact Stop or Delete through
+cleanup on the Account's own daemon, even a shared one. That proof may come from
+the app, the CLI or an approved Agent: the Action's approval default decides
+consent, not a present-user floor. Other signed native follow-ups bind the signer to
 the row's enrolled guest or an unshared custodian daemon. The same route owner
 protects cancellation and setup decisions on paired rows.
 

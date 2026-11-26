@@ -75,10 +75,12 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
                 && options.admission.input.when === 'now' && options.admission.input.intent === 'stop';
             const ownerDelete = request.externalActionEffectActionId === MANAGED_DELETE_ACTION_ID_V1
                 && input.requestId !== undefined && request.externalActionExecutionRequestId === input.requestId;
-            // An original Account proof can carry the owner's exact Delete; the mutation owns
-            // admission and later consumes its active request or submitted outcome.
+            // The owning Account's signed root carries its exact Stop or Delete whatever credential
+            // invoked it (app, CLI, approved Agent): Action approval defaults decide consent, not a
+            // present-user floor (owner 2026-10-29). The mutation owns admission and later consumes
+            // its active request or submitted outcome.
             const ownerControlWithoutController = row.controllerMachineId === null && request.userId === row.custodianAccountId
-                && (isManagedPresentUser(request) && (stopAdmission || ownerDelete)
+                && ((stopAdmission || ownerDelete)
                     || options.controllerDestination != null
                         && options.controllerDestination.machineId === request.externalActionExecutionMachineId);
             // Reviewed deployment retention runs on the enrolled guest, not its provisioner controller.
