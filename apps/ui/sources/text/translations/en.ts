@@ -4749,9 +4749,6 @@ export const en = {
             codexAcp: {
                 title: 'Codex ACP adapter',
             },
-            agyAcpServer: {
-                title: 'Agy ACP server',
-            },
             githubCli: {
                 title: 'GitHub CLI',
             },
@@ -5039,18 +5036,6 @@ export const en = {
             updateTitle: 'Update Codex ACP?',
             reinstallTitle: 'Reinstall Codex ACP?',
             description: 'This installs an experimental ACP adapter around Codex that supports loading/resuming threads.',
-        },
-        agyAcpBanner: {
-            title: 'Agy ACP server',
-            install: 'Install',
-            update: 'Update',
-            reinstall: 'Reinstall',
-        },
-        agyAcpInstallModal: {
-            installTitle: 'Install Agy ACP server?',
-            updateTitle: 'Update Agy ACP server?',
-            reinstallTitle: 'Reinstall Agy ACP server?',
-            description: 'This installs the official pinned Agy ACP server used for Agy sessions. The interactive agy CLI stays separately installed.',
         },
         githubCliBanner: {
             title: 'GitHub CLI',

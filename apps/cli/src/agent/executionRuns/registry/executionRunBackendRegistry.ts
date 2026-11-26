@@ -8,6 +8,7 @@ import { executionRunBackendFactory as kilo } from '@/backends/kilo/executionRun
 import { executionRunBackendFactory as copilot } from '@/backends/copilot/executionRuns/executionRunBackendFactory';
 import { executionRunBackendFactory as pi } from '@/backends/pi/executionRuns/executionRunBackendFactory';
 import { executionRunBackendFactory as devin } from '@/backends/devin/executionRuns/executionRunBackendFactory';
+import { agyAcpRuntimeSessionModelAdapter } from '@/backends/agy/acp/modelControls';
 import { createCatalogDefinedExecutionRunBackendFactory } from '@/agent/acp/catalog/createCatalogDefinedExecutionRunBackendFactory';
 
 import { listNativeReviewEngineIds, resolveNativeReviewExecutionRunBackendFactory } from '@/agent/reviews/engines/nativeReviewEngines';
@@ -31,7 +32,7 @@ const REGISTRY: Record<string, ExecutionRunBackendDescriptor> = {
   copilot: { factory: copilot },
   pi: { factory: pi },
   devin: { factory: devin },
-  agy: { factory: createCatalogDefinedExecutionRunBackendFactory('agy') },
+  agy: { factory: createCatalogDefinedExecutionRunBackendFactory('agy', agyAcpRuntimeSessionModelAdapter) },
   fx: { factory: createCatalogDefinedExecutionRunBackendFactory('fx') },
   droid: { factory: createCatalogDefinedExecutionRunBackendFactory('droid') },
   codebuddy: { factory: createCatalogDefinedExecutionRunBackendFactory('codebuddy') },

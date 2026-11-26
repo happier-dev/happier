@@ -491,8 +491,7 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     binaryName: 'agy',
     knownCommandCandidates: [{ kind: 'homeBinDir', relativeDir: '.local/bin' }],
     sourcePreferenceDefault: 'system-first',
-    // Interactive `agy` stays system/vendor installed. The managed `agy_acp_server`
-    // ACP transport is owned by the runtime-installables seam, not this CLI spec.
+    // `agy` stays system/vendor installed and serves every Happier session (`agy acp`).
     managedInstall: null,
     manualInstallKind: 'vendor_recipe',
     manualInstallRecipes: {

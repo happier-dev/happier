@@ -586,7 +586,7 @@ export const AGENTS_CORE = {
             },
         },
         resume: { vendorResume: 'supported', vendorResumeIdField: 'agySessionId' },
-        // The managed ACP server owns an opaque provider session id, but Happier does not
+        // The ACP server owns an opaque provider session id, but Happier does not
         // read an Agy-native transcript store directly.
         sessionStorage: { direct: false, persisted: true },
         sessionCapabilities: {
@@ -597,8 +597,8 @@ export const AGENTS_CORE = {
         },
         handoff: { vendorStateTransfer: 'unsupported' },
         // Interactive `agy` stays the system-first terminal/local-control surface.
-        // The managed `agy_acp_server` ACP transport never shares session identity with it
-        // until a real create → list/load round trip proves equivalence.
+        // `agy acp` sessions never share session identity with it until a real
+        // create → list/load round trip proves equivalence.
         localControl: { supported: true, topology: 'exclusive', attachStrategy: 'tmux' },
         tools: { delivery: 'native_mcp', support: 'supported' },
         media: {

@@ -76,9 +76,8 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
   },
   agy: {
     agentId: 'agy',
-    // The interactive CLI remains `agy`; the CLI catalog replaces this launch
-    // command with the ensured managed registry artifact for ACP sessions.
-    launcher: { command: providerLauncherCommand('agy'), args: [] },
+    // The CLI provider adds the profile (`--gemini-dir`) and, for connected accounts, file token storage.
+    launcher: { command: providerLauncherCommand('agy'), args: ['acp'] },
     transportProfile: 'generic',
     supportsLoadSession: true,
     supportsModes: 'auto',
