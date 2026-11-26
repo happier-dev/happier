@@ -88,7 +88,7 @@ describe('actionCatalog action-definition adapter', () => {
       automation: { before: true, after: true, workflowStep: false },
     };
     expect(projectActionDefinitionForExternalDiscovery(definition).automation).toMatchObject({
-      before: true, after: true, workflowStep: false,
+      before: true, after: true, workflowStep: true,
       subjectKinds: ['healthCheck', 'approvalProfile'],
       primarySubject: { kind: 'healthCheck', field: 'checkId' },
     });
@@ -241,8 +241,12 @@ describe('actionCatalog action-definition adapter', () => {
       surface: 'agent', query: accountPlugin.id, includeOutputSchema: false,
       isActionEnabled: () => false, additionalDefinitions: [accountPlugin],
     });
-    expect(accountSummary[0]).toMatchObject({ automation: { workflowStep: false } });
+    expect(accountSummary[0]).toMatchObject({ automation: { workflowStep: true } });
     expect(projectActionDefinitionForExternalDiscovery(accountPlugin)).toMatchObject({
+      automation: { workflowStep: true },
+    });
+    const clientPlugin = { ...contributed, executionPlacement: 'client' as const };
+    expect(projectActionDefinitionForExternalDiscovery(clientPlugin)).toMatchObject({
       automation: { workflowStep: false },
     });
     expect(serializeActionSpec(getActionSpec('wait'), { includeOutputSchema: false })).toMatchObject({

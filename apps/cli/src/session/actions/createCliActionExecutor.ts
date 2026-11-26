@@ -470,19 +470,17 @@ export function createCliActionHost(params: CliActionExecutorParams):
     },
   );
   const base = harness.executor;
+  const hasBoundMachineAction = (reference: NonNullable<ReturnType<typeof readPluginActionExecutionReference>>) => {
+    if (!params.invokeContributedAction) return false;
+    const id = formatQualifiedPluginActionId(reference);
+    return params.listContributedActionDefinitions?.({ id }).find(candidate => candidate.id === id)?.executionPlacement === 'machine';
+  };
   const executeInCurrentProcess: NonNullable<Parameters<typeof createDaemonPluginActionExecutor>[0]['executeInCurrentProcess']> =
     async (actionId, input, context) => {
-      if (context?.surface === 'plugin' && context.actionCaller?.kind === 'plugin' && params.invokeContributedAction) {
+      if (context?.surface === 'plugin' && context.actionCaller?.kind === 'plugin') {
         const reference = readPluginActionExecutionReference(actionId, input);
-        if (reference) {
-          // The bound runtime's catalog already projects placement. Reading it
-          // internally must not introduce another approval-routed Action;
-          // the actual invocation still owns caller and surface admission.
-          const id = formatQualifiedPluginActionId(reference);
-          const definition = params.listContributedActionDefinitions?.({ id }).find(candidate => candidate.id === id);
-          if (definition?.executionPlacement === 'machine') {
-            return { matched: true, result: await base.execute(actionId as ActionId, input, context) };
-          }
+        if (reference && hasBoundMachineAction(reference)) {
+          return { matched: true, result: await base.execute(actionId as ActionId, input, context) };
         }
       }
       const { executeAccountPluginAction } = await import('./executeAccountPluginAction');
@@ -706,7 +704,12 @@ export function createCliActionHost(params: CliActionExecutorParams):
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
       if (!resolvedContext) return { kind: 'settled' as const,
         result: actionStartTargetUnavailableV1(context, 'cli_context', 'requester_projection_unavailable') };
-      if (usesPluginPlacement(actionId, input) && isPluginActionExecutionDispatchId(actionId)) {
+      // The committed Machine registry owns prepared Machine dispatch. The
+      // Account route is selected here for other qualified Workflow calls.
+      const workflowAction = params.pluginActionExecutionOwner === 'current_process' && params.accountPluginActions
+        && resolvedContext.actionCaller?.kind === 'workflowRun' ? readPluginActionExecutionReference(actionId, input) : null;
+      if (isPluginActionExecutionDispatchId(actionId) && usesPluginPlacement(actionId, input)
+        && !(workflowAction && hasBoundMachineAction(workflowAction))) {
         // Preparation must not bypass the placement owner or run an effect.
         // The same admitted invocation settles once when its caller runs it.
         let result: Promise<ActionExecuteResult> | undefined;

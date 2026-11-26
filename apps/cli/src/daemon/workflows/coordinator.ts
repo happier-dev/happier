@@ -2067,8 +2067,8 @@ async function executeActionBlock(
         { id: formatQualifiedPluginActionId(target) }, actionContext));
       const described = preparedDescription.kind === 'ready'
         ? await context.holds.track(() => preparedDescription.invocation.run()) : preparedDescription.result;
-      const definition = ActionDefinitionV1Schema.safeParse(described.ok && isWorkflowJsonObject(described.result)
-        ? described.result.actionSpec : null);
+      if (!described.ok) return await fail(described.errorCode, 'failed', true, undefined, described.failureCause);
+      const definition = ActionDefinitionV1Schema.safeParse(isWorkflowJsonObject(described.result) ? described.result.actionSpec : null);
       if (!definition.success) return await fail('target_unavailable', 'failed', true);
       readOnlyAction = definition.data.sideEffectClass === 'read';
       const projection = projectTargetActionApprovalInput(contributedAction ? input : input.input,

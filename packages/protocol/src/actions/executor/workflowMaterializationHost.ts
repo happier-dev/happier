@@ -32,7 +32,7 @@ export type WorkflowMaterializationHostDepsV1 = Readonly<{
   readLaunchProfile: (profileId: string, signal?: AbortSignal) => Promise<AiLaunchProfile | null>;
   readWorkflowDefinition: (ref: Parameters<NonNullable<Materialization['effects']['readWorkflowDefinition']>>[0], signal?: AbortSignal)
     => ReturnType<NonNullable<Materialization['effects']['readWorkflowDefinition']>>;
-  /** The executing Machine's host Action catalog, never the relay's local catalog. */
+  /** The requester's Account catalog and the executing Machine's native Action catalog. */
   readHostActionContract?: (actionId: string, target: MachineTarget) => ReturnType<NonNullable<Materialization['effects']['readActionContract']>>;
 }>;
 
@@ -139,14 +139,17 @@ export function createWorkflowMaterializationHostV1(deps: WorkflowMaterializatio
       const identity = parseQualifiedPluginActionId(actionId);
       const contributionKey = identity ? buildQualifiedPluginContributionKey(identity) : actionId;
       const contributed = roster.projection.actionsById[contributionKey];
-      if (contributed?.available === false) return null;
+      if (contributed?.execution.target === 'client') return null;
       try {
         throwIfAborted(target.signal);
-        if (!contributed) {
+        // An Account declaration in Machine inventory cannot decide the
+        // requester's release, availability, or schemas.
+        if (!contributed || contributed.execution.target === 'account') {
           const contract = await deps.readHostActionContract?.(actionId, target) ?? null;
           throwIfAborted(target.signal);
           return contract;
         }
+        if (contributed.available === false) return null;
         const response = await call(RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ, {
           machineId: target.machineId, qualifiedActionId: contributionKey, expectedOccurrenceId: contributed.occurrenceId,
         });

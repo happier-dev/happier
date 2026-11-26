@@ -7984,6 +7984,14 @@ for the external author contract. The maintained public-import fixture is
 
 ### Workflow patterns and Run presentation (0.3 development source)
 
+Qualified plugin Actions exposed to Agents can run as Workflow steps at
+Account or Machine placement. An Account step uses the Run starter's Home
+credentials, connected sources, and Action approval policy, including on a
+shared Machine or an unattended schedule. Actions placed on a client stay
+outside the Workflow step catalog. An Account Action whose input requires the
+invoking App returns `plugin_action_client_target_unavailable` when the Run has
+no invoking App.
+
 The Machine services plugin contributes `http/request` as an ordinary daemon
 Action for Workflow Action steps and direct agent/MCP/CLI invocation. Its
 `destination` explicitly names the HTTP(S) URL; `method`, optional text `body`

@@ -243,17 +243,20 @@ async function executeInAccountRuntime(params: Parameters<typeof executeAccountP
   const execution = selectedAction?.definition.execution;
   const origin = params.context;
   const caller = origin?.actionCaller;
+  const workflowInvocation = caller?.kind === 'workflowRun'
+    && (params.actionId === ACTION_INVOKE_ACTION_ID_V1 || parseQualifiedPluginActionId(params.actionId) !== null);
+  const sessionHandoff = caller?.kind === 'session' && !origin?.bypassApprovals && !origin?.expectedContributedActionOccurrenceId
+    && !origin?.externalActionExecutionAuthorization && !origin?.externalActionCredential
+    && !origin?.hostReviewedChild && !params.inheritedInvocation;
   if (execution?.target === 'account' && execution.invokingUi && execution.agentInvokingUi
-    && origin?.surface === 'agent' && caller?.kind === 'session' && origin.authority === 'account_automation'
-    && !origin.bypassApprovals && !origin.expectedContributedActionOccurrenceId
-    && !origin.externalActionExecutionAuthorization && !origin.externalActionCredential
-    && !origin.hostReviewedChild && !params.inheritedInvocation && identity) {
+    && origin?.surface === 'agent' && origin.authority === 'account_automation'
+    && (workflowInvocation || sessionHandoff) && identity) {
     const invocation = params.actionId === 'action.invoke' ? ActionInvokeInputSchema.safeParse(params.input) : undefined;
     const actionInput = invocation?.success ? invocation.data.input : params.input;
     if ((invocation === undefined || invocation.success) && evaluateInputPredicate(execution.agentInvokingUi.when, actionInput)) {
       const principalAccountId = readActionPrincipalAccountId(origin);
       const execute = params.host.executeInvokingUiAction;
-      if (!principalAccountId || !execute || selection?.kind !== 'available') {
+      if (caller?.kind !== 'session' || !principalAccountId || !execute || selection?.kind !== 'available') {
         const code = 'plugin_action_client_target_unavailable';
         return { matched: true, result: { ok: false, errorCode: code, error: code, effectAttempted: false } };
       }

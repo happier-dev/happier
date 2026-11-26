@@ -621,6 +621,29 @@ describe('exact-machine workflow materialization effects', () => {
     await expect(context.effects.resolveTargetAvailability({ blockId: 'work', selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'test.agent', localId: 'agent' } } }, executionTarget: { kind: 'session' } }, { sessionIds: [] })).rejects.toThrow('machine_offline');
   });
 
+  it('freezes the requester Home’s Account Action schema even when the Machine lists it as unavailable', async () => {
+    const actionId = 'test.action/actions/check';
+    const contract = { inputSchema: { type: 'object', required: ['starterInput'] }, outputSchema: {} };
+    const resolve = createWorkflowMaterializationHostV1({
+      credentials,
+      readRoleSelection: async () => ({}), readLaunchProfile: async () => null, readWorkflowDefinition: async () => null,
+      readHostActionContract: async id => id === actionId ? contract : null,
+      callMachineAction: async ({ method }) => {
+        if (method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+          throw new Error('Account contracts do not use a Machine schema RPC');
+        }
+        return { protocolVersion: 1, projection: { v: 2, generation: 1, actionsById: {
+          'test.action/check': { id: 'test.action/check', pluginId: 'test.action', occurrenceId: 'action-occurrence',
+            title: 'Check', scopes: ['agent'], surfaces: ['agent'], execution: { target: 'account',
+              account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+            dangerLevel: 'safe', available: false },
+        } } };
+      },
+    });
+    const context = await resolve({ machineId: 'shared-machine', directory: '/repo' });
+    await expect(context.effects.readActionContract!(actionId)).resolves.toEqual(contract);
+  });
+
   it.each(['schema_rejected', 'schema_malformed', 'core_rejected', 'schema_aborted', 'core_aborted'])
     ('distinguishes a malformed Action contract from failed or cancelled reads: %s', async (failure) => {
       const controller = new AbortController();

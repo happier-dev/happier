@@ -2486,7 +2486,7 @@ export function isWorkflowStepActionSpecV1(spec: Readonly<{
 }>): boolean {
   if (!spec.surfaces.agent || spec.executionPlacement === 'client') return false;
   return parseQualifiedPluginActionId(spec.id)
-    ? spec.executionPlacement === 'machine'
+    ? spec.executionPlacement === 'machine' || spec.executionPlacement === 'account'
     : !isWorkflowRunActionIdV1(spec.id) || isWorkflowRunSummaryActionIdV1(spec.id);
 }
 

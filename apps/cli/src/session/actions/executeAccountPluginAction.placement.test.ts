@@ -398,6 +398,12 @@ it('sends a matching Session Agent Account Action to the invoking App and refuse
         appReachable = false;
         expect(await invoke('compose')).toMatchObject({ matched: true, result: { ok: false, errorCode: 'plugin_action_client_target_unavailable' } });
         expect(await invoke('direct')).not.toMatchObject({ result: { errorCode: 'plugin_action_client_target_unavailable' } });
+        const workflowCaller = { kind: 'workflowRun', runId: 'workflow-run' } as const;
+        const workflow = await executeAccountPluginAction({ host, deps, accountRuntime: runtime,
+            actionId: 'action.invoke', input: { action, input: { key: 'compose' } },
+            context: { ...context, actionCaller: workflowCaller } });
+        expect(workflow).toMatchObject({ matched: true, result: { ok: false,
+            errorCode: 'plugin_action_client_target_unavailable', effectAttempted: false } });
         expect(reverse).toHaveBeenCalledTimes(1);
     } finally {
         await runtime.dispose();

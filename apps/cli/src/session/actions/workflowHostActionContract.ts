@@ -42,6 +42,10 @@ export function createWorkflowHostActionContractReader(
           return result.result;
         },
       });
+      if (action.executionPlacement === 'account') {
+        if (action.automation?.workflowStep !== true) return null;
+        return freezeWorkflowActionContractV1({ ...action, outputSchema: action.outputSchema ?? {} });
+      }
       return freezeWorkflowActionContractV1(action);
     } catch (error) {
       target.signal?.throwIfAborted();

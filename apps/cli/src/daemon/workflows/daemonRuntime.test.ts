@@ -1,6 +1,16 @@
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios, { AxiosHeaders } from 'axios';
+import fastify from 'fastify';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
+import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { API_TOKEN_FULL_GRANT_V1, freezeActionCompletionContractV1, getActionSpec,
   sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
   sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
@@ -24,6 +34,7 @@ import { WorkflowRuntimeInterruption } from './coordinator';
 import { SessionActivityChangedResponseSchema } from '@/daemon/sessions/sessionActivityChangedContract';
 import { tmpdir } from 'node:os';
 import nacl from 'tweetnacl';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol';
 import { AccountSettingsSchema, ResolvedRoleV1Schema, HomeConnectionDescriptorV1Schema, FeaturesResponseSchema, ManagedMachineV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema,
   computeExternalActionRequestEnvelopeDigestV1, ExternalActionExecutionAuthorizationV1Schema, StrictJsonValueSchema, zodSchemaToJsonSchemaObject } from '@happier-dev/protocol';
 import { updateSettings, writeStoredCredentialsForServerId, writeDaemonState } from '@/persistence';
@@ -53,7 +64,7 @@ import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol/auth
 import { createRequesterSessionControlRuntimeFixture } from '@/daemon/testkit/requesterSessionControlRuntimeFixture';
 import { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runtimeRegistry/registry';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { logger } from '@/ui/logger';
 import { createProductionWorkflowConversationOwner } from './sessionStepExecutor';
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1,
@@ -132,6 +143,212 @@ import {
 // The daemon's singleton controller has one process lifetime, shared by the
 // production-composition cases in this file; shutdown is terminal.
 afterAll(async () => { await pluginReloadController.shutdown(); });
+
+it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed'] as const)('resolves a %s qualified step through the production Workflow daemon without a Session', async scenario => {
+  const isGuest = scenario === 'guest';
+  const isClient = scenario === 'client-placed';
+  const ownerId = 'workflow-account-plugin-owner';
+  const accountId = isGuest ? 'workflow-account-plugin-guest' : ownerId;
+  const machineId = 'shared-machine';
+  const runId = 'ba043ea1-8cbb-43bc-803d-462cefacb60b';
+  const serverId = 'srv_workflow_account_plugin';
+  const home = 'http://workflow-account-plugin.test';
+  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+    encryption: null, credentialProvenance: 'stored_session' as const };
+  const workspaceRuntime = await pluginReloadController.acquireRuntimeRegistry({ resolveRuntimeRegistry: () =>
+    resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}) }) });
+  await workspaceRuntime.release();
+  const app = fastify();
+  const fixture = await import('../../../../../packages/plugin-sdk/fixtures/account-actions/src/index');
+  const echoAction = { pluginId: fixture.manifest.id, localId: 'echo' };
+  const features = registerAccountHomeHttp(app, { accountId, serverId,
+    ...(scenario === 'policy-disabled' ? { settings: { actionsSettingsV1: {
+      v: 1, actions: { [formatQualifiedPluginActionId(echoAction)]: { enabled: false } },
+    } } } : {}),
+  });
+  const triage = isGuest ? await import('../../../../../packages/plugins/triage/src/manifest') : null;
+  const authored = await registerAuthoredAccountActionRelease(app, accountId, triage ? { primary: {
+    manifest: triage.PLUGIN_MANIFEST,
+    projectRoot: resolve(import.meta.dirname, '../../../../../packages/plugins/triage'),
+    entryPath: resolve(import.meta.dirname, '../../../../../packages/plugins/triage/src/accountRuntime.ts'),
+    artifactId: 'triage-account-runtime', activateExport: 'activate', manifestExport: null,
+  } } : scenario === 'missing-app' ? { primary: {
+    manifest: { ...fixture.manifest, contributes: { ...fixture.manifest.contributes,
+      actions: fixture.manifest.contributes?.actions?.map(action => action.id === echoAction.localId
+        && action.execution?.target === 'account'
+        ? { ...action, execution: { ...action.execution, invokingUi: true,
+          agentInvokingUi: { when: { op: 'eq', path: 'key', value: 'compose' } } } } : action),
+    } },
+    projectRoot: resolve(import.meta.dirname, '../../../../../packages/plugin-sdk/fixtures/account-actions'),
+    entryPath: resolve(import.meta.dirname, '../../../../../packages/plugin-sdk/fixtures/account-actions/src/index.ts'),
+    manifestExport: null,
+  } } : {});
+  const localId = triage ? (await import('../../../../../packages/plugins/triage/src/actions/resolveResourceProtocol')).TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 : isClient ? 'compose' : 'echo';
+  const reference = { pluginId: authored.pluginId, localId };
+  const actionId = formatQualifiedPluginActionId(reference);
+  const input = triage ? { v: 1, resource: { kind: 'pullRequest', url: 'https://github.com/example/private/pull/17' } }
+    : { key: scenario === 'missing-app' ? 'compose' : 'from-the-starter' };
+  const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{
+    kind: 'action', id: 'lookup', actionId,
+    input: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, { kind: 'literal', value }])),
+  }] };
+  const scheduledFor = 1_800_000_000_000;
+  const triggerId = 'account-step-schedule';
+  const origin = scenario === 'scheduled' || isClient ? { kind: 'automation', automationId: 'account-step-automation',
+    cause: AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId, triggerKind: 'schedule', triggerRevision: 1,
+      occurredAt: scheduledFor, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'schedule', scheduledFor } }),
+      evidence: { scheduledFor } }),
+  } as const : { kind: 'direct' } as const;
+  const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+    mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
+    acceptedSnapshot: WorkflowAcceptedSnapshotV1Schema.parse({ startedBy: origin.kind === 'automation' ? 'trigger' : 'user', definition, authoredDefinition: definition, workDepth: 0, metadata: null,
+      frozenChildren: {}, inputs: {}, machineId, materializedLeaves: [{ sourceKey: '$root', blockId: 'lookup', kind: 'action',
+        actionId, selection: {}, executionTarget: { kind: 'session' }, authoredWorkspace: { kind: 'inherit' }, actionInput: {},
+        actionContract: { inputSchema: { type: 'object' }, outputSchema: {} },
+      }], source: origin.kind === 'automation' ? { kind: 'automation', automationId: origin.automationId } : { kind: 'inline' },
+      executionTarget: { kind: 'session' },
+      workspaceTarget: { project: { machineId, directory: tmpdir(), checkoutRootPath: tmpdir() } },
+      ...(origin.kind === 'direct' ? { origin } : {}),
+      authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+    }),
+  }));
+  const storage = createWorkflowRunStorageTestkit({ accountId, machineId, runId, origin,
+    ...(origin.kind === 'direct' ? { acceptedEnvelope } : {}),
+  });
+  const headers = { Authorization: `Bearer ${credentials.token}` };
+  const ownerBearer = `Bearer e30.${Buffer.from(JSON.stringify({ sub: ownerId })).toString('base64url')}.signature`;
+  const foreignAccountReads: string[] = [];
+  app.addHook('onRequest', async (request, reply) => {
+    if (request.headers.authorization === headers.Authorization) return;
+    foreignAccountReads.push(request.url);
+    if (isGuest && request.headers.authorization === ownerBearer) return;
+    await reply.code(401).send({ error: 'unauthorized' });
+  });
+  const sourceReads: string[] = [];
+  if (isGuest) {
+    const { PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1, PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1, PluginCollectionQueryRequestV1Schema } =
+      await import('@happier-dev/protocol/plugins/data/collectionsV1');
+    const { CORPUS_SOURCE_INSTANCES_COLLECTION } = await import('../../../../../packages/plugins/triage/src/corpus/collections/definitions');
+    const { createHttpCollectionBoundary } = await import('@/plugins/runtime/context/accountPluginDataStorage.testkit');
+    const guestSources = createHttpCollectionBoundary(CORPUS_SOURCE_INSTANCES_COLLECTION.indexes, 'plain');
+    const ownerSources = createHttpCollectionBoundary(CORPUS_SOURCE_INSTANCES_COLLECTION.indexes, 'plain');
+    const configured = createTriageSourceV1Fixture().configuredInstance;
+    const instanceTag = 'a'.repeat(43);
+    const projection = { lifecycle: 'active', configuredAtMs: 1,
+      sourceQualifiedId: `${configured.instance.source.pluginId}/${configured.instance.source.localId}` };
+    await ownerSources.http.post(`${home}${PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1}`, JSON.stringify({
+      pluginId: authored.pluginId, collectionId: CORPUS_SOURCE_INSTANCES_COLLECTION.id,
+      writerContext: { schemaVersion: CORPUS_SOURCE_INSTANCES_COLLECTION.schemaVersion, contractDigest: 'a'.repeat(43) },
+      operations: [{ kind: 'put', rowId: instanceTag, expectedRevision: 'absent', expectedAbsenceEpoch: 0, projection,
+        content: { t: 'plain', v: { configured, instanceTag } } }],
+    }));
+    expect(ownerSources.retainedRowCount()).toBe(1);
+    app.post(PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1, async request => {
+      const query = PluginCollectionQueryRequestV1Schema.parse(request.body);
+      const isOwner = request.headers.authorization === ownerBearer;
+      sourceReads.push(`${isOwner ? 'owner' : 'guest'}:${query.collectionId}`);
+      return (await (isOwner ? ownerSources : guestSources).http.post(
+        `${home}${PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1}`, JSON.stringify(request.body),
+      )).data;
+    });
+  }
+  app.get(PROMPT_LIBRARY_ROWS_ROUTE_V1, async () => ({ status: 'listed', rows: [{ key: 'role-overrides', revision: 1,
+    content: { t: 'plain', v: { key: 'role-overrides', value: { v: 1, overrides: {} } } } }] }));
+  app.post('/v3/automations/runs/workflow-storage', async request => storage.execute(request.body as WorkflowRunStorageTestkitOperation));
+  await app.ready();
+  const restore = installAxiosFastifyAdapter({ app, origin: home });
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features));
+  mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
+    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+  try {
+    await runWithServerHttpBaseUrl(home, async () => {
+      const snapshot = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force', honorAccountSettingsModeEnv: false });
+      if (!snapshot.scopeKey) throw new Error('Missing starter Account settings');
+      const catalog = await loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows: async () =>
+        PromptLibraryRowsListResponseV1Schema.parse((await axios.get(`${home}${PROMPT_LIBRARY_ROWS_ROUTE_V1}`,
+          { headers })).data) });
+      expect(commitActivePromptLibraryCatalog({ scopeKey: snapshot.scopeKey,
+        lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), catalog })).toBe(true);
+      const savedSecretOperationContext = createInvocationSavedSecretOperationContextV1({
+        credentials, snapshot, serverHttpBaseUrl: home, isCurrent: async () => true,
+        ...(isGuest ? { machineAdmission: { actorAccountId: accountId, custodianAccountId: ownerId, machineId,
+          installationId: 'shared-machine-installation', role: 'use', encryptionMode: 'plain' } } : {}),
+      });
+      if (origin.kind === 'automation') {
+        const contributionKey = buildQualifiedPluginContributionKey(reference);
+        const machineRoster = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+          protocolVersion: 1, projection: { v: 2, generation: 1, ...(isClient ? { actionsById: {
+            [contributionKey]: { id: contributionKey, pluginId: reference.pluginId, occurrenceId: 'app-compose',
+              title: 'Compose', scopes: ['agent'], surfaces: ['agent'], dangerLevel: 'safe', available: true,
+              execution: { target: 'client', client: { artifactId: 'app', exportName: 'activate' }, platforms: ['web'] },
+            },
+          } } : {}) },
+        });
+        const inventory = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
+          expect(request.credentials === credentials).toBe(true);
+          expect(request).toMatchObject({ machineId, serverUrl: home, authorityCeiling: 'account_automation',
+            method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE });
+          return machineRoster;
+        });
+        onTestFinished(() => { inventory.mockRestore(); });
+      }
+      const unavailable = async (): Promise<never> => { throw new Error('Account step must not dispatch a Machine effect'); };
+      const runtime = createProductionDaemonWorkflowRuntime({ credentials, accountId, serverId });
+      const diagnostics = vi.spyOn(logger, 'debug');
+      const result = await runtime.createCoordinatorForMachine({ machineId, serverIdentityId: serverId, savedSecretOperationContext,
+        machineAdmissionTransport: unavailable, machineActionDirectTargetTransport: { machineId, invoke: unavailable },
+      })({ runId, attempt: 0, expectedRevision: storage.run().revision,
+        ...(origin.kind === 'automation' ? { automationId: origin.automationId, automationCause: origin.cause,
+          causeWorkDepth: 0, definitionEnvelope: JSON.stringify({ t: 'plain', v: {
+            workspace: { directory: tmpdir() }, executionTarget: { kind: 'session' }, inlineDefinition: definition,
+          } }),
+        } : { acceptedEnvelope }),
+        accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
+      const refusal = scenario === 'missing-app' ? 'plugin_action_client_target_unavailable'
+        : scenario === 'policy-disabled' ? 'action_disabled' : null;
+      const admission = diagnostics.mock.calls.find(([message]) => message.includes('Trigger admission refused'))?.[1];
+      diagnostics.mockRestore();
+      if (isClient) {
+        expect(result, JSON.stringify({ result, admission })).toMatchObject({
+          state: 'failed', reason: 'target_unavailable', admission: 'refused',
+        });
+        expect(storage.rows()).toEqual([]);
+        expect(foreignAccountReads).toEqual([]);
+        return;
+      }
+      expect(result, JSON.stringify({ result, admission })).toMatchObject(refusal
+        ? { state: scenario === 'missing-app' ? 'interrupted' : 'failed', reason: refusal } : { state: 'succeeded' });
+      if (scenario === 'policy-disabled') {
+        const direct = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl: home,
+          savedSecretOperationContext, accountPluginActions: true });
+        expect(await direct.execute('action.spec.get', { id: actionId }, { surface: 'agent' }))
+          .toMatchObject({ ok: false, errorCode: refusal });
+        expect(await direct.execute('action.invoke', { action: echoAction, input }, { surface: 'agent' }))
+          .toMatchObject({ ok: false, errorCode: 'plugin_action_unavailable', effectAttempted: false });
+      }
+      const leaf = storage.rows().find(row => row.index.parentRecordId !== null);
+      if (!leaf) throw new Error('Missing durable Account step invocation');
+      expect(openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: leaf.index.id,
+          sequence: leaf.index.sequence, parentRecordId: leaf.index.parentRecordId, memberOrdinal: leaf.index.memberOrdinal, attempt: leaf.index.attempt },
+        envelope: parseWorkflowStoredContentEnvelopeV1(leaf.contentEnvelope),
+      })).toMatchObject({ kind: 'available', content: refusal ? { reason: { code: refusal } }
+        : { result: isGuest ? { kind: 'unavailable' } : { key: 'from-the-starter', surface: 'agent' } } });
+      if (isGuest) {
+        expect(sourceReads).toContain('guest:source-instances');
+        expect(sourceReads).not.toContain('owner:source-instances');
+      }
+      expect(foreignAccountReads).toEqual([]);
+    });
+  } finally {
+    fetch.mockRestore();
+    mocks.fetchAccountEncryptionCurrentness.mockReset();
+    restore();
+    await app.close();
+    resetInMemoryAccountSettingsContextForTests();
+    resetActiveAccountSettingsSnapshotForTests();
+  }
+}, 60_000);
 
 describe('production daemon retained operation target', () => {
   let releaseHome = () => {};

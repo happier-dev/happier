@@ -14,6 +14,7 @@ export { buildWorkflowActionContext } from './workflowActionContext';
 import type { WorkflowConversationUnavailableDetailsV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { SessionInputCancelExactTurnResultV1Schema } from '@happier-dev/protocol/sessions/control/exactTurnCancellationV1';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { freezeWorkflowActionContractV1, readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { admitAgentStartV1 } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
@@ -313,6 +314,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         machineId: input.machineId,
         ...(savedSecretOperationContext ? {
           savedSecretOperationContext,
+          accountPluginActions: true,
           actionsSettingsProvider: createSnapshotActionSettingsProvider(() => {
             const snapshot = savedSecretOperationContext.readSnapshot();
             if (!snapshot) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
@@ -361,18 +363,20 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         },
         readHostActionContract: async (actionId, target) => {
           if (target.machineId !== input.machineId) return null;
+          const contributed = parseQualifiedPluginActionId(actionId);
           const spec = await readCompleteActionSpecV1({ actionId, ...(target.signal ? { signal: target.signal } : {}),
             read: async input => {
               const result = await actionExecutor.execute('action.spec.get', input, {
-                surface: 'cli', authority: 'account_automation',
+                surface: contributed ? 'agent' : 'cli', authority: 'account_automation',
                 externalActionTarget: { kind: 'machine', machineId: target.machineId, project: { machineId: target.machineId, directory: target.directory } },
                 ...(target.signal ? { signal: target.signal } : {}),
               });
-              if (!result.ok) throw new Error('action_contract_unavailable');
+              if (!result.ok) throw createActionExecuteFailureError(result);
               return result.result;
             },
           });
-          return freezeWorkflowActionContractV1(spec);
+          if (contributed && spec.automation?.workflowStep !== true) return null;
+          return freezeWorkflowActionContractV1(contributed ? { ...spec, outputSchema: spec.outputSchema ?? {} } : spec);
         },
       });
       const resolveMaterializationHost: NonNullable<Parameters<typeof createProductionWorkflowRunCoordinator>[0]['resolveMaterializationHost']> = async (claim) => {
