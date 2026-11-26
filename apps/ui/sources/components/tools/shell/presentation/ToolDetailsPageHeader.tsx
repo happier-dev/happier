@@ -9,6 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { formatApprovalStatusLabel, formatToolPermissionDecisionLabel } from '@/components/approvals/approvalStatusLabel';
+import { useCopyToolApproval } from '../approvals/CopyToolApproval';
 import { buildToolHeaderModel } from './buildToolHeaderModel';
 import { toolActionOutcomeLabel } from './resolveToolActionFailure';
 import type { DeclinedApprovalDisposition, ToolStatusIndicatorKind } from './resolveToolStatusIndicatorKind';
@@ -67,8 +68,19 @@ export const ToolDetailsPageHeader = React.memo(function ToolDetailsPageHeader(
   const decisionLabel = formatToolPermissionDecisionLabel(tool.permission)
     ?? (declinedApproval ? formatApprovalStatusLabel(declinedApproval) : null);
   const result = React.useMemo(() => resolveToolCallOutcome(tool, declinedApproval), [declinedApproval, tool]);
+  const copyStatus = useCopyToolApproval()?.status;
   let outcome: React.ReactNode;
-  if (result.kind === 'status' && result.indicator === 'permission_blocked' && decisionLabel) {
+  if (copyStatus && copyStatus !== 'open') {
+    const mark = copyStatus === 'failed' ? { glyph: 'warning-circle', tone: 'danger' } as const
+      : copyStatus === 'executed' ? { glyph: 'check', tone: 'quiet' } as const
+        : copyStatus === 'approved' || copyStatus === 'executing' ? { glyph: 'clock', tone: 'quiet' } as const
+          : { glyph: 'minus-circle', tone: 'quiet' } as const;
+    outcome = (
+      <View style={styles.outcome}>
+        <ToolOutcomeStatus testID="tool-details-outcome" label={formatApprovalStatusLabel(copyStatus)} {...mark} />
+      </View>
+    );
+  } else if (result.kind === 'status' && result.indicator === 'permission_blocked' && decisionLabel) {
     // A person's decision uses the request's vocabulary and quiet mark.
     outcome = (
       <View style={styles.outcome}>

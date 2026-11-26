@@ -36,6 +36,8 @@ import { CodeView } from '@/components/ui/media/CodeView';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { BotTemplatePreview } from '@/components/sessions/bots/templates/BotTemplatePreview';
+import { useCopyToolApproval } from '../approvals/CopyToolApproval';
 
 function isEmptyValue(value: unknown): boolean {
   if (value === null || value === undefined) return true;
@@ -86,21 +88,48 @@ function renderValueRows(value: unknown, testID: string): React.ReactNode {
   );
 }
 
+type ToolCallDetailsSectionsProps = Readonly<{
+  tool: ToolCall;
+  serverId?: string | null;
+  sessionId?: string | null;
+  declinedApproval?: DeclinedApprovalDisposition | null;
+}>;
+
+export const ToolCallDetailsSections = React.memo(function ToolCallDetailsSections(props: ToolCallDetailsSectionsProps) {
+  const copyApproval = useCopyToolApproval();
+  return copyApproval
+    ? <CopyApprovalDetails approval={copyApproval} serverId={props.serverId ?? null} declinedApproval={props.declinedApproval ?? null} />
+    : <GenericToolCallDetailsSections {...props} />;
+});
+
+function CopyApprovalDetails({ approval, serverId, declinedApproval }: Readonly<{
+  approval: NonNullable<ReturnType<typeof useCopyToolApproval>>;
+  serverId: string | null;
+  declinedApproval: DeclinedApprovalDisposition | null;
+}>) {
+  const router = useDestinationRouter();
+  const { artifactId, botHref, content, failure, status } = approval;
+  return <>
+    <ItemGroup title={t('tools.structuredResult.result')} testID="tool-details-result">
+      {botHref ? <Item testID="tool-details-copy-bot" title={t('runs.openSession')} onPress={() => router.push(botHref)} /> : null}
+      {failure ? <Item testID="tool-details-failure-reason" title={failure.headline} subtitle={failure.reason ?? undefined}
+        subtitleLines={0} mode="info" showChevron={false} /> : null}
+      {failure && failure.technicalDetails.length > 0 ? <ApprovalTechnicalDetails lines={failure.technicalDetails} /> : null}
+      <ApprovalRequestRow artifactId={artifactId} serverId={serverId} declinedApproval={declinedApproval}
+        showRequestTitle={status !== null && status !== 'open'} />
+    </ItemGroup>
+    {content ? <BotTemplatePreview content={content} /> : null}
+  </>;
+}
+
 /**
  * The structured body of the tool-details page for a call without a richer renderer of its own (an MCP or
  * Happier Action call, an unknown tool): what it was asked to do, then what came back — or, for a typed
  * refusal or failure, the reason in words with its code one disclosure away. The raw transport envelope
  * never leads; it stays in the page's Debug disclosure.
  */
-export const ToolCallDetailsSections = React.memo(
-  function ToolCallDetailsSections(
-    props: Readonly<{
-      tool: ToolCall;
-      serverId?: string | null;
-      sessionId?: string | null;
-      declinedApproval?: DeclinedApprovalDisposition | null;
-    }>,
-  ) {
+const GenericToolCallDetailsSections = React.memo(
+  function GenericToolCallDetailsSections(props: ToolCallDetailsSectionsProps) {
     const { tool } = props;
     const expiredOutput = tool.toolOutputAvailability?.status === 'expired' ? tool.toolOutputAvailability : null;
     const actionId = readHappierActionCallId(tool.name, tool.input);
@@ -115,8 +144,6 @@ export const ToolCallDetailsSections = React.memo(
           : readHappierActionToolPayload(tool.input),
       [actionId, props.sessionId, tool.input, tool.name],
     );
-    // The tool call is history even when it returned an approval reference;
-    // that request's decision remains on its own linked approval page.
     const outcome = React.useMemo(() => resolveToolCallOutcome(tool), [tool]);
     const actionFields = React.useMemo(
       () =>
@@ -297,15 +324,22 @@ export const ToolCallDetailsSections = React.memo(
 
 /** The approval an Action asked for, opening that request where its decision lives. */
 function ApprovalRequestRow(
-  props: Readonly<{ artifactId: string; serverId: string | null; declinedApproval: DeclinedApprovalDisposition | null }>,
+  props: Readonly<{
+    artifactId: string;
+    serverId: string | null;
+    declinedApproval: DeclinedApprovalDisposition | null;
+    showRequestTitle?: boolean;
+  }>,
 ) {
   const router = useDestinationRouter();
-  const { artifactId, serverId, declinedApproval } = props;
+  const { artifactId, serverId, declinedApproval, showRequestTitle } = props;
+  const title = showRequestTitle ? t('detailPages.approval.requestTitle')
+    : declinedApproval ? formatApprovalStatusLabel(declinedApproval) : t('toolView.approvalRequested.title');
   return (
     <Item
       testID="tool-details-approval-request"
-      title={declinedApproval ? formatApprovalStatusLabel(declinedApproval) : t('toolView.approvalRequested.title')}
-      subtitle={declinedApproval ? undefined : t('toolView.approvalRequested.description')}
+      title={title}
+      subtitle={showRequestTitle || declinedApproval ? undefined : t('toolView.approvalRequested.description')}
       subtitleLines={0}
       onPress={
         serverId

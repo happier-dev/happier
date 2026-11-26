@@ -12,6 +12,7 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { ToolCallDetailsSections } from './ToolCallDetailsSections';
+import { CopyToolApprovalScope } from '../approvals/CopyToolApproval';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
@@ -312,7 +313,7 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
     }
 
     const structuredPage = usesStructuredToolDetailsPage(normalizedToolName);
-    return (
+    const page = (
         <ItemList testID="tool-details-page">
             {header}
             {outputExpired || structuredPage || !SpecializedFullView ? (
@@ -348,6 +349,7 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
             {debugSection}
         </ItemList>
     );
+    return <CopyToolApprovalScope tool={toolForRendering} serverId={serverId ?? null}>{page}</CopyToolApprovalScope>;
 }
 
 const styles = StyleSheet.create((theme) => ({
