@@ -68,7 +68,8 @@ import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORI
 import { encryptSessionPayload, decryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { ReviewWalkthroughResponseSchema } from '@happier-dev/protocol/reviews/reviewNarration';
-import { readRetainedExecutionRunRecords, reconcileRetainedExecutionRunRecords } from '@/daemon/executionRunRegistry';
+import { listExecutionRunMarkersForRehydration, readRetainedExecutionRunRecords, reconcileRetainedExecutionRunRecords } from '@/daemon/executionRunRegistry';
+import { resolveDaemonExecutionRunBrokerAuthority } from '@/daemon/executionRunBrokerAuthority';
 import { restartSessionRunnerOnCurrentRuntime } from '@/daemon/plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
 import { requestPlannedRunnerRestart } from '@/daemon/plannedRunnerRestart/requestPlannedRunnerRestart';
 import { requestConnectedServiceSessionRestartSignal } from '@/daemon/connectedServices/sessionAuthSwitch/requestConnectedServiceSessionRestartSignal';
@@ -997,15 +998,38 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     { outcome: 'failed', operation: 'retire', holdPublication: false, narration: false },
     { outcome: 'complete', operation: 'retire', holdPublication: false, narration: true },
     { outcome: 'complete', operation: 'restart', holdPublication: false, narration: true },
-  ] as const)('resumes a completed idle retained review after runner disposal and replacement ($outcome, $operation, publication held=$holdPublication, narration=$narration)', async ({ outcome, operation, holdPublication, narration }) => {
+  ] as const)('resumes a completed idle retained review after runner disposal and replacement ($outcome, $operation, publication held=$holdPublication, narration=$narration)', async ({ outcome, operation, holdPublication, narration }) => runWithScmAccountScope('account-1', async () => {
     execFileSync('git', ['init', directory], { stdio: 'ignore' });
     writeFileSync(join(directory, 'code.ts'), 'export const enabled = true;\n');
     const comparison = narration ? await captureScmComparison({ cwd: directory, source: { kind: 'workingTree' } }) : null;
     let sequence = 0;
     const requests: AgentSessionOpenRequest[] = [];
     const disposedThreads: AgentSessionOpenRequest[] = [];
+    let brokerManager: ExecutionRunHostBridge | undefined;
+    let resumedRunId: string | undefined;
     nativeOpen.mockImplementation(async request => {
       requests.push(request);
+      if (request.kind === 'resume') {
+        const executionRunId = resumedRunId;
+        if (!executionRunId || !brokerManager) throw new Error('Missing replacement Review owner');
+        const markers = await listExecutionRunMarkersForRehydration();
+        expect(markers.find(marker => marker.runId === executionRunId)?.status).toBe('succeeded');
+        // Native open is the external boundary. Keep marker discovery, resumed
+        // controller publication and live authority real across this call.
+        expect(await resolveDaemonExecutionRunBrokerAuthority({ v: 1,
+          requestNonce: '11111111-1111-4111-8111-111111111111', serverIdentityId: 'review-home',
+          requestingAccountId: 'account-1', workerMachineId: 'machine-1', executionRunId,
+          expectedIntent: 'review', expectedOccurrenceId: null,
+        }, {
+          currentIdentity: { serverIdentityId: 'review-home', accountId: 'account-1', machineId: 'machine-1' },
+          listMarkers: async () => markers,
+          isPidAlive: pid => pid === process.pid,
+          resolveLiveAuthority: async input => brokerManager!.resolveLiveBrokerAuthority({ v: 1,
+            executionRunId: input.executionRunId,
+            ...(input.expectedIntent !== undefined ? { expectedIntent: input.expectedIntent } : {}),
+            expectedOccurrenceId: input.expectedOccurrenceId }),
+        })).toMatchObject({ status: 'current', parentSessionId: 'session-1', intent: 'review' });
+      }
       let nativeTurns = 0;
       let emit: ((event: AgentSessionRuntimeEvent) => void) | undefined;
       const base = () => ({ sessionId: 'session-parent', sequence: ++sequence, emittedAtMs: sequence });
@@ -1160,6 +1184,8 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
       }
     } else await (retiring ?? original.manager.dispose());
     const replacement = createHarness(false, true);
+    brokerManager = replacement.manager;
+    resumedRunId = started.runId;
     const followUp = await replacement.manager.applyAction(started.runId, {
       actionId: 'review.follow_up', input: { findingIds: [], messageMarkdown: 'Why does this matter?' },
     });
@@ -1175,7 +1201,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
     await replacement.manager.waitForTerminal(followUp.result.runId);
     expect(requests).toMatchObject([{ kind: 'create' }, { kind: 'resume', providerSessionId: 'retained-review-thread' }]);
     expect(replacement.manager.getStructuredMeta(followUp.result.runId)?.kind).toBe('review_follow_up.v1');
-  });
+  }));
 
   it.each([
     { recovered: false, settlement: 'complete' },

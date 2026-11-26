@@ -53,7 +53,8 @@ export async function resolveDaemonExecutionRunBrokerAuthority(
       !== request.requestingAccountId) {
     return deny('identity_mismatch');
   }
-  if (marker.status !== 'running') return deny('terminal');
+  // Markers route to the owner; only its live occurrence decides currentness.
+  // A resume provisions credentials before publishing its updated marker.
   if (!await deps.isPidAlive(marker.pid)) return deny('runtime_unavailable');
 
   let live: SessionExecutionRunBrokerAuthorityResponseV1;

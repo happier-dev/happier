@@ -3067,6 +3067,10 @@ authority failures.
 For Execution Run broker admission, Home reports `execution_run_authority_unavailable`
 when the worker cannot supply a readable authority reply. An explicit terminal
 Run or mismatched authority still receives its existing refusal.
+The daemon uses the saved Run marker to reach its live owner. That owner decides
+whether the occurrence is current, including while a retained Run resumes before
+its updated activity marker is written; the marker's previous terminal status
+does not refuse the resumed occurrence.
 In unreleased 0.3, a verified Session broker refresh reports `access_removed`
 when the member loses brokered access. Home checks entitlement before comparing
 the requested resource revision. An entitled member using an old revision gets

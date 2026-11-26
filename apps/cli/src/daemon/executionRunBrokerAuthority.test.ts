@@ -194,6 +194,23 @@ describe('resolveDaemonExecutionRunBrokerAuthority', () => {
     })).resolves.toEqual({ status: 'not_current', requestNonce: request.requestNonce, reason: 'terminal' });
   });
 
+  it('uses the resumed Review owner while the persisted marker still describes the finished occurrence', async () => {
+    const reviewRequest = { ...request, expectedIntent: 'review' as const, expectedOccurrenceId: 'resumed-occurrence' };
+    await expect(resolveDaemonExecutionRunBrokerAuthority(reviewRequest, {
+      currentIdentity: { serverIdentityId: 'srv_home_one', accountId: 'account-one', machineId: 'machine-one' },
+      listMarkers: async () => [{
+        runId: 'run-one', happySessionId: 'session-one', intent: 'review', status: 'succeeded', pid: 41,
+        executionRunBrokerAuthorityV1: { occurrenceId: 'finished-occurrence', turnState: 'idle' },
+      }],
+      isPidAlive: async () => true,
+      // Session RPC boundary: provisioning already published this admitted resume;
+      // the activity marker is written after the credential-backed provision.
+      resolveLiveAuthority: async () => ({
+        ...await liveCurrent(), intent: 'review', occurrenceId: 'resumed-occurrence', runtimeState: 'idle', activeTurnId: null,
+      }),
+    })).resolves.toMatchObject({ status: 'current', intent: 'review', occurrenceId: 'resumed-occurrence' });
+  });
+
   it('denies an old occurrence after the live owner replaced it even when the marker write failed', async () => {
     await expect(resolveDaemonExecutionRunBrokerAuthority(request, {
       currentIdentity: { serverIdentityId: 'srv_home_one', accountId: 'account-one', machineId: 'machine-one' },
