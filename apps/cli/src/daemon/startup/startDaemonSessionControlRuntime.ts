@@ -697,6 +697,7 @@ import {
   recordProviderAccountUsageAdoptionForSession,
   recordProviderAccountUsageSnapshotForSession,
 } from '../connectedServices/accountUsage/recordProviderAccountUsageSnapshotForSession';
+import { normalizeAcquiredProviderAccountUsageSnapshot } from '../connectedServices/accountUsage/acquiredSnapshot';
 import type { QualifiedProviderAccountUsagePersistenceTarget } from '../connectedServices/accountUsage/persistence';
 import {
   createProviderAccountUsageStore,
@@ -15173,6 +15174,9 @@ export async function startDaemonSessionControlRuntime(
         return await coordinator.consumeRecoveryCreditForProfile(input);
       },
       handleProviderAccountUsageSnapshot: async (input) => {
+        const snapshot = normalizeAcquiredProviderAccountUsageSnapshot(input.snapshot, {
+          kind: 'acquired', acquiredAtMs: Date.now(),
+        });
         const accountContext = await resolveSessionAccountContext(
           input.sessionId,
         );
@@ -15184,14 +15188,14 @@ export async function startDaemonSessionControlRuntime(
             if (
               input.sourceProviderAccountId === undefined &&
               claimedSource?.bindingKind === 'group_member' &&
-              input.snapshot.accountSubject.kind === 'providerSubject'
+              snapshot.accountSubject.kind === 'providerSubject'
             ) {
               const groupSource = claimedSource;
               claimedSource = await resolveProviderAccountUsageSourceProfile({
                 source: groupSource,
-                providerAccountId: input.snapshot.accountSubject.id,
-                providerOrganizationId: input.snapshot.recordKey.quotaScope === 'organization'
-                  ? input.snapshot.recordKey.quotaScopeId ?? null : null,
+                providerAccountId: snapshot.accountSubject.id,
+                providerOrganizationId: snapshot.recordKey.quotaScope === 'organization'
+                  ? snapshot.recordKey.quotaScopeId ?? null : null,
                 getCurrentGroup: async () => {
                   await assertSessionAccountCurrent(
                     input.sessionId,
@@ -15229,7 +15233,7 @@ export async function startDaemonSessionControlRuntime(
               ? await resolveConnectedAccountUsageIdentity(capturedClaimedSource.serviceId) : null;
             const runtimeSourceIdentityRequested = Boolean(capturedClaimedSource
               && input.deriveCredentialFingerprintFromSource === true && input.credentialFingerprint === undefined
-              && input.snapshot.source === 'runtimeSignal' && input.snapshot.accountSubject.kind === 'provisionalLocalSubject');
+              && snapshot.source === 'runtimeSignal' && snapshot.accountSubject.kind === 'provisionalLocalSubject');
             const usageRuntimeBindings = connectedServiceRuntimeRegistry.getBySessionId(input.sessionId)?.activeBindings ?? [];
             let runtimeSourcePersistenceTarget: QualifiedProviderAccountUsagePersistenceTarget | null = null;
             const shouldResolveSourceCredential =
@@ -15354,7 +15358,7 @@ export async function startDaemonSessionControlRuntime(
                 );
               },
               sessionId: input.sessionId,
-              snapshot: input.snapshot,
+              snapshot,
             });
             const qualifiedUsageSource = 'qualifiedSource' in result ? result.qualifiedSource ?? null : null;
             const verifiedLocalSource = 'verifiedLocalSource' in result ? result.verifiedLocalSource ?? null : null;
@@ -15385,7 +15389,7 @@ export async function startDaemonSessionControlRuntime(
                 ) {
                   const source = verifiedLocalSource ?? qualifiedUsageSource!;
                   const observedProviderAccountId = verifiedSourceProviderAccountId
-                    ?? (input.snapshot.accountSubject.kind === 'providerSubject' ? input.snapshot.accountSubject.id : null);
+                    ?? (snapshot.accountSubject.kind === 'providerSubject' ? snapshot.accountSubject.id : null);
                   const serviceId = ConnectedAccountServiceKeySchema.safeParse(
                     readBuiltInLegacyConnectedAccountServiceKeyIngress(
                       source.serviceId,
@@ -15406,7 +15410,7 @@ export async function startDaemonSessionControlRuntime(
                   const projection = legacyServiceId
                     ? projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1(
                         {
-                          snapshot: input.snapshot,
+                          snapshot,
                           source,
                         },
                       )
@@ -15424,8 +15428,8 @@ export async function startDaemonSessionControlRuntime(
                   sourceIsExactlyCurrent = credentialResolution?.revisionSemantics === 'revisioned'
                     && matchesCurrentQuotaObservationCredential({
                       providerAccountId: observedProviderAccountId ?? '',
-                      providerOrganizationId: input.snapshot.recordKey.quotaScope === 'organization'
-                        ? input.snapshot.recordKey.quotaScopeId ?? null : null,
+                      providerOrganizationId: snapshot.recordKey.quotaScope === 'organization'
+                        ? snapshot.recordKey.quotaScopeId ?? null : null,
                       credentialFingerprint,
                       credential: credential?.kind === 'oauth' ? {
                         providerAccountId: credential.oauth.providerAccountId,
@@ -15492,7 +15496,7 @@ export async function startDaemonSessionControlRuntime(
                         groupGeneration,
                         credentialRevision:
                           credentialResolution.credentialRevision,
-                        observedAtMs: input.snapshot.observedAtMs,
+                        observedAtMs: snapshot.observedAtMs,
                       };
                     }
                   }

@@ -5,6 +5,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
 import * as daemonControl from '@/daemon/controlClient';
 import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
+import { normalizeAcquiredProviderAccountUsageSnapshot } from '@/daemon/connectedServices/accountUsage/acquiredSnapshot';
 import { recordProviderAccountUsageSnapshotForSession } from '@/daemon/connectedServices/accountUsage/recordProviderAccountUsageSnapshotForSession';
 import { createProviderAccountUsagePersistenceScheduler } from '@/daemon/connectedServices/accountUsage/persistence';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount, buildProviderAccountUsagePersistenceTargetFromQualifiedCredential } from '@/daemon/connectedServices/accountUsage/qualifiedAccountIdentity';
@@ -17,12 +18,17 @@ import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test
 import { readMuseLoginRecording } from './testkit/mspProcess.js';
 import { readMuseRecord } from './events.js';
 
-it.each([false, true])('pushes native allowance into the real usage owner (selected account: %s), retaining equal samples', async selected => {
+it.each([
+  { selected: false, openWithZeroClock: false },
+  { selected: true, openWithZeroClock: false },
+  { selected: true, openWithZeroClock: true },
+])('pushes native allowance into the real usage owner (selected: $selected, zero-clock refresh: $openWithZeroClock)', async ({ selected, openWithZeroClock }) => {
   const captured = readMuseRecord(await readMuseLoginRecording());
   if (!Array.isArray(captured.rows)) throw new Error('Expected native recording rows');
   const usageRow = captured.rows.find(row => readMuseRecord(readMuseRecord(row).message).method === 'usage/changed');
   const usageMessage = readMuseRecord(readMuseRecord(usageRow).message);
   const nativeSample = readMuseRecord(usageMessage.params);
+  const refreshSample = openWithZeroClock ? { ...nativeSample, observedAtMs: 0 } : nativeSample;
   const changed = { ...nativeSample, observedAtMs: Number(nativeSample.observedAtMs) + 1,
     weekly: { ...readMuseRecord(nativeSample.weekly), usedPercent: 9 } };
   // Real login capture has an empty usage/read cache. The native refresh
@@ -33,7 +39,7 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
     ? [{ ...readMuseRecord(row), message: { ...readMuseRecord(readMuseRecord(row).message), method: 'usage/refresh' } }]
     : readMuseRecord(row).direction === 'recv'
     && readMuseRecord(readMuseRecord(row).message).id === usageReadId
-    ? [{ ...readMuseRecord(row), message: { ...readMuseRecord(readMuseRecord(row).message), result: { usage: nativeSample, tierName: 'Native subscription', subscriptionActive: true } } }]
+    ? [{ ...readMuseRecord(row), message: { ...readMuseRecord(readMuseRecord(row).message), result: { usage: refreshSample, tierName: 'Native subscription', subscriptionActive: true } } }]
     : row === usageRow
     ? [{}, { schemaVersion: 999 }, nativeSample, nativeSample, changed, {}, { schemaVersion: 999 }].map(params => ({
         ...readMuseRecord(row), message: { ...usageMessage, params },
@@ -64,14 +70,17 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
   });
   const persistence = createProviderAccountUsagePersistenceScheduler({ credentials,
     // All replayed samples have already occurred; do not make the changed sample future-dated.
-    api: { getAccountEncryptionMode: async () => 'plain' }, now: () => Number(changed.observedAtMs),
+    api: { getAccountEncryptionMode: async () => 'plain' }, now: openWithZeroClock ? Date.now : () => Number(changed.observedAtMs),
     fingerprintKey: new Uint8Array(32).fill(3) });
   let admittedMaterial: Awaited<ReturnType<typeof readQualifiedConnectedAccountCredentialMaterial>> = null;
   // Daemon IPC is the replaced process boundary; canonical intake and storage remain real.
   const ipc = vi.spyOn(daemonControl, 'notifyDaemonProviderAccountUsageSnapshot').mockImplementation(async input => {
+    const snapshot = normalizeAcquiredProviderAccountUsageSnapshot(input.snapshot, {
+      kind: 'acquired', acquiredAtMs: 1_000,
+    });
     const result = await recordProviderAccountUsageSnapshotForSession({
       getChildren: () => [{ happySessionId: 'host-admitted-muse' }],
-      store, persistence: selected ? persistence : null, sessionId: input.sessionId, snapshot: input.snapshot,
+      store, persistence: selected ? persistence : null, sessionId: input.sessionId, snapshot,
       ...(input.source ? { observation: { sources: [input.source] } } : {}),
       resolveAuthoritativeSource: async source => resolveProviderAccountUsageAuthoritativeSource({ source,
         activeBindings: registry.getBySessionId(input.sessionId)?.activeBindings ?? [] }),
@@ -96,12 +105,24 @@ it.each([false, true])('pushes native allowance into the real usage owner (selec
     ...(selected ? { environment, usageCredential } : {}) });
   const events = createAgentSessionRuntimeHarness();
   try {
+    const beforeOpen = Date.now();
     const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd(),
       ...(selected ? { launchEnvironment: { values: environment, unset: [] } } : {}) });
     // Existing credentials have no initial cache: refresh must publish before a turn.
     await vi.waitFor(() => expect(results).toEqual(['snapshot_advanced']));
     expect(store.listSnapshots()[0]?.planLabel).toBe('Native subscription');
     expect(store.listSnapshots()[0]?.meters.map(meter => meter.meterId)).toEqual(['weekly', 'window']);
+    if (openWithZeroClock) {
+      await persistence.flush(5000);
+      const acquiredAtMs = store.listSnapshots()[0]!.observedAtMs;
+      expect(acquiredAtMs).toBeGreaterThanOrEqual(beforeOpen);
+      expect(acquiredAtMs).toBeLessThanOrEqual(Date.now());
+      expect(fixture.usageWrites).toEqual([
+        expect.objectContaining({ fetchedAt: acquiredAtMs,
+          snapshot: expect.objectContaining({ state: 'loaded_data', observedAtMs: acquiredAtMs, fetchedAtMs: acquiredAtMs }) }),
+      ]);
+      return;
+    }
     session.watch(events.recordRuntimeEvent);
     await session.send({ inputIds: ['usage-input'], input: { text: 'Reply with exactly PEBBLE. Do not use tools.' },
       delivery: { kind: 'newTurn', turnId: 'usage-turn' } });

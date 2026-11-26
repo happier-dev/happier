@@ -10,15 +10,17 @@ import { withAuthenticatedTestApp } from '../../../testkit/sqliteFastify';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
 import { mutateQualifiedConnectedServiceCredential } from './credentialRepository';
 import { readExactQualifiedConnectedServiceUsageSource, writeQualifiedProviderAccountUsageRecord } from './usageRepository';
+import { readProviderAccountUsageHistory } from '../providerAccountUsage/recordStorage';
 import { openQualifiedConnectedAccountQuotaResponseV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
+import { buildProviderAccountUsageRecordId, type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import * as controlClient from '../../../../../../../cli/src/daemon/controlClient';
 import { createNativeAgentAccountUsageService } from '../../../../../../../cli/src/agent/runtime/registry/engineRegistry/nativeAgentAccountUsage';
 import { createProviderAccountUsagePersistenceScheduler } from '../../../../../../../cli/src/daemon/connectedServices/accountUsage/persistence';
+import { normalizeAcquiredProviderAccountUsageSnapshot } from '../../../../../../../cli/src/daemon/connectedServices/accountUsage/acquiredSnapshot';
 import { createProviderAccountUsageStore } from '../../../../../../../cli/src/daemon/connectedServices/accountUsage/store';
-import { recordProviderAccountUsageSnapshotForSession } from '../../../../../../../cli/src/daemon/connectedServices/accountUsage/recordProviderAccountUsageSnapshotForSession';
+import { recordProviderAccountUsageAdoptionForSession, recordProviderAccountUsageSnapshotForSession } from '../../../../../../../cli/src/daemon/connectedServices/accountUsage/recordProviderAccountUsageSnapshotForSession';
 import { resolveProviderAccountUsageAuthoritativeSource } from '../../../../../../../cli/src/daemon/connectedServices/accountUsage/runtimeSource';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../../../../../../../cli/src/daemon/connectedServices/accountUsage/qualifiedAccountIdentity';
 import { buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota } from '../../../../../../../cli/src/daemon/connectedServices/quotas/ConnectedServiceQuotasCoordinator';
@@ -45,6 +47,19 @@ describe('Muse qualified usage publication through Home', () => {
 
     it.each([false, true])('publishes a Muse usage event through recordSnapshot and reads its Account figures (encrypted=%s)', async encrypted => {
         await runFlow(encrypted, 'event');
+    });
+    it.each([false, true])('retains a measured Muse usage event with a zero clock at receipt (encrypted=%s)', async encrypted => {
+        await runFlow(encrypted, 'event', { ...usage, observedAtMs: 0 });
+    });
+    it.each([false, true])('retains a measured Muse usage event without a provider clock at receipt (encrypted=%s)', async encrypted => {
+        const { weekly, window, tier } = usage;
+        await runFlow(encrypted, 'event', { weekly, window, tier });
+    });
+    it.each([false, true])('qualifies the public Agent loaded-zero input at host ingress (encrypted=%s)', async encrypted => {
+        await runFlow(encrypted, 'agent', { ...usage, observedAtMs: 0 });
+    });
+    it.each([false, true])('adopts a retained loaded-zero record without adding epoch history (encrypted=%s)', async encrypted => {
+        await runFlow(encrypted, 'adoption');
     });
     it.each([false, true])('registers a cold Muse source, accepts manual Refresh, invokes quota and reads figures (encrypted=%s)', async encrypted => {
         await runFlow(encrypted, 'refresh');
@@ -74,19 +89,26 @@ describe('Muse qualified usage publication through Home', () => {
             source: { ref: otherRef, bindingKind: 'account' } })).toEqual({ status: 'ownership_unproven' });
     });
 
-    async function runFlow(encrypted: boolean, flow: 'event' | 'refresh') {
+    async function runFlow(
+        encrypted: boolean, flow: 'event' | 'agent' | 'refresh' | 'adoption',
+        allowance: Omit<typeof usage, 'observedAtMs'> & { observedAtMs?: number } = usage,
+    ) {
+        const receivedAtMs = usage.observedAtMs + 1000;
         const account = await db.account.create({ data: encrypted
             ? { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }
             : { publicKey: null, encryptionMode: 'plain' } });
+        const providerIdentity = flow === 'adoption'
+            ? { accountId: 'muse-provider-subject', email: 'qa@example.invalid' }
+            : { email: 'qa@example.invalid' };
         const created = await mutateQualifiedConnectedServiceCredential({ accountId: account.id, ref,
             expectedCredentialRevision: null, authenticationModeId: 'native-import',
             content: encrypted ? { t: 'encrypted', c: 'sealed-native-import' } : { t: 'plain', v: { token: 'synthetic' } },
-            metadata: { scopes: [], providerIdentity: { email: 'qa@example.invalid' } } });
+            metadata: { scopes: [], providerIdentity } });
         if (created.status !== 'written') throw new Error('Credential fixture failed');
         const profile: QualifiedConnectedAccountProfileV4 = { ref, status: 'connected', authenticationModeId: 'native-import',
             revisionSemantics: 'revisioned', credentialRevision: created.credentialRevision,
             configurationRevision: null, configurationReady: false, kind: 'oauth', expiresAt: null,
-            providerIdentity: { email: 'qa@example.invalid' }, displayName: 'Muse', scopes: [] };
+            providerIdentity, displayName: 'Muse', scopes: [] };
         const credentials = { token: 'synthetic-account-token', encryption: encrypted
             ? { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } : null };
         const signal = new AbortController().signal;
@@ -118,17 +140,49 @@ describe('Muse qualified usage publication through Home', () => {
                     catch (error) { writes.push({ path: 'writer-failure', status: 0, data: error instanceof Error ? { name: error.name, message: error.message } : String(error) }); throw error; }
                 },
                 api: { getAccountEncryptionMode: async () => encrypted ? 'e2ee' : 'plain' },
-                now: () => usage.observedAtMs, randomBytes: size => new Uint8Array(size).fill(3), fingerprintKey: new Uint8Array(32).fill(4) });
+                now: () => receivedAtMs, randomBytes: size => new Uint8Array(size).fill(3), fingerprintKey: new Uint8Array(32).fill(4) });
             try {
-                const publish = async (snapshot: Parameters<typeof persistence.recordInBandSnapshot>[0]) => {
-                    await persistence.recordInBandSnapshot(snapshot, { targets: [target] });
+                const publish = async (snapshot: Parameters<typeof normalizeAcquiredProviderAccountUsageSnapshot>[0]) => {
+                    await persistence.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: receivedAtMs }), { targets: [target] });
                     await persistence.flush(5_000);
                 };
-                if (flow === 'event') {
+                if (flow === 'adoption') {
+                    const quota = await readNativeQuota(signal);
+                    const stable = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+                        profile, quota: { ...quota, observedAtMs: 0 },
+                        staleAfterMs: 120_000, usageIdentity: museAccountDescriptor.usageIdentity,
+                    });
+                    const recordKey = { ...stable.recordKey, accountSubjectId: 'provisional:muse-session', subjectKind: 'unknown' as const };
+                    const provisional = {
+                        ...stable, recordKey, recordId: buildProviderAccountUsageRecordId(recordKey),
+                        accountSubject: { kind: 'provisionalLocalSubject' as const, id: recordKey.accountSubjectId },
+                        observedAtMs: receivedAtMs, fetchedAtMs: receivedAtMs,
+                    };
+                    // Model both snapshots opened into the daemon's retained store before adoption.
+                    store.recordSnapshot(stable, { sources: [source] });
+                    store.recordSnapshot(provisional, { sources: [source] });
+                    await expect(recordProviderAccountUsageAdoptionForSession({
+                        getChildren: () => [{ happySessionId: 'muse-session' }], store, persistence,
+                        resolvePersistenceTargets: async () => [target], sessionId: 'muse-session',
+                        adoption: {
+                            providerId: stable.providerId, fromRecordId: provisional.recordId, toRecordId: stable.recordId,
+                            stableRecordKey: stable.recordKey, proof: { kind: 'provider_account_id_match' },
+                            observedAtMs: receivedAtMs,
+                        },
+                    })).resolves.toMatchObject({ status: 'adopted', persisted: true });
+                    await persistence.flush(5_000);
+                    expect(store.resolveRecordId(provisional.recordId)).toMatchObject({
+                        recordId: stable.recordId, observedAtMs: 0, fetchedAtMs: 0,
+                    });
+                } else if (flow !== 'refresh') {
                     vi.spyOn(controlClient, 'notifyDaemonProviderAccountUsageSnapshot').mockImplementation(async request => {
+                        if (flow === 'agent') expect(request.snapshot.observedAtMs).toBe(receivedAtMs);
+                        const snapshot = normalizeAcquiredProviderAccountUsageSnapshot(request.snapshot, {
+                            kind: 'acquired', acquiredAtMs: receivedAtMs + 1,
+                        });
                         const result = await recordProviderAccountUsageSnapshotForSession({
                             getChildren: () => [{ happySessionId: 'muse-session' }], sessionId: request.sessionId,
-                            snapshot: request.snapshot, observation: { sources: [source] }, store, persistence,
+                            snapshot, observation: { sources: [source] }, store, persistence,
                             resolveAuthoritativeSource: async claimed => resolveProviderAccountUsageAuthoritativeSource({ source: claimed,
                                 activeBindings: [{ serviceId, profileId: ref.accountId, groupId: null, groupGeneration: null,
                                     credentialRevision: created.credentialRevision }] }),
@@ -145,8 +199,20 @@ describe('Muse qualified usage publication through Home', () => {
                         recordSnapshot: (input, options) => native.recordSnapshot({ ...input, sessionId: 'muse-session' }, options),
                         adoptProvisionalRecord: (input, options) => native.adoptProvisionalRecord({ ...input, sessionId: 'muse-session' }, options),
                     };
-                    await recordMuseUsageObservation({ params: { usage }, accountUsage, sessionId: 'muse-session', signal,
-                        logger: { debug() {}, warn() {} } });
+                    const clock = vi.spyOn(Date, 'now').mockReturnValue(receivedAtMs);
+                    try {
+                        if (flow === 'agent') {
+                            const quota = await readNativeQuota(signal);
+                            const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({ profile,
+                                quota: { ...quota, observedAtMs: 0 }, staleAfterMs: 120_000, usageIdentity: museAccountDescriptor.usageIdentity });
+                            expect((await accountUsage.recordSnapshot({
+                                snapshot: { ...snapshot, source: 'runtimeSignal' }, source: { serviceId },
+                            })).status).toBe('recorded');
+                        } else {
+                            await recordMuseUsageObservation({ params: { usage: allowance }, accountUsage, sessionId: 'muse-session', signal,
+                                logger: { debug() {}, warn() {} } });
+                        }
+                    } finally { clock.mockRestore(); }
                     await persistence.flush(5_000);
                     expect(writes, JSON.stringify(writes)).toContainEqual(expect.objectContaining({ status: 200, data: { success: true, source: { status: 'linked' } } }));
                     expect(store.resolveBySource(source)?.meters.map(m => m.utilizationPct)).toEqual([16, 2]);
@@ -166,10 +232,15 @@ describe('Muse qualified usage publication through Home', () => {
                 }
                 expect(await readExactQualifiedConnectedServiceUsageSource({ accountId: account.id, source: target.source }))
                     .toMatchObject({ recordId: identity.recordId, source: target.source });
+                const expectedClock = allowance.observedAtMs || receivedAtMs;
+                const history = await readProviderAccountUsageHistory({ accountId: account.id, recordId: identity.recordId,
+                    history: { range: { startAtMs: 0, endAtMs: receivedAtMs + 1 }, pageSize: 10 } });
+                expect(history.entries.map(entry => entry.observedAtMs)).toEqual(flow === 'adoption' ? [] : [expectedClock]);
                 const response = await readQualifiedConnectedAccountQuotaV4({ token: credentials.token, ref });
                 expect(response).not.toBeNull();
                 const quota = response && openQualifiedConnectedAccountQuotaResponseV4({ response, expectedRef: ref,
                     material: credentials.encryption });
+                if (flow === 'adoption') expect(quota?.fetchedAtMs).toBe(0);
                 expect(quota?.meters.map(m => m.utilizationPct)).toEqual([16, 2]);
                 expect(quota?.meters.map(m => m.resetsAt)).toEqual([usage.weekly.resetsAtMs, usage.window.resetsAtMs]);
             } finally { persistence.dispose(); }

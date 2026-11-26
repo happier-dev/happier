@@ -1504,7 +1504,11 @@ write outcome is transient and has no durable refusal marker.
 Within the retained detail window, the authorized client can drain exact encrypted history. Current capacity is published before history, entered-price and Pending work settle;
 each accepted page then updates the same Resource. The ordinary progressive
 history adapter keeps the first and last actual observations of an unchanged
-material run. Plans' page projection retains every accepted observation,
+material run. An addressable quota record can carry an unread status or a first-read
+failure before any provider observation exists. Neither state adds a history entry.
+Current hosts preserve the provider's observation time when supplied. For a measured
+reading without one, they use the acquisition clock captured before publication work.
+Plans' page projection retains every accepted observation,
 including interior samples whose only change is the observation time. This
 keeps curves, sample counts, ended windows and reset evidence tied to the same
 history. Ordinary paged reads and exact immutable reset-witness reads return

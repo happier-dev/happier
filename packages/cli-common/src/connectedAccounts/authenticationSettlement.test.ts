@@ -240,7 +240,8 @@ describe('admitted authentication settlement', () => {
             expect(counts.configurationReads).toBe(admittedReads.configuration);
             expect(counts.credentialReads).toBe(admittedReads.credential);
             expect(publications).toEqual(fault === 'credential-replaced' ? [] : [{ account, accountMode: 'plain',
-                credentialRevision: after, configurationRevision: null, completionObservation }]);
+                credentialRevision: after, configurationRevision: null,
+                completionObservation: { snapshot: completionObservation, acquiredAtMs: 1000 } }]);
             expect(JSON.stringify(stored)).not.toContain('completionObservation');
             expect(JSON.stringify(stored)).not.toContain('private-provider-response');
             expect(JSON.stringify(publications)).not.toContain('private-provider-response');

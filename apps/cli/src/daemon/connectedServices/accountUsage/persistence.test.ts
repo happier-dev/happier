@@ -1,3 +1,4 @@
+import { normalizeAcquiredProviderAccountUsageSnapshot } from '@/daemon/connectedServices/accountUsage/acquiredSnapshot';
 import {
     buildProviderAccountUsageRecordId,
     openProviderAccountUsageSnapshotCiphertext,
@@ -129,15 +130,15 @@ describe('provider account usage persistence scheduler', () => {
         const refreshed = createSnapshot({ meters: [{ ...previous.meters[0]!, used: 45, utilizationPct: 45 }] });
         const targets = [createTarget()];
         try {
-            await scheduler.recordInBandSnapshot(previous, { targets });
+            await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(previous, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
             await vi.runAllTimersAsync();
-            await scheduler.recordInBandSnapshot(refreshed, { targets });
+            await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(refreshed, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
             await vi.runAllTimersAsync();
             expect(post).toHaveBeenCalledTimes(2);
-            expect(await scheduler.recordInBandSnapshot(refreshed, { targets })).toMatchObject({ status: 'enqueued' });
+            expect(await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(refreshed, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets })).toMatchObject({ status: 'enqueued' });
             await vi.runAllTimersAsync();
             expect(post).toHaveBeenCalledTimes(3);
-            expect(await scheduler.recordInBandSnapshot(refreshed, { targets })).toEqual({ status: 'already_persisted', reason: 'unchanged_fresh' });
+            expect(await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(refreshed, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets })).toEqual({ status: 'already_persisted', reason: 'unchanged_fresh' });
         } finally { scheduler.dispose(); vi.useRealTimers(); }
     });
 
@@ -157,7 +158,7 @@ describe('provider account usage persistence scheduler', () => {
         try {
             for (let index = 0; index < 505; index += 1) {
                 const original = createTarget();
-                await scheduler.recordInBandSnapshot(snapshot, { targets: [createTarget({ source: {
+                await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets: [createTarget({ source: {
                     ...original.source, ref: { ...original.source.ref, accountId: `account-${index}` },
                 } })] });
             }
@@ -187,13 +188,13 @@ describe('provider account usage persistence scheduler', () => {
             now: () => 1_500, randomBytes: length => new Uint8Array(length).fill(9),
         });
         try {
-            await scheduler.recordInBandSnapshot(snapshot, { targets: [target] });
+            await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets: [target] });
             await scheduler.flush(1_000);
             expect(get.mock.calls.filter(call => String(call[0]).includes('/provider-account-usage/record?'))).toHaveLength(1);
             expect(get.mock.calls[0]?.[0]).toContain('/provider-account-usage/record?');
             expect(post).toHaveBeenCalledTimes(1);
             expect(post.mock.calls[0]?.[1]).not.toHaveProperty('material');
-            expect(await scheduler.recordInBandSnapshot(snapshot, { targets: [target] })).toMatchObject({ status: 'already_persisted' });
+            expect(await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets: [target] })).toMatchObject({ status: 'already_persisted' });
         } finally { scheduler.dispose(); post.mockRestore(); get.mockRestore(); }
     });
 
@@ -211,13 +212,13 @@ describe('provider account usage persistence scheduler', () => {
         const snapshot = createSnapshot();
         const targets = [createTarget()];
         try {
-            await scheduler.recordInBandSnapshot(snapshot, { targets });
+            await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
             await expect.poll(() => post.mock.calls.length).toBe(1);
-            for (let index = 0; index < 10; index++) await scheduler.recordInBandSnapshot(snapshot, { targets });
+            for (let index = 0; index < 10; index++) await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
             release();
             await scheduler.flush(1_000);
             expect(post).toHaveBeenCalledTimes(1);
-            await scheduler.recordInBandSnapshot({ ...snapshot, planLabel: 'changed' }, { targets });
+            await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot({ ...snapshot, planLabel: 'changed' }, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
             await scheduler.flush(1_000);
             expect(post).toHaveBeenCalledTimes(2);
             expect(post.mock.calls[1]?.[1]).toMatchObject({ snapshot: { planLabel: 'changed' } });
@@ -236,9 +237,9 @@ describe('provider account usage persistence scheduler', () => {
         const initial = createSnapshot({ recoveryCreditDetails: { grant: { remainingCount: 2, appliesToProviderLimitIds: ['weekly'] } } });
         const changed = createSnapshot({ recoveryCreditDetails: { grant: { remainingCount: 1, appliesToProviderLimitIds: ['weekly'], unavailableReason: 'cooldown' } } });
         try {
-            await scheduler.recordInBandSnapshot(initial, { targets: [createTarget()] });
+            await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(initial, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets: [createTarget()] });
             await scheduler.flush(1_000);
-            expect(await scheduler.recordInBandSnapshot(changed, { targets: [createTarget()] })).toMatchObject({ status: 'enqueued' });
+            expect(await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(changed, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets: [createTarget()] })).toMatchObject({ status: 'enqueued' });
             await scheduler.flush(1_000);
             const write = post.mock.calls.at(-1)?.[1];
             expect(post.mock.calls.at(-1)?.[0]).toContain('/v4/connect/qualified/provider-account-usage');
@@ -262,14 +263,14 @@ describe('provider account usage persistence scheduler', () => {
         const refreshed = createSnapshot({ subscription: { ...previous.subscription!, observedAtMs: 950 } });
         const targets = [createTarget()];
         try {
-            await scheduler.recordInBandSnapshot(previous, { targets });
+            await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(previous, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
             await scheduler.flush(1_000);
-            expect(await scheduler.recordInBandSnapshot(refreshed, { targets })).toMatchObject({ status: 'enqueued' });
+            expect(await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(refreshed, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets })).toMatchObject({ status: 'enqueued' });
             await scheduler.flush(1_000);
             const first = QualifiedProviderAccountUsageWriteV4Schema.parse(writeQualifiedProviderAccountUsage.mock.calls[0]![0].write);
             const latest = writeQualifiedProviderAccountUsage.mock.calls[1]![0].write;
             expect(latest).toMatchObject({ fetchedAt: 1_000, snapshot: { subscription: { observedAtMs: 950 } }, metadata: { materialFingerprint: first.metadata?.materialFingerprint } });
-            expect(await scheduler.recordInBandSnapshot(previous, { targets })).toMatchObject({ status: 'already_persisted', reason: 'unchanged_fresh' });
+            expect(await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(previous, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets })).toMatchObject({ status: 'already_persisted', reason: 'unchanged_fresh' });
         } finally { scheduler.dispose(); }
     });
 
@@ -292,7 +293,7 @@ describe('provider account usage persistence scheduler', () => {
         });
 
         try {
-            await expect(scheduler.recordInBandSnapshot(snapshot, {
+            await expect(scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), {
                 targets: [target],
             })).resolves.toEqual({
                 status: 'enqueued',
@@ -316,7 +317,7 @@ describe('provider account usage persistence scheduler', () => {
                     },
                 }),
             });
-            await expect(scheduler.recordInBandSnapshot(snapshot, {
+            await expect(scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), {
                 targets: [target],
             })).resolves.toEqual({
                 status: 'already_persisted',
@@ -348,9 +349,9 @@ describe('provider account usage persistence scheduler', () => {
         });
 
         try {
-            await scheduler.recordInBandSnapshot(snapshot, { targets: [first] });
+            await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets: [first] });
             await scheduler.flush(1_000);
-            await expect(scheduler.recordInBandSnapshot(snapshot, {
+            await expect(scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), {
                 targets: [second],
             })).resolves.toEqual({
                 status: 'enqueued',
@@ -409,7 +410,7 @@ describe('provider account usage persistence scheduler', () => {
         });
 
         try {
-            await scheduler.recordInBandSnapshot(snapshot, {
+            await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), {
                 targets: [createTarget({
                     source: {
                         ref: {
@@ -486,7 +487,7 @@ describe('provider account usage persistence scheduler', () => {
         });
 
         try {
-            await expect(scheduler.recordInBandSnapshot(createSnapshot())).resolves.toEqual({
+            await expect(scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(createSnapshot(), { kind: 'acquired', acquiredAtMs: 1_000 }))).resolves.toEqual({
                 status: 'not_persisted',
                 reason: 'no_current_qualified_source',
             });
@@ -512,13 +513,13 @@ describe('provider account usage persistence scheduler', () => {
         const future = createSnapshot({ fetchedAtMs: 100_000, observedAtMs: 100_000 });
         const current = createSnapshot({ fetchedAtMs: 10_000, observedAtMs: 10_000 });
         try {
-            await expect(scheduler.recordInBandSnapshot(future, {
+            await expect(scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(future, { kind: 'acquired', acquiredAtMs: 1_000 }), {
                 targets: [createTarget()],
             })).resolves.toEqual({
                 status: 'already_persisted',
                 reason: 'future_snapshot',
             });
-            await expect(scheduler.recordInBandSnapshot(current, {
+            await expect(scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(current, { kind: 'acquired', acquiredAtMs: 1_000 }), {
                 targets: [createTarget()],
             })).resolves.toEqual({
                 status: 'enqueued',

@@ -1,3 +1,4 @@
+import { normalizeAcquiredProviderAccountUsageSnapshot } from '@/daemon/connectedServices/accountUsage/acquiredSnapshot';
 import axios from 'axios';
 import fastify from 'fastify';
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -2242,7 +2243,7 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
       fetchedAtMs: 1_000, staleAfterMs: 300_000, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data', meters: [] };
     const targets = [{ source: { ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
       bindingKind: 'account' as const }, expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', expectedConfigurationRevision: 'cfg-current' }];
-    await runtime.providerAccountUsagePersistence.recordInBandSnapshot(snapshot, { targets });
+    await runtime.providerAccountUsagePersistence.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
     await runtime.providerAccountUsagePersistence.flush(1_000);
     if (surface === 'reconnect') {
       // Keep failed work in canonical backoff while transport is down; reconnect
@@ -2258,10 +2259,10 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
       expect(writes).toEqual([{ url: 'https://bob-home.test/v4/connect/qualified/provider-account-usage', token: `Bearer ${bobToken}`,
         data: expect.objectContaining({ snapshot }) }]);
       current = false;
-      await runtime.providerAccountUsagePersistence.recordInBandSnapshot({ ...snapshot, fetchedAtMs: 2_000 }, { targets });
+      await runtime.providerAccountUsagePersistence.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot({ ...snapshot, fetchedAtMs: 2_000 }, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
       await runtime.providerAccountUsagePersistence.flush(1_000);
       await runWithServerHttpBaseUrl('https://alice-home.test', async () => {
-        await alice.recordInBandSnapshot(snapshot, { targets });
+        await alice.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
         await reconnect();
       });
       expect(writes).toHaveLength(2);
@@ -2272,11 +2273,11 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
     expect(writes).toEqual([{ url: 'https://bob-home.test/v4/connect/qualified/provider-account-usage', token: `Bearer ${bobToken}`,
       data: expect.objectContaining({ source: targets[0].source, snapshot, payloadMode: 'plain_json_v1' }) }]);
     current = false;
-    await runtime.providerAccountUsagePersistence.recordInBandSnapshot({ ...snapshot, fetchedAtMs: 2_000 }, { targets });
+    await runtime.providerAccountUsagePersistence.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot({ ...snapshot, fetchedAtMs: 2_000 }, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
     await runtime.providerAccountUsagePersistence.flush(1_000);
     expect(writes).toHaveLength(1);
     await runWithServerHttpBaseUrl('https://alice-home.test', async () => {
-      await alice.recordInBandSnapshot(snapshot, { targets });
+      await alice.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets });
       await alice.flush(1_000);
     });
     expect(writes[1]).toEqual({ url: 'https://alice-home.test/v4/connect/qualified/provider-account-usage', token: `Bearer ${aliceToken}`,

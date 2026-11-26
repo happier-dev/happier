@@ -1,6 +1,6 @@
+import { normalizeAcquiredProviderAccountUsageSnapshot, type AcquiredProviderAccountUsageSnapshot } from './acquiredSnapshot';
 import type { QualifiedProviderAccountUsageIdentity } from './qualifiedAccountIdentity';
 import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
-import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 import {
     ProviderAccountUsageAdoptionV1Schema,
@@ -78,7 +78,7 @@ export async function recordProviderAccountUsageSnapshotForSession(input: Readon
      */
     resolvePersistenceTargets?: QualifiedPersistenceTargetResolver;
     sessionId: string;
-    snapshot: ProviderAccountUsageSnapshotV1;
+    snapshot: AcquiredProviderAccountUsageSnapshot;
 }>): Promise<
     | Readonly<{ status: ProviderAccountUsageStoreMutationStatus; recordId: string; persisted: boolean; persistence?: UnpersistedSnapshotObservation; qualifiedSource?: ConnectedServiceUsageSourceV1; verifiedLocalSource?: ConnectedServiceUsageSourceV1; sourceProviderAccountId?: string }>
     | Readonly<{ status: 'session_not_found' }>
@@ -88,7 +88,7 @@ export async function recordProviderAccountUsageSnapshotForSession(input: Readon
     const tracked = findTrackedSession(input.getChildren(), input.sessionId);
     if (!tracked) return { status: 'session_not_found' };
 
-    let snapshot = ProviderAccountUsageSnapshotV1Schema.parse(input.snapshot);
+    let snapshot = input.snapshot;
     const claimedSources = input.observation?.sources?.length
         ? input.observation.sources
         : null;
@@ -111,7 +111,7 @@ export async function recordProviderAccountUsageSnapshotForSession(input: Readon
         const identity = matches ? await input.resolveRuntimeSourceIdentity(current) : null;
         if (identity && (!input.requiresProviderOrganizationId
             || (identity.recordKey.quotaScope === 'organization' && Boolean(identity.recordKey.quotaScopeId?.trim())))) {
-            snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ ...snapshot, ...identity });
+            snapshot = { ...snapshot, ...identity };
             qualifiedSources = [current!];
             sourceQualificationMismatch = false;
         }
@@ -256,7 +256,7 @@ export async function recordProviderAccountUsageAdoptionForSession(input: Readon
         })
         : [];
     const persistence = await input.persistence.recordInBandSnapshot(
-        prepared.snapshot,
+        normalizeAcquiredProviderAccountUsageSnapshot(prepared.snapshot, { kind: 'retained' }),
         { targets },
     );
     if (persistence.status === 'not_persisted') {

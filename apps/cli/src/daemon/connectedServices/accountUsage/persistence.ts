@@ -1,6 +1,7 @@
 import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedProviderAccountUsageSourceLinkOutcomeV4Schema, QualifiedProviderAccountUsageWriteV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import type { AcquiredProviderAccountUsageSnapshot } from './acquiredSnapshot';
 import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
 import { mergeProviderAccountSubscription, type ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
@@ -134,7 +135,7 @@ type ProviderAccountUsagePersistencePayload = Readonly<{
 
 export type ProviderAccountUsagePersistenceScheduler = Readonly<{
   recordInBandSnapshot(
-    snapshot: ProviderAccountUsageSnapshotV1,
+    snapshot: AcquiredProviderAccountUsageSnapshot,
     options?: Readonly<{
       targets?: readonly QualifiedProviderAccountUsagePersistenceTarget[];
     }>,

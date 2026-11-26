@@ -16,6 +16,7 @@ export async function invokeQuota(input: Readonly<{
   cancellationSignal?: AbortSignal;
   expectedCredentialRevision?: string;
   fetchTimeoutMs: number | null;
+  now(): number;
   scheduledHealth?: Readonly<{ work: ScheduledQualifiedAccountHealth; dispatched(): void }>;
   beforeInvoke(basis: InvocationBasis, signal?: AbortSignal): ReturnType<NonNullable<QualifiedConnectedAccountScheduledOperationOptions['beforeInvoke']>>;
   recoverUnauthorized?(signal?: AbortSignal): Promise<boolean>;
@@ -54,6 +55,9 @@ export async function invokeQuota(input: Readonly<{
         return disposition;
       },
     };
+    // The established runtime returns after currentness and optional health/credit work.
+    // Carry the invocation clock across those waits when the provider supplies none.
+    const acquiredAtMs = input.now();
     const initial = input.scheduledHealth ? (async () => {
       input.scheduledHealth!.dispatched();
       const receipts = await input.runtime.invokeScheduledWithReceipts({
@@ -72,15 +76,17 @@ export async function invokeQuota(input: Readonly<{
       operation: { kind: 'quota' as const }, ...quota });
     const pending = (async () => {
       try {
-        return await initial;
+        return { ...await initial, acquiredAtMs };
       } catch (error) {
         signal?.throwIfAborted();
         if (error !== null && typeof error === 'object' && 'status' in error && error.status === 401
           && input.recoverUnauthorized && await input.recoverUnauthorized(signal)) {
           signal?.throwIfAborted();
           // One replay uses the coordinator's settled credential, within this acquisition's budget.
-          return input.runtime.invokeWithReceipt({ account: input.profile.ref,
+          const retryAcquiredAtMs = input.now();
+          const receipt = await input.runtime.invokeWithReceipt({ account: input.profile.ref,
             operation: { kind: 'quota' as const }, ...quota, expectedCredentialRevision: undefined });
+          return { ...receipt, acquiredAtMs: retryAcquiredAtMs };
         }
         throw error;
       }

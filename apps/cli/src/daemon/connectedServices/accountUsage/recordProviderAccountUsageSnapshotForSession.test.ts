@@ -1,3 +1,4 @@
+import { normalizeAcquiredProviderAccountUsageSnapshot, type AcquiredProviderAccountUsageSnapshot } from './acquiredSnapshot';
 import { resolveProviderAccountUsageAuthoritativeSource } from './runtimeSource';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount } from './qualifiedAccountIdentity';
 import {
@@ -7,7 +8,6 @@ import {
     SealedProviderAccountUsageSnapshotV1Schema,
     type ConnectedServiceUsageSourceV1,
     type ProviderAccountUsageRecordKeyV1,
-    type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 import { getProviderAccountUsageRefreshErrorAt } from '@happier-dev/protocol/connect/account-usage-primitives';
 import axios from 'axios';
@@ -35,8 +35,8 @@ function createRecordKey(accountSubjectId = 'acct_123'): ProviderAccountUsageRec
 
 function createSnapshot(
     recordKey = createRecordKey(),
-): ProviderAccountUsageSnapshotV1 {
-    return {
+): AcquiredProviderAccountUsageSnapshot {
+    return normalizeAcquiredProviderAccountUsageSnapshot({
         v: 1,
         recordId: buildProviderAccountUsageRecordId(recordKey),
         recordKey,
@@ -54,7 +54,7 @@ function createSnapshot(
         confidence: 'confirmed',
         state: 'loaded_data',
         meters: [],
-    };
+    }, { kind: 'acquired', acquiredAtMs: 1_000 });
 }
 
 const profileSource = {
@@ -210,7 +210,7 @@ describe('recordProviderAccountUsageSnapshotForSession', () => {
             await vi.runAllTimersAsync();
             expect(attempts).toBe(7);
             // A settled success retires retries; a genuine material change still writes.
-            await persistence.recordInBandSnapshot({ ...snapshot, planLabel: 'changed' }, { targets: [target] });
+            await persistence.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot({ ...snapshot, planLabel: 'changed' }, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets: [target] });
             await vi.runAllTimersAsync();
             expect(attempts).toBe(8);
         } finally {
@@ -549,6 +549,34 @@ describe('recordProviderAccountUsageSnapshotForSession', () => {
             expectedCredentialRevision: target.expectedCredentialRevision,
             expectedConfigurationRevision: target.expectedConfigurationRevision })]);
         expect(store.resolveBySource(profileSource)?.recordId).toBe(adoption.toRecordId);
+    });
+
+    it.each([0, 500])('adopts into a hydrated stable record without restamping its clock (%i)', async (storedClock) => {
+        const store = createProviderAccountUsageStore();
+        const stableRecordKey = createRecordKey('acct_stable');
+        const stable = { ...createSnapshot(stableRecordKey), observedAtMs: storedClock, fetchedAtMs: storedClock };
+        // Hydration seeds the store with the snapshot opened from Home.
+        store.recordSnapshot(stable, { sources: [profileSource] });
+        const provisional = createSnapshot(createRecordKey('provisional:native'));
+        store.recordSnapshot(provisional, { sources: [profileSource] });
+        const persistence = createPersistence();
+
+        await expect(recordProviderAccountUsageAdoptionForSession({
+            getChildren: () => [{ happySessionId: 'sess_1' }],
+            store, persistence, resolvePersistenceTargets: async () => [createTarget()],
+            sessionId: 'sess_1',
+            adoption: {
+                providerId: 'codex',
+                fromRecordId: provisional.recordId,
+                toRecordId: stable.recordId,
+                stableRecordKey,
+                proof: { kind: 'provider_account_id_match' },
+                observedAtMs: 2_000,
+            },
+        })).resolves.toMatchObject({ status: 'adopted', persisted: true });
+        await persistence.flush(1_000);
+        expect(writes).toEqual([expect.objectContaining({ snapshot: stable })]);
+        expect(store.resolveRecordId(provisional.recordId)).toEqual(stable);
     });
 
     it('returns session_not_found without local or durable mutations', async () => {

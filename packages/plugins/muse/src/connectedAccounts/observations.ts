@@ -17,11 +17,11 @@ export function parseMuseUsageObservation(value: unknown): MuseUsageObservationR
   if ('allowance' in root && root.schemaVersion !== 1) return { status: 'unavailable', reason: 'malformed' };
   if (root.schemaVersion === 1 && !('allowance' in root)) return { status: 'unavailable', reason: 'malformed' };
   // MSP notifications carry SubscriptionUsage directly; reads carry { usage }.
-  const rawUsage = root.usage ?? root.allowance ?? ('observedAtMs' in root ? root : undefined);
+  const rawUsage = root.usage ?? root.allowance ?? ('observedAtMs' in root || 'weekly' in root || 'window' in root ? root : undefined);
   const usage = museRecord(rawUsage);
   if (!usage) return { status: 'unavailable', reason: rawUsage === undefined || rawUsage === null
     ? root.subscriptionActive === false ? 'no_allowance' : 'server_sent_no_usage' : 'malformed' };
-  const observedAtMs = usage.observedAtMs ?? usage.asOfMs ?? root.asOfMs;
+  const observedAtMs = usage.observedAtMs ?? usage.asOfMs ?? root.asOfMs ?? 0;
   if (!timestamp(observedAtMs)) return { status: 'unavailable', reason: 'malformed' };
   const limits: MuseQuotaObservation['limits'][number][] = [];
   for (const id of ['weekly', 'window'] as const) {

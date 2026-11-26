@@ -44,6 +44,7 @@ import {
     writeProviderAccountUsageRecordWithPolicy,
 } from "./routeWritePolicy";
 import { publishUsageRecordChange } from './publishUsageRecordChange';
+import { normalizeAcquiredProviderAccountUsageSnapshot } from '../../../../../../../cli/src/daemon/connectedServices/accountUsage/acquiredSnapshot';
 import {
     ProviderAccountUsagePayloadInvariantError,
 } from "./types";
@@ -118,6 +119,66 @@ describe("provider account usage record storage (integration)", () => {
             await expect(write(first)).resolves.toBe('stale');
             expect(latest()?.seq).toBe(cursor);
         } finally { emitted.mockRestore(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('keeps first-read status but retains only measured quota history (%s)', async (mode) => {
+        const account = await db.account.create({
+            data: { ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}), encryptionMode: mode },
+            select: { id: true },
+        });
+        const measuredAt = Date.now() - 1;
+        const reading = createUsageSnapshot({ fetchedAt: measuredAt });
+        const key = { accountId: account.id, recordId: reading.recordId };
+        const empty = { ...reading, fetchedAtMs: 0, observedAtMs: 0, state: 'not_loaded' as const,
+            confidence: 'unknown' as const, meters: [] };
+        const errorAt = measuredAt - 1;
+        const failure = ProviderAccountUsageSnapshotV1Schema.parse({
+            ...empty, state: 'error_last_known_good',
+            diagnostics: [{ kind: 'provider_http', code: 'network', observedAtMs: errorAt }],
+        });
+        const write = (snapshot: typeof reading, status: 'ok' | 'unavailable' | 'error', refreshErrorAt?: number) =>
+            writeProviderAccountUsageRecordWithPolicy({
+                ...key, recordKey: reading.recordKey, status,
+                fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs,
+                ...(mode === 'plain' ? { payloadMode: 'plain_json_v1', snapshot } : {
+                    payloadMode: 'sealed_account_scoped_v1',
+                    sealedPayload: { format: 'account_scoped_v1', ciphertext: status, refreshErrorAt },
+                }),
+            });
+        const history = () => readProviderAccountUsageHistory({ ...key,
+            history: { range: { startAtMs: 0, endAtMs: measuredAt + 1 }, pageSize: 10 } });
+        const dayChange = async () => {
+            const entityIds = buildProviderAccountUsageMaterialChangesV1(reading.recordId).map(change => change.entityId);
+            return readProviderAccountUsageDayChangeV1(await db.accountChange.findMany({
+                where: { accountId: account.id, kind: 'account', entityId: { in: entityIds } },
+            }));
+        };
+        await expect(write(empty, 'unavailable')).resolves.toBe('written');
+        await expect(readProviderAccountUsageRecord(key)).resolves.toMatchObject({ status: 'unavailable', fetchedAt: 0 });
+        expect.soft((await history()).entries.map(entry => entry.observedAtMs)).toEqual([]);
+        expect.soft(await dayChange()).toBeUndefined();
+
+        await expect(write(failure, 'error', errorAt)).resolves.toBe('written');
+        await expect(readProviderAccountUsageRecord(key)).resolves.toMatchObject({ status: 'error', fetchedAt: 0 });
+        expect.soft((await history()).entries.map(entry => entry.observedAtMs)).toEqual([]);
+        expect.soft(await dayChange()).toBeUndefined();
+
+        await expect(write(reading, 'ok')).resolves.toBe('written');
+        await expect(readProviderAccountUsageRecord(key)).resolves.toMatchObject({ status: 'ok', fetchedAt: measuredAt,
+            metadata: { daySummaryPendingDays: [Math.floor(measuredAt / 86_400_000) * 86_400_000] } });
+        expect((await history()).entries.map(entry => entry.observedAtMs)).toEqual([measuredAt]);
+        expect(await dayChange()).toMatchObject({ history: { fromAtMs: measuredAt } });
+
+        const refreshFailedAt = measuredAt + 1;
+        const retainedFailure = ProviderAccountUsageSnapshotV1Schema.parse({
+            ...reading, state: 'error_last_known_good',
+            diagnostics: [{ kind: 'provider_http', code: 'network', observedAtMs: refreshFailedAt }],
+        });
+        await expect(write(retainedFailure, 'error', refreshFailedAt)).resolves.toBe('written');
+        await expect(readProviderAccountUsageRecord(key)).resolves.toMatchObject({ status: 'error', fetchedAt: measuredAt });
+        const retained = (await history()).entries;
+        expect(retained.map(entry => entry.observedAtMs)).toEqual([measuredAt, measuredAt]);
+        expect(retained.map(entry => entry.record.status)).toEqual(expect.arrayContaining(['ok', 'error']));
     });
 
     it('chains interleaved and back-to-back usage publications to the exact record within the existing query budget', async () => {
@@ -960,6 +1021,29 @@ describe("provider account usage record storage (integration)", () => {
             }),
             refreshRequestedAt: refreshed?.refreshRequestedAt,
         });
+    });
+
+    it("does not let a clockless reading delayed after acquisition replace a newer real observation or tie", async () => {
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        const now = Date.now();
+        const acquiredAtMs = now - 20_000;
+        const newerAtMs = now - 10_000;
+        const clockless = createUsageSnapshot({ fetchedAt: 0 });
+        const old = normalizeAcquiredProviderAccountUsageSnapshot(clockless, { kind: 'acquired', acquiredAtMs });
+        const newer = { ...old, observedAtMs: newerAtMs, fetchedAtMs: newerAtMs, planLabel: "newer" };
+        const write = (snapshot: typeof clockless) => writeProviderAccountUsageRecordWithPolicy({
+            accountId: account.id, recordId: snapshot.recordId, recordKey: snapshot.recordKey,
+            payloadMode: "plain_json_v1", status: "ok", fetchedAt: snapshot.fetchedAtMs,
+            staleAfterMs: snapshot.staleAfterMs, snapshot,
+        });
+        await expect(write(newer)).resolves.toBe("written");
+        await expect(write(old)).resolves.toBe("stale");
+        await expect(write({ ...old, observedAtMs: newerAtMs, fetchedAtMs: newerAtMs })).resolves.toBe("stale");
+        expect((await readProviderAccountUsageRecord({ accountId: account.id, recordId: old.recordId }))?.snapshot)
+            .toMatchObject({ observedAtMs: newerAtMs, planLabel: "newer" });
+        const history = await readProviderAccountUsageHistory({ accountId: account.id, recordId: old.recordId,
+            history: { range: { startAtMs: acquiredAtMs, endAtMs: now }, pageSize: 10 } });
+        expect(history.entries.map(entry => entry.observedAtMs)).toEqual([newerAtMs]);
     });
 
     it("rejects future-dated writes and lets a current observation replace a previously persisted future clock", async () => {

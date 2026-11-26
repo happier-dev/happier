@@ -209,10 +209,12 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
                     },
                 );
                 if (!await createProviderAccountUsageRecordIfAbsent(initialWrite, params.client)) continue;
-                await retainProviderAccountUsageHistory(initialWrite, params.client);
+                const historyChanged = await retainProviderAccountUsageHistory(initialWrite, params.client);
                 publishUsageRecordChange(params.client, { accountId: params.accountId, recordId: params.recordId,
-                    dayStartAtMs: Math.floor(initialWrite.fetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
-                    historyFromAtMs: initialWrite.fetchedAt });
+                    ...(historyChanged ? {
+                        dayStartAtMs: Math.floor(initialWrite.fetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
+                        historyFromAtMs: initialWrite.fetchedAt,
+                    } : {}) });
                 return "written";
             } catch (error) {
                 if (isUniqueConstraintError(error)) continue;

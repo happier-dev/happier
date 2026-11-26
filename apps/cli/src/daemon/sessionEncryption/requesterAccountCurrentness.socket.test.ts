@@ -1,3 +1,4 @@
+import { normalizeAcquiredProviderAccountUsageSnapshot } from '@/daemon/connectedServices/accountUsage/acquiredSnapshot';
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -966,7 +967,7 @@ describe('requester Account currentness over the installed socket wiring', () =>
         try {
             await observation.read();
             await runWithServerHttpBaseUrl(scope.serverBaseUrl, async () => {
-                await scheduler.recordInBandSnapshot(snapshot, { targets: [{ source: { ref: {
+                await scheduler.recordInBandSnapshot(normalizeAcquiredProviderAccountUsageSnapshot(snapshot, { kind: 'acquired', acquiredAtMs: 1_000 }), { targets: [{ source: { ref: {
                     service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' }, bindingKind: 'account' },
                     expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', expectedConfigurationRevision: 'cfg-current' }] });
                 await scheduler.flush(1_000);

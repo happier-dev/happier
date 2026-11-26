@@ -14551,17 +14551,20 @@ describe('startDaemonSessionControlRuntime', () => {
         }
     });
 
-    it.each(['profile', 'group', 'foreign', 'stale', 'replaced'] as const)('publishes identity-free native allowance from the selected qualified source (%s)', async variant => {
+    it.each(['profile', 'group', 'foreign', 'stale', 'replaced', 'raw-zero'] as const)('publishes identity-free native allowance from the selected qualified source (%s)', async variant => {
         const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' } as const;
         const serviceId = buildQualifiedPluginContributionKey(service);
         const sessionId = 'native-allowance-session';
         const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
         const group = variant === 'group' || variant === 'stale';
         let credentialReads = 0;
+        const receivedAtMs = Date.now();
+        let now = receivedAtMs;
         const readCredential = vi.spyOn(axios, 'get').mockImplementation(async url => {
             const path = new URL(String(url)).pathname;
             if (path !== '/v4/connect/qualified/credential') throw new Error(`Unexpected native allowance read: ${path}`);
             credentialReads += 1;
+            if (variant === 'raw-zero') now = receivedAtMs + 30_000;
             return { status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
                 ref: { service, accountId: 'work' }, authenticationModeId: 'device', configurationRevision: null,
                 revisionSemantics: 'revisioned', credentialRevision: variant === 'replaced' ? 'csr_aaaaaaaaaaaaaaaaaaaaaa' : credentialRevision,
@@ -14594,33 +14597,45 @@ describe('startDaemonSessionControlRuntime', () => {
         const recordKey = { providerId: 'meta', accountSubjectId: sessionId, subjectKind: 'unknown', quotaScope: 'account' } as const;
         const snapshot: ProviderAccountUsageSnapshotV1 = { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
             providerId: 'meta', accountSubject: { kind: 'provisionalLocalSubject', id: sessionId },
-            observedAtMs: 1000, fetchedAtMs: 1000, staleAfterMs: 60000, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data',
+            observedAtMs: variant === 'raw-zero' ? 0 : 1000, fetchedAtMs: variant === 'raw-zero' ? 0 : 1000,
+            staleAfterMs: 60000, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_data',
             meters: [{ meterId: 'weekly', label: 'Weekly', used: 20, limit: 100, unit: 'unknown', utilizationPct: 20,
                 remainingPct: 80, resetsAt: null, status: 'ok', details: {} }] };
         const source: ConnectedServiceUsageSourceV1 = group
             ? { serviceId, profileId: 'work', bindingKind: 'group_member', groupId: 'pool', groupGeneration: variant === 'stale' ? 3 : 4 }
             : { serviceId, profileId: variant === 'foreign' ? 'another' : 'work', bindingKind: 'profile' };
+        const clock = variant === 'raw-zero' ? vi.spyOn(Date, 'now').mockImplementation(() => now) : undefined;
         try {
             const input = vi.mocked(startDaemonControlServer).mock.calls.at(-1)![0];
             const result = await input.handleProviderAccountUsageSnapshot!({ sessionId, snapshot, source, deriveCredentialFingerprintFromSource: true });
-            const accepted = variant === 'profile' || variant === 'group';
+            const accepted = variant === 'profile' || variant === 'group' || variant === 'raw-zero';
             expect(result).toMatchObject({ status: accepted ? 'snapshot_advanced' : 'credential_fingerprint_mismatch' });
             if (accepted) {
                 expect(result).toMatchObject({ persisted: true, qualifiedSource: source });
                 expect(runtime.providerAccountUsageStore.resolveBySource(source)).toMatchObject({
-                    providerId: serviceId, accountSubject: { kind: 'providerSubject', id: 'native-account' }, observedAtMs: 1000,
+                    providerId: serviceId, accountSubject: { kind: 'providerSubject', id: 'native-account' },
+                    observedAtMs: variant === 'raw-zero' ? receivedAtMs : 1000,
                     recordKey: { accountSubjectId: 'native-account', subjectKind: 'account' },
                 });
                 await vi.waitFor(() => expect(writeUsage).toHaveBeenCalledWith(expect.stringContaining('/v4/connect/qualified/provider-account-usage'),
                     expect.objectContaining({ source: expect.objectContaining({ ref: { service, accountId: 'work' } }),
-                        expectedCredentialRevision: credentialRevision, expectedConfigurationRevision: null }), expect.anything()));
+                        expectedCredentialRevision: credentialRevision, expectedConfigurationRevision: null,
+                        ...(variant === 'raw-zero' ? { snapshot: expect.objectContaining({
+                            observedAtMs: receivedAtMs, fetchedAtMs: receivedAtMs,
+                        }) } : {}) }), expect.anything()));
                 expect(credentialReads).toBe(1);
+                if (variant === 'raw-zero') expect(now).toBe(receivedAtMs + 30_000);
             } else {
                 expect(runtime.providerAccountUsageStore.resolveBySource(source)).toBeNull();
                 expect(writeUsage).not.toHaveBeenCalled();
             }
             expect(runtime.providerAccountUsageStore.resolveRecordId(snapshot.recordId)).toBeNull();
-        } finally { readCredential.mockRestore(); writeUsage.mockRestore(); await runtime.stopControlServer(); }
+        } finally {
+            clock?.mockRestore();
+            readCredential.mockRestore();
+            writeUsage.mockRestore();
+            await runtime.stopControlServer();
+        }
     });
 
     it.each([
@@ -14724,7 +14739,13 @@ describe('startDaemonSessionControlRuntime', () => {
         } finally { cancellation.abort(); transport.mockRestore(); readCredential.mockRestore(); writeUsage.mockRestore(); await runtime.stopControlServer(); }
     });
 
-    it('normalizes qualified account usage to the current registered generation before persistence and quota policy', async () => {
+    it.each(['provider-clock', 'receipt-clock'] as const)(
+      'normalizes qualified account usage to the current registered generation before persistence and quota policy (%s)',
+      async (clockSource) => {
+        const rawZero = clockSource === 'receipt-clock';
+        const receivedAtMs = 200_000;
+        let nowMs = rawZero ? receivedAtMs : 2_000;
+        let receivingRawZero = false;
         vi.mocked(startDaemonControlServer).mockClear();
         const recordKey = {
             providerId: 'codex',
@@ -14738,8 +14759,8 @@ describe('startDaemonSessionControlRuntime', () => {
             recordKey,
             providerId: 'codex',
             accountSubject: { kind: 'providerSubject', id: 'acct_group_usage' },
-            observedAtMs: 900,
-            fetchedAtMs: 1_000,
+            observedAtMs: rawZero ? 0 : 900,
+            fetchedAtMs: rawZero ? 0 : 1_000,
             staleAfterMs: 60_000,
             source: 'runtimeSignal',
             confidence: 'confirmed',
@@ -14829,6 +14850,10 @@ describe('startDaemonSessionControlRuntime', () => {
             } } };
 
             if (path !== '/v4/connect/qualified/credential') throw new Error(`Unexpected group usage HTTP read: ${path}`);
+            if (receivingRawZero) {
+                await Promise.resolve();
+                nowMs = receivedAtMs + 30_000;
+            }
             return { status: 200, data: readQualifiedUsageCredential() };
         });
         const writeProviderAccountUsage = vi.spyOn(axios, 'post').mockResolvedValue({
@@ -14854,7 +14879,7 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceQuotasCoordinator: () => ({
                 handleAccountUsageChanged,
                 resolveQuotaProbeFreshProof: (proofInput: Parameters<typeof resolveQuotaProbeFreshProof>[0]) =>
-                    resolveQuotaProbeFreshProof({ ...proofInput, nowMs: 2_000 }),
+                    resolveQuotaProbeFreshProof({ ...proofInput, nowMs }),
             }) as never,
             trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([
                 [legacyPidSessionTrackingKey(1234), {
@@ -14928,6 +14953,11 @@ describe('startDaemonSessionControlRuntime', () => {
             proofScheduler,
             'markProviderOutcomeProofByIdentity',
         );
+        if (rawZero) {
+            const clock = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+            onTestFinished(() => { clock.mockRestore(); });
+            receivingRawZero = true;
+        }
         const intake = controlServerInput?.handleProviderAccountUsageSnapshot?.({
             sessionId: 'sess_usage_group',
             snapshot,
@@ -14962,8 +14992,23 @@ describe('startDaemonSessionControlRuntime', () => {
             bindingKind: 'group_member',
             groupId: 'team',
             groupGeneration: 7,
-        })?.recordId).toBe(snapshot.recordId);
+        })).toMatchObject({
+            recordId: snapshot.recordId,
+            observedAtMs: rawZero ? receivedAtMs : 900,
+            fetchedAtMs: rawZero ? receivedAtMs : 1_000,
+        });
         releasePolicy();
+        if (rawZero) {
+            expect(nowMs).toBe(receivedAtMs + 30_000);
+            await vi.waitFor(() => expect(writeProviderAccountUsage).toHaveBeenCalledWith(
+                expect.stringContaining('/v4/connect/qualified/provider-account-usage'),
+                expect.objectContaining({ snapshot: expect.objectContaining({
+                    observedAtMs: receivedAtMs,
+                    fetchedAtMs: receivedAtMs,
+                }) }),
+                expect.any(Object),
+            ));
+        }
         await vi.waitFor(() => expect(handleAccountUsageChanged).toHaveBeenCalledWith({
             sessionId: 'sess_usage_group',
             serviceId: 'happier.agent.codex/openai-codex',
@@ -14985,8 +15030,9 @@ describe('startDaemonSessionControlRuntime', () => {
             groupId: 'team',
             groupGeneration: 7,
             credentialRevision: expect.any(String),
-            observedAtMs: 900,
+            observedAtMs: rawZero ? receivedAtMs : 900,
         }));
+        if (rawZero) return;
 
         markQuotaProof.mockRejectedValueOnce(new Error('proof settlement unavailable'));
         await expect(controlServerInput?.handleProviderAccountUsageSnapshot?.({

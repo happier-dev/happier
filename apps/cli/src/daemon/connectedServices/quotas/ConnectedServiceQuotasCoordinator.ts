@@ -1,3 +1,4 @@
+import { normalizeAcquiredProviderAccountUsageSnapshot, type AcquiredProviderAccountUsageSnapshot } from '../accountUsage/acquiredSnapshot';
 import { createHash } from 'node:crypto';
 import { setTimeout, clearTimeout } from 'node:timers';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../accountUsage/qualifiedAccountIdentity';
@@ -5,7 +6,7 @@ import { isProviderAccountUsageOwnershipRefusalCode, isProviderAccountUsageSourc
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ProviderAccountUsageUsageIdentityResolver } from '../accountUsage/hydration';
-import type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
+import type { AcquiredConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedServiceRefreshCoordinator } from '../refresh/ConnectedServiceRefreshCoordinator';
 import type { ScheduledQualifiedAccountHealth } from '../refresh/ConnectedServiceRefreshCoordinator';
 import { logger } from '@/ui/logger';
@@ -711,6 +712,7 @@ type InBandQuotaPersistencePayload = Readonly<{
   serviceId: ConnectedServiceId;
   profileId: string;
   snapshot: ConnectedServiceQuotaSnapshotV1;
+  acquiredSnapshot: AcquiredProviderAccountUsageSnapshot;
   status: 'ok' | 'unavailable' | 'estimated';
   materialFingerprint: string;
   materialState: QuotaPersistenceMaterialState;
@@ -1696,10 +1698,10 @@ export class ConnectedServiceQuotasCoordinator {
           inventorySettlement = this.settleRecoveryCreditFromInventory(receipt, refreshed.result.recoveryCredits, attempt.grantExpiresAtMs);
           if (inventorySettlement?.receipt) receipt = pendingReceipt = inventorySettlement.receipt;
         }
-        const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+        const snapshot = normalizeAcquiredProviderAccountUsageSnapshot(buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
           profile: refreshed.profile, quota: refreshed.result, staleAfterMs: this.polledQuotaStaleAfterMs,
           usageIdentity: refreshed.usageIdentity,
-        });
+        }), { kind: 'acquired', acquiredAtMs: refreshed.acquiredAtMs });
         if (!await this.persistQualifiedConnectedAccountQuota({ accountMode, profile, snapshot, basis: refreshed.basis })) {
           return { ...unavailable('refresh_unavailable'), receipt };
         }
@@ -3256,6 +3258,7 @@ export class ConnectedServiceQuotasCoordinator {
     serviceId: ConnectedServiceId;
     profileId: string;
     snapshot: ConnectedServiceQuotaSnapshotV1;
+    acquiredAtMs: number;
   }>): Promise<
     | Readonly<{ status: 'enqueued'; enqueue: 'accepted' | 'coalesced' }>
     | Readonly<{ status: 'suppressed'; reason: string }>
@@ -3264,14 +3267,23 @@ export class ConnectedServiceQuotasCoordinator {
       return { status: 'suppressed', reason: 'service_id_mismatch' };
     }
 
-    this.recordRuntimeProfileSnapshot(input);
-    const status = deriveQuotaSnapshotStatus(input.snapshot);
+    const acquiredSnapshot = normalizeAcquiredProviderAccountUsageSnapshot(
+      buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
+        snapshot: input.snapshot,
+        observedAtMs: input.snapshot.fetchedAtMs ?? input.snapshot.fetchedAt,
+      }),
+      { kind: 'acquired', acquiredAtMs: input.acquiredAtMs },
+    );
+    const snapshot = acquiredSnapshot.fetchedAtMs === (input.snapshot.fetchedAtMs ?? input.snapshot.fetchedAt)
+      ? input.snapshot : { ...input.snapshot, fetchedAt: acquiredSnapshot.fetchedAtMs, fetchedAtMs: acquiredSnapshot.fetchedAtMs };
+    this.recordRuntimeProfileSnapshot({ ...input, snapshot });
+    const status = deriveQuotaSnapshotStatus(snapshot);
     const key = this.buildQuotaPersistenceKey(input);
-    const materialFingerprint = this.computeQuotaMaterialFingerprint(input.snapshot);
+    const materialFingerprint = this.computeQuotaMaterialFingerprint(snapshot);
     const materialState: QuotaPersistenceMaterialState = {
       fingerprint: materialFingerprint,
-      fetchedAt: input.snapshot.fetchedAt,
-      staleAfterMs: input.snapshot.staleAfterMs,
+      fetchedAt: snapshot.fetchedAt,
+      staleAfterMs: snapshot.staleAfterMs,
       status,
     };
     const decision = shouldPersistQuotaSnapshot({
@@ -3286,7 +3298,8 @@ export class ConnectedServiceQuotasCoordinator {
       key,
       serviceId: input.serviceId,
       profileId: input.profileId,
-      snapshot: input.snapshot,
+      snapshot,
+      acquiredSnapshot,
       status,
       materialFingerprint,
       materialState,
@@ -3415,6 +3428,7 @@ export class ConnectedServiceQuotasCoordinator {
       serviceId: payload.serviceId,
       profileId: payload.profileId,
       snapshot: payload.snapshot,
+      acquiredSnapshot: payload.acquiredSnapshot,
       materialFingerprint: payload.materialFingerprint,
     });
     this.quotaPersistenceStateByKey.set(payload.key, payload.materialState);
@@ -3425,18 +3439,14 @@ export class ConnectedServiceQuotasCoordinator {
     serviceId: ConnectedServiceId;
     profileId: string;
     snapshot: ConnectedServiceQuotaSnapshotV1;
-    providerAccountUsageSnapshot?: ProviderAccountUsageSnapshotV1;
+    acquiredSnapshot: AcquiredProviderAccountUsageSnapshot;
     materialFingerprint?: string;
   }>): Promise<void> {
     const profile = await this.resolveQualifiedProfileForScalarQuotaPersistence({
       serviceId: input.serviceId,
       profileId: input.profileId,
     });
-    const incomingSnapshot = input.providerAccountUsageSnapshot
-      ?? buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({
-        snapshot: input.snapshot,
-        observedAtMs: input.snapshot.fetchedAtMs ?? input.snapshot.fetchedAt,
-      });
+    const incomingSnapshot = input.acquiredSnapshot;
     const subscription = mergeProviderAccountSubscription(
       this.accountUsageStore?.resolveRecordId(incomingSnapshot.recordId)?.subscription,
       incomingSnapshot.subscription,
@@ -3677,12 +3687,12 @@ export class ConnectedServiceQuotasCoordinator {
               retainRetryBoundary(profile);
               continue;
             }
-            const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+            const snapshot = normalizeAcquiredProviderAccountUsageSnapshot(buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
               profile: invocation.profile,
               quota: invocation.result,
               staleAfterMs: this.polledQuotaStaleAfterMs,
               usageIdentity: invocation.usageIdentity,
-            });
+            }), { kind: 'acquired', acquiredAtMs: invocation.acquiredAtMs });
             await this.recordQualifiedPolledAccountUsageLocally({
               signal,
               profile: invocation.profile, snapshot,
@@ -3779,7 +3789,7 @@ export class ConnectedServiceQuotasCoordinator {
     stageDaySummaries?: (recordId: string, throughMs: number) => void;
     accountMode: 'e2ee' | 'plain';
     profile: QualifiedConnectedAccountProfileV4;
-    snapshot: ProviderAccountUsageSnapshotV1;
+    snapshot: AcquiredProviderAccountUsageSnapshot;
     basis: Pick<QualifiedConnectedAccountEstablishedInvocationBasis,
       'credentialRevision' | 'credentialConfigurationRevision'> & Readonly<{
         isCurrent(): boolean | Promise<boolean>;
@@ -3933,12 +3943,12 @@ export class ConnectedServiceQuotasCoordinator {
     profile: QualifiedConnectedAccountProfileV4,
     usageIdentity?: PluginConnectedAccountDescriptorContributionV2['usageIdentity'],
   ) {
-    return { ...buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+    return normalizeAcquiredProviderAccountUsageSnapshot({ ...buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
       profile, quota: { observedAtMs: 0, limits: [],
         ...(profile.providerIdentity?.organizationId ? { providerOrganizationId: profile.providerIdentity.organizationId } : {}) },
       staleAfterMs: this.polledQuotaStaleAfterMs,
       usageIdentity,
-    }), state: 'not_loaded' as const, confidence: 'unknown' as const };
+    }), state: 'not_loaded', confidence: 'unknown' }, { kind: 'retained' });
   }
 
   /** Publish completion usage or make the first Refresh addressable without provider quota work. */
@@ -3947,7 +3957,7 @@ export class ConnectedServiceQuotasCoordinator {
     credentialRevision: string;
     configurationRevision: string | null;
     accountMode: 'plain' | 'e2ee';
-    completionObservation?: ConnectedAccountCompletionObservation;
+    completionObservation?: AcquiredConnectedAccountCompletionObservation;
   }>): Promise<void> {
     const runtime = this.qualifiedConnectedAccountRuntime;
     if (!runtime) return;
@@ -3971,7 +3981,7 @@ export class ConnectedServiceQuotasCoordinator {
   private async initializeQualifiedAccountQuotaSourceForProfile(input: Readonly<{
     profile: QualifiedConnectedAccountProfileV4;
     accountMode: 'plain' | 'e2ee';
-    completionObservation?: ConnectedAccountCompletionObservation;
+    completionObservation?: AcquiredConnectedAccountCompletionObservation;
     signal?: AbortSignal;
     stageDaySummaries?: (recordId: string, throughMs: number) => void;
   }>): Promise<ProviderAccountUsageSnapshotV1 | null> {
@@ -3991,14 +4001,15 @@ export class ConnectedServiceQuotasCoordinator {
     if (input.completionObservation) {
       const usageIdentity = await runtime.resolveUsageIdentity?.(profile.ref.service, input.signal);
       const owned = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
-        profile, quota: { observedAtMs: input.completionObservation.observedAtMs, limits: [],
+        profile, quota: { observedAtMs: input.completionObservation.snapshot.observedAtMs, limits: [],
           ...(profile.providerIdentity?.organizationId ? { providerOrganizationId: profile.providerIdentity.organizationId } : {}) },
         staleAfterMs: this.polledQuotaStaleAfterMs,
         usageIdentity: usageIdentity ?? undefined,
       });
-      const snapshot: ProviderAccountUsageSnapshotV1 = { ...owned, ...input.completionObservation,
+      const snapshot = normalizeAcquiredProviderAccountUsageSnapshot({ ...owned, ...input.completionObservation.snapshot,
         providerId: owned.providerId, recordId: owned.recordId, recordKey: owned.recordKey,
-        accountSubject: owned.accountSubject, staleAfterMs: owned.staleAfterMs };
+        accountSubject: owned.accountSubject, staleAfterMs: owned.staleAfterMs },
+      { kind: 'acquired', acquiredAtMs: input.completionObservation.acquiredAtMs });
       if (!await this.persistQualifiedConnectedAccountQuota({ accountMode: input.accountMode, profile, snapshot, basis, signal: input.signal })) {
         throw new Error('Qualified completion observation could not be published');
       }
@@ -4196,6 +4207,7 @@ export class ConnectedServiceQuotasCoordinator {
           ? input.signal ? null : this.fetchTimeoutMs
           : input.fetchTimeoutMs,
         scheduledHealth: input.scheduledHealth,
+        now: this.now,
         recoverUnauthorized: async signal => {
           signal?.throwIfAborted();
           if (!admittedBasis?.credentialRevision || !admittedBasis.isCurrent()
@@ -4264,11 +4276,11 @@ export class ConnectedServiceQuotasCoordinator {
       // Keep the producer's typed cause. The usage diagnostic schema owns validation;
       // provider messages and response content are never copied into publication.
       const safeCode = typeof code === 'string' ? code : undefined;
-      const snapshot: ProviderAccountUsageSnapshotV1 = { ...lastKnown, state: 'error_last_known_good', diagnostics: [{
+      const snapshot = normalizeAcquiredProviderAccountUsageSnapshot({ ...lastKnown, state: 'error_last_known_good', diagnostics: [{
         kind: 'provider_http', ...(safeCode ? { code: safeCode } : {}),
         ...(status === undefined ? {} : { status }), observedAtMs: now,
         retryAtMs: this.failureStateByBindingKey.get(key)?.nextAllowedAt,
-      }] };
+      }] }, { kind: 'retained' });
       try {
         await this.persistQualifiedConnectedAccountQuota({
           accountMode: input.accountMode, profile: input.profile, snapshot, basis: admittedBasis,
@@ -4773,12 +4785,12 @@ export class ConnectedServiceQuotasCoordinator {
         }
         profile = invocation.profile;
         const incomingSnapshot =
-          buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+          normalizeAcquiredProviderAccountUsageSnapshot(buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
             profile: invocation.profile,
             quota: invocation.result,
             staleAfterMs: this.polledQuotaStaleAfterMs,
             usageIdentity: invocation.usageIdentity,
-          });
+          }), { kind: 'acquired', acquiredAtMs: invocation.acquiredAtMs });
         const subscription = mergeProviderAccountSubscription(
           existing?.sourceResolution.recordId === incomingSnapshot.recordId
             ? existingSnapshot?.subscription

@@ -496,6 +496,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                 return producerContextUnavailable(error);
             }
             try {
+                input.onInvocationStarted?.(invocation.lifetime.invokedAtMs);
                 const common = {
                     descriptor: input.admission.descriptor,
                     operation: input.operation,

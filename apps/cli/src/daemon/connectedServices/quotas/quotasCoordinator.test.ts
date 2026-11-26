@@ -129,6 +129,7 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { PluginConnectedAccountDescriptorContributionV2Schema, type PluginConnectedAccountDescriptorContributionV2 } from '@happier-dev/protocol';
 import { canonicalizeAgentAccountUsageSnapshot } from '@/agent/runtime/registry/engineRegistry/nativeAgentAccountUsage';
 import { recordProviderAccountUsageSnapshotForSession } from '../accountUsage/recordProviderAccountUsageSnapshotForSession';
+import { normalizeAcquiredProviderAccountUsageSnapshot } from '../accountUsage/acquiredSnapshot';
 import { startConnectedServiceQuotasLoop } from './startConnectedServiceQuotasLoop';
 import { resolveRuntimeAuthRecoveryResultDisposition } from '../runtimeAuth/resolveRuntimeAuthRecoveryResultDisposition';
 import { PLUGIN_MANIFEST as CLAUDE_USAGE_MANIFEST } from '../../../../../../packages/plugins/claude/src/manifest';
@@ -573,16 +574,19 @@ it('keeps account-bearing usage keys and never shares one key across organizatio
   expect(new Set(ids).size).toBe(ids.length);
 });
 
-it('keeps a just-added account that names only its organization on one identity-free team record and reads it once', async () => {
+it.each([
+  { providerAt: 0, expectedAt: 1_000_000 },
+  { providerAt: 990_000, expectedAt: 990_000 },
+])('reads a new organization-only account once and publishes the measured clock (provider clock $providerAt)', async ({ providerAt, expectedAt }) => {
   // Deploy auto-mode F-PLAN-LIVE: a Vercel team token reports its team and no provider user.
-  const now = 1_000_000;
+  let now = 1_000_000;
   const profile: QualifiedConnectedAccountProfileV4 = {
     ref: { service: { pluginId: 'example.organization-only', localId: 'account' }, accountId: 'team-connection' },
     status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
     credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationRevision: null, configurationReady: true,
     providerIdentity: { accountId: null, organizationId: 'team-a' }, displayName: 'Team', scopes: [],
   };
-  const fixture = await createQualifiedQuotaRuntimeFixture(profile, now);
+  const fixture = await createQualifiedQuotaRuntimeFixture(profile, providerAt);
   let stored: ProviderAccountUsageSnapshotV1 | null = null;
   // Home persistence is the boundary; plugin admission, record identity and cadence stay real.
   const writeProviderAccountUsage = vi.fn(async (params: Readonly<{ token: string; write: unknown }>) => {
@@ -596,6 +600,17 @@ it('keeps a just-added account that names only its organization on one identity-
       getConnectedServiceCredentialSealed: async () => null } satisfies QuotaApi,
     credentials: fixture.credentials, quotaFetchers: [], now: () => now,
     randomBytes: length => new Uint8Array(length),
+    qualifiedHealth: {
+      retainScheduledQualifiedHealthAccounts: () => {},
+      prepareScheduledQualifiedHealth: () => ({
+        due: true,
+        nextDeadline: () => null,
+        settle: async () => {
+          // A separate health settlement completes after this provider acquisition.
+          now = 1_004_000;
+        },
+      }),
+    },
     qualifiedConnectedAccountRuntime: {
       resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
       resolveUsageIdentity: fixture.resolveUsageIdentity,
@@ -613,8 +628,14 @@ it('keeps a just-added account that names only its organization on one identity-
   });
   onTestFinished(() => coordinator.disposeInBandQuotaPersistence());
   await coordinator.tickOnce();
-  const recordKeys = writeProviderAccountUsage.mock.calls.map(([params]) =>
-    QualifiedProviderAccountUsageWriteV4Schema.parse(params.write).recordKey);
+  expect(now).toBe(1_004_000);
+  const observations = writeProviderAccountUsage.mock.calls.map(([params]) =>
+    QualifiedProviderAccountUsageWriteV4Schema.parse(params.write));
+  expect(observations[0]).toMatchObject({ fetchedAt: 0, snapshot: { state: 'not_loaded', meters: [] } });
+  expect(observations.at(-1)).toMatchObject({ fetchedAt: expectedAt, snapshot: {
+    observedAtMs: expectedAt, fetchedAtMs: expectedAt, state: 'loaded_data', meters: [expect.objectContaining({ used: 25 })],
+  } });
+  const recordKeys = observations.map(({ recordKey }) => recordKey);
   // Source initialization and the first acquisition address one identity-free record Home can link.
   expect(recordKeys.length).toBeGreaterThan(0);
   for (const recordKey of recordKeys) expect(recordKey).toEqual({
@@ -1694,7 +1715,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     if (!native) throw new Error('Native provider observation did not satisfy the canonical contract');
     expect(await recordProviderAccountUsageSnapshotForSession({
       getChildren: () => [{ happySessionId: 'session-a' }], sessionId: 'session-a', store, persistence: null,
-      snapshot: native, observation: { sources: [sourceA] }, requiresProviderOrganizationId: provider === 'claude',
+      snapshot: normalizeAcquiredProviderAccountUsageSnapshot(native, { kind: 'acquired', acquiredAtMs: now }),
+      observation: { sources: [sourceA] }, requiresProviderOrganizationId: provider === 'claude',
     })).toMatchObject({ status: 'snapshot_advanced' });
     expect(store.resolveBySource(sourceB)?.recordKey).toEqual(native.recordKey);
     expect(store.resolveBySource(sourceB)?.recordId).toBe(native.recordId);
@@ -2662,7 +2684,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
-  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_timeout_reconciliation', 'manual_reconcile_redeemed', 'manual_reconcile_absent', 'manual_reconcile_refresh_absent', 'manual_reconcile_refresh_late_unknown', 'manual_reconcile_refresh_available', 'manual_reconcile_refresh_expired', 'manual_configured_late_acknowledgement', 'manual_configured_checked_late_acknowledgement', 'manual_configured_terminal_read_acknowledgement', 'automatic_configured_late_after_inventory', 'manual_late_acknowledgement', 'manual_lost_loopback_acknowledgement', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_clockless', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_timeout_reconciliation', 'manual_reconcile_redeemed', 'manual_reconcile_absent', 'manual_reconcile_refresh_absent', 'manual_reconcile_refresh_late_unknown', 'manual_reconcile_refresh_available', 'manual_reconcile_refresh_expired', 'manual_configured_late_acknowledgement', 'manual_configured_checked_late_acknowledgement', 'manual_configured_terminal_read_acknowledgement', 'automatic_configured_late_after_inventory', 'manual_late_acknowledgement', 'manual_lost_loopback_acknowledgement', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
     let now = 1_000_000;
     const service = recoveryMode === 'manual_codex_alias'
       ? { pluginId: 'happier.agent.codex', localId: 'openai-codex' }
@@ -2900,7 +2922,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           ${backgroundFreshnessCase ? "if (++quotaReadCount >= 7) throw Object.assign(new Error('Provider read failed'), { quotaFetchErrorCode: 'network' });" : ''}
           return {
             ${recoveryMode === 'discovery_no_facet' || recoveryMode === 'discovery_unavailable' ? "recoveryCredits: { availableCount: 99, credits: [] }, recoveryCreditDetails: { injected: { remainingCount: 99, appliesToProviderLimitIds: [] } }," : ''}
-            observedAtMs: ${recoveryMode === 'usage_notice_requester' ? '++quotaReadCount === 1 ? 500000 : 600000' : backgroundFreshnessCase ? `${now} + (quotaReadCount - 1) * ${pollIntervalMs}` : refreshReconcilesDebit ? `${now} + (await (await import('node:fs/promises')).readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') === 'refresh' ? ${recoveryMode === 'manual_reconcile_refresh_expired' ? 1_500 : 500} : 0)` : now},
+            observedAtMs: ${inventoryRegistration ? 0 : recoveryMode === 'usage_notice_requester' ? '++quotaReadCount === 1 ? 500000 : 600000' : backgroundFreshnessCase ? `${now} + (quotaReadCount - 1) * ${pollIntervalMs}` : refreshReconcilesDebit ? `${now} + (await (await import('node:fs/promises')).readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') === 'refresh' ? ${recoveryMode === 'manual_reconcile_refresh_expired' ? 1_500 : 500} : 0)` : now},
             ${accountMode === 'e2ee' ? `subscription: ${JSON.stringify(failedSubscription)},` : ''}
             limits: [{
               ${recoveryMode === 'quota_all_unavailable' ? "status: 'unavailable'," : ''}
@@ -3388,8 +3410,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         quotaPollingAdmitted = true;
         coordinator.invalidateInventory({ resetQuotaSchedule: true });
         await coordinator.tickOnce();
-        expect(committedSourceWrite).toMatchObject({ recordKey,
-          snapshot: { state: 'loaded_data', meters: [expect.objectContaining({ used: 25, remaining: 75 })] } });
+        expect(committedSourceWrite).toMatchObject({ recordKey, fetchedAt: now,
+          snapshot: { state: 'loaded_data', observedAtMs: now, fetchedAtMs: now,
+            meters: [expect.objectContaining({ used: 25, remaining: 75 })] } });
         return;
       }
       if (settlementInitialization) {
@@ -3413,12 +3436,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           },
         });
         if (!profile.displayName) throw new Error('Expected the connected quota profile display name');
+        const providerClock = recoveryMode === 'completion_observation_clockless' ? 0 : now;
         const completionObservation = { v: 1 as const, providerId: previous.providerId,
-          observedAtMs: now, fetchedAtMs: now, source: 'providerHttp' as const, confidence: 'confirmed' as const,
+          observedAtMs: providerClock, fetchedAtMs: providerClock, source: 'providerHttp' as const, confidence: 'confirmed' as const,
           state: 'loaded_data' as const, meters: [{ meterId: 'monthly', label: 'Monthly', used: 25, remaining: 75, limit: 100,
             unit: 'requests' as const, utilizationPct: 25, resetsAt: null, status: 'ok' as const, details: {} }] };
         const expectedCompletionSnapshot: ProviderAccountUsageSnapshotV1 = { ...completionObservation,
-          recordId: previous.recordId, recordKey: previous.recordKey, accountSubject: previous.accountSubject,
+          observedAtMs: now, fetchedAtMs: now, recordId: previous.recordId, recordKey: previous.recordKey, accountSubject: previous.accountSubject,
           staleAfterMs: 2 * 60_000, accountLabel: profile.displayName };
         const settlementRequest = {
           intent: 'connect', service: profile.ref.service, accountId: profile.ref.accountId,
@@ -3431,7 +3455,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             accountId: profile.providerIdentity.accountId ?? undefined,
             ...(profile.providerIdentity.email == null ? {} : { email: profile.providerIdentity.email }),
           } : undefined, displayName: profile.displayName, scopes: [],
-          ...(completionObservationMode ? { completionObservation } : {}),
+          ...(completionObservationMode ? { completionObservation: { snapshot: completionObservation, acquiredAtMs: now } } : {}),
         } satisfies Parameters<typeof persistence.attempts.settlement.settle>[0];
         await expect(persistence.attempts.settlement.settle(settlementRequest)).resolves.toEqual(
           recoveryMode === 'completion_observation_settlement_failed'
@@ -3461,7 +3485,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           } else {
             expect(accountUsageStore.resolveBySource({ serviceId: serviceKey, profileId: profile.ref.accountId, bindingKind: 'profile' })).toEqual(expectedCompletionSnapshot);
             await coordinator.initializeQualifiedAccountQuotaSource({ account: profile.ref, accountMode,
-              credentialRevision: profile.credentialRevision!, configurationRevision: profile.configurationRevision, completionObservation });
+              credentialRevision: profile.credentialRevision!, configurationRevision: profile.configurationRevision, completionObservation: { snapshot: completionObservation, acquiredAtMs: now } });
             expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
             expect(accountUsageStore.listSnapshots()).toEqual([expectedCompletionSnapshot]);
             expect(acceptedSnapshots).toEqual([expectedCompletionSnapshot]);
@@ -5215,7 +5239,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       randomBytes: (length: number) => randomBytes(length),
     });
 
-    const result = await coordinator.recordInBandQuotaSnapshot({
+    const result = await coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: {
@@ -5256,7 +5280,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       runtimeQuotaSnapshots,
     });
 
-    await expect(coordinator.recordInBandQuotaSnapshot({
+    await expect(coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: {
@@ -5324,7 +5348,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       }],
     });
 
-    await expect(coordinator.recordInBandQuotaSnapshot({
+    await expect(coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: makeSnapshot(firstFetchedAt),
@@ -5332,7 +5356,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await coordinator.flushInBandQuotaPersistence(1_000);
 
     now += 6_000;
-    await expect(coordinator.recordInBandQuotaSnapshot({
+    await expect(coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: makeSnapshot(firstFetchedAt),
@@ -5391,7 +5415,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       }],
     });
 
-    await expect(coordinator.recordInBandQuotaSnapshot({
+    await expect(coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: makeSnapshot(now),
@@ -5401,7 +5425,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     credentials.token = createJwtWithSub('quota-account', 'hydrated');
     now += 1_000;
 
-    await expect(coordinator.recordInBandQuotaSnapshot({
+    await expect(coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: makeSnapshot(now),
@@ -5462,7 +5486,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       meters: [],
     };
 
-    await coordinator.recordInBandQuotaSnapshot({
+    await coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot,
@@ -5472,7 +5496,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await failedFlush;
 
     modeUnavailable = false;
-    const resumed = await coordinator.recordInBandQuotaSnapshot({
+    const resumed = await coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot,
@@ -5508,20 +5532,25 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       qualifiedConnectedAccountRuntime: legacyV4.qualifiedConnectedAccountRuntime,
     });
     const snapshot: ConnectedServiceQuotaSnapshotV1 = {
-      v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: now,
-      staleAfterMs: 300_000, planLabel: null, accountLabel: null, meters: [],
+      v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: 0,
+      staleAfterMs: 300_000, planLabel: null, accountLabel: null,
+      meters: [{ meterId: 'weekly', label: 'Weekly', used: 25, limit: 100, remaining: 75,
+        unit: 'count', utilizationPct: 25, resetsAt: now + 60_000, status: 'ok', details: {} }],
     };
     const observation = { serviceId: 'openai-codex' as const, profileId: 'work', snapshot };
     try {
-      await coordinator.recordInBandQuotaSnapshot(observation);
+      await coordinator.recordInBandQuotaSnapshot({ ...observation, acquiredAtMs: now });
       await coordinator.flushInBandQuotaPersistence(1_000);
       expect(serverWorkScheduler.getSnapshot().purposes.connectedServiceQuotaPersistence.counters)
         .toMatchObject({ written: 0, failed: 1, retried: 0 });
       expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(1);
-      expect(await coordinator.recordInBandQuotaSnapshot(observation)).toMatchObject({ status: 'enqueued' });
+      expect(await coordinator.recordInBandQuotaSnapshot({ ...observation, acquiredAtMs: now })).toMatchObject({ status: 'enqueued' });
       await coordinator.flushInBandQuotaPersistence(1_000);
       expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(2);
-      expect(await coordinator.recordInBandQuotaSnapshot(observation))
+      expect(legacyV4.writeProviderAccountUsage.mock.lastCall?.[0].write).toMatchObject({
+        fetchedAt: now, snapshot: { state: 'loaded_data', observedAtMs: now, fetchedAtMs: now },
+      });
+      expect(await coordinator.recordInBandQuotaSnapshot({ ...observation, acquiredAtMs: now }))
         .toEqual({ status: 'suppressed', reason: 'unchanged_fresh' });
     } finally { coordinator.disposeInBandQuotaPersistence(); get.mockRestore(); }
   });
@@ -5555,7 +5584,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       qualifiedConnectedAccountRuntime: legacyV4.qualifiedConnectedAccountRuntime,
     });
 
-    await coordinator.recordInBandQuotaSnapshot({
+    await coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: {
@@ -5620,7 +5649,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       qualifiedConnectedAccountRuntime: legacyV4.qualifiedConnectedAccountRuntime,
     } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
 
-    await coordinator.recordInBandQuotaSnapshot({
+    await coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: {
@@ -5670,7 +5699,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       qualifiedConnectedAccountRuntime: legacyV4.qualifiedConnectedAccountRuntime,
     } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
 
-    expect(await coordinator.recordInBandQuotaSnapshot({
+    expect(await coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: {
@@ -5685,7 +5714,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       },
     })).toEqual({ status: 'enqueued', enqueue: 'accepted' });
     now += 1;
-    expect(await coordinator.recordInBandQuotaSnapshot({
+    expect(await coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
       serviceId: 'openai-codex',
       profileId: 'work',
       snapshot: {
@@ -5862,7 +5891,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     };
 
     try {
-      await coordinator.recordInBandQuotaSnapshot({
+      await coordinator.recordInBandQuotaSnapshot({ acquiredAtMs: now,
         serviceId: 'openai-codex',
         profileId: 'work',
         snapshot,

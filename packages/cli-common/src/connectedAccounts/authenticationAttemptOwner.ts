@@ -107,6 +107,8 @@ export type ConnectedAccountAttemptProviderInvocation = Readonly<{
     admission: ConnectedAccountAttemptModeAdmission & Readonly<{ modeId: string }>;
     operation: ConnectedAccountAttemptProviderOperation;
     context: AuthenticationAttemptContext;
+    /** Private host timing evidence, captured before runtime completion and cleanup. */
+    onInvocationStarted?(invokedAtMs: number): void;
     signal?: AbortSignal;
 }>;
 
@@ -120,6 +122,11 @@ type ProviderResult =
 type ValidatedProviderResult = ProviderResult & Readonly<{
     failureClass?: 'rateLimit';
     retryNotBeforeMs?: number;
+}>;
+
+export type AcquiredConnectedAccountCompletionObservation = Readonly<{
+    snapshot: NonNullable<Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' }>['completionObservation']>;
+    acquiredAtMs: number;
 }>;
 
 export type ConnectedAccountAttemptSettlementRequest = Readonly<{
@@ -144,7 +151,7 @@ export type ConnectedAccountAttemptSettlementRequest = Readonly<{
     providerIdentity?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['providerIdentity'];
     authenticationProvenance?: QualifiedConnectedAccountCredentialSnapshotV4['metadata']['authenticationProvenance'];
     /** Invocation-local only; the prepared durable settlement never contains this observation. */
-    completionObservation?: Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' }>['completionObservation'];
+    completionObservation?: AcquiredConnectedAccountCompletionObservation;
     displayName: string;
     scopes: readonly string[];
 }>;
@@ -1983,6 +1990,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         attempt: ActiveStoredAttempt,
         result: Extract<ProviderResult, { status: 'connected' }>,
         authenticationProvenance: ConnectedAccountAttemptSettlementRequest['authenticationProvenance'],
+        completionObservation: AcquiredConnectedAccountCompletionObservation | undefined,
     ): Promise<AttemptResponse> {
         if (attempt.preparedSettlement) {
             return await settlePrepared(attempt, true);
@@ -2105,7 +2113,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             const title = typeof field?.title === 'string' ? field.title : field?.title?.fallback;
             secretResources[key] = { resourceId: params.createSavedSecretResourceId(), displayName: (title ?? key).slice(0, 100) };
         }
-        attempt.completionObservation = result.completionObservation;
+        attempt.completionObservation = completionObservation;
         const accessMode = result.accessMode
             ?? (isConnectedAccountApiKeyModeV1(attempt.admission.descriptor) ? 'apiKey' : undefined);
         attempt.preparedSettlement = Object.freeze({
@@ -2142,6 +2150,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         attempt: ActiveStoredAttempt,
         result: ValidatedProviderResult,
         successfulAuthentication: boolean,
+        acquiredAtMs: number,
     ): Promise<AttemptResponse> {
         // A later configuration choice does not change when or where OAuth succeeded.
         const executionMachine = successfulAuthentication
@@ -2199,7 +2208,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             return response;
         }
         if (result.status === 'connected') {
-            return await settleConnected(attempt, result, authenticationProvenance);
+            return await settleConnected(attempt, result, authenticationProvenance,
+                result.completionObservation ? { snapshot: result.completionObservation, acquiredAtMs } : undefined);
         }
         if (result.status === 'outcomeUnknown') {
             const drift = await checkAttemptActive(attempt);
@@ -2575,12 +2585,16 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         }
         const beforeInvocation = attemptOwnershipFailure(attempt);
         if (beforeInvocation) return beforeInvocation;
+        // Hosts that delegate to the CLI runtime pass its existing admission clock.
+        // Other hosts acquire at this call boundary, before any runtime wait.
+        let acquiredAtMs = params.now();
         let result: unknown;
         try {
             result = await params.runtime.invoke({
                 admission: attempt.admission,
                 operation,
                 context: contextFor(attempt, operation),
+                onInvocationStarted: invokedAtMs => { acquiredAtMs = invokedAtMs; },
                 ...(signal ? { signal } : {}),
             });
         } catch (error) {
@@ -2595,6 +2609,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             operation.kind === 'submitManual'
                 || operation.kind === 'completeOAuth'
                 || operation.kind === 'pollDevice',
+            acquiredAtMs,
         );
     }
 
@@ -4057,6 +4072,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 }
                 const beforeLateEvidence = attemptOwnershipFailure(attempt);
                 if (beforeLateEvidence) return beforeLateEvidence;
+                const acquiredAtMs = params.now();
                 let result: ProviderResult;
                 try {
                     result = await params.lateEvidence.reconcile({
@@ -4088,6 +4104,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     attempt,
                     snapshotProviderResult(result),
                     false,
+                    acquiredAtMs,
                 );
             }
             attempt.phase = 'reconnectRequired';

@@ -9,6 +9,7 @@ import { parseBuiltInLegacyProviderAccountUsageSnapshotV1 } from '@happier-dev/p
 import { SealedProviderAccountUsageSnapshotV1Schema, type SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
 import { serializeProviderAccountUsageHistoryMaterialV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
+import { hasConnectedServiceQuotaObservationTime } from '@happier-dev/protocol/connect/quotaObservationTime';
 import {
     ProviderAccountUsageRecordMetadataSchema,
     UpsertProviderAccountUsageRecordSchema,
@@ -126,7 +127,7 @@ export async function retainProviderAccountUsageHistory(
     client: Pick<TransactionClient, "providerAccountUsageHistory" | '$executeRaw'>,
 ): Promise<boolean> {
     const parsed = parseProviderAccountUsageRecordWrite(raw);
-    if (parsed.fetchedAt === undefined || (!parsed.snapshot && !parsed.sealedPayload)) return false;
+    if (!hasConnectedServiceQuotaObservationTime(parsed.fetchedAt) || (!parsed.snapshot && !parsed.sealedPayload)) return false;
     const observedAt = new Date(parsed.fetchedAt);
     // The accepted current-record CAS serializes equal-clock checks. A new
     // clock is its own measured point; reset recovery addresses exact rows.

@@ -5,7 +5,7 @@ import {
   randomUUID,
 } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { createConnectedAccountCredentialSettlement, readQualifiedConnectedAccountCredentialMaterial, type ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountCredentialSettlement, readQualifiedConnectedAccountCredentialMaterial, type AcquiredConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import { promoteConnectedAccountCredentialSecrets } from '@/settings/secrets/promoteConnectedAccountCredentialSecrets';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -324,7 +324,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       credentialRevision: string;
       configurationRevision: string | null;
       accountMode: 'plain' | 'e2ee';
-      completionObservation?: ConnectedAccountCompletionObservation;
+      completionObservation?: AcquiredConnectedAccountCompletionObservation;
     }>) => Promise<void>;
   }>,
 ): ConnectedAccountDaemonPersistence {

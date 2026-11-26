@@ -1,3 +1,4 @@
+import { normalizeAcquiredProviderAccountUsageSnapshot, type AcquiredProviderAccountUsageSnapshot } from '../../../../daemon/connectedServices/accountUsage/acquiredSnapshot';
 import { normalizeConnectedAccountAccessTokenFingerprint } from '@happier-dev/plugin-sdk/connected-accounts';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageRecordKeyV1Schema, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { ConnectedAccountServiceKeyIngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -53,7 +54,7 @@ type RecordedSnapshotResult = Extract<
 >;
 type SnapshotRequest = Readonly<{
     sessionId: string;
-    snapshot: ProviderAccountUsageSnapshotV1;
+    snapshot: AcquiredProviderAccountUsageSnapshot;
     source?: ConnectedServiceUsageSourceV1 | null;
     deriveCredentialFingerprintFromSource?: true;
     sourceProviderAccountId?: string;
@@ -344,6 +345,7 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
             input: Parameters<NativeAgentAccountUsageService['recordSnapshot']>[0],
             options?: Parameters<NativeAgentAccountUsageService['recordSnapshot']>[1],
         ): Promise<Awaited<ReturnType<NativeAgentAccountUsageService['recordSnapshot']>>> {
+            const acquiredAtMs = Date.now();
             throwIfAborted(options?.signal, 'Provider account usage recording aborted');
             params.signal.throwIfAborted();
             const signal = options?.signal ? AbortSignal.any([params.signal, options.signal]) : params.signal;
@@ -379,7 +381,7 @@ export function createNativeAgentAccountUsageService(params: Readonly<{
             }
             const pendingSnapshot: SnapshotRequest = {
                 sessionId: params.sessionId,
-                snapshot: parsed,
+                snapshot: normalizeAcquiredProviderAccountUsageSnapshot(parsed, { kind: 'acquired', acquiredAtMs }),
                 ...(resolvedSource?.connectedServiceSource
                     ? {
                         source: resolvedSource.connectedServiceSource,

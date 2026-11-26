@@ -1150,6 +1150,7 @@ describe('connected-account runtime invoker', () => {
 
     it.each([
         { successor: 'unavailable', authentication: 'manual', retirement: 'callback' },
+        { successor: 'unavailable', authentication: 'manual', retirement: 'cleanup' },
         { successor: 'sameSource', authentication: 'manual', retirement: 'callback' },
         { successor: 'changedSource', authentication: 'manual', retirement: 'callback' },
         { successor: 'configurationChanged', authentication: 'device', retirement: 'callback' },
@@ -1159,6 +1160,11 @@ describe('connected-account runtime invoker', () => {
         { successor: 'sameSource', authentication: 'manual', retirement: 'resolution' },
     ] as const)(
         'preserves captured $authentication state when the runtime becomes $successor at $retirement', async ({ successor, authentication, retirement }) => {
+        const completionObservation = retirement === 'cleanup' ? {
+            v: 1 as const, providerId: 'acme.accounts/work', observedAtMs: 0, fetchedAtMs: 0,
+            source: 'providerHttp' as const, state: 'loaded_empty' as const, confidence: 'confirmed' as const, meters: [],
+        } : undefined;
+        let now = 1_000;
         const authenticationMode = authentication === 'manual' ? mode
             : PluginConnectedAccountAuthenticationModeV2Schema.parse({
                 id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none',
@@ -1174,6 +1180,7 @@ describe('connected-account runtime invoker', () => {
             accountId: 'account-a',
             displayName: 'Account A',
             scopes: Object.freeze([]),
+            ...(completionObservation ? { completionObservation } : {}),
         }));
         const registeredRuntime = {
             ...runtime(() => {}),
@@ -1278,7 +1285,10 @@ describe('connected-account runtime invoker', () => {
                 serviceBinding:
                     createPluginInvocationServiceBinding(runtimeIdentity.occurrenceId, 'producer'),
             }),
-            createServices: () => {
+            createServices: seed => {
+                if (completionObservation) {
+                    seed.redactionLifetimeSignal?.addEventListener('abort', () => { now = 3_000; }, { once: true });
+                }
                 if (identity === runtimeIdentity && retirement === 'callback') publishSuccessor();
                 return Object.freeze({}) as PluginInvocationContext['services'];
             },
@@ -1294,7 +1304,7 @@ describe('connected-account runtime invoker', () => {
         const attempts = createConnectedAccountAuthenticationAttemptOwner({
             createAttemptId: () => 'attempt-1',
             createAccountId: () => 'account-1',
-            now: () => 1_000,
+            now: () => now,
             attemptAddresses: transactions.address,
             accounts: Object.freeze({
                 readExact: async () => null,
@@ -1354,10 +1364,11 @@ describe('connected-account runtime invoker', () => {
             return;
         }
         if (retirement === 'command') publishSuccessor();
+        const clock = completionObservation ? vi.spyOn(Date, 'now').mockImplementation(() => now) : undefined;
         const response = await attempts.submitManual({
             attemptId: 'attempt-1',
             fields: Object.freeze({ token: 'candidate' }),
-        });
+        }).finally(() => clock?.mockRestore());
         expect(response).toEqual({
             status: 'connected',
             attemptId: 'attempt-1',
@@ -1365,6 +1376,12 @@ describe('connected-account runtime invoker', () => {
         });
         expect(complete).toHaveBeenCalledOnce();
         expect(settle).toHaveBeenCalledOnce();
+        if (completionObservation) {
+            expect(now).toBe(3_000);
+            expect(settle).toHaveBeenCalledWith(expect.objectContaining({
+                completionObservation: { snapshot: completionObservation, acquiredAtMs: 1_000 },
+            }));
+        }
         await expect(attempts.read({ attemptId: 'attempt-1' })).resolves.toEqual(response);
         await expect(attempts.reconcile({ attemptId: 'attempt-1' })).resolves.toEqual(response);
         await expect(attempts.cancel({ attemptId: 'attempt-1' })).resolves.toEqual(response);
