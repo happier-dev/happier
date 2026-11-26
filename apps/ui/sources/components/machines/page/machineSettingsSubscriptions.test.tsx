@@ -163,7 +163,7 @@ describe('Machine settings subscriptions', () => {
         </React.Profiler>);
         // Settle the mounted readers' shared credential lookup before measuring settings publications.
         await act(async () => { await resolveServerCredentialAccountScope(account.serverId); });
-        if (kind === 'terminal') {
+        if (kind === 'terminal' || kind === 'computer') {
             // The Switch defers its first mount; measure publications after the control is present.
             await waitForTestEvent(screen.subscribe, () => screen.findAllByType(HappierSwitchNative).length, count => count > 0);
         }
@@ -189,7 +189,7 @@ describe('Machine settings subscriptions', () => {
             const settings = storage.getState().settings;
             storage.getState().applySettingsLocal(kind === 'computer'
                 ? { computerUseByMachineId: { ...settings.computerUseByMachineId,
-                    [machine.id]: { enabledProviders: ['agent-desktop'], defaultProvider: 'agent-desktop' } } }
+                    [machine.id]: { enabledProviders: ['cua', 'agent-desktop'], defaultProvider: 'cua' } } }
                 : kind === 'installables'
                     ? { installablesPolicyByMachineId: { ...settings.installablesPolicyByMachineId,
                         [machine.id]: { [tool.key]: { autoUpdateMode: 'auto' } } } }
@@ -213,6 +213,13 @@ describe('Machine settings subscriptions', () => {
             expect(screen.findAllByType(Item).find(node => node.props.testID === 'machine-terminal-effective-host')?.props.subtitle).toBe('tmux');
         }
         if (kind === 'computer') {
+            expect(screen.findAllByType(HappierSwitchNative).find(node => node.props.testID === 'machine-computer-use-provider-agent-desktop.switch')?.props.value).toBe(true);
+            // Changing the default replaces the newly-default row's Switch with the Default label.
+            await act(async () => {
+                const settings = storage.getState().settings;
+                storage.getState().applySettingsLocal({ computerUseByMachineId: { ...settings.computerUseByMachineId,
+                    [machine.id]: { enabledProviders: ['cua', 'agent-desktop'], defaultProvider: 'agent-desktop' } } });
+            });
             expect(screen.findByTestId('machine-computer-use-provider-agent-desktop.default')).not.toBeNull();
             expect(screen.findByTestId('machine-computer-use-provider-cua.switch')).not.toBeNull();
         }
