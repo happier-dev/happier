@@ -1,4 +1,4 @@
-import { Children, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Children, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ScrollView, View } from 'react-native';
 
 import { useOptionalHappierUiTypography } from '../../environment/context.js';
@@ -9,6 +9,7 @@ import { HappierText } from '../text/Text.js';
 import { resolveHappierWorkStatusSurfaceStyle, type HappierWorkStatusColors, type HappierWorkStatusTone } from '../work/workStatus.js';
 import { resolveHappierWorkTextStep } from '../work/workTheme.js';
 import { HappierApprovalFirstFactContext } from './approvalFirstFact.js';
+import { HappierApprovalFactsRevealContext, resolveHappierFactsRevealOffset, type HappierFactsRevealTarget } from './approvalFactsReveal.js';
 
 export type HappierApprovalPromptTextRender = (input: Readonly<{
   role: 'eyebrow' | 'title' | 'subtitle';
@@ -127,6 +128,19 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
   const [factsViewport, setFactsViewport] = useState(0);
   const [factsContent, setFactsContent] = useState(0);
   const [factsOffset, setFactsOffset] = useState(0);
+  // A fold opened inside the facts (Technical details) asks to be seen: the window and offset it is measured
+  // against are read when it asks, so they live in refs rather than re-rendering the card on every scroll.
+  const factsScrollRef = useRef<ScrollView>(null);
+  const factsWindow = useRef({ viewport: 0, offset: 0 });
+  const revealFact = useCallback((target: HappierFactsRevealTarget | null) => {
+    const scroll = factsScrollRef.current;
+    const content = scroll?.getInnerViewNode?.();
+    if (!scroll || !content || !target?.measureLayout) return;
+    target.measureLayout(content, (_x, top, _width, height) => {
+      const next = resolveHappierFactsRevealOffset({ top, height, ...factsWindow.current });
+      if (next !== null) scroll.scrollTo({ y: next, animated: true });
+    }, () => {});
+  }, []);
   // Only real facts count as hidden; a few pixels of the body's own bottom inset do not.
   const factsClipped = pinned && factsContent - factsViewport > step;
   const renderFade = props.renderFactsEdgeFade;
@@ -191,10 +205,19 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
             // Facts that fit draw no track: a few pixels of inset past the bound are not hidden facts.
             showsVerticalScrollIndicator={factsClipped}
             scrollEventThrottle={renderFade ? 16 : undefined}
-            onScroll={renderFade ? (event) => setFactsOffset(event.nativeEvent.contentOffset.y) : undefined}
-            onLayout={(event) => setFactsViewport(event.nativeEvent.layout.height)}
+            ref={factsScrollRef}
+            onScroll={(event) => {
+              factsWindow.current.offset = event.nativeEvent.contentOffset.y;
+              if (renderFade) setFactsOffset(event.nativeEvent.contentOffset.y);
+            }}
+            onLayout={(event) => {
+              factsWindow.current.viewport = event.nativeEvent.layout.height;
+              setFactsViewport(event.nativeEvent.layout.height);
+            }}
             onContentSizeChange={(_width, height) => setFactsContent(height)}>
-            <HappierApprovalFirstFactContext.Provider value={reportFirstFact}>{props.children}</HappierApprovalFirstFactContext.Provider>
+            <HappierApprovalFirstFactContext.Provider value={reportFirstFact}>
+              <HappierApprovalFactsRevealContext.Provider value={revealFact}>{props.children}</HappierApprovalFactsRevealContext.Provider>
+            </HappierApprovalFirstFactContext.Provider>
           </ScrollView>
           {renderFade ? renderFade(factsClipped ? resolveHappierApprovalFactsEdges({ viewport: factsViewport,
             content: factsContent, offset: factsOffset, threshold: step }) : NO_FACTS_EDGES,

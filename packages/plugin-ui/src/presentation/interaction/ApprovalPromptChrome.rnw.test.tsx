@@ -2,7 +2,9 @@ import { View } from 'react-native';
 import { describe, expect, it } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
-import { act } from 'react';
+import { act, createContext, useContext, type ReactNode } from 'react';
+import { HappierTechnicalDetailsDisclosure } from '../collection/TechnicalDetailsDisclosure.js';
+import { resolveHappierFactsRevealOffset } from './approvalFactsReveal.js';
 import { HappierApprovalFields } from './ApprovalFields.js';
 import { HappierApprovalPromptChrome, resolveHappierApprovalFactsEdges, type HappierApprovalPromptChromeProps } from './ApprovalPromptChrome.js';
 
@@ -177,6 +179,50 @@ describe('HappierApprovalPromptChrome', () => {
       expect(card.style.maxHeight).toBe('');
       expect(mounted.container.querySelector('[data-testid="card-facts"]')).toBeNull();
     } finally { mounted.unmount(); }
+  });
+
+  it('brings an opened Technical details body into view instead of leaving it under the decision', async () => {
+    // Design review R4 (1440 tray): the opened body sat under the fade with only its first label legible.
+    const Open = createContext(false);
+    const Fold = (props: Readonly<{ title: string; testID?: string; children: ReactNode }>) => (
+      <View testID={props.testID}>{useContext(Open) ? props.children : null}</View>
+    );
+    const card = (open: boolean) => (
+      <Open.Provider value={open}>
+        <HappierApprovalPromptChrome {...base} testID="card" maxHeight={200} footer={<View testID="decision" />}>
+          <View testID="facts" />
+          <HappierTechnicalDetailsDisclosure testID="technical" title="Technical details" Disclosure={Fold}
+            lines={[{ key: 'code', label: 'Code', value: 'workspace_sync_relationship_in_use' }]} />
+        </HappierApprovalPromptChrome>
+      </Open.Provider>
+    );
+    const view = mountThroughReactNativeWeb(card(false));
+    try {
+      const fire = (node: Element, height: number) => act(() => {
+        (node as unknown as { __reactLayoutHandler?: (event: unknown) => void }).__reactLayoutHandler?.({
+          nativeEvent: { layout: { x: 0, y: 0, width: 600, height } } });
+      });
+      const scroller = view.container.querySelector('[data-testid="card-facts"]') as HTMLElement & { scroll: unknown };
+      const scrolls: Array<Readonly<{ top?: number }>> = [];
+      scroller.scroll = (options: Readonly<{ top?: number }>) => { scrolls.push(options); };
+      fire(scroller, 100);
+      await view.render(card(true));
+      const body = view.container.querySelector('[data-testid="technical.body"]') as HTMLElement;
+      expect(body).not.toBeNull();
+      // The body opens 180px down the facts and is 60px tall: its end must reach the 100px window's bottom.
+      Object.defineProperty(body, 'offsetTop', { value: 180 });
+      Object.defineProperty(body, 'offsetHeight', { value: 60 });
+      fire(body, 60);
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+      expect(scrolls.at(-1)?.top).toBe(140);
+    } finally { view.unmount(); }
+  });
+
+  it('reveals the least it must: never past the opened body\'s own start, and not at all when it is in view', () => {
+    expect(resolveHappierFactsRevealOffset({ top: 180, height: 60, viewport: 100, offset: 0 })).toBe(140);
+    // Taller than the window: it reads from its first line.
+    expect(resolveHappierFactsRevealOffset({ top: 180, height: 300, viewport: 100, offset: 0 })).toBe(180);
+    expect(resolveHappierFactsRevealOffset({ top: 20, height: 40, viewport: 100, offset: 0 })).toBeNull();
   });
 
   it('lets an unbounded card grow with its facts', () => {
