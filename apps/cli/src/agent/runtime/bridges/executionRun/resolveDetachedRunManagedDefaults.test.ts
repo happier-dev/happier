@@ -28,23 +28,45 @@ it('preserves the selected runner model through detached Account defaults', asyn
   });
 });
 
-it('resolves the requester’s saved Muse profile for a detached Run with an empty binding', async () => {
+it.each(['owner', 'hosted member'] as const)('resolves the %s’s saved Muse profile for a detached Run with an empty binding', async requester => {
   const serverHttpBaseUrl = 'https://requester.example';
-  const credentials = bindRequesterSessionCredentialScope({
-    token: `header.${Buffer.from(JSON.stringify({ sub: 'detached-muse-requester' })).toString('base64url')}.signature`,
+  const serverId = 'fixture-home';
+  const machineId = 'fixture-machine';
+  const accountToken = (sub: string) => `header.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`;
+  const owner = bindRequesterSessionCredentialScope({
+    token: accountToken('machine-owner'),
     encryption: null,
-  }, { serverId: 'fixture-home', serverHttpBaseUrl });
+  }, { serverId, serverHttpBaseUrl });
+  const credentials = requester === 'owner' ? owner : bindRequesterSessionCredentialScope({
+    token: accountToken('hosted-member'),
+    encryption: null,
+  }, {
+    serverId, serverHttpBaseUrl,
+    requesterSession: {
+      sessionId: 'hosted-member-session',
+      attribution: { accountId: 'hosted-member', serverId, machineId, installationId: 'fixture-installation' },
+      machineAdmission: { custodianAccountId: 'machine-owner', role: 'use' },
+    },
+  });
+  const profileByBearer = new Map([
+    [`Bearer ${owner.token}`, 'owner-muse-profile'],
+    [`Bearer ${accountToken('hosted-member')}`, 'member-muse-profile'],
+  ]);
+  const profileId = requester === 'owner' ? 'owner-muse-profile' : 'member-muse-profile';
   const contributions = getResolvedContributionRegistry();
   const muse = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({ agentId: 'muse', contributions })
     ?.authorizedPurposes.find(purpose => purpose.serviceRefs[0]?.localId === 'muse-account');
   const service = muse?.serviceRefs[0];
   if (!muse || !service) throw new Error('Missing the bundled Muse purpose');
   let available = true;
-  const store = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+  const store = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(owner);
+  const accountReads = new Set<string>();
   const home = vi.spyOn(axios, 'get').mockImplementation(async (input, config) => {
     const url = new URL(String(input));
     expect(url.origin).toBe(serverHttpBaseUrl);
-    expect(config?.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}` });
+    const selectedProfile = profileByBearer.get(String(config?.headers?.Authorization));
+    if (!selectedProfile) throw new Error('Unrecognized fixture Account');
+    accountReads.add(selectedProfile);
     if (url.pathname === '/v2/account/settings') return { status: 200,
       data: { content: { t: 'plain', v: {} }, version: 9 } };
     if (url.pathname === '/v1/account/encryption/currentness') return { status: 200,
@@ -54,32 +76,33 @@ it('resolves the requester’s saved Muse profile for a detached Run with an emp
       return { status: 200, data: { status: 'present', revision: 3,
         content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [{
           purpose: muse.purpose,
-          target: { kind: 'account', account: { service, accountId: 'saved-muse-profile' } },
+          target: { kind: 'account', account: { service, accountId: selectedProfile } },
         }] } } } } };
     }
     return { status: 404, data: { error: 'unsupported' } };
   });
   try {
     const leaf = { backendId: 'muse', backendSourceKind: 'built_in', agentCatalogEntry: findCatalogEntry('muse'), contributions };
-    const session = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => (
-      resolveExecutionRunConnectedServicesSelection(leaf)
-    ));
     const bindings = { v: 2, bindingsByServiceId: {
-      [`${service.pluginId}/${service.localId}`]: { source: 'connected', selection: 'profile', profileId: 'saved-muse-profile' },
+      [`${service.pluginId}/${service.localId}`]: { source: 'connected', selection: 'profile', profileId },
     } };
-    expect(session?.bindings).toEqual(bindings);
+    if (requester === 'owner') {
+      await expect(runWithServerHttpBaseUrl(serverHttpBaseUrl, () => resolveExecutionRunConnectedServicesSelection(leaf)))
+        .resolves.toMatchObject({ bindings });
+    }
     const detached = () => resolveDetachedRunManagedDefaults({
       sessionId: null, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: 'muse' },
       modelId: 'meta/muse-spark-1.3-contributor', connectedServices: { v: 2, bindingsByServiceId: {} },
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response',
       promptCredentials: credentials,
-    }, { machineId: 'fixture-machine', agentSandbox: {
+    }, { machineId, agentSandbox: {
       machineIsolation: null, machineIsolationPolicy: null, nativeSandboxAvailable: false,
     } });
     const defaults = await detached();
     expect(defaults?.connectedServices).toEqual(bindings);
     await expect(resolveExecutionRunConnectedServicesSelection({ ...leaf, connectedServices: defaults?.connectedServices }))
       .resolves.toMatchObject({ bindings });
+    expect(accountReads).toEqual(new Set([profileId]));
     available = false;
     await expect(detached()).rejects.toMatchObject({
       code: 'connected_services_default_unavailable', reason: 'connected_account_purpose_catalog_unavailable',

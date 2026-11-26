@@ -172,8 +172,11 @@ export async function withSessionSpawnConnectedServicesDefaultContext<T>(
     operationContext: SavedSecretOperationContextV1;
   }>) => T | Promise<T>,
 ): Promise<T> {
+  const scope = params.credentials.requesterSessionCredentialScope;
+  const requesterHome = scope?.requesterSession ? scope.serverHttpBaseUrl : undefined;
+  const admittedHome = params.operationContext?.serverHttpBaseUrl ?? requesterHome;
   const resolve = async () => {
-    const serverHttpBaseUrl = params.operationContext?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+    const serverHttpBaseUrl = resolveServerHttpBaseUrl();
     try {
       const accountSettingsContext = await bootstrapAccountSettingsContext({
         credentials: params.credentials,
@@ -184,8 +187,10 @@ export async function withSessionSpawnConnectedServicesDefaultContext<T>(
       });
       const operationContext = params.operationContext ?? createInvocationSavedSecretOperationContextV1({
         credentials: params.credentials, snapshot: accountSettingsContext, serverHttpBaseUrl,
+        // Private Session custody carries the admitted requester and Home into
+        // detached work. The catalog read authenticates that requester at Home.
         isCurrent: async () => resolveServerHttpBaseUrl() === serverHttpBaseUrl
-          && (await readStoredCredentials())?.token === params.credentials.token,
+          && (requesterHome !== undefined || (await readStoredCredentials())?.token === params.credentials.token),
       });
       if (params.operationContext && !await operationContext.replaceAccountSettings(accountSettingsContext)) {
         throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
@@ -194,7 +199,7 @@ export async function withSessionSpawnConnectedServicesDefaultContext<T>(
         credentials: params.credentials, operationContext, signal: params.signal,
       });
       const admittedSnapshot = operationContext.readSnapshot();
-      if (!admittedSnapshot || !await operationContext.isCurrent()) {
+      if (!admittedSnapshot || !await operationContext.isCurrent(params.signal)) {
         throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding', 'scope-retired');
       }
       return await use({ settings: admittedSnapshot.settings, purposeCatalog, operationContext });
@@ -207,7 +212,7 @@ export async function withSessionSpawnConnectedServicesDefaultContext<T>(
         readConnectedAccountCatalogUnavailableReason(error, params.signal));
     }
   };
-  return params.operationContext ? runWithServerHttpBaseUrl(params.operationContext.serverHttpBaseUrl, resolve) : resolve();
+  return admittedHome ? runWithServerHttpBaseUrl(admittedHome, resolve) : resolve();
 }
 
 /**
