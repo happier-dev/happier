@@ -30,6 +30,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { createSessionPaneDetailsTab } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { fileChangesScopeOfComparison } from '@/components/workspaces/files/file/changes/fileChangesScope';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
 
 const NO_LOCAL_SCOPES = { showTurnViewToggle: false, showTurnAgentReportedViewToggle: false, showTurnCheckpointViewToggle: false, showSessionViewToggle: false };
 
@@ -100,6 +101,13 @@ export function SessionCapturedScmReviewDetailsView(props: SessionScmReviewDetai
         const { isPinned: _pinned, isPreview: _preview, ...tab } = constructed;
         deferOnWeb(() => openDetailsTab(tab));
     }, [captured.comparison, comparison, openDetailsTab]);
+    const { openCaptured } = useWorkspaceFileOpener();
+    const displayedComparison = view === 'walkthrough' ? walkthrough?.comparison : captured.comparison;
+    const openCapturedFile = React.useCallback((path: string) => {
+        if (!workspaceScope || !displayedComparison) return;
+        void openCaptured({ scope: { ...workspaceScope, rootPath: displayedComparison.repository.rootPath }, path,
+            comparison: { ...props.comparison, comparisonId: displayedComparison.id }, comparisonSessionId: props.sessionId });
+    }, [workspaceScope, displayedComparison, openCaptured, props.comparison, props.sessionId]);
     return <WorkspaceScmReviewBody
         onVisibleFileRowCountChange={setIndexPageSize}
         activeReviewFile={activeReviewFile}
@@ -114,9 +122,10 @@ export function SessionCapturedScmReviewDetailsView(props: SessionScmReviewDetai
             {...restoration}
             serverId={props.serverId} comparison={comparison} scopeLabel={scopeLabel} layout={layout} active={props.active !== false}
             startedReviewRunIds={startedReviewRunIds}
-            renderBar={renderBar} onShowFiles={onShowFiles} onOpenFile={openFile} onOpenComposer={goToComposer} />}
+            renderBar={renderBar} onShowFiles={onShowFiles} onOpenFile={layout === 'phone' ? openCapturedFile : openFile} onOpenComposer={goToComposer} />}
         renderFiles={(chrome) => <>
             {captured.comparison ? <CapturedComparisonFilesView activeReviewFile={activeReviewFile} comparison={captured.comparison} sessionId={props.sessionId}
+                onOpenFile={openCapturedFile}
                 error={captured.error}
                 serverId={props.serverId} page={captured.page} onLoadMore={captured.loadMore} loadingMore={captured.loading}
                 active={props.active !== false && view === 'files'}

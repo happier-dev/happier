@@ -43,6 +43,7 @@ import { useScmReviewedMarks } from '@/components/sessions/files/comparison/useS
 import { createSessionScmReviewDetailsTab, SESSION_DETAILS_SCM_REVIEW_TAB_KEY, type SessionScmReviewComparison, type SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { t, usePreferredLanguage } from '@/text';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { useScmReviewActiveFileSelection, useScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
@@ -238,6 +239,14 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
         knownComparison: bound.capturedComparison });
     const displayedComparison = view === 'walkthrough' ? bound.capturedComparison
         : comparison.kind !== 'workingTree' || comparison.comparisonId ? capture.comparison : null;
+    const { openCaptured } = useWorkspaceFileOpener();
+    const openCapturedFile = useEventCallback((path: string) => {
+        if (!displayedComparison) return;
+        const comparisonSessionId = props.evidenceSessionId ?? props.host.sessionId;
+        void openCaptured({ scope: { ...scope, rootPath: displayedComparison.repository.rootPath }, path,
+            comparison: { ...comparison, comparisonId: displayedComparison.id },
+            ...(comparisonSessionId ? { comparisonSessionId } : {}) });
+    });
     const displayedResult = displayedComparison?.id === bound.capturedComparison?.id ? bound.viewModel?.savedResult ?? null : null;
     const displayedIdentity = JSON.stringify([displayedComparison?.id, displayedResult?.resultId, displayedResult?.revision]);
     const currentDisplayedIdentity = React.useRef(displayedIdentity);
@@ -445,7 +454,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                     <ScmWalkthroughView bound={bound} displayMachineId={props.machineId} serverId={props.serverId}
                         sessionId={props.host.sessionId} startedReviewRunIds={props.host.sessionId ? startedReviewRunIds : null}
                         comparison={comparison} scopeLabel={scopeLabel} scopeDetail={scopeDetail} layout={layout}
-                        renderBar={renderBar} onShowFiles={onShowFiles} onOpenFile={(path) => props.onOpenFile?.(path)}
+                        renderBar={renderBar} onShowFiles={onShowFiles} onOpenFile={layout === 'phone' ? openCapturedFile : (path) => props.onOpenFile?.(path)}
                         onAskStop={bound.capturedComparison ? (stop, question) => {
                             if (!readingIsCurrent() || !bound.capturedComparison) return;
                             onAsk({ comparison: bound.capturedComparison, result: bound.viewModel?.savedResult ?? null, stop,
@@ -454,6 +463,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                 </View>}
                 renderFiles={(comparisonChrome) => comparison.kind !== 'workingTree' || comparison.comparisonId
                     ? capture.comparison ? <CapturedComparisonFilesView activeReviewFile={activeReviewFile} comparison={capture.comparison} reviewScopeKey={activeReviewFileKey}
+                        onOpenFile={openCapturedFile}
                         error={capture.error}
                         active={presented && view === 'files'}
                         workspaceScope={scope} discardEnabled={scmWriteEnabled && snapshot?.capabilities?.writeDiscard === true}

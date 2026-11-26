@@ -1,6 +1,7 @@
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { reviewReviewersForEngineIdsV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import * as React from 'react';
+import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import tweetnacl from 'tweetnacl';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -79,6 +80,41 @@ async function mountWithRows(kind: 'exact' | 'missing' | 'ambiguous') {
 const PHONE_HEAD_LAUNCHERS = { testIdPrefix: 'project-header', showWorktreesButton: false } as const;
 
 describe('WorkspaceScmReviewDetailsView', () => {
+    it('opens a phone-picked workspace file on the exact captured comparison rather than the live checkout', async () => {
+        const comparison = ScmComparisonCaptureOutputSchema.parse({ success: true, comparison: {
+            id: 'e'.repeat(64), source: { kind: 'branch', base: 'main', head: 'feature' },
+            repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [{
+                path: 'a.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false,
+                occurrences: [{ id: 'a-change', alias: 'a-change', path: 'a.ts', position: 0,
+                    before: { startLine: 1, lineCount: 1 }, after: { startLine: 1, lineCount: 1 } }],
+                evidence: { state: 'available', unifiedDiff: '@@ -1 +1 @@\n-before\n+captured\n' },
+            }] } }, metadata: { sourceKey: 'e'.repeat(64), source: { kind: 'branch', base: 'main', head: 'feature' } } });
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request =>
+            request.method === 'scm.diffSummary.capture' ? comparison : request.method === 'scm.status.snapshot'
+                ? { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo' }) } : undefined });
+        fixture.storage.setState({ isDataReady: true });
+        const { WorkspaceProvider } = await import('@/components/appShell/workspace/WorkspaceProvider');
+        const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
+        const { ChangedFilesReviewPhoneFileControl } = await import('@/components/workspaces/scm/review/ChangedFilesReviewPhoneFileControl');
+        const liveFile = vi.fn();
+        let navigation: WorkspaceNavigationContextValue | null = null;
+        const screen = await fixture.render(<WorkspaceProvider enabled catalog={resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } })}>{owner => {
+            navigation = owner;
+            return <WorkspaceScmReviewDetailsView scopeId="project:phone-capture" serverId={fixture.scope.serverId}
+                machineId="m1" rootPath="/repo" comparison={{ kind: 'branch', base: 'main', head: 'feature' }} onOpenFile={liveFile} />;
+        }}</WorkspaceProvider>);
+        await act(async () => screen.findByType(WorkspaceScmReviewBody)
+            .find(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function')
+            .props.onLayout({ nativeEvent: { layout: { width: 390, height: 700 } } }));
+        await vi.waitFor(() => expect(screen.findAllByType(ChangedFilesReviewPhoneFileControl)).toHaveLength(1));
+        await act(async () => screen.findByType(ChangedFilesReviewPhoneFileControl).props.onFocusPath('a.ts'));
+        await vi.waitFor(() => expect(Object.values(navigation!.state.tabs).map(tab => tab.target))
+            .toContainEqual(expect.objectContaining({ kind: 'captured-file', params: expect.objectContaining({
+                machineId: 'm1', rootPath: '/repo', path: 'a.ts', comparison: 'branch', base: 'main', head: 'feature', comparisonId: 'e'.repeat(64),
+            }) })));
+        expect(liveFile).not.toHaveBeenCalled();
+    });
     it.each(['walkthrough', 'commits'] as const)('reads summary facts for live %s without listing checkout files', async (view) => {
         fixture = await createSessionFilesViewFixture({ rootPath: '/summary', rpc: request => request.method === 'scm.status.snapshot'
             ? { success: true, snapshot: fileViewSnapshot({ rootPath: '/summary', entries: CHANGED_ENTRIES }) } : undefined });

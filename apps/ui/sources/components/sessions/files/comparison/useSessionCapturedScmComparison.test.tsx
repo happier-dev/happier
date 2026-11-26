@@ -968,7 +968,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         expect(screen.findByType('PaneProbe' as never).props.state.details.tabs[0]?.resource)
             .toMatchObject({ comparison: { ...source, comparisonId: comparison.id }, view: 'walkthrough' });
     });
-    it('shows saved reading coverage in phone Files and jumps between captured files without opening the checkout', async () => {
+    it('shows saved reading coverage in phone Files and opens the selected file on its exact capture', async () => {
         const { SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH, SPECIMEN_ANALYSIS_COMPLETE } = await import('@/components/dev/changes/walkthroughSpecimenFixture');
         const source = { kind: 'commit' as const, commit: 'saved-ref' };
         const comparison = ScmComparisonSchema.parse({ ...SPECIMEN_COMPARISON, source, id: 'd'.repeat(64), repository: { rootPath: '/repo/exact' } });
@@ -976,6 +976,12 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const hook = await mount(source, false);
         await hook.unmount();
         const serverId = getStorage().getState().sessions['capture-commit']!.serverId!;
+        const session = getStorage().getState().sessions['capture-commit']!;
+        const machine = getStorage().getState().machineListByServerId[serverId]![0]!;
+        getStorage().getState().activateProfileScope({ serverId, accountId: 'captured-account' });
+        getStorage().getState().applySessions([session]);
+        getStorage().getState().applyMachines([{ ...machine, presenceProtocolVersion: 1 }], true,
+            { sourceServerId: serverId, sourceAccountId: 'captured-account' });
         const scope = { serverId, accountId: 'captured-account' };
         scopes.push(scope);
         const result = ScmDiffSummaryResultSchema.parse({ resultId: 'phone-reading', revision: 1, canUndo: false,
@@ -997,7 +1003,14 @@ describe('Files reads the canonical captured comparison through authenticated RP
             return <SessionScmReviewDetailsView sessionId="capture-commit" serverId={serverId}
                 scopeId={savedFilesScopeId} target={target} />;
         }
-        const screen = await renderScreen(<AppPaneProvider><SavedFilesPane /></AppPaneProvider>);
+        const { WorkspaceProvider } = await import('@/components/appShell/workspace/WorkspaceProvider');
+        const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        let navigation: import('@/components/appShell/workspace/WorkspaceNavigationContext').WorkspaceNavigationContextValue | null = null;
+        getStorage().setState({ isDataReady: true });
+        const screen = await renderScreen(<WorkspaceProvider enabled catalog={resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: false, friends: false } })}>{owner => {
+            navigation = owner;
+            return <AppPaneProvider><SavedFilesPane /></AppPaneProvider>;
+        }}</WorkspaceProvider>);
         await vi.waitFor(() => expect(screen.findHostByTestId('captured-comparison-files')).toBeTruthy());
         const owner = screen.findByType((await import('@/components/sessions/files/views/SessionCapturedScmReviewDetailsView')).SessionCapturedScmReviewDetailsView);
         await act(async () => owner.findAll((node) => typeof node.props.onLayout === 'function')[0]!
@@ -1020,11 +1033,12 @@ describe('Files reads the canonical captured comparison through authenticated RP
         boundary.list!.refHandle.scrollToIndex.mockClear();
         const secondPath = comparison.inventory.files[1]!.path;
         await act(async () => control.props.onSelect(secondPath));
-        await vi.waitFor(() => expect(boundary.list!.refHandle.scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 1, animated: false })));
-        // The real viewport boundary reports scrolling to a different file; the control follows it.
-        await act(async () => screen.findHostByTestId('scm-review-list')!.props.onViewableItemsChanged({ viewableItems: [{ index: 2, isViewable: true }], changed: [] }));
-        await vi.waitFor(() => expect(screen.findAllByType(DropdownMenu)
-            .find((node) => node.props.testID === 'scm-comparison-file-picker')!.props.selectedId).toBe(comparison.inventory.files[2]!.path));
+        await vi.waitFor(() => expect(Object.values(navigation!.state.tabs).map(tab => tab.target))
+            .toContainEqual(expect.objectContaining({ kind: 'captured-file', params: expect.objectContaining({
+                path: secondPath, rootPath: '/repo/exact', comparison: 'commit', commit: 'saved-ref', comparisonId: comparison.id,
+                evidenceSessionId: 'capture-commit',
+            }) })));
+        expect(boundary.list!.refHandle.scrollToIndex).not.toHaveBeenCalled();
     });
 });
 import * as React from 'react';
