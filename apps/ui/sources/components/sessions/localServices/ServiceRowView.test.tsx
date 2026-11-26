@@ -137,7 +137,7 @@ describe('ServiceRowView', () => {
     });
 
     function declaredStartRow(title = 'web') {
-        const target = launchTarget({ source: 'managed_service', title, sourceClass: { kind: 'managed_service', managedServiceId: 'project-service:selected' },
+        const target = launchTarget({ source: 'managed_service', title, actions: ['start'], sourceClass: { kind: 'managed_service', managedServiceId: 'project-service:selected' },
             workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/accepted' },
             declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: title } }, commandPreview: 'vite' });
         const [row] = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
@@ -900,7 +900,7 @@ describe('ServiceRowView', () => {
             workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
             declaration: { workspaceRefId: 'accepted', selection: { kind: 'native',
                 source: { kind: 'native', tool: 'procfile', file: 'Procfile', target: 'jobs' } } },
-            title: 'jobs', unavailableReason: undefined, ...overrides });
+            title: 'jobs', actions: ['start'], unavailableReason: undefined, ...overrides });
     }
     function projectRow(target: LocalServiceLaunchTarget) {
         return buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' })[0]!;
@@ -1020,7 +1020,7 @@ describe('ServiceRowView', () => {
 
     it('retains the published failure until the daemon admits the retry', async () => {
         const diagnostics = [{ code: 'native_service_output', severity: 'info', message: 'EADDRINUSE: address already in use :::3005' }] as const;
-        const failed = projectRow(projectTarget({ state: 'available', serviceState: 'failed', actions: ['manage'], diagnostics: [...diagnostics] }));
+        const failed = projectRow(projectTarget({ state: 'available', serviceState: 'failed', actions: ['start', 'manage'], diagnostics: [...diagnostics] }));
         const start = vi.fn(() => new Promise<unknown>(() => {}));
         const screen = await renderScreen(<ServiceRowView row={failed} onStartLauncherTarget={start} testID="row" />);
         expect(screen.findByTestId('row-output-toggle')).toBeTruthy();

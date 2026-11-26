@@ -667,9 +667,8 @@ describe('Project Services source feed plus actual native binding', () => {
       intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
     managedRow = initialManagedRow;
     const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-    const physicalSource = bindChild ? parent : source;
-    const relationship: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'copy', controllerMachineId: physicalSource.machineId,
-      alphaWorkspaceRefId: physicalSource.id, betaWorkspaceRefId: worker.id, mode: 'keep_synced', enabled: false,
+    const relationship: WorkspaceSyncRelationshipV1 = { v: 1, relationshipId: 'copy', controllerMachineId: source.machineId,
+      alphaWorkspaceRefId: source.id, betaWorkspaceRefId: worker.id, mode: 'keep_synced', enabled: false,
       contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, createdAtMs: 1, updatedAtMs: 1 };
     storage.getState().activateProjectAccountRowsScope(scope);
     storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',

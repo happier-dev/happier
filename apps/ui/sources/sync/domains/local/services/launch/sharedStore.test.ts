@@ -126,7 +126,7 @@ describe('shared local-service launcher store', () => {
         const diagnostic = { code: 'local_services_inventory_scan_failed', severity: 'error' };
         let declared = LocalServiceLauncherSnapshotV1Schema.parse({ ...snapshot, targets: [{
             id: 'declared:web', source: 'managed_service', machineId: key.machineId, title: 'Web',
-            confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [],
+            confidence: 'high', state: 'available', serviceState: 'stopped', actions: ['start'],
             workspace: { serverId: key.serverId, machineId: key.machineId, workspaceId: 'checkout', rootPath: '/repo' },
             declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'web' } },
         }] });
