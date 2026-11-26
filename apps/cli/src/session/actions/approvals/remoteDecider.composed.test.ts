@@ -26,7 +26,7 @@ import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecyc
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
-import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonApprovalExecutionOriginCurrentnessFromCredentials, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import type { VerifyExternalActionExecutionAuthorization } from '@/daemon/externalActions/executeExternalAction';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
@@ -38,6 +38,7 @@ import { createClientActionReverseDispatcher } from '../clientActionReverseDispa
 import { SessionMessageContentSchema, UserMessageSchema } from '@/api/types';
 import { UiActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
+import { createCliActionExecutor } from '../createCliActionExecutor';
 import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
 
 // Replace network transport only. The credentialed deciding factory, Artifact
@@ -45,13 +46,17 @@ import { createPluginInvocationActionsService } from '@/plugins/runtime/invocati
 const transport = vi.hoisted(() => vi.fn());
 vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => ({
   ...await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>(), callExactMachineRpc: transport,
+  callMachineRpc: transport,
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); transport.mockReset(); resetActiveAccountSettingsSnapshotForTests(); });
 
 const managerSessionId = 'c123456789012345678901234';
 
 describe('remote person approval through credentialed CLI and registered daemon replay', () => {
-  async function approveGoal(externalActionClient: boolean, scenario: 'goal' | 'missing_client' | 'missing_app_live' | 'missing_app_plugin_live' | 'sdk_deferred_post' | 'sdk_origin_revoked' | 'background_plugin_post' | 'background_plugin_refusal' | 'target_live' | 'mcp_client' = 'goal', decision: 'approve' | 'reject' = 'approve') {
+  async function approveGoal(externalActionClient: boolean, scenario: 'goal' | 'missing_client' | 'missing_app_live' | 'missing_app_plugin_live' | 'sdk_deferred_post' | 'sdk_origin_revoked' | 'background_plugin_post' | 'background_plugin_refusal' | 'target_live' | 'mcp_client' | 'failed_before_override' | 'terminal_failed_before_override' | 'terminal_host_failed_before_override' = 'goal', decision: 'approve' | 'reject' = 'approve') {
+    const hostOverride = scenario === 'terminal_host_failed_before_override';
+    const terminalOwnOverride = scenario === 'terminal_failed_before_override' || hostOverride;
+    const failedBeforeOverride = scenario === 'failed_before_override' || terminalOwnOverride;
     const missingClientPort = scenario === 'missing_client';
     const mcpClient = scenario === 'mcp_client';
     const missingAppWaiter = scenario === 'missing_app_live' || scenario === 'missing_app_plugin_live';
@@ -67,7 +72,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
       const serverId = configuration.activeServerId;
       const requesterAccountId = scenario === 'target_live' && !externalActionClient ? 'guest' : 'owner';
       const token = `fixture.${Buffer.from(JSON.stringify({ sub: requesterAccountId, tokenEpoch: 1, provenance: {
-        v: 1, kind: 'account', authority: 'present_user',
+        v: 1, kind: terminalOwnOverride ? 'terminal' : 'account', authority: terminalOwnOverride ? 'account_automation' : 'present_user',
       } })).toString('base64url')}.signature`;
       const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
       const installation = await readOrCreateInstallationIdentity();
@@ -85,7 +90,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
       let waiterAdmissions = 0;
       let signedAdmissions = 0;
       let signedDeliveries = 0;
-      const dispatchCount = () => transport.mock.calls.length + signedDeliveries;
+      const dispatchCount = () => transport.mock.calls.filter(([request]) => request.method !== RPC_METHODS.BASH).length + signedDeliveries;
       const executionCounts = () => ({ rpc: transport.mock.calls.length, admissions: signedAdmissions,
         deliveries: signedDeliveries, effects: effects.length });
       const issuedAuthorizations = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
@@ -177,6 +182,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
           },
         })) } : {}),
         sessionGoalSet: async input => { effects.push(input); return { updated: true }; },
+        machineCommandRun: async input => { effects.push(input); return { exitCode: 0, stdout: 'effect', stderr: '' }; },
         discussionAction: async ({ actionId, input, context }) => {
           if (actionId !== 'discussion.post') throw new Error(`Unexpected Discussion operation: ${actionId}`);
           effects.push({ input, context });
@@ -196,9 +202,12 @@ describe('remote person approval through credentialed CLI and registered daemon 
         },
         approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
       });
-      const originContext = { surface: 'agent' as const, authority: 'account_automation' as const, serverId, serverIdentityId: 'srv_home', runtimeAccountId: 'owner',
-        defaultSessionId: managerSessionId, defaultSessionMachineId: 'origin-machine', actionRequestId: 'goal-request',
-        actionCaller: { kind: 'session' as const, sessionId: managerSessionId, starterDepth: 0, turnDepth: 0 } };
+      const originContext = { surface: hostOverride ? 'cli' as const : 'agent' as const, authority: 'account_automation' as const, serverId, serverIdentityId: 'srv_home', runtimeAccountId: 'owner',
+        ...(!hostOverride ? { defaultSessionId: managerSessionId } : {}), defaultSessionMachineId: 'origin-machine', actionRequestId: 'goal-request',
+        ...(failedBeforeOverride ? { externalActionTarget: { kind: 'machine' as const, machineId: 'origin-machine',
+          project: { machineId: 'origin-machine', directory: '/workspace' } } } : {}),
+        actionCaller: hostOverride ? { kind: 'host' as const }
+          : { kind: 'session' as const, sessionId: managerSessionId, starterDepth: 0, turnDepth: 0 } };
       const pluginCaller = { kind: 'plugin' as const, pluginId: 'acme.channels', contributionLocalId: 'ingress',
         occurrenceId: 'channels-occurrence', originSurface: 'background' as const,
         sourceCustody: { kind: 'development' as const, registeredRootId: 'channels-root' },
@@ -263,10 +272,27 @@ describe('remote person approval through credentialed CLI and registered daemon 
         externalActionTarget: { kind: 'session', sessionId: managerSessionId } }))
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       else if (!target) expect(await daemon.execute('approval.request.create', {
-        ...(missingClientPort ? { actionId: 'file.editor.save', actionArgs: {} }
+        ...(failedBeforeOverride ? { actionId: 'machines.command.run', actionArgs: { command: 'printf effect' } }
+          : missingClientPort ? { actionId: 'file.editor.save', actionArgs: {} }
           : { actionId: 'session.goal.set', actionArgs: { sessionId: managerSessionId, objective: 'Ship goal controls', resumeInactiveWithInitialGoal: false } }),
-        summary: 'Set manager goal', createdBy: { surface: 'agent' },
+        summary: failedBeforeOverride ? 'Run command after check' : 'Set manager goal',
+        createdBy: { surface: hostOverride ? 'cli' : 'agent' },
       }, originContext)).toMatchObject({ ok: true, result: { artifactId: 'approval' } });
+      if (failedBeforeOverride) {
+        // Persisted Artifact boundary: the original human approval already ran
+        // its selected Before check, whose recorded Run failed with Ask policy.
+        stored = ApprovalRequestV2Schema.parse({ ...ApprovalRequestV2Schema.parse(stored),
+          approval: { flow: 'deferred', result: 'required' }, automaticChecks: {
+          phase: 'override', humanApprovalRequired: true,
+          humanDecision: { kind: 'approve', authority: 'present_user', decidingAccountId: 'owner', decidedAtMs: 1 },
+          selectionStatus: 'ready', subjects: [], consents: [], notices: [],
+          selected: [{ automationId: 'automation', triggerId: 'before', triggerRevision: 1,
+            workflowId: 'workflow', workflowRevision: 1, ownerAccountId: 'owner', actionIds: ['machines.command.run'],
+            phase: 'before', mode: 'wait', onFailure: 'ask' }],
+          runs: [{ automationId: 'automation', triggerId: 'before', runId: 'failed-run' }],
+          results: [{ automationId: 'automation', triggerId: 'before', runId: 'failed-run', outcome: 'failed' }],
+        } });
+      }
       if (mcpClient) {
         const request = ApprovalRequestV2Schema.parse(stored);
         expect(request.executionOriginV1).toMatchObject({ machineId: 'origin-machine',
@@ -280,7 +306,17 @@ describe('remote person approval through credentialed CLI and registered daemon 
         body: encodePlainArtifactStoredContent({ body: JSON.stringify(target ?? stored) }),
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
       const rpc = new RpcHandlerManager({ scopePrefix: 'origin-machine', encryptionMode: 'plain', logger: () => {} });
-      registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: daemon });
+      const originPublisher = createCliActionExecutor({ token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
+        serverId, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://approval.test',
+        isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
+          credentials, machineId: 'origin-machine', serverId, serverApiUrl: 'https://approval.test',
+          resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_home', machineId: 'origin-machine' }),
+          isSessionCallerCurrent: async ({ caller }) => managerSession.active && caller.sessionId === managerSession.id,
+        }),
+        externalActionMachineInstallationId: installation.installationId, externalActionMachineRequestPrivateKey: privateKey });
+      registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: sdkDeferredPost ? daemon : {
+        ...daemon, replayApprovedApprovalRequest: originPublisher.replayApprovedApprovalRequest,
+      } });
       const verifyExecutionAuthorization: VerifyExternalActionExecutionAuthorization = input =>
         verifyExternalActionExecutionAuthorizationCurrent({ ...input, privateKey, installationId: installation.installationId,
           serverHttpBaseUrl: 'https://approval.test' });
@@ -306,6 +342,10 @@ describe('remote person approval through credentialed CLI and registered daemon 
       let originRefusalPending = refusedOriginDelivery;
       transport.mockImplementation(async (input: { machineId: string; method: string; request: unknown }) => {
         expect(input.machineId).toBe('origin-machine');
+        if (input.method === RPC_METHODS.BASH) {
+          effects.push(input.request);
+          return { success: true, exitCode: 0, stdout: 'effect', stderr: '' };
+        }
         expect(input.method).toBe(backgroundPluginPost || target ? RPC_METHODS.APPROVAL_REQUEST_DECIDE : RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED);
         if (originRefusalPending) {
           originRefusalPending = false;
@@ -314,7 +354,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
         }
         if (target) return { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'custodian_only' };
         const result = await rpc.handleRequest({ method: `origin-machine:${input.method}`, params: input.request,
-          callerAuthority: 'present_user' });
+          callerAuthority: terminalOwnOverride ? 'account_automation' : 'present_user' });
         return result;
       });
       vi.stubGlobal('fetch', async (input: string | URL | Request) => {
@@ -335,6 +375,9 @@ describe('remote person approval through credentialed CLI and registered daemon 
             resourceMode: 'plain', accessState: 'ready' },
         } } };
         if (path === `/v2/sessions/${managerSessionId}`) return { status: 200, data: { session: managerSession } };
+        if (path.startsWith(`/v2/sessions/${managerSessionId}/messages/by-local-id/`)) {
+          throw Object.assign(new axios.AxiosError('Message not found'), { response: { status: 404, data: { error: 'Message not found' } } });
+        }
         if (path === '/v1/account/profile') return { status: 200, data: { id: requesterAccountId } };
         if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
@@ -366,7 +409,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
           const existing = publications.get(localId);
           if (existing !== undefined) expect(authored.content.text).toBe(existing);
           else publications.set(localId, authored.content.text);
-          return { status: 200, data: { didWrite: existing === undefined, terminal: false } };
+          return { status: 200, data: { didWrite: existing === undefined, terminal: false, message: { localId } } };
         }
         if (path === '/v1/actions/approval.request.decide/execution-authorization') {
           expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
@@ -553,15 +596,18 @@ describe('remote person approval through credentialed CLI and registered daemon 
         expect(stored).toMatchObject({ status: 'failed', execution: {
           ok: false, errorCode: 'unsupported_action',
         } });
+        expect(transport.mock.calls.map(([request]) => request.method))
+          .toEqual([RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED]);
         expect(await decide()).toMatchObject({ ok: true, result: { status: 'failed', execution: {
           ok: false, errorCode: 'unsupported_action',
         } } });
-        expect(transport).not.toHaveBeenCalled();
+        expect(transport.mock.calls.map(([request]) => ({ method: request.method, request: request.request })))
+          .toEqual([{ method: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED, request: { artifactId: 'approval' } }]);
         expect(signedAdmissions).toBe(1);
         expect(signedDeliveries).toBe(1);
         expect(effects).toEqual([]);
         expect(publications.size).toBe(1);
-        expect(publicationRequests).toEqual(['approval-result:approval', 'approval-result:approval']);
+        expect(publicationRequests).toEqual(['approval-result:approval']);
         expect(JSON.parse(publications.get('approval-result:approval')!)).toMatchObject({
           artifactId: 'approval', actionId: 'file.editor.save', status: 'failed',
           execution: { ok: false, errorCode: 'unsupported_action' },
@@ -577,11 +623,32 @@ describe('remote person approval through credentialed CLI and registered daemon 
         const http: Record<string, number> = {};
         return { first: { http, ...executionCounts() }, replay: { http, ...executionCounts() } };
       }
+      if (failedBeforeOverride) {
+        expect(result, JSON.stringify({ result, stored, effects, http, dispatch: executionCounts() }))
+          .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+        expect(stored).toMatchObject({ status: 'executed', automaticChecks: { phase: 'passed',
+          results: [{ runId: 'failed-run', outcome: 'failed' }] }, execution: { ok: true } });
+        // Terminal replay publishes its Session result in the same origin call;
+        // signed requester decisions join that publisher after effect dispatch.
+        expect(dispatchCount()).toBe(terminalOwnOverride ? 1 : 2);
+        expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(effects).toEqual([terminalOwnOverride
+          ? expect.objectContaining({ command: 'printf effect', cwd: '/workspace', cwdMode: 'explicit' })
+          : { command: 'printf effect' }]);
+        expect(publications.size, JSON.stringify({ result, stored, http })).toBe(hostOverride ? 0 : 1);
+        if (!hostOverride) expect(JSON.parse(publications.get('approval-result:approval')!)).toMatchObject({
+          artifactId: 'approval', actionId: 'machines.command.run', status: 'executed', execution: { ok: true },
+        });
+        const counts: Record<string, number> = {};
+        return { first: { http: counts, ...executionCounts() }, replay: { http: counts, ...executionCounts() } };
+      }
       const first = {
         http: Object.fromEntries([...new Set(http)].map(route => [route, http.filter(value => value === route).length])),
         rpc: transport.mock.calls.length, admissions: signedAdmissions, deliveries: signedDeliveries, effects: effects.length };
       console.info('FLOWBUDGET_APPROVE', JSON.stringify({ externalActionClient, ...first }));
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+      // Execution admission and result publication use the origin separately.
+      expect(first.rpc + first.deliveries).toBe(2);
       http.length = 0;
       expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
       const replay = {
@@ -589,15 +656,30 @@ describe('remote person approval through credentialed CLI and registered daemon 
         rpc: transport.mock.calls.length, admissions: signedAdmissions, deliveries: signedDeliveries, effects: effects.length };
       console.info('FLOWBUDGET_APPROVE_REPLAY', JSON.stringify({ externalActionClient, ...replay }));
       expect(effects).toEqual([expect.objectContaining({ sessionId: managerSessionId, objective: 'Ship goal controls' })]);
-      expect(dispatchCount()).toBe(1);
+      // A repeated decision consumes the retained delivery without another
+      // publication, execution admission or effect dispatch.
+      expect(replay).toMatchObject({ rpc: first.rpc, admissions: first.admissions,
+        deliveries: first.deliveries, effects: first.effects });
       expect(publications.size).toBe(1);
-      expect(publicationRequests).toEqual(['approval-result:approval', 'approval-result:approval']);
+      expect(publicationRequests).toEqual(['approval-result:approval']);
       expect(JSON.parse(publications.get('approval-result:approval')!)).toMatchObject({
         artifactId: 'approval', actionId: 'session.goal.set', status: 'executed', execution: { ok: true },
       });
       return { first, replay };
     });
   }
+
+  it.each([true, false])('settles an overridden failed Before check through credentialed replay (externalActionClient=%s)', async externalActionClient => {
+    await approveGoal(externalActionClient, 'failed_before_override');
+  });
+
+  it('settles an overridden failed Before check through retained own-Account terminal replay', async () => {
+    await approveGoal(false, 'terminal_failed_before_override');
+  });
+
+  it('settles an overridden failed Before check from a deferred CLI host invocation', async () => {
+    await approveGoal(false, 'terminal_host_failed_before_override');
+  });
 
   it.each([true, false])('FLOWBUDGET executes the original Goal once (externalActionClient=%s)', async externalActionClient => {
     await approveGoal(externalActionClient);

@@ -41,6 +41,13 @@ import { createDeferred } from '@/testkit/async/deferred';
 import type { TrackedSession } from '@/daemon/types';
 import { createDaemonStorageRoutes } from '@/rpc/handlers/storage';
 import { createStoragePolicyFixture } from '@/storage/storagePolicy.testkit';
+import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
+import { ArtifactCreateHttpResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 
 const io = vi.hoisted(() => vi.fn());
 // HTTP and Socket.IO are genuine boundaries; Action routing, exact targeting and codecs stay real.
@@ -50,23 +57,32 @@ const responses: unknown[] = [];
 const requests: { method: string; params: unknown }[] = [];
 let releaseHome = () => {};
 let receive: ((method: string, params: unknown) => Promise<unknown>) | undefined;
-const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
+const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
 const context = { surface: 'cli', authority: 'present_user', serverId: 'home' } as const;
 const params = { token: credentials.token, credentials, sessionId: 'cli-global', serverId: 'home',
   serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null } as const;
 
 describe('CLI machine Processes Action transport', () => {
   beforeEach(() => {
+    installAxiosRequestMethodAdapter();
     responses.length = 0;
     requests.length = 0;
     receive = undefined;
     releaseHome = publishServerHttpRuntimeOrigin('https://home.invalid', 'https');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async url => {
+      if (new URL(String(url)).pathname !== '/v1/features') throw new Error('Unexpected feature request');
+      return Response.json(FeaturesResponseSchema.parse({ features: { workflows: { enabled: true } } }));
+    });
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
+      if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200, data: { v: 1, rows: [] } };
+      if (path === '/v1/account/encryption') return { status: 200, data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 0 }) };
       if (!path.startsWith('/v1/machines/')) throw new Error(`Unexpected HTTP read: ${path}`);
       return { status: 200, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() },
-        data: { machine: { id: decodeURIComponent(path.slice('/v1/machines/'.length)),
-          storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } } };
+        data: { machine: MachinePublishedRowV1Schema.parse({ id: decodeURIComponent(path.slice('/v1/machines/'.length)),
+          managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null,
+          metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+          storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }) } };
     });
     bindApiSessionSocketMock(io, createApiSessionSocketStub({ emitWithAck: (event, payload) => {
       if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object'
@@ -126,7 +142,7 @@ describe('CLI machine Processes Action transport', () => {
       machineId: 'selected', invoke: async () => { throw new Error('An unavailable local owner must not dispatch RPC'); },
     } });
     expect(await unavailable.execute('machines.services.list', local, context))
-      .toEqual({ ok: true, result: { kind: 'unavailable', reason: 'admission_unavailable' } });
+      .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
     expect(requests.map(request => request.method)).toEqual(['remote:machines.services.list']);
   });
 
@@ -176,6 +192,7 @@ describe('CLI machine Processes Action transport', () => {
         const data = path === '/v1/account/encryption'
           ? AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 0 })
           : path === '/v1/machines/selected' ? { machine: MachinePublishedRowV1Schema.parse({ id: 'selected', storageMode: 'plain',
+            managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null,
             metadata: encodePlainMachineStoredContent(metadata), metadataVersion: revision, daemonState: null, daemonStateVersion: 0,
             dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }) } : null;
         if (!data) throw new Error(`Unexpected policy HTTP read: ${path}`);
@@ -342,7 +359,7 @@ describe('CLI machine Processes Action transport', () => {
         expect(agentView, JSON.stringify(agentView)).toMatchObject({ ok: true, result: { policy: { keepAwake: 'on' } } });
         if (!agentView?.ok) throw new Error(agentView?.error ?? 'Guard Action did not settle');
         assertActionOutputContract('machines.guard.get', agentView.result);
-        admitted = { ...admitted, verifyMachineAdmissionCurrent: async () => false };
+        admitted = { ...admitted, machineAdmission: undefined };
         expect(await executor.execute('machines.guard.get', { machineId: 'selected' }, context)).toMatchObject({ ok: false });
         expect(requests.map(request => request.method)).toEqual([
           `selected:${RPC_METHODS.MACHINES_GUARD_GET}`, `selected:${RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST}`,
@@ -406,6 +423,32 @@ describe('CLI machine Processes Action transport', () => {
     const terminalCredentials = decodeStoredCredentials(encodeStoredCredentials(credentials));
     if (!terminalCredentials) throw new Error('Stored terminal credentials unavailable');
     const executor = createCliActionExecutor({ ...params, credentials: terminalCredentials });
+    const originalRead = axios.get.bind(axios);
+    const artifacts = new Map<string, ReturnType<typeof ArtifactCreateHttpResponseV1Schema.parse>>();
+    vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+      if (new URL(String(url)).pathname.startsWith('/v1/artifacts/')) {
+        const artifact = artifacts.get(new URL(String(url)).pathname.split('/').at(-1)!);
+        return { status: artifact ? 200 : 404, data: artifact ?? { error: 'Artifact not found' } };
+      }
+      return originalRead(url, options);
+    });
+    let approval: unknown;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(new URL(String(url)).pathname).toBe('/v1/artifacts');
+      const mutation = readCarrierMutation(body);
+      const content = decodePlainArtifactStoredContent(String(mutation.body));
+      if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') {
+        throw new Error('Missing approval Artifact body');
+      }
+      approval = StoredApprovalRequestSchema.parse(JSON.parse(content.body));
+      const artifact = ArtifactCreateHttpResponseV1Schema.parse({
+        id: mutation.id, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+        header: mutation.header, body: mutation.body, dataEncryptionKey: mutation.dataEncryptionKey,
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+      });
+      artifacts.set(artifact.id, artifact);
+      return { status: 200, data: artifact };
+    });
     try {
       const ref = processRef(21, rows.get(21)!.start);
       const read = await executor.execute('machines.processes.get', { machineId: 'selected', ref }, context);
@@ -418,8 +461,11 @@ describe('CLI machine Processes Action transport', () => {
       expect(JSON.stringify(read)).not.toMatch(/ordinary-action-secret|ordinary-url-secret|alice/);
       if (!selected || !('level' in selected)) throw new Error('Expected a Happier process');
       const input = { machineId: 'selected', targets: [{ ref, expect: { level: selected.level, owner } }], tree: false };
-      expect(await executor.execute('machines.processes.kill', input, context))
-        .toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+      const unconfirmed = await executor.execute('machines.processes.kill', input, context);
+      expect(unconfirmed, JSON.stringify(unconfirmed)).toMatchObject({ ok: true,
+        result: { kind: 'approval_request_created', actionId: 'machines.processes.kill', artifactId: expect.any(String) } });
+      expect(approval).toMatchObject({ actionId: 'machines.processes.kill', status: 'open',
+        approval: { flow: 'deferred' }, actionArgs: input });
       expect(signals).toEqual([]);
       expect(requests).toHaveLength(1);
       const killed = await executor.execute('machines.processes.kill', input,
@@ -446,7 +492,7 @@ describe('CLI machine Processes Action transport', () => {
     expect(requests).toEqual([{ method: `selected:${RPC_METHODS.MACHINES_PROCESSES_GET}`,
       params: { serverId: 'home', machineId: 'selected', ref: 'process-ref' } }]);
     expect(axios.get).toHaveBeenCalledWith('https://home.invalid/v1/machines/selected', expect.objectContaining({
-      signal: expect.any(AbortSignal), headers: expect.objectContaining({ Authorization: 'Bearer token' }),
+      signal: expect.any(AbortSignal), headers: expect.objectContaining({ Authorization: `Bearer ${credentials.token}` }),
     }));
     expect(invoke).not.toHaveBeenCalled();
     // The request owner may compose its lifetime with the caller's signal.
