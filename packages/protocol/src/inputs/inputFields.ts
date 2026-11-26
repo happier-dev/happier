@@ -343,28 +343,41 @@ function readInputHintCrossField(value: unknown): InputHintCrossField | null {
   };
 }
 
+type InputHintCrossFieldValidationOptions = Readonly<{
+  allowJsonParentDescendants: boolean;
+}>;
+
+const StrictInputHintCrossFieldValidationOptions: InputHintCrossFieldValidationOptions = {
+  allowJsonParentDescendants: false,
+};
+
+const ReviewInputHintCrossFieldValidationOptions: InputHintCrossFieldValidationOptions = {
+  allowJsonParentDescendants: true,
+};
+
 function validateInputHintsCrossField(
   rawFields: readonly unknown[],
   context: z.core.$RefinementCtx,
+  validationOptions: InputHintCrossFieldValidationOptions = StrictInputHintCrossFieldValidationOptions,
 ): void {
   const fields = rawFields.flatMap((rawField, index) => {
     const field = readInputHintCrossField(rawField);
     return field ? [{ field, index }] : [];
   });
-  const seenPaths = new Map<string, number>();
+  const seenPaths = new Map<string, Readonly<{ index: number; widget: unknown }>>();
   const secretPaths = new Set<string>();
   const connectedAccountOptionFieldIndexes: number[] = [];
 
   fields.forEach(({ field, index }) => {
-    const priorIndex = seenPaths.get(field.path);
-    if (priorIndex !== undefined) {
+    const prior = seenPaths.get(field.path);
+    if (prior !== undefined) {
       context.addIssue({
         code: "custom",
         path: ['fields', index, 'path'],
-        message: `Action input field path duplicates fields.${priorIndex}.path.`,
+        message: `Action input field path duplicates fields.${prior.index}.path.`,
       });
     } else {
-      seenPaths.set(field.path, index);
+      seenPaths.set(field.path, { index, widget: field.widget });
     }
     if (field.widget === 'secret') secretPaths.add(field.path);
     if (field.connectedAccountOptions) connectedAccountOptionFieldIndexes.push(index);
@@ -379,16 +392,22 @@ function validateInputHintsCrossField(
   }
 
   fields.forEach(({ field, index }) => {
-    for (const [otherPath, otherIndex] of seenPaths) {
-      if (otherIndex === index) continue;
-      if (isSameOrDescendantPath(field.path, otherPath)) {
-        context.addIssue({
-          code: "custom",
-          path: ['fields', index, 'path'],
-          message: `Action input field paths cannot be ancestors or descendants of fields.${otherIndex}.path.`,
-        });
-        break;
+    for (const [otherPath, other] of seenPaths) {
+      if (other.index === index) continue;
+      if (!isSameOrDescendantPath(field.path, otherPath)) continue;
+      if (
+        validationOptions.allowJsonParentDescendants
+        && field.path !== otherPath
+        && other.widget === 'json'
+      ) {
+        continue;
       }
+      context.addIssue({
+        code: "custom",
+        path: ['fields', index, 'path'],
+        message: `Action input field paths cannot be ancestors or descendants of fields.${other.index}.path.`,
+      });
+      break;
     }
 
     const predicatePaths = [
@@ -415,6 +434,7 @@ function createInputHintsSchemasForSharedField<
   optionValueSchema: TOptionValue,
   sourceShape: TSourceShape,
   validationOptions: InputHintFieldValidationOptions,
+  crossFieldValidationOptions: InputHintCrossFieldValidationOptions = StrictInputHintCrossFieldValidationOptions,
 ) {
   const optionSchema = z.strictObject({
     value: optionValueSchema,
@@ -444,7 +464,7 @@ function createInputHintsSchemasForSharedField<
     submitLabel: z.optional(textSchema),
     fields: z._default(z.readonly(z.array(fieldSchema)), []),
   }).check(z.superRefine((value, context) => {
-    validateInputHintsCrossField(value.fields, context);
+    validateInputHintsCrossField(value.fields, context, crossFieldValidationOptions);
   }));
   return Object.freeze({ optionSchema, fieldSchema, hintsSchema });
 }
@@ -500,8 +520,10 @@ export function createInputHintsSchemasWithStaticOptionsOnly<
   );
 }
 
+const CanonicalInputHintsTextSchema = z.string().check(z.trim(), z.minLength(1));
+
 const CanonicalInputHintsSchemas = createInputHintsSchemas(
-  z.string().check(z.trim(), z.minLength(1)),
+  CanonicalInputHintsTextSchema,
   InputOptionValueSchema,
 );
 
@@ -519,6 +541,20 @@ export const InputFieldHintSchema = CanonicalInputHintsSchemas.fieldSchema;
 export type InputFieldHint = z.infer<typeof InputFieldHintSchema>;
 export const InputHintsSchema = CanonicalInputHintsSchemas.hintsSchema;
 export type InputHints = z.infer<typeof InputHintsSchema>;
+
+/**
+ * Review-only approval presentation hints may declare strict descendant labels
+ * beneath a declared `json` parent while preserving duplicate-path, non-JSON
+ * overlap, widget-property, and secret-predicate validation. Executable hints
+ * remain on `InputHintsSchema`.
+ */
+export const ApprovalReviewInputHintsSchema = createInputHintsSchemasForSharedField(
+  CanonicalInputHintsTextSchema,
+  InputOptionValueSchema,
+  InputHintCanonicalSourceShape,
+  CanonicalInputHintFieldValidationOptions,
+  ReviewInputHintCrossFieldValidationOptions,
+).hintsSchema;
 
 export function normalizeInputHintsText<TText>(
   hints: InputHintsDescriptor<TText>,

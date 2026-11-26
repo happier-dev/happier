@@ -12,6 +12,7 @@ import { AutomationSubjectKindV1Schema, type AutomationSubjectV1 } from '../../a
 import { ActionOperationDeclarationV1Schema, ActionOperationReentryPolicyV1Schema } from '../operations/v1.js';
 import { ActionCliProjectionSchema, readActionSchemaTopLevelFieldNames } from '../actionCliProjection.js';
 import { ActionExecutionPlacementSchema, ActionInputHintsSchema, ActionRequiredAuthoritySchema, ActionPermissionChangingSchema, ActionSurfaceSchema, ActionToolExposureSchema, type ActionExecutionPlacement, type ActionRequiredAuthority, type ActionSurfaces } from '../metadata.js';
+import { ApprovalReviewInputHintsSchema } from '../../inputs/inputFields.js';
 import type { ActionCaller, ActionExecutorContext, ActionMachineRuntimeDemandV1, HostReviewedChildrenPlanV1 } from '../executor/types.js';
 import { HostReviewedChildDeclarationV1Schema } from '../executor/hostReviewedChildrenV1.js';
 import type { DeploymentPreparationScopeDeclarationV1 } from './deploymentPreparationScope.js';
@@ -347,8 +348,8 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
     inputSchema: z.optional(ZodSchemaLike),
     /** Domain-declared reference identity; undefined delegates to the shared value reading. */
     referenceForField: z.optional(z.custom<(path: string, value: unknown, input: unknown, parent?: unknown) => ApprovalActionReference | undefined>((value) => typeof value === 'function')),
-    /** Private review field labels may differ from the executable authoring form. */
-    inputHints: z.optional(ActionInputHintsSchema),
+    /** Private review field labels may declare strict descendants under a declared JSON parent. */
+    inputHints: z.optional(ApprovalReviewInputHintsSchema),
     /** Private history may retain this declared review after replay; live-only custody still wins. */
     retainInputOnSettlement: z.optional(z.literal(true)),
   })),
