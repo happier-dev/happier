@@ -1758,7 +1758,7 @@ export async function authorizeMachineRpcRequest(
         }, hostHomeServerIdentityId: await machine.resolveHomeServerIdentityId?.(request.signal),
           hostCustodianAccountId: await machine.resolveCustodianAccountId(request.signal),
           hostExecutionTarget: installationId ? { machineId: machine.machineId, installationId } : undefined });
-        if (!isHostRequesterUnrestrictedOwner(identity)) return forbidden('requester_execution_identity');
+        if (!isHostRequesterUnrestrictedOwner(identity)) return forbidden('machine_admission');
         if (request.signal?.aborted || !await retainedRequester.isCurrent()) return forbidden('request_cancelled');
       } catch { return forbidden('authorization_unavailable'); }
     }
