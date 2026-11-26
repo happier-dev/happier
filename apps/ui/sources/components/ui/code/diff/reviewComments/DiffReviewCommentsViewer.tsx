@@ -9,10 +9,7 @@ import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildC
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
 import type { ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
-import { ReviewCommentCard } from '@/components/reviews/ReviewCommentCard';
-import { ReviewFindingAnchor, ReviewFindingAnchorContext } from '@/components/reviews/ReviewFindingAnchor';
-import { buildReviewCommentLabels } from '@/components/reviews/sessionSurfaceLabels';
-import { resolveCodeLineAnchor } from '@/components/ui/code/reviewComments/resolveCodeLineAnchor';
+import { useSavedReviewCommentLines } from '@/components/ui/code/reviewComments/savedReviewComments';
 import { filterReviewCommentDraftsForFile } from '@/sync/domains/input/reviewComments/filterReviewCommentDrafts';
 import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
@@ -151,31 +148,14 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
         onError: props.onReviewCommentError,
     });
     const showInactiveCommentAffordance = Platform.OS === 'web';
-    const commentsByLineId = React.useMemo(() => {
-        const result = new Map<string, ReviewCommentV1[]>();
-        for (const comment of props.reviewComments ?? []) {
-            if (comment.parentCommentId || (comment.anchor.kind !== 'line' && comment.anchor.kind !== 'range')) continue;
-            const filePath = comment.anchor.side === 'before' && comment.anchor.filePath === props.previousFilePath
-                ? comment.anchor.filePath : props.filePath;
-            const resolution = resolveCodeLineAnchor({ filePath, source: reviewCommentSource, lines, anchor: comment.anchor });
-            const lineId = resolution.lines.at(-1)?.id;
-            if (!lineId) continue;
-            const comments = result.get(lineId);
-            if (comments) comments.push(comment);
-            else result.set(lineId, [comment]);
-        }
-        return result;
-    }, [props.reviewComments, props.filePath, props.previousFilePath, lines, reviewCommentSource]);
-    const labels = commentsByLineId.size > 0 ? buildReviewCommentLabels() : null;
-    const openFinding = React.useContext(ReviewFindingAnchorContext);
+    const renderSavedComments = useSavedReviewCommentLines({ comments: props.reviewComments,
+        filePath: props.filePath, previousFilePath: props.previousFilePath, source: reviewCommentSource, lines, serverId: props.serverId });
     const renderAfterLine = React.useCallback((line: CodeLine) => {
         const notes = props.renderAfterLine?.(line);
         const comments = controls?.renderAfterLine?.(line);
-        const saved = commentsByLineId.get(line.id);
-        return notes || comments || saved ? <>{notes}{labels && saved?.map(comment => openFinding && comment.finding
-            ? <ReviewFindingAnchor key={comment.id} comment={comment} onOpen={openFinding} />
-            : <ReviewCommentCard key={comment.id} comment={comment} serverId={props.serverId} labels={labels} />)}{comments}</> : null;
-    }, [controls?.renderAfterLine, props.renderAfterLine, commentsByLineId, props.serverId, labels, openFinding]);
+        const saved = renderSavedComments?.(line);
+        return notes || comments || saved ? <>{notes}{saved}{comments}</> : null;
+    }, [controls?.renderAfterLine, props.renderAfterLine, renderSavedComments]);
 
     return (
         <View style={viewport ?? undefined}>
@@ -202,7 +182,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
                 pressLineWhenNotSelectable={Boolean(controls?.onPressAddComment)}
                 onPressAddComment={controls?.onPressAddComment}
                 isCommentActive={controls?.isCommentActive}
-                renderAfterLine={props.renderAfterLine || commentsByLineId.size > 0 ? renderAfterLine : controls?.renderAfterLine}
+                renderAfterLine={props.renderAfterLine || renderSavedComments ? renderAfterLine : controls?.renderAfterLine}
                 showInactiveCommentAffordance={showInactiveCommentAffordance}
                 virtualized={virtualized}
                 wrapLines={effectiveWrapLines}

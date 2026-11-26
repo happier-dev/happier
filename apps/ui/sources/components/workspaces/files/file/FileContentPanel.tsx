@@ -24,6 +24,8 @@ import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildC
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { useNativeLineRangeState, type NativeLineRangeSelection } from '@/components/ui/code/selection/nativeLineRangeSelection';
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
+import { getSavedReviewFileNotes, SavedReviewCommentNotes, useSavedReviewCommentLines } from '@/components/ui/code/reviewComments/savedReviewComments';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { Typography } from '@/constants/Typography';
 import type { ReviewCommentAnchor, ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { t } from '@/text';
@@ -78,6 +80,7 @@ type FileContentPanelProps = {
     sessionId: string;
     workspaceScope?: WorkspaceScopeBase | null;
     filePath: string;
+    previousFilePath?: string;
     diffContent: string | null;
     /** Changes mode: per-change rows and the current change from the File page review owner. */
     hunks?: DiffViewerHunks;
@@ -99,7 +102,8 @@ type FileContentPanelProps = {
     reviewCommentsEnabled?: boolean;
     reviewCommentModeActive?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
-    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
+    reviewComments?: readonly ReviewCommentV1[];
+    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
     rangeSelectionActive?: boolean;
@@ -233,6 +237,7 @@ function FileContentPanelInner({
     sessionId: _sessionId,
     workspaceScope,
     filePath,
+    previousFilePath,
     diffContent,
     hunks,
     reviewUnits,
@@ -251,6 +256,7 @@ function FileContentPanelInner({
     reviewCommentsEnabled,
     reviewCommentModeActive,
     reviewCommentDrafts,
+    reviewComments,
     onUpsertReviewCommentDraft,
     onDeleteReviewCommentDraft,
     onReviewCommentError,
@@ -343,6 +349,7 @@ function FileContentPanelInner({
             lineSelectionEnabled === true
             || selectedLineKeys.size > 0
             || reviewCommentControlsEnabled
+            || (reviewComments?.length ?? 0) > 0
             || jumpToAnchor?.kind === 'diffLine'
             || jumpToAnchor?.kind === 'line'
             || jumpToAnchor?.kind === 'range'
@@ -375,6 +382,18 @@ function FileContentPanelInner({
         onDeleteDraft: onDeleteReviewCommentDraft,
         onError: onReviewCommentError,
     });
+    const renderSavedComments = useSavedReviewCommentLines({ comments: reviewComments, filePath, previousFilePath,
+        source: commentSource, lines, serverId: workspaceScope?.serverId });
+    const renderReviewComments = React.useCallback((line: CodeLine) => {
+        const saved = renderSavedComments?.(line);
+        const draft = reviewCommentControls?.renderAfterLine(line);
+        return saved || draft ? <>{saved}{draft}</> : null;
+    }, [renderSavedComments, reviewCommentControls?.renderAfterLine]);
+    const renderAfterLine = renderSavedComments ? renderReviewComments : reviewCommentControls?.renderAfterLine;
+    const savedFileNotes = React.useMemo(() => getSavedReviewFileNotes({ comments: reviewComments, filePath, previousFilePath }),
+        [reviewComments, filePath, previousFilePath]);
+    const reviewFileNotes = savedFileNotes.length > 0
+        ? <SavedReviewCommentNotes comments={savedFileNotes} serverId={workspaceScope?.serverId} /> : null;
     const reviewCommentLineActionsEnabled = codeGeometry.reviewLaneWidth > 0 && Boolean(reviewCommentControls);
     const handledCommentRangeKey = React.useRef<number | null>(null);
     React.useEffect(() => {
@@ -651,7 +670,8 @@ function FileContentPanelInner({
                 pressLineWhenNotSelectable={reviewCommentLineActionsEnabled || lineRangeAskEnabled}
                 onPressAddComment={reviewCommentLineActionsEnabled ? reviewCommentControls?.onPressAddComment : undefined}
                 isCommentActive={reviewCommentControls?.isCommentActive}
-                renderAfterLine={reviewCommentControls?.renderAfterLine}
+                renderAfterLine={renderAfterLine}
+                listHeader={reviewFileNotes}
                 renderLeadingLane={renderLeadingLane}
                 liveTint={liveTint}
                 agentPresence={agentPresence}
@@ -699,9 +719,9 @@ function FileContentPanelInner({
                 pressLineWhenNotSelectable={!lineSelectionEnabled && (reviewCommentLineActionsEnabled || lineRangeAskEnabled)}
                 onPressAddComment={reviewCommentControls?.onPressAddComment}
                 isCommentActive={reviewCommentControls?.isCommentActive}
-                renderAfterLine={reviewCommentControls?.renderAfterLine}
+                renderAfterLine={renderAfterLine}
                 renderLeadingLane={renderLeadingLane}
-                leadingContent={diffLeadingContent}
+                leadingContent={reviewFileNotes ? <>{reviewFileNotes}{diffLeadingContent}</> : diffLeadingContent}
                 contentPaddingHorizontal={CODE_CANVAS_CONTENT_PADDING}
                 contentPaddingVertical={CODE_CANVAS_CONTENT_PADDING}
                 externalScrollView={!effectiveDiffVirtualized && Platform.OS !== 'web' ? externalCodeScrollView : undefined}
