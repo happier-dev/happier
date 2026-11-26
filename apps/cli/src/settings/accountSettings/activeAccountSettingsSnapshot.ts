@@ -383,7 +383,11 @@ export function commitActiveAccountSettingsSnapshot(
     return { snapshot: previous, didCommit: false };
   }
   let accepted = preserveAccountCatalogsInSnapshot(previous, next);
-  const lifetimeChanged = !previous || !belongsToSameAccount(previous, accepted) || keyMaterialChanged;
+  // The first Settings read key is the canonical write key. Recovery-secret
+  // credentials additionally carry a legacy fallback; changing that fallback
+  // availability does not retire the Account admitted with the same canonical key.
+  const lifetimeChanged = !previous || !belongsToSameAccount(previous, accepted)
+    || !isDeepStrictEqual(previous.settingsSecretsReadKeys[0], accepted.settingsSecretsReadKeys[0]);
   if (lifetimeChanged) {
     slot.lifetimeToken = ++lifetimeTokenSequence;
     slot.acpCatalogRevision = undefined;

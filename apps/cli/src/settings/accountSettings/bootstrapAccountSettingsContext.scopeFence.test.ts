@@ -1,10 +1,11 @@
 import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol';
-import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
+import tweetnacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
@@ -14,6 +15,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { runAddedHostedSession, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { __resetApplyAccountSettingsToProcessEnvStateForTests } from '@/settings/applyAccountSettingsToProcessEnv';
 import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import {
   bootstrapAccountSettingsContext,
   applyAccountSettingsV2Update,
@@ -109,6 +111,53 @@ describe('bootstrapAccountSettingsContext active Account scope fence', () => {
       });
     }
   });
+
+  it.each(['same canonical key', 'rotated canonical key'] as const)(
+    'keeps an admitted Session Account current across credential forms only with the %s', async material => {
+      const secret = new Uint8Array(32).fill(7);
+      const token = accountToken('hosted-credential-forms', 1);
+      const firstCredentials: Credentials = { token, encryption: { type: 'legacy', secret } };
+      const nextSecret = material === 'same canonical key' ? secret : new Uint8Array(32).fill(8);
+      const machineKey = deriveAccountMachineKeyFromRecoverySecret(nextSecret);
+      const nextCredentials: Credentials = { token, encryption: { type: 'dataKey',
+        machineKey, publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey } };
+      const bootstrap = (credentials: Credentials, recoverySecret: Uint8Array, settingsVersion: number) => bootstrapAccountSettingsContext({
+        credentials, mode: 'blocking', refresh: 'force', expectedAccountEncryptionMode: 'e2ee',
+        // Substitute only Home HTTP/cache I/O; opening, publication and custody stay real.
+        deps: { readCache: async () => null, writeCache: async () => {}, fetchFromServer: async () => ({
+          settingsContent: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
+            material: { type: 'legacy', secret: recoverySecret }, payload: { themePreference: 'dark' },
+            randomBytes: length => new Uint8Array(length).fill(1) }) }, settingsVersion,
+        }) },
+      });
+      await runAddedHostedSession({ environment: {}, workingDirectory: join(serverDir, 'first-form'), end() {} }, async () => {
+        await bootstrap(firstCredentials, secret, 1);
+        const snapshot = getActiveAccountSettingsSnapshot()!;
+        const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+        const isCurrent = () => getActiveAccountSettingsSnapshotLifetimeToken() === lifetimeToken;
+        const operation = createInvocationSavedSecretOperationContextV1({ credentials: firstCredentials, snapshot,
+          serverHttpBaseUrl: 'https://credential-forms.test',
+          readSourceSnapshot: () => isCurrent() ? getActiveAccountSettingsSnapshot() : null,
+          isCurrent: async () => isCurrent() });
+        expect(snapshot.settingsSecretsReadKeys).toHaveLength(2);
+        await runAddedHostedSession({ environment: {}, workingDirectory: join(serverDir, 'second-form'), end() {} }, async () => {
+          const next = await bootstrap(nextCredentials, nextSecret, 2);
+          expect(next.settingsSecretsReadKeys).toHaveLength(1);
+          if (material === 'same canonical key') expect(next.settingsSecretsReadKeys[0]).toEqual(snapshot.settingsSecretsReadKeys[0]);
+          else expect(next.settingsSecretsReadKeys[0]).not.toEqual(snapshot.settingsSecretsReadKeys[0]);
+        });
+        if (material === 'same canonical key') {
+          expect(operation.readSnapshot()).toMatchObject({ settingsVersion: 2, source: 'network' });
+          expect(await operation.isCurrent()).toBe(true);
+          expect(getActiveAccountSettingsSnapshotLifetimeToken()).toBe(lifetimeToken);
+        } else {
+          expect(operation.readSnapshot()).toBeNull();
+          expect(await operation.isCurrent()).toBe(false);
+          expect(getActiveAccountSettingsSnapshotLifetimeToken()).not.toBe(lifetimeToken);
+        }
+      });
+    },
+  );
 
   it('re-reads Settings for a later hosted Session with new material for the same Account', async () => {
     const start = (secretByte: number, settingsVersion: number) => runAddedHostedSession({
