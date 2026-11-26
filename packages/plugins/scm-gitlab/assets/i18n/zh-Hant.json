@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "要求變更",
   "plugins.gitlab.ui.publication.summary": "審查摘要",
   "plugins.gitlab.ui.publication.submit": "送出審查",
-  "plugins.gitlab.ui.publication.createComment": "發布所選留言",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "繼續，不發布現有草稿",
   "plugins.gitlab.ui.publication.reply.title": "發布建議的回覆",
   "plugins.gitlab.ui.publication.reply.proposal": "建議的回覆",

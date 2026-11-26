@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "Poproś o zmiany",
   "plugins.gitlab.ui.publication.summary": "Podsumowanie przeglądu",
   "plugins.gitlab.ui.publication.submit": "Wyślij przegląd",
-  "plugins.gitlab.ui.publication.createComment": "Opublikuj wybrany komentarz",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "Kontynuuj bez publikowania istniejących szkiców",
   "plugins.gitlab.ui.publication.reply.title": "Opublikuj proponowaną odpowiedź",
   "plugins.gitlab.ui.publication.reply.proposal": "Proponowana odpowiedź",

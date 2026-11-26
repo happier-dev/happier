@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "Запросить изменения",
   "plugins.gitlab.ui.publication.summary": "Итог ревью",
   "plugins.gitlab.ui.publication.submit": "Отправить ревью",
-  "plugins.gitlab.ui.publication.createComment": "Опубликовать выбранный комментарий",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "Продолжить, не публикуя существующие черновики",
   "plugins.gitlab.ui.publication.reply.title": "Опубликовать предложенный ответ",
   "plugins.gitlab.ui.publication.reply.proposal": "Предложенный ответ",

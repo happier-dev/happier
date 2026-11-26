@@ -13505,6 +13505,8 @@ const de: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `Alle ${count} anzeigen`,
         caughtUp: "Keine Entscheidung von dir nötig",
         columnEmpty: "Hier erscheinen Reviews, die du startest, und die, die Automationen starten.",
+        noneOpenTitle: "Kein Review geöffnet",
+        noneOpenDescription: "Wähle eines aus der Liste oder starte ein Review.",
         noProject: "Ohne Projekt",
         search: 'Reviews durchsuchen',
         filteredWithinLoaded: 'Gefiltert in den geladenen Reviews',

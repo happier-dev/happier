@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "Demana canvis",
   "plugins.gitlab.ui.publication.summary": "Resum de la revisió",
   "plugins.gitlab.ui.publication.submit": "Envia la revisió",
-  "plugins.gitlab.ui.publication.createComment": "Publica el comentari seleccionat",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "Continua sense publicar els esborranys existents",
   "plugins.gitlab.ui.publication.reply.title": "Publica una resposta proposada",
   "plugins.gitlab.ui.publication.reply.proposal": "Resposta proposada",

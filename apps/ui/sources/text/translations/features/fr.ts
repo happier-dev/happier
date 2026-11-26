@@ -13520,6 +13520,8 @@ const fr: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `Tout afficher (${count})`,
         caughtUp: "Aucune décision à prendre",
         columnEmpty: "Les revues que vous lancez, et celles que lancent les automatisations, apparaissent ici.",
+        noneOpenTitle: "Aucune revue ouverte",
+        noneOpenDescription: "Choisis-en une dans la liste ou lance une revue.",
         noProject: "Sans projet",
         search: 'Rechercher des revues',
         filteredWithinLoaded: 'Filtré parmi les revues chargées',

@@ -13534,6 +13534,8 @@ const ru: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `Показать все (${count})`,
         caughtUp: "Ваше решение не требуется",
         columnEmpty: "Здесь появляются проверки, которые запускаете вы и автоматизации.",
+        noneOpenTitle: "Ревью не открыто",
+        noneOpenDescription: "Выберите ревью в списке или начните новое.",
         noProject: "Без проекта",
         search: 'Искать проверки',
         filteredWithinLoaded: 'Отфильтровано среди загруженных проверок',

@@ -18,6 +18,7 @@ import { CollectionSearchToggle } from '@/components/ui/lists/collection/Collect
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
@@ -63,7 +64,11 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
     const focused = useIsFocused();
     const presented = useLayoutPresentationActive();
     const { columnVisible } = useAppShellColumn();
-    const overview = surface === 'hub' || surface === 'home' && columnVisible;
+    // Beside the Reviews column the column is the list, so the page holds no second copy of it (the Projects and
+    // Discussions index pattern): it says no Review is open and offers to start one. Collapsed, or on a phone, the page
+    // is the list. Home's section is the overview: what waits on the person, then running.
+    const besideColumn = surface === 'home' && columnVisible;
+    const overview = surface === 'hub';
     const view = useReviewsCollectionView(focused, surface === 'home');
     const { list } = view;
     const router = useRouter();
@@ -162,7 +167,25 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
         {homeNotice}{list.items?.length ? failure : null}{collection}
     </CoreCollectionScope>;
     return <ReviewsCollectionPage view={view} failure={failure} homeNotice={homeNotice}
-        startReview={scope && list.items?.length ? startReview : undefined}>{collection}</ReviewsCollectionPage>;
+        startReview={scope && list.items?.length && !besideColumn ? startReview : undefined}>
+        {besideColumn ? <ReviewsNoneOpen hasReviews={list.items === null ? null : list.items.length > 0}
+            startReview={scope ? startReview : undefined} /> : collection}
+    </ReviewsCollectionPage>;
+}
+
+/**
+ * `/reviews` beside the Reviews column: no Review is open. With none yet, the page owns the first-run invitation (the
+ * column says one line); otherwise it asks for one from the list and offers Start a review. It never opens one itself.
+ */
+function ReviewsNoneOpen({ hasReviews, startReview }: Readonly<{ hasReviews: boolean | null; startReview?: () => void }>): React.ReactElement | null {
+    if (hasReviews === null) return null;
+    if (!hasReviews) return <ReviewsEmptyInvitation iconName={REVIEWS_GLYPH} startReview={startReview} />;
+    return <View testID="reviews:none-open" style={styles.noneOpen}>
+        <EmptyState layout="page" iconName={REVIEWS_GLYPH} title={t('reviewWalkthrough.collection.noneOpenTitle')}
+            subtitle={t('reviewWalkthrough.collection.noneOpenDescription')}
+            {...(startReview ? { primaryAction: { label: t('reviewWalkthrough.detail.startReview'), onPress: startReview,
+                testID: 'reviews:start' } } : {})} />
+    </View>;
 }
 
 /**
@@ -250,6 +273,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx },
     controlLinePhone: { paddingTop: theme.space.s8 },
     grow: { flex: 1 },
+    noneOpen: { flexGrow: 1, justifyContent: 'center', paddingVertical: theme.space.s24 },
     strip: { flex: 1, minWidth: 0 },
     stripLine: { paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx, paddingTop: theme.space.s8 },
     searchLine: { gap: theme.space.s4, paddingTop: theme.space.s8, paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx },

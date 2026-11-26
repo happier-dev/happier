@@ -13393,6 +13393,8 @@ const zhHans: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `显示全部 ${count} 个`,
         caughtUp: "暂无需要你决定的事项",
         columnEmpty: "你发起的审阅，以及自动化发起的审阅，会显示在这里。",
+        noneOpenTitle: "未打开评审",
+        noneOpenDescription: "从列表中选择一个，或开始评审。",
         noProject: "无项目",
         search: '搜索审阅',
         filteredWithinLoaded: '在已加载的审阅中筛选',

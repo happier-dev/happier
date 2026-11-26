@@ -13495,6 +13495,8 @@ const pt: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `Mostrar todas (${count})`,
         caughtUp: "Nada precisa da sua decisão",
         columnEmpty: "As revisões que você inicia, e as que as automações iniciam, aparecem aqui.",
+        noneOpenTitle: "Nenhuma revisão aberta",
+        noneOpenDescription: "Escolha uma na lista ou inicie uma revisão.",
         noProject: "Sem projeto",
         search: 'Pesquisar revisões',
         filteredWithinLoaded: 'Filtrado nas revisões carregadas',

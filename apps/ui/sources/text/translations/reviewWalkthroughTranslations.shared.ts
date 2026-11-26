@@ -123,6 +123,8 @@ export type ReviewWalkthroughTranslations = {
         showAll: (params: Count) => string;
         caughtUp: string;
         columnEmpty: string;
+        noneOpenTitle: string;
+        noneOpenDescription: string;
         noProject: string;
         search: string;
         filteredWithinLoaded: string;
@@ -424,6 +426,8 @@ export const en: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `Show all ${count}`,
         caughtUp: 'Nothing needs your decision',
         columnEmpty: "Reviews you start, and the ones automations start, show here.",
+        noneOpenTitle: 'No review open',
+        noneOpenDescription: 'Choose one from the list, or start a review.',
         noProject: 'Without a project',
         search: 'Search reviews',
         filteredWithinLoaded: 'Filtered within the loaded reviews',

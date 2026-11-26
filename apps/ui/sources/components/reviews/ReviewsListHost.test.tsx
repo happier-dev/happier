@@ -237,14 +237,18 @@ describe('/reviews live host', () => {
         </PluginSurfaceFocusEligibilityProvider>;
         const screen = await renderScreen(page(true));
         try {
-            await reportCollectionLayout(screen, 'reviews:list');
-            await vi.waitFor(() => expect(screen.findHostByTestId('reviews:row:needs')).not.toBeNull());
-            expect(screen.findHostByTestId('reviews:row:running')).not.toBeNull();
             if (columnVisible) {
-                expect(screen.findHostByTestId('reviews:row:finished')).toBeNull();
-                expect(screen.findHostByTestId('reviews:row:elsewhere')).toBeNull();
-                expect(screen.getTextContent()).toContain('Needs your decision');
+                // Beside the column the column is the list: the page holds no second copy (Projects/Discussions pattern).
                 await reportCollectionLayout(screen, 'reviews:column');
+                await vi.waitFor(() => expect(screen.findByTestId('reviews:none-open')).not.toBeNull());
+                expect(screen.findByTestId('reviews:list')).toBeNull();
+                expect(screen.findHostByTestId('reviews:row:needs')).toBeNull();
+                expect(screen.getTextContent()).toContain(t('reviewWalkthrough.collection.noneOpenTitle'));
+                expect(screen.findAllHostsByTestId('reviews:start')).toHaveLength(1);
+            } else {
+                await reportCollectionLayout(screen, 'reviews:list');
+                await vi.waitFor(() => expect(screen.findHostByTestId('reviews:row:needs')).not.toBeNull());
+                expect(screen.findHostByTestId('reviews:row:running')).not.toBeNull();
             }
             const prefix = columnVisible ? 'reviews:column:row' : 'reviews:row';
             await vi.waitFor(() => expect(screen.findHostByTestId(`${prefix}:finished`)).not.toBeNull());

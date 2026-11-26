@@ -19,7 +19,7 @@ import {
 import type { GithubRepositoryCapabilitiesV1 } from '../../triage/capabilities.js';
 import {
   buildGithubIssueCommentInputV1, buildGithubPullRequestThreadReplyInputV1,
-  buildGithubPullRequestReviewCommentCreateInputV1, buildGithubPullRequestReviewPublicationInputV1,
+  buildGithubPullRequestReviewPublicationInputV1,
   type GithubMutationResultV1,
 } from './mutations.js';
 import type { GithubReadStateV1 } from './panelState.js';
@@ -30,7 +30,6 @@ type PublicationWriteControlProps = Readonly<{
   localId: string;
   payload: NonNullable<ReturnType<typeof buildGithubIssueCommentInputV1>>
     | NonNullable<ReturnType<typeof buildGithubPullRequestThreadReplyInputV1>>
-    | NonNullable<ReturnType<typeof buildGithubPullRequestReviewCommentCreateInputV1>>
     | NonNullable<ReturnType<typeof buildGithubPullRequestReviewPublicationInputV1>> | null;
   title: string;
   titleKey?: string;
@@ -266,37 +265,6 @@ export function PullRequestReviewPublicationWrite({
       : buildGithubPullRequestReviewPublicationInputV1(input, publication.plan),
     [input, publication, publish.blocked],
   );
-  const standaloneCommentPlan = React.useMemo<ReviewCommentPublicationPlanV1 | null>(() => {
-    if (proposalRead !== 'ready') return null;
-    const revision = input.observation.snapshot.reviewRevision;
-    const proposal = proposals.find((candidate) => selectedIds.includes(candidate.id));
-    if (revision === undefined || selectedIds.length !== 1 || proposal === undefined
-      || typeof proposal.body !== 'string'
-    ) return null;
-    return parseReviewCommentPublicationPlanV1({
-      target: Object.freeze({
-        providerId: 'github',
-        ...githubReviewPublicationCredential(input.instance.binding),
-        subtarget: null,
-        entryRef: Object.freeze({
-          sourceId: `${GITHUB_PLUGIN_ID}/github-forge`,
-          kindId: input.observation.entryRef.kindId,
-          collisionScope: input.observation.entryRef.collisionScope,
-          entryId: input.observation.entryRef.entryId,
-        }),
-      }),
-      baseRevision: revision.baseSha,
-      headRevision: revision.headSha,
-      entries: Object.freeze([buildReviewCommentPublicationEntryV1(proposal)]),
-      verdict: null,
-    });
-  }, [input, proposalRead, proposals, selectedIds]);
-  const standaloneCommentPayload = React.useMemo(
-    () => standaloneCommentPlan === null
-      ? null
-      : buildGithubPullRequestReviewCommentCreateInputV1(input, standaloneCommentPlan),
-    [input, standaloneCommentPlan],
-  );
   // Why Publish cannot run, from the same facts the plan above is built from.
   const blocked: ReviewPublicationBlockedCause | null = proposalRead === 'loading' ? 'proposalsLoading'
     : proposalRead === 'failed' ? 'proposalsFailed'
@@ -355,29 +323,17 @@ export function PullRequestReviewPublicationWrite({
         : null}
       preview={publication?.summary ?? null}
       inlineCommentCount={publication?.plan.entries.length ?? selected.length}
-      // The quieter standalone comment first, Publish last: the one filled control ends the row.
-      actions={<>
-        <WriteControl
-          localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReviewCommentCreate}
-          payload={standaloneCommentPayload}
-          title="Publish selected comment"
-          titleKey="plugins.github.mutations.reviewCommentCreate.confirmation.confirmLabel"
-          parseResult={parseReviewPublicationResult}
-          onObserved={onObserved}
-          capabilities={capabilities}
-          operation="pullRequestReviewCommentCreate"
-        />
-        <WriteControl
-          localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview}
-          payload={payload}
-          title={publish.title}
-          variant="primary"
-          parseResult={parseReviewPublicationResult}
-          onObserved={onObserved}
-          capabilities={capabilities}
-          operation="pullRequestSubmitReview"
-        />
-      </>}
+      // One publish action, named for what the plan posts (UI refinements 2026-11-26 09:26Z).
+      actions={<WriteControl
+        localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview}
+        payload={payload}
+        title={publish.title}
+        variant="primary"
+        parseResult={parseReviewPublicationResult}
+        onObserved={onObserved}
+        capabilities={capabilities}
+        operation="pullRequestSubmitReview"
+      />}
     />
   );
 }

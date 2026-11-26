@@ -13533,6 +13533,8 @@ const pl: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `Pokaż wszystkie (${count})`,
         caughtUp: "Nic nie wymaga Twojej decyzji",
         columnEmpty: "Tu pojawiają się recenzje, które uruchomisz, i te uruchomione przez automatyzacje.",
+        noneOpenTitle: "Brak otwartej recenzji",
+        noneOpenDescription: "Wybierz jedną z listy lub rozpocznij recenzję.",
         noProject: "Bez projektu",
         search: 'Szukaj recenzji',
         filteredWithinLoaded: 'Przefiltrowane wśród wczytanych recenzji',

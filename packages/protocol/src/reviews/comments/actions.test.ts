@@ -43,7 +43,7 @@ describe('review comment operation contracts', () => {
         'Please address the timeout.',
         '**Blockers**\n- [Timeout can overflow](https://forge.test/pull/1#thread-7)',
         '1 nit',
-        'Quality: 3/5 (median). Reviewer scores: Claude 2, Codex 5.',
+        'Quality: 3/5 (median of 2). Reviewer scores: Claude 2, Codex 5.',
       ].join('\n\n'),
       walkthrough: { title: 'Walkthrough · 1 stop', markdown: '- **Back off.** Retries wait longer.' },
       footerMarkdown: [
@@ -62,7 +62,7 @@ Please address the timeout.
 
 1 nit
 
-Quality: 3/5 (median). Reviewer scores: Claude 2, Codex 5.
+Quality: 3/5 (median of 2). Reviewer scores: Claude 2, Codex 5.
 
 <details>
 <summary>Walkthrough · 1 stop</summary>
@@ -74,6 +74,16 @@ Quality: 3/5 (median). Reviewer scores: Claude 2, Codex 5.
 [Open in Happier](https://cloud.happier.dev/artifacts/review-1) · [Fix in Happier](https://cloud.happier.dev/artifacts/review-1?thread=finding-7)
 
 Reviewed with Happier`);
+  });
+
+  it('names the aggregation only when several reviewers scored the round', () => {
+    const summary = (reviewers: readonly { displayName: string; score: number }[]) => buildReviewPublicationSummaryV1({
+      verdict: { kind: 'comment', body: 'Looks fine.' }, headRevision: '4f2c1a9', findings: [],
+      quality: { aggregation: 'lowest', score: 2, reviewers },
+    }).bodyMarkdown;
+    expect(summary([{ displayName: 'Luna', score: 2 }])).toContain('Quality: 2/5. Reviewer scores: Luna 2.');
+    expect(summary([{ displayName: 'Luna', score: 2 }, { displayName: 'Codex', score: 4 }]))
+      .toContain('Quality: 2/5 (lowest of 2). Reviewer scores: Luna 2, Codex 4.');
   });
 
   it('accepts an explicit selected finding set, including an empty selection', () => {

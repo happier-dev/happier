@@ -13453,6 +13453,8 @@ const ja: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `すべて表示（${count}）`,
         caughtUp: "判断が必要なものはありません",
         columnEmpty: "あなたが開始したレビューと、オートメーションが開始したレビューがここに表示されます。",
+        noneOpenTitle: "開いているレビューはありません",
+        noneOpenDescription: "一覧から選ぶか、レビューを開始しましょう。",
         noProject: "プロジェクトなし",
         search: 'レビューを検索',
         filteredWithinLoaded: '読み込んだレビューの中で絞り込み',

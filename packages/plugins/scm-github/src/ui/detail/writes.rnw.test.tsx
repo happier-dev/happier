@@ -372,6 +372,16 @@ async function openPublication(detail: PluginUiTestkit): Promise<void> {
   await act(async () => { await detail.press(await detail.findByRole('button', { name: 'Publish review' })); });
 }
 
+/** The Publish step's summary, typed the way the Markdown editor takes it. */
+async function writePublicationSummary(markdown: string): Promise<void> {
+  const box = [...document.querySelectorAll('textarea')].find((area) => area.getAttribute('aria-label') === 'Summary');
+  if (!box) throw new Error('Expected the Publish summary editor');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, markdown);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 async function waitForPublicationProposalRead(
   detail: PluginUiTestkit,
   role: 'checkbox' | 'radio' = 'checkbox',
@@ -999,9 +1009,9 @@ describe('the mounted GitHub write controls', () => {
 
     // Publishing is one task: its step replaces the pull request's other changes, and Cancel gives them back.
     await waitForPublicationProposalRead(detail);
-    for (const name of ['Publish 1 comment', 'Publish selected comment']) {
-      expect(actionHost(detail).presentation(name)).toBeDefined();
-    }
+    // One publish action, named for what it posts: no standalone twin beside it.
+    expect(actionHost(detail).presentation('Publish 1 comment')).toBeDefined();
+    expect(actionHost(detail).presentation('Publish selected comment')).toBeUndefined();
     expect(actionHost(detail).presentation('Close pull request')).toBeUndefined();
     await expect(detail.findByRole('checkbox', { name: 'The implementation is ready to merge.' }))
       .resolves.toMatchObject({ state: { checked: true } });
@@ -1020,6 +1030,8 @@ describe('the mounted GitHub write controls', () => {
     await expect(detail.findByRole('checkbox', { name: 'The implementation is ready to merge.' }))
       .resolves.toMatchObject({ state: { checked: true } });
     expect(actionHost(detail).presentation('Publish 1 comment')?.disabled).toBe(true);
+    // The reason stands beside the disabled control, with what to do.
+    await expect(detail.getByText('Write a summary to publish.')).resolves.toBeDefined();
     await expect(act(async () => { await actionHost(detail).press('Publish 1 comment'); })).rejects.toThrow();
     expect(recorded.filter((entry) => typeof entry.action === 'object')).toHaveLength(0);
   });
@@ -1035,8 +1047,6 @@ describe('the mounted GitHub write controls', () => {
       await detail.press(await detail.findByRole('radio', { name: 'Approve' }));
     });
     expect(actionHost(detail).presentation('Publish 1 comment')?.disabled).toBe(true);
-    // The reason stands beside the disabled control, with what to do.
-    await expect(detail.getByText('Write a summary to publish.')).resolves.toBeDefined();
     await expect(act(async () => { await actionHost(detail).press('Publish 1 comment'); })).rejects.toThrow();
     expect(recorded.filter((entry) => typeof entry.action === 'object')).toHaveLength(0);
   });
@@ -1091,9 +1101,10 @@ describe('the mounted GitHub write controls', () => {
         },
       },
     } as JsonValue;
-    await openPublication(detail);
+    await waitForPublicationProposalRead(detail);
+    await writePublicationSummary('Two notes before merging.');
     await act(async () => {
-      await actionHost(detail).press('Publish selected comment');
+      await actionHost(detail).press('Publish 1 comment');
     });
     await expect(detail.getByText(
       '1/2 review comments published; 1 unconfirmed; 0 not published. Verdict published.',
@@ -1123,9 +1134,10 @@ describe('the mounted GitHub write controls', () => {
         verdict: { kind: 'notRequested' },
       },
     } as JsonValue;
-    await openPublication(detail);
+    await waitForPublicationProposalRead(detail);
+    await writePublicationSummary('Two notes before merging.');
     await act(async () => {
-      await actionHost(detail).press('Publish selected comment');
+      await actionHost(detail).press('Publish 1 comment');
     });
     await expect(detail.getByText('Review partially published')).resolves.toMatchObject({
       content: 'Review partially published',

@@ -372,7 +372,6 @@ export function GitlabMergeRequestPublicationControls({
   const text = usePluginTranslation();
   const completePostMutation = useTriagePostMutationCompletion();
   const [submitExecution, setSubmitExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
-  const [createExecution, setCreateExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [selectedIds, setSelectedIds] = useReviewPublicationSelection(proposals.proposals);
   const [verdict, setVerdict] = React.useState<GitlabVerdictChoice>('none');
   const [summary, setSummary] = React.useState('');
@@ -440,9 +439,6 @@ export function GitlabMergeRequestPublicationControls({
       verdictValue,
       acknowledgement,
     );
-  const createPayload = selected.length === 1
-    ? buildGitlabMergeRequestReviewCommentCreateInputV1(input, selected[0]!)
-    : null;
 
   const submitControl = (payload: NonNullable<typeof submitPayload>): PluginUiActionControlController => ({
     prepare() {
@@ -462,18 +458,6 @@ export function GitlabMergeRequestPublicationControls({
       void completeTriagePostMutationIfNeeded(completePostMutation, settled, publicationMayHaveChanged);
     },
   });
-  const createControl: PluginUiActionControlController = {
-    prepare() {
-      if (createPayload === null) return null;
-      setCreateExecution({ status: 'pending' });
-      return { input: createPayload };
-    },
-    onSettled(execution) {
-      const settled = projectPluginActionControlExecutionV1(execution, text);
-      setCreateExecution(settled);
-      void completeTriagePostMutationIfNeeded(completePostMutation, settled, publicationMayHaveChanged);
-    },
-  };
 
   // Why Publish cannot run, from the same facts the plan above is built from.
   const blocked: ReviewPublicationBlockedCause | null = submitPayload !== null && !verdictNeedsBody && acknowledgement === null
@@ -518,29 +502,17 @@ export function GitlabMergeRequestPublicationControls({
           : null}
         preview={submitPayload?.publicationPlan.verdict && publication ? publication.summary : null}
         inlineCommentCount={submitPayload?.publicationPlan.entries.length ?? selected.length}
-        // The quieter standalone comment first, Publish last: the one filled control ends the row.
-        actions={<>
-          <Action.Control
-            title={text('plugins.gitlab.ui.publication.createComment', 'Publish selected comment')}
-            variant="secondary"
-            disabled={createPayload === null}
-            action={{
-              pluginId: GITLAB_PLUGIN_ID,
-              localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate,
-            }}
-            controller={createControl}
-          />
-          <Action.Control
-            title={publish.title}
-            variant="primary"
-            disabled={blocked !== null}
-            action={{
-              pluginId: GITLAB_PLUGIN_ID,
-              localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
-            }}
-            controller={submitPayload === null ? { prepare: () => null, onSettled() {} } : submitControl(submitPayload)}
-          />
-        </>}
+        // One publish action, named for what the plan posts (UI refinements 2026-11-26 09:26Z).
+        actions={<Action.Control
+          title={publish.title}
+          variant="primary"
+          disabled={blocked !== null}
+          action={{
+            pluginId: GITLAB_PLUGIN_ID,
+            localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
+          }}
+          controller={submitPayload === null ? { prepare: () => null, onSettled() {} } : submitControl(submitPayload)}
+        />}
       />
       <PublicationOutcome execution={submitExecution} />
       {acknowledgedPayload === null ? null : (
@@ -557,7 +529,6 @@ export function GitlabMergeRequestPublicationControls({
           controller={submitControl(acknowledgedPayload)}
         />
       )}
-      <PublicationOutcome execution={createExecution} />
     </Stack>
   );
 }

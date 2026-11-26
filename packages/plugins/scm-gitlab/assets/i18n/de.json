@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "Änderungen anfordern",
   "plugins.gitlab.ui.publication.summary": "Review-Zusammenfassung",
   "plugins.gitlab.ui.publication.submit": "Review absenden",
-  "plugins.gitlab.ui.publication.createComment": "Ausgewählten Kommentar veröffentlichen",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "Fortfahren, ohne vorhandene Entwürfe zu veröffentlichen",
   "plugins.gitlab.ui.publication.reply.title": "Vorgeschlagene Antwort veröffentlichen",
   "plugins.gitlab.ui.publication.reply.proposal": "Vorgeschlagene Antwort",

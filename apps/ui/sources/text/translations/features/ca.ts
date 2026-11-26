@@ -13501,6 +13501,8 @@ const ca: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `Mostra-les totes (${count})`,
         caughtUp: "Res no necessita la teva decisió",
         columnEmpty: "Aquí apareixen les revisions que inicies i les que inicien les automatitzacions.",
+        noneOpenTitle: "Cap revisió oberta",
+        noneOpenDescription: "Tria'n una de la llista o comença una revisió.",
         noProject: "Sense projecte",
         search: 'Cerca revisions',
         filteredWithinLoaded: 'Filtrat dins de les revisions carregades',

@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "変更をリクエスト",
   "plugins.gitlab.ui.publication.summary": "レビューの概要",
   "plugins.gitlab.ui.publication.submit": "レビューを送信",
-  "plugins.gitlab.ui.publication.createComment": "選択したコメントを公開",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "既存の下書きを公開せずに続行",
   "plugins.gitlab.ui.publication.reply.title": "提案された返信を公開",
   "plugins.gitlab.ui.publication.reply.proposal": "提案された返信",

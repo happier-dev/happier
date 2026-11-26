@@ -356,8 +356,11 @@ export function buildReviewPublicationSummaryV1(input: ReviewPublicationSummaryI
     ? [`**${title}**`, ...entries.map(finding => `- ${publicationLink(publicationText(finding.title), finding.href)}`)].join('\n')
     : '';
   const quality = presentReviewRoundQualityV1(input.quality ?? null);
+  // The aggregation names how several scores became one; with one scored reviewer there is nothing to aggregate.
   const qualityLine = quality ? [
-    `Quality: ${quality.displayScore}/5 (${quality.aggregation}).`,
+    quality.reviewers.length > 1
+      ? `Quality: ${quality.displayScore}/5 (${quality.aggregation} of ${quality.reviewers.length}).`
+      : `Quality: ${quality.displayScore}/5.`,
     `Reviewer scores: ${quality.reviewers.map(({ displayName, score }) => displayName ? `${publicationText(displayName)} ${score}` : `${score}`).join(', ')}.`,
   ].join(' ') : '';
   const stops = walkthrough?.map(stop => {

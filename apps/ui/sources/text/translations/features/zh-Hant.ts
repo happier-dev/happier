@@ -13393,6 +13393,8 @@ const zhHant: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `顯示全部 ${count} 個`,
         caughtUp: "暫無需要你決定的事項",
         columnEmpty: "你發起的審閱，以及自動化發起的審閱，會顯示在這裡。",
+        noneOpenTitle: "未開啟審查",
+        noneOpenDescription: "從清單中選擇一個，或開始審查。",
         noProject: "無專案",
         search: '搜尋審閱',
         filteredWithinLoaded: '在已載入的審閱中篩選',

@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "Richiedi modifiche",
   "plugins.gitlab.ui.publication.summary": "Riepilogo della revisione",
   "plugins.gitlab.ui.publication.submit": "Invia revisione",
-  "plugins.gitlab.ui.publication.createComment": "Pubblica il commento selezionato",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "Continua senza pubblicare le bozze esistenti",
   "plugins.gitlab.ui.publication.reply.title": "Pubblica una risposta proposta",
   "plugins.gitlab.ui.publication.reply.proposal": "Risposta proposta",

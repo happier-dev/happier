@@ -13400,6 +13400,8 @@ const es: ReviewWalkthroughTranslations = {
         showAll: ({ count }) => `Mostrar todas (${count})`,
         caughtUp: "Nada necesita tu decisión",
         columnEmpty: "Aquí aparecen las revisiones que inicias y las que inician las automatizaciones.",
+        noneOpenTitle: "Ninguna revisión abierta",
+        noneOpenDescription: "Elige una de la lista o empieza una revisión.",
         noProject: "Sin proyecto",
         search: 'Buscar revisiones',
         filteredWithinLoaded: 'Filtrado dentro de las revisiones cargadas',

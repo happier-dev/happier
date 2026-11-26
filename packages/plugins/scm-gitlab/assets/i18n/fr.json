@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "Demander des modifications",
   "plugins.gitlab.ui.publication.summary": "Résumé de la revue",
   "plugins.gitlab.ui.publication.submit": "Envoyer la revue",
-  "plugins.gitlab.ui.publication.createComment": "Publier le commentaire sélectionné",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "Continuer sans publier les brouillons existants",
   "plugins.gitlab.ui.publication.reply.title": "Publier une réponse proposée",
   "plugins.gitlab.ui.publication.reply.proposal": "Réponse proposée",

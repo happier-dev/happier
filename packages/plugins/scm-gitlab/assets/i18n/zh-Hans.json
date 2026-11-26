@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "请求更改",
   "plugins.gitlab.ui.publication.summary": "评审摘要",
   "plugins.gitlab.ui.publication.submit": "提交评审",
-  "plugins.gitlab.ui.publication.createComment": "发布所选评论",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "继续，不发布现有草稿",
   "plugins.gitlab.ui.publication.reply.title": "发布建议的回复",
   "plugins.gitlab.ui.publication.reply.proposal": "建议的回复",

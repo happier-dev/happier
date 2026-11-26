@@ -270,7 +270,6 @@
   "plugins.gitlab.ui.publication.verdict.requestChanges": "Request changes",
   "plugins.gitlab.ui.publication.summary": "Review summary",
   "plugins.gitlab.ui.publication.submit": "Submit review",
-  "plugins.gitlab.ui.publication.createComment": "Publish selected comment",
   "plugins.gitlab.ui.publication.continueWithoutDrafts": "Continue without publishing existing drafts",
   "plugins.gitlab.ui.publication.reply.title": "Publish a proposed reply",
   "plugins.gitlab.ui.publication.reply.proposal": "Proposed reply",

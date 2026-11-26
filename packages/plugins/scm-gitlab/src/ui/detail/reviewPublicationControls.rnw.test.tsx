@@ -365,7 +365,7 @@ describe('mounted GitLab Review publication controls', () => {
     await expect(mergeRequest.findByRole('checkbox', { name: PROPOSAL.body })).resolves.toMatchObject({
       state: { checked: true },
     });
-    for (const name of ['Publish 1 comment', 'Publish selected comment', 'Publish reply']) {
+    for (const name of ['Publish 1 comment', 'Publish reply']) {
       await expect(Promise.resolve(mergeRequest.controls.presentation(name))).resolves.toBeDefined();
     }
 
@@ -388,10 +388,10 @@ describe('mounted GitLab Review publication controls', () => {
     await expect(Promise.resolve(issue.controls.presentation('Publish comment'))).resolves.toBeDefined();
   });
 
-  it('mounts and dispatches submit-review plus standalone review-comment-create', async () => {
+  it('mounts and dispatches one submit-review action, with no standalone comment twin', async () => {
     const detail = await mountControl('merge-request');
     await expect(Promise.resolve(detail.controls.presentation('Publish 1 comment'))).resolves.toBeDefined();
-    await expect(Promise.resolve(detail.controls.presentation('Publish selected comment'))).resolves.toBeDefined();
+    expect(detail.controls.presentation('Publish selected comment')).toBeUndefined();
     await expect(detail.getByRole('checkbox', { name: PROPOSAL.body })).resolves.toMatchObject({
       state: { checked: true },
     });
@@ -409,13 +409,7 @@ describe('mounted GitLab Review publication controls', () => {
         },
       },
     });
-
-    await act(async () => detail.controls.press('Publish selected comment'));
-    expect(recorded.at(-1)).toMatchObject({
-      action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate),
-      input: { publicationPlan: { entries: [{ happierCommentId: PROPOSAL.id }], verdict: null } },
-    });
-    expect(completed).toBe(2);
+    expect(completed).toBe(1);
   });
 
   it('offers Request changes and requires a summary before publishing a verdict', async () => {
@@ -448,7 +442,7 @@ describe('mounted GitLab Review publication controls', () => {
       box.dispatchEvent(new Event('input', { bubbles: true }));
     });
     const readPreview = () => document.body.querySelector('[data-testid="gitlab-review-publication-preview"]')?.textContent;
-    await vi.waitFor(() => expect(readPreview()).toContain('Quality: 3/5 (median). Reviewer scores: Claude 2, Codex 5.'));
+    await vi.waitFor(() => expect(readPreview()).toContain('Quality: 3/5 (median of 2). Reviewer scores: Claude 2, Codex 5.'));
     const walkthroughLabel = 'Walkthrough · 1 stop';
     if (withWalkthrough) {
       const fold = await detail.getByRole('button', { name: walkthroughLabel });
@@ -478,7 +472,7 @@ describe('mounted GitLab Review publication controls', () => {
       `Head: ${HEAD}`,
       authored,
       '**Should fix**\n- Keep retry state consistent',
-      'Quality: 3/5 (median). Reviewer scores: Claude 2, Codex 5.',
+      'Quality: 3/5 (median of 2). Reviewer scores: Claude 2, Codex 5.',
       ...(withWalkthrough ? [`<details>\n<summary>${walkthroughLabel}</summary>\n\n- **Retry ownership.** The new scheduler owns retries.\n\n</details>`] : []),
       '[Open in Happier](https://cloud.happier.dev/artifacts/selected-review) · [Fix in Happier](https://cloud.happier.dev/artifacts/selected-review?thread=review-comment-1)',
       'Reviewed with Happier',
