@@ -13,7 +13,7 @@ type MachineDetailsHome = {
         machineListRequests: number;
         readMachines: (() => Promise<readonly Machine[]>) | null;
         beforeSessionRead: (() => Promise<void>) | null;
-        beforeRequest: ((url: URL) => Promise<void>) | null;
+        beforeRequest: ((url: URL, init?: RequestInit) => Promise<void>) | null;
     };
     storage: typeof import('@/sync/domains/state/storage').storage;
     sync: typeof import('@/sync/sync').sync;
@@ -81,12 +81,12 @@ export async function arrangeMachineDetailsHomeForTests(
         machineListRequests: 0,
         readMachines: null as (() => Promise<readonly Machine[]>) | null,
         beforeSessionRead: null as (() => Promise<void>) | null,
-        beforeRequest: null as ((url: URL) => Promise<void>) | null,
+        beforeRequest: null as MachineDetailsHome['state']['beforeRequest'],
     };
     const toWire = (machine: Machine) => createPlainMachineRowFixture({ id: machine.id, accountId: 'machine-viewer', machine });
     network.setHttpResponder(async (input, init) => {
         const url = new URL(String(input));
-        await state.beforeRequest?.(url);
+        await state.beforeRequest?.(url, init);
         if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({}));
         if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
         if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());

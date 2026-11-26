@@ -9,6 +9,7 @@ import { createSessionFixture, createSessionListRenderableSessionFixture } from 
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { DaemonExecutionRunEntrySchema } from '@happier-dev/protocol/daemon/executionRuns';
+import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
@@ -41,7 +42,6 @@ afterEach(async () => {
     await standardCleanup();
     await home?.dispose();
     home = undefined;
-    network.resetRequests();
     stopDialogs.alert.mockClear();
     stopDialogs.confirm.mockClear();
     routeParams.current = { id: 'machine-missing' };
@@ -331,18 +331,30 @@ describe('MachineDetailScreen hydration', () => {
                 lists: home.storage.getState().machineListByServerId })).toBe('Offline Machine');
         const screen = await home.render(MachineDetailScreen);
         await vi.waitFor(() => expect(screen.findByTestId('machine-vitals-offline')).not.toBeNull());
-        deferred = createDeferred<readonly Machine[]>();
-        home.state.readMachines = () => deferred!.promise;
-        const beforeRequests = home.state.machineListRequests;
-        const action = () => screen.findAllByProps({ testID: 'machine-vitals-offline' })[0]!.props.action;
+        const reply = createDeferred<void>();
+        const retryReads: string[][] = [];
+        const homeOrigin = new URL(home.home.serverUrl).origin;
+        home.state.beforeRequest = async (url, init) => {
+            if (url.origin !== homeOrigin || url.pathname !== '/v1/machines/read-batch' || init?.method !== 'POST') return;
+            retryReads.push(MachineReadBatchRequestV1Schema.parse(JSON.parse(String(init.body))).machineIds);
+            await reply.promise;
+        };
+        const fleetReadsBeforeRetry = home.state.machineListRequests;
+        const action = () => screen.findAllByProps({ testID: 'machine-vitals-offline' })
+            .find(node => node.props.action?.testID === 'machine-vitals-offline-retry')!.props.action;
         const refreshing = () => screen.tree.root.findAll(node => Boolean(node.props.refreshControl))[0]!.props.refreshControl.props.refreshing;
-        expect(action().loading).toBeFalsy();
-        await act(async () => { action().onPress(); await flushHookEffects({ cycles: 1, turns: 1 }); });
-        await vi.waitFor(() => expect(home!.state.machineListRequests).toBeGreaterThan(beforeRequests));
-        expect(action().loading).toBe(true);
-        expect(refreshing()).toBe(false);
-        await act(async () => { deferred!.resolve([offline]); await flushHookEffects({ cycles: 2, turns: 2 }); });
+        try {
+            expect(action().loading).toBeFalsy();
+            await act(async () => { action().onPress(); await flushHookEffects({ cycles: 1, turns: 1 }); });
+            await vi.waitFor(() => expect(retryReads).toEqual([[offline.id]]));
+            expect(action().loading).toBe(true);
+            expect(refreshing()).toBe(false);
+        } finally {
+            await act(async () => { reply.resolve(); await flushHookEffects({ cycles: 2, turns: 2 }); });
+        }
         await vi.waitFor(() => expect(action().loading).toBe(false));
         expect(refreshing()).toBe(false);
+        expect(retryReads).toEqual([[offline.id]]);
+        expect(home.state.machineListRequests).toBe(fleetReadsBeforeRetry);
     });
 });
