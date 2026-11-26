@@ -64,9 +64,7 @@ function operationForSnapshot(snapshot: PersonalHomeBootstrapSnapshot): Personal
 }
 
 function errorSnapshot(snapshot: PersonalHomeBootstrapSnapshot, error: Error): PersonalHomeBootstrapSnapshot {
-    const code = 'code' in error && typeof (error as { code?: unknown }).code === 'string'
-        ? (error as { code: string }).code
-        : null;
+    const code = readOperationErrorCode(error);
     if (
         code === 'personal_home_existing_runtime_conflict'
         || code === 'personal_home_credentials_unverified'
@@ -107,7 +105,7 @@ function errorSnapshot(snapshot: PersonalHomeBootstrapSnapshot, error: Error): P
         phase: 'blocked',
         action: 'retry',
         detail: {
-            code: thisComputer ? thisComputer.status : 'bootstrap_operation_failed',
+            code: thisComputer?.status ?? code ?? 'bootstrap_operation_failed',
             message: error.message,
             retryable: true,
             ...(thisComputer ? { thisComputer } : {}),

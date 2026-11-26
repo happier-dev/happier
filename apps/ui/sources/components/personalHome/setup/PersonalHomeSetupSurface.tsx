@@ -141,11 +141,6 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
     const progress = derivePersonalHomeSetupProgress(props.snapshot);
     const hasFailure = props.snapshot.phase === 'blocked';
     const acquisition = progress.working ? presentActiveCliAcquisition(props.activeTask) : null;
-    const failedTask = props.activeTask?.result;
-    const acquisitionFailure = hasFailure && props.snapshot.detail?.code === 'bootstrap_operation_failed'
-        && failedTask && !failedTask.ok
-        ? resolveCliAcquisitionFailureMessage(failedTask.error.code)
-        : undefined;
     const showExistingDecision = props.snapshot.action === 'choose-existing-runtime';
     const signedInHomeLabel = props.snapshot.action === 'choose-signed-in-home' ? props.snapshot.signedInHomeLabel : undefined;
     const showSignedInDecision = signedInHomeLabel != null
@@ -159,7 +154,7 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
     // completed setup work is safe.
     const blockedBody = hasFailure ? blockedFailureBodyCopy(props.snapshot) : null;
     // With no state-specific reason, the status and the failure body are one message: say it once.
-    const genericFailure = showFailure && !acquisitionFailure && !blockedBody && blockedStatusCopy(props.snapshot) === null;
+    const genericFailure = showFailure && !blockedBody && blockedStatusCopy(props.snapshot) === null;
     const hasLocalDetails = props.activeTask != null || props.snapshot.detail != null;
     const showDetails = detailsOpen && hasLocalDetails;
     const toggleDetails = React.useCallback(() => setDetailsOpen((value) => !value), []);
@@ -224,10 +219,12 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
                     <View style={styles.header}>
                         <View
                             testID="personal-home-bootstrap-progress"
-                            accessible
-                            accessibilityRole="progressbar"
-                            accessibilityLabel={t('personalHome.bootstrap.title')}
-                            accessibilityValue={{ min: 0, max: progress.totalMilestones, now: progress.completedMilestones }}
+                            accessible={progress.working}
+                            {...(progress.working ? {
+                                accessibilityRole: 'progressbar',
+                                accessibilityLabel: t('personalHome.bootstrap.title'),
+                                accessibilityValue: { min: 0, max: progress.totalMilestones, now: progress.completedMilestones },
+                            } as const : {})}
                         >
                             <CapacityRing ratio={progress.fraction} color={theme.colors.text.secondary} size={MARK_FALLBACK_SIZE}>
                                 {hasFailure ? (
@@ -247,7 +244,7 @@ export const PersonalHomeSetupSurface = React.memo(function PersonalHomeSetupSur
                             accessibilityLiveRegion="polite"
                             style={styles.status}
                         >
-                            {genericFailure ? t('personalHome.bootstrap.failureBody') : acquisitionFailure ?? acquisition?.status ?? phaseCopy(props.snapshot)}
+                            {genericFailure ? t('personalHome.bootstrap.failureBody') : acquisition?.status ?? phaseCopy(props.snapshot)}
                         </Text>
                         {acquisition?.downloadProgress ? (
                             <Text testID="personal-home-bootstrap-download-progress" style={styles.status}>

@@ -89,7 +89,11 @@ type PersonalHomeTaskOutcome =
 
 type SystemTaskStartOutcome =
     | Readonly<{ status: 'started'; taskId: string; spec: SystemTaskSpec }>
-    | Readonly<{ status: 'failed'; message: string }>;
+    | Readonly<{ status: 'failed'; code: string; message: string }>;
+
+function unavailableTaskStart(): Extract<SystemTaskStartOutcome, { status: 'failed' }> {
+    return { status: 'failed', code: 'system_tasks_unavailable', message: t('settings.systemTaskBridgeUnavailable') };
+}
 
 type PersonalHomeVerification = Readonly<{
     archivePath: string;
@@ -250,7 +254,9 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
                     ? 'relay.runtime.personal_home.recover_restore' : LOCAL_RELAY_RUNTIME_ACTION_IDS[kind],
                     recover ? { runtimeTarget: input.runtimeTarget, purpose: input.purpose } : input);
                 if (!('status' in outcome) || outcome.status !== 'task_started') {
-                    throw new Error('reason' in outcome ? outcome.reason : t('settings.systemTaskStartFailed'));
+                    throw Object.assign(new Error('reason' in outcome ? outcome.reason : t('settings.systemTaskStartFailed')), {
+                        code: 'reason' in outcome ? outcome.reason : outcome.status,
+                    });
                 }
                 taskId = outcome.taskId;
             } else {
@@ -260,17 +266,22 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
             setLastErrorMessage(null);
             return { status: 'started', taskId, spec };
         } catch (error) {
-            if (error instanceof Error && 'code' in error && isActionApprovalDeclinedErrorCode(error.code)) {
-                return { status: 'failed', message: error.message };
+            const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+                ? error.code
+                : undefined;
+            if (error instanceof Error && code && isActionApprovalDeclinedErrorCode(code)) {
+                return { status: 'failed', code, message: error.message };
             }
             const message = readSystemTaskStartErrorMessage(error);
             const unavailable = isSystemTaskBridgeUnavailableError(error);
-            const failure = unavailable
-                ? t('settings.systemTaskBridgeUnavailable')
-                : (message ?? t('settings.systemTaskStartFailed'));
+            const failure = unavailable ? unavailableTaskStart() : {
+                status: 'failed' as const,
+                code: code ?? 'system_task_start_failed',
+                message: message ?? t('settings.systemTaskStartFailed'),
+            };
             setBridgeUnavailable(unavailable);
-            setLastErrorMessage(failure);
-            return { status: 'failed', message: failure };
+            setLastErrorMessage(failure.message);
+            return failure;
         }
     }, [mountedAction.requiresAction, mountedAction.runSignedOutDraft, runner, runtimeAction]);
 
@@ -291,7 +302,7 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
         taskOptions: LocalRelayRuntimeTaskOptions = {},
     ): Promise<SystemTaskStartOutcome> => {
         if (isUnavailable) {
-            return { status: 'failed', message: t('settings.systemTaskBridgeUnavailable') };
+            return unavailableTaskStart();
         }
         const started = await startTask(kind, taskOptions);
         if (started.status !== 'started') {
@@ -305,19 +316,22 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
     const runTaskAndWait = React.useCallback(async (
         kind: RelayRuntimeActionKind | PersonalHomeTaskKind | 'relay.runtime.status.v1',
         taskOptions: LocalRelayRuntimeTaskOptions = {},
-    ): Promise<SystemTaskResult | null> => {
-        if (isUnavailable) return null;
-        const started = kind === 'relay.runtime.status.v1'
-            ? await startTask(kind, taskOptions)
-            : await runAction(kind, taskOptions);
-        if (started.status !== 'started') return null;
+    ): Promise<SystemTaskResult> => {
+        let started: SystemTaskStartOutcome;
+        if (kind !== 'relay.runtime.status.v1') {
+            started = await runAction(kind, taskOptions);
+        } else {
+            started = isUnavailable ? unavailableTaskStart() : await startTask(kind, taskOptions);
+        }
+        if (started.status !== 'started') {
+            throw Object.assign(new Error(started.message), { code: started.code });
+        }
         if (kind === 'relay.runtime.status.v1') setStatusTaskId(started.taskId);
         return await waitForSystemTaskResult(runner, started.taskId);
     }, [isUnavailable, runAction, runner, startTask]);
 
     const readStatus = React.useCallback(async (): Promise<RelayRuntimeStatusData | null> => {
         const result = await runTaskAndWait('relay.runtime.status.v1');
-        if (!result) return null;
         if (!result.ok) {
             setLastErrorMessage(result.error.message);
             throw Object.assign(new Error(result.error.message), { code: result.error.code });

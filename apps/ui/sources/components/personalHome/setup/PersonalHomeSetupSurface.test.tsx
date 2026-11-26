@@ -27,15 +27,14 @@ const snapshot: PersonalHomeBootstrapSnapshot = {
 };
 
 describe('PersonalHomeSetupSurface', () => {
-    it('names acquisition failure from the task when bootstrap uses a generic operation failure', async () => {
+    it('names the bootstrap acquisition failure after a successful status recheck replaces the active task', async () => {
         const screen = await renderScreen(<PersonalHomeSetupSurface
             snapshot={{ ...snapshot, phase: 'blocked', action: 'retry', detail: {
-                code: 'bootstrap_operation_failed', message: 'diagnostic URL', retryable: true,
+                code: 'cli_acquisition_verifying_failed', message: 'diagnostic URL', retryable: true,
             } }}
-            activeTask={{ taskId: 'acquire', status: 'failed', currentStepId: null, latestMessage: null,
+            activeTask={{ taskId: 'readback', status: 'succeeded', currentStepId: null, latestMessage: null,
                 awaitingInput: false, cancelRequested: false, events: [], result: {
-                    protocolVersion: 1, taskId: 'acquire', ok: false,
-                    error: { code: 'cli_acquisition_verifying_failed', message: 'diagnostic URL' },
+                    protocolVersion: 1, taskId: 'readback', ok: true,
                 } }}
         />);
         expect(screen.findByTestId('personal-home-bootstrap-phase')?.props.children)
@@ -245,6 +244,7 @@ describe('PersonalHomeSetupSurface', () => {
         expect(screen.findByTestId('personal-home-use-another-title')).not.toBeNull();
         expect(screen.findByTestId('personal-home-use-another-subtitle')).not.toBeNull();
         expect(screen.findByTestId('personal-home-bootstrap-failure')).toBeNull();
+        expect(screen.findByTestId('personal-home-bootstrap-progress')?.props.accessibilityRole).toBeUndefined();
         expect(screen.findByTestId('personal-home-bootstrap-details-toggle')).not.toBeNull();
         await screen.pressByTestIdAsync('personal-home-bootstrap-details-toggle');
         expect(screen.findByTestId('personal-home-bootstrap-details-panel')).not.toBeNull();

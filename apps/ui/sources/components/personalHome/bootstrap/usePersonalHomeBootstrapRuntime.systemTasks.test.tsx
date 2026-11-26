@@ -137,6 +137,7 @@ const harness = vi.hoisted(() => {
     /** When set, the endpoint commits the Account and then fails before the token returns. */
     let failCreateAfterCommit = false;
     let relayStatusUnavailable = false;
+    let relayStatusStartFailure = false;
 
     function seedBase64Url(seed: Uint8Array | undefined): string | null {
         if (!seed) return null;
@@ -285,6 +286,9 @@ const harness = vi.hoisted(() => {
 
     const makeManualBridge = () => ({
         async start(spec: { kind: string; params?: unknown }): Promise<string> {
+            if (spec.kind === 'relay.runtime.status.v1' && relayStatusStartFailure) {
+                throw Object.assign(new Error('Runtime status refused before starting'), { code: 'system_task_start_failed' });
+            }
             const taskId = `bridge-task-${++nextTaskId}`;
             const params = JSON.parse(JSON.stringify(spec.params ?? {})) as Record<string, unknown>;
             recordedSpecs.push({
@@ -464,6 +468,7 @@ const harness = vi.hoisted(() => {
         HOME_B_TOKEN,
         makeManualBridge,
         failRelayStatus: () => { relayStatusUnavailable = true; },
+        refuseRelayStatusStart: () => { relayStatusStartFailure = true; },
         markBootstrapStarted: () => {
             bootstrapStarted = true;
         },
@@ -539,6 +544,7 @@ const harness = vi.hoisted(() => {
             serverAccountsBySeedBase64Url.clear();
             failCreateAfterCommit = false;
             relayStatusUnavailable = false;
+            relayStatusStartFailure = false;
             authPingFailureCount = 0;
             publishedHomeConnectionDescriptor = { ...DEFAULT_HOME_DESCRIPTOR };
             redeemHomeChallenge.mockClear();
@@ -728,7 +734,31 @@ describe('usePersonalHomeBootstrapRuntime system-task composition', () => {
         // and result/snapshot delivery must never turn either into another process start.
         expect(harness.recordedSpecs().filter((spec) => spec.kind === 'relay.runtime.status.v1')).toHaveLength(2);
         expect(hook.getCurrent().isChecking).toBe(false);
-        expect(hook.getCurrent().error).toMatchObject({ code: 'relay_status_failed' });
+        expect(hook.getCurrent().snapshot).toMatchObject({
+            phase: 'blocked',
+            action: 'retry',
+            detail: { code: 'relay_status_failed', message: 'Runtime status unavailable', retryable: true },
+        });
+    });
+
+    it('settles a refused status start with its reason and Retry without attempting install', async () => {
+        harness.refuseRelayStatusStart();
+        const hook = await renderHook(() => {
+            const runtime = usePersonalHomeBootstrapRuntime();
+            return usePersonalHomeBootstrapController({ readFacts: runtime.readFacts, operations: runtime.operations });
+        });
+        for (let cycle = 0; cycle < 8; cycle += 1) {
+            await act(async () => { vi.runOnlyPendingTimers(); });
+            await flushHookEffects();
+        }
+        expect(harness.recordedSpecs().filter((spec) => spec.kind === 'relay.runtime.installOrUpdate.v1')).toHaveLength(0);
+        expect(hook.getCurrent().isChecking).toBe(false);
+        expect(hook.getCurrent().isOperating).toBe(false);
+        expect(hook.getCurrent().snapshot).toMatchObject({
+            phase: 'blocked',
+            action: 'retry',
+            detail: { code: 'system_task_start_failed', message: 'Runtime status refused before starting', retryable: true },
+        });
     });
 
     it.each(['primary', 'canonical-alias'] as const)('does not prepare this computer when the runtime URL names two saved Home identities (%s)', async (matching) => {
