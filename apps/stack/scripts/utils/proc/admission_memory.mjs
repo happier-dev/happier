@@ -96,6 +96,14 @@ export function readProcessJobScopeCpuUsageUsec(pid, read = readFileSync) {
   } catch { return null; }
 }
 
+export function readProcessJobScopeOomCount(pid, read = readFileSync) {
+  try {
+    const stat = readJobScopeStat(pid, 'memory.events.local', read);
+    const count = Number(/^oom +(\d+)$/m.exec(stat ?? '')?.[1]);
+    return Number.isSafeInteger(count) && count >= 0 ? count : null;
+  } catch { return null; }
+}
+
 export function readLinuxHostAvailableMemoryKiB(memory = readFileSync('/proc/meminfo', 'utf8')) {
   return Number(/^MemAvailable:\s+(\d+)/m.exec(memory)?.[1]);
 }

@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, renameSync, writeFileSync, openSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -7,11 +7,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isRuntimeImportProgressLine } from '../../apps/stack/scripts/utils/proc/runtimeImportProbe.mjs';
+import { readProcessJobScopeOomCount } from '../../apps/stack/scripts/utils/proc/admission_memory.mjs';
 
 const self = fileURLToPath(import.meta.url);
 const tooling = new URL('../../', import.meta.url);
 const ENTRY_LOAD_ADMISSION_CLASS = 'gate-entry-loads';
 const ENTRY_LOAD_RESULT = 'HAPPIER_COMMIT_ENTRY_LOAD_RESULT ';
+const ENTRY_LOAD_OOM = 'HAPPIER_COMMIT_ENTRY_LOAD_OOM ';
+const ENTRY_ACTIVE = 'ENTRY_ACTIVE ';
+// Twice the 2.672 GiB process-tree RSS peak on 2f4434a5bc0, rounded up
+// to a GiB. The cap also accounts for reclaimable cache and kernel memory.
+const ENTRY_LOAD_MEMORY_CAP_BYTES = 6 * 1024 ** 3;
 const ENTRY_GRAPHS_PATH = 'apps/stack/scripts/perf/entry-graphs.mjs';
 const ENTRY_LOAD_PATH = 'apps/stack/scripts/perf/entry-load.mjs';
 const CLI_GRAPH = 'cli';
@@ -351,6 +357,17 @@ async function spawnEntryLoadCommand({ repo, projects, payload, signal, env, std
 
 export class EntryLoadAdmissionRequired extends Error {}
 
+class EntryLoadMemoryLimitExceeded extends Error {
+  constructor(graphs) {
+    super(`entry-load memory limit exceeded while checking ${graphs.join(', ')}`);
+    this.graphs = graphs;
+  }
+}
+
+function scopeOomIncreased(previous) {
+  return previous !== null && readProcessJobScopeOomCount() > previous;
+}
+
 export class EntryLoadAdmissionUnavailable extends Error {
   constructor(status) {
     super(`entry-load admission did not grant the commit gate (exit ${status})`);
@@ -371,17 +388,42 @@ async function withEntryLoadScratch(env, cacheRoot, run) {
   }
 }
 
+async function entryLoadPayload() {
+  const launchSpec = { filePath: process.execPath, args: [self, '--entry-load-admitted'] };
+  if (process.platform !== 'linux') return [launchSpec.filePath, ...launchSpec.args];
+
+  // The cap contains unanticipated descendants of archived code, including
+  // raw compiler binaries. Admission remains the independent capacity check.
+  const { createCliSourceLoader } = await import(new URL('packages/cli-common/cliSourceLoader.mjs', tooling).href);
+  const loader = await createCliSourceLoader('happier-commit-entry-load-governor');
+  try {
+    const { buildSystemdUserScopedLaunchSpec } = await loader.import(new URL(
+      'apps/cli/src/daemon/platform/linux/systemdUserResourceGovernor.ts', tooling).href, import.meta.url);
+    const scope = buildSystemdUserScopedLaunchSpec({ launchSpec, expandEnvironment: false,
+      // Stack's native launcher recognizes this as an existing per-job scope,
+      // so a nested launcher inherits the limit instead of creating a sibling.
+      unit: `happier-jobs-${process.pid}-${randomUUID()}.scope`,
+      properties: [`MemoryMax=${ENTRY_LOAD_MEMORY_CAP_BYTES}`] });
+    return [scope.filePath, ...scope.args];
+  } finally {
+    await loader.unregister();
+  }
+}
+
 async function admitEntryLoads(request, { env, signal, admissionClass }) {
   return await withEntryLoadScratch(env, request.root, async admittedEnv => {
     const child = await spawnEntryLoadCommand({ ...request, projects: request.selected, signal, admissionClass,
-      payload: [process.execPath, self, '--entry-load-admitted'],
+      payload: await entryLoadPayload(),
       env: { ...admittedEnv, HAPPIER_COMMIT_ENTRY_LOAD: request.phase === 'report' ? '' : '1',
         HAPPIER_COMMIT_ENTRY_LOAD_REQUEST: JSON.stringify(request) },
       stdio: ['ignore', 'pipe', 'inherit'] });
     let stdout = '';
     child.stdout.setEncoding('utf8').on('data', data => { stdout += data; });
     const status = await waitForTreeChild(child);
-    const line = stdout.split('\n').find(line => line.startsWith(ENTRY_LOAD_RESULT));
+    const lines = stdout.split('\n');
+    const oom = lines.find(line => line.startsWith(ENTRY_LOAD_OOM));
+    if (oom) throw new EntryLoadMemoryLimitExceeded(JSON.parse(oom.slice(ENTRY_LOAD_OOM.length)));
+    const line = lines.find(line => line.startsWith(ENTRY_LOAD_RESULT));
     if (status !== 0 || !line) {
       if (request.phase === 'commit') throw new EntryLoadAdmissionUnavailable(status);
       throw new Error(`entry-load admission did not return a verdict (exit ${status})`);
@@ -532,26 +574,51 @@ async function runTreeHarness({ dir, selected, env, signal }) {
     const { HEAVYWEIGHT_COMMAND_RESOURCES } = await import(new URL('apps/stack/scripts/utils/dev_targets/command_resources.mjs', tooling).href);
     overlapCore = Number(env.HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB) >= HEAVYWEIGHT_COMMAND_RESOURCES[ENTRY_LOAD_ADMISSION_CLASS].memoryKiB;
   }
-  const code = `const { ENTRY_GRAPHS, loadEntryGraph } = await import(${JSON.stringify(pathToFileURL(join(dir, ENTRY_LOAD_PATH)).href)});
+  const initialOoms = readProcessJobScopeOomCount();
+  const code = `import { writeSync } from 'node:fs';
+import { readProcessJobScopeOomCount } from ${JSON.stringify(new URL(
+    'apps/stack/scripts/utils/proc/admission_memory.mjs', tooling).href)};
+const reportActive = graphs => writeSync(1, ${JSON.stringify(ENTRY_ACTIVE)} + JSON.stringify(graphs) + '\\n');
+const stopAfterOom = () => {
+  if (${initialOoms} !== null && readProcessJobScopeOomCount() > ${initialOoms}) throw new Error('cgroup memory exhausted');
+};
+const { ENTRY_GRAPHS, loadEntryGraph } = await import(${JSON.stringify(pathToFileURL(join(dir, ENTRY_LOAD_PATH)).href)});
 const ids = ${JSON.stringify(selected)};
 const graphs = ENTRY_GRAPHS.filter(graph => ids.includes(graph.id));
 const results = new Map();
 if (${overlapCore}) {
   const core = graphs.filter(graph => ${JSON.stringify(coreGraphs)}.includes(graph.id));
   const env = { ...process.env, GOMAXPROCS: '1', UV_THREADPOOL_SIZE: '1', HAPPIER_ADMISSION_WORKERS: '1' };
+  reportActive(core.map(graph => graph.id));
   const settled = await Promise.allSettled(core.map(graph => loadEntryGraph(graph, { env })));
+  stopAfterOom();
   for (const [i, result] of settled.entries()) {
     if (result.status === 'rejected') throw result.reason;
     results.set(core[i].id, result.value);
   }
 }
-for (const graph of graphs) console.log('ENTRY_RESULT ' + JSON.stringify(results.get(graph.id) ?? await loadEntryGraph(graph)));`;
+for (const graph of graphs) {
+  if (!results.has(graph.id)) {
+    reportActive([graph.id]);
+    results.set(graph.id, await loadEntryGraph(graph));
+    stopAfterOom();
+  }
+  console.log('ENTRY_RESULT ' + JSON.stringify(results.get(graph.id)));
+}`;
   // The tree is the commit: its packages load as they are, never through the checkout's HEAD pin.
   const child = spawn(process.execPath, ['--input-type=module', '-e', code], { cwd: dir, env: treeEnvironment(dir, env), signal, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = ''; let stderr = '';
   child.stdout.on('data', chunk => { stdout += chunk; });
   child.stderr.on('data', chunk => { stderr += chunk; });
-  const code_ = await waitForTreeChild(child);
+  let code_;
+  try {
+    code_ = await waitForTreeChild(child);
+  } finally {
+    if (scopeOomIncreased(initialOoms)) {
+      const active = stdout.split('\n').findLast(line => line.startsWith(ENTRY_ACTIVE));
+      throw new EntryLoadMemoryLimitExceeded(active ? JSON.parse(active.slice(ENTRY_ACTIVE.length)) : selected);
+    }
+  }
   const results = stdout.split('\n').filter(line => line.startsWith('ENTRY_RESULT ')).map(line => JSON.parse(line.slice('ENTRY_RESULT '.length)));
   if (code_ !== 0 || results.length !== selected.length) {
     throw new Error(`tree entry-load harness exited ${code_} with ${results.length}/${selected.length} results: ${stderr.slice(-400)}`);
@@ -650,12 +717,20 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
   if (args.includes('--entry-load-admitted')) {
+    let selected;
+    const initialOoms = readProcessJobScopeOomCount();
     try {
       const request = JSON.parse(process.env.HAPPIER_COMMIT_ENTRY_LOAD_REQUEST);
+      selected = request.selected;
       const result = await compareSelectedEntryLoads(request, process.env, stop.signal);
+      if (scopeOomIncreased(initialOoms)) throw new EntryLoadMemoryLimitExceeded(selected);
       process.stdout.write(`${ENTRY_LOAD_RESULT}${JSON.stringify(result)}\n`);
     } catch (error) {
-      console.error(`commit tree entry loads unavailable: ${error.message}`);
+      const activeGraphs = error instanceof EntryLoadMemoryLimitExceeded ? error.graphs
+        : scopeOomIncreased(initialOoms) ? selected : undefined;
+      if (activeGraphs) process.stdout.write(`${ENTRY_LOAD_OOM}${JSON.stringify(activeGraphs)}\n`);
+      const detail = activeGraphs ? new EntryLoadMemoryLimitExceeded(activeGraphs) : error;
+      console.error(`commit tree entry loads unavailable: ${detail.message}`);
       process.exitCode = 75;
     }
   } else {

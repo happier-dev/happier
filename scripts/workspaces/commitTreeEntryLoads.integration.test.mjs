@@ -280,6 +280,70 @@ test('the synchronous scope ignores a UI-only packet for CLI and daemon and keep
   assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base: ui, tree: cli, phase: 'commit' })).selected, ['cli', 'daemon']);
 });
 
+test('exact-tree entry loads and their descendants run in a capped Linux scope',
+  { skip: process.platform !== 'linux' || process.env.HAPPIER_TEST_USER_SYSTEMD !== '1' }, async t => {
+    const entry = 'packages/sample/src/index.mjs';
+    const { repo, tree: base, write } = miniatureRevision(t, {
+      'apps/stack/scripts/perf/entry-graphs.mjs': `export const ENTRY_GRAPHS = [{ id: 'sample', entry: '${entry}' }];`,
+      'apps/stack/scripts/perf/entry-load.mjs': `
+        import { readFileSync } from 'node:fs';
+        import { execFileSync } from 'node:child_process';
+        export { ENTRY_GRAPHS } from './entry-graphs.mjs';
+        export function loadEntryGraph(graph) {
+          const cgroup = execFileSync('cat', ['/proc/self/cgroup'], { encoding: 'utf8' });
+          const location = cgroup.trim().split('::')[1];
+          const cap = readFileSync('/sys/fs/cgroup' + location + '/memory.max', 'utf8').trim();
+          return { graph: graph.id, entry: graph.entry, status: Number(cap) === 6 * 1024 ** 3 ? 'passed' : 'failed', elapsedMs: 1,
+            loadError: { message: 'expected 6 GiB in descendant memory.max, got ' + cap + ' at ' + location } };
+        }
+      `,
+      'apps/stack/scripts/build/source_revision.mjs': 'export function deriveRevisionGeneratedInputs() {}',
+      'packages/cli-common/registerSourceRuntime.mjs': '',
+      'packages/sample/package.json': '{"name":"@fixture/sample"}',
+      [entry]: 'export const value = 1;',
+    });
+    write(entry, 'export const value = 2;');
+    execFileSync('git', ['commit', '-qam', 'candidate'], { cwd: repo });
+    const result = await commitTreeEntryLoads({ repo, base, tree: 'HEAD', phase: 'commit', root: path.join(repo, '.git') });
+    assert.deepEqual(result.findings, []);
+    assert.deepEqual(result.results.map(({ graph, status }) => [graph, status]), [['sample', 'passed']], JSON.stringify(result));
+  });
+
+test('reports the exact entry graph when its Linux memory cap kills a child',
+  { skip: process.platform !== 'linux' || process.env.HAPPIER_TEST_USER_SYSTEMD !== '1' }, async t => {
+    const entry = 'packages/sample/src/index.mjs';
+    const { repo, tree: base, write } = miniatureRevision(t, {
+      'apps/stack/scripts/perf/entry-graphs.mjs': `export const ENTRY_GRAPHS = [
+        { id: 'before-memory-sample', entry: '${entry}' },
+        { id: 'memory-sample', entry: '${entry}' },
+        { id: 'after-memory-sample', entry: '${entry}' },
+      ];`,
+      'apps/stack/scripts/perf/entry-load.mjs': `
+        import { readFileSync } from 'node:fs';
+        import { execFileSync } from 'node:child_process';
+        import { basename } from 'node:path';
+        export { ENTRY_GRAPHS } from './entry-graphs.mjs';
+        export function loadEntryGraph(graph) {
+          if (graph.id !== 'memory-sample') return { graph: graph.id, entry: graph.entry, status: 'passed', elapsedMs: 1 };
+          const location = readFileSync('/proc/self/cgroup', 'utf8').trim().split('::')[1];
+          const unit = basename(location);
+          if (!/^happier-jobs-\\d+-[a-f0-9-]{36}\\.scope$/.test(unit)) throw new Error('Expected private gate scope');
+          execFileSync('systemctl', ['--user', 'set-property', '--runtime', unit, 'MemoryMax=192M'], { stdio: 'pipe' });
+          execFileSync(process.execPath, ['-e', 'Buffer.alloc(256 * 1024 ** 2, 5);'], { stdio: 'pipe' });
+          return { graph: graph.id, entry: graph.entry, status: 'passed', elapsedMs: 1 };
+        }
+      `,
+      'apps/stack/scripts/build/source_revision.mjs': 'export function deriveRevisionGeneratedInputs() {}',
+      'packages/cli-common/registerSourceRuntime.mjs': '',
+      'packages/sample/package.json': '{"name":"@fixture/sample"}',
+      [entry]: 'export const value = 1;',
+    });
+    write(entry, 'export const value = 2;');
+    execFileSync('git', ['commit', '-qam', 'candidate'], { cwd: repo });
+    await assert.rejects(commitTreeEntryLoads({ repo, base, tree: 'HEAD', phase: 'commit', root: path.join(repo, '.git') }),
+      { message: 'entry-load memory limit exceeded while checking memory-sample' });
+  });
+
 test('post-commit entry loads attribute only newly failed entries and retain actionable diagnostics', async t => {
   const entry = 'packages/protocol/src/index.mjs';
   const stale = 'apps/cli/assets/bundled-plugin-manifests/database-workbench.json';

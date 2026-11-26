@@ -726,6 +726,11 @@ unpledged capacity behind a CPU-blocked head. The head retains its exclusive
 CPU-pressure exception and earns the usual pledge as slots release. The sample exposes head age,
 `reservationDelayMs` and `reservationActive` alongside `reservationKiB`.
 
+On Linux, the exact-tree entry-load subprocess and its descendants run in a
+user-systemd governor scope with a 6 GiB hard limit. This is twice the measured
+2.672 GiB peak process-tree RSS, rounded up to a GiB. A scope launch failure or
+cgroup memory exhaustion makes the check unavailable. Exhaustion names the
+active graph or the group running at that point.
 The TypeScript launcher refuses package compilation in commit-triggered entry
 loads. The rolling worker owns package typechecks.
 
