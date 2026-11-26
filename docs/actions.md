@@ -4169,10 +4169,11 @@ remains the default for explicit Work readers. Period summary uses this bounded
 count, and broad Recap does not prefetch its unmounted Session autopsy. A selected
 Session retains the detailed autopsy. Public-profile preparation shares admitted
 Session/turn membership and bounded numeric/private projections, not full Usage
-event delivery. Rich Work stores complete contribution memberships once in its
-outcome and branch tables; each allocation carries only the corresponding
-identity and evidence. Its bounded `workSummary` also retains distinct Session,
-contribution and allocated-contribution counts.
+event delivery. Rich Work stores full contribution records once in
+`accounting.contributions`. Both allocation lists reference those records by
+contribution ID. Outcome and branch tables list the contributions linked to
+each row. The bounded `workSummary` retains distinct Session, contribution and
+allocated-contribution counts.
 
 The Work owner publishes counts of merged PRs linked by the read, and of
 Sessions with those links, when each Session in the requested Work population
@@ -4203,20 +4204,30 @@ the total source count and groups by status, path and capture kind, with source
 and event counts. `coverage.reasons` and the other coverage facts remain intact;
 `coverage.sources` is empty when that summary replaces its rows. Comparison
 accounting uses the same projection. Select one Session to read per-source rows.
-The existing delivery owner also omits broad
-Work allocations and transcript autopsy bodies, recording them in
-`incomplete.omittedSections` with `narrow_query` recovery for agent tool budgets.
+The existing delivery owner also omits broad Work links, branches, allocations
+and transcript autopsy bodies for agent tool budgets.
+It records each omission in `incomplete.omittedSections` with `narrow_query`
+recovery.
 Select exactly one Session with `session` to obtain those detail sections.
 Narrow the period and filters and use the existing include flags or
-`workProjection: 'summary'` to acquire only needed sections. UI Resources,
-widgets and CLI delivery keep their existing projections. This is unreleased
-0.3 source behavior; it adds no query path or transport cap.
+`workProjection: 'summary'` to acquire only needed sections. UI Resources and
+widgets use the admitted result. Mounted and standalone Actions share the
+delivery rules below. This is unreleased 0.3 source behavior under the existing
+query path and transport cap.
 
-When requested evidence cannot fit that complete Action envelope, the Usage
-delivery projection omits the largest evidence sections first and reports
+When requested evidence cannot fit the complete Action envelope, the Usage
+delivery projection can remove Work Session detail while keeping the linked rows. It reports
 `incomplete: { reason: 'response_size_limit', omittedSections, recovery: 'narrow_query' }`
-on each affected slice. Sections are `work`, `howYouWork` and `coach`; omitting
-Work also omits its raw contributions and dependent merged-outcome summary.
+on each affected slice. `workSessionDetail` leaves PR and branch rows and their
+typed unread counts available. Its allocation arrays are empty and the raw
+accounting contributions are absent. If even compact Work does not fit, `work`
+names the whole omission, including its merged-outcome summary.
+`howYouWork` and `coach` name those evidence sections.
+When Work Session detail is present, each PR or branch allocation row refers
+to exactly one `accounting.contributions` row by `contributionId`. For example,
+join `slice.work.allocations[0].contributionId` to the row with the same
+`id` in `slice.accounting.contributions`. The same join applies to
+`slice.work.branchAllocations`.
 The bounded Work summary, including Session and contribution counts when rich
 Work was acquired, remains available to agents and the CLI. Accounting totals,
 breakdowns, allowance facts, source currentness and exact

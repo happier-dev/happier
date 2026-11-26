@@ -164,7 +164,7 @@ export function readUsageChartAgentIds(slices: readonly UsageQueryResultSlice[])
       add(edge.sourceAgentId);
       add(edge.targetAgentId);
     }
-    for (const row of slice.work?.allocations ?? []) add(row.contribution.agentId);
+    if (slice.work) for (const row of slice.accounting?.contributions ?? []) add(row.agentId);
   }
   // The rank is the Agent's tokens on the page: its breakdown row where the query asks for one, its timeline leaders
   // (the Overview reads no Agent breakdown), or its calendar total (How you work reads neither). The largest reading

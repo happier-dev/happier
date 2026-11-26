@@ -8,9 +8,27 @@ import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import { isUsageCoverageFailure } from '@/sync/api/account/usageReadFailure';
 import type {
-  UsageWorkAllocation,
-  UsageWorkProjection,
+  UsageWorkAllocation as UsageWorkAllocationRef,
+  UsageWorkContribution,
+  UsageWorkProjection as UsageWorkAllocationGraph,
 } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
+
+type UsageWorkAllocation = UsageWorkAllocationRef & { contribution: UsageWorkContribution };
+type UsageWorkBranchAllocation = UsageWorkAllocationGraph['branchAllocations'][number] & { contribution: UsageWorkContribution };
+type UsageWorkProjection = Omit<UsageWorkAllocationGraph, 'allocations' | 'branchAllocations'> & {
+  allocations: UsageWorkAllocation[];
+  branchAllocations: UsageWorkBranchAllocation[];
+};
+
+function readUsageWorkAllocations(work: UsageWorkAllocationGraph, contributions: readonly UsageWorkContribution[]): UsageWorkProjection {
+  // The admitted Work arrays conserve accounting order. Join bodies only for
+  // the display computation, without putting their copies on the wire.
+  return {
+    ...work,
+    allocations: work.allocations.map((row, index) => ({ ...row, contribution: contributions[index]! })),
+    branchAllocations: work.branchAllocations.map((row, index) => ({ ...row, contribution: contributions[index]! })),
+  };
+}
 
 type UsageWorkOutcome = NonNullable<UsageWorkAllocation['outcome']>;
 type UsageWorkBranch = NonNullable<UsageWorkProjection['branchAllocations'][number]['branch']>;
@@ -145,14 +163,15 @@ export function readUsageWorkOutcomesEvidence(
 /** Empty Outcomes consumes identities and evidence, never monetary or Project detail. */
 export function readUsageWorkOutcomesPresentation(slice: UsageQueryResultSlice): UsageWorkOutcomesPresentation {
   const { work } = slice;
+  const contributions = slice.accounting?.contributions;
   const evidence = readUsageWorkOutcomesEvidence(slice, 'work');
-  if (!work) return { kind: evidence === 'observed' ? 'unavailable' : evidence, sessions: [], machineIds: [] };
+  if (!work || !contributions) return { kind: evidence === 'observed' ? 'unavailable' : evidence, sessions: [], machineIds: [] };
   const sessions = new Map<string, SessionIdentityAccumulator>();
   const machineIds = new Set<string>();
   let allocatedOutcome = false;
   let witnessed = false;
-  for (const row of work.allocations) {
-    const { contribution } = row;
+  for (const [index, row] of work.allocations.entries()) {
+    const contribution = contributions[index]!;
     if (contribution.machineId) machineIds.add(contribution.machineId);
     if (contribution.sessionId) {
       const identity = sessions.get(contribution.sessionId) ?? { machines: new Set<string>(), lastObservedAtMs: 0 };
@@ -317,7 +336,8 @@ export function usageProjectDisplayKey(key: string | null, namedProjectKeys?: Pi
 }
 
 export function summarizeUsageWork(
-  work: UsageWorkProjection,
+  graph: UsageWorkAllocationGraph,
+  contributions: readonly UsageWorkContribution[],
   basis: UsageWorkAmount,
   namedProjectKeys?: ReadonlySet<string>,
   /**
@@ -326,6 +346,7 @@ export function summarizeUsageWork(
    */
   anchorOf?: (key: string) => string,
 ): UsageWorkSummary {
+  const work = readUsageWorkAllocations(graph, contributions);
   const anchor = (key: string | null) => key === null || !anchorOf ? key : anchorOf(key);
   const displayProjectKey = (key: string | null) => usageProjectDisplayKey(key, namedProjectKeys, anchorOf);
   const unallocatedAmounts: Record<UsageWorkUnallocatedReason, AmountAccumulator> = {
@@ -609,10 +630,12 @@ function groupUsageWorkTurns(
 }
 
 export function summarizeUsageWorkSession(
-  work: UsageWorkProjection,
+  graph: UsageWorkAllocationGraph,
+  contributions: readonly UsageWorkContribution[],
   basis: UsageWorkAmount,
   sessionId: string,
 ): UsageWorkSessionAutopsy {
+  const work = readUsageWorkAllocations(graph, contributions);
   const branchByContribution = new Map(work.branchAllocations.map((row) => [row.contribution.id, row]));
   const marks = newMarks();
   const outcomes = new Map<string, UsageWorkOutcome>();

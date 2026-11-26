@@ -47,8 +47,9 @@ it('delivers no unused cost-breakdown bytes to Work while conserving every contr
   }
   const allocated = allocateUsageOutcomes({ contributions: delivered, evidence: [] });
   expect(allocated.allocations).toHaveLength(contributions.length);
-  expect(new Set(allocated.allocations.map(row => row.contribution.id)).size).toBe(contributions.length);
-  expect(allocated.allocations.reduce((sum, row) => sum + row.contribution.tokens.total!, 0)).toBe(contributions.length);
+  expect(new Set(allocated.allocations.map(row => row.contributionId)).size).toBe(contributions.length);
+  expect(allocated.allocations.map(row => row.contributionId)).toEqual(delivered.map(row => row.id));
+  expect(delivered.reduce((sum, row) => sum + row.tokens.total!, 0)).toBe(contributions.length);
   expect(allocated.allocations.every(row => row.outcome === null)).toBe(true);
   // Rich exports retain their admitted detail.
   expect(rich.flatMap(chunk => chunk.contributionPages ?? []).every(page =>

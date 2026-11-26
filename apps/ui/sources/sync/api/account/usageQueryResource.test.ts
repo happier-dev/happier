@@ -1786,8 +1786,8 @@ describe('usage query captured Resource adapter', () => {
       const worked = kept.results.find(slice => slice.key === getUsageQueryKey(controls[1]));
       expect(exported?.accounting?.contributions).toHaveLength(count);
       expect(worked?.work?.allocations).toHaveLength(count);
-      expect(worked?.work?.allocations.map(row => row.contribution)).toEqual(worked?.accounting?.contributions);
-      expect(summarizeUsageWork(worked!.work!, { metric: 'cost', costBasis: 'auto' }).total).toBe(count);
+      expect(worked?.work?.allocations.map(row => row.contributionId)).toEqual(worked?.accounting?.contributions?.map(row => row.id));
+      expect(summarizeUsageWork(worked!.work!, worked!.accounting!.contributions!, { metric: 'cost', costBasis: 'auto' }).total).toBe(count);
       count = 3;
       const comparison = normalizeUsageQuery({ ...query, period: { startMs: 500, endMs: 1000 }, includeComparison: true,
         includeSessionEvidence: false, includeTranscriptEvidence: false });
@@ -2544,8 +2544,8 @@ describe('usage query captured Resource adapter', () => {
     await workEntry.refresh();
     const detailed = decodeUsageQueryResource(workEntry.getSnapshot().value!);
     expect(detailed.results[0]?.accounting?.contributions?.map(row => row.id)).toEqual(contributions.map(row => row.id));
-    expect(detailed.results[0]?.work?.allocations.map(row => row.contribution.id)).toEqual(contributions.map(row => row.id));
-    const amount = summarizeUsageWork(detailed.results[0]!.work!, { metric: 'cost', costBasis: 'api_equivalent' }).total;
+    expect(detailed.results[0]?.work?.allocations.map(row => row.contributionId)).toEqual(contributions.map(row => row.id));
+    const amount = summarizeUsageWork(detailed.results[0]!.work!, detailed.results[0]!.accounting!.contributions!, { metric: 'cost', costBasis: 'api_equivalent' }).total;
     expect(formatUsageCost(amount!, 'USD')).toBe('$0.0025');
     const reads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch');
     expect(reads()).toHaveLength(2);
@@ -3547,7 +3547,8 @@ describe('usage query captured Resource adapter', () => {
       return results.find(slice => slice.requestedQuery.includeWorkEvidence) ?? results[0]!;
     };
     const branches = (slice: Awaited<ReturnType<typeof read>>) => sessionIds.map(id =>
-      slice.work?.branchAllocations.find(allocation => allocation.contribution.sessionId === id)?.branch?.branch.ref);
+      slice.work?.branchAllocations.find((_, index) =>
+        slice.accounting?.contributions?.[index]?.sessionId === id)?.branch?.branch.ref);
     const accountingReads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch').length;
     let release = entry.subscribe(() => {}, true);
     try {
@@ -11058,7 +11059,7 @@ describe('usage query Work composition', () => {
       for (const slice of relativeBatch.results) expect(slice.comparison?.query.period).toEqual(precedingPeriod);
     } finally { clock.mockRestore(); }
     const shown = result.results.find(slice => slice.key === getUsageQueryKey(query))!;
-    expect(shown.work?.allocations).toMatchObject([{ reason: 'allocated', contribution, outcome: { repositoryKey: 'repo' } }]);
+    expect(shown.work?.allocations).toMatchObject([{ reason: 'allocated', contributionId: contribution.id, outcome: { repositoryKey: 'repo' } }]);
     expect(result.results.find(slice => slice.key === getUsageQueryKey(other))?.work?.allocations)
       .toMatchObject([{ reason: 'missing_evidence', outcome: null }]);
     expect(shown.sources).toContainEqual({ source: 'work', status: 'partial', asOfMs: expect.any(Number) });
@@ -11158,7 +11159,7 @@ describe('usage query Work composition', () => {
     const branchWitness = { ...checkpoint, branch: { ref: 'refs/heads/standalone', headSha: 'b'.repeat(40) } };
     scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [], branchEvidence: [branchWitness] }));
     const standalone = await readUiUsageQueryBatch(captured, { queries: [query] });
-    expect(standalone.results[0]?.work?.branchAllocations[0]).toMatchObject({ reason: 'allocated', contribution,
+    expect(standalone.results[0]?.work?.branchAllocations[0]).toMatchObject({ reason: 'allocated', contributionId: contribution.id,
       branch: { repositoryKey: 'repo', branch: { ref: 'refs/heads/standalone' } } });
     expect(standalone.results[0]?.work?.branchAllocations[0]?.branch).not.toHaveProperty('contributionIds');
     expect(standalone.results[0]?.work?.branches).toEqual([expect.objectContaining({

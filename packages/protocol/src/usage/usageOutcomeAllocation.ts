@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ScmPullRequestWorkEvidenceSchema, ScmPullRequestSummarySchema, type ScmPullRequestSummary, type ScmPullRequestWorkEvidence } from '../scm/pullRequests.js';
-import { UsageAnalyticsContributionSchema, type UsageAnalyticsContribution } from './usageAnalyticsContracts.js';
+import type { UsageAnalyticsContribution } from './usageAnalyticsContracts.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 import { ScmBranchWorkEvidenceSchema, ScmBranchWorkIdentitySchema, type ScmBranchWorkEvidence } from '../scm/branches.js';
@@ -15,11 +15,12 @@ export type UsageWorkOutcome = Readonly<{
   key: string; repositoryKey: string; pullRequest: ScmPullRequestSummary; contributionIds: string[];
 }>;
 export type UsageWorkAllocation = Readonly<{
-  contribution: UsageWorkContribution; outcome: Omit<UsageWorkOutcome, 'contributionIds'> | null;
+  contributionId: string; outcome: Omit<UsageWorkOutcome, 'contributionIds'> | null;
   reason: 'allocated' | 'missing_turn' | 'missing_evidence' | 'ambiguous_outcome' | 'uncertain_writers';
   evidence: UsageWorkEvidence[];
 }>;
 export type UsageWorkProjection = Readonly<{
+  /** One allocation of each kind per accounting contribution, in accounting order. */
   allocations: UsageWorkAllocation[]; outcomes: UsageWorkOutcome[];
   branchAllocations: UsageWorkBranchAllocation[]; branches: UsageWorkBranch[];
 }>;
@@ -27,7 +28,7 @@ export type UsageWorkBranch = Readonly<{
   key: string; repositoryKey: string; branch: ScmBranchWorkEvidence['branch']; contributionIds: string[];
 }>;
 export type UsageWorkBranchAllocation = Readonly<{
-  contribution: UsageWorkContribution; branch: Omit<UsageWorkBranch, 'contributionIds'> | null; reason: UsageWorkAllocation['reason'];
+  contributionId: string; branch: Omit<UsageWorkBranch, 'contributionIds'> | null; reason: UsageWorkAllocation['reason'];
   evidence: ScmBranchWorkEvidence[];
 }>;
 
@@ -41,13 +42,13 @@ const UsageWorkBranchSchema = lazyZodSchema(() => z.strictObject({
 }));
 export const UsageWorkProjectionSchema = lazyZodSchema(() => z.strictObject({
   allocations: z.array(z.strictObject({
-    contribution: UsageAnalyticsContributionSchema, outcome: z.nullable(z.omit(UsageWorkOutcomeSchema, { contributionIds: true })),
+    contributionId: z.string().check(z.minLength(1)), outcome: z.nullable(z.omit(UsageWorkOutcomeSchema, { contributionIds: true })),
     reason: z.enum(['allocated', 'missing_turn', 'missing_evidence', 'ambiguous_outcome', 'uncertain_writers']),
     evidence: z.array(ScmPullRequestWorkEvidenceSchema),
   })),
   outcomes: z.array(UsageWorkOutcomeSchema),
   branchAllocations: z.array(z.strictObject({
-    contribution: UsageAnalyticsContributionSchema, branch: z.nullable(z.omit(UsageWorkBranchSchema, { contributionIds: true })),
+    contributionId: z.string().check(z.minLength(1)), branch: z.nullable(z.omit(UsageWorkBranchSchema, { contributionIds: true })),
     reason: z.enum(['allocated', 'missing_turn', 'missing_evidence', 'ambiguous_outcome', 'uncertain_writers']),
     evidence: z.array(ScmBranchWorkEvidenceSchema),
   })),
@@ -96,17 +97,18 @@ export type UsageWorkSummary = z.infer<typeof UsageWorkSummarySchema>;
 
 /** Project exact merged counts only when the admitted PR reads answered. */
 export function projectUsageWorkSummary(outcomes: readonly Pick<UsageWorkOutcome, 'pullRequest'>[],
-  pullRequestsRead: boolean, work?: Pick<UsageWorkProjection, 'allocations'>): UsageWorkSummary | undefined {
+  pullRequestsRead: boolean, detail?: Readonly<{ work: Pick<UsageWorkProjection, 'allocations'>; contributions: readonly UsageWorkContribution[] }>): UsageWorkSummary | undefined {
   const summary: UsageWorkSummary = pullRequestsRead ? {
     pullRequestsRead: true,
     mergedPrCount: outcomes.filter(outcome => outcome.pullRequest.state === 'merged').length,
   } : {};
-  if (!work) return pullRequestsRead ? summary : undefined;
+  if (!detail) return pullRequestsRead ? summary : undefined;
+  const { work, contributions } = detail;
   const sessions = new Set<string>();
   const mergedSessions = new Set<string>();
   let allocatedContributionCount = 0;
-  for (const row of work.allocations) {
-    const { sessionId } = row.contribution;
+  for (const [index, row] of work.allocations.entries()) {
+    const { sessionId } = contributions[index]!;
     if (sessionId !== null) sessions.add(sessionId);
     if (row.outcome === null) continue;
     allocatedContributionCount++;
@@ -118,14 +120,15 @@ export function projectUsageWorkSummary(outcomes: readonly Pick<UsageWorkOutcome
 
 /** Consumes the canonical allocation; usage timestamps never stand in for merge dates. */
 export function summarizeUsageMergedOutcomes(input: Readonly<{
-  work: UsageWorkProjection; period: Readonly<{ startMs: number; endMs: number }>; timeZoneOffsetMinutes: number;
+  work: UsageWorkProjection; contributions: readonly UsageWorkContribution[]; period: Readonly<{ startMs: number; endMs: number }>; timeZoneOffsetMinutes: number;
   pullRequestsRead: boolean;
 }>): UsageMergedOutcomeSummary {
   const countsByOutcome = new Map<string, Map<string | null, number>>();
-  for (const allocation of input.work.allocations) {
+  for (const [index, allocation] of input.work.allocations.entries()) {
     if (!allocation.outcome || allocation.outcome.pullRequest.state !== 'merged') continue;
     const counts = countsByOutcome.get(allocation.outcome.key) ?? new Map<string | null, number>();
-    counts.set(allocation.contribution.agentId, (counts.get(allocation.contribution.agentId) ?? 0) + 1);
+    const { agentId } = input.contributions[index]!;
+    counts.set(agentId, (counts.get(agentId) ?? 0) + 1);
     countsByOutcome.set(allocation.outcome.key, counts);
   }
   const summary: UsageMergedOutcomeSummary = {
@@ -233,13 +236,13 @@ export function allocateUsageOutcomes(input: Readonly<{
     ids.add(contribution.id);
     const admission = contribution.sessionId && contribution.turnId
       ? byTurn.get(turnKey(contribution.sessionId, contribution.turnId)) : undefined;
-    if (!admission?.outcome) return { contribution, outcome: null,
+    if (!admission?.outcome) return { contributionId: contribution.id, outcome: null,
       reason: admission?.reason ?? 'missing_turn', evidence: admission?.evidence ?? [] };
     const outcome = outcomes.get(admission.outcome.key) ?? { ...admission.outcome, contributionIds: [] };
     outcome.contributionIds.push(contribution.id);
     outcomes.set(outcome.key, outcome);
     // Complete memberships live once in outcomes, never once per allocation.
-    return { contribution, outcome: admission.outcome, reason: admission.reason, evidence: admission.evidence };
+    return { contributionId: contribution.id, outcome: admission.outcome, reason: admission.reason, evidence: admission.evidence };
   });
   const jsonKey = (value: unknown) => createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(value));
   const compare = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
@@ -261,13 +264,13 @@ export function allocateUsageOutcomes(input: Readonly<{
     const reason: UsageWorkAllocation['reason'] = !contribution.sessionId || !contribution.turnId ? 'missing_turn'
       : evidence.length === 0 ? 'missing_evidence' : keys.size !== 1 ? 'ambiguous_outcome'
         : evidence.some(row => row.attributionScope !== 'no_happier_checkpoint_overlap_observed') ? 'uncertain_writers' : 'allocated';
-    if (reason !== 'allocated') return { contribution, branch: null, reason, evidence };
+    if (reason !== 'allocated') return { contributionId: contribution.id, branch: null, reason, evidence };
     const witness = evidence[0]!;
     const key = branchKey(witness);
     const branch = branches.get(key) ?? { key, repositoryKey: witness.repositoryKey, branch: witness.branch, contributionIds: [] };
     branch.contributionIds.push(contribution.id);
     branches.set(key, branch);
-    return { contribution, branch: { key, repositoryKey: branch.repositoryKey, branch: branch.branch }, reason, evidence };
+    return { contributionId: contribution.id, branch: { key, repositoryKey: branch.repositoryKey, branch: branch.branch }, reason, evidence };
   });
   return { allocations, outcomes: [...outcomes.values()].sort((a, b) => compare(a.key, b.key)),
     branchAllocations, branches: [...branches.values()].sort((a, b) => compare(a.key, b.key)) };

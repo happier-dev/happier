@@ -221,9 +221,10 @@ it('R140 folds unnamed Project choices like the ledger and selects their origina
             const fact = titleFacts.get(key);
             return { key, ...fixture.totals, ...(fact ? { label: fact.title } : {}) };
         }) } } }];
-    const work = allocateUsageOutcomes({ contributions: projects.map((projectKey, index) => ({ ...fixture.contributions![0]!,
-        id: 'r140-' + index, projectKey, sessionId: 'r140-session', turnId: null })), evidence: [] });
-    const ledger = summarizeUsageWork(work, { metric: 'tokens', costBasis: 'auto' }, new Set(named));
+    const contributions = projects.map((projectKey, index) => ({ ...fixture.contributions![0]!,
+        id: 'r140-' + index, projectKey, sessionId: 'r140-session', turnId: null }));
+    const work = allocateUsageOutcomes({ contributions, evidence: [] });
+    const ledger = summarizeUsageWork(work, contributions, { metric: 'tokens', costBasis: 'auto' }, new Set(named));
     expect(ledger.projects.filter(row => row.projectKey === null)).toHaveLength(1);
     expect(ledger.projects.find(row => row.projectKey === null)!.unnamedProjectCount).toBe(unnamed.length);
     const fetch = vi.spyOn(globalThis, 'fetch');

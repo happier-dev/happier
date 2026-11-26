@@ -1,5 +1,5 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type { UsageActionInputById, WidgetsActionInputById } from '@happier-dev/plugin-sdk/actions';
+import type { UsageActionInputById, UsageActionResultById, WidgetsActionInputById } from '@happier-dev/plugin-sdk/actions';
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from '@happier-dev/plugin-sdk/ui/build';
@@ -64,4 +64,16 @@ export function watchUsage(
     options?: Parameters<PluginUiHostApi['watchResource']>[2],
 ): ReturnType<PluginUiHostApi['watchResource']> {
     return host.watchResource({ hostRead: 'usage.query', input: { queries: [query] } }, listener, options);
+}
+
+/** Join an Action reply's Work allocations to the admitted accounting rows. */
+export function readWorkAllocations(slice: UsageActionResultById['usage.query']['results'][number]) {
+    const contributions = new Map(slice.accounting?.contributions?.map(row => [row.id, row] as const));
+    const join = <T extends { contributionId: string }>(rows: T[] = []) =>
+        rows.map(allocation => ({ allocation, contribution: contributions.get(allocation.contributionId) }));
+    return {
+        sessionDetailOmitted: slice.incomplete?.omittedSections.includes('workSessionDetail') ?? false,
+        pullRequests: join(slice.work?.allocations),
+        branches: join(slice.work?.branchAllocations),
+    };
 }

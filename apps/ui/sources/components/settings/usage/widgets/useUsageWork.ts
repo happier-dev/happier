@@ -2,6 +2,7 @@ import * as React from 'react';
 import { formatHappierDataValue, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
 import { UsageAccountingMetricSchema, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { UsageWorkContribution } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -28,7 +29,10 @@ function countLabels(labels: readonly string[]): Map<string, number> {
   return counts;
 }
 
-const summaries = new WeakMap<object, Map<string, UsageWorkSummary>>();
+const summaries = new WeakMap<object, {
+  contributions: readonly UsageWorkContribution[];
+  byKey: Map<string, UsageWorkSummary>;
+}>();
 const EMPTY_SESSION_IDENTITIES: readonly UsageWorkSessionIdentity[] = Object.freeze([]);
 const EMPTY_MACHINE_IDS: readonly string[] = Object.freeze([]);
 
@@ -39,6 +43,7 @@ export function useUsageWork(
   serverId: string,
 ) {
   const work = slice.work;
+  const contributions = slice.accounting?.contributions;
   const view = useUsageAnalyticsView(slice, query);
   const projectNames = useUsageProjectNames(serverId, view?.breakdowns.projects);
   const projectLabels = projectNames.labels;
@@ -47,22 +52,22 @@ export function useUsageWork(
   const anchorOf = useUsageProjectAnchorOf(serverId);
   const namesKey = JSON.stringify([...namedProjectKeys].sort());
   const summary = React.useMemo(() => {
-    if (!work) return null;
+    if (!work || !contributions) return null;
     const key = `${query.metric}\u0000${query.costBasis}\u0000${namesKey}\u0000${anchorOf.joinedKey}`;
-    let byKey = summaries.get(work);
-    if (!byKey) {
-      byKey = new Map();
-      summaries.set(work, byKey);
+    let cachedInput = summaries.get(work);
+    if (cachedInput?.contributions !== contributions) {
+      cachedInput = { contributions, byKey: new Map() };
+      summaries.set(work, cachedInput);
     }
-    const cached = byKey.get(key);
+    const cached = cachedInput.byKey.get(key);
     if (cached) return cached;
-    const built = summarizeUsageWork(work, {
+    const built = summarizeUsageWork(work, contributions, {
       metric: query.metric,
       costBasis: query.costBasis,
     }, namedProjectKeys, anchorOf.resolve);
-    byKey.set(key, built);
+    cachedInput.byKey.set(key, built);
     return built;
-  }, [work, query.metric, query.costBasis, namesKey, namedProjectKeys, anchorOf]);
+  }, [work, contributions, query.metric, query.costBasis, namesKey, namedProjectKeys, anchorOf]);
   const format = React.useCallback(
     (value: number | null, moneyBasis: UsageWorkMoneyBasis | null = summary?.moneyBasis ?? null) =>
       // An unknown amount is unpriced money, or a token count not measured: never "no API price" for tokens.

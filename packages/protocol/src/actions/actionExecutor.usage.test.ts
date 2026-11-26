@@ -115,9 +115,13 @@ describe('personal usage Action execution', () => {
       expect(slice.work).toBeUndefined();
       expect(slice.incomplete).toMatchObject({ recovery: 'narrow_query', omittedSections: ['work'] });
     }
-    const narrowed = await createActionExecutor({ usageActions: { query: async () => ({ ...rich, results: [rich.results[1]!] }) } } as ActionExecutorDeps)
-      .execute('usage.query', { queries: [small] }, { surface: 'agent' });
-    expect(narrowed.ok && UsageQueryBatchResultSchema.parse(narrowed.result).results[0]?.work?.allocations).toHaveLength(1);
+    for (const surface of ['agent', 'mcp'] as const) {
+      const narrowed = await createActionExecutor({ usageActions: { query: async () => ({ ...rich, results: [rich.results[1]!] }) } } as ActionExecutorDeps)
+        .execute('usage.query', { queries: [small] }, { surface });
+      const work = narrowed.ok && UsageQueryBatchResultSchema.parse(narrowed.result).results[0]?.work;
+      expect(work).toMatchObject({ outcomes: [{ pullRequest: { number: 1 } }],
+        allocations: [{ contributionId: contributions[0]!.id }] });
+    }
     const result = await executor.execute('usage.query', { queries: [heavy, small, heavy] }, { surface: 'cli' });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('Expected useful admitted Usage facts');
@@ -129,7 +133,7 @@ describe('personal usage Action execution', () => {
     expect(bounded).toMatchObject({ requestedQuery: heavy, shownQuery: heavy, accounting: { totals: accounting.totals } });
     expect(bounded.work?.allocations).toHaveLength(1_000);
     expect(bounded.work?.outcomes[0]?.contributionIds).toHaveLength(1_000);
-    expect(new Set(bounded.work?.allocations.map(row => row.contribution.sessionId)).size).toBe(1_000);
+    expect(bounded.work?.allocations.map(row => row.contributionId)).toEqual(contributions.map(row => row.id));
     expect(bounded).not.toHaveProperty('incomplete');
     expect(bounded.workSummary).toMatchObject({ sessionCount: 1_000, contributionCount: 1_000, allocatedContributionCount: 1_000 });
     const narrow = batch.results.find(slice => slice.key !== bounded.key)!;
@@ -163,7 +167,7 @@ describe('personal usage Action execution', () => {
     }, bundledUsageModelPriceCatalog);
     expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(wide)).toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
     const wideDelivery = usageDelivery.projectUsageQueryDelivery(wide);
-    expect(wideDelivery.results.some(slice => slice.incomplete?.omittedSections.includes('work'))).toBe(true);
+    expect(wideDelivery.results.some(slice => slice.incomplete?.omittedSections.includes('workSessionDetail'))).toBe(true);
     expect(UsageQueryBatchResultSchema.safeParse(wideDelivery).success).toBe(true);
     for (const slice of wideDelivery.results) {
       expect(slice.workSummary).toMatchObject({ sessionCount: 1_000, contributionCount: 1_000, allocatedContributionCount: 1_000 });
@@ -173,6 +177,142 @@ describe('personal usage Action execution', () => {
       richBytes: measureExternalActionResultResponseEnvelopeUtf8BytesV1(rich),
       deliveredBytes: measureExternalActionResultResponseEnvelopeUtf8BytesV1(result.result), nearBytes, nearRows: selected.length }));
   }, 0); // Real envelope-scale byte contract, not a five-second throughput gate.
+  it('preserves Week Work links and typed counts when only Session detail exceeds the Action envelope', async () => {
+    const week = normalizeUsageQuery({ period: { startMs: 0, endMs: 7 * 86_400_000 },
+      includeWorkEvidence: true, includeComparison: false });
+    const sha = 'c'.repeat(40);
+    const contribution = (index: number, projectKey: string) => ({
+      id: `contribution-${index}`, sessionId: `session-${index}`, turnId: `turn-${index}`, observedAtMs: 1,
+      agentId: 'muse', modelId: null, machineId: null, projectKey, workspaceId: null, source: 'runtime',
+      tokens: accounting.totals.tokens, cost: accounting.totals.cost,
+    });
+    const build = (projectKey: string, firstTitle = 'Work', requestedQuery = week) => {
+      const contributions = Array.from({ length: 11 }, (_, index) => contribution(index, projectKey));
+      const branchEvidence = contributions.slice(0, 10).map((row, index) => ({
+        sessionId: row.sessionId, turnId: row.turnId, repositoryKey: 'repo',
+        checkpointRef: `checkpoint-${index}`, checkpointCommitSha: sha, commitSha: sha,
+        attributionScope: 'no_happier_checkpoint_overlap_observed' as const,
+        branch: { ref: `refs/heads/work-${index}`, headSha: sha },
+      }));
+      const evidence: UsageWorkEvidence[] = branchEvidence.slice(0, 9).map(({ branch: _branch, ...row }, index) => ({
+        ...row, pullRequest: {
+          provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+            nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+          number: index + 1, title: index === 0 ? firstTitle : 'Work', url: `https://github.com/owner/repo/pull/${index + 1}`,
+          baseBranch: 'main', headBranch: `work-${index}`,
+          ...(index === 1 ? { state: 'merged' as const, mergedAtMs: 2 } : { state: 'open' as const }),
+        },
+      }));
+      return resolveUsagePageAggregation({ queries: [requestedQuery],
+        accounting: [{ query: requestedQuery, status: 'available', value: { ...accounting, contributions } }],
+        work: [{ query: requestedQuery, status: 'partial', errorCode: 'machine_offline', asOfMs: 7,
+          unreadSessions: { machine_unavailable: 1 }, evidence, branchEvidence }],
+        howYouWork: requestedQuery.includeCoach ? [{ query: requestedQuery, detail: { status: 'available', phaseEvents: [{
+          evidenceId: 'sibling-read', sessionId: 'session-0', turnId: 'turn-0', observedAtMs: 1,
+          kind: 'read', method: 'tool_classification',
+        }] } }] : [],
+      }, bundledUsageModelPriceCatalog);
+    };
+    const invokeBatch = async (batch: ReturnType<typeof build>, surface: 'ui' | 'cli') => {
+      const executor = createActionExecutor({ usageActions: { query: async () => batch } } as ActionExecutorDeps);
+      const reply = await executor.execute('usage.query', { queries: batch.results.map(slice => slice.requestedQuery) }, { surface });
+      if (!reply.ok) throw new Error(reply.errorCode);
+      expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(reply.result))
+        .toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+      return UsageQueryBatchResultSchema.parse(reply.result).results;
+    };
+    const invoke = async (batch: ReturnType<typeof build>, surface: 'ui' | 'cli') => (await invokeBatch(batch, surface))[0]!;
+
+    const small = build('project');
+    const complete = await invoke(small, 'cli');
+    expect(complete.work).toEqual(small.results[0]!.work);
+    expect(complete.accounting?.contributions).toEqual(small.results[0]!.accounting?.contributions);
+    expect(complete.incomplete).toBeUndefined();
+
+    const weekSized = build('p'.repeat(2_300_000));
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(weekSized))
+      .toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    const compact = await invoke(weekSized, 'cli');
+    expect(compact).toMatchObject({ accounting: { totals: accounting.totals },
+      workSummary: complete.workSummary,
+      incomplete: { reason: 'response_size_limit', omittedSections: ['workSessionDetail'], recovery: 'narrow_query' } });
+    expect(compact.work?.outcomes.map(row => row.pullRequest)).toEqual(complete.work?.outcomes.map(row => row.pullRequest));
+    expect(compact.work?.outcomes).toHaveLength(9);
+    expect(compact.work?.branches.map(row => row.branch)).toEqual(complete.work?.branches.map(row => row.branch));
+    expect(compact.work?.branches).toHaveLength(10);
+    expect(compact.work?.allocations).toHaveLength(0);
+    expect(compact.work?.branchAllocations).toHaveLength(0);
+    expect(compact.accounting?.contributions).toBeUndefined();
+    expect(compact.mergedOutcomes).toEqual(complete.mergedOutcomes);
+    expect(compact.mergedOutcomes?.linkedMergedCount).toBe(1);
+    expect(compact.mergedOutcomes?.mergedInPeriodCount).toBeUndefined();
+    expect(UsageQueryBatchResultSchema.safeParse({ v: 1, results: [{
+      ...compact, mergedOutcomes: { ...compact.mergedOutcomes, mergedInPeriodCount: 1 },
+    }] }).success).toBe(false);
+    expect(compact.sources).toEqual(complete.sources);
+    expect(compact.sources.find(row => row.source === 'work')).toMatchObject({
+      status: 'partial', asOfMs: 7, unreadSessions: { machine_unavailable: 1 },
+    });
+    expect(await invoke(weekSized, 'ui')).toEqual(compact);
+
+    const sibling = build('sibling', 'Work', normalizeUsageQuery({ ...week, period: { startMs: 0, endMs: 6 * 86_400_000 }, includeCoach: true }));
+    const completeSibling = await invoke(sibling, 'cli');
+    expect(completeSibling.howYouWork?.autopsy?.events).toHaveLength(1);
+    expect(completeSibling.coach).toBeDefined();
+
+    // Calibrate the ASCII title against the actual envelope. A's compact link body
+    // plus B's complete answer is one byte over, but omitting B's detail fits.
+    const withFirstTitle = (slice: typeof compact, title: string) => ({
+      ...slice, work: { ...slice.work!, outcomes: slice.work!.outcomes.map(row => row.pullRequest.number === 1
+        ? { ...row, pullRequest: { ...row.pullRequest, title } } : row) },
+    });
+    const envelopeBytes = (results: typeof weekSized.results) =>
+      measureExternalActionResultResponseEnvelopeUtf8BytesV1({ ...weekSized, results });
+    const baseBytes = envelopeBytes([withFirstTitle(compact, ''), completeSibling]);
+    const title = 'a'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - baseBytes + 1);
+    const large = build('p'.repeat(2_300_000), title);
+    const compactLarge = withFirstTitle(compact, title);
+    const mixedBytes = envelopeBytes([compactLarge, completeSibling]);
+    expect(mixedBytes).toBe(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES + 1);
+
+    const [largeDelivery, smallDelivery] = await invokeBatch({
+      ...large, results: [...large.results, ...sibling.results],
+    }, 'cli');
+    expect(largeDelivery).toEqual(compactLarge);
+    expect(smallDelivery).toBeDefined();
+    if (!largeDelivery || !smallDelivery) throw new Error('Missing delivered slices');
+    const bothCompactBytes = envelopeBytes([largeDelivery, smallDelivery]);
+    expect(bothCompactBytes).toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    expect(envelopeBytes([...large.results, completeSibling]) - mixedBytes)
+      .toBeGreaterThan(mixedBytes - bothCompactBytes);
+    for (const [delivered, admitted] of [[largeDelivery, large.results[0]!], [smallDelivery, completeSibling]] as const) {
+      expect(delivered.incomplete).toEqual({
+        reason: 'response_size_limit', omittedSections: ['workSessionDetail'], recovery: 'narrow_query',
+      });
+      expect(delivered.work).toEqual({ ...admitted.work, allocations: [], branchAllocations: [] });
+      expect(delivered.accounting?.totals).toEqual(admitted.accounting?.totals);
+      expect(delivered.workSummary).toEqual(admitted.workSummary);
+      expect(delivered.mergedOutcomes).toEqual(admitted.mergedOutcomes);
+      expect(delivered.sources).toEqual(admitted.sources);
+      expect(delivered.sources.find(row => row.source === 'work')).toMatchObject({
+        status: 'partial', asOfMs: 7, unreadSessions: { machine_unavailable: 1 },
+      });
+      expect(delivered.howYouWork).toEqual(admitted.howYouWork);
+      expect(delivered.coach).toEqual(admitted.coach);
+    }
+
+    const linksTooLarge = build('project', 'p'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES));
+    const [omitted, siblingDelivery] = await invokeBatch({
+      ...linksTooLarge, results: [...linksTooLarge.results, ...sibling.results],
+    }, 'cli');
+    expect(siblingDelivery).toEqual(completeSibling);
+    expect(omitted).toBeDefined();
+    if (!omitted) throw new Error('missing oversized result');
+    expect(omitted.work).toBeUndefined();
+    expect(omitted.incomplete?.omittedSections).toEqual(['work']);
+    expect(omitted.workSummary).toEqual(complete.workSummary);
+  }, 0);
+
   it('marks oversized transcript detail incomplete without discarding admitted Coach or accounting', async () => {
     const event = { evidenceId: 'phase-0', sessionId: 'session-0', turnId: 'turn-0', observedAtMs: 150,
       kind: 'read' as const, method: 'tool_classification' as const };
@@ -400,7 +540,8 @@ describe('personal usage Action execution', () => {
     const executor = createActionExecutor(deps as ActionExecutorDeps);
     expect(await executor.execute('usage.query', { queries: [workQuery, other] }, { surface: 'cli' }))
       .toMatchObject({ ok: true, result: { v: 1, results: expect.arrayContaining([
-        expect.objectContaining({ requestedQuery: workQuery, work: expect.objectContaining({ allocations: [expect.objectContaining({ contribution,
+        expect.objectContaining({ requestedQuery: workQuery, accounting: expect.objectContaining({ contributions: [contribution] }),
+          work: expect.objectContaining({ allocations: [expect.objectContaining({ contributionId: contribution.id,
           reason: 'allocated', outcome: expect.objectContaining({ repositoryKey: 'repo' }) })] }) }),
         expect.objectContaining({ requestedQuery: other }),
       ]) } });

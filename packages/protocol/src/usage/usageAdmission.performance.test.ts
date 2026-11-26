@@ -120,7 +120,7 @@ describe('admitted Usage data stays typed inside the process', () => {
       expect(workParse.mock.calls.length).toBe(0);
       expect(detailParse.mock.calls.length).toBe(0);
       expect(digestParse.mock.calls.length).toBe(0);
-      expect(batch.results[0]!.work!.allocations[0]!.contribution === batch.results[0]!.accounting!.contributions![0]).toBe(true);
+      expect(batch.results[0]!.work!.allocations[0]!.contributionId).toBe(batch.results[0]!.accounting!.contributions![0]!.id);
     } finally { workParse.mockRestore(); detailParse.mockRestore(); digestParse.mockRestore(); }
   }, 60_000);
 });

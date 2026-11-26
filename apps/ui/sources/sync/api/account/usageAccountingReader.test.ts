@@ -143,7 +143,7 @@ it('requests compact Work rows and preserves allocation, money modes and local r
         expect(work.contributions![0]!.sourceContext).toEqual(rich.contributions![0]!.sourceContext);
         for (const costBasis of ['auto', 'reported', 'estimated', 'api_equivalent'] as const) {
             const presentation = (rows: NonNullable<UsageAnalyticsQueryResponse['contributions']>) => summarizeUsageWork(
-                allocateUsageOutcomes({ contributions: rows, evidence: [] }), { metric: 'cost', costBasis });
+                allocateUsageOutcomes({ contributions: rows, evidence: [] }), rows, { metric: 'cost', costBasis });
             expect(presentation(work.contributions!)).toEqual(presentation(rich.contributions!));
         }
         const rates = { model: { kind: 'rates' as const, inputUsdPerMillion: 9, outputUsdPerMillion: 0 } };

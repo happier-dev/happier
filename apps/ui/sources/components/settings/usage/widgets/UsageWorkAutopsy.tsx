@@ -86,18 +86,20 @@ export function UsageWorkAutopsy(
   const amount = props.query.metric === 'cost' ? cost?.amountUsd ?? null : accounting?.hero.totalTokens ?? null;
   const selected = usageQuerySingleSession(props.query);
   const work = props.slice.work;
+  const accountingContributions = props.slice.accounting?.contributions;
   // A viewer given access to this Session sees their own account's usage in it: its label says so, and zero is the
   // answer, never the dashboard's empty state (acceptance r226 #62).
   const viewerOwn = useUsageSessionRecipient(selected, props.serverId);
   const linksNotice = usageWorkLinksNotice(props.slice);
   const { metric, costBasis } = props.query;
   const autopsy = React.useMemo(
-    () => (selected && work ? summarizeUsageWorkSession(work, { metric, costBasis }, selected) : null),
-    [selected, work, metric, costBasis],
+    () => (selected && work && accountingContributions
+      ? summarizeUsageWorkSession(work, accountingContributions, { metric, costBasis }, selected) : null),
+    [selected, work, accountingContributions, metric, costBasis],
   );
   const metadata = useSessionMetadata(selected ?? '', props.serverId);
-  const contributions = React.useMemo(() => new Map((work?.allocations ?? [])
-    .filter(row => row.contribution.sessionId === selected).map(row => [row.contribution.id, row.contribution])), [work, selected]);
+  const contributions = React.useMemo(() => new Map((accountingContributions ?? [])
+    .filter(row => row.sessionId === selected).map(row => [row.id, row])), [accountingContributions, selected]);
   const modelOptions = React.useMemo(() => new Map([...new Set([...contributions.values()]
     .flatMap(row => row.agentId === null ? [] : [row.agentId]))].map(agentId => [agentId,
       getModelOptionsForSession(agentId, metadata)])), [contributions, metadata]);

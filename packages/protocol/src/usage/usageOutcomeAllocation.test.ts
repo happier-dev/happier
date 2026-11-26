@@ -44,7 +44,7 @@ describe('evidence-derived Work allocation', () => {
         state: 'closed' as const, closedAtMs: period.startMs } },
     ];
     const work = allocateUsageOutcomes({ contributions, evidence: [...witnesses, witnesses[0]] });
-    const summary = summarizeUsageMergedOutcomes({ work, period, timeZoneOffsetMinutes, pullRequestsRead: true });
+    const summary = summarizeUsageMergedOutcomes({ work, contributions, period, timeZoneOffsetMinutes, pullRequestsRead: true });
     expect(summary).toMatchObject({ period, timeZoneOffsetMinutes, attributionBasis: 'contribution_count',
       linkedMergedCount: 5, mergedInPeriodCount: 2, outsidePeriodMergedCount: 2, undatedMergedCount: 1,
       mergeWeeks: [
@@ -63,7 +63,7 @@ describe('evidence-derived Work allocation', () => {
       agentContributions: [{ agentId: null, contributionCount: 1 }], leadingAgentIds: [null],
     });
     expect(summarizeUsageMergedOutcomes({ work: allocateUsageOutcomes({ contributions: [...contributions].reverse(),
-      evidence: [...witnesses].reverse() }), period, timeZoneOffsetMinutes, pullRequestsRead: true })).toEqual(summary);
+      evidence: [...witnesses].reverse() }), contributions: [...contributions].reverse(), period, timeZoneOffsetMinutes, pullRequestsRead: true })).toEqual(summary);
   });
 
   it('retains Unknown and tied leading Agents while refusing ambiguous or shared-writer attribution', () => {
@@ -82,7 +82,7 @@ describe('evidence-derived Work allocation', () => {
       evidence('s4', 't4', 2), evidence('s4', 't4', 3),
       { ...evidence('s5', 't5', 4), attributionScope: 'shared_worktree' },
     ] });
-    const summary = summarizeUsageMergedOutcomes({ work, period, timeZoneOffsetMinutes: 0, pullRequestsRead: true });
+    const summary = summarizeUsageMergedOutcomes({ work, contributions, period, timeZoneOffsetMinutes: 0, pullRequestsRead: true });
     expect(summary).toMatchObject({ linkedMergedCount: 1, mergedInPeriodCount: 1, outsidePeriodMergedCount: 0,
       undatedMergedCount: 0, mergeWeeks: [{ bucketStartMs: 0, bucketEndMs: 1_000, count: 1 }],
       outcomes: [{ key: '["repo",1]', mergedAtMs: 0, attribution: 'mixed',
@@ -94,7 +94,7 @@ describe('evidence-derived Work allocation', () => {
     expect(UsageMergedOutcomeSummarySchema.safeParse({ ...summary, outcomes: [{ ...summary.outcomes[0], agentContributions: [
       { ...summary.outcomes[0].agentContributions[0], currentSessionAgent: 'guessed' },
     ] }] }).success).toBe(false);
-    expect(summarizeUsageMergedOutcomes({ work: allocateUsageOutcomes({ contributions: [], evidence: [] }), period,
+    expect(summarizeUsageMergedOutcomes({ work: allocateUsageOutcomes({ contributions: [], evidence: [] }), contributions: [], period,
       timeZoneOffsetMinutes: 0, pullRequestsRead: true })).toEqual({ period, timeZoneOffsetMinutes: 0, attributionBasis: 'contribution_count',
       linkedMergedCount: 0, mergedInPeriodCount: 0, outsidePeriodMergedCount: 0, undatedMergedCount: 0,
       mergeWeeks: [], outcomes: [] });
@@ -109,7 +109,7 @@ describe('evidence-derived Work allocation', () => {
     expect(result.allocations[0].outcome).toBeNull();
     expect(result.branches[0].contributionIds).toEqual(['a']);
     expect(result.branches).toHaveLength(1);
-    expect(result.branchAllocations[0].contribution.cost.reportedUsd).toBe(3);
+    expect(contributions.find(row => row.id === result.branchAllocations[0].contributionId)?.cost.reportedUsd).toBe(3);
     expect(UsageWorkProjectionSchema.safeParse(result).success).toBe(true);
     const withPr = allocateUsageOutcomes({ contributions, evidence: [witnessed], branchEvidence });
     expect(withPr.allocations).toEqual(allocateUsageOutcomes({ contributions, evidence: [witnessed] }).allocations);
@@ -137,17 +137,18 @@ describe('evidence-derived Work allocation', () => {
       contribution('c', 's2', 't3'), contribution('d', 's1', null)];
     const result = allocateUsageOutcomes({ contributions, evidence: [evidence('s1', 't1', 1),
       evidence('s1', 't2', 2), evidence('s2', 't3', 1), evidence('s1', 't1', 1)] });
-    expect(result.allocations.map(row => [row.contribution.id, row.outcome?.pullRequest.number ?? null])).toEqual([
+    expect(result.allocations.map(row => [row.contributionId, row.outcome?.pullRequest.number ?? null])).toEqual([
       ['a', 1], ['b', 2], ['c', 1], ['d', null],
     ]);
     expect(result.outcomes.map(row => row.contributionIds)).toEqual([['a', 'c'], ['b']]);
     // Output shape does not rerun the allocator to impose its presentation order.
     expect(UsageWorkProjectionSchema.safeParse({ ...result, outcomes: [...result.outcomes].reverse() }).success).toBe(true);
+    const allocatedRows = result.allocations.map(({ contributionId }) => contributions.find(row => row.id === contributionId)!);
     for (const key of ['reportedUsd', 'estimatedUsd', 'invoiceUsd'] as const) {
-      expect(result.allocations.reduce((sum, row) => sum + (row.contribution.cost[key] ?? 0), 0))
+      expect(allocatedRows.reduce((sum, row) => sum + (row.cost[key] ?? 0), 0))
         .toBe(contributions.reduce((sum, row) => sum + (row.cost[key] ?? 0), 0));
     }
-    expect(result.allocations.reduce((sum, row) => sum + row.contribution.tokens.total, 0)).toBe(56);
+    expect(allocatedRows.reduce((sum, row) => sum + row.tokens.total, 0)).toBe(56);
     expect(result.allocations[3].reason).toBe('missing_turn');
   });
 

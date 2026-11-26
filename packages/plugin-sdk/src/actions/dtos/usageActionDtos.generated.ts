@@ -14414,84 +14414,7 @@ export type UsageActionResultById = {
             };
             work?: undefined | {
                 allocations: {
-                    contribution: {
-                        id: string;
-                        observedAtMs: number;
-                        sessionId: null | string;
-                        turnId: null | string;
-                        agentId: null | string;
-                        modelId: null | string;
-                        machineId: null | string;
-                        projectKey: null | string;
-                        workspaceId: null | string;
-                        source: null | string;
-                        tokens: {
-                            input: null | number;
-                            output: null | number;
-                            reasoning: null | number;
-                            cacheRead: null | number;
-                            cacheWrite: null | number;
-                            total: null | number;
-                            measured?: undefined | {
-                                total: number;
-                                fromParts: true;
-                            };
-                        };
-                        cost: {
-                            reportedUsd: null | number;
-                            estimatedUsd: null | number;
-                            currency: string;
-                            apiEquivalentUsd?: number | undefined;
-                            pricingSource?: string | undefined;
-                            reportedTotalId?: string | undefined;
-                            reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: null | number | undefined;
-                            billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
-                            costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
-                            breakdown?: undefined | {
-                                [x: string]: number;
-                            };
-                            effectiveUsd?: number | undefined;
-                            selectedBasis?: undefined | {
-                                mode: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
-                                value: null | {
-                                    kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
-                                    currency: string;
-                                    source: string;
-                                    partial?: true | undefined;
-                                };
-                            };
-                        };
-                        eventCount?: number | undefined;
-                        context?: undefined | {
-                            usedTokens?: null | number | undefined;
-                            windowTokens?: null | number | undefined;
-                        };
-                        backendMode?: null | string | undefined;
-                        providerId?: null | string | undefined;
-                        providerConnectionId?: null | string | undefined;
-                        providerAttribution?: 'known' | 'unknown' | undefined;
-                        providerSource?: 'native' | 'provider' | 'unknown' | undefined;
-                        connectedAccount?: null | undefined | {
-                            service: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            accountId: string;
-                        };
-                        sourceContext?: undefined | {
-                            path: 'legacy' | 'native' | 'runtime' | 'unknown';
-                            execution: 'happier' | 'outside' | 'unknown';
-                        };
-                        tokenCategories?: undefined | {
-                            input: null | number;
-                            output: null | number;
-                            reasoning: null | number;
-                            cacheRead: null | number;
-                            cacheWrite: null | number;
-                            total: null | number;
-                        };
-                    };
+                    contributionId: string;
                     outcome: null | {
                         key: string;
                         pullRequest: {
@@ -14659,84 +14582,7 @@ export type UsageActionResultById = {
                     contributionIds: string[];
                 }[];
                 branchAllocations: {
-                    contribution: {
-                        id: string;
-                        observedAtMs: number;
-                        sessionId: null | string;
-                        turnId: null | string;
-                        agentId: null | string;
-                        modelId: null | string;
-                        machineId: null | string;
-                        projectKey: null | string;
-                        workspaceId: null | string;
-                        source: null | string;
-                        tokens: {
-                            input: null | number;
-                            output: null | number;
-                            reasoning: null | number;
-                            cacheRead: null | number;
-                            cacheWrite: null | number;
-                            total: null | number;
-                            measured?: undefined | {
-                                total: number;
-                                fromParts: true;
-                            };
-                        };
-                        cost: {
-                            reportedUsd: null | number;
-                            estimatedUsd: null | number;
-                            currency: string;
-                            apiEquivalentUsd?: number | undefined;
-                            pricingSource?: string | undefined;
-                            reportedTotalId?: string | undefined;
-                            reportedTotalContributionIds?: string[] | undefined;
-                            invoiceUsd?: null | number | undefined;
-                            billingContext?: 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | 'unknown' | undefined;
-                            costSource?: 'invoice' | 'none' | 'pricing_estimate' | 'provider_reported' | 'provider_reported_api_equivalent' | undefined;
-                            breakdown?: undefined | {
-                                [x: string]: number;
-                            };
-                            effectiveUsd?: number | undefined;
-                            selectedBasis?: undefined | {
-                                mode: 'api_equivalent' | 'auto' | 'estimated' | 'reported';
-                                value: null | {
-                                    kind: 'api_equivalent' | 'estimated' | 'invoice' | 'mixed' | 'reported';
-                                    currency: string;
-                                    source: string;
-                                    partial?: true | undefined;
-                                };
-                            };
-                        };
-                        eventCount?: number | undefined;
-                        context?: undefined | {
-                            usedTokens?: null | number | undefined;
-                            windowTokens?: null | number | undefined;
-                        };
-                        backendMode?: null | string | undefined;
-                        providerId?: null | string | undefined;
-                        providerConnectionId?: null | string | undefined;
-                        providerAttribution?: 'known' | 'unknown' | undefined;
-                        providerSource?: 'native' | 'provider' | 'unknown' | undefined;
-                        connectedAccount?: null | undefined | {
-                            service: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            accountId: string;
-                        };
-                        sourceContext?: undefined | {
-                            path: 'legacy' | 'native' | 'runtime' | 'unknown';
-                            execution: 'happier' | 'outside' | 'unknown';
-                        };
-                        tokenCategories?: undefined | {
-                            input: null | number;
-                            output: null | number;
-                            reasoning: null | number;
-                            cacheRead: null | number;
-                            cacheWrite: null | number;
-                            total: null | number;
-                        };
-                    };
+                    contributionId: string;
                     branch: null | {
                         key: string;
                         branch: {
@@ -16885,7 +16731,7 @@ export type UsageActionResultById = {
             };
             incomplete?: undefined | {
                 reason: 'response_size_limit';
-                omittedSections: ('coach' | 'howYouWork' | 'work')[];
+                omittedSections: ('coach' | 'howYouWork' | 'work' | 'workSessionDetail')[];
                 recovery: 'narrow_query';
             };
         }[];

@@ -1,8 +1,9 @@
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../actions/externalActionLimits.js';
 import { measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '../plugins/contributions/strictJsonValue.js';
-import { USAGE_QUERY_EVIDENCE_SECTIONS, type UsageQueryBatchResult, type UsageQueryResultSlice } from './resolveUsagePageAggregation.js';
+import { type UsageQueryBatchResult, type UsageQueryResultSlice } from './resolveUsagePageAggregation.js';
 
 type EvidenceSection = NonNullable<UsageQueryResultSlice['incomplete']>['omittedSections'][number];
+type EvidenceOmission = { index: number; section: EvidenceSection; bodyBytes: number };
 const bytes = (value: unknown) => measureSerializedValidatedStrictPluginJsonUtf8Bytes(value, 'usageQueryDelivery');
 type Accounting = NonNullable<UsageQueryResultSlice['accounting']>;
 type SourceGroup = NonNullable<NonNullable<Accounting['coverage']>['sourceSummary']>['groups'][number];
@@ -45,7 +46,14 @@ function projectAccounting(value: Accounting, includeRows: boolean, summaryDeliv
 
 function omitEvidence(slice: UsageQueryResultSlice, section: EvidenceSection): UsageQueryResultSlice {
   const incomplete = { reason: 'response_size_limit' as const, recovery: 'narrow_query' as const,
-    omittedSections: [...(slice.incomplete?.omittedSections ?? []), section] };
+    omittedSections: [
+      ...(slice.incomplete?.omittedSections ?? []).filter(previous => section !== 'work' || previous !== 'workSessionDetail'),
+      section,
+    ] };
+  if (section === 'workSessionDetail' && slice.work) {
+    return { ...slice, work: { ...slice.work, allocations: [], branchAllocations: [] },
+      ...(slice.accounting ? { accounting: projectAccounting(slice.accounting, false) } : {}), incomplete };
+  }
   if (section === 'work') {
     const { work: _work, mergedOutcomes: _merged, ...facts } = slice;
     return { ...facts, ...(slice.accounting ? { accounting: projectAccounting(slice.accounting, false) } : {}), incomplete };
@@ -58,14 +66,14 @@ function omitEvidence(slice: UsageQueryResultSlice, section: EvidenceSection): U
     const { coach: _coach, ...facts } = slice;
     return { ...facts, incomplete };
   }
-  const unreachable: never = section;
-  return unreachable;
+  throw new Error(`Cannot omit Usage evidence section: ${section}`);
 }
 
 /** Keep exact framing while each potentially omitted body is measured separately once. */
 function projectMeasurementSkeleton(slice: UsageQueryResultSlice): unknown {
   return { ...slice,
-    ...(slice.work === undefined ? {} : { work: null,
+    ...(slice.work === undefined ? {} : {
+      work: { allocations: null, branchAllocations: null, outcomes: null, branches: null },
       ...(slice.mergedOutcomes === undefined ? {} : { mergedOutcomes: null }),
       ...(slice.accounting?.contributions === undefined ? {} : {
         accounting: { ...slice.accounting, contributions: null },
@@ -74,6 +82,24 @@ function projectMeasurementSkeleton(slice: UsageQueryResultSlice): unknown {
     ...(slice.howYouWork === undefined ? {} : { howYouWork: null }),
     ...(slice.coach === undefined ? {} : { coach: null }),
   };
+}
+
+function applyOmission(slices: UsageQueryResultSlice[], { index, section, bodyBytes }: EvidenceOmission): number {
+  const previous = slices[index]!;
+  const next = omitEvidence(previous, section);
+  slices[index] = next;
+  return bytes(projectMeasurementSkeleton(next)) - bytes(projectMeasurementSkeleton(previous)) - bodyBytes;
+}
+
+function omitDetailUntilFit(
+  slices: UsageQueryResultSlice[], detail: readonly EvidenceOmission[], serializedBytes: number,
+): number {
+  for (const omission of detail) {
+    if (serializedBytes <= EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES) break;
+    if (omission.section === 'workSessionDetail' && !slices[omission.index]!.work) continue;
+    serializedBytes += applyOmission(slices, omission);
+  }
+  return serializedBytes;
 }
 
 /**
@@ -101,33 +127,55 @@ export function projectUsageQueryDelivery(batch: UsageQueryBatchResult, surface?
         accounting: projectAccounting(slice.comparison.accounting, false, summary) } } : {}),
     };
   }) };
-  // Remove largest detail sections first so a large slice cannot erase a small
-  // sibling's evidence. Work includes its conservation-dependent inputs/summary.
-  const candidates = result.results.flatMap((slice, index) => USAGE_QUERY_EVIDENCE_SECTIONS.flatMap(section => {
-    if (slice[section] === undefined) return [];
-    const size = bytes(section === 'work'
-      ? { work: slice.work, mergedOutcomes: slice.mergedOutcomes, contributions: slice.accounting?.contributions }
-      : slice[section]);
-    const skeletonSize = bytes(section === 'work' ? { work: null,
-      mergedOutcomes: slice.mergedOutcomes === undefined ? undefined : null,
-      contributions: slice.accounting?.contributions === undefined ? undefined : null,
-    } : null);
-    return [{ index, section, size, bodyBytes: size - skeletonSize }];
-  })).sort((left, right) => right.size - left.size);
+  const nullBytes = bytes(null);
+  const emptyArrayBytes = bytes([]);
+  const detail: EvidenceOmission[] = [];
+  const links: (EvidenceOmission & { sessionBodyBytes: number })[] = [];
+  let fullBodyBytes = 0;
+  for (const [index, slice] of result.results.entries()) {
+    const { work } = slice;
+    if (work) {
+      const contributionBytes = slice.accounting?.contributions === undefined
+        ? 0 : bytes(slice.accounting.contributions) - nullBytes;
+      const sessionBytes = bytes(work.allocations) + bytes(work.branchAllocations) - 2 * emptyArrayBytes + contributionBytes;
+      const linkedBytes = bytes(work.outcomes) + bytes(work.branches) - 2 * nullBytes
+        + 2 * (emptyArrayBytes - nullBytes)
+        + (slice.mergedOutcomes === undefined ? 0 : bytes(slice.mergedOutcomes) - nullBytes);
+      if (!slice.incomplete?.omittedSections.includes('workSessionDetail')) {
+        detail.push({ index, section: 'workSessionDetail', bodyBytes: sessionBytes });
+      }
+      links.push({ index, section: 'work', bodyBytes: linkedBytes, sessionBodyBytes: sessionBytes });
+      fullBodyBytes += sessionBytes + linkedBytes;
+    }
+    for (const section of ['howYouWork', 'coach'] as const) {
+      if (slice[section] === undefined) continue;
+      const bodyBytes = bytes(slice[section]) - nullBytes;
+      detail.push({ index, section, bodyBytes });
+      fullBodyBytes += bodyBytes;
+    }
+  }
   let serializedBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1({ ...result,
     results: result.results.map(projectMeasurementSkeleton),
-  }) + candidates.reduce((sum, candidate) => sum + candidate.bodyBytes, 0);
+  }) + fullBodyBytes;
   if (serializedBytes <= EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES) return result;
-  for (const { index, section, bodyBytes } of candidates) {
-    const previous = result.results[index]!;
-    const next = omitEvidence(previous, section);
-    // Only framing changes after admission; never rewalk an evidence body for
-    // candidate ranking or an omission's exact byte delta.
-    serializedBytes += bytes(projectMeasurementSkeleton(next)) - bytes(projectMeasurementSkeleton(previous)) - bodyBytes;
-    result.results[index] = next;
-    if (serializedBytes <= EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES) break;
+  // Omit per-Session Work detail across the reply, largest first, before dropping any Work link list.
+  detail.sort((a, b) => b.bodyBytes - a.bodyBytes);
+  const compact = [...result.results];
+  let compactBytes = omitDetailUntilFit(compact, detail, serializedBytes);
+  if (compactBytes <= EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES) return { ...result, results: compact };
+
+  // If compact Work still cannot fit, drop the largest linked body from both
+  // projections. Spend optional omissions only against the surviving linked
+  // rows. The original projection can keep a small sibling's complete answer.
+  for (const omission of links.sort((a, b) => b.bodyBytes - a.bodyBytes)) {
+    compactBytes += applyOmission(compact, omission);
+    serializedBytes += applyOmission(result.results, { ...omission, bodyBytes: omission.bodyBytes + omission.sessionBodyBytes });
+    if (compactBytes <= EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES) {
+      omitDetailUntilFit(result.results, detail, serializedBytes);
+      return result;
+    }
   }
   // If summary facts alone exceed the envelope, the existing transport owner
   // still refuses it. No cap bypass, fabricated zero, or silent truncation.
-  return result;
+  return { ...result, results: compact };
 }

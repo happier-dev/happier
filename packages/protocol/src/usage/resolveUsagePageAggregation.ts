@@ -6,7 +6,7 @@ import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { getUsageQueryKey, normalizeUsageQuery, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, UsageQuerySchema, type UsageQuery } from '../inputs/usageQuery.js';
 import { UsageQueryAccountingSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { UsageCostFactTotalSchema, projectUsageCostFactTotals } from './usageCostFactTotals.js';
-import { allocateUsageOutcomes, summarizeUsageMergedOutcomes, projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, UsageWorkSummarySchema, UsageMergedOutcomeSummarySchema, UsageWorkProjectionSchema, type UsageWorkEvidence } from './usageOutcomeAllocation.js';
+import { allocateUsageOutcomes, summarizeUsageMergedOutcomes, projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, UsageWorkSummarySchema, UsageMergedOutcomeSummarySchema, UsageWorkProjectionSchema, type UsageMergedOutcomeSummary, type UsageWorkEvidence } from './usageOutcomeAllocation.js';
 import { hasUsagePullRequestRead, projectUsagePublicWorkLenses, readUsageWorkSessionTurns } from './usageWorkSources.js';
 import type { ScmBranchWorkEvidence } from '../scm/branches.js';
 import { resolveUsageHowYouWork, UsageHowYouWorkSchema, type UsageHowYouWorkDetailInput, type UsageSessionEvidenceCoverage } from './resolveUsageHowYouWork.js';
@@ -100,7 +100,11 @@ function readWitnessedUsageComparisonPeriod(accounting: UsageAnalyticsQueryRespo
   return readBoundedAccountingPeriod(accounting) ?? coachPeriod ?? accounting?.coverage?.range;
 }
 
-export const USAGE_QUERY_EVIDENCE_SECTIONS = ['work', 'howYouWork', 'coach'] as const;
+export const USAGE_QUERY_EVIDENCE_SECTIONS = ['work', 'workSessionDetail', 'howYouWork', 'coach'] as const;
+
+function readMergedLinkFacts({ outcomes, ...facts }: UsageMergedOutcomeSummary) {
+  return { ...facts, outcomes: outcomes.map(({ key, mergedAtMs }) => ({ key, mergedAtMs })) };
+}
 
 export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
   key: z.string().check(z.minLength(1)),
@@ -133,14 +137,29 @@ export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
   /** Delivery omissions are distinct from acquisition/source currentness. */
   incomplete: z.optional(z.strictObject({
     reason: z.literal('response_size_limit'),
-    /** Work also omits its raw contributions and dependent merged-outcome summary. */
+    /** Work includes its Session detail and dependent merged-outcome summary. */
     omittedSections: z.array(z.enum(USAGE_QUERY_EVIDENCE_SECTIONS)).check(z.minLength(1), z.refine(sections => new Set(sections).size === sections.length)),
     recovery: z.literal('narrow_query'),
   })),
   sources: z.array(UsageQuerySourceStateSchema),
   pending: z.boolean(),
 }).check(z.superRefine((slice, context) => {
-  for (const section of slice.incomplete?.omittedSections ?? []) {
+  const omissions = slice.incomplete?.omittedSections ?? [];
+  const compactWork = omissions.includes('workSessionDetail');
+  const contributions = slice.accounting?.contributions;
+  const work = slice.work;
+  const compactWorkInputs = work && slice.accounting && contributions === undefined
+    && work.allocations.length === 0 && work.branchAllocations.length === 0;
+  const completeWorkInputs = work && contributions && new Set(contributions.map(row => row.id)).size === contributions.length
+    && [work.allocations, work.branchAllocations].every(rows => rows.length === contributions.length
+      && rows.every((row, index) => row.contributionId === contributions[index]!.id));
+  for (const section of omissions) {
+    if (section === 'workSessionDetail') {
+      if (!compactWorkInputs || omissions.includes('work')) {
+        context.addIssue({ code: 'custom', path: ['incomplete'], message: 'Omitted Work Session detail requires only Work links and summaries' });
+      }
+      continue;
+    }
     if (slice[section] !== undefined || section === 'work' && (slice.mergedOutcomes !== undefined || slice.accounting?.contributions !== undefined)) {
       context.addIssue({ code: 'custom', path: ['incomplete'], message: 'Omitted evidence must not be presented as complete delivered facts' });
     }
@@ -175,8 +194,7 @@ export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
       context.addIssue({ code: 'custom', path: ['comparison', 'query'], message: 'Comparison must identify the exact preceding range' });
     }
   }
-  if (slice.work && (!slice.accounting?.contributions || !sameStrictJsonValue(
-    slice.work.allocations.map(row => row.contribution), slice.accounting.contributions))) {
+  if (work && (!slice.requestedQuery.includeWorkEvidence || !compactWork && !completeWorkInputs)) {
     context.addIssue({ code: 'custom', path: ['work'], message: 'Work must conserve the exact admitted contributions' });
   }
   if (slice.quota && !slice.sources.some(source => source.source === 'quota' && ['available', 'partial', 'stale'].includes(source.status))) {
@@ -195,20 +213,31 @@ export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
   }
   // All-time accounting has a witnessed end and no lower bound. The Work
   // projection represents that open start as zero, without bounding the query.
-  if (slice.mergedOutcomes && (!slice.work || witnessedPeriod?.endMs === undefined
-    || !slice.sources.some(source => source.source === 'work' && ['available', 'partial', 'stale', 'pending'].includes(source.status))
-    || !sameStrictJsonValue(slice.mergedOutcomes, summarizeUsageMergedOutcomes({ work: slice.work,
-      period: { startMs: witnessedPeriod.startMs ?? 0, endMs: witnessedPeriod.endMs }, timeZoneOffsetMinutes: slice.shownQuery.timeZoneOffsetMinutes,
-      pullRequestsRead })))) {
-    context.addIssue({ code: 'custom', path: ['mergedOutcomes'], message: 'Merged outcomes must preserve the admitted Work, period and calendar' });
+  const readableWorkSource = slice.sources.some(source => source.source === 'work'
+    && ['available', 'partial', 'stale', 'pending'].includes(source.status));
+  if (slice.mergedOutcomes) {
+    const expected = work && witnessedPeriod?.endMs !== undefined && readableWorkSource
+      && (compactWork ? compactWorkInputs : completeWorkInputs)
+      ? summarizeUsageMergedOutcomes({ work, contributions: contributions ?? [],
+        period: { startMs: witnessedPeriod.startMs ?? 0, endMs: witnessedPeriod.endMs },
+        timeZoneOffsetMinutes: slice.shownQuery.timeZoneOffsetMinutes, pullRequestsRead })
+      : undefined;
+    // Session detail is needed to reconstruct Agent attribution. The other
+    // summary facts still have their exact admitted PR witnesses.
+    const conforms = expected && (compactWork
+      ? sameStrictJsonValue(readMergedLinkFacts(slice.mergedOutcomes), readMergedLinkFacts(expected))
+      : sameStrictJsonValue(slice.mergedOutcomes, expected));
+    if (!conforms) {
+      context.addIssue({ code: 'custom', path: ['mergedOutcomes'], message: 'Merged outcomes must preserve the admitted Work, period and calendar' });
+    }
   }
   if (week?.status === 'available' && (!slice.accounting?.activity
     || week.startMs !== accountingPeriod?.startMs || week.endMs !== accountingPeriod?.endMs
     || week.timeZoneOffsetMinutes !== slice.shownQuery.timeZoneOffsetMinutes)) {
     context.addIssue({ code: 'custom', path: ['planInsights', 'recordedWeek'], message: 'Recorded week must preserve admitted accounting period and calendar' });
   }
-  if ((slice.work?.allocations.some(row => row.evidence.length > 0) || slice.work?.branchAllocations.some(row => row.evidence.length > 0))
-    && !slice.sources.some(source => source.source === 'work' && ['available', 'partial', 'stale', 'pending'].includes(source.status))) {
+  if ((slice.work?.outcomes.length || slice.work?.branches.length || slice.work?.allocations.some(row => row.evidence.length > 0)
+    || slice.work?.branchAllocations.some(row => row.evidence.length > 0)) && !readableWorkSource) {
     context.addIssue({ code: 'custom', path: ['work'], message: 'Unavailable Work sources cannot disclose private evidence' });
   }
   const intervals = slice.howYouWork?.intervals;
@@ -802,11 +831,12 @@ export function withdrawUsageQueryWork(slice: UsageQueryResultSlice, input: Read
 
   const { work: priorWork, workSummary: _summary, mergedOutcomes: priorMerged, publicProfileEvidence,
     [usagePageProjections]: projections, ...other } = slice as ProjectedUsageSlice;
-  const work = priorWork && allocateUsageOutcomes({ contributions: priorWork.allocations.map(row => row.contribution),
-    evidence, branchEvidence });
-  const mergedOutcomes = work && priorMerged && summarizeUsageMergedOutcomes({ work, period: priorMerged.period,
+  const contributions = slice.accounting?.contributions;
+  const work = priorWork && contributions && allocateUsageOutcomes({ contributions, evidence, branchEvidence });
+  const mergedOutcomes = work && contributions && priorMerged && summarizeUsageMergedOutcomes({ work, contributions, period: priorMerged.period,
     timeZoneOffsetMinutes: priorMerged.timeZoneOffsetMinutes, pullRequestsRead: false });
-  const workSummary = readable && work ? projectUsageWorkSummary(work.outcomes, false, work) : undefined;
+  const workSummary = readable && work && contributions
+    ? projectUsageWorkSummary(work.outcomes, false, { work, contributions }) : undefined;
   const pending = previous?.status === 'pending' && input.sessionIds.some(id => unreadBySession.get(id) !== 'not_entitled');
   const sources = slice.sources.map((current): UsageQuerySourceState => current.source === 'work' ? {
     source: 'work', status: pending ? 'pending' : status, errorCode, ...clock, unreadSessions,
@@ -1148,7 +1178,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
       });
       const admittedTurns = readableWork && query.includeWorkEvidence ? readUsageWorkSessionTurns(accountingValue) : undefined;
       const pullRequestsRead = hasUsagePullRequestRead(admittedTurns, readSessions);
-      const summary = work && (readableWork || retainWork) ? projectUsageWorkSummary(work.outcomes, pullRequestsRead, work)
+      const summary = work && accountingValue?.contributions && (readableWork || retainWork)
+        ? projectUsageWorkSummary(work.outcomes, pullRequestsRead, { work, contributions: accountingValue.contributions })
         : admittedTurns ? projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({ turns: admittedTurns, evidence: workEvidence ?? [] }).outcomes,
           pullRequestsRead) : undefined;
       const profileLenses = query.population === 'public_eligible_personal' && query.includeWorkEvidence && accountingValue
@@ -1158,11 +1189,12 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     });
     const { work: workProjection, summary: workSummary, profileLenses } = workFacts.value;
     const pullRequestsRead = workSummary?.pullRequestsRead === true;
+    const workContributions = workProjection ? accountingValue?.contributions : undefined;
     const mergedFacts = projectAdmittedUsageInputs(admitted?.mergedOutcomes, {
-      work: workProjection, startMs, endMs, pullRequestsRead,
+      work: workProjection, contributions: workContributions, startMs, endMs, pullRequestsRead,
     }, () => {
-      if (!workProjection || endMs === undefined || endMs < startMs) return undefined;
-      const evidence = summarizeUsageMergedOutcomes({ work: workProjection, period: { startMs, endMs },
+      if (!workProjection || !workContributions || endMs === undefined || endMs < startMs) return undefined;
+      const evidence = summarizeUsageMergedOutcomes({ work: workProjection, contributions: workContributions, period: { startMs, endMs },
         timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead });
       return pullRequestsRead || evidence.linkedMergedCount > 0 ? evidence : undefined;
     });

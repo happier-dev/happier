@@ -614,6 +614,14 @@ describe('resolveUsagePageAggregation', () => {
     expect(UsageQueryBatchResultSchema.safeParse({ ...first, results: [{ ...first.results[0],
       mergedOutcomes: { ...first.results[0]!.mergedOutcomes, undatedMergedCount: 99 },
     }] }).success).toBe(false);
+    const corrected = resolveUsagePageAggregation({ queries: [query], previous: first,
+      accounting: [{ query, status: 'available', value: { ...value,
+        contributions: [{ ...value.contributions![0]!, agentId: 'codex' }],
+      } }], work: [{ query, status: 'partial', evidence: [witness] }],
+    }, bundledUsageModelPriceCatalog);
+    expect(corrected.results[0]?.work).toEqual(first.results[0]?.work);
+    expect(corrected.results[0]?.mergedOutcomes?.outcomes[0]?.leadingAgentIds).toEqual(['codex']);
+    expect(UsageQueryBatchResultSchema.safeParse(corrected).success).toBe(true);
     const refused = resolveUsagePageAggregation({ queries: [query], previous: first,
       accounting: [{ query, status: 'available', value }], howYouWork: [{ query, detail: { status: 'unknown' } }],
       work: [{ query, status: 'error', evidence: [], errorCode: 'permission_denied' }],
@@ -934,7 +942,7 @@ describe('resolveUsagePageAggregation', () => {
     })) }, bundledUsageModelPriceCatalog);
     expect(batch.results[0]?.accounting?.contributions).toEqual([contribution]);
     expect(batch.results[0]?.work).toBeUndefined();
-    expect(batch.results[1]?.work?.allocations.map(row => row.contribution)).toEqual([contribution]);
+    expect(batch.results[1]?.work?.allocations.map(row => row.contributionId)).toEqual([contribution.id]);
     expect(UsageQueryBatchResultSchema.safeParse(batch).success).toBe(true);
   });
   it('does not retain an unobserved initial Coach in place of the first admitted accounting evidence', () => {
@@ -1676,7 +1684,7 @@ describe('resolveUsagePageAggregation', () => {
       } };
     const result = resolveUsagePageAggregation({ queries: [query, other], accounting: [{ query, value, status: 'available' }],
       work: [{ query, status: 'available', asOfMs: 225, evidence: [witness], pullRequestReadSessions: ['session'] }] }, bundledUsageModelPriceCatalog);
-    expect(result.results[0]?.work?.allocations).toMatchObject([{ contribution, reason: 'allocated', outcome: { repositoryKey: 'repo' } }]);
+    expect(result.results[0]?.work?.allocations).toMatchObject([{ contributionId: contribution.id, reason: 'allocated', outcome: { repositoryKey: 'repo' } }]);
     expect(result.results[0]?.sources).toContainEqual({ source: 'work', status: 'available', asOfMs: 225 });
     expect(result.results[0]?.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
     expect(result.results[1]?.work).toBeUndefined();
@@ -1692,7 +1700,8 @@ describe('resolveUsagePageAggregation', () => {
     const changedValue = UsageAnalyticsQueryResponseSchema.parse({ ...value, contributions: [{ ...contribution, tokens: { ...tokens, input: 14, total: 18 } }] });
     const changed = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: changedValue, status: 'available' }],
       work: [{ query, status: 'pending' }], previous: result }, bundledUsageModelPriceCatalog);
-    expect(changed.results[0]?.work?.allocations[0]).toMatchObject({ contribution: { tokens: { input: 14, total: 18 } }, reason: 'allocated' });
+    expect(changed.results[0]?.work?.allocations[0]).toMatchObject({ contributionId: contribution.id, reason: 'allocated' });
+    expect(changed.results[0]?.accounting?.contributions).toMatchObject([{ id: contribution.id, tokens: { input: 14, total: 18 } }]);
     const partialFailure = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
       work: [{ query, status: 'partial', asOfMs: 200, errorCode: 'work_evidence_failed', evidence: [witness] }] }, bundledUsageModelPriceCatalog);
     const retrying = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
@@ -1742,7 +1751,7 @@ describe('resolveUsagePageAggregation', () => {
     expect(quarantined.results[0]?.work?.outcomes).toEqual([]);
     const revoked = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
       work: [{ query, status: 'error', errorCode: 'unauthorized', evidence: [witness] }], previous: failed }, bundledUsageModelPriceCatalog);
-    expect(revoked.results[0]?.work?.allocations).toMatchObject([{ contribution, reason: 'missing_evidence', outcome: null, evidence: [] }]);
+    expect(revoked.results[0]?.work?.allocations).toMatchObject([{ contributionId: contribution.id, reason: 'missing_evidence', outcome: null, evidence: [] }]);
     expect(revoked.results[0]?.work?.outcomes).toEqual([]);
     expect(revoked.results[0]?.sources).toContainEqual({ source: 'work', status: 'error', errorCode: 'unauthorized' });
     expect(UsageQueryBatchResultSchema.safeParse({ ...result, results: [{ ...result.results[0], accounting }] }).success).toBe(false);

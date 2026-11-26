@@ -8111,15 +8111,18 @@ claim of loaded-runtime availability. No persistence format changes.
 The development `usage.query` result remains closed V1, independently of package
 SemVer. Its slice optionally reports the closed delivery-only `incomplete` object:
 `reason: 'response_size_limit'`, nonempty unique `omittedSections` (`work`,
-`howYouWork`, `coach`) and `recovery: 'narrow_query'`. Unknown keys and section
-values are rejected, not dropped. An omitted Work section also withdraws its raw
-contributions and dependent merged summary; other admitted summary facts and
-query identities remain intact. The projection reuses the existing complete
+`workSessionDetail`, `howYouWork`, `coach`) and `recovery: 'narrow_query'`.
+The schema rejects unknown keys and section values. `workSessionDetail` retains
+links, branches, source coverage and summaries with empty allocation arrays
+and absent raw contributions. `work` includes this omission and also removes
+links, branches and the merged-outcome summary. Other admitted summary facts
+and query identities remain intact. The projection reuses the existing complete
 Action envelope budget without changing source/acquisition currentness.
 Matching development readers consume this explicit omission instead of treating
-it as complete evidence. Work allocations carry outcome/branch identities; full
-contribution memberships occur once in their respective tables, avoiding
-quadratic response growth. `workSummary` optionally retains `sessionCount`,
+it as complete evidence. Work allocations carry outcome or branch identities
+and reference the corresponding entry in `accounting.contributions` by its
+contribution ID. The outcome and branch tables carry their memberships.
+`workSummary` optionally retains `sessionCount`,
 `contributionCount` and `allocatedContributionCount`, including when rich Work
 is omitted. These counts describe admitted contributions, not unobserved history.
 The matching strict 0.3 producer and readers must reload together for the narrowed

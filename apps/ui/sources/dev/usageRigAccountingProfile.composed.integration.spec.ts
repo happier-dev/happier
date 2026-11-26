@@ -619,7 +619,7 @@ describe('Usage RIG accounting phase census', () => {
                             let work: ReturnType<typeof summarizeUsageWork> | undefined;
                             if (view === 'work' && slice?.work) {
                                 const workStarted = performance.now();
-                                work = summarizeUsageWork(slice.work, query, namedProjects);
+                                work = summarizeUsageWork(slice.work, slice.accounting!.contributions!, query, namedProjects);
                                 workPresentationMs = (workPresentationMs ?? 0) + (performance.now() - workStarted);
                             }
                             const coachFindings = slice?.coach?.findings.map(finding => ({
@@ -777,8 +777,11 @@ describe('Usage RIG accounting phase census', () => {
                 const cost = slice?.accounting?.totals.cost;
                 expect(cost && resolveEffectiveUsageCostUsd(cost, 'auto')).toBe(30);
                 const work = slice?.work;
-                expect(work?.allocations.filter(row => row.contribution.turnId !== null)
-                    .map(row => ({ turn: row.contribution.turnId, tokens: row.contribution.tokens.total, reason: row.reason })))
+                const contributions = slice?.accounting?.contributions ?? [];
+                expect(work?.allocations.flatMap((row, index) => {
+                    const contribution = contributions[index]!;
+                    return contribution.turnId === null ? [] : [{ turn: contribution.turnId, tokens: contribution.tokens.total, reason: row.reason }];
+                }))
                     .toEqual(turns.map(turn => ({ turn: turn.turnId, tokens: turn.tokens, reason: 'missing_evidence' })));
                 expect(work?.outcomes).toEqual([]);
                 expect(observations).toHaveLength(1);

@@ -906,7 +906,7 @@ describe('one selected money basis across Usage bodies', () => {
       for (const row of entries) expect(resolveUsageCostForSelection(row.cost!, page.selection)).toBeCloseTo(expectedRowCost(row.key));
     }
     expect(resolveUsageCostForSelection(page.accounting.breakdowns!.model!.find(row => row.key === 'unknown')!.cost, page.selection)).toBeCloseTo(reportedCost);
-    const summary = summarizeUsageWork(allocateUsageOutcomes({ contributions: rows, evidence: [] }), { metric: 'cost', costBasis: 'auto' });
+    const summary = summarizeUsageWork(allocateUsageOutcomes({ contributions: rows, evidence: [] }), rows, { metric: 'cost', costBasis: 'auto' });
     expect(summary.total).toBeCloseTo(total);
     expect(summary.moneyBasis).toMatchObject({ kind: 'mixed', currency: 'USD' });
     const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;

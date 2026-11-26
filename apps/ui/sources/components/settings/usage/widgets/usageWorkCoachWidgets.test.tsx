@@ -168,10 +168,25 @@ const contributions = [
   contribution('b', 's2', 't2'),
   contribution('c', 's1', null),
 ];
-const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+const fixtureRows = new WeakMap<ReturnType<typeof allocateUsageOutcomes>, Parameters<typeof allocateUsageOutcomes>[0]['contributions']>();
+function allocateFixtureWork(input: Parameters<typeof allocateUsageOutcomes>[0]) {
+  const projection = UsageWorkProjectionSchema.parse(allocateUsageOutcomes(input));
+  fixtureRows.set(projection, input.contributions);
+  return projection;
+}
+function fixtureContributions(work: ReturnType<typeof allocateUsageOutcomes>) {
+  const rows = fixtureRows.get(work);
+  if (!rows) throw new Error('Expected the Work fixture accounting');
+  return rows;
+}
+function withFixtureWorkAccounting<T extends Pick<UsageQueryResultSlice, 'work' | 'accounting'>>(value: T): T {
+  const rows = value.work && fixtureRows.get(value.work);
+  return !rows || !value.accounting ? value : { ...value, accounting: { ...value.accounting, contributions: [...rows] } };
+}
+const work = allocateFixtureWork({
   contributions,
   evidence: [evidence('s1', 't1', 2493)],
-}));
+});
 const compactions = [
   { evidenceId: 'c1', observedAtMs: 10, sessionId: 's', turnId: 't', immediateRefillToLimit: true },
   { evidenceId: 'c2', observedAtMs: 20, sessionId: 's', turnId: 't', immediateRefillToLimit: true },
@@ -189,7 +204,7 @@ const slice: UsageQueryResultSlice = {
   requestedQuery: query,
   shownQuery: query,
   work,
-  workSummary: projectUsageWorkSummary(work.outcomes, true, work),
+  workSummary: projectUsageWorkSummary(work.outcomes, true, { work: work, contributions: fixtureContributions(work) }),
   coach,
   pending: false,
   accounting: {
@@ -223,6 +238,18 @@ const model: UsageWidgetBodyModel = {
 const props = { model, slice, query, serverId: 'home' };
 
 describe('Work and Coach widget bodies', () => {
+  it('updates Work amounts when accounting corrects a contribution without changing the link', async () => {
+    const corrected = { ...slice, accounting: { ...slice.accounting!, contributions: [
+      { ...contributions[0]!, cost: { ...contributions[0]!.cost, reportedUsd: 6 } },
+      ...contributions.slice(1),
+    ] } };
+    const hook = await renderHook(() => ({
+      before: useUsageWork(slice, query, 'home').summary?.total,
+      after: useUsageWork(corrected, query, 'home').summary?.total,
+    }));
+    expect(hook.getCurrent()).toEqual({ before: 9, after: 12 });
+  });
+
   it('opens a Work Session through its mounted command and withdraws its address on unmount', async () => {
     const hook = await renderHook(() => ({ work: useUsageWork(slice, query, 'home'), reader: useOptionalCurrentUiContextReader() }));
     const command = hook.getCurrent().reader!.readCurrentUiContext()!.commands.find(row => row.title === `${t('common.open')}: ${hook.getCurrent().work.sessionLabel('s1')}`);
@@ -255,7 +282,7 @@ describe('Work and Coach widget bodies', () => {
     // The Session occurred entirely inside the Work period. Each explicit basis has a different amount.
     const row = contribution('a', 's1', 't1');
     const measured = { ...row, cost: { ...row.cost, apiEquivalentUsd: 7 } };
-    const linked = allocateUsageOutcomes({ contributions: [measured], evidence: [evidence('s1', 't1', 2493)] });
+    const linked = allocateFixtureWork({ contributions: [measured], evidence: [evidence('s1', 't1', 2493)] });
     const accounting = {
       ...slice.accounting!,
       totals: { eventCount: 1, tokens: measured.tokens, cost: measured.cost },
@@ -263,8 +290,8 @@ describe('Work and Coach widget bodies', () => {
       breakdowns: { project: [{ key: 'p1', label: 'Workspace', eventCount: 1,
         tokens: measured.tokens, cost: measured.cost }] },
     };
-    const costSlice = { ...slice, work: linked, workSummary: projectUsageWorkSummary(linked.outcomes, true, linked),
-      accounting, requestedQuery: workQuery, shownQuery: workQuery };
+    const costSlice = withFixtureWorkAccounting({ ...slice, work: linked, workSummary: projectUsageWorkSummary(linked.outcomes, true, { work: linked, contributions: fixtureContributions(linked) }),
+      accounting, requestedQuery: workQuery, shownQuery: workQuery });
     const screen = await renderScreen(<>
       <UsageProjectLedgerWidget {...props} query={workQuery} slice={costSlice} id="usage_project_ledger" testID="ledger" />
       <UsageSessionValueWidget {...props} query={workQuery} slice={costSlice} id="usage_session_value" testID="value" />
@@ -347,11 +374,11 @@ describe('Work and Coach widget bodies', () => {
   it('reveals exact row money in its own basis when the ledger cannot share one numeric money column', async () => {
     const rows = ['USD', 'EUR'].map((currency, index) => ({ ...contribution(`money-${index}`, `session-${index}`, null),
       projectKey: `project-${index}`, cost: { reportedUsd: 1.23456, estimatedUsd: 0, currency } }));
-    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const work = allocateFixtureWork({ contributions: rows, evidence: [] });
     const accounting = { ...slice.accounting!, breakdowns: { project: rows.map((row, index) => ({ key: row.projectKey, label: `Named project ${index}`,
       eventCount: 1, tokens: row.tokens, cost: row.cost })) } };
     const screen = await renderScreen(<UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'cost' })}
-      slice={{ ...slice, accounting, work }} id="usage_project_ledger" testID="ledger" />);
+      slice={withFixtureWorkAccounting({ ...slice, accounting, work })} id="usage_project_ledger" testID="ledger" />);
     expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'ledger.projects-datum-0')?.props.datum.value).toContain('USD 1.23456');
     expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'ledger.projects-datum-1')?.props.datum.value).toContain('EUR 1.23456');
     await screen.pressByTestIdAsync('ledger.project.project-0.toggle');
@@ -378,10 +405,10 @@ describe('Work and Coach widget bodies', () => {
       { ...contribution('project-only', 'unused', null), sessionId: null, agentId: null,
         providerId: sessionlessProvider, providerConnectionId: 'connection' },
     ];
-    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const work = allocateFixtureWork({ contributions: rows, evidence: [] });
     const screen = await renderScreen(<UsageChartInteractions>
       <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
-        slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />
+        slice={withFixtureWorkAccounting({ ...slice, work })} id="usage_project_ledger" testID="ledger" />
     </UsageChartInteractions>);
     const layout = (width: number) => layoutIdentityStrip(screen.findByTestId('ledger.marks'), width);
     const displayed = () => screen.findAllByType(UsageAgentMark);
@@ -420,10 +447,10 @@ describe('Work and Coach widget bodies', () => {
   ] as const)('names $kind once per identity in the marks, the detail line and the spoken detail', async ({ providers, expected }) => {
     const rows: UsageWorkContribution[] = providers.map(([providerId, machineId], index) => ({
       ...contribution(`p${index}`, 's1', 't1'), machineId, providerId, providerConnectionId: 'connection' }));
-    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [evidence('s1', 't1', 2493)] }));
+    const work = allocateFixtureWork({ contributions: rows, evidence: [evidence('s1', 't1', 2493)] });
     const screen = await renderScreen(<UsageChartInteractions>
       <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
-        slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />
+        slice={withFixtureWorkAccounting({ ...slice, work })} id="usage_project_ledger" testID="ledger" />
     </UsageChartInteractions>);
     await layoutIdentityStrip(screen.findByTestId('ledger.marks'), 1000);
     const identityCount = new Set(providers.map(([providerId]) => providerId)).size;
@@ -482,10 +509,10 @@ describe('Work and Coach widget bodies', () => {
       const rows: UsageWorkContribution[] = ids.map((providerId, index) => ({
         ...contribution(`provider-${index}`, 's1', 't1'), machineId, providerId, providerConnectionId: 'connection',
       }));
-      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [evidence('s1', 't1', 2493)] }));
+      const work = allocateFixtureWork({ contributions: rows, evidence: [evidence('s1', 't1', 2493)] });
       const screen = await renderScreen(<UsageChartInteractions>
         <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
-          slice={{ ...slice, work }} serverId={serverId} id="usage_project_ledger" testID="ledger" />
+          slice={withFixtureWorkAccounting({ ...slice, work })} serverId={serverId} id="usage_project_ledger" testID="ledger" />
       </UsageChartInteractions>);
       if (declarations) {
         expect(ids.map(providerId => resolveUsageWorkProviderDisplay({ providerId, machineIds: [machineId] }, serverId).label))
@@ -528,10 +555,10 @@ describe('Work and Coach widget bodies', () => {
     { kind: 'Sessions with a linked PR', sessionId: 's1', read: true, linked: true, caption: false },
   ] as const)('claims an outcome state for $kind only when the coverage decision allows it', async ({ sessionId, read, linked, caption }) => {
     const rows = [{ ...contribution('only', sessionId ?? 'unused', 't1'), sessionId }];
-    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows,
-      evidence: linked ? [evidence('s1', 't1', 2493)] : [] }));
+    const work = allocateFixtureWork({ contributions: rows,
+      evidence: linked ? [evidence('s1', 't1', 2493)] : [] });
     const screen = await renderScreen(<UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
-      slice={{ ...slice, work, workSummary: projectUsageWorkSummary(work.outcomes, read, work) }} id="usage_project_ledger" testID="ledger" />);
+      slice={withFixtureWorkAccounting({ ...slice, work, workSummary: projectUsageWorkSummary(work.outcomes, read, { work: work, contributions: fixtureContributions(work) }) })} id="usage_project_ledger" testID="ledger" />);
     await screen.pressByTestIdAsync('ledger.project.p1.toggle');
     const title = screen.findAllByType(UsageWorkSectionTitle).find(node => node.props.children === t('usage.board.work.funnelSessions'));
     expect(title?.props.caption).toBe(caption ? t('usage.board.work.noOutcome') : undefined);
@@ -543,9 +570,9 @@ describe('Work and Coach widget bodies', () => {
   it('leads a Project’s Sessions with the largest six behind Show all · n and keeps the Project total (acceptance r224 #48)', async () => {
     const rows = Array.from({ length: 10 }, (_, index) => ({ ...contribution(`c${index}`, `s${index}`, `t${index}`),
       tokens: { ...tokens, total: 10 + index } }));
-    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const work = allocateFixtureWork({ contributions: rows, evidence: [] });
     const screen = await renderScreen(<UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
-      slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />);
+      slice={withFixtureWorkAccounting({ ...slice, work })} id="usage_project_ledger" testID="ledger" />);
     const total = () => screen.findAllByType(HappierDataRows).find(node => node.props.testID === 'ledger.projects')!.props.rows[0][1];
     expect(total()).toBe(145);
     await screen.pressByTestIdAsync('ledger.project.p1.toggle');
@@ -588,12 +615,12 @@ describe('Work and Coach widget bodies', () => {
         commitSha: 'd'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' as const,
         branch: { ref: `refs/heads/${group.turnId}`, headSha: String(index + 1).repeat(40) },
       }));
-      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+      const work = allocateFixtureWork({
         contributions: rows, evidence: [evidence('s1', 'pr', 2493)], branchEvidence,
-      }));
+      });
       const screen = await renderScreen(<UsageChartInteractions>
         <UsageProjectLedgerWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
-          slice={{ ...slice, work }} id="usage_project_ledger" testID="ledger" />
+          slice={withFixtureWorkAccounting({ ...slice, work })} id="usage_project_ledger" testID="ledger" />
       </UsageChartInteractions>);
       if (kind !== 'standalone branch') await screen.pressByTestIdAsync('ledger.project.p1.toggle');
       const tableId = kind === 'linked PR' ? 'ledger.project.p1.prs'
@@ -632,11 +659,11 @@ describe('Work and Coach widget bodies', () => {
   it('never falls back to raw opaque Project or Session ids', async () => {
     const opaque = 'a'.repeat(64);
     const rows = [contribution('opaque', 'private-session-identifier', null)].map(row => ({ ...row, projectKey: opaque }));
-    const unnamed = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
-    for (const accounting of [undefined, { ...slice.accounting!, breakdowns: { project: [{
+    const unnamed = allocateFixtureWork({ contributions: rows, evidence: [] });
+    for (const accounting of [{ ...slice.accounting!, breakdowns: undefined }, { ...slice.accounting!, breakdowns: { project: [{
       ...slice.accounting!.breakdowns!.project![0]!, key: opaque, label: `  ${'b'.repeat(64)}  `,
     }] } }]) {
-      const hook = await renderHook(() => useUsageWork({ ...slice, work: unnamed, accounting }, query, 'home'));
+      const hook = await renderHook(() => useUsageWork(withFixtureWorkAccounting({ ...slice, work: unnamed, accounting }), query, 'home'));
       expect(hook.getCurrent().projectLabel(opaque)).toBe(t('usage.board.work.unknownProject'));
       expect(hook.getCurrent().sessionLabel('private-session-identifier')).toBe(t('session.untitled'));
       expect(hook.getCurrent().summary?.projects).toMatchObject([{ projectKey: null, unnamedProjectCount: 1 }]);
@@ -649,8 +676,8 @@ describe('Work and Coach widget bodies', () => {
       { ...contribution('u2', 'untitled-2', 't1'), machineId: 'machine-b', observedAtMs: 1_700_000_900_000 },
       { ...contribution('u3', 'lone-session', 't1'), machineId: 'machine-a' },
     ];
-    const projection = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
-    const hook = await renderHook(() => useUsageWork({ ...slice, work: projection }, query, 'home'));
+    const projection = allocateFixtureWork({ contributions: rows, evidence: [] });
+    const hook = await renderHook(() => useUsageWork(withFixtureWorkAccounting({ ...slice, work: projection }), query, 'home'));
     const { sessionLabel } = hook.getCurrent();
     const [first, second] = [sessionLabel('untitled-1'), sessionLabel('untitled-2')];
     expect(first).not.toBe(second);
@@ -679,8 +706,8 @@ describe('Work and Coach widget bodies', () => {
           rootPath: '/home/happier', createdAtMs: 0 })), relationships: [], revisionsByPhysicalKey: {}, organizations: [] } });
       const rows = machines.map((machine, index) => ({ ...contribution(`usage-${index}`, `session-${index}`, 't'),
         machineId: machine.id, projectKey: projectKeys[index]! }));
-      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
-      const workSlice = { ...slice, work };
+      const work = allocateFixtureWork({ contributions: rows, evidence: [] });
+      const workSlice = withFixtureWorkAccounting({ ...slice, work });
       const Wrapper = ({ children }: React.PropsWithChildren) => <CommandWrapper>{children}
         <UsageProjectLedgerWidget {...props} serverId={scope.serverId} slice={workSlice}
           id="usage_project_ledger" testID="same-folder-ledger" />
@@ -737,10 +764,10 @@ describe('Work and Coach widget bodies', () => {
       { ...contribution('t2', 'twin-2', 't1'), projectKey: 'tmp-b', machineId: 'machine-b' },
       { ...contribution('t3', 'lone-1', 't1'), projectKey: 'lone-key', machineId: 'machine-a' },
     ];
-    const projection = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const projection = allocateFixtureWork({ contributions: rows, evidence: [] });
     const project = (key: string, label: string) => ({ ...slice.accounting!.breakdowns!.project![0]!, key, label });
     const accounting = { ...slice.accounting!, breakdowns: { project: [project('tmp-a', 'tmp'), project('tmp-b', 'tmp'), project('lone-key', 'solo')] } };
-    const hook = await renderHook(() => useUsageWork({ ...slice, work: projection, accounting }, query, 'home'));
+    const hook = await renderHook(() => useUsageWork(withFixtureWorkAccounting({ ...slice, work: projection, accounting }), query, 'home'));
     const { projectLabel, projectPlace, summary } = hook.getCurrent();
     expect(summary?.projects.map(row => [row.projectKey, row.amount])).toEqual([
       ['tmp-a', 3], ['tmp-b', 3], ['lone-key', 3],
@@ -775,9 +802,9 @@ describe('Work and Coach widget bodies', () => {
     try {
       storage.setState({ profileScope: scope });
       storage.getState().activateProjectAccountRowsScope(scope);
-      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: keys.map((projectKey, index) =>
-        ({ ...contribution(`human-${index}`, `session-${index}`, null), projectKey })), evidence: [] }));
-      const hook = await renderHook(() => useUsageWork({ ...slice, work }, query, scope.serverId));
+      const work = allocateFixtureWork({ contributions: keys.map((projectKey, index) =>
+        ({ ...contribution(`human-${index}`, `session-${index}`, null), projectKey })), evidence: [] });
+      const hook = await renderHook(() => useUsageWork(withFixtureWorkAccounting({ ...slice, work }), query, scope.serverId));
       // Deliver protected facts after the mounted Account finishes acquisition.
       await act(async () => { await owner.refresh(); });
       const names = keys.map(key => hook.getCurrent().projectLabel(key));
@@ -808,9 +835,9 @@ describe('Work and Coach widget bodies', () => {
     try {
       storage.setState({ profileScope: scope });
       storage.getState().activateProjectAccountRowsScope(scope);
-      const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [namedKey, ...unnamedKeys].flatMap((projectKey, index) =>
-        [0, 1].map(part => ({ ...contribution(`anchor-${index}-${part}`, `session-${index}`, `turn-${part}`), projectKey }))), evidence: [] }));
-      const hook = await renderHook(() => useUsageWork({ ...slice, work }, query, scope.serverId));
+      const work = allocateFixtureWork({ contributions: [namedKey, ...unnamedKeys].flatMap((projectKey, index) =>
+        [0, 1].map(part => ({ ...contribution(`anchor-${index}-${part}`, `session-${index}`, `turn-${part}`), projectKey }))), evidence: [] });
+      const hook = await renderHook(() => useUsageWork(withFixtureWorkAccounting({ ...slice, work }), query, scope.serverId));
       await act(async () => { await owner.refresh(); });
       expect(hook.getCurrent().projectLabel(namedKey)).toBe('happier');
       expect(hook.getCurrent().summary?.projects).toHaveLength(2);
@@ -1079,7 +1106,7 @@ describe('Work and Coach widget bodies', () => {
     const twinContent = cipher.seal({ key: twinKey, value: { label: 'Human project' } });
     const otherOpaqueKey = { ...rowKey, projectKey: 'other-opaque-project' };
     const otherOpaqueContent = cipher.seal({ key: otherOpaqueKey, value: { label: 'b'.repeat(64) } });
-    const namedWork = allocateUsageOutcomes({ contributions: [...contributions,
+    const namedWork = allocateFixtureWork({ contributions: [...contributions,
       { ...contribution('opaque', 'opaque-session', null), projectKey: opaqueKey.projectKey },
       { ...contribution('other-opaque', 'other-opaque-session', null), projectKey: otherOpaqueKey.projectKey }], evidence: [] });
     const owner = createProjectAccountRowsSync({ scope, cipher, isCurrent: () => true,
@@ -1091,7 +1118,7 @@ describe('Work and Coach widget bodies', () => {
     try {
       storage.setState({ profileScope: scope });
       storage.getState().activateProjectAccountRowsScope(scope);
-      const workSlice = { ...slice, work: namedWork };
+      const workSlice = withFixtureWorkAccounting({ ...slice, work: namedWork });
       const screen = await renderScreen(<UsageProjectLedgerWidget {...props} serverId={scope.serverId} slice={workSlice} id="usage_project_ledger" testID="label-ledger" />);
       await act(async () => { await owner.refresh(); });
       expect(storage.getState().projectAccountRows?.organizations ?? [], JSON.stringify({
@@ -1201,11 +1228,11 @@ describe('Work and Coach widget bodies', () => {
     const parts = { ...contribution('parts', 's1', 't1'),
       tokens: { input: 10, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };
     const reported = contribution('second', 's2', 't2');
-    const work = allocateUsageOutcomes({
+    const work = allocateFixtureWork({
       contributions: [parts, allFromParts ? { ...reported, tokens: parts.tokens } : reported], evidence: [],
     });
     const screen = await renderScreen(<UsageSessionValueWidget {...props}
-      query={normalizeUsageQuery({ ...query, metric: 'tokens' })} slice={{ ...slice, work }}
+      query={normalizeUsageQuery({ ...query, metric: 'tokens' })} slice={withFixtureWorkAccounting({ ...slice, work })}
       id="usage_session_value" testID="value" />);
     const rows = screen.findAllByType(RankedRows).find(node => node.props.testID === 'value.unlinked')!.props.rows as
       readonly { id: string; annotation?: string }[];
@@ -1216,15 +1243,15 @@ describe('Work and Coach widget bodies', () => {
   });
   it('says one parts qualifier across Session value groups and one across Outcomes rows', async () => {
     const parts = { ...tokens, total: null };
-    const work = allocateUsageOutcomes({ contributions: [
+    const work = allocateFixtureWork({ contributions: [
       { ...contribution('first', 's1', 't1'), tokens: parts },
       { ...contribution('second', 's2', 't2'), tokens: parts },
       { ...contribution('third', 's3', 't3'), tokens: parts },
     ], evidence: [evidence('s1', 't1', 1), evidence('s2', 't2', 2)] });
     const tokenQuery = normalizeUsageQuery({ ...query, metric: 'tokens' });
-    const value = await renderScreen(<UsageSessionValueWidget {...props} query={tokenQuery} slice={{ ...slice, work }}
+    const value = await renderScreen(<UsageSessionValueWidget {...props} query={tokenQuery} slice={withFixtureWorkAccounting({ ...slice, work })}
       id="usage_session_value" testID="value" />);
-    const outcomes = await renderScreen(<UsageOutcomesWidget {...props} query={tokenQuery} slice={{ ...slice, work }}
+    const outcomes = await renderScreen(<UsageOutcomesWidget {...props} query={tokenQuery} slice={withFixtureWorkAccounting({ ...slice, work })}
       id="usage_outcomes" testID="outcomes" />);
     expect(value.findByTestId('value.merged')).toBeTruthy();
     expect(value.findByTestId('value.unlinked')).toBeTruthy();
@@ -1236,10 +1263,10 @@ describe('Work and Coach widget bodies', () => {
   it('draws every Session value group against one bar scale, so a small linked Session never fills a bar (acceptance r230 #82)', async () => {
     const sized = (id: string, sessionId: string, turnId: string, total: number) =>
       ({ ...contribution(id, sessionId, turnId), tokens: { ...tokens, total } });
-    const work = allocateUsageOutcomes({ contributions: [sized('small', 's1', 't1', 100), sized('big', 's2', 't2', 10_000)],
+    const work = allocateFixtureWork({ contributions: [sized('small', 's1', 't1', 100), sized('big', 's2', 't2', 10_000)],
       evidence: [evidence('s1', 't1', 7)] });
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
-      slice={{ ...slice, work }} id="usage_session_value" testID="value" />);
+      slice={withFixtureWorkAccounting({ ...slice, work })} id="usage_session_value" testID="value" />);
     const linked = screen.findAllByType(RankedRows).find(node => node.props.testID !== 'value.unlinked')!;
     const bar = (id: string) => screen.findAllByType(HappierProgress).find(node => node.props.testID === `${id}-bar-0`)?.props.value as number;
     expect([bar(linked.props.testID as string), bar('value.unlinked')]).toEqual([0.01, 1]);
@@ -1247,11 +1274,11 @@ describe('Work and Coach widget bodies', () => {
 
   it('groups Session value counts by locale, like every other Usage count (acceptance r230 #86)', async () => {
     const readings = Array.from({ length: 1001 }, (_, index) => contribution(`row-${index}`, `row-${index}`, null));
-    const work = allocateUsageOutcomes({ contributions: readings, evidence: [] });
+    const work = allocateFixtureWork({ contributions: readings, evidence: [] });
     let caption: string | null = null;
     const screen = await renderScreen(<WidgetFrameBodyCaptionContext.Provider value={next => { caption = next ?? caption; }}>
       <UsageSessionValueWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
-        slice={{ ...slice, work }} id="usage_session_value" testID="value" />
+        slice={withFixtureWorkAccounting({ ...slice, work })} id="usage_session_value" testID="value" />
     </WidgetFrameBodyCaptionContext.Provider>);
     // The app language (English here) groups the count; the copy owner still decides the plural from the integer (J-B56).
     expect(caption).toBe('1,001 sessions');
@@ -1263,9 +1290,9 @@ describe('Work and Coach widget bodies', () => {
     const readings = Array.from({ length: 9 }, (_, index) => contribution(`row-${index}`, `row-${index}`, null));
     readings[8] = { ...readings[8]!, tokens: { ...tokens, input: 1, output: 0, reasoning: null, cacheRead: null,
       cacheWrite: null, total: null } };
-    const work = allocateUsageOutcomes({ contributions: readings, evidence: [] });
+    const work = allocateFixtureWork({ contributions: readings, evidence: [] });
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={normalizeUsageQuery({ ...query, metric: 'tokens' })}
-      slice={{ ...slice, work }} id="usage_session_value" testID="value" />);
+      slice={withFixtureWorkAccounting({ ...slice, work })} id="usage_session_value" testID="value" />);
     const qualifier = t('usage.board.page.tokensFromPartsSome');
     const collapsed = screen.getTextContent().includes(qualifier);
     await screen.pressByTestIdAsync('value.unlinked.more.toggle');
@@ -1273,8 +1300,8 @@ describe('Work and Coach widget bodies', () => {
   });
 
   it('collapses the ledger summary to one sentence when nothing is linked, instead of repeating the total', async () => {
-    const unlinked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions, evidence: [] }));
-    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={{ ...slice, work: unlinked }} id="usage_project_ledger" testID="ledger" />);
+    const unlinked = allocateFixtureWork({ contributions, evidence: [] });
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: unlinked })} id="usage_project_ledger" testID="ledger" />);
     const summary = screen.findHostByTestId('ledger.conservation')!;
     const text = summary.findAll(node => typeof node.props.children === 'string').map(node => node.props.children as string).join(' ');
     expect(text).toContain(t('usage.board.work.noneLinked'));
@@ -1285,9 +1312,9 @@ describe('Work and Coach widget bodies', () => {
     const reported = contribution('reported', 's1', 't1');
     const parts = { ...contribution('parts', 's1', 't1'),
       tokens: { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };
-    const work = allocateUsageOutcomes({ contributions: [reported, parts], evidence: [] });
+    const work = allocateFixtureWork({ contributions: [reported, parts], evidence: [] });
     const screen = await renderScreen(<UsageProjectLedgerWidget {...props}
-      query={normalizeUsageQuery({ ...query, metric: 'tokens' })} slice={{ ...slice, work }}
+      query={normalizeUsageQuery({ ...query, metric: 'tokens' })} slice={withFixtureWorkAccounting({ ...slice, work })}
       id="usage_project_ledger" testID="parts-ledger" />);
     const rows = screen.findAllByType(HappierDataRows).find(node => node.props.testID === 'parts-ledger.projects')!;
     expect(rows.props.rows[0][1]).toBe(1727);
@@ -1297,10 +1324,10 @@ describe('Work and Coach widget bodies', () => {
   });
   it('bounds the project ledger behind Show all and says the PR qualifier once for the band, not on every row', async () => {
     const many = Array.from({ length: 12 }, (_, index) => ({ ...contribution(`m${index}`, `ms${index}`, null), projectKey: `project-${index}` }));
-    const unlinked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: many, evidence: [] }));
+    const unlinked = allocateFixtureWork({ contributions: many, evidence: [] });
     const accounting = { ...slice.accounting!, breakdowns: { project: many.map(row => ({ key: row.projectKey,
       label: `Project ${row.projectKey}`, eventCount: 1, tokens: row.tokens, cost: row.cost })) } };
-    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={{ ...slice, work: unlinked, accounting }} id="usage_project_ledger" testID="ledger" />);
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: unlinked, accounting })} id="usage_project_ledger" testID="ledger" />);
     // A long list leads with its largest rows; the rest are one press away, never a wall.
     expect(screen.findByTestId('ledger.project.project-11')).toBeNull();
     expect(screen.findByTestId('ledger.projects.more')).toBeTruthy();
@@ -1315,10 +1342,10 @@ describe('Work and Coach widget bodies', () => {
   it('shows a standalone exact branch and a separate bound Provider mark without inventing one from the Agent', async () => {
     const bound = { ...contribution('branch', 's1', 't1'), providerId: 'provider.openrouter', providerConnectionId: 'connection' };
     const branch = { ref: 'refs/heads/standalone', headSha: 'c'.repeat(40) };
-    const branchWork = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [bound, contribution('native', 's2', 't2')], evidence: [],
+    const branchWork = allocateFixtureWork({ contributions: [bound, contribution('native', 's2', 't2')], evidence: [],
       branchEvidence: [{ sessionId: 's1', turnId: 't1', repositoryKey: 'opaque-repo', checkpointRef: 'checkpoint/s1/t1',
-        checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] }));
-    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={{ ...slice, work: branchWork }} id="usage_project_ledger" testID="ledger" />);
+        checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] });
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: branchWork })} id="usage_project_ledger" testID="ledger" />);
     expect(screen.findByTestId('ledger.branches')).toBeTruthy();
     expect(screen.getTextContent()).toContain('standalone');
     expect(screen.getTextContent()).toContain(branch.headSha.slice(0, 7));
@@ -1357,12 +1384,13 @@ describe('Work and Coach widget bodies', () => {
     // r178: the Session receives an API-equivalent total, but Pi supplies no turn_delta.
     const paid = { input: 3305, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 3309 };
     const cumulative = { ...contribution('cumulative', 's1', null), agentId: 'pi', modelId: 'openai/gpt-4.1-mini',
-      source: 'pi-session-stats', tokens: paid, cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' } };
-    const cumulativeSlice: UsageQueryResultSlice = { ...slice, shownQuery: sessionQuery,
+      source: 'pi-session-stats', tokens: paid,
+      cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD', apiEquivalentUsd: 0.0013284, pricingSource: 'catalog' } };
+    const cumulativeSlice: UsageQueryResultSlice = withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery,
       accounting: { v: 1, totals: { eventCount: 1, tokens: paid,
-        cost: { ...cumulative.cost, apiEquivalentUsd: 0.0013284, pricingSource: 'catalog' } },
+        cost: cumulative.cost },
         costPresentation: { mode: 'auto', effectiveUsd: 0.0013284, currency: 'USD', source: 'catalog' } },
-      work: allocateUsageOutcomes({ contributions: [cumulative], evidence: [] }) };
+      work: allocateFixtureWork({ contributions: [cumulative], evidence: [] }) });
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery} slice={cumulativeSlice}
       id="usage_session_value" testID="value" />);
     const metrics = screen.findAllByType(HappierDataMetric);
@@ -1422,9 +1450,9 @@ describe('Work and Coach widget bodies', () => {
     try {
       const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
       // The viewer's own ledger in this Session has no Work: zero is the answer, not "nothing in this period".
-      const none = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [], evidence: [] }));
+      const none = allocateFixtureWork({ contributions: [], evidence: [] });
       const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
-        slice={{ ...slice, shownQuery: sessionQuery, work: none }} id="usage_session_value" testID="value" />);
+        slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery, work: none })} id="usage_session_value" testID="value" />);
       const text = screen.getTextContent();
       expect.soft(text.includes(t('usage.board.page.sessionRecipientFigure'))).toBe(level === 'view');
       expect.soft(text.includes(t('usage.board.page.thisSession'))).toBe(level === 'owner');
@@ -1434,7 +1462,7 @@ describe('Work and Coach widget bodies', () => {
       await screen.unmount();
       // On the Session's own page the empty line never shows, for its owner either (r230 #83).
       const hosted = await renderScreen(<UsageSessionPageHost value="s1"><UsageSessionValueWidget {...props} query={sessionQuery}
-        slice={{ ...slice, shownQuery: sessionQuery, work: none }} id="usage_session_value" testID="value" /></UsageSessionPageHost>);
+        slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery, work: none })} id="usage_session_value" testID="value" /></UsageSessionPageHost>);
       expect.soft(hosted.getTextContent().includes(t('usage.board.work.emptyReason'))).toBe(false);
       await hosted.unmount();
     } finally { storage.setState(previous, true); }
@@ -1442,13 +1470,13 @@ describe('Work and Coach widget bodies', () => {
   it('says only the PR is missing for a turn whose commit is linked, and keeps the broad absence for a turn with no git evidence', async () => {
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
     const branch = { ref: 'refs/heads/master', headSha: 'b'.repeat(40) };
-    const linked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+    const linked = allocateFixtureWork({
       contributions: [contribution('with-commit', 's1', 't1'), contribution('bare', 's1', 't2'), contribution('with-pr', 's1', 't3')],
       evidence: [{ ...evidence('s1', 't3', 2493), commitSha: 'c'.repeat(40) }],
       branchEvidence: [{ sessionId: 's1', turnId: 't1', repositoryKey: 'opaque-repo', checkpointRef: 'checkpoint/s1/t1',
-        checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] }));
+        checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] });
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
-      slice={{ ...slice, shownQuery: sessionQuery, work: linked }} id="usage_session_value" testID="value" />);
+      slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery, work: linked })} id="usage_session_value" testID="value" />);
     const text = screen.getTextContent();
     expect(text).toContain('bbbbbbb');
     expect(text).toContain(t('usage.board.work.reason_missing_pr'));
@@ -1460,10 +1488,10 @@ describe('Work and Coach widget bodies', () => {
   });
   it('leads a long Session\'s turns and folds the rest behind Show all · N (R135 item 3)', async () => {
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
-    const many = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
-      contributions: Array.from({ length: 12 }, (_, index) => contribution(`turn-${index}`, 's1', `t${index}`)), evidence: [] }));
+    const many = allocateFixtureWork({
+      contributions: Array.from({ length: 12 }, (_, index) => contribution(`turn-${index}`, 's1', `t${index}`)), evidence: [] });
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
-      slice={{ ...slice, shownQuery: sessionQuery, work: many }} id="usage_session_value" testID="value" />);
+      slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery, work: many })} id="usage_session_value" testID="value" />);
     const turns = () => screen.findAllByType(HappierDataRows).find(rows => rows.props.testID === 'value.autopsy.turns')!.props.rows;
     expect(turns()).toHaveLength(6);
     await screen.pressByTestIdAsync('value.autopsy.turns.more.toggle');
@@ -1490,9 +1518,9 @@ describe('Work and Coach widget bodies', () => {
     const estimated = { ...contribution('usd-exact', 's1', 't2'),
       cost: { reportedUsd: 0, estimatedUsd: 4.56789, currency: 'USD', costSource: 'pricing_estimate' as const } };
     const body = (rows: UsageWorkContribution[]) => <UsageSessionValueWidget {...props} query={sessionQuery}
-      slice={{ ...slice, shownQuery: sessionQuery,
+      slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery,
         accounting: { ...slice.accounting!, contributions: rows },
-        work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] })) }}
+        work: allocateFixtureWork({ contributions: rows, evidence: [] }) })}
       id="usage_session_value" testID="value" />;
     const screen = await renderScreen(body([reported]));
     const summary = screen.findAllByType(ChartDatum).find(node => node.props.datum.label === usagePeriodPhrase(sessionQuery));
@@ -1515,9 +1543,9 @@ describe('Work and Coach widget bodies', () => {
     const rows = [5, 3, 1].map((usd, index) => ({ ...contribution(`turn-${index}`, 's1', `t${index}`),
       observedAtMs: index + 1, cost: cost(usd / 1000) }));
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
-      slice={{ ...slice, shownQuery: sessionQuery,
+      slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery,
         accounting: { ...slice.accounting!, totals: { ...slice.accounting!.totals, eventCount: 3, cost: cost(0.009) }, contributions: rows },
-        work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] })) }}
+        work: allocateFixtureWork({ contributions: rows, evidence: [] }) })}
       id="usage_session_value" testID="value" />);
     const phrase = usageCostKindPhrase(basis);
     const text = screen.getTextContent();
@@ -1542,13 +1570,13 @@ describe('Work and Coach widget bodies', () => {
       tokens: { input: amount - 1, output: 1, reasoning: null, cacheRead: null, cacheWrite: null,
         total: fromParts[index] ? null : amount },
     }));
-    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const work = allocateFixtureWork({ contributions: rows, evidence: [] });
     const total: UsageAnalyticsTokens = fromParts.some(Boolean)
       ? { input: 15, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: null, measured: { total: 17, fromParts: true } }
       : { input: 15, output: 2, reasoning: null, cacheRead: null, cacheWrite: null, total: 17 };
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
-      slice={{ ...slice, shownQuery: sessionQuery, work,
-        accounting: { ...slice.accounting!, totals: { ...slice.accounting!.totals, eventCount: 2, tokens: total }, contributions: rows } }}
+      slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery, work,
+        accounting: { ...slice.accounting!, totals: { ...slice.accounting!.totals, eventCount: 2, tokens: total }, contributions: rows } })}
       id="usage_session_value" testID="value" />);
     const qualifier = t('usage.board.page.tokensFromParts');
     const hero = screen.findAllByType(HappierDataMetric).find(node => node.props.label === usagePeriodPhrase(sessionQuery));
@@ -1581,10 +1609,10 @@ describe('Work and Coach widget bodies', () => {
         total: index === 8 ? 2 : null,
       },
     }));
-    const work = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
+    const work = allocateFixtureWork({ contributions: rows, evidence: [] });
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
-      slice={{ ...slice, shownQuery: sessionQuery, work,
-        accounting: { ...slice.accounting!, contributions: rows } }}
+      slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery, work,
+        accounting: { ...slice.accounting!, contributions: rows } })}
       id="usage_session_value" testID="value" />);
     const qualified = () => screen.findAllByType(ChartDatum).filter(node =>
       String(node.props.testID).startsWith('value.autopsy.turns-datum-')
@@ -1599,13 +1627,13 @@ describe('Work and Coach widget bodies', () => {
     const committedAtMs = 500;
     const checkpointCommittedAtMs = 300;
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
-    const timedWork = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions,
-      evidence: [{ ...evidence('s1', 't1', 2493), committedAtMs, checkpointCommittedAtMs }] }));
+    const timedWork = allocateFixtureWork({ contributions,
+      evidence: [{ ...evidence('s1', 't1', 2493), committedAtMs, checkpointCommittedAtMs }] });
     try {
       setPreferredLanguageFromSettings('fr');
       await preloadTranslations();
       const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
-        slice={{ ...slice, shownQuery: sessionQuery, work: timedWork }} id="usage_session_value" testID="value" />);
+        slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery, work: timedWork })} id="usage_session_value" testID="value" />);
       const formatted = new Intl.DateTimeFormat('fr', { dateStyle: 'medium', timeStyle: 'short' }).format(committedAtMs);
       expect(screen.getTextContent()).toContain(formatted);
       expect(screen.findByType(IntervalTimeline).props.intervals).toContainEqual(expect.objectContaining({
@@ -1626,15 +1654,15 @@ describe('Work and Coach widget bodies', () => {
       metadata: { ...machine.metadata!, displayName: 'Evidence workstation' } } } });
     try {
       const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
-      const namedWork = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [{ ...contribution('named', 's1', 't1'), modelId: 'claude-opus-4-5' }], evidence: [] }));
+      const namedWork = allocateFixtureWork({ contributions: [{ ...contribution('named', 's1', 't1'), modelId: 'claude-opus-4-5' }], evidence: [] });
       const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
-        slice={{ ...slice, shownQuery: sessionQuery, work: namedWork }} id="usage_session_value" testID="value" />);
+        slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery, work: namedWork })} id="usage_session_value" testID="value" />);
       expect(screen.getTextContent()).toContain('Opus 4.5');
       expect(screen.getTextContent()).toContain('Evidence workstation');
-      const unknownWork = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [{ ...contribution('unlisted', 's1', 't1'),
-        modelId: 'third-party/model-snapshot', machineId: 'unknown-machine-uuid' }], evidence: [] }));
+      const unknownWork = allocateFixtureWork({ contributions: [{ ...contribution('unlisted', 's1', 't1'),
+        modelId: 'third-party/model-snapshot', machineId: 'unknown-machine-uuid' }], evidence: [] });
       await screen.update(<UsageSessionValueWidget {...props} query={sessionQuery}
-        slice={{ ...slice, shownQuery: sessionQuery, work: unknownWork }} id="usage_session_value" testID="value" />);
+        slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery, work: unknownWork })} id="usage_session_value" testID="value" />);
       expect(screen.getTextContent()).toContain('third-party/model-snapshot');
       expect(screen.getTextContent()).not.toContain('Third Party Model Snapshot');
       expect(screen.getTextContent()).not.toContain('unknown-machine-uuid');
@@ -1646,13 +1674,13 @@ describe('Work and Coach widget bodies', () => {
     { ...contribution('usd', 'usd-session', 'usd-turn'), projectKey: 'usd-project',
       cost: { reportedUsd: 0, estimatedUsd: 4, currency: 'USD', costSource: 'pricing_estimate' as const } }];
     const mixedQuery = normalizeUsageQuery({ ...query, costBasis: 'auto' });
-    const mixedSlice: UsageQueryResultSlice = { ...slice, shownQuery: mixedQuery,
-      work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [evidence('eur-session', 'eur-turn', 1),
-        evidence('usd-session', 'usd-turn', 2)] })),
+    const mixedSlice: UsageQueryResultSlice = withFixtureWorkAccounting({ ...slice, shownQuery: mixedQuery,
+      work: allocateFixtureWork({ contributions: rows, evidence: [evidence('eur-session', 'eur-turn', 1),
+        evidence('usd-session', 'usd-turn', 2)] }),
       accounting: { ...slice.accounting!, totals: { ...slice.accounting!.totals,
         cost: { reportedUsd: 3, estimatedUsd: 4, currency: 'MIXED' } },
         breakdowns: { project: rows.map(row => ({ key: row.projectKey, label: row.projectKey === 'eur-project' ? 'Europe' : 'America',
-          eventCount: 1, tokens: row.tokens, cost: row.cost })) } } };
+          eventCount: 1, tokens: row.tokens, cost: row.cost })) } } });
     for (const [Widget, id] of [[UsageProjectLedgerWidget, 'usage_project_ledger'], [UsageSessionValueWidget, 'usage_session_value'], [UsageOutcomesWidget, 'usage_outcomes']] as const) {
       const screen = await renderScreen(<Widget {...props} query={mixedQuery} slice={mixedSlice} id={id} testID="work" />);
       const text = screen.getTextContent();
@@ -1668,12 +1696,12 @@ describe('Work and Coach widget bodies', () => {
     try {
       const rows = Array.from({ length: 7 }, (_, index) => contribution(`c${index}`, `s${index}`, `t${index}`));
       const branch = { ref: 'refs/heads/glass', headSha: 'c'.repeat(40) };
-      const complete = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows,
+      const complete = allocateFixtureWork({ contributions: rows,
         evidence: [evidence('s0', 't0', 2493)],
         branchEvidence: [{ sessionId: 's1', turnId: 't1', repositoryKey: 'repo', checkpointRef: 'checkpoint/s1/t1',
-          checkpointCommitSha: 'a'.repeat(40), commitSha: 'd'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] }));
+          checkpointCommitSha: 'a'.repeat(40), commitSha: 'd'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] });
       const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'small', footprint: { columns: 2, columnSpan: 1, rowSpan: 1, width: 'half', height: 'compact' }, geometry: { width: 320, height: 96 } }}>
-        <UsageProjectLedgerWidget {...props} slice={{ ...slice, work: complete }} id="usage_project_ledger" testID="ledger" />
+        <UsageProjectLedgerWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: complete })} id="usage_project_ledger" testID="ledger" />
       </WidgetPresentationProvider>);
       expect(screen.findByTestId('ledger.project.p1.detail')).toBeFalsy();
       await screen.pressByTestIdAsync('ledger.project.p1.toggle');
@@ -1699,13 +1727,13 @@ describe('Work and Coach widget bodies', () => {
     const navigation = vi.spyOn(router, 'push');
     try {
       const branch = { ref: 'refs/heads/glass', headSha: 'c'.repeat(40) };
-      const branchWork = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions,
+      const branchWork = allocateFixtureWork({ contributions,
         evidence: [evidence('s1', 't1', 2493)],
         branchEvidence: [{ sessionId: 's2', turnId: 't2', repositoryKey: 'repo', checkpointRef: 'checkpoint/s2/t2',
-          checkpointCommitSha: 'a'.repeat(40), commitSha: 'd'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] }));
+          checkpointCommitSha: 'a'.repeat(40), commitSha: 'd'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed', branch }] });
       const screen = await renderScreen(<>
-        <UsageProjectLedgerWidget {...props} slice={{ ...slice, work: branchWork }} id="usage_project_ledger" testID="ledger" />
-        <UsageOutcomesWidget {...props} slice={{ ...slice, work: branchWork }} id="usage_outcomes" testID="outcomes" />
+        <UsageProjectLedgerWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: branchWork })} id="usage_project_ledger" testID="ledger" />
+        <UsageOutcomesWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: branchWork })} id="usage_outcomes" testID="outcomes" />
       </>);
       const branchKey = branchWork.branches[0]!.key;
       expect(screen.findByTestId(`ledger.branch.${branchKey}.session.open.s2`)).toBeFalsy();
@@ -1724,8 +1752,8 @@ describe('Work and Coach widget bodies', () => {
     const navigation = vi.spyOn(router, 'push');
     try {
     const rows = Array.from({ length: 7 }, (_, index) => contribution(`c${index}`, `s${index}`, `t${index}`));
-    const complete = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: rows.map((row, index) => evidence(row.sessionId!, row.turnId!, 100 + index)) }));
-    const compactSlice = { ...slice, work: complete };
+    const complete = allocateFixtureWork({ contributions: rows, evidence: rows.map((row, index) => evidence(row.sessionId!, row.turnId!, 100 + index)) });
+    const compactSlice = withFixtureWorkAccounting({ ...slice, work: complete });
     const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'small', footprint: { columns: 2, columnSpan: 1, rowSpan: 1, width: 'half', height: 'compact' }, geometry: { width: 320, height: 96 } }}>
       <UsageSessionValueWidget {...props} slice={compactSlice} id="usage_session_value" testID="value" />
       <UsageOutcomesWidget {...props} slice={compactSlice} id="usage_outcomes" testID="outcomes" />
@@ -1750,8 +1778,8 @@ describe('Work and Coach widget bodies', () => {
       { ...contribution('unknown', 'unpriced', 't1'), cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' as const } },
       { ...contribution('free', 'free', 't2'), cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'provider_reported' as const } },
     ];
-    const unpriced = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] }));
-    const screen = await renderScreen(<UsageSessionValueWidget {...props} slice={{ ...slice, work: unpriced }} id="usage_session_value" testID="value" />);
+    const unpriced = allocateFixtureWork({ contributions: rows, evidence: [] });
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: unpriced })} id="usage_session_value" testID="value" />);
     const unpricedRow = screen.findByTestId('value.open.unpriced');
     const freeRow = screen.findByTestId('value.open.free');
     expect(unpricedRow).toBeTruthy();
@@ -1768,9 +1796,9 @@ describe('Work and Coach widget bodies', () => {
     ];
     // The Session's hero comes from its accounting projection; the same unpriced rows feed accounting and Work.
     const sessionSlice = (cost: NonNullable<UsageQueryResultSlice['accounting']>['totals']['cost'],
-      contributions: readonly ReturnType<typeof contribution>[]): UsageQueryResultSlice => ({ ...slice, shownQuery: sessionQuery,
+      contributions: readonly ReturnType<typeof contribution>[]): UsageQueryResultSlice => (withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery,
       accounting: { v: 1, totals: { eventCount: contributions.length, tokens: { ...tokens, total: 84 }, cost }, contributions: [...contributions] },
-      work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [...contributions], evidence: [] })) });
+      work: allocateFixtureWork({ contributions: [...contributions], evidence: [] }) }));
     const costFact = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllByType(HappierDataMetric)
       .find(node => node.props.label === t('usage.cost'));
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery} slice={sessionSlice(unknownCost, rows)}
@@ -1893,11 +1921,11 @@ describe('Work and Coach widget bodies', () => {
   });
 
   it('shows unlinked Sessions once when a wide scatter has no witnessed outcome axis', async () => {
-    const unlinked = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions, evidence: [] }));
+    const unlinked = allocateFixtureWork({ contributions, evidence: [] });
     const screen = await renderScreen(<WidgetPresentationProvider value={{ size: 'full',
       footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'tall' },
       geometry: { width: 700, height: 500 } }}>
-      <UsageSessionValueWidget {...props} slice={{ ...slice, work: unlinked }} id="usage_session_value" testID="value" />
+      <UsageSessionValueWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: unlinked })} id="usage_session_value" testID="value" />
     </WidgetPresentationProvider>);
     expect(screen.findByTestId('value.scatter')).toBeFalsy();
     expect(screen.findAllHostsByTestId('value.open.s1')).toHaveLength(1);
@@ -1906,12 +1934,12 @@ describe('Work and Coach widget bodies', () => {
 
   it.each(['draft', 'open'] as const)('shows the linked draft outcome for the provider state %s', async (state) => {
     const witness = evidence('s1', 't1', 2493);
-    const draftWork = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+    const draftWork = allocateFixtureWork({
       contributions,
       evidence: [{ ...witness, pullRequest: { ...witness.pullRequest!, state, isDraft: true } }],
-    }));
+    });
     const screen = await renderScreen(
-      <UsageSessionValueWidget {...props} slice={{ ...slice, work: draftWork }} id="usage_session_value" testID="draft-value" />,
+      <UsageSessionValueWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: draftWork })} id="usage_session_value" testID="draft-value" />,
     );
     expect(screen.getTextContent()).toContain(`${witness.pullRequest!.title} · ${t('usage.board.work.state_draft')}`);
   });
@@ -1931,16 +1959,16 @@ describe('Work and Coach widget bodies', () => {
 
   it.each(['open', 'merged'] as const)('keeps a known %s PR without counting unread merges or claiming no links in the ledger', async state => {
     const witness = evidence('s1', 't1', 2493);
-    const witnessedWork = allocateUsageOutcomes({ contributions, evidence: [
+    const witnessedWork = allocateFixtureWork({ contributions, evidence: [
       { ...witness, pullRequest: { ...witness.pullRequest, state } },
     ] });
-    const unread = { ...slice, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, false, witnessedWork), work: witnessedWork, sources: [
+    const unread = withFixtureWorkAccounting({ ...slice, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, false, { work: witnessedWork, contributions: fixtureContributions(witnessedWork) }), work: witnessedWork, sources: [
       { source: 'work', status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } },
-    ] } satisfies UsageQueryResultSlice;
+    ] }) satisfies UsageQueryResultSlice;
     const outcomes = await renderScreen(<UsageOutcomesWidget {...props} slice={unread} id="usage_outcomes" testID="outcomes" />);
     expect(outcomes.getTextContent()).toContain('2493');
     expect(outcomes.findByType(OutcomeFunnel).props.steps.find((step: React.ComponentProps<typeof OutcomeFunnel>['steps'][number]) => step.id === 'merged')?.value).toBeNull();
-    const measured = { ...unread, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, true, witnessedWork) };
+    const measured = { ...unread, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, true, { work: witnessedWork, contributions: fixtureContributions(witnessedWork) }) };
     await outcomes.update(<UsageOutcomesWidget {...props} slice={measured} id="usage_outcomes" testID="outcomes" />);
     expect(outcomes.findByType(OutcomeFunnel).props.steps.find((step: React.ComponentProps<typeof OutcomeFunnel>['steps'][number]) => step.id === 'merged')?.value).toBe(state === 'merged' ? 1 : 0);
     const efficiency = await renderScreen(<UsageEfficiencyWidget {...props} slice={unread} id="usage_efficiency" testID="efficiency" />);
@@ -1951,7 +1979,7 @@ describe('Work and Coach widget bodies', () => {
     const ledger = await renderScreen(<UsageProjectLedgerWidget {...props} slice={unread} id="usage_project_ledger" testID="ledger" />);
     await ledger.pressByTestIdAsync('ledger.project.p1.toggle');
     expect(ledger.getTextContent()).toContain(witness.pullRequest.title);
-    const withoutLinks = { ...unread, work: allocateUsageOutcomes({ contributions, evidence: [] }) };
+    const withoutLinks = { ...unread, work: allocateFixtureWork({ contributions, evidence: [] }) };
     await ledger.update(<UsageProjectLedgerWidget {...props} slice={withoutLinks} id="usage_project_ledger" testID="ledger" />);
     expect(ledger.getTextContent()).not.toContain(t('usage.board.work.noneLinked'));
     expect(ledger.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(
@@ -1998,10 +2026,10 @@ describe('Work and Coach widget bodies', () => {
   });
   it('states a settled Work gap at the total with the owner counts and no button of its own: the header retries (J-B46)', async () => {
     const witness = evidence('s1', 't1', 2493);
-    const witnessedWork = allocateUsageOutcomes({ contributions, evidence: [witness] });
-    const gap = { ...slice, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, false, witnessedWork), work: witnessedWork, sources: [
+    const witnessedWork = allocateFixtureWork({ contributions, evidence: [witness] });
+    const gap = withFixtureWorkAccounting({ ...slice, workSummary: projectUsageWorkSummary(witnessedWork.outcomes, false, { work: witnessedWork, contributions: fixtureContributions(witnessedWork) }), work: witnessedWork, sources: [
       { source: 'work', status: 'partial', asOfMs: 1000, errorCode: 'work_evidence_failed', unreadSessions: { failed: 1, not_entitled: 1 } },
-    ] } satisfies UsageQueryResultSlice;
+    ] }) satisfies UsageQueryResultSlice;
     const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={gap} id="usage_project_ledger" testID="ledger" />);
     expect.soft(screen.findAll(node => typeof node.props?.testID === 'string' && node.props.testID.startsWith('ledger.workRetry'))).toHaveLength(0);
     // Outside a page (Home, a board) the body's own coverage line keeps its Retry; on a page the header owns it.
@@ -2044,20 +2072,20 @@ describe('Work and Coach widget bodies', () => {
 
   it('keeps the admitted merge week and Values when a sibling Session read fails', async () => {
     const witness = evidence('s1', 't1', 2493);
-    const witnessedWork = allocateUsageOutcomes({ contributions, evidence: [
+    const witnessedWork = allocateFixtureWork({ contributions, evidence: [
       { ...witness, pullRequest: { ...witness.pullRequest, mergedAtMs: 500 } },
     ] });
     const renderShipped = (pullRequestsRead: boolean) => {
-      const shippedSlice = {
+      const shippedSlice = withFixtureWorkAccounting({
         ...slice,
         work: witnessedWork,
-        workSummary: projectUsageWorkSummary(witnessedWork.outcomes, pullRequestsRead, witnessedWork),
+        workSummary: projectUsageWorkSummary(witnessedWork.outcomes, pullRequestsRead, { work: witnessedWork, contributions: fixtureContributions(witnessedWork) }),
         mergedOutcomes: summarizeUsageMergedOutcomes({
-          work: witnessedWork, period: { startMs: 0, endMs: 1000 },
+          work: witnessedWork, contributions: fixtureContributions(witnessedWork), period: { startMs: 0, endMs: 1000 },
           timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead,
         }),
         sources: pullRequestsRead ? slice.sources : [{ source: 'work', status: 'partial', unreadSessions: { failed: 1 } }],
-      } satisfies UsageQueryResultSlice;
+      }) satisfies UsageQueryResultSlice;
       return <WidgetPresentationProvider value={{ size: 'large',
         footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'tall' }, geometry: { width: 520, height: 260 } }}>
         <UsageChartInteractions>
@@ -2083,9 +2111,9 @@ describe('Work and Coach widget bodies', () => {
   });
 
   it('keeps ambiguous witnesses without known PR rows unavailable after an incomplete read', async () => {
-    const ambiguous = allocateUsageOutcomes({ contributions, evidence: [evidence('s1', 't1', 1), evidence('s1', 't1', 2)] });
-    const partial = { ...slice, work: ambiguous, workSummary: projectUsageWorkSummary(ambiguous.outcomes, false, ambiguous),
-      sources: [{ source: 'work', status: 'partial', unreadSessions: { failed: 1 } }] } satisfies UsageQueryResultSlice;
+    const ambiguous = allocateFixtureWork({ contributions, evidence: [evidence('s1', 't1', 1), evidence('s1', 't1', 2)] });
+    const partial = withFixtureWorkAccounting({ ...slice, work: ambiguous, workSummary: projectUsageWorkSummary(ambiguous.outcomes, false, { work: ambiguous, contributions: fixtureContributions(ambiguous) }),
+      sources: [{ source: 'work', status: 'partial', unreadSessions: { failed: 1 } }] }) satisfies UsageQueryResultSlice;
     const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={partial} id="usage_outcomes" testID="outcomes" />);
     expect(screen.findByTestId('outcomes.workUnavailable')).toBeTruthy();
     expect(screen.findByTestId('outcomes.noPrs')).toBeFalsy();
@@ -2095,19 +2123,19 @@ describe('Work and Coach widget bodies', () => {
   it('keeps unread PR evidence unknown in both styles without reading money or losing Session commands', async () => {
     const navigation = vi.spyOn(router, 'push');
     try {
-    const bare = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+    const bare = allocateFixtureWork({
       contributions: Array.from({ length: 3800 }, (_, index) => contribution(`bare-${index}`, `s${index % 2 + 1}`, `t${index}`)),
       evidence: [],
-    }));
+    });
     let moneyReads = 0;
-    for (const row of bare.allocations) Object.defineProperty(row.contribution.cost, 'reportedUsd', {
+    for (const row of fixtureContributions(bare)) Object.defineProperty(row.cost, 'reportedUsd', {
       enumerable: true, get: () => { moneyReads++; return 3; },
     });
     const refresh = vi.fn(async () => {});
     const caption = vi.fn();
-    const unread = { ...slice, work: bare, workSummary: undefined, sources: [
+    const unread = withFixtureWorkAccounting({ ...slice, work: bare, workSummary: undefined, sources: [
       { source: 'work', status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } },
-    ] } satisfies UsageQueryResultSlice;
+    ] }) satisfies UsageQueryResultSlice;
     const reader = React.createRef<ReturnType<typeof useOptionalCurrentUiContextReader>>();
     function Outcomes() {
       reader.current = useOptionalCurrentUiContextReader();
@@ -2143,9 +2171,9 @@ describe('Work and Coach widget bodies', () => {
     expect(shipped.findByTestId('shipped.unavailable')).toBeTruthy();
     expect(shipped.findByTestId('shipped.empty')).toBeFalsy();
     const mergedOutcomes = summarizeUsageMergedOutcomes({
-      work: bare, period: { startMs: 0, endMs: 1000 }, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead: true,
+      work: bare, contributions: fixtureContributions(bare), period: { startMs: 0, endMs: 1000 }, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead: true,
     });
-    const workSummary = projectUsageWorkSummary(bare.outcomes, true, bare);
+    const workSummary = projectUsageWorkSummary(bare.outcomes, true, { work: bare, contributions: fixtureContributions(bare) });
     await shipped.update(<UsageOutcomesWidget {...props} slice={{ ...workRead, mergedOutcomes, workSummary }}
       presentation={{ style: 'shipped' }} id="usage_outcomes" testID="shipped" />);
     expect(shipped.findByTestId('shipped.empty')).toBeTruthy();
@@ -2162,10 +2190,10 @@ describe('Work and Coach widget bodies', () => {
   });
 
   it('keeps the no-Sessions state ahead of the no-PR state', async () => {
-    const bare = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+    const bare = allocateFixtureWork({
       contributions: [{ ...contribution('sessionless', 's1', 't1'), sessionId: null }], evidence: [],
-    }));
-    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...slice, work: bare, workSummary: projectUsageWorkSummary(bare.outcomes, true, bare) }}
+    });
+    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: bare, workSummary: projectUsageWorkSummary(bare.outcomes, true, { work: bare, contributions: fixtureContributions(bare) }) })}
       id="usage_outcomes" testID="outcomes" />);
     expect(screen.findByTestId('outcomes.empty')).toBeTruthy();
     expect(screen.findByTestId('outcomes.noPrs')).toBeFalsy();
@@ -2183,12 +2211,12 @@ describe('Work and Coach widget bodies', () => {
       sessionListRowsByServerId: { [serverId]: Object.fromEntries(sessions.map(session => [session.id, session])) } });
     storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
     storage.getState().setSessionTagAssignmentsOptimistic(serverId, 's1', ['private']);
-    const bare = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: sessions.map((session, index) => ({
+    const bare = allocateFixtureWork({ contributions: sessions.map((session, index) => ({
       ...contribution(`retained-${index}`, session.id, 't1'), machineId: `machine-${index + 1}`,
       observedAtMs: 1_700_000_000_000 + index * 900_000,
-    })), evidence: [] }));
+    })), evidence: [] });
     const Wrapper = ({ children }: React.PropsWithChildren) => <CommandWrapper>{children}
-      <UsageOutcomesWidget {...props} serverId={serverId} slice={{ ...slice, work: bare }} id="usage_outcomes" testID="retained-outcomes" />
+      <UsageOutcomesWidget {...props} serverId={serverId} slice={withFixtureWorkAccounting({ ...slice, work: bare })} id="usage_outcomes" testID="retained-outcomes" />
     </CommandWrapper>;
     const hook = await renderHook(() => useOptionalCurrentUiContextReader(), { wrapper: Wrapper });
     const commandTitles = () => hook.getCurrent()!.readCurrentUiContext()!.commands
@@ -2213,12 +2241,12 @@ describe('Work and Coach widget bodies', () => {
   });
 
   it('keeps witnessed ambiguous PRs in the ready funnel without an allocated PR', async () => {
-    const ambiguous = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+    const ambiguous = allocateFixtureWork({
       contributions: [contribution('ambiguous', 's1', 't1')],
       evidence: [evidence('s1', 't1', 1), evidence('s1', 't1', 2)],
-    }));
+    });
     expect(ambiguous.outcomes).toHaveLength(0);
-    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...slice, work: ambiguous, workSummary: projectUsageWorkSummary(ambiguous.outcomes, true, ambiguous) }}
+    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: ambiguous, workSummary: projectUsageWorkSummary(ambiguous.outcomes, true, { work: ambiguous, contributions: fixtureContributions(ambiguous) }) })}
       id="usage_outcomes" testID="outcomes" />);
     expect(screen.findByType(OutcomeFunnel).props.steps).toMatchObject([
       { id: 'sessions', value: 1 }, { id: 'witnessed', value: 1 },
@@ -2346,7 +2374,7 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
     { state: 'failed', source: { source: 'work', status: 'error', errorCode: 'work_evidence_failed' } as const, footer: () => t('usage.board.work.workUnavailableTitle') },
   ];
   const unreadSlice = (source: UsageQueryResultSlice['sources'][number]): UsageQueryResultSlice => ({ ...slice,
-    workSummary: projectUsageWorkSummary(work.outcomes, false, work),
+    workSummary: projectUsageWorkSummary(work.outcomes, false, { work: work, contributions: fixtureContributions(work) }),
     sources: [{ source: 'accounting', status: 'available' }, source] });
 
   // Tokens: an unknown token part reads "not measured yet", the placeholder the production frame printed on each row.
@@ -2439,11 +2467,11 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
   it('says a one-commit branch range once: "Commit 027cb70 · +1 / −0" (acceptance 1122 #59)', async () => {
     const sha = '027cb70'.padEnd(40, 'e');
     const branch = { ref: 'refs/heads/usage-outcome-01', headSha: sha };
-    const branchWork = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [contribution('one', 's1', 't1')], evidence: [],
+    const branchWork = allocateFixtureWork({ contributions: [contribution('one', 's1', 't1')], evidence: [],
       branchEvidence: [{ sessionId: 's1', turnId: 't1', repositoryKey: 'repo', checkpointRef: 'checkpoint/s1/t1',
         checkpointCommitSha: 'a'.repeat(40), commitSha: sha, attributionScope: 'no_happier_checkpoint_overlap_observed', branch,
-        retainedChange: { targetSha: sha, method: 'changed_file_tree_comparison', status: 'retained', addedLines: 1, removedLines: 0 } }] }));
-    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={{ ...slice, work: branchWork }} id="usage_project_ledger" testID="ledger" />);
+        retainedChange: { targetSha: sha, method: 'changed_file_tree_comparison', status: 'retained', addedLines: 1, removedLines: 0 } }] });
+    const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={withFixtureWorkAccounting({ ...slice, work: branchWork })} id="usage_project_ledger" testID="ledger" />);
     const text = screen.getTextContent();
     expect(text).toContain(`${t('usage.board.work.commit')} 027cb70`);
     expect(text).toContain('+1 / −0');
@@ -2456,9 +2484,9 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
     const rows = [5, 3, 1].map((usd, index) => ({ ...contribution(`turn-${index}`, 's1', `t${index}`),
       observedAtMs: 1 + index * 60_000, cost: cost(usd / 1000) }));
     const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
-      slice={{ ...slice, shownQuery: sessionQuery,
+      slice={withFixtureWorkAccounting({ ...slice, shownQuery: sessionQuery,
         accounting: { ...slice.accounting!, totals: { ...slice.accounting!.totals, eventCount: 3, cost: cost(0.009) }, contributions: rows },
-        work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] })) }}
+        work: allocateFixtureWork({ contributions: rows, evidence: [] }) })}
       id="usage_session_value" testID="value" />);
     const costFact = screen.findAllByType(HappierDataMetric).find(node => node.props.label === t('usage.cost'));
     expect(costFact?.props.caption).toContain(usageCostKindPhrase('api_equivalent'));
