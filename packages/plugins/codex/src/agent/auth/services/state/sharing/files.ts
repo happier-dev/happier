@@ -2,7 +2,7 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canonicalAbsolutePathsEqual, expandHomePath, readConnectedAccountNativeHomeState, resolveConfiguredNativeHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
-import { parse as parseToml } from 'smol-toml';
+import { parse as parseToml, type TomlTable } from 'smol-toml';
 import { CODEX_NATIVE_HOME } from '../../../../nativeHome.js';
 import { isCodexAuthFileKnownUnmanaged } from '../../runtime/auth/accountId.js';
 
@@ -44,7 +44,7 @@ async function mayExist(path: string): Promise<boolean> {
   return await stat(path).then(() => true, error => !missing(error));
 }
 
-async function readUserConfig(codexHome: string): Promise<ReturnType<typeof parseToml>> {
+async function readUserConfig(codexHome: string): Promise<TomlTable> {
   try { return parseToml(await readFile(join(codexHome, 'config.toml'), 'utf8')); }
   catch (error) { if (missing(error)) return {}; throw error; }
 }
@@ -143,7 +143,15 @@ async function projectCodexRuntimeHome(params: CodexRuntimeHomeInput) {
 
 export async function resolveCodexRuntimeStore(params: CodexRuntimeHomeInput): Promise<CodexRuntimeStore> {
   const { environment, pin } = await projectCodexRuntimeHome(params);
-  const override = params.configOverrides?.findLast(value => /^\s*sqlite_home\s*=/u.test(value));
+  const overrides = params.configOverrides ?? [];
+  let override: string | undefined;
+  for (let index = overrides.length - 1; index >= 0; index--) {
+    const value = overrides[index];
+    if (/^\s*sqlite_home\s*=/u.test(value)) {
+      override = value;
+      break;
+    }
+  }
   return Object.freeze({
     cwd: resolve(params.cwd),
     environment,
