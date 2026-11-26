@@ -372,7 +372,8 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                     if (!selection.backend.describeBackend) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'SCM backend operation is unavailable' };
                     const result = await selection.backend.describeBackend({ context, request });
                     const identity = await describeScmGitIdentity(context.cwd);
-                    return identity ? { ...result, gitIdentity: identity.identity } : result;
+                    return identity ? { ...result, gitIdentity: identity.identity,
+                        gitIdentityResolution: { source: identity.source, identity: identity.identity } } : result;
                 },
             });
         }

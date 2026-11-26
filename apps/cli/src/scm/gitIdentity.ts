@@ -1,11 +1,9 @@
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { ScmGitIdentity } from '@happier-dev/protocol/scm/gitIdentity';
+import type { ScmGitIdentity, ScmGitIdentityResolution } from '@happier-dev/protocol/scm/gitIdentity';
 import type { ScmCommandInput, ScmCommandRunner } from './runtime';
 
-export type GitIdentityResolution = Readonly<{
-  source: 'repository' | 'person' | 'native' | 'none';
-  identity: ScmGitIdentity | null;
+export type GitIdentityResolution = ScmGitIdentityResolution & Readonly<{
   environment: Readonly<Record<string, string>>;
   processEnvironment: Readonly<Record<string, string>>;
 }>;

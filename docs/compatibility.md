@@ -25,8 +25,9 @@ SCM's `resolveGitIdentity` owns repository-local identity, then person identity,
 then native Git resolution for the verified custodian, then none. Other people
 never inherit the Machine's global/system identity. Missing commit identity
 retains `COMMIT_IDENTITY_REQUIRED`. Amend and cherry-pick preserve their original
-author semantics. Backend Describe can return the effective `gitIdentity` for a
-future presenter. The same resolver supplies the retained Session and Execution
+author semantics. Backend Describe retains optional `gitIdentity` and adds the
+optional `gitIdentityResolution` (identity and resolver source). Older responses
+without that projection leave the commit author line unknown. The same resolver supplies the retained Session and Execution
 Run launch overlay described in [CLI architecture](cli-architecture.md#agent-git-identity-at-native-launch-03-development).
 Match unpublished 0.3 Protocol, SDK and requester/receiver sources; no shim,
 feature gate, credential field or wire epoch is introduced.

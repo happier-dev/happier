@@ -8,7 +8,7 @@ import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotFor
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import type { RpcHandler } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ScmCommitCreateResponseSchema } from '@happier-dev/protocol/scm';
+import { ScmCommitCreateResponseSchema, ScmBackendDescribeResponseSchema } from '@happier-dev/protocol/scm';
 import { createGitWorkspace, createTestGitScmBackendRegistry, runGit } from './testRpcHarness';
 
 const person = { name: 'Guest Person', email: 'guest@example.test' };
@@ -85,6 +85,10 @@ describe.each(['rpc', 'action'] as const)('SCM requester identity through %s', e
         machineId: 'machine-test', installationId: 'installation', role: 'use' in test ? 'use' : 'manage', encryptionMode: 'plain' } });
     const expectedIdentity = test.expected === null ? null : /^(.+) <(.+)>$/.exec(test.expected);
     expect(described).toMatchObject({ success: true, gitIdentity: expectedIdentity ? { name: expectedIdentity[1], email: expectedIdentity[2] } : null });
+    expect(ScmBackendDescribeResponseSchema.parse(described)).toMatchObject({ gitIdentityResolution: {
+      source: test.local ? 'repository' : test.person ? 'person' : test.guest ? 'none' : 'native',
+      identity: expectedIdentity ? { name: expectedIdentity[1], email: expectedIdentity[2] } : null,
+    } });
   });
 });
 

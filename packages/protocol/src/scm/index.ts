@@ -1,4 +1,4 @@
-import { ScmGitIdentitySchema } from './gitIdentity.js';
+import { ScmGitIdentitySchema, ScmGitIdentityResolutionSchema } from './gitIdentity.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
@@ -183,6 +183,7 @@ export type ScmBackendDescribeRequest = z.infer<typeof ScmBackendDescribeRequest
 
 export const ScmBackendDescribeResponseSchema = lazyZodSchema(() => z.object({
   gitIdentity: z.optional(z.nullable(ScmGitIdentitySchema)),
+  gitIdentityResolution: z.optional(ScmGitIdentityResolutionSchema),
   success: z.boolean(),
   backendId: z.optional(ScmBackendIdSchema),
   repoMode: z.optional(ScmRepoModeSchema),
