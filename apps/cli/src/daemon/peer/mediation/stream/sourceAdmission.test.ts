@@ -10,6 +10,7 @@ import { createMachineLiveStreamCaptureRegistry } from './captureRegistry';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { registerMachineLiveStreamSourceAdmissionHandler } from './sourceAdmission';
+import { MACHINE_VITALS_STREAM_FAMILY, MACHINE_VITALS_STREAM_SOURCES } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -28,6 +29,39 @@ import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessio
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 
 describe('personal live stream source admission RPC', () => {
+    it('signs the exact Vitals source for a Machine Use viewer and refuses non-user callers', async () => {
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const sourceId = MACHINE_VITALS_STREAM_SOURCES.overview;
+        registry.register({
+            sourceId, streamFamily: MACHINE_VITALS_STREAM_FAMILY,
+            adapter: { start: async () => { throw new Error('Admission must not start sampling'); } },
+        });
+        const keys = tweetnacl.sign.keyPair();
+        const installation = MachineInstallationIdentityV1Schema.parse({ version: 1, installationId: 'installation', createdAt: 0,
+            publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+        const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+        registerMachineLiveStreamSourceAdmissionHandler({ registerHandler(method, handler) {
+            handlers.set(method, handler as RpcHandler<unknown, unknown>);
+        } }, { machineId: 'machine', resolveComputer: () => null, resolveCaptureRegistry: () => registry,
+            readInstallationIdentity: () => installation, readHomeServerIdentityId: () => 'home' });
+        const context: RpcHandlerContext = {
+            signal: new AbortController().signal,
+            callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'viewer', role: 'use',
+                custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation', encryptionMode: 'plain' },
+        };
+        const invoke = async (context: RpcHandlerContext) => await handlers.get(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT)?.({
+            protocolVersion: 1, machineId: 'machine', streamFamily: MACHINE_VITALS_STREAM_FAMILY, sourceId,
+        }, context);
+        const source = registry.resolve({ sourceId });
+        if (!source.ok) throw new Error('Expected a mounted Vitals source');
+        expect(await invoke(context)).toMatchObject({ result: { ok: true, sourceAdmission: { payload: { accountId: 'owner',
+            liveStreamSourceAdmission: { actorAccountId: 'viewer', homeServerIdentityId: 'home',
+                sourceOccurrenceId: source.source.sourceOccurrenceId, sourceId } } } } });
+        expect(await invoke({ ...context, callerAuthority: undefined })).toMatchObject({
+            result: { ok: false, reasonCode: 'capture_source_denied' },
+        });
+    });
+
     it('admits shared View/Steer without Machine access while preserving profile and unshared-guest isolation', async () => {
         const root = await mkdtemp(join(tmpdir(), 'browser-source-admission-'));
         const profiles = createBrowserProfileStore({ storageRootDirectory: root,

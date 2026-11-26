@@ -81,7 +81,7 @@ export function createComputerRecording(input: Readonly<{
       }
       const resolved = input.registry.resolve({ sourceId: source.sourceId });
       // Use the producer's advertised cadence, or the shared output target when unspecified.
-      const maxFps = (resolved.ok ? resolved.source.capabilities.maxFramesPerSecond : undefined)
+      const maxFps = (resolved.ok ? resolved.source.capabilities?.maxFramesPerSecond : undefined)
         ?? DEFAULT_BROWSER_RECORDING_CAPABILITIES.maxFps;
       const outputMimeType = await encoderFactory.resolveOutputMimeType?.();
       return service.startRecording({ machineId: input.machineId, sourceId: source.sourceId,

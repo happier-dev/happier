@@ -113,6 +113,66 @@ describe('machine resources subscription owner', () => {
     vi.useRealTimers();
   });
 
+  it.each([
+    { view: 'summary' as const, intervalMs: 15_000 },
+    { view: 'overview' as const, intervalMs: 2_000 },
+  ])('opens one live watch for a visible minute in $view', async ({ view, intervalMs }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(60_000);
+    const h = harness(() => Date.now());
+    const input = { ...key, view };
+    const held: { deliver?: (point: MachineVitalsSampleV1) => void } = {};
+    const open = vi.fn(async (request: Parameters<NonNullable<import('./machineResourceStore').MachineResourceClients['streamClient']>>[0]) => {
+      request.onDispatched();
+      held.deliver = point => request.onUpdate({ v: 1, kind: 'sample', sample: point });
+      await new Promise<void>(resolve => request.signal?.addEventListener('abort', () => resolve(), { once: true }));
+      return { kind: 'closed' as const, reasonCode: 'viewer_closed' };
+    });
+    const store = createMachineResourceStore({ snapshotClient: h.snapshotClient, watchClient: h.watchClient, historyClient: h.historyClient, streamClient: open });
+    const release = store.demand(input);
+    try {
+      await settle();
+      const until = Date.now() + 60_000;
+      while (Date.now() < until) {
+        await vi.advanceTimersByTimeAsync(intervalMs);
+        held.deliver?.({ ...sample(Date.now()), intervalMs });
+      }
+      expect(store.getState(input).snapshot?.sample?.sampledAt).toBe(until);
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(h.watchClient).not.toHaveBeenCalled();
+      release();
+      expect(open.mock.calls[0]?.[0].signal?.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(60_000);
+      held.deliver?.(sample(Date.now()));
+      expect(store.getState(input).snapshot?.sample?.sampledAt).toBe(until);
+      expect(open).toHaveBeenCalledTimes(1);
+    } finally { release(); store.reset(); }
+  });
+
+  it.each([
+    { kind: 'unsupported' as const, reasonCode: 'capture_source_unavailable', legacy: true },
+    { kind: 'closed' as const, reasonCode: 'capture_source_denied', legacy: false },
+  ])('uses the old watch only when live streaming is unsupported ($reasonCode)', async ({ kind, reasonCode, legacy }) => {
+    const h = harness();
+    const open = vi.fn(async () => ({ kind, reasonCode }));
+    const store = createMachineResourceStore({ snapshotClient: h.snapshotClient, watchClient: h.watchClient, historyClient: h.historyClient, streamClient: open });
+    const input = { ...key, view: 'overview' as const };
+    const release = store.demand(input);
+    try {
+      await settle();
+      if (legacy) {
+        expect(h.watchClient).toHaveBeenCalledTimes(1);
+        h.watches[0]?.answer.resolve({ ok: true, value: { v: 1, changed: true, samples: [sample(62_000)] } });
+        await settle();
+        expect(h.watchClient).toHaveBeenCalledTimes(2);
+        expect(open).toHaveBeenCalledTimes(1);
+      } else {
+        expect(h.watchClient).not.toHaveBeenCalled();
+        expect(store.getState(input).errorCode).toBe(reasonCode);
+      }
+    } finally { release(); store.reset(); }
+  });
+
   it('rearms only for delivered samples and does no work for retained or withdrawn Machines', async () => {
     vi.useFakeTimers();
     const h = harness(() => Date.now());

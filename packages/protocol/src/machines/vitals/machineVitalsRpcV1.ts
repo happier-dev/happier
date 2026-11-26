@@ -33,3 +33,13 @@ export const MachineVitalsWatchResultV1Schema = lazyZodSchema(() => z.discrimina
     z.strictObject({ changed: z.literal(false) }),
 ]));
 export type MachineVitalsWatchResultV1 = z.infer<typeof MachineVitalsWatchResultV1Schema>;
+
+export const MACHINE_VITALS_STREAM_FAMILY = 'machine.vitals';
+export const MACHINE_VITALS_STREAM_SOURCES = { summary: 'vitals.summary', overview: 'vitals.overview' } as const;
+
+/** Versioned content of a protected live-stream metadata frame. */
+export const MachineVitalsStreamUpdateV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+    z.strictObject({ v: z.literal(1), kind: z.literal('snapshot'), snapshot: MachineVitalsSnapshotV1Schema }),
+    z.strictObject({ v: z.literal(1), kind: z.literal('sample'), sample: MachineVitalsSampleV1Schema }),
+]));
+export type MachineVitalsStreamUpdateV1 = z.infer<typeof MachineVitalsStreamUpdateV1Schema>;

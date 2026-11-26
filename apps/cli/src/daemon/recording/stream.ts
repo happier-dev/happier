@@ -170,16 +170,17 @@ export function createBrowserRecordingStreamFrameCaptureAdapter<R extends Record
           ),
         };
       }
-      if (resolved.source.capabilities.health.status !== 'available') {
+      const capabilities = resolved.source.capabilities;
+      if (capabilities && capabilities.health.status !== 'available') {
         return {
           status: 'unavailable',
           reason: unavailable(
             'browser_recording_capture_unavailable',
-            resolved.source.capabilities.health.reasonCode ?? 'Machine live-stream source is unavailable.',
+            capabilities.health.reasonCode ?? 'Machine live-stream source is unavailable.',
           ),
         };
       }
-      if (!resolved.source.capabilities.supportedCodecs.some(codec => codec === MACHINE_LIVE_STREAM_BASELINE_CODEC_V1 || codec === 'image.frame.v1')) {
+      if (!capabilities?.supportedCodecs.some(codec => codec === MACHINE_LIVE_STREAM_BASELINE_CODEC_V1 || codec === 'image.frame.v1')) {
         return {
           status: 'unavailable',
           reason: unavailable(

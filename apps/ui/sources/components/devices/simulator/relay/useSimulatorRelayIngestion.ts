@@ -5,7 +5,7 @@ import { MACHINE_LIVE_STREAM_SOCKET_EVENT, MachineLiveStreamDecodedEnvelopeV1Sch
 import type { MachineLiveStreamCodecIdV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 import { MachineLiveStreamReceiptV1Schema, type MachineLiveStreamReceiptV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/receipts';
 
-import { openMachineLiveStreamRelayClient, renewMachineLiveStreamRelayClient, type MachineLiveStreamRelayClientInput } from '@/sync/domains/machines/peer/mediation/stream/relayClient';
+import { createMachineLiveStreamGrantRenewal, openMachineLiveStreamRelayClient, type MachineLiveStreamRelayClientInput } from '@/sync/domains/machines/peer/mediation/stream/relayClient';
 import { resolveLiveStreamViewerCapabilities, type LiveStreamViewerCapabilities } from '@/sync/domains/machines/peer/mediation/stream/capabilities';
 import { resolveMachineLiveStreamCodecPreference } from '@/sync/domains/machines/peer/mediation/stream/codecs';
 import { resolveBrowserLiveStreamWebCodecsSupport } from '@/sync/domains/machines/peer/mediation/stream/webCodecs';
@@ -188,12 +188,6 @@ export function useSimulatorRelayIngestion(
         const requestController = new AbortController();
         let ended = false;
         let openSettled = false;
-        let renewalTimer: ReturnType<typeof setTimeout> | undefined;
-        const clearRenewal = () => {
-            if (renewalTimer !== undefined) clearTimeout(renewalTimer);
-            renewalTimer = undefined;
-        };
-
         const openEvent: SimulatorRelayIngestionEvent = {
             type: 'open',
             sourceCodecs: latestRef.current.sourceCodecs,
@@ -244,32 +238,17 @@ export function useSimulatorRelayIngestion(
         const failRenewal = (reasonCode: string) => {
             if (disposed || ended) return;
             ended = true;
-            clearRenewal();
+            renewal.close();
             dispatch({ type: 'error', reasonCode });
             stop();
         };
-        const scheduleRenewal = (expiresAtMs: number) => {
-            clearRenewal();
-            if (disposed || ended) return;
-            const remainingMs = expiresAtMs - Date.now();
-            if (remainingMs <= 0) { failRenewal('grant_expired'); return; }
-            // Renew within the signed lifetime, through the existing grant owner.
-            // A fresh grant is not a second capture start. Its exact expiry is
-            // acknowledged by grant_expiring and schedules the next renewal.
-            renewalTimer = setTimeout(() => {
-                renewalTimer = undefined;
-                void renewMachineLiveStreamRelayClient(clientInput).then((result) => {
-                    if (disposed || ended) return;
-                    if (!result.ok) { failRenewal(result.reasonCode); return; }
-                    if (result.routeKind !== 'server_relay') { failRenewal('unexpected_route_kind'); return; }
-                    transport.send(MACHINE_LIVE_STREAM_SOCKET_EVENT, {
-                        v: 1, sourceMachineId, targetMachineId,
-                        ...(viewerSocketId ? { viewerSocketId } : {}),
-                        message: { kind: 'renew', startRequest: result.startRequest },
-                    });
-                }).catch(() => failRenewal('grant_refresh_failed'));
-            }, remainingMs / 2);
-        };
+        const renewal = createMachineLiveStreamGrantRenewal(clientInput, startRequest => {
+            transport.send(MACHINE_LIVE_STREAM_SOCKET_EVENT, {
+                v: 1, sourceMachineId, targetMachineId,
+                ...(viewerSocketId ? { viewerSocketId } : {}),
+                message: { kind: 'renew', startRequest },
+            });
+        }, failRenewal);
 
         let unsubscribe = () => {};
         const subscribe = () => transport.onEnvelope((raw) => {
@@ -279,7 +258,7 @@ export function useSimulatorRelayIngestion(
             if (parsed.data.sourceMachineId !== sourceMachineId || parsed.data.targetMachineId !== targetMachineId) return;
             if (parsed.data.message.kind === 'control' && parsed.data.message.control.streamId === streamId
                 && parsed.data.message.control.kind === 'grant_expiring') {
-                scheduleRenewal(parsed.data.message.control.expiresAtMs);
+                renewal.schedule(parsed.data.message.control.expiresAtMs);
             }
             // Viewer-side ack (SIM-P0-2): every delivered frame replenishes the server's bounded
             // in-flight window. The ack is the backpressure signal — without it the relay stops
@@ -314,7 +293,7 @@ export function useSimulatorRelayIngestion(
                 return;
             }
             if (event) {
-                if (event.type === 'error' || event.type === 'stopped') { ended = true; clearRenewal(); }
+                if (event.type === 'error' || event.type === 'stopped') { ended = true; renewal.close(); }
                 dispatch(event);
             }
         });
@@ -325,7 +304,7 @@ export function useSimulatorRelayIngestion(
             onAuthorized: (request) => {
                 if (disposed || ended) return;
                 setAuthorization({ identityKey: streamIdentityKey, caps: request });
-                if (request.authorization) scheduleRenewal(request.authorization.payload.exp);
+                if (request.authorization) renewal.schedule(request.authorization.payload.exp);
             },
         });
         const completion = (async () => {
@@ -341,11 +320,11 @@ export function useSimulatorRelayIngestion(
                 if (disposed) { if (result.ok) stop(); return; }
                 if (result.ok) return;
                 ended = true;
-                clearRenewal();
+                renewal.close();
                 dispatch({ type: 'error', reasonCode: result.reasonCode });
             })
             .catch(() => {
-                if (!disposed) { ended = true; clearRenewal(); dispatch({ type: 'error', reasonCode: 'relay_open_failed' }); }
+                if (!disposed) { ended = true; renewal.close(); dispatch({ type: 'error', reasonCode: 'relay_open_failed' }); }
             })
             .finally(() => {
                 openSettled = true;
@@ -356,7 +335,7 @@ export function useSimulatorRelayIngestion(
         return () => {
             disposed = true;
             requestController.abort();
-            clearRenewal();
+            renewal.close();
             stop();
             // A late accepted capture needs its own final Stop before the carrier retires.
             if (openSettled) unsubscribe();

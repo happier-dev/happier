@@ -219,6 +219,7 @@ import { resolveConnectedServicesMaterializationBaseDir } from './connectedServi
 import { createDaemonMachineRpcRouteAttachmentCache } from './machineRpcRouteAttachments';
 import { createDaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import { createMachineVitalsSampler, type MachineVitalsSampler } from './vitals/createMachineVitalsSampler';
+import { registerMachineVitalsLiveStream } from './vitals/registerMachineVitalsLiveStream';
 import { machineNativeEffectAdmission } from './local/services/launch/machineNativeEffectAdmission';
 import { createMachineVitalsReader } from './vitals/createMachineVitalsReader';
 import { createMinuteHistoryStore } from './vitals/history/minuteHistoryStore';
@@ -892,6 +893,8 @@ export async function startDaemon(
       readAttention: () => machineResourceSummary?.getSummary()?.attention,
     });
     const liveStreamCaptureRegistry = createMachineLiveStreamCaptureRegistry();
+    registerMachineVitalsLiveStream({ registry: liveStreamCaptureRegistry, sampler: machineVitals,
+      readAttention: () => machineResourceSummary?.getSummary()?.attention, signal: homeTransportCancellation.signal });
     const simulatorInputLeaseManager = createSimulatorInputLeaseManager({ ttlMs: 30_000 });
     // PMS-WIRE: own the peer-mediation observability store ONCE at startup. Its emitter is handed to
     // the machine-sync bootstrap relay terminators (write-path) and its store is published on the Api

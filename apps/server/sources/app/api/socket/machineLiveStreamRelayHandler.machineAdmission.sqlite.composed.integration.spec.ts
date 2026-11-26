@@ -7,6 +7,7 @@ import { MachineLiveStreamRelayAuthorizationV1Schema, MachineLiveStreamRelayEnve
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonMachineLiveStreamSourceAdmitResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
+import { MACHINE_VITALS_STREAM_FAMILY, MACHINE_VITALS_STREAM_SOURCES } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { registerMachineLiveStreamSourceAdmissionHandler } from '../../../../../cli/src/daemon/peer/mediation/stream/sourceAdmission';
 import { createMachineLiveStreamCaptureRegistry } from '../../../../../cli/src/daemon/peer/mediation/stream/captureRegistry';
@@ -325,7 +326,10 @@ describe('Live stream current Machine admission (real SQLite)', () => {
         },
     );
 
-    it('ends the guest live stream and prevents later frames when its real Use grant is removed', async () => {
+    it.each([
+        { streamFamily: 'screen', sourceId: 'guest-desktop', payloadKind: 'image_keyframe' },
+        { streamFamily: MACHINE_VITALS_STREAM_FAMILY, sourceId: MACHINE_VITALS_STREAM_SOURCES.overview, payloadKind: 'metadata' },
+    ])('ends the guest $streamFamily stream when its real Use grant is removed', async ({ streamFamily, sourceId, payloadKind }) => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
         const installationId = randomUUID();
@@ -367,21 +371,20 @@ describe('Live stream current Machine admission (real SQLite)', () => {
         const streamId = randomUUID();
         const payload = { v: 2 as const, grantId: randomUUID(), accountId: owner.id,
             sourceMachineId: machine.id, targetMachineId: machine.id, sourceMachineInstallationId: installationId,
-            viewerAccountId: guest.id, viewerSocketId, sourceId: 'guest-desktop', flowKind: 'live_stream' as const,
-            routeKind: 'server_relay' as const, streamId, streamFamily: 'screen', iat: 900, exp: 61_000,
+            viewerAccountId: guest.id, viewerSocketId, sourceId, flowKind: 'live_stream' as const,
+            routeKind: 'server_relay' as const, streamId, streamFamily, iat: 900, exp: 61_000,
             aud: MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1,
-            personalSourceAdmission: { homeServerIdentityId: 'home', actorAccountId: guest.id, streamFamily: 'screen',
-                sourceId: 'guest-desktop', sourceOccurrenceId },
+            personalSourceAdmission: { homeServerIdentityId: 'home', actorAccountId: guest.id, streamFamily, sourceId, sourceOccurrenceId },
         };
         const authorization = { payload, signature: { keyId: 'guest-access-loss', alg: 'Ed25519' as const,
             valueBase64Url: Buffer.from(tweetnacl.sign.detached(Buffer.from(createMachineLiveStreamRelayAuthorizationSigningInputV1(payload)), keys.secretKey)).toString('base64url'),
         } };
-        const startRequest = { v: 1 as const, streamId, streamFamily: 'screen', routeKind: 'server_relay' as const,
-            sourceMachineId: machine.id, targetMachineId: machine.id, sourceId: 'guest-desktop',
+        const startRequest = { v: 1 as const, streamId, streamFamily, routeKind: 'server_relay' as const,
+            sourceMachineId: machine.id, targetMachineId: machine.id, sourceId,
             sourceOccurrenceId, viewerSocketId, authorization };
         const envelope = { v: 1 as const, sourceMachineId: machine.id, targetMachineId: machine.id, viewerSocketId };
         const frame = (sequence: number) => ({ ...envelope, message: { kind: 'frame', frame: {
-            v: 1, streamId, sequence, timestampMs: 1_000, payloadKind: 'image_keyframe', payloadEncoding: 'binary_base64',
+            v: 1, streamId, sequence, timestampMs: 1_000, payloadKind, payloadEncoding: 'binary_base64',
             payload: { t: 'plain', v: 'AQID' }, payloadSizeBytes: 3,
         } } });
         try {

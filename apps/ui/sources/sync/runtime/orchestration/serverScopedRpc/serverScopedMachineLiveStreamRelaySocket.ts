@@ -42,6 +42,7 @@ export async function resolveServerScopedMachineLiveStreamRelaySocket(params: Re
     serverId?: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
     timeoutMs?: number;
+    signal?: AbortSignal;
 }>): Promise<ServerScopedMachineLiveStreamRelaySocket> {
     const socket = await createServerScopedRelaySocket<MachineLiveStreamRelayEnvelopeV1>({
         machineId: params.machineId,
@@ -49,6 +50,7 @@ export async function resolveServerScopedMachineLiveStreamRelaySocket(params: Re
         ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         accountLifetime: params.accountLifetime,
         timeoutMs: params.timeoutMs,
+        signal: params.signal,
         missingScopeUserProfileErrorMessage: 'Active account profile id is unavailable for machine live-stream relay',
         getActiveSocketId: () => apiSocket.getSocketId(),
         onActiveSocketIdChange: listener => apiSocket.onStatusChange(listener),

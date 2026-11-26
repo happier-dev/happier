@@ -25,6 +25,7 @@ import { resolveMachineLiveStreamAvailability } from './availability';
 import { requestMachineLiveStreamSourceAdmission } from './sourceAdmission';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { MACHINE_VITALS_STREAM_FAMILY } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 
 
 export type ProductionMachineLiveStreamStartResult =
@@ -84,6 +85,7 @@ async function startServerRelayedStream(input: Readonly<{
 
 export async function startProductionMachineLiveStream(input: Readonly<{
     serverId?: string | null;
+    expectedAccountId?: string;
     sessionId?: string;
     sourceMachineId: string;
     targetMachineId: string;
@@ -119,6 +121,9 @@ export async function startProductionMachineLiveStream(input: Readonly<{
 
     let accountId: string;
     try { accountId = parseToken(credentials.token); } catch { return { ok: false, reasonCode: 'grant_missing' }; }
+    if (input.signal?.aborted || (input.expectedAccountId && input.expectedAccountId !== accountId)) {
+        return { ok: false, reasonCode: 'grant_missing' };
+    }
     const availability = resolveMachineLiveStreamAvailability({
         serverFeatures,
         preferredRouteKinds: [input.routeKind],
@@ -141,7 +146,7 @@ export async function startProductionMachineLiveStream(input: Readonly<{
     let sourceAdmission = input.sourceAdmission;
     const state = readRegisteredStorageState();
     const machine = state ? resolveServerScopedMachine(state, server.serverId, input.sourceMachineId) : null;
-    if (!sourceAdmission && (input.sessionId || machine?.isShared === true)) {
+    if (!sourceAdmission && (input.sessionId || machine?.isShared === true || input.streamFamily === MACHINE_VITALS_STREAM_FAMILY)) {
         const admitted = await requestMachineLiveStreamSourceAdmission({ ...input, serverId: server.serverId, accountId });
         if (!admitted.ok) return admitted;
         sourceAdmission = admitted.sourceAdmission;

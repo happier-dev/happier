@@ -6,6 +6,7 @@ import type { MachineLiveStreamRelayStartRpcResult } from './relayStartRpc';
 
 type StartProductionMachineLiveStreamInput = Readonly<{
     serverId?: string | null;
+    expectedAccountId?: string;
     sessionId?: string;
     sourceMachineId: string;
     targetMachineId: string;
@@ -69,6 +70,7 @@ async function defaultStartDaemonRelay(
  */
 export type MachineLiveStreamRelayClientInput = Readonly<{
     serverId?: string | null;
+    expectedAccountId?: string;
     sessionId?: string;
     sourceMachineId: string;
     targetMachineId: string;
@@ -92,6 +94,7 @@ export async function renewMachineLiveStreamRelayClient(input: MachineLiveStream
     const start = input.startProduction ?? defaultStartProductionMachineLiveStream;
     return await start({
         serverId: input.serverId,
+        ...(input.expectedAccountId ? { expectedAccountId: input.expectedAccountId } : {}),
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         sourceMachineId: input.sourceMachineId,
         targetMachineId: input.targetMachineId,
@@ -108,6 +111,38 @@ export async function renewMachineLiveStreamRelayClient(input: MachineLiveStream
         timeoutMs: input.timeoutMs,
         signal: input.signal,
     } satisfies Parameters<StartProductionMachineLiveStream>[0]);
+}
+
+/** Renew the existing stream grant while its exact viewer is holding it. */
+export function createMachineLiveStreamGrantRenewal(
+    input: MachineLiveStreamRelayClientInput,
+    send: (startRequest: MachineLiveStreamStartRequestV1) => void,
+    fail: (reasonCode: string) => void,
+) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let closed = false;
+    const clear = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = undefined;
+    };
+    return {
+        close() { closed = true; clear(); },
+        schedule(expiresAtMs: number) {
+            clear();
+            if (closed) return;
+            const remainingMs = expiresAtMs - Date.now();
+            if (remainingMs <= 0) { fail('grant_expired'); return; }
+            // The relay returns the exact new expiry in grant_expiring.
+            timer = setTimeout(() => {
+                timer = undefined;
+                void renewMachineLiveStreamRelayClient(input).then(result => {
+                    if (closed) return;
+                    if (!result.ok) { fail(result.reasonCode); return; }
+                    send(result.startRequest);
+                }).catch(() => { if (!closed) fail('grant_refresh_failed'); });
+            }, remainingMs / 2);
+        },
+    };
 }
 
 export async function openMachineLiveStreamRelayClient(input: MachineLiveStreamRelayClientInput): Promise<OpenMachineLiveStreamRelayClientResult> {

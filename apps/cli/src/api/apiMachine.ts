@@ -1900,6 +1900,7 @@ export class ApiMachineClient {
             machineId: this.machine.id,
             resolveComputer: () => this.devicesRoleRoutes?.resolveComputer?.() ?? null,
             resolveBrowser: () => this.devicesRoleRoutes?.browserControl ?? null,
+            resolveCaptureRegistry: () => this.lifecycleDependencies.liveStreamCaptureRegistry ?? null,
             readHomeServerIdentityId: () => this.lifecycleDependencies.resolveCurrentServerIdentityId?.(),
             readInstallationIdentity: readInstallationIdentityIfExistsSync,
         });

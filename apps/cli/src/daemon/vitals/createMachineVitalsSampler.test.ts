@@ -16,6 +16,10 @@ import { MachineVitalsHistoryV1Schema, MachineVitalsMinuteRecordV1Schema } from 
 import { MachineResourcesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import { createMachineResourcesPolicyRuntime } from '../resources/machineResourcesPolicy';
 import { createMachineResourceSummary } from '../resources/machineResourceSummary';
+import { createDaemonMachineLiveStreamCaptureAdapter } from '../peer/mediation/stream/captureAdapter';
+import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
+import { MACHINE_VITALS_STREAM_FAMILY, MACHINE_VITALS_STREAM_SOURCES, MachineVitalsStreamUpdateV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
+import { registerMachineVitalsLiveStream } from './registerMachineVitalsLiveStream';
 
 // Native OS memory boundary; sampler, reader and accounting remain real.
 vi.mock('node:os', async importOriginal => ({ ...await importOriginal<typeof import('node:os')>(), freemem: vi.fn() }));
@@ -89,6 +93,51 @@ describe('createMachineVitalsSampler', () => {
         const historyStore = await createMinuteHistoryStore({ directory: join(directory, 'history'), nowMs: () => Date.now() });
         return createMachineVitalsSampler({ readers: reader, historyStore, monotonicMs: () => Date.now() - initialTime, ...options });
     }
+
+    it.each([
+        { view: 'summary' as const, intervalMs: 15_000, samples: 4 },
+        { view: 'overview' as const, intervalMs: 2_000, samples: 30 },
+    ])('pushes $samples $view samples in one visible minute and stops at release', async ({ view, intervalMs, samples }) => {
+        await writeCounters();
+        const sampler = await setup();
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const retirement = new AbortController();
+        registerMachineVitalsLiveStream({ registry, sampler, signal: retirement.signal, readAttention: () => undefined });
+        const frames: ReturnType<typeof MachineVitalsStreamUpdateV1Schema.parse>[] = [];
+        const stream = {
+            streamId: 'visible-minute', sourceMachineId: 'machine', targetMachineId: 'machine',
+            streamFamily: MACHINE_VITALS_STREAM_FAMILY,
+        };
+        try {
+            await sampler.start();
+            const result = await createDaemonMachineLiveStreamCaptureAdapter(registry).start({
+                ...stream, caps: {}, startedAtMs: Date.now(), expiresAtMs: Date.now() + 120_000, nowMs: Date.now,
+                startRequest: { ...stream, v: 1, routeKind: 'server_relay', sourceId: MACHINE_VITALS_STREAM_SOURCES[view], caps: {} },
+                offerFrame(frame) {
+                    expect(frame.sequence).toBe(frames.length + 1);
+                    frames.push(MachineVitalsStreamUpdateV1Schema.parse(JSON.parse(Buffer.from(frame.payloadBase64, 'base64').toString())));
+                    return { ok: true };
+                },
+                applyControl: () => ({ ok: true }), emitReceipt: () => {},
+            });
+            expect(result.ok).toBe(true);
+            if (!result.ok) throw new Error(result.reasonCode);
+            expect(frames).toEqual([{ v: 1, kind: 'snapshot', snapshot: expect.objectContaining({ state: 'reporting' }) }]);
+            for (let i = 0; i < samples; i++) {
+                await vi.advanceTimersByTimeAsync(intervalMs);
+                await sampler.start();
+            }
+            expect(frames).toHaveLength(samples + 1);
+            for (const update of frames.slice(1)) {
+                expect(update.kind).toBe('sample');
+                if (update.kind === 'sample') expect(Boolean(update.sample.sharedMemory)).toBe(view === 'overview');
+            }
+            await result.session.stop();
+            await vi.advanceTimersByTimeAsync(60_000);
+            await sampler.start();
+            expect(frames).toHaveLength(samples + 1);
+        } finally { retirement.abort(); await sampler.stop(); }
+    });
 
     it('samples service accounting only on the existing minute clock, never on history reads', async () => {
         await writeCounters({ mem: 100 });

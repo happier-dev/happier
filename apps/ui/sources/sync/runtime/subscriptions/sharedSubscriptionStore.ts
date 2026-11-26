@@ -112,7 +112,7 @@ export type SharedSubscriptionStoreConfig<
     /** Optional cancellation-owned producer demand spanning the entire series of watch replies. */
     observeWatch?: (params: SharedSubscriptionWatchParams<TInput, TState, TWatchClient>) => Promise<void>;
     watch?: (
-        params: SharedSubscriptionWatchParams<TInput, TState, TWatchClient>,
+        params: SharedSubscriptionWatchParams<TInput, TState, TWatchClient> & Readonly<{ publish(snapshot: TSnapshot): void }>,
     ) => Promise<SharedSubscriptionWatchOutcome<TSnapshot>> | SharedSubscriptionWatchRequest<TSnapshot>;
 }>;
 
@@ -352,6 +352,13 @@ export function createSharedSubscriptionStore<
                     state: entry.state,
                     watchClient: entry.watchClient,
                     nowMs: entry.nowMs,
+                    publish(snapshot) {
+                        if (entry.watchAbortController !== abortController || abortController?.signal.aborted || entry.refCount <= 0) return;
+                        const previous = entry.state;
+                        entry.state = config.applySnapshot(previous, snapshot);
+                        config.onWatchSnapshot?.(entry.input, snapshot, previous);
+                        if (entry.state !== previous) notify(entry);
+                    },
                     ...(abortController ? { signal: abortController.signal } : {}),
                 });
                 if ('outcome' in request) dispatched = request.dispatched;

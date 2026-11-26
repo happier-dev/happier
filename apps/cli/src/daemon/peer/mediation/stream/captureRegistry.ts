@@ -10,7 +10,8 @@ export type MachineLiveStreamRegisteredCaptureSource = Readonly<{
     sourceId: string;
     streamFamily: string;
     adapter: MachineLiveStreamCaptureAdapter;
-    capabilities: MachineLiveStreamCaptureSourceV1;
+    /** Metadata-only sources have no media or input capabilities to advertise. */
+    capabilities?: MachineLiveStreamCaptureSourceV1;
     /** Native target lifecycle and control share this exact registered capture source. */
     computer?: ComputerCaptureSource;
     /** Browser owner identity, supplied by capture registration rather than viewer input. */
@@ -67,7 +68,7 @@ export function createMachineLiveStreamCaptureRegistry(): MachineLiveStreamCaptu
 
     return {
         register: (source) => {
-            const capabilities = MachineLiveStreamCaptureSourceV1Schema.parse(source.capabilities);
+            const capabilities = source.capabilities && MachineLiveStreamCaptureSourceV1Schema.parse(source.capabilities);
             retirements.get(source.sourceId)?.abort();
             const retirement = new AbortController();
             retirements.set(source.sourceId, retirement);

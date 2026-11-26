@@ -2,16 +2,19 @@ import { signMachineInstallationProof, type MachineInstallationIdentityV1 } from
 import { DaemonMachineLiveStreamSourceAdmitRequestV1Schema, DaemonMachineLiveStreamSourceAdmitResponseV1Schema,
     type DaemonMachineLiveStreamSourceAdmitResponseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
 import { MachineLiveStreamSourceAdmissionPayloadV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MACHINE_VITALS_STREAM_FAMILY } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ComputerRoutes } from '@/daemon/computer/routes';
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { MachineLiveStreamCaptureRegistry } from './captureRegistry';
 
 export type MachineLiveStreamSourceAdmissionHandlerOptions = Readonly<{
     machineId: string;
     resolveComputer: () => ComputerRoutes | null;
     resolveBrowser?: () => BrowserDaemonControlRoutes | null;
+    resolveCaptureRegistry?: () => MachineLiveStreamCaptureRegistry | null;
     readHomeServerIdentityId?: () => string | null | undefined;
     readInstallationIdentity: () => MachineInstallationIdentityV1 | null;
 }>;
@@ -35,6 +38,14 @@ export function registerMachineLiveStreamSourceAdmissionHandler(
             || sessionBrowserAccess && request.streamFamily !== 'browser.streamed') return refuse('capture_source_denied');
         const actionContext = buildActionExecutorContextForRpc(context);
         const admitSource = async () => {
+            if (request.streamFamily === MACHINE_VITALS_STREAM_FAMILY) {
+                const source = options.resolveCaptureRegistry?.()?.resolve({ streamFamily: request.streamFamily, sourceId: request.sourceId });
+                const homeServerIdentityId = options.readHomeServerIdentityId?.();
+                if (!source?.ok || !source.source.sourceOccurrenceId || !homeServerIdentityId) {
+                    return { ok: false as const, reasonCode: 'capture_source_unavailable' };
+                }
+                return { ok: true as const, source: source.source, sourceOccurrenceId: source.source.sourceOccurrenceId, homeServerIdentityId };
+            }
             if (request.streamFamily === 'browser.streamed') {
                 const browser = options.resolveBrowser?.();
                 const admitted = browser?.admitSourceViewing?.(request, actionContext);

@@ -14,6 +14,7 @@ import type {
     MachineVitalsReadInput, MachineVitalsHistoryReadInput, MachineVitalsWatchInput,
 } from './machineRpc';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import type { openMachineVitalsStream } from './openMachineVitalsStream';
 
 export type MachineResourceState = Readonly<{
     status: 'loading' | 'ready' | 'slow' | 'error' | 'not_reported';
@@ -34,6 +35,7 @@ export type MachineResourceClients = Readonly<{
     snapshotClient: (input: MachineVitalsReadInput) => Promise<MachineResourceRpcResult<MachineVitalsSnapshotV1>>;
     watchClient: (input: MachineVitalsWatchInput) => Promise<MachineResourceRpcResult<MachineVitalsWatchResultV1>>;
     historyClient: (input: MachineVitalsHistoryReadInput) => Promise<MachineResourceRpcResult<MachineVitalsHistoryV1>>;
+    streamClient?: typeof openMachineVitalsStream;
 }>;
 
 export const EMPTY_MACHINE_RESOURCE_STATE: MachineResourceState = { status: 'loading', snapshot: null, summary: null, stale: false, samples: [] };
@@ -42,7 +44,7 @@ const NOT_REPORTED_STATE: MachineResourceState = { ...EMPTY_MACHINE_RESOURCE_STA
 const NOT_REPORTED_HISTORY_STATE: MachineResourceHistoryState = { ...EMPTY_MACHINE_RESOURCE_HISTORY_STATE, status: 'not_reported' };
 
 type ResourceUpdate =
-    | Readonly<{ kind: 'snapshot'; snapshot: MachineVitalsSnapshotV1 }>
+    | Readonly<{ kind: 'snapshot'; snapshot: MachineVitalsSnapshotV1; retainDetails?: boolean }>
     | Readonly<{ kind: 'samples'; samples: readonly MachineVitalsSampleV1[]; retainDetails?: boolean }>
     | Readonly<{ kind: 'published_attention'; attention: MachineResourceAttentionV1 }>
     | Readonly<{ kind: 'published_host'; host: MachineVitalsHostFactsV1 | undefined }>
@@ -127,7 +129,7 @@ function applySnapshot(state: MachineResourceState, incoming: MachineVitalsSnaps
 }
 
 function applyUpdate(state: MachineResourceState, update: ResourceUpdate, now: number): MachineResourceState {
-    if (update.kind === 'snapshot') return applySnapshot(state, update.snapshot, now);
+    if (update.kind === 'snapshot') return applySnapshot(state, update.snapshot, now, update.retainDetails);
     if (update.kind === 'published_host') {
         const host = retainDeep(state.host, update.host);
         if (host === state.host) return state;
@@ -182,7 +184,7 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
     // One static publication per Machine, including before observation begins.
     const publishedHosts = new Map<string, MachineVitalsHostFactsV1>();
     // These are live consumer/read demands, never retained snapshots or a second transport owner.
-    const views = new Map<string, { summary: number; overview: number }>();
+    const views = new Map<string, { summary: number; overview: number; legacyWatch?: boolean }>();
     const serviceHistoryDemands = new Map<string, Map<string, { input: HistoryInput; count: number }>>();
     function invalidateHistories(input: MachineResourceKey) {
         for (const range of ['1h', '24h', '7d'] as const) histories.invalidate({ ...input, range });
@@ -255,12 +257,26 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
                 invalidateHistories(input);
             }
         },
-        watch: ({ input, state, watchClient, signal }) => {
+        watch: ({ input, state, watchClient, signal, publish }) => {
             let markDispatched!: () => void;
             const dispatched = new Promise<void>(resolve => { markDispatched = resolve; });
             const outcome = (async (): Promise<SharedSubscriptionWatchOutcome<ResourceUpdate>> => {
                 if (unsupported.has(machineKey(input))) return { status: 'unavailable' };
-                const result = await watchClient({ ...input,
+                const activeViews = views.get(machineKey(input));
+                const retainDetails = input.view === 'summary';
+                let result: MachineResourceRpcResult<MachineVitalsWatchResultV1> | undefined;
+                if (clients.streamClient && activeViews && !activeViews.legacyWatch) {
+                    const stream = await clients.streamClient({ ...input, signal, onDispatched: markDispatched,
+                        onUpdate(update) {
+                            publish(update.kind === 'snapshot' ? { kind: 'snapshot', snapshot: update.snapshot, retainDetails }
+                                : { kind: 'samples', samples: [update.sample], retainDetails });
+                        },
+                    }).catch(error => ({ kind: 'closed' as const, reasonCode: projectMachineDaemonRpcFailure(error).errorCode ?? 'live_stream_relay_start_failed' }));
+                    if (signal?.aborted) return { status: 'unavailable' };
+                    if (stream.kind === 'unsupported') activeViews.legacyWatch = true;
+                    else result = projectMachineDaemonRpcFailure({ errorCode: stream.reasonCode });
+                }
+                result ??= await watchClient({ ...input,
                     ...(state.snapshot?.sample ? { sinceSampledAt: state.snapshot.sample.sampledAt } : {}), signal, onDispatched: markDispatched })
                     .catch(projectMachineDaemonRpcFailure);
                 if (signal?.aborted) return { status: 'unavailable' };
@@ -278,7 +294,7 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
                     return { status: 'changed', snapshot: update };
                 }
                 return { status: 'changed', snapshot: result.value.changed
-                    ? { kind: 'samples', samples: result.value.samples, retainDetails: input.view === 'summary' } : { kind: 'freshness' } };
+                    ? { kind: 'samples', samples: result.value.samples, retainDetails } : { kind: 'freshness' } };
             })();
             // Failure/cancellation before dispatch must also release publication; the existing
             // transport deadline and demand lifecycle remain the recovery boundaries.
@@ -377,6 +393,8 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
             if (daemonVersions.has(key) && daemonVersions.get(key) === version) return;
             daemonVersions.set(key, version);
             const wasUnsupported = unsupported.delete(key);
+            const demand = views.get(key);
+            if (demand) delete demand.legacyWatch;
             const state = store.getState({ ...input, view: 'summary' });
             if (wasUnsupported || state.status === 'error' || state.stale || state.snapshot?.state === 'unavailable') {
                 store.invalidate({ ...input, view: 'summary' });
@@ -394,4 +412,5 @@ export const machineResourceStore = createMachineResourceStore({
     snapshotClient: async input => (await import('./machineRpc')).fetchMachineVitalsViaMachineRpc(input),
     watchClient: async input => (await import('./machineRpc')).watchMachineVitalsViaMachineRpc(input),
     historyClient: async input => (await import('./machineRpc')).fetchMachineVitalsHistoryViaMachineRpc(input),
+    streamClient: async input => (await import('./openMachineVitalsStream')).openMachineVitalsStream(input),
 });

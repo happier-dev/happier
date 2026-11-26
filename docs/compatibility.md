@@ -7108,6 +7108,18 @@ predecessor `fd3f03529d96e899e95c8b384f5843340a1339c6` have no corresponding
 vitals/history or resources-policy paths. This is an unreleased-source
 contraction, not a released rollback adapter or loaded mixed-version claim.
 
+Visible Machine Vitals readers use the existing Machine live stream with the
+`machine.vitals` family and `vitals.summary` or `vitals.overview` source. Its
+version 1 metadata sends a snapshot followed by individual samples at the
+existing view cadence. The Home binds the signed source admission to a viewer
+with Machine Use access and the exact viewer socket. The same relay carries
+encrypted content for E2EE Accounts and plaintext for plain Accounts. The
+daemon releases sample demand when the viewer closes or the relay retires.
+Development clients use the existing V1 watch RPC when the stream source or
+relay start RPC is unavailable, or when the Home does not support the relay.
+A denied stream does not trigger that fallback. Older clients can continue
+using the V1 watch RPC.
+
 Guard Keep running retains its existing V1 request and response. The current
 development Home admits Use; the daemon still applies the existing Session/PTY
 warning-ownership check. A development Home retaining the prior custodian-only

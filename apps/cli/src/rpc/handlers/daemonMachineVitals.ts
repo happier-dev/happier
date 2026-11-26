@@ -1,11 +1,11 @@
 import type { RpcAdmissionPredicate, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { MachineVitalsSampler } from '@/daemon/vitals/createMachineVitalsSampler';
 import { parkWatch } from '@/daemon/lifecycle/parkWatch';
-import { appendMachineVitalsSeriesV1, type MachineResourceAttentionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
-import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
+import type { MachineResourceAttentionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
+import { projectMachineVitalsSample, projectMachineVitalsSnapshot } from '@/daemon/vitals/projectMachineVitalsRead';
 import {
     MachineVitalsGetInputV1Schema, MachineVitalsHistoryGetInputV1Schema, MachineVitalsWatchInputV1Schema,
-    type MachineVitalsSnapshotV1, type MachineVitalsWatchResultV1,
+    type MachineVitalsWatchResultV1,
 } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -18,41 +18,6 @@ export type DaemonMachineVitalsRoutes = Readonly<{
     canReadServiceHistory?: (serviceId: string, context: RpcHandlerContext) => Promise<boolean>;
     readAttention?: () => MachineResourceAttentionV1 | undefined;
 }>;
-
-/** Independent Overview extras are filtered; a memory observation stays whole. */
-function sampleForView(sample: MachineVitalsSampleV1, view: 'summary' | 'overview'): MachineVitalsSampleV1 {
-    if (view === 'overview') return sample;
-    const { gpu: _gpu, battery: _battery, thermal: _thermal, sharedMemory: _sharedMemory, ...base } = sample;
-    const limits = base.limits ? (() => {
-        const { inotify: _inotify, ...limits } = base.limits;
-        return limits;
-    })() : undefined;
-    return { ...base, ...(limits ? { limits } : {}) };
-}
-
-function fiveMinuteSeries(sampler: MachineVitalsSampler): MachineVitalsSnapshotV1['series5m'] {
-    const latest = sampler.latest();
-    const end = latest?.sampledAt ?? Date.now();
-    const start = end - 5 * 60_000;
-    const live = sampler.samplesSince(start);
-    const firstLive = live[0]?.sampledAt ?? end + 1;
-    const memoryTotal = latest?.memory.reported ? latest.memory.totalBytes : sampler.host()?.memoryTotalBytes;
-    const series: MachineVitalsSnapshotV1['series5m'] = { cpu: [], memory: [], networkRx: [], networkTx: [] };
-    const add = (t: number, cpu: number | null, memory: number | null, rx: number | null, tx: number | null) => {
-        series.cpu.push({ t, y: cpu });
-        series.memory.push({ t, y: memory });
-        series.networkRx.push({ t, y: rx });
-        series.networkTx.push({ t, y: tx });
-    };
-    const minutes = new Map(sampler.minutes(start).map(record => [record.t, record]));
-    for (let at = (Math.floor(start / 60_000) + 1) * 60_000; at < firstLive && at <= end; at += 60_000) {
-        const minute = minutes.get(at);
-        add(at, minute?.cpu ?? null,
-            minute?.mem != null && memoryTotal !== undefined ? Math.max(0, memoryTotal - minute.mem) : null,
-            minute?.rx != null ? minute.rx / 60 : null, minute?.tx != null ? minute.tx / 60 : null);
-    }
-    return appendMachineVitalsSeriesV1(series, null, live);
-}
 
 export function registerDaemonMachineVitalsRpcHandlers(
     rpc: RpcHandlerRegistrar,
@@ -83,15 +48,7 @@ export function registerDaemonMachineVitalsRpcHandlers(
         const request = MachineVitalsGetInputV1Schema.parse(raw);
         const assertLocal = bindAdmission(request, context);
         try {
-            const latest = options.sampler.latest();
-            const state = options.sampler.state();
-            const attention = options.readAttention?.();
-            return {
-                ...state, sample: latest ? sampleForView(latest, request.view ?? 'summary') : null,
-                series5m: latest || options.sampler.minutes(0).length ? fiveMinuteSeries(options.sampler)
-                    : { cpu: [], memory: [], networkRx: [], networkTx: [] },
-                ...(attention ? { attention } : {}),
-            } satisfies MachineVitalsSnapshotV1;
+            return projectMachineVitalsSnapshot(options.sampler, request.view ?? 'summary', options.readAttention?.());
         } finally { await assertLocal(); }
     };
     registerActionSpecRpcHandlers({
@@ -122,7 +79,7 @@ export function registerDaemonMachineVitalsRpcHandlers(
         try {
             const parked = await parkWatch({
                 isNewer: () => newer().length > 0,
-                read: () => newer().map(sample => sampleForView(sample, request.view)),
+                read: () => newer().map(sample => projectMachineVitalsSample(sample, request.view)),
                 subscribe(listener) {
                     const unsubscribe = options.sampler.subscribe(() => { if (newer().length) listener(); });
                     const release = request.view === 'overview' ? options.sampler.demandOverview() : options.sampler.demand('summary');
