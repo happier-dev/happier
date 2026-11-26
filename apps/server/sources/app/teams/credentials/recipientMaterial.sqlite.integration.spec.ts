@@ -141,6 +141,74 @@ describe("Team credential recipient material", () => {
         } })).toEqual(fixture.payload);
     });
 
+    it('qualifies a restricted Team read once per transaction and still refuses unqualified, removed or wrong-Team callers', async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: "1",
+            AUTH_REQUIRED_LOGIN_PROVIDERS: "",
+            HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "true",
+        });
+        try {
+            const fixture = await createTeamDirectActionMaterialFixture();
+            await db.team.update({ where: { id: fixture.team.id }, data: { authenticationPolicy: {
+                v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId: "key_challenge" }],
+            } } });
+            // Key-challenge sign-in qualifies only an encrypted Account holding its signing key.
+            const e2eeMaterial = createE2eeAccountMaterial();
+            await db.account.update({ where: { id: fixture.recipient.id }, data: {
+                encryptionMode: "e2ee",
+                publicKey: Buffer.from(e2eeMaterial.signing.publicKey).toString("hex"),
+                contentPublicKey: Buffer.from(e2eeMaterial.contentPublicKey),
+                contentPublicKeySig: Buffer.from(e2eeMaterial.contentPublicKeySig),
+            } });
+            const encryptedStored = createTeamCredentialDirectMaterialStoredV1({
+                payload: fixture.payload, recipientMode: "e2ee",
+                recipientContentPublicKey: e2eeMaterial.contentPublicKey,
+                randomBytes: length => new Uint8Array(length).fill(17),
+            });
+            await db.teamCredentialRecipientMaterial.update({
+                where: { resourceId_recipientAccountId_sourceMemberKey: {
+                    resourceId: fixture.resource.id, recipientAccountId: fixture.recipient.id, sourceMemberKey: fixture.sourceMemberKey,
+                } },
+                data: { recipientMode: "e2ee", recipientContentPublicKeyFingerprint: e2eeMaterial.fingerprint,
+                    storedMaterial: Buffer.from(JSON.stringify(encryptedStored)) },
+            });
+            const evidence = [{ kind: "home_method" as const, methodId: "key_challenge" }];
+            const qualified = {
+                sessionAuthentication: { env: process.env, authority: "present_user" as const, authenticationEvidence: evidence },
+                authentication: { env: process.env, authenticationAuthority: "present_user" as const, authenticationEvidence: evidence },
+            };
+            // Each Team sign-in qualification reads the Account's current login facts once.
+            const teamQualificationReads = () => queries.filter(query => /\bSELECT\b/i.test(query)
+                && query.includes('AccountPasswordCredential')).length;
+            queries.length = 0;
+            await expect(fixture.readCurrent(qualified)).resolves.toMatchObject({ ok: true, recipientMode: "e2ee", stored: encryptedStored });
+            expect(teamQualificationReads()).toBe(1);
+            expect(entitlementReads()).toBe(1);
+
+            // The Team operation's own credential is the one qualification; Session
+            // evidence alone never qualifies a restricted Team read.
+            await expect(fixture.readCurrent()).resolves.toEqual({
+                ok: false, outcome: "operation_error", error: "team_authentication_required",
+            });
+            await expect(fixture.readCurrent({ sessionAuthentication: qualified.sessionAuthentication })).resolves.toEqual({
+                ok: false, outcome: "operation_error", error: "team_authentication_required",
+            });
+            await expect(fixture.readCurrent({ ...qualified, teamId: "another-team" })).resolves.toEqual({
+                ok: false, outcome: "unavailable", reason: "access_removed",
+            });
+            await db.teamCredentialMemberGrant.deleteMany({ where: { resourceId: fixture.resource.id } });
+            await expect(fixture.readCurrent(qualified)).resolves.toEqual({
+                ok: false, outcome: "unavailable", reason: "access_removed",
+            });
+            await db.teamMembership.delete({ where: { id: fixture.membership.id } });
+            await expect(fixture.readCurrent(qualified)).resolves.toEqual({
+                ok: false, outcome: "unavailable", reason: "access_removed",
+            });
+        } finally {
+            harness.resetEnv();
+        }
+    });
+
     it('withdraws only the source owner’s exact publication and preserves other members and newer replacements', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain', publicKey: null } });
         const other = await db.account.create({ data: { encryptionMode: 'plain', publicKey: null } });
@@ -360,6 +428,18 @@ describe("Team credential recipient material", () => {
             sessionId: session.id, teamId: team.id, accessLevel: "edit",
             canApprovePermissions: false, effectiveAt: new Date(),
         } });
+        await expect(readCurrent()).resolves.toMatchObject({ ok: true });
+        // A Session whose accepted selection names another resource never
+        // discloses this one, even though this resource's Team qualified.
+        const sibling = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: custodian.id, displayName: storedPlainPrivateLabel("Sibling credential"),
+            disclosureCeiling: "direct_allowed", sessionUsePolicy: "personal_allowed", sourceBindingJson: resource.sourceBindingJson,
+            memberGrants: { create: { teamMembershipId: membership.id, deliveryMode: "direct" } },
+        } });
+        await db.sessionTeamCredentialBinding.updateMany({ where: { sessionId: session.id }, data: { resourceId: sibling.id } });
+        await expect(readCurrent()).resolves.toEqual({ ok: false, outcome: "unavailable", reason: "access_removed" });
+        await db.sessionTeamCredentialBinding.updateMany({ where: { sessionId: session.id }, data: { resourceId: resource.id } });
+        await db.teamCredentialResource.delete({ where: { id: sibling.id } });
         await expect(readCurrent()).resolves.toMatchObject({ ok: true });
         await db.account.update({ where: { id: recipient.id }, data: { encryptionMode: 'e2ee' } });
         await expect(readCurrent()).resolves.toEqual({ ok: false, outcome: 'unavailable', reason: 'recipient_binding_changed' });

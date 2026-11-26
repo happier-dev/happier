@@ -11,7 +11,8 @@ import { createServiceAccountTokenIdentityFields } from '@/app/api/routes/connec
 import { mutateQualifiedConnectedServiceCredential } from '@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository';
 import { readCurrentTeamCredentialRecipientMaterialInTx, upsertTeamCredentialRecipientMaterialInTx } from './recipientMaterial';
 import { createTeamCredentialResourceInTx } from './resourceCreate';
-import { readTeamOperationAuthenticationFromRequest } from '../actorContext';
+import { readTeamOperationAuthenticationFromRequest, type TeamOperationAuthenticationContext } from '../actorContext';
+import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 
 /** Real two-Account sharing fixture; the containing SQLite harness owns cleanup. */
 export async function createTeamDirectActionMaterialFixture(options: Readonly<{
@@ -106,11 +107,11 @@ export async function createTeamDirectActionMaterialFixture(options: Readonly<{
     const actionAdmission: Omit<NonNullable<Parameters<typeof readCurrentTeamCredentialRecipientMaterialInTx>[1]['actionAdmission']>,
         'preparedDeclaration'> = { rootActionId: consumer.actionId, machineId: machine.id,
             declarationAccountId: recipient.id, installationId: 'fixture-installation' };
+    const sessionAuthentication: SessionAccessAuthentication = { env: process.env, authority: 'present_user', authenticationEvidence: [] };
+    const authentication: TeamOperationAuthenticationContext = { authenticationAuthority: 'present_user' };
     const input = { teamId: team.id, resourceId: resource.id, recipientAccountId: recipient.id,
         slot: { kind: 'connected_service_purpose' as const, purpose }, disclosedMember: sourceAccount, consumer,
-        actionAdmission,
-        sessionAuthentication: { env: process.env, authority: 'present_user' as const, authenticationEvidence: [] },
-        authentication: { authenticationAuthority: 'present_user' as const } };
+        actionAdmission, sessionAuthentication, authentication };
     // Like the material route, prepare the declaration body before the locked read.
     const readCurrent = async (override: Partial<typeof input> = {}) => {
         const current = { ...input, ...override };

@@ -555,7 +555,10 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     if (!resource.enabled) return { ok: false as const, outcome: "unavailable" as const, reason: "disabled" as const };
     // A Session reads through its accepted witness. A Run uses its attested
     // selection with the Session context supplied by the currentness resolver.
+    // This request's credential qualified for this Team above, in this
+    // transaction, so the binding admission does not qualify it again.
     const admitted = await admitTeamCredentialOperationBindingInTx(tx, {
+        qualifiedAtAdmission: true,
         consumer: input.consumer.kind === "session"
             ? input.consumer
             : input.consumer.kind !== "execution_run"
