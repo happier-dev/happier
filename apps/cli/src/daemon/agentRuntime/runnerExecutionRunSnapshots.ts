@@ -1,3 +1,5 @@
+import { resolveExecutionRunRuntimeBackendTarget } from '@/agent/runtime/bridges/executionRun/backendTargets';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -71,8 +73,16 @@ export function createRunnerExecutionRunSnapshots(input: Readonly<{ machineId: s
           const registration = descriptor ? snapshot.runtimeRegistry.agentRuntimesByAgentId.get(descriptor.agentId) : null;
           const binding = readExecutionRunFactoryBinding(registration);
           if (operation.backendTarget && (!descriptor || !binding || !registration?.isCurrent())) return unavailable();
+          const runnerTarget = operation.runnerAgentTarget
+            ? resolveExecutionRunRuntimeBackendTarget(operation.runnerAgentTarget, snapshot.runtimeRegistry.contributes) : null;
+          const runnerDescriptor = runnerTarget ? await resolveRunnerAgentSessionDescriptorForLease({
+            target: readBackendTargetRefV2(runnerTarget), lease: snapshot.runtimeRegistryLease }) : null;
+          const runnerRegistration = runnerDescriptor ? snapshot.runtimeRegistry.agentRuntimesByAgentId.get(runnerDescriptor.agentId) : null;
+          const runnerBinding = readExecutionRunFactoryBinding(runnerRegistration);
+          if (operation.runnerAgentTarget && (!runnerDescriptor || !runnerBinding || !runnerRegistration?.isCurrent())) return unavailable();
           const projection = RunnerExecutionRunSnapshotV1Schema.parse({ kind: 'execution_run.snapshot', snapshotId: randomUUID(),
             ...(descriptor && binding ? { agent: { descriptor, binding } } : {}),
+            ...(runnerDescriptor && runnerBinding ? { runnerAgent: { backendTarget: readBackendTargetRefV2(runnerTarget!), descriptor: runnerDescriptor, binding: runnerBinding } } : {}),
             profiles: [...snapshot.profileCatalog.profileDescriptorsById.values()].flatMap(profile =>
               profile.pluginId && profile.sourceCustody ? [{ pluginId: profile.pluginId,
                 sourceCustody: profile.sourceCustody, definition: profile.definition }] : []),
@@ -96,9 +106,11 @@ export function createRunnerExecutionRunSnapshots(input: Readonly<{ machineId: s
       if (operation.kind === 'execution_run.native_offered_model.read_v1') {
         const snapshotId = request.context.executionRunSnapshotId;
         const retained = snapshotId ? read(snapshotId, context) : null;
-        const agent = retained?.projection.agent;
-        if (!retained?.backendTarget || !agent || !input.withNativeModelAccount || !context.trackedSession
-          || !areExecutionRunBackendTargetsEqual(retained.backendTarget, operation.backendTarget)) return unavailable();
+        const selected = retained?.projection.runnerAgent;
+        const agent = selected && areExecutionRunBackendTargetsEqual(selected.backendTarget, operation.backendTarget)
+          ? selected : retained?.backendTarget && areExecutionRunBackendTargetsEqual(retained.backendTarget, operation.backendTarget)
+            ? retained.projection.agent : undefined;
+        if (!retained?.backendTarget || !agent || !input.withNativeModelAccount || !context.trackedSession) return unavailable();
         const registration = retained.snapshot.runtimeRegistry.agentRuntimesByAgentId.get(agent.descriptor.agentId);
         const isCurrent = async () => read(snapshotId!, context) === retained && await context.isCurrent()
           && isDeepStrictEqual(agent.binding, readExecutionRunFactoryBinding(registration)) && registration?.isCurrent();

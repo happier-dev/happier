@@ -193,6 +193,8 @@ export type ResolveEngineRegistryParams = Readonly<{
     requireRunnerAgentSessionRuntimeSource?: boolean;
     /** Private admitted source. It constructs one real Agent runtime in this runner and is not a daemon proxy. */
     runnerAgentSessionRuntimeSource?: RunnerAgentSessionRuntimeSource | null;
+    /** Additional exact sources retained by the same execution-run snapshot. */
+    runnerAgentSessionRuntimeSources?: readonly RunnerAgentSessionRuntimeSource[];
     /**
      * Exact host-owned Team credential preparation for a direct, already
      * generation-pinned plugin runtime. Standalone scoped hosts use this

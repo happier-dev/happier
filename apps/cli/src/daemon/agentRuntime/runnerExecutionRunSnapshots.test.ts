@@ -48,17 +48,25 @@ describe('runner execution-run snapshot SCM preparation', () => {
         trackedSession: { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: sessionId },
         isCurrent: async () => true,
       };
-      const acquire = async (backendTarget: typeof parentTarget) => {
+      const acquire = async (backendTarget: typeof parentTarget,
+        runnerAgentTarget?: { kind: 'agent'; identity: { pluginId: string; localId: string } }) => {
         const response = AgentRuntimeDaemonServiceResponseV1Schema.parse(await snapshots.dispatch(
           AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1, context: { token: 'A'.repeat(43), sessionId },
-            operation: { kind: 'execution_run.snapshot.acquire_v1', backendTarget } }), context));
+            operation: { kind: 'execution_run.snapshot.acquire_v1', backendTarget,
+              ...(runnerAgentTarget ? { runnerAgentTarget } : {}) } }), context));
         if (!response.ok || response.result.kind !== 'execution_run.snapshot' || !response.result.agent) {
           throw new Error('Missing retained Agent snapshot');
         }
-        return response.result.agent;
+        return response.result;
       };
-      expect((await acquire(parentTarget)).binding).toEqual(retainedAgent);
-      const { binding, descriptor } = await acquire(target(CLAWPATCH_PLUGIN.manifest.id, 'clawpatch'));
+      expect((await acquire(parentTarget)).agent?.binding).toEqual(retainedAgent);
+      const engineTarget = target(CLAWPATCH_PLUGIN.manifest.id, 'clawpatch');
+      const engineOnly = await acquire(engineTarget);
+      expect(engineOnly.runnerAgent).toBeUndefined();
+      const selected = await acquire(engineTarget,
+        { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } });
+      expect(selected.runnerAgent).toMatchObject({ backendTarget: parentTarget, binding: retainedAgent });
+      const { binding, descriptor } = selected.agent!;
       expect(AgentSessionRunnerBindingV1Schema.safeParse(binding).success).toBe(false);
       const leaf = await loadRetainedAgentRuntimeLeaf({
         paths: resolvePluginStorePaths({ happyHomeDir: runtime.happyHomeDir }),

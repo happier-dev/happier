@@ -420,7 +420,7 @@ export type ExecutionRunHostBridgeOptions = Readonly<{
     signal?: AbortSignal;
   }>) => Promise<VoicePromptPreparation>;
   executionRunProfileCatalog?: ExecutionRunProfileContributionCatalog;
-  resolveExecutionRunProfileCatalog?: (backendTarget?: ExecutionRunManagerStartParams['backendTarget']) =>
+  resolveExecutionRunProfileCatalog?: (backendTarget?: ExecutionRunManagerStartParams['backendTarget'], runnerAgentTarget?: ExecutionRunManagerStartParams['runnerAgentTarget']) =>
     | Promise<ExecutionRunProfileCatalogResolution>
     | ExecutionRunProfileCatalogResolution;
   happyHomeDir?: string;
@@ -1274,7 +1274,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }
 
   private async resolveExecutionRunProfileCatalog(backendTarget?: ExecutionRunManagerStartParams['backendTarget'], runId?: string,
-    reuseLiveRuntimeOnly = false): Promise<Readonly<{
+    reuseLiveRuntimeOnly = false, runnerAgentTarget?: ExecutionRunManagerStartParams['runnerAgentTarget']): Promise<Readonly<{
     profileCatalog: ExecutionRunProfileContributionCatalog;
     engineRegistry?: ResolvedCliEngineRegistry;
     release?: () => Promise<void>;
@@ -1293,7 +1293,9 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     if (!resolver) {
       return { profileCatalog: this.executionRunProfileCatalog };
     }
-    const resolved = await resolver(backendTarget);
+    const run = runId ? this.runs.get(runId) : undefined;
+    const resolved = await resolver(backendTarget, runnerAgentTarget
+      ?? (run ? resolveExecutionRunResumeBackendOptions({ run }).runnerAgentTarget : undefined));
     if (!isExecutionRunProfileCatalogResolution(resolved)) {
       throw executionRunContributionSnapshotUnavailable();
     }
@@ -2526,7 +2528,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     let admittedAccount: Awaited<ReturnType<NonNullable<typeof captureAccount>>> | undefined;
     if (retained) await this.recoverRetainedRuns();
     this.ensurePermissionResponseTargetHandlerRegistered();
-    const resolution = await this.resolveExecutionRunProfileCatalog(params.backendTarget, retained?.runId).catch((error: unknown) => {
+    const resolution = await this.resolveExecutionRunProfileCatalog(params.backendTarget, retained?.runId, false, params.runnerAgentTarget).catch((error: unknown) => {
       throw markExecutionRunStartPreparationFailure(error, 'execution_run_contribution_snapshot_unavailable');
     });
     let nativeSandbox: ExecutionRunRuntimeCreateOptions['nativeSandbox'] = params.nativeSandbox;
@@ -4017,7 +4019,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     if (params.actionId === 'review.walkthrough' && this.resolveExecutionRunProfileCatalogOption
       && (!resolution.readNativeOfferedModel || run?.status !== 'running')) {
       await resolution.release?.();
-      resolution = await this.resolveExecutionRunProfileCatalog(run?.backendTarget);
+      resolution = await this.resolveExecutionRunProfileCatalog(run?.backendTarget, undefined, false,
+        run ? resolveExecutionRunResumeBackendOptions({ run }).runnerAgentTarget : undefined);
     }
     try {
       return await applyExecutionRunAction({

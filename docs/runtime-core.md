@@ -4911,6 +4911,14 @@ source. The runner resolves the factory through the retained activation
 owner, using the same Agent registration as detached execution. Session
 bootstrap uses its existing Session runner binding.
 
+An engine with an explicit runner Agent retains both declarations and factory
+bindings from that same admitted runtime lease. The attached runner registry
+resolves both retained sources; model reads use the selected runner, and Provider
+preparation consumes the same lease. An omitted runner keeps the engine as its
+own runner. No live catalog lookup substitutes for a missing retained runner.
+The host-private snapshot request and response reload together in development;
+older strict daemons refuse the new selector rather than ignore it.
+
 In unreleased 0.3 source, engine Runs receive the materializer's selected runner
 Connected Account purposes alongside the runner Agent owner's translated launch
 material. Machine login is used only without a selected runner account. An

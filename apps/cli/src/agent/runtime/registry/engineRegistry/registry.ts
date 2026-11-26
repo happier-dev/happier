@@ -107,6 +107,10 @@ export async function resolveCliEngineRegistry(
     const defaultRegistry = await resolveDefaultContributionRegistry(params);
     const contributions = defaultRegistry.contributions;
     const agentRoutingIds = indexAgentRoutingIdsByContributionIdentity([...contributions.agentDefinitionsById.values()]);
+    const runnerSources = [
+        ...(params?.runnerAgentSessionRuntimeSource ? [params.runnerAgentSessionRuntimeSource] : []),
+        ...(params?.runnerAgentSessionRuntimeSources ?? []),
+    ];
     const resolutionPromises = new Map<string, Promise<EngineAdapterResolution | null>>();
 
     async function resolveRuntimeRegistry(pluginId?: string | null): Promise<RuntimeRegistryHandle> {
@@ -179,10 +183,7 @@ export async function resolveCliEngineRegistry(
             const resolutionPromise = (async (): Promise<EngineAdapterResolution | null> => {
                 let resolutionContributions = contributions;
                 const matchingRunnerSessionRuntimeSource =
-                    params?.runnerAgentSessionRuntimeSource?.identity.backendId
-                            === backendId
-                        ? params.runnerAgentSessionRuntimeSource
-                        : null;
+                    runnerSources.find(source => source.identity.backendId === backendId) ?? null;
                 let backend = matchingRunnerSessionRuntimeSource
                     ? projectEngineRuntimeContributionFromAgent(
                         matchingRunnerSessionRuntimeSource.agentContribution,
@@ -204,7 +205,7 @@ export async function resolveCliEngineRegistry(
                 if (
                     params?.requireRunnerAgentSessionRuntimeSource
                     && backend
-                    && params.runnerAgentSessionRuntimeSource?.identity.backendId !== backend.id
+                    && !hasMatchingRunnerSessionRuntimeSource
                 ) {
                     const error = new Error(
                         `Daemon-spawned native Agent backend '${backend.id}' is missing its runner-local runtime source`,
@@ -275,7 +276,7 @@ export async function resolveCliEngineRegistry(
                             : {}),
                         ...(params?.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
                         runnerAgentSessionRuntimeSource:
-                            params?.runnerAgentSessionRuntimeSource ?? null,
+                            matchingRunnerSessionRuntimeSource,
                         ...(params?.prepareTeamCredentialProviderBinding
                             ? {
                                 prepareTeamCredentialProviderBinding:
@@ -292,7 +293,7 @@ export async function resolveCliEngineRegistry(
                 const resolution = await resolutionPromise;
                 // Account rows can change independently of this plugin registry.
                 // Share in-flight work, but do not retain a configured launch or miss.
-                if ((!resolution || agentTarget?.definitionId !== undefined || params?.startupRuntimeDescriptorV1?.agent !== undefined || params?.runnerAgentSessionRuntimeSource?.startupRuntimeDescriptorV1?.agent !== undefined)
+                if ((!resolution || agentTarget?.definitionId !== undefined || params?.startupRuntimeDescriptorV1?.agent !== undefined || runnerSources.some(source => source.startupRuntimeDescriptorV1?.agent !== undefined))
                     && resolutionPromises.get(cacheKey) === resolutionPromise) {
                     resolutionPromises.delete(cacheKey);
                 }

@@ -72,7 +72,7 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
   NonNullable<ExecutionRunRpcHandlerContext['resolveExecutionRunProfileCatalog']> {
   const unavailable = () => { throw new PluginError({ code: 'execution_run_contribution_snapshot_unavailable',
     message: 'Execution Run executable snapshot is unavailable' }); };
-  return async backendTarget => {
+  return async (backendTarget, runnerAgentTarget) => {
     const path = sessionProcessEnvironment()[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
     if (!path) return unavailable();
     const current = await readCurrentRunnerAgentRuntimeDaemonServiceAuthority({
@@ -98,9 +98,11 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
       return response.result;
     };
     const snapshot = await dispatch({ kind: 'execution_run.snapshot.acquire_v1',
-      ...(backendTarget ? { backendTarget: readBackendTargetRefV2(backendTarget) } : {}) });
+      ...(backendTarget ? { backendTarget: readBackendTargetRefV2(backendTarget) } : {}),
+      ...(runnerAgentTarget ? { runnerAgentTarget } : {}) });
     if (snapshot.kind !== 'execution_run.snapshot') return unavailable();
     let source: Awaited<ReturnType<typeof createRunnerAgentSessionRuntimeSource>> = null;
+    let runnerSource: Awaited<ReturnType<typeof createRunnerAgentSessionRuntimeSource>> = null;
     const releaseDaemon = async () => {
       const result = await dispatch({ kind: 'execution_run.snapshot.release_v1', snapshotId: snapshot.snapshotId });
       if (result.kind !== 'execution_run.snapshot.released') return unavailable();
@@ -120,10 +122,21 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
         });
         if (!source) return unavailable();
       } else if (backendTarget) return unavailable();
+      if (snapshot.runnerAgent) {
+        runnerSource = await createRunnerAgentSessionRuntimeSource({
+          happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
+          authorityFilePath: path, expectedSessionId: input.sessionId,
+          occurrenceId: snapshot.runnerAgent.descriptor.occurrenceId,
+          runtimeAuthority: snapshot.runnerAgent.descriptor.runtimeAuthority,
+          executionRunSnapshot: { ...snapshot, agent: snapshot.runnerAgent },
+        });
+        if (!runnerSource) return unavailable();
+      }
       const engineRegistry = await resolveCliEngineRegistry({
-        contributes: createResolvedContributionRegistry({ agents: source ? [source.agentContribution] : [] }),
+        contributes: createResolvedContributionRegistry({ agents: [...(source ? [source.agentContribution] : []), ...(runnerSource ? [runnerSource.agentContribution] : [])] }),
         ...(source ? { backendId: source.identity.backendId, runnerAgentSessionRuntimeSource: source,
-          requireRunnerAgentSessionRuntimeSource: true } : {}),
+          requireRunnerAgentSessionRuntimeSource: true,
+          runnerAgentSessionRuntimeSources: runnerSource ? [runnerSource] : [] } : {}),
       });
       const profileCatalog = createRunnerExecutionRunProfileCatalog({ snapshot, engineRegistry, ...input,
         dispatch: operation => dispatch(operation, snapshot.snapshotId) });
@@ -179,11 +192,15 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
       return { profileCatalog, engineRegistry, providerLaunch, readNativeOfferedModel,
         nativeModelRegistry: engineRegistry.contributions, release: async () => {
         if (released) return;
-        try { await source?.retire?.(); } finally { await releaseDaemon(); }
+        try { await runnerSource?.retire?.(); } finally {
+          try { await source?.retire?.(); } finally { await releaseDaemon(); }
+        }
         released = true;
       } };
     } catch (error) {
-      try { await source?.retire?.(); } finally { await releaseDaemon(); }
+      try { await runnerSource?.retire?.(); } finally {
+        try { await source?.retire?.(); } finally { await releaseDaemon(); }
+      }
       throw error;
     }
   };

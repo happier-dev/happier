@@ -46,7 +46,8 @@ const ProviderLaunchRefusalShape = {
 // that refusal cannot be interpreted as an empty executable snapshot.
 export const RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS = lazyActionSpecArray(() => [
   z.strictObject({ kind: z.literal('execution_run.snapshot.acquire_v1'),
-    backendTarget: z.optional(asHostProtocolZod(StrictBackendTargetRefV2Schema)) }),
+    backendTarget: z.optional(asHostProtocolZod(StrictBackendTargetRefV2Schema)),
+    runnerAgentTarget: z.optional(asHostProtocolZod(AgentExecutionTargetV1Schema)) }),
   z.strictObject({ kind: z.literal('execution_run.snapshot.release_v1'), snapshotId: z.uuid() }),
   z.strictObject({ kind: z.literal('execution_run.native_offered_model.read_v1'),
     backendTarget: asHostProtocolZod(StrictBackendTargetRefV2Schema), modelId: z.string().check(z.minLength(1)),
@@ -73,6 +74,8 @@ export const RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS = lazyActionSpecArray(() =
 export const RunnerExecutionRunSnapshotV1Schema = z.strictObject({
   kind: z.literal('execution_run.snapshot'), snapshotId: z.uuid(),
   agent: z.optional(z.strictObject({ descriptor: AgentRuntimeDaemonSessionDescriptorV1Schema,
+    binding: AgentExecutionRunRunnerBindingV1Schema })),
+  runnerAgent: z.optional(z.strictObject({ backendTarget: asHostProtocolZod(StrictBackendTargetRefV2Schema), descriptor: AgentRuntimeDaemonSessionDescriptorV1Schema,
     binding: AgentExecutionRunRunnerBindingV1Schema })),
   profiles: z.array(z.strictObject({ pluginId: z.string().check(z.minLength(1)),
     sourceCustody: asHostProtocolZod(PluginSourceCustodyV1Schema),
