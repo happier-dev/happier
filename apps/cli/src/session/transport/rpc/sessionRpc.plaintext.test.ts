@@ -1,6 +1,6 @@
 import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { projectSocketRpcTargetAcknowledgementV1 } from '@happier-dev/protocol/socketRpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -23,6 +23,12 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import * as persistence from '@/persistence';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { logger as fileLogger } from '@/ui/logger';
+import { createCapabilitiesService } from '@/capabilities/service';
+import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
+import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+
+const automationNotices = [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }];
 
 let nextRpcAck: any = null;
 let nextSocket: FakeSocket | null = null;
@@ -154,7 +160,7 @@ import { startExecutionRunStream, waitForExecutionRun, watchExecutionRun } from 
 describe('execution-run caller authority at the Socket.IO boundary', () => {
   it('separates connection from a pending RPC acknowledgement in opt-in phase observations', async () => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-    const sink = vi.spyOn(fileLogger, 'warnLocalFile').mockImplementation(() => undefined);
+    const sink = vi.spyOn(fileLogger, 'debugLocalFile').mockImplementation(() => undefined);
     configureNextSocket = socket => { socket.ackMode = 'never'; };
     const pending = callSessionRpc({ token: 'token', sessionId: 'session', mode: 'plain',
       method: 'session.update.post', request: { summary: 'private payload' } });
@@ -229,8 +235,11 @@ describe('execution-run caller authority at the Socket.IO boundary', () => {
       } } };
       throw new Error(`Unexpected Home HTTP boundary: ${url}`);
     });
-    nextRpcAck = (request: { method: string }) => ({ ok: true, result: request.method.includes('capabilities.detect')
-      ? { results: { 'tool.executionRuns': { ok: true, data: { protocolVersion: 2, features: { detachedScope: true } } } } }
+    nextRpcAck = (request: { method: string }) => ({ ok: true, result: request.method.endsWith(RPC_METHODS.CAPABILITIES_DESCRIBE)
+      ? createCapabilitiesService({ capabilities: [executionRunsCapability],
+        checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+        buildContext: async () => { throw new Error('Protocol description does not probe the Machine'); },
+      }).describe()
       : { runs: [] } });
     const credentials = { token: 'account-token', encryption: null };
     const executor = createActionExecutor(createCliActionDeps({
@@ -260,7 +269,7 @@ describe('Goal RPC acknowledgement lifetime through the CLI owner', () => {
     configureNextSocket = null;
   });
 
-  it.each(['agent', 'cli'] as const)('retires the one-shot %s Goal tool wait on caller cancellation', async (surface) => {
+  it('retires the retained Windows Agent Goal RPC wait on caller cancellation', async () => {
     const sessionId = 'c123456789012345678901234';
     const credentials = { token: 'goal-token', encryption: null };
     const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true,
@@ -279,14 +288,21 @@ describe('Goal RPC acknowledgement lifetime through the CLI owner', () => {
     });
     configureNextSocket = socket => { socket.ackMode = 'never'; };
     const { callBuiltInHappierTool } = await import('@/agent/tools/happierTools/callBuiltInHappierTool');
-    const { handleToolsCliCommand } = await import('@/cli/commands/tools');
     const cancellation = new AbortController();
     const interruptListeners = process.listenerCount('SIGINT');
     let settled = false;
-    const args = ['tools', 'call', '--source', 'happier', '--tool', 'session_goal_get', '--args-json', '{}', '--session-id', sessionId];
-    const pending = (surface === 'agent'
-      ? callBuiltInHappierTool({ credentials, sessionId, toolName: 'session_goal_get', args: {}, surface, signal: cancellation.signal })
-      : handleToolsCliCommand({ args, rawArgv: ['happier', ...args], terminalRuntime: null, signal: cancellation.signal })).then(
+    // POSIX Agents use Session MCP. Exercise the retained Windows bridge by
+    // substituting only the OS platform at its synchronous transport selection.
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    let call: ReturnType<typeof callBuiltInHappierTool>;
+    try {
+      Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+      call = callBuiltInHappierTool({ credentials, sessionId, toolName: 'session_goal_get', args: {},
+        surface: 'agent', signal: cancellation.signal });
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+    }
+    const pending = call.then(
         result => { settled = true; return result; }, error => { settled = true; return error; });
     try {
       await vi.waitFor(() => expect(nextSocket?.delayedAck).toBeTypeOf('function'));
@@ -298,8 +314,63 @@ describe('Goal RPC acknowledgement lifetime through the CLI owner', () => {
       await pending;
       expect(process.listenerCount('SIGINT')).toBe(interruptListeners);
     } finally {
+      cancellation.abort();
       nextSocket?.delayedAck?.({ ok: true, result: {} });
       await pending;
+    }
+  });
+
+  it('retires the one-shot CLI Goal tool Home Action wait on caller cancellation', async () => {
+    const sessionId = 'c123456789012345678901234';
+    const credentials = { token: `hap_v1_11111111-1111-4111-8111-111111111111_${'A'.repeat(43)}`,
+      encryption: null, credentialProvenance: 'api_token' as const };
+    const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true,
+      machineId: 'goal-machine', metadata: JSON.stringify({ machineId: 'goal-machine', path: '/repo' }) });
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url).endsWith('/v1/account/encryption/currentness')) {
+        return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      }
+      if (String(url).endsWith('/v2/account/settings')) {
+        return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+      }
+      if (String(url).includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session } };
+      throw new Error(`Unexpected Home HTTP boundary: ${url}`);
+    });
+    let requestSignal: AbortSignal | null | undefined;
+    // The current CLI owner sends Goal Actions to Home; its real SDK and Action
+    // admission stay intact while the external HTTP response remains pending.
+    vi.stubGlobal('fetch', async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).endsWith('/v1/actions/session.goal.get')) {
+        throw new Error(`Unexpected Home fetch boundary: ${url}`);
+      }
+      requestSignal = init?.signal;
+      return await new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => reject(requestSignal?.reason), { once: true });
+      });
+    });
+    const { handleToolsCliCommand } = await import('@/cli/commands/tools');
+    const cancellation = new AbortController();
+    const interruptListeners = process.listenerCount('SIGINT');
+    const previousExitCode = process.exitCode;
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const args = ['tools', 'call', '--source', 'happier', '--tool', 'session_goal_get', '--args-json', '{}', '--session-id', sessionId];
+    let settled = false;
+    const pending = handleToolsCliCommand({ args, rawArgv: ['happier', ...args], terminalRuntime: null,
+      signal: cancellation.signal }).finally(() => { settled = true; });
+    try {
+      await vi.dynamicImportSettled();
+      await vi.waitFor(() => expect(requestSignal).toBeInstanceOf(AbortSignal));
+      cancellation.abort();
+      await pending;
+      expect(settled, 'Tool cancellation must release its Home Action wait').toBe(true);
+      expect(requestSignal?.aborted).toBe(true);
+      expect(process.listenerCount('SIGINT')).toBe(interruptListeners);
+    } finally {
+      cancellation.abort();
+      await pending;
+      process.exitCode = previousExitCode;
+      vi.unstubAllGlobals();
     }
   });
 
@@ -378,7 +449,12 @@ describe('permission-response lifetime through the CLI Action owner', () => {
 
   function respond(executor: ReturnType<typeof createActionExecutor>, actionId: 'session.permission.respond' | 'session.user_action.answer', signal: AbortSignal) {
     return executor.execute(actionId, { sessionId, requestId, ...(actionId === 'session.permission.respond'
-      ? { decision: 'allow', turnId } : { decision: 'approve' }) }, { surface: 'cli', authority: 'present_user', signal });
+      ? { decision: 'allow', turnId } : { decision: 'approve' }) }, {
+      surface: 'cli', authority: 'present_user', signal,
+      // This Account allows its own CLI permission answers; exercise the reply
+      // lifetime after policy admission, including affirmative decisions.
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['cli'] } }),
+    });
   }
 
   afterEach(() => {
@@ -401,6 +477,7 @@ describe('permission-response lifetime through the CLI Action owner', () => {
     let settled = false;
     const pending = respond(executor, actionId, cancellation.signal).then(result => { settled = true; return result; });
     try {
+      await vi.dynamicImportSettled();
       await vi.waitFor(() => expect(nextSocket?.delayedAck).toBeTypeOf('function'));
       // The incident's runner acknowledged after 31,759 ms, beyond the CLI's
       // implicit 20-second cutoff and the relay's legacy 30-second default.
@@ -411,7 +488,7 @@ describe('permission-response lifetime through the CLI Action owner', () => {
       expect(decoded.params).toMatchObject({ id: requestId, approved: true,
         ...(actionId === 'session.permission.respond' ? { turnId } : {}) });
       nextSocket?.delayedAck?.({ ok: true, result: await socketRpcCodec.encodeResponse(content, undefined, decoded.callId) });
-      expect(await pending).toEqual({ ok: true, result: { ok: true } });
+      expect(await pending).toEqual({ ok: true, result: { ok: true }, automationNotices });
       expect(packet.timeoutMs).toBeNull();
       expect(nextSocket?.emitted.filter(call => call.event === 'rpc-call')).toHaveLength(1);
       expect(nextSocket?.emitted.some(call => call.event === 'rpc-cancel')).toBe(false);
@@ -426,6 +503,7 @@ describe('permission-response lifetime through the CLI Action owner', () => {
       const { executor } = createPermissionExecutor();
       const cancellation = new AbortController();
       const pending = respond(executor, actionId, cancellation.signal);
+      await vi.dynamicImportSettled();
       await vi.waitFor(() => expect(nextSocket?.delayedAck).toBeTypeOf('function'));
       const rpcId = nextSocket?.emitted.find(call => call.event === 'rpc-call')?.data.requestId;
       cancellation.abort();
@@ -473,7 +551,7 @@ describe('permission-response lifetime through the CLI Action owner', () => {
 
     const outcome = await pending;
     if (settlement === 'written') {
-      expect(outcome).toEqual({ ok: true, result: { ok: true } });
+      expect(outcome).toEqual({ ok: true, result: { ok: true }, automationNotices });
       expect(agentState.requests?.[requestId]).toBeUndefined();
       expect(agentState.completedRequests?.[requestId]).toMatchObject({
         answerDetails: { 'Revision?': { freeText: 'Fixture revision' } },
@@ -490,6 +568,7 @@ describe('permission-response lifetime through the CLI Action owner', () => {
     'reports a disconnected %s as outcome unknown without resending', async actionId => {
       const { executor } = createPermissionExecutor();
       const pending = respond(executor, actionId, new AbortController().signal);
+      await vi.dynamicImportSettled();
       await vi.waitFor(() => expect(nextSocket?.delayedAck).toBeTypeOf('function'));
       nextSocket?.trigger('disconnect', 'transport close');
       expect(await pending).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN });
@@ -570,7 +649,7 @@ describe('current-turn cancellation through the CLI Action owner', () => {
       ...(mode === 'plain' ? { mode, ctx: null } : { mode, ctx: { encryptionKey: secret, encryptionVariant: 'legacy' as const } }) });
     expect(await owner.executor.execute('session.turn.cancel', { sessionId }, {
       authority: 'present_user', surface: 'cli',
-    })).toEqual({ ok: true, result: { requested: true } });
+    })).toEqual({ ok: true, result: { requested: true }, automationNotices });
   });
 
   it.each([
@@ -586,7 +665,7 @@ describe('current-turn cancellation through the CLI Action owner', () => {
     expect(await harness().executor.execute('session.turn.cancel', { sessionId }, {
       authority, surface, signal, ...(surface === 'agent' ? { defaultSessionId: sessionId } : {}),
     }))
-      .toEqual({ ok: true, result: { requested: true } });
+      .toEqual({ ok: true, result: { requested: true }, automationNotices });
     expect(http.mock.calls.map(([url]) => url)).toEqual([
       `${home.serverHttpBaseUrl}/v1/account/encryption/currentness`,
       `${home.serverHttpBaseUrl}/v2/sessions/${sessionId}`,
@@ -701,6 +780,8 @@ describe('execution wait transport recovery', () => {
       const observing = executor.execute('execution.run.wait', {
         sessionId, runId: 'run-original', timeoutSeconds: 1,
       }, { surface: 'cli', authority: 'present_user' });
+      await vi.dynamicImportSettled();
+      await vi.waitFor(() => expect(nextSocket?.delayedAck).toBeTypeOf('function'));
       await vi.advanceTimersByTimeAsync(1_000);
       expect(await observing).toMatchObject({ ok: false, errorCode: 'observation_timeout' });
       configureNextSocket = null;

@@ -55,10 +55,11 @@ it.each(['verification_purpose', 'deployment_child_http'] as const)(
     vi.spyOn(axios, 'get').mockRejectedValue(transportRefusal);
     let refusal: unknown;
     try { await callMachine(true); } catch (error) { refusal = error; }
-    const expected = { code: 'action_forbidden', ...(phase === 'deployment_child_http' ? placement : {
-      details: { requiredFact: phase, remedy: expect.any(String) },
-      failureCause: { phase: `home.authorization.${phase}`, httpStatus: 401 },
-    }) };
+    const expected = { code: 'action_forbidden',
+      details: phase === 'deployment_child_http' ? placement.details : { requiredFact: phase, remedy: expect.any(String) },
+      failureCause: { ...(phase === 'deployment_child_http' ? placement.failureCause : {}),
+        phase: `home.authorization.${phase}`, httpStatus: 401 },
+    };
     const action = projectCliActionFailure(normalizeCliActionThrownError(refusal).failure);
     expect(action).toMatchObject(expected);
     const deployment = normalizeActionExecuteResult(projectDeploymentFailure('action_forbidden', refusal));
