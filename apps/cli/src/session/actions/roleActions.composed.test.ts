@@ -31,6 +31,8 @@ import { logger } from '@/ui/logger';
 import { serveSessionActionHome } from '../../../../ui/sources/dev/testkit/harness/sessionActionHome';
 import { loadSyncSingletonForTests } from '../../../../ui/sources/dev/testkit/harness/syncSingletonLoader';
 import { createSessionFixture } from '../../../../ui/sources/dev/testkit';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 const transport = vi.hoisted(() => vi.fn());
 // Replace only the browser → Session network hop with the real receiving registrar.
@@ -60,7 +62,8 @@ it('resets and edits through the real UI front door after the Session prepared p
   const accountId = 'role-reset-account';
   const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
     encryption: null, credentialProvenance: 'stored_session' } as const;
-  const home = await serveSessionActionHome({ homes: [{ key: 'owner', serverUrl, accountId, currentAccount: true }], route: () => undefined });
+  const home = await serveSessionActionHome({ homes: [{ key: 'owner', serverUrl, accountId, currentAccount: true }],
+    route: request => request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 ? Response.json({ v: 1, rows: [] }) : undefined });
   const sessionId = 'role-reset-session';
   let current = true;
   let nativeWorkspaceWrites: 'allow' | 'deny' = 'allow';
@@ -89,8 +92,10 @@ it('resets and edits through the real UI front door after the Session prepared p
   } });
   const refreshing = createDeferred();
   const refreshed = createDeferred();
+  installAxiosRequestMethodAdapter();
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     const path = new URL(String(url)).pathname;
+    if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200, data: { v: 1, rows: [] } };
     if (path === '/v1/artifacts') { artifactListReads++; return { status: 200, data: [] }; }
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
       mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
@@ -110,6 +115,7 @@ it('resets and edits through the real UI front door after the Session prepared p
     throw new Error(`Unexpected Role HTTP path ${path}`);
   });
   vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+    if (new URL(String(url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200, data: { v: 1, rows: [] } };
     expect(new URL(String(url)).pathname).toBe('/v1/account/entity-rows/prompt-library/role-overrides');
     const mutation = PromptLibraryRowMutationV1Schema.parse(body);
     expect(mutation.expectedRevision).toBe(roleRevision);
@@ -163,7 +169,7 @@ it('resets and edits through the real UI front door after the Session prepared p
       refreshed.resolve();
       await preparing;
       const reset = await resetting;
-      expect(reset).toEqual({ ok: true, result: RoleActionOutputSchemasV1['session.roles.override.clear'].parse({ updated: true }) });
+      expect(reset, JSON.stringify(reset)).toEqual({ ok: true, result: RoleActionOutputSchemasV1['session.roles.override.clear'].parse({ updated: true }) });
       expect(readSessionRolesV1(metadata)?.overrides).toEqual({});
       expect(nativeWorkspaceWrites).toBe('deny');
       expect(artifactListReads).toBe(preparedArtifactReads);

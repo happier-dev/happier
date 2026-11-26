@@ -39,7 +39,7 @@ import { ArtifactHttpReadV1Schema, ArtifactHttpHeaderReadV1Schema, ArtifactReadB
 import { sealManagedMachinePresetContentV1, projectManagedMachinePresetForRecipientV1, createManagedMachinePresetAcquireOverrideV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createEmptyActionAutomationPort, createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { executeArtifactFolderActionV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
@@ -221,6 +221,7 @@ describe('createCliApprovalsArtifactStore', () => {
       actionsSettingsProvider: { getActionsSettings: () => actionsSettings, getAccountSettings: () => null },
     }, {
       ...createUnavailableActionTransportDeps(), ...store,
+      actionAutomations: createEmptyActionAutomationPort('requester'),
       managedMachineAction: async input => { deliveries.push(input); return { managedId: 'must-not-exist' }; },
     }).executor;
     // Home authorization is the ingress boundary. Preparation, origin signing,
