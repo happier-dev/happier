@@ -99,6 +99,33 @@ describe('private operation task answer', () => {
     })).toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: attachment } });
   });
 
+  it('answers the live SSH question published by a managed Machine acquisition', async () => {
+    const trustPrompt = { kind: 'ssh.trustHost', host: 'guest', keyType: 'ssh-ed25519', fingerprint: 'SHA256:fixture',
+      existingFingerprint: null, message: 'Trust this host?' };
+    const bootstrapTask = { id: 'trust-task', taskKind: 'remote.ssh.bootstrapMachine.v1', prompt: trustPrompt };
+    const current = ActionOperationSnapshotV1Schema.parse({ ...operation, actionId: MANAGED_ACQUIRE_ACTION_ID_V1,
+      domainRef: { kind: 'managedMachine', id: 'guest', bootstrapTask } });
+    const sent: unknown[] = [];
+    const transport: ActionOperationMachineTransportV1 = async request => {
+      if (request.method === 'actionOperation.get.v2') return { kind: 'found', operation: current };
+      sent.push(request.payload);
+      return { ok: true, result: null };
+    };
+    const respond = (fingerprint: string) => executeActionOperationActionV1({
+      actionId: 'action.operations.task.respond', context: { surface: 'ui', expectedAccountId: 'account' }, transport,
+      input: getActionSpec('action.operations.task.respond').inputSchema.parse({
+        ...address, taskId: bootstrapTask.id, prompt: { ...trustPrompt, fingerprint }, answer: { trusted: true },
+      }),
+    });
+
+    expect(await respond('SHA256:other')).toMatchObject({ ok: false, errorCode: 'action_operation_unavailable' });
+    expect(sent).toEqual([]);
+    expect(await respond(trustPrompt.fingerprint)).toEqual({ kind: 'answered' });
+    expect(sent).toEqual([{ id: 'tool.systemTasks', method: 'respond', params: {
+      taskId: bootstrapTask.id, expectedPromptKind: trustPrompt.kind, answer: { trusted: true },
+    } }]);
+  });
+
   it('refuses stale, settled and cross-account or machine questions before disclosing the answer', async () => {
     const changed = [
       { ...operation, state: 'cancelled', settledAt: 3 },

@@ -21,7 +21,9 @@ export function readActionOperationTaskQuestionV1(snapshot: ActionOperationSnaps
     const task = domain.kind === 'machineSetup' ? domain.setupTask : domain.task;
     return task?.prompt ? { id: task.id, taskKind: task.taskKind, prompt: task.prompt } : null;
   }
-  if (domain?.kind !== 'systemTask'
-    || domain.prompt?.kind !== 'ssh.trustHost' && domain.prompt?.kind !== 'ssh.replaceHostKey') return null;
-  return { id: domain.id, taskKind: domain.taskKind, prompt: domain.prompt };
+  const bootstrapTask = domain?.kind === 'managedMachine' ? domain.bootstrapTask
+    : domain?.kind === 'systemTask' ? domain : undefined;
+  const prompt = bootstrapTask?.prompt;
+  if (!bootstrapTask || (prompt?.kind !== 'ssh.trustHost' && prompt?.kind !== 'ssh.replaceHostKey')) return null;
+  return { id: bootstrapTask.id, taskKind: bootstrapTask.taskKind, prompt };
 }
