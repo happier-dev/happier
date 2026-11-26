@@ -1,4 +1,4 @@
-import { realpath, stat } from 'node:fs/promises';
+import { realpath, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 import { importConnectedServiceSessionFiles } from '@/daemon/connectedServices/stateSharing/importConnectedServiceSessionFiles';
@@ -67,6 +67,12 @@ export async function importLegacyAgyConversation(profileDir: string, conversati
   if (conversation.location !== 'legacy' || !conversation.legacyProfileDir) return false;
   const legacy = join(conversation.legacyProfileDir, LEGACY_APP_DATA_DIR);
   const native = join(profileDir, AGY_APP_DATA_DIR);
+  // Without its `.db` the CLI copy is an interrupted import, never a conversation the CLI continued:
+  // discard it so the retry copies one consistent set instead of keeping stale files at their names.
+  await Promise.all([
+    ...[`${id}.db-wal`, `${id}.db-shm`, `${id}.meta`].map((name) => rm(join(native, 'conversations', name), { force: true })),
+    rm(join(native, 'brain', id), { recursive: true, force: true }),
+  ]);
   const conversations = { sourceRoot: join(legacy, 'conversations'), destinationRoot: join(native, 'conversations'), includeDirectory: () => false };
   // The CLI store counts a conversation as present once its `.db` exists, so the database is copied
   // last (each file lands atomically): an interrupted import leaves no `.db` and is retried next time.

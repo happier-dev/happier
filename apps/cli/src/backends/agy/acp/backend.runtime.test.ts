@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -180,9 +180,8 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
       await mkdir(join(profile, 'antigravity-acp', 'brain', id), { recursive: true });
       await writeFile(join(profile, 'antigravity-acp', 'conversations', `${id}.db`), 'legacy database');
       await writeFile(join(profile, 'antigravity-acp', 'brain', id, 'task.md'), 'legacy artifact');
-      // A file where the artifact directory belongs makes the copy fail part-way (as ENOSPC/EACCES would).
-      await mkdir(join(profile, 'antigravity-cli', 'brain'), { recursive: true });
-      await writeFile(join(profile, 'antigravity-cli', 'brain', id), 'obstacle');
+      // An unreadable artifact makes the copy fail part-way (as ENOSPC/EACCES would).
+      await chmod(join(profile, 'antigravity-acp', 'brain', id, 'task.md'), 0o000);
       const resume = async () => {
         const backend = await createAgyAcpBackend({ cwd: dir, env: { HAPPIER_AGY_PATH: agy, GEMINI_HOME: profile } });
         try { return await backend.loadSession!(id); } finally { await backend.dispose(); }
@@ -190,10 +189,40 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
       await expect(resume()).rejects.toThrow();
       await expect(readFile(join(profile, 'antigravity-cli', 'conversations', `${id}.db`), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
 
-      await rm(join(profile, 'antigravity-cli', 'brain', id));
+      await chmod(join(profile, 'antigravity-acp', 'brain', id, 'task.md'), 0o644);
       await expect(resume()).resolves.toMatchObject({ sessionId: id });
       expect(await readFile(join(profile, 'antigravity-cli', 'brain', id, 'task.md'), 'utf8')).toBe('legacy artifact');
       expect(await readFile(join(profile, 'antigravity-cli', 'conversations', `${id}.db`), 'utf8')).toBe('legacy database');
+    });
+  });
+
+  it('starts a retried import clean when the retired store changed after an interrupted one', async () => {
+    await withTempDir('agy-launch-', async dir => {
+      const agy = await writeAgyFixture(dir, '1.5.18');
+      const profile = join(dir, 'profile');
+      const id = 'changed';
+      const legacy = join(profile, 'antigravity-acp');
+      await mkdir(join(legacy, 'conversations'), { recursive: true });
+      await mkdir(join(legacy, 'brain', id), { recursive: true });
+      await writeFile(join(legacy, 'conversations', `${id}.db`), 'database v1');
+      await writeFile(join(legacy, 'conversations', `${id}.db-wal`), 'wal v1');
+      await writeFile(join(legacy, 'brain', id, 'task.md'), 'artifact v1');
+      await chmod(join(legacy, 'brain', id, 'task.md'), 0o000);
+      const resume = async () => {
+        const backend = await createAgyAcpBackend({ cwd: dir, env: { HAPPIER_AGY_PATH: agy, GEMINI_HOME: profile } });
+        try { return await backend.loadSession!(id); } finally { await backend.dispose(); }
+      };
+      await expect(resume()).rejects.toThrow();
+      await chmod(join(legacy, 'brain', id, 'task.md'), 0o644);
+      await writeFile(join(legacy, 'conversations', `${id}.db`), 'database v2');
+      await writeFile(join(legacy, 'conversations', `${id}.db-wal`), 'wal v2');
+
+      await expect(resume()).resolves.toMatchObject({ sessionId: id });
+      const conversations = join(profile, 'antigravity-cli', 'conversations');
+      // The database and its sidecar must come from the same retired-store state.
+      expect(await readFile(join(conversations, `${id}.db`), 'utf8')).toBe('database v2');
+      expect(await readFile(join(conversations, `${id}.db-wal`), 'utf8')).toBe('wal v2');
+      expect((await readdir(conversations)).filter(name => name.includes('happier-import'))).toEqual([]);
     });
   });
 
