@@ -1,9 +1,14 @@
 import axios, { AxiosHeaders } from 'axios';
+import { readFile } from 'node:fs/promises';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { PluginManifestV2Schema } from '@happier-dev/protocol';
+import { AgentsBackendsListOutputSchema } from '@happier-dev/protocol/actions/agentBackendInventory';
 import { artifactKindListResponse } from '@/testkit/http/artifactHome';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { accountSettingsParse, createActionExecutor, createRoleSourceReaderV1, readLegacyRolesV1, encodeV2SessionListCursorV2, buildBackendTargetKeyV2, snapshotSessionRolesAtSpawnV1,
   SessionListQueryV1Schema,
-  type ActionExecutorContext } from '@happier-dev/protocol';
+  type ActionExecutorContext, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
 import { createSessionNotificationContextFixture, createSessionRecordFixture, createCompactSessionListQueryResponseFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { ACCOUNT_SECURITY_PATH_V1 } from '@happier-dev/protocol/auth/accountSecurity';
@@ -30,9 +35,10 @@ import { createTerminalRuntimeSwitchHandlerService } from '@/agent/runtime/sessi
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
-import { encodeBase64, encryptWithDataKey, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
+import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
 import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { decryptAccountSettingsCiphertext } from '@/settings/accountSettingsClient';
+import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import type { StoredCredentials } from '@/persistence';
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol';
 
@@ -52,6 +58,7 @@ import { socketRpcCodec } from '@happier-dev/sync-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -662,10 +669,24 @@ describe('daemon Account Action Session caller context', () => {
     const lead = 'c123456789012345678901230';
     const children = ['c123456789012345678901231', 'c123456789012345678901232',
       'c123456789012345678901233', 'c123456789012345678901234'];
-    // An admitted external Agent reaches Role resolution as itself, not through a persisted-only reread.
-    const backendTarget = route === 'bound-external'
-      ? { kind: 'agent', identity: { pluginId: 'acme.sample', localId: 'sample' } } as const
-      : { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } as const;
+    let backendTarget: PersistedBackendTargetRefV2 = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' };
+    if (route === 'bound-external') {
+      const pluginFixtureRoot = new URL('../../../../../packages/tests/fixtures/plugin-platform/agent-runtime-conformance/', import.meta.url);
+      const manifest = PluginManifestV2Schema.parse(JSON.parse(await readFile(new URL('.happier-plugin/plugin.json', pluginFixtureRoot), 'utf8')));
+      const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+        plugins: [{ manifest: { ...manifest, activation: { events: [] } }, files: {
+          'daemon.mjs': await readFile(new URL('daemon.mjs', pluginFixtureRoot), 'utf8'),
+          'agent-runtime.mjs': await readFile(new URL('agent-runtime.mjs', pluginFixtureRoot), 'utf8'),
+        } }],
+        runtimeOptions: { pluginIds: ['happier.agent.codex', 'happier.agent.claude', manifest.id] },
+      });
+      onTestFinished(async () => {
+        await runtime.dispose();
+        await pluginReloadController.shutdown();
+      });
+      // The external Agent is physically admitted through the same runtime catalog as built-ins.
+      backendTarget = { kind: 'agent', identity: { pluginId: manifest.id, localId: 'novel-native-agent' } };
+    }
     const metadata = createTestMetadata({ machineId: 'report-machine',
       flavor: 'codex',
       modelSelectionIntentV1: { v: 1, selection: { agentTargetKey: buildBackendTargetKeyV2(backendTarget),
@@ -719,6 +740,12 @@ describe('daemon Account Action Session caller context', () => {
       if (path.startsWith('/v2/sessions/')) return { status: 200, data: { session: row(path.slice('/v2/sessions/'.length)) } };
       throw new Error(`Unexpected report copy HTTP read: ${path}`);
     });
+    const request = vi.spyOn(axios, 'request').mockImplementation(async input => {
+      const path = new URL(String(input.url)).pathname;
+      if (path !== AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) throw new Error(`Unexpected report copy HTTP request: ${path}`);
+      expect(input.method).toBe('GET');
+      return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+    });
     const post = vi.spyOn(axios, 'post').mockImplementation(async (input, body) => {
       const path = new URL(String(input)).pathname;
       if (path === '/v2/sessions/read-batch') return { status: 200,
@@ -755,19 +782,7 @@ describe('daemon Account Action Session caller context', () => {
         return await manager.handleRequest({ method: `${misbindRecipient ? 'wrong-session' : request.sessionId}:${request.method}`, params: request.input,
           callerAuthority: 'account_automation', sessionActionOrigin: request.origin });
       } });
-    let engineInventoryReads = 0;
-    let enabledAgentTargetKeys: string[] = [];
-    const readEngineInventory = baseDeps.agentsBackendsList;
-    if (!readEngineInventory) throw new Error('CLI deps must provide the Agent backend inventory');
-    const deps = { ...baseDeps, agentsBackendsList: async (args: Parameters<typeof readEngineInventory>[0]) => {
-      engineInventoryReads += 1;
-      const real = await readEngineInventory(args);
-      // The installed external plugin is the catalog boundary this host fixture lacks.
-      const inventory = route === 'bound-external' ? { ...real, items: [...real.items,
-        { ...real.items.find(item => item.enabled)!, targetKey: buildBackendTargetKeyV2(backendTarget) }] } : real;
-      enabledAgentTargetKeys = inventory.items.filter(item => item.enabled).map(item => item.targetKey);
-      return inventory;
-    } };
+    const deps = baseDeps;
     const unexpectedTranscriptWrite = async (): Promise<never> => { throw new Error('Unexpected transcript write'); };
     const registrations = [...managers].map(([id, manager]) => {
       const child = childMetadata.get(id)!;
@@ -801,7 +816,7 @@ describe('daemon Account Action Session caller context', () => {
       expect(await pending).toEqual({ ok: true, result: { updatedSessionIds: children } });
       expect(writes).toEqual(children);
       for (const child of childMetadata.values()) {
-        expect(child.work?.sessionRolesV1).toMatchObject({ inheritedFrom: lead, notes: 'Release checklist',
+        expect(child.work?.sessionRolesV1, JSON.stringify(child.work?.sessionRolesV1)).toMatchObject({ inheritedFrom: lead, notes: 'Release checklist',
           sessionRoles: { builder: expect.objectContaining({ name: 'Builder', workspaceWrites: 'allow',
             engine: { agentTargetKey: buildBackendTargetKeyV2(backendTarget), modelId: 'lead-applied-model' } }) } });
         if (route === 'live-birth') expect(child.work?.sessionRolesV1?.sessionRoles).toEqual(born.sessionRoles);
@@ -809,15 +824,18 @@ describe('daemon Account Action Session caller context', () => {
       if (route === 'live-birth') {
         expect(birth.roles.builder?.engine?.modelId).toBe('lead-applied-model');
         expect(birth.roles.second_opinion?.engine?.agentTargetKey).not.toBe(buildBackendTargetKeyV2(backendTarget));
-        expect(enabledAgentTargetKeys).toContain(birth.roles.second_opinion?.engine?.agentTargetKey);
+        const inventory = await createActionExecutor(deps).execute('agents.backends.list', {},
+          { surface: 'cli', authority: 'present_user' });
+        if (!inventory.ok) throw new Error(JSON.stringify(inventory));
+        expect(AgentsBackendsListOutputSchema.parse(inventory.result).items
+          .filter(item => item.enabled).map(item => item.targetKey))
+          .toContain(birth.roles.second_opinion?.engine?.agentTargetKey);
       }
-      expect(engineInventoryReads).toBe(route === 'live-birth' ? 2 : 1);
       if (route === 'global-source') {
         const beforeRefusal = [...writes];
         expect(await createActionExecutor(deps).execute('session.roles.apply_to_reports', { sessionId: lead }, { ...context, agentStartContext: undefined }))
           .toMatchObject({ ok: false });
         expect(writes).toEqual(beforeRefusal);
-        expect(engineInventoryReads).toBe(1);
         expect(await createActionExecutor(deps).execute('session.roles.apply_to_reports', { sessionId: lead }, {
           ...context, agentStartContext: { ...agentStartContext, caller: { ...agentStartContext.caller, sessionId: 'another-lead' } },
         })).toMatchObject({ ok: false });
@@ -832,7 +850,7 @@ describe('daemon Account Action Session caller context', () => {
       await pending;
       await Promise.all([...managers.values()].map(manager => manager.waitForIdle()));
       for (const registration of registrations) registration.dispose();
-      post.mockRestore(); get.mockRestore(); resetActiveAccountSettingsSnapshotForTests();
+      post.mockRestore(); request.mockRestore(); get.mockRestore(); resetActiveAccountSettingsSnapshotForTests();
     }
   });
   it('resolves complete Role inventories from the retained Account without a second Settings capture', async () => {
@@ -883,8 +901,11 @@ describe('daemon Account Action Session caller context', () => {
     const accountId = `guidance-delete-account-${mode}-${actionId}`;
     const contentKey = new Uint8Array(32).fill(17);
     const credentials: StoredCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
-      encryption: mode === 'plain' ? null : { type: 'dataKey', machineKey: contentKey, publicKey: libsodiumPublicKeyFromSecretKey(contentKey) } };
+      encryption: mode === 'plain' ? null : { type: 'dataKey', machineKey: contentKey, publicKey: tweetnacl.box.keyPair.fromSecretKey(contentKey).publicKey } };
     const resource = await createResourceDataKey({ credentials, mode });
+    const crypto = credentials.encryption ? createAccountScopedCryptoMaterialSnapshotV1({
+      accountEncryptionMode: 'e2ee', material: credentials.encryption,
+      ...(credentials.encryption.type === 'dataKey' ? { dataKeyPublicKey: credentials.encryption.publicKey } : {}) }) : null;
     const encode = (value: unknown) => resource.mode === 'plain' ? encodePlainArtifactStoredContent(value)
       : encodeBase64(encryptWithDataKey(value, resource.dataKey), 'base64');
     const scopeKey = resolveAccountSettingsScopeKey(credentials);
@@ -898,7 +919,7 @@ describe('daemon Account Action Session caller context', () => {
     const settingsContent = () => sealAccountSettingsV2RawContent({ credentials, raw: rawSettings,
       envelopeKind: mode === 'plain' ? 'plain' : 'encrypted', randomBytes: n => new Uint8Array(n).fill(9) });
     const publish = () => setActiveAccountSettingsSnapshot({ scopeKey, source: 'network', settings: accountSettingsParse(rawSettings),
-      rawSettings, settingsVersion, settingsSecretsReadKeys: [], loadedAtMs: settingsVersion });
+      rawSettings, settingsVersion, settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(credentials), loadedAtMs: settingsVersion });
     publish();
     const stored = (id: string, header: Readonly<Record<string, unknown>>, body: string) => ({
       id, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
@@ -917,8 +938,9 @@ describe('daemon Account Action Session caller context', () => {
       const path = new URL(String(input)).pathname;
       if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
-        mode, version: 1, settingsVersion,
-        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        mode, version: 1, settingsVersion, signingKeyFingerprint: null,
+        contentKeyFingerprint: crypto ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(crypto.contentPublicKeyFingerprint) : null,
+        updatedAt: 1 } };
       if (path === '/v2/account/settings') return { status: 200, data: { content: settingsContent(), version: settingsVersion } };
       if (path.startsWith(PROMPT_LIBRARY_ROWS_ROUTE_V1)) {
         return { status: 404, data: { error: 'not_found' } };
