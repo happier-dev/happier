@@ -218,6 +218,29 @@ describe('createActionExecutor (review.start)', () => {
       { sessionId: 'reviewer-session', serverId: 'reviewer-home' }]);
     expect(catalogs).toEqual(nameSource !== 'Agent label' ? [] : ['reviewer-machine']);
   });
+  it('retains the selected model reviewer’s qualified Agent identity even when launch is refused', async () => {
+    const records = createInMemoryReviewRecordPortV1();
+    const agentTarget = { kind: 'agent', identity: { pluginId: 'review.plugin', localId: 'reviewer' } } as const;
+    let reviewId = '';
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      workflowAction: async invocation => {
+        const request = WorkflowRunStartRequestV1Schema.parse(invocation.input);
+        reviewId = ReviewRoundBindingV1Schema.parse(request.inputs?.reviewRound).reviewId;
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
+    });
+    const result = await executor.execute('review.start', { sessionId: 'source', scope: 'repository', instructions: 'Review.',
+      reviewers: [{ kind: 'model', launch: { agentTarget, executionTarget: { serverId: 'home', machineId: 'machine-1' },
+        directory: { kind: 'path', path: '/repo' } } }],
+    }, { surface: 'ui', serverId: 'home', defaultSessionId: 'source', defaultSessionMachineId: 'machine-1' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    expect((await records.read(reviewId))?.rounds[0]).toMatchObject({
+      reviewerDisplayNames: { 'step-1-reviewer-1': 'review.plugin/reviewer' },
+      reviewerAgentIds: { 'step-1-reviewer-1': 'review.plugin/reviewer' },
+    });
+  });
+
   it('retains host role custody for native review starts without a child-depth stamp', async () => {
     const context: AgentStartContextV1 = { ...workflowStartContext, caller: { kind: 'host' }, roles: {} };
     const executor = createActionExecutor({
