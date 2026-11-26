@@ -12,7 +12,7 @@ import { db, initDbPostgres } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { materializeWorkflowAcceptedSnapshotFixture } from "@/testkit/workflowAcceptedSnapshot";
 
-import { admitWorkflowRun, admitWorkflowRunTx, cancelWorkflowRun, deleteWorkflowRun, listWorkflowRunsForRecovery } from "./workflowRunService";
+import { admitWorkflowRun, admitWorkflowRunTx, cancelWorkflowRun, deleteWorkflowRun, listWorkflowRunsForRecovery, resolveAssignedWorkflowRunOriginSession } from "./workflowRunService";
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Direct Workflow queued-work publication (PostgreSQL)", () => {
     beforeAll(async () => {
@@ -25,7 +25,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Direct Workflow
     });
     afterAll(async () => { await db.$disconnect(); });
 
-    async function fixture() {
+    async function fixture(withOrigin = false) {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const machines = await Promise.all([0, 1].map(() => db.machine.create({
             data: { id: randomUUID(), accountId: account.id, metadata: "{}", installationId: randomUUID() },
@@ -34,20 +34,38 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Direct Workflow
             where: { id: account.id }, select: automationAccountCurrentnessSelect,
         }));
         if (!accountCurrentness) throw new Error("Fixture currentness unavailable");
+        const originSession = withOrigin ? await db.session.create({ data: {
+            id: randomUUID(), tag: randomUUID(), accountId: account.id, metadata: "{}", encryptionMode: "plain",
+        }, select: { id: true } }) : null;
+        const origin = { kind: "direct" as const, ...(originSession ? { originSessionId: originSession.id } : {}) };
         const runId = randomUUID();
         const acceptedSnapshot = await materializeWorkflowAcceptedSnapshotFixture({
             definition: { version: 1, blocks: [{ kind: "wait", id: "answer",
                 document: { text: "Answer", references: [], attachments: [] }, result: { kind: "text" } }] },
             context: { source: { kind: "inline" }, inputs: {}, machineId: machines[0].id,
-                executionTarget: { kind: "session" }, origin: { kind: "direct" }, authorization: { principal: { kind: "host" } },
+                executionTarget: { kind: "session" }, origin, authorization: { principal: { kind: "host" } },
                 workspaceTarget: { project: { machineId: machines[0].id, directory: "/repo", checkoutRootPath: "/repo" } } },
         });
-        const request = { accountId: account.id, runId, machineId: machines[0].id, origin: { kind: "direct" as const },
+        const request = { accountId: account.id, runId, machineId: machines[0].id, origin,
             accountCurrentness, acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
                 mode: "plain", binding: { v: 1, purpose: "accepted_snapshot", accountId: account.id, runId }, acceptedSnapshot,
             })) };
         return { account, machines, request };
     }
+
+    it("resolves the admitted origin only for the assigned installation and live Run", async () => {
+        const { account, machines, request } = await fixture(true);
+        const { run } = await admitWorkflowRun(request);
+        const claim = { accountId: account.id, workflowRunId: request.runId, installationId: machines[0].installationId! };
+        const refused = { ok: false, code: "run_not_found" };
+        expect(await resolveAssignedWorkflowRunOriginSession(claim)).toEqual({
+            ok: true, originSessionId: request.origin.originSessionId,
+        });
+        expect(await resolveAssignedWorkflowRunOriginSession({ ...claim, installationId: machines[1].installationId! })).toEqual(refused);
+        expect(await resolveAssignedWorkflowRunOriginSession({ ...claim, accountId: randomUUID() })).toEqual(refused);
+        await cancelWorkflowRun({ accountId: account.id, runId: request.runId, expectedRevision: run.revision });
+        expect(await resolveAssignedWorkflowRunOriginSession(claim)).toEqual(refused);
+    });
 
     function observe(accountId: string, machineId?: string) {
         const updates: UpdatePayload[] = [];

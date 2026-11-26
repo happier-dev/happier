@@ -962,6 +962,25 @@ export function workflowRunIdentityWhere(params: Readonly<{ accountId: string; r
     return { id: params.runId, accountId: params.accountId, workflowCustodyState: { not: null }, workflowAcceptedSnapshotEnvelope: { not: null } };
 }
 
+/** Projects the origin admitted for this live Run and verified Machine installation. */
+export async function resolveAssignedWorkflowRunOriginSession(input: Readonly<{
+    accountId: string;
+    installationId: string;
+    workflowRunId: string;
+}>): Promise<Readonly<{ ok: true; originSessionId: string } | { ok: false; code: 'run_not_found' }>> {
+    const run = await db.automationRun.findFirst({
+        where: {
+            ...workflowRunIdentityWhere({ accountId: input.accountId, runId: input.workflowRunId }),
+            state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
+            assignments: { some: { admittedMachineInstallationId: input.installationId } },
+        },
+        select: { originSessionId: true },
+    });
+    return run?.originSessionId
+        ? { ok: true, originSessionId: run.originSessionId }
+        : { ok: false, code: 'run_not_found' };
+}
+
 /** Control observes only the Run token and, when requested, the original root. */
 export async function getWorkflowRunControl(params: Readonly<{ accountId: string; runId: string; projection: 'control' | 'revision' }>) {
     return inTx(async tx => {

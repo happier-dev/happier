@@ -386,6 +386,47 @@ describe("workflowRunService (integration)", () => {
         return { accountId: account.id, machineId: machine.id, sessionId: session.id };
     }
 
+    it('resolves only the admitted guest Workflow origin for its live assigned installation', async () => {
+        const custodian = await seed();
+        const guest = await seed();
+        const installationId = await readMachineInstallationId(custodian.machineId);
+        const guestInstallationId = await readMachineInstallationId(guest.machineId);
+        for (const machineId of [custodian.machineId, guest.machineId]) {
+            await db.machine.update({ where: { id: machineId }, data: {
+                installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair().publicKey),
+            } });
+        }
+        await makeShareEligibleForTest(custodian.accountId, guest.accountId);
+        await inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: custodian.accountId,
+            machineId: custodian.machineId,
+            principal: { kind: 'account', accountId: guest.accountId },
+            level: 'view',
+        }));
+        const runId = randomUUID();
+        const originSessionId = guest.sessionId;
+        const admitted = await admitWorkflowRun({
+            accountId: guest.accountId, machineId: custodian.machineId, runId,
+            origin: { kind: 'direct', originSessionId },
+            acceptedEnvelope: await acceptedEnvelope({ accountId: guest.accountId,
+                machineId: custodian.machineId, runId, originSessionId }),
+        });
+        const claim = { accountId: guest.accountId, installationId, workflowRunId: runId };
+        const refused = { ok: false, code: 'run_not_found' };
+        const resolve = workflowRunService.resolveAssignedWorkflowRunOriginSession;
+        const reads: string[] = [];
+        const stopObserving = observeSqliteRequests({ before: request => { reads.push(request.action); } });
+        try {
+            expect(await resolve(claim)).toEqual({ ok: true, originSessionId });
+            expect(reads).toHaveLength(1);
+        } finally { stopObserving(); }
+        expect(await resolve({ ...claim, installationId: guestInstallationId })).toEqual(refused);
+        expect(await resolve({ ...claim, accountId: custodian.accountId })).toEqual(refused);
+
+        await cancelWorkflowRun({ accountId: guest.accountId, runId, expectedRevision: admitted.run.revision });
+        expect(await resolve(claim)).toEqual(refused);
+    });
+
     const legacyMachineShapes = ['plain_uninstalled', 'encrypted_uninstalled', 'encrypted_installed'] as const;
     async function retainLegacyMachineShape(machineId: string, shape: typeof legacyMachineShapes[number]) {
         // Predecessor eb8cd957's api/machine/machineStoredContent.ts writes the
