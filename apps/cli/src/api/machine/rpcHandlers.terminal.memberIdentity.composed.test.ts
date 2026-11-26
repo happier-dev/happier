@@ -59,12 +59,16 @@ function closedFailureReason(value: unknown, field: string) {
 }
 
 type NativeHome = { path: string; workspaceRoot: string; backing: string; workspaceBacking: string; uid: number };
-const nativeOs: { home: NativeHome | undefined; sharedHome: string | undefined; memberEffectErrors: string[] } = vi.hoisted(() => ({ home: undefined, sharedHome: undefined, memberEffectErrors: [] }));
+const nativeOs: { home: NativeHome | undefined; sharedHome: string | undefined; memberEffectErrors: string[];
+  /** Another person's checkout: every in-process (daemon-user) filesystem call under it is recorded. */
+  ownerRoots: string[]; ownerDaemonReads: string[] } = vi.hoisted(() => ({ home: undefined, sharedHome: undefined, memberEffectErrors: [],
+  ownerRoots: [], ownerDaemonReads: [] }));
 // Native ownership and path mapping are OS boundaries. No requester selector,
 // Account runtime, native preparation, finalizer, PTY manager or RPC is mocked.
 vi.mock('node:fs/promises', async original => {
   const actual = await original<typeof import('node:fs/promises')>();
   const pathFor = (path: Parameters<typeof actual.readFile>[0]) => {
+    if (typeof path === 'string' && nativeOs.ownerRoots.some(root => path === root || path.startsWith(`${root}/`))) nativeOs.ownerDaemonReads.push(path);
     const home = nativeOs.home;
     if (typeof path !== 'string' || !home) return path;
     if (path === home.path || path.startsWith(`${home.path}/`)) return home.backing + path.slice(home.path.length);
@@ -127,7 +131,8 @@ vi.mock('node:child_process', async original => {
     return actual.spawn(args[0], args[1], options ? { ...options, cwd: mapped } : options);
   }) as typeof actual.spawn };
 });
-afterEach(() => { nativeOs.home = undefined; nativeOs.sharedHome = undefined; nativeOs.memberEffectErrors = []; vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { nativeOs.home = undefined; nativeOs.sharedHome = undefined; nativeOs.memberEffectErrors = [];
+  nativeOs.ownerRoots = []; nativeOs.ownerDaemonReads = []; vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 class NativePty implements PtyProcess {
   readonly data = new Set<(data: Buffer | string) => void>();
@@ -413,7 +418,7 @@ child.on('close', code => { process.exitCode = code ?? 1; });
       machineAdmission: { actorAccountId, custodianAccountId: 'requester', machineId: f.machineId,
         installationId: f.installation.installationId, role: 'manage', encryptionMode: 'plain' },
       verifyMachineAdmissionCurrent: async () => f.isHomeCurrent() } });
-  return { ...f, member, workspace, workspaceBacking, sharedHome, accountId, account, finiteInput,
+  return { ...f, member, workspace, workspaceBacking, sharedHome, accountId, account, finiteInput, rows,
     invokeTerminal: invoke, invokeInstalledTerminal, invokeOwnerAgentTerminal, invokeFinite, operation, processes, preparation };
 }
 
@@ -533,6 +538,30 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     expect(scripts).toHaveLength(1);
     await f.machine.waitForActionOperationCompletion(scope, scripts[0]!.operationId);
     expect(operations.store.get(scope, scripts[0]!.operationId)).toMatchObject({ state: 'succeeded' });
+  });
+
+  it.each(['ensure', 'restart', 'package_script'] as const)('refuses a guest Project terminal %s on another person\'s checkout named by its own WorkspaceRef', async kind => {
+    const f = await fixture({ finite: true, nativePackageScript: true });
+    // The guest's own Account row names the owner's checkout on the owner's Machine.
+    const ownerRoot = join(f.directory, 'owner-checkout');
+    await mkdir(join(ownerRoot, '.happier'), { recursive: true });
+    await writeFile(join(ownerRoot, '.happier/project.json'), JSON.stringify({ version: 1,
+      environmentVariables: [{ name: 'OWNER_PRIVATE', kind: 'config', required: true }] }));
+    await writeFile(join(ownerRoot, 'package.json'), JSON.stringify({ name: 'owner-private', scripts: { dev: 'echo owner-private' } }));
+    const ref = { id: 'guest-names-owner', serverId: f.workspace.serverId, machineId: f.machineId, rootPath: ownerRoot,
+      createdAtMs: 1, projectKey: 'owner-project' };
+    f.rows.push(createPlainProjectAccountRefRow(ref));
+    nativeOs.ownerRoots = [ownerRoot];
+    const workspace = { serverId: ref.serverId, workspaceId: ref.id, machineId: ref.machineId, rootPath: ownerRoot };
+    const result = kind === 'package_script'
+      ? await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'owner-script', cwd: ownerRoot,
+        launch: { kind: 'package_script', runTargetId: 'owner-private:dev' } })
+      : await f.invokeTerminal(kind === 'ensure' ? RPC_METHODS.DAEMON_TERMINAL_ENSURE : RPC_METHODS.DAEMON_TERMINAL_RESTART,
+        { terminalKey: 'owner-shell', workspace });
+    expect(result).toMatchObject({ ok: false, error: 'project_workspace_unavailable' });
+    expect(JSON.stringify(result)).not.toContain('owner-private');
+    expect(nativeOs.ownerDaemonReads).toEqual([]);
+    expect(f.processes).toEqual([]);
   });
 
   it('requires the requester Ask for a member script even when the host Account waives approval', async () => {
@@ -836,7 +865,8 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     }
     expect(f.preparation.launches).toEqual([]);
     expect(f.preparation.mutations).toEqual([]);
-  });
+  // Six Project shells each read the checkout through a real member reader process at this OS boundary.
+  }, 120_000);
 
   it('retains accepted member native custody for person and Agent controls while refusing foreign and legacy PTYs', async () => {
     const f = await fixture();

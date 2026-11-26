@@ -9,7 +9,7 @@ import type { DaemonTerminalErrorCode, TerminalStreamAckRequest, TerminalStreamA
 import type { DaemonTerminalError, DaemonTerminalShellAvailabilityV1 } from '@happier-dev/protocol/daemon/terminal';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { normalizeWorkspaceRootPathV1, projectWorkspaceRefV1, resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { isManagedWorkspaceRefV2, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { StoredCredentials } from '@/persistence';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { requireAgentIsolationMaterialNativeIdentity, type AgentLaunchOperationMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
@@ -29,7 +29,7 @@ import { readAcceptedManagedWorkspaceRef } from '@/workspaces/acceptedManagedWor
 import { ensureAcceptedManagedWorkspaceTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
-import { createProjectRuntimeDotenvPreparation } from '@/workspaces/projectSetup/projectSetupReadiness';
+import { createProjectRuntimeDotenvPreparation, isProjectCheckoutReadAsMember, withProjectMemberWorkspaceSource } from '@/workspaces/projectSetup/projectSetupReadiness';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
@@ -563,6 +563,16 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   };
   const observeShellReleaseFailure = () => logger.debug('[terminal] Project shell native resources remain unsettled');
 
+  /** A separated requester's accepted checkout is read only as its member, through the one member source owner. */
+  const readRequesterCheckout = <T>(input: Readonly<{ runtime: ProjectTerminalRuntime; requesterIdentity: HostRequesterExecutionIdentity;
+    context: RpcHandlerContext; workspace: WorkspaceRefV1; read: () => Promise<T>;
+    nativeOperation?: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> }>): Promise<T> =>
+    isProjectCheckoutReadAsMember({ requesterIdentity: input.requesterIdentity, agentIsolation: input.runtime.agentIsolation })
+      ? withProjectMemberWorkspaceSource({ runtime: { ...input.runtime, requesterIdentity: input.requesterIdentity }, ingress: input.context,
+        context: projectActionContext(input.context), workspace: workspaceAddressFromRefV1(input.workspace), accepted: input.workspace,
+        ...(input.nativeOperation ? { native: input.nativeOperation } : {}), read: input.read })
+      : input.read();
+
   /** Terminal admission covers the shell and native environment; setup is a separate Action. */
   const prepareProjectShell = async (custody: Extract<TerminalPtyCustody, { kind?: undefined }>,
     launchProcess: TerminalLaunchProcess | undefined, context: RpcHandlerContext | undefined,
@@ -593,6 +603,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal,
         address: { serverId: custody.serverId, workspaceId: custody.workspaceRefId, machineId: custody.machineId, rootPath: custody.rootPath } });
       if (association.workspace.projectKey !== custody.projectKey) return refused('project_workspace_changed');
+      let authorized: Awaited<ReturnType<typeof authorizeResolvedProjectExecLaunchForHost>> | undefined;
+      const authorizedProjectLaunch = await readRequesterCheckout({ runtime, requesterIdentity, context, workspace: association.workspace,
+        ...(nativeOperation ? { nativeOperation } : {}), read: async () => {
       const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath, account: accountAccess,
         project: association.project, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal });
       const { environmentBindings, secretEnvironment } = await resolveProjectRequesterSecretInputs(runtime, {
@@ -603,9 +616,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const hostEnvironment = Object.freeze({ ...(runtime.hostEnvironment ?? env) });
       const runtimeBindings = await prepareProjectWorktreeRuntime({ workspace: association.workspace,
         manifest: definition.effectiveDefinition.effectiveManifest, signal: context.signal });
-      if (runtimeBindings.kind !== 'ready') return refused(runtimeBindings.code, { reason: runtimeBindings.reason });
+      if (runtimeBindings.kind !== 'ready') throw Object.assign(new Error(runtimeBindings.code), { code: runtimeBindings.code,
+        details: { reason: runtimeBindings.reason } });
       const nativeCustody = createProjectNativeInvocationCustody({ signal: context.signal });
-      let authorized: Awaited<ReturnType<typeof authorizeResolvedProjectExecLaunchForHost>> | undefined;
       release = async () => {
         try { await authorized?.release(); }
         finally {
@@ -653,7 +666,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
           if (plan.toolchainAdapterLease && !plan.toolchainAdapterLease.isCurrent()) throw Object.assign(new Error('native_adapter_retired'), { code: 'native_adapter_retired' });
         }, ...(projectLaunch.nativeAdapter ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}),
       });
-      return { ok: true as const, authorizedProjectLaunch: authorized,
+      return authorized;
+      } });
+      return { ok: true as const, authorizedProjectLaunch,
         validate: assertCurrent, release };
     } catch (error) {
       // The capture owner waits for physical settlement without holding the caller's
@@ -774,7 +789,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const accepted = resolveWorkspaceRefV1(rows.workspaceRefs, { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: cwd },
         { normalizeServerId: id => id === runtime.serverId ? homeServerId : id });
       if (accepted.kind !== 'resolved' || !accepted.ref.projectKey) return refused('project_workspace_unavailable');
-      const scriptName = await resolveLocalServiceRunTargetScriptName({ cwd: accepted.ref.rootPath, runTargetId });
+      const requesterIdentity = (await resolveRequesterIdentity(context)).identity;
+      const scriptName = await readRequesterCheckout({ runtime, requesterIdentity, context, workspace: accepted.ref,
+        read: () => resolveLocalServiceRunTargetScriptName({ cwd: accepted.ref.rootPath, runTargetId }) });
       if (context.signal.aborted) return refused('machine_admission_changed');
       if (!scriptName) return refused('native_target_missing');
       // The receiving producer must borrow the incumbent PTY, including its rings and holds.
