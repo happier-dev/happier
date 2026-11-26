@@ -89,6 +89,7 @@ describe('useWorkflowActionCatalog', () => {
     let deferred: ReturnType<typeof buildDeferredDaemonProjectionSections>;
     let holdProjection: (() => Promise<void>) | undefined;
     let transportUnavailable: boolean;
+    let manifestReads: number;
 
     beforeEach(async () => {
         network.resetRequests();
@@ -96,6 +97,7 @@ describe('useWorkflowActionCatalog', () => {
         sectionsRead.clear();
         holdProjection = undefined;
         transportUnavailable = false;
+        manifestReads = 0;
         deferred = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
             protocolVersion: 1, projection, projectionDigest: 'b'.repeat(64) }));
         const sectionByIndexDigest = new Map(Object.entries(deferred.manifest.sections).map(([section, digest]) => [digest, section]));
@@ -113,6 +115,7 @@ describe('useWorkflowActionCatalog', () => {
             }
             const read = (request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
             if (!read) {
+                manifestReads += 1;
                 if (transportUnavailable) return { ok: false, error: 'Machine transport unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE };
                 await holdProjection?.();
                 return { ok: true, result: deferred.manifest };
@@ -545,8 +548,10 @@ describe('useWorkflowActionCatalog', () => {
             await screen.pressByTestIdAsync('selection-list:add-root:option:add-action');
             expect(screen.findByTestId(command)).toBeNull();
             expect(screen.findByTestId(webhook)).toBeNull();
+            let readsBeforeRetry: number | undefined;
             if (initial === 'unavailable') {
                 await waitForHomeGovernance(() => expect(screen.findByTestId(retry)).not.toBeNull());
+                readsBeforeRetry = manifestReads;
                 transportUnavailable = false;
                 await screen.pressByTestIdAsync(retry);
             } else {
@@ -560,6 +565,7 @@ describe('useWorkflowActionCatalog', () => {
                 expect(screen.findByTestId(webhook)).not.toBeNull();
                 expect(screen.findByTestId(retry)).toBeNull();
             });
+            if (readsBeforeRetry !== undefined) expect(manifestReads - readsBeforeRetry).toBe(1);
             await screen.pressByTestIdAsync(webhook);
             expect(onAdd).toHaveBeenCalledExactlyOnceWith({ kind: 'action', actionId: 'webhooks.call' });
         } finally {
