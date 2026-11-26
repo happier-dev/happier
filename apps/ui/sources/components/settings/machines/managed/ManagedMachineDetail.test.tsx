@@ -4826,7 +4826,15 @@ describe('managed Machine detail', () => {
                     return Response.json({ v: 1, requestId: request.requestId, actionId, execution: outcome === 'plan-failed'
                         ? { ok: false, errorCode: 'unavailable', error: 'unavailable' }
                         : effects && outcome === 'effects-changed' ? { ok: false, errorCode: 'plan_changed', error: 'plan_changed' }
-                        : { ok: true, result: effects ? { ...current, sources, recipePlans: [] } : current } });
+                        : { ok: true, result: effects ? MachineSetupPlanResultV1Schema.parse({ ...current, sources, recipePlans: [],
+                            review: {
+                                target: { homeId, machineId: machine.enrolledMachineId },
+                                administratorRequired: false, downtime: 'none',
+                                steps: sources.map((_, index) => ({ planIndex: 0, stepId: `script:${index}`, label: `Script ${index + 1}` })),
+                                presetUpdateEffects: { toolchain: false,
+                                    scripts: sources.map((_, sourceIndex) => ({ sourceIndex, scriptIndex: 0 })) },
+                            },
+                        }) : current } });
                 }
                 if (actionId === 'machines.setup.apply') applies.push(request.input);
                 return Response.json({ v: 1, requestId: request.requestId, actionId, execution: { ok: true,
