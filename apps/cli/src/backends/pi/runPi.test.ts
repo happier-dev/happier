@@ -281,7 +281,11 @@ describe('runPi', () => {
       expect(runStandardAcpProviderMock.mock.calls[0]?.[0].resume).toBe('explicit-id');
     });
 
-    it('starts a new session and names the directory when there is no previous session', async () => {
+    it.each(['default', 'configured'])('starts a new session and names the %s directory it checked', async (kind) => {
+      const sessionDir = kind === 'default'
+        ? join(agentDir, 'sessions', formatPiSessionDirectoryForCwd(process.platform === 'win32' ? cwd : physicalCwd))
+        : join(root, 'custom-sessions');
+      if (kind === 'configured') envScope.patch({ PI_CODING_AGENT_SESSION_DIR: sessionDir });
       const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       let stderrText = '';
       try {
@@ -292,7 +296,7 @@ describe('runPi', () => {
       }
 
       expect(runStandardAcpProviderMock.mock.calls[0]?.[0].resume).toBeUndefined();
-      expect(stderrText).toContain(physicalCwd);
+      expect(stderrText).toContain(`No previous Pi session in ${sessionDir};`);
     });
   });
 });

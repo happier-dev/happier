@@ -3,34 +3,33 @@ import { join, resolve } from 'node:path';
 
 import { readPiSessionHeader } from '@/backends/pi/directSessions/readPiSessionHeader';
 import { resolvePiAgentDir } from '@/backends/pi/directSessions/resolvePiAgentDir';
-import { comparePiSessionFilePreference } from '@/backends/pi/directSessions/resolvePiDirectSessionFile';
 import { formatPiSessionDirectoryForCwd } from '@/backends/pi/utils/piSessionFiles';
-import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
-import { normalizePathForComparison } from '@/utils/path/normalizePathForComparison';
+import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 
 /**
- * The session file plain `pi --continue` would open in `cwd`, or null when Pi would start a new
- * one. Mirrors Pi 1.5.2 (`main.js` session-dir selection, `SessionManager.continueRecent`,
+ * The session file plain `pi --continue` would open in `cwd` (if any) and the directory searched.
+ * Mirrors Pi 1.5.2 (`main.js` session-dir selection, `SessionManager.continueRecent`,
  * `findMostRecentSession`):
  * - session dir: `PI_CODING_AGENT_SESSION_DIR`, else `sessionDir` from `<agentDir>/settings.json`
  *   overridden by `<cwd>/.pi/settings.json`, else `<agentDir>/sessions/--<cwd>--`;
- * - newest `*.jsonl` by mtime whose first line is a session header;
+ * - newest `*.jsonl` by mtime whose first parsed entry is a session header;
  * - a configured dir other than the default keeps only sessions whose header cwd is `cwd`.
  * Pi's `--session-dir` flag is not forwarded by Happier, so it is not read here.
  */
 export async function resolvePiContinueSessionFile(params: Readonly<{
   cwd: string;
   env: NodeJS.ProcessEnv;
-}>): Promise<string | null> {
+}>): Promise<{ sessionDir: string; sessionFile: string | null }> {
   const cwd = resolve(params.cwd);
   const agentDir = resolve(resolvePiAgentDir({ source: { kind: 'piAgentDir' }, env: params.env }));
   const defaultDir = join(agentDir, 'sessions', formatPiSessionDirectoryForCwd(cwd));
   const configuredRaw = nonEmptyString(params.env.PI_CODING_AGENT_SESSION_DIR)
     ?? await readPiSettingsSessionDir({ agentDir, cwd });
-  const configuredDir = configuredRaw ? resolve(cwd, expandHomeDirPath(configuredRaw, params.env)) : null;
-  const dir = configuredDir ?? defaultDir;
-  const filterCwd = configuredDir !== null && !isSamePath(configuredDir, defaultDir, params.env);
-  return await findMostRecentPiSessionFile({ dir, cwd: filterCwd ? cwd : null, env: params.env });
+  const configuredDir = configuredRaw ? resolvePiPath(configuredRaw, cwd, params.env) : null;
+  const sessionDir = configuredDir ?? defaultDir;
+  const filterCwd = configuredDir !== null && !isSamePath(configuredDir, defaultDir);
+  const sessionFile = await findMostRecentPiSessionFile({ dir: sessionDir, cwd: filterCwd ? cwd : null, env: params.env });
+  return { sessionDir, sessionFile };
 }
 
 async function findMostRecentPiSessionFile(params: Readonly<{
@@ -56,15 +55,16 @@ async function findMostRecentPiSessionFile(params: Readonly<{
       // A file removed between readdir and stat is not a session.
     }
   }
-  candidates.sort(comparePiSessionFilePreference);
+  // Pi's stable mtime sort keeps directory enumeration order on ties.
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
   for (const candidate of candidates) {
     const header = await readPiSessionHeader(candidate.filePath);
     if (!header) continue;
     if (params.cwd !== null) {
       if (!header.cwd) continue;
-      const headerCwd = resolve(params.cwd, expandHomeDirPath(header.cwd, params.env));
-      if (!isSamePath(headerCwd, params.cwd, params.env)) continue;
+      const headerCwd = resolvePiPath(header.cwd, params.cwd, params.env);
+      if (!isSamePath(headerCwd, params.cwd)) continue;
     }
     return candidate.filePath;
   }
@@ -90,12 +90,18 @@ async function readPiSettingsFile(filePath: string): Promise<Record<string, unkn
   }
 }
 
-function isSamePath(left: string, right: string, env: NodeJS.ProcessEnv): boolean {
-  return normalizePathForComparison(left, { env }) === normalizePathForComparison(right, { env });
+function resolvePiPath(value: string, cwd: string, env: NodeJS.ProcessEnv): string {
+  if (value === '~') return resolve(resolveHomeDirFromEnvironment(env));
+  if (value.startsWith('~/') || (process.platform === 'win32' && value.startsWith('~\\'))) {
+    return resolve(resolveHomeDirFromEnvironment(env), `.${value.slice(1)}`);
+  }
+  return resolve(cwd, value);
+}
+
+function isSamePath(left: string, right: string): boolean {
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
 function nonEmptyString(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return typeof value === 'string' && value.length > 0 ? value : null;
 }

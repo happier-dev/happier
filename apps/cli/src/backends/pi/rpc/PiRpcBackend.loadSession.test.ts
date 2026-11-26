@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import type { AgentBackend } from '@/agent/core';
 
+import { resolvePiContinueSessionFile } from '../utils/resolvePiContinueSessionFile';
 import { PiRpcBackend } from './PiRpcBackend';
 
 function makeTempDir(prefix: string): string {
@@ -293,6 +294,27 @@ describe('PiRpcBackend loadSession', () => {
     expect(boots.length).toBe(1);
     expect(boots[0]!.argv).toContain('--session');
     expect(boots[0]!.argv).toContain(sessionPath);
+  });
+
+  it('resumes the file selected by --continue using its header ID and exact path', async () => {
+    workDir = makeTempDir('happier-pi-load-session-continue-');
+    const sessionDir = join(workDir, 'sessions');
+    mkdirSync(sessionDir);
+    const sessionPath = join(sessionDir, '2026-02-18T00-00-00-000Z_my_feature.jsonl');
+    writeFileSync(sessionPath, `${JSON.stringify({ type: 'session', id: 'my_feature', cwd: workDir })}\n`);
+    const bootLogPath = join(workDir, 'boot.log');
+    backend = new PiRpcBackend({
+      cwd: workDir,
+      command: process.execPath,
+      args: [makeFakePiRpcLoadSessionScript(workDir)],
+      env: { BOOT_LOG_PATH: bootLogPath, FAKE_PI_RPC_SESSION_ID: 'my_feature' },
+    });
+
+    const selected = await resolvePiContinueSessionFile({ cwd: workDir, env: { PI_CODING_AGENT_SESSION_DIR: sessionDir } });
+    expect(selected?.sessionFile).toBe(sessionPath);
+    await expect(backend.loadSession!(selected.sessionFile!)).resolves.toEqual({ sessionId: 'my_feature' });
+    const boots = parseBootLog(await readFile(bootLogPath, 'utf8'));
+    expect(boots[0]?.argv).toEqual(expect.arrayContaining(['--session', sessionPath]));
   });
 
   it('does not match session files by sibling id prefix', async () => {

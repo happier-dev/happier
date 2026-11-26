@@ -51,14 +51,14 @@ async function resolvePiRunResume(opts: PiRunOptions): Promise<string | undefine
   // The directory Happier launches Pi in. A copy of env keeps the daemon's requested-directory
   // variable for the session start that consumes it.
   const cwd = await resolvePiProcessCwd(resolveRequestedSessionDirectory({ env: { ...process.env } }));
-  const sessionFile = await resolvePiContinueSessionFile({ cwd, env: process.env });
+  const { sessionDir, sessionFile } = await resolvePiContinueSessionFile({ cwd, env: process.env });
   if (sessionFile) {
     logger.infoFile(`[pi] --continue resumes ${sessionFile}`);
     return sessionFile;
   }
-  // Still before any terminal UI exists; a different cwd is the usual reason nothing is found.
-  logger.infoFile(`[pi] --continue found no previous session in ${cwd}`);
-  process.stderr.write(`No previous Pi session in ${cwd}; starting a new one.\n`);
+  // Still before any terminal UI exists.
+  logger.infoFile(`[pi] --continue found no previous session in ${sessionDir}`);
+  process.stderr.write(`No previous Pi session in ${sessionDir}; starting a new one.\n`);
   return undefined;
 }
 

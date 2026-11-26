@@ -18,7 +18,7 @@ import type { PiBackendOptions } from '@/backends/pi/acp/backend';
 import { resolveHappyToolsBridgeBackendOptions } from '@/backends/pi/bridgeExtension';
 import type { PiSharedTerminalHost } from '@/backends/pi/sharedControl/piSharedTerminalHost';
 import { publishPiSessionIdMetadata } from '@/backends/pi/utils/piSessionIdMetadata';
-import { resolvePiSessionIdFromResumeReference } from '@/backends/pi/utils/piSessionFiles';
+import { resolveExpectedPiSessionIdForResume } from '@/backends/pi/utils/piSessionFiles';
 
 export function createPiAcpRuntime(params: {
   directory: string;
@@ -87,7 +87,7 @@ export function createPiAcpRuntime(params: {
         }
       },
     },
-    resolveExpectedVendorSessionIdForResume: resolvePiSessionIdFromResumeReference,
+    resolveExpectedVendorSessionIdForResume: resolveExpectedPiSessionIdForResume,
     onThinkingChange: params.onThinkingChange,
     getSessionOpenAbortSignal: params.getSessionOpenAbortSignal,
     memoryRecallGuidance: {

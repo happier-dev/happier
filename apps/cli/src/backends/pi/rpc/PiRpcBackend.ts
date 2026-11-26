@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { open, readdir, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
+
+import { readPiSessionHeader } from '@/backends/pi/directSessions/readPiSessionHeader';
 import { dirname, isAbsolute, join } from 'node:path';
 
 import type {
@@ -49,7 +51,8 @@ import {
   doesPiSessionFileNameMatchSessionId,
   formatPiSessionDirectoryForCwd,
   isBarePiSessionId,
-  resolvePiSessionIdFromResumeReference,
+  pathExistsAsFile,
+  resolveExpectedPiSessionIdForResume,
 } from '../utils/piSessionFiles';
 import {
   PiSharedTerminalUnavailableError,
@@ -627,33 +630,6 @@ function readNonNegativeIntegerEnv(env: Record<string, string>, key: string, fal
   return Number.isInteger(value) && value >= 0 ? value : fallback;
 }
 
-async function pathIsFile(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-async function readPiSessionHeaderId(path: string): Promise<string | null> {
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  try {
-    handle = await open(path, 'r');
-    const buffer = Buffer.alloc(64 * 1024);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const firstLineEnd = buffer.subarray(0, bytesRead).indexOf(0x0a);
-    const firstLine = buffer.subarray(0, firstLineEnd >= 0 ? firstLineEnd : bytesRead).toString('utf8').trim();
-    if (!firstLine) return null;
-    const header = asRecord(JSON.parse(firstLine));
-    if (header?.type !== 'session') return null;
-    return asNonEmptyString(header.id);
-  } catch {
-    return null;
-  } finally {
-    await handle?.close().catch(() => undefined);
-  }
-}
-
 async function delay(ms: number): Promise<void> {
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(resolve, ms);
@@ -924,7 +900,7 @@ export class PiRpcBackend implements AgentBackend {
           try {
             const s = await stat(path);
             if (!s.isFile()) continue;
-            if (requireMatchingHeader && await readPiSessionHeaderId(path) !== expectedSessionId) continue;
+            if (requireMatchingHeader && (await readPiSessionHeader(path))?.id !== expectedSessionId) continue;
             matches.push({ path, mtimeMs: typeof s.mtimeMs === 'number' ? s.mtimeMs : 0 });
           } catch {
             // ignore
@@ -956,7 +932,12 @@ export class PiRpcBackend implements AgentBackend {
       throw new Error('Pi loadSession requires a bare Pi session id or absolute session file path');
     }
 
-    const expectedSessionId = resolvePiSessionIdFromResumeReference(requestedResumeReference);
+    const lifecycle = this.createSessionOpenLifecycle(options?.signal);
+    const expectedSessionId = await this.waitForSessionOpenPhase(
+      resolveExpectedPiSessionIdForResume(requestedResumeReference),
+      lifecycle,
+      'session file discovery',
+    );
     if (!expectedSessionId) {
       throw new Error('Pi loadSession requires a bare Pi session id or absolute session file path');
     }
@@ -977,10 +958,9 @@ export class PiRpcBackend implements AgentBackend {
     // We intentionally avoid `--continue` here because it resumes "most recent", which can be the wrong
     // session when multiple sessions exist in PI_CODING_AGENT_DIR.
     this.emitMessage({ type: 'status', status: 'starting' });
-    const lifecycle = this.createSessionOpenLifecycle(options?.signal);
     try {
       const sessionFileDiscovery = (async () => {
-        const preferredSessionFile = requestedAbsoluteSessionFile && await pathIsFile(requestedAbsoluteSessionFile)
+        const preferredSessionFile = requestedAbsoluteSessionFile && await pathExistsAsFile(requestedAbsoluteSessionFile)
           ? requestedAbsoluteSessionFile
           : null;
         return preferredSessionFile

@@ -503,7 +503,7 @@ export function createAcpRuntime(params: {
    * session id that a successful load must return. The provider still receives
    * the original reference; the generic identity binder remains strict.
    */
-  resolveExpectedVendorSessionIdForResume?: (resumeReference: string) => string | null;
+  resolveExpectedVendorSessionIdForResume?: (resumeReference: string) => string | null | Promise<string | null>;
   /**
    * Optional in-flight steer support.
    *
@@ -2614,10 +2614,11 @@ export function createAcpRuntime(params: {
           ? {
               kind: 'resume',
               expectedVendorSessionId: params.resolveExpectedVendorSessionIdForResume
-                ? params.resolveExpectedVendorSessionIdForResume(resumeReference) ?? ''
+                ? (await params.resolveExpectedVendorSessionIdForResume(resumeReference)) ?? ''
                 : resumeReference,
             }
           : { kind: 'create' };
+        assertRuntimeGeneration(operationGeneration);
         const opened = await identityBinding.open({
           intent,
           openSession: async (identityContext) => {

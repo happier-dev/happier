@@ -1,4 +1,4 @@
-import { mkdir, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { formatPiSessionDirectoryForCwd } from './piSessionFiles';
-import { resolvePiContinueSessionFile } from './resolvePiContinueSessionFile';
+import { resolvePiContinueSessionFile as resolvePiContinueSession } from './resolvePiContinueSessionFile';
+
+async function resolvePiContinueSessionFile(params: Parameters<typeof resolvePiContinueSession>[0]): Promise<string | null> {
+  return (await resolvePiContinueSession(params)).sessionFile;
+}
 
 /**
  * Contract: the file Pi 1.5.2 `--continue` opens (`SessionManager.continueRecent` +
@@ -69,6 +73,15 @@ describe('resolvePiContinueSessionFile', () => {
     await expect(resolvePiContinueSessionFile({ cwd, env: { HOME: home } })).resolves.toBe(newest);
   });
 
+  it('keeps directory enumeration order for sessions with equal mtimes', async () => {
+    const dir = defaultSessionDir(join(home, '.pi', 'agent'));
+    await writeSession(dir, 'a.jsonl', { cwd, mtimeSec: 1_000 });
+    await writeSession(dir, 'B.jsonl', { cwd, mtimeSec: 1_000 });
+    const [first] = await readdir(dir);
+
+    await expect(resolvePiContinueSessionFile({ cwd, env: { HOME: home } })).resolves.toBe(join(dir, first!));
+  });
+
   it('skips files without a readable session header', async () => {
     const dir = defaultSessionDir(join(home, '.pi', 'agent'));
     const valid = await writeSession(dir, 'valid.jsonl', { cwd, mtimeSec: 1_000 });
@@ -77,6 +90,30 @@ describe('resolvePiContinueSessionFile', () => {
     await writeSession(dir, 'notes.txt', { cwd, mtimeSec: 4_000 });
 
     await expect(resolvePiContinueSessionFile({ cwd, env: { HOME: home } })).resolves.toBe(valid);
+  });
+
+  it('skips blank and malformed lines within Pi’s bounded header scan', async () => {
+    const dir = defaultSessionDir(join(home, '.pi', 'agent'));
+    const header = JSON.stringify({ type: 'session', id: 'actual_id', cwd });
+    const newest = await writeSession(dir, 'renamed.jsonl', { cwd, mtimeSec: 2_000, firstLine: `\n${'!'.repeat(70 * 1024)}\n${header}` });
+    await writeSession(dir, 'header-too-late.jsonl', { cwd, mtimeSec: 3_000, firstLine: `${'!'.repeat(1024 * 1024)}\n${header}` });
+    await writeSession(dir, 'not-a-header.jsonl', { cwd, mtimeSec: 4_000, firstLine: `\n{"type":"message"}\n${header}` });
+
+    await expect(resolvePiContinueSessionFile({ cwd, env: { HOME: home } })).resolves.toBe(newest);
+  });
+
+  it.each(['trailing space', 'literal backslash'])('preserves a POSIX header cwd with a %s', async (kind) => {
+    if (process.platform === 'win32') return;
+    const sessionDir = join(root, 'shared');
+    const launchCwd = join(cwd, 'nested');
+    const mine = await writeSession(sessionDir, 'mine.jsonl', { cwd: launchCwd, mtimeSec: 1_000 });
+    const foreign = kind === 'trailing space' ? `${launchCwd} ` : `${cwd}\\nested`;
+    await writeSession(sessionDir, 'foreign.jsonl', { cwd: foreign, mtimeSec: 2_000 });
+
+    await expect(resolvePiContinueSessionFile({
+      cwd: launchCwd,
+      env: { HOME: home, PI_CODING_AGENT_SESSION_DIR: sessionDir },
+    })).resolves.toBe(mine);
   });
 
   it('does not filter the default directory by the header cwd', async () => {

@@ -2,6 +2,8 @@ import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
+import { readPiSessionHeader } from '../directSessions/readPiSessionHeader';
+
 const LEGACY_PI_WORKDIR_SEGMENT = '--workdir--';
 
 export function doesPiSessionFileNameMatchSessionId(fileName: string, sessionId: string): boolean {
@@ -64,6 +66,15 @@ export function resolvePiSessionIdFromResumeReference(value: string): string | n
     return stem.slice('session-'.length) || null;
   }
   return stem || null;
+}
+
+/** Validate native resume against the file's own identity when a header is available. */
+export async function resolveExpectedPiSessionIdForResume(reference: string): Promise<string | null> {
+  if (isAbsolute(reference) && await pathExistsAsFile(reference)) {
+    const header = await readPiSessionHeader(reference);
+    if (header) return header.id;
+  }
+  return resolvePiSessionIdFromResumeReference(reference);
 }
 
 function nonEmptyString(value: unknown): string | null {
