@@ -41,6 +41,7 @@ import {
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
 
 export type SessionRuntimeControls = {
+  openAgentTerminalPresentation?: import('@/agent/runtime/session/loop/terminalRemoteModeRuntime').HostSessionTerminalRemoteModeLoop['openAgentTerminalPresentation'];
   readExecutionRunRolePolicy?: (request: import('@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc').SessionExecutionRunRolePolicyRequestV1) =>
     import('@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc').SessionGoalRolePolicyDecisionV1;
   /** Actual admitted Agent and transport selected by the current Session runtime. */

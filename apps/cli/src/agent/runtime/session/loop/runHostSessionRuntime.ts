@@ -4104,6 +4104,9 @@ async function runHostedSessionRuntime(
       readReferenceAction,
       readPermissionHandler: () => permissionHandler,
       readCodingPromptBehavior: () => resolveFreshSessionSystemPrompt?.readCodingPromptBehavior?.() ?? null,
+      ...(initialTerminalRemoteModeLoop?.openAgentTerminalPresentation
+        ? { openAgentTerminalPresentation: initialTerminalRemoteModeLoop.openAgentTerminalPresentation }
+        : {}),
       readEffectiveInputConfiguration: () => ({
         modelSelection: modelTransitionCoordinator?.readEffectiveModelSelection() ?? null,
         permissionMode: permissionModeState.getCurrentPermissionMode() ?? initialPermissionMode,

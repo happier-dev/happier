@@ -11,6 +11,7 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { getAgentTerminalSessionManager } from '@/terminal/pty/agentTerminals';
 import { byteStreamHoldEndsAtMs, readByteStreamHeld } from '@/terminal/pty/byteStreamHold';
 import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
+import type { SessionRuntimeControls } from './sessionControls';
 
 type Refusal = Readonly<{ ok: false; code: string; message: string }>;
 
@@ -18,29 +19,6 @@ const refusal = (code: string, message: string): Refusal => ({ ok: false, code, 
 const invalidRequest = () => refusal('terminal_invalid_request', 'Invalid Agent terminal request');
 /** The Session's Agent is not on a live PTY terminal host in this process (another host, ended, or not started yet). */
 const unavailable = () => refusal('agent_terminal_unavailable', 'This Session has no live Agent terminal to attach to');
-
-/** The provider mode supplies on-demand presentation through the same viewer admission. */
-export function registerSessionAgentTerminalOpenHandler(rpc: RpcHandlerRegistrar, opts: Readonly<{
-  sessionId: string;
-  terminals?: () => TerminalPtySessionManager;
-  preparePresentation?: (signal?: AbortSignal) => Promise<Readonly<{ terminalId: string; fresh: boolean }> | null>;
-}>): void {
-  const terminals = opts.terminals ?? getAgentTerminalSessionManager;
-  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN, async (raw: unknown, context) => {
-    if (!SessionAgentTerminalOpenRequestSchema.safeParse(raw).success) return invalidRequest();
-    const presentation = await opts.preparePresentation?.(context?.signal);
-    const terminal = opts.preparePresentation
-      ? presentation && terminals().get(presentation.terminalId)
-      : terminals().list().find(entry => entry.sessionId === opts.sessionId && !entry.ended);
-    if (!terminal || terminal.ended || terminal.sessionId !== opts.sessionId) return unavailable();
-    // Include the first screen of a just-started presenter. An existing terminal
-    // still opens at its live end.
-    if (presentation?.fresh) return { ok: true as const, terminalId: terminal.terminalId, byteOffset: 0 };
-    const end = terminals().readByteStream({ terminalId: terminal.terminalId, byteOffset: Number.MAX_SAFE_INTEGER, creditBytes: 0 });
-    if (!end.ok) return unavailable();
-    return { ok: true as const, terminalId: terminal.terminalId, byteOffset: end.nextByteOffset };
-  });
-}
 
 /**
  * `happier attach` viewers of this Session's Agent terminal, served from the process's one PTY
@@ -50,11 +28,36 @@ export function registerSessionAgentTerminalOpenHandler(rpc: RpcHandlerRegistrar
 export function registerSessionAgentTerminalHandlers(rpc: RpcHandlerRegistrar, opts: Readonly<{
   sessionId: string;
   terminals?: () => TerminalPtySessionManager;
+  sessionRuntimeControls?: Pick<SessionRuntimeControls, 'openAgentTerminalPresentation'> | null;
+  waitForSessionRuntimeControls?: (signal?: AbortSignal) => Promise<boolean>;
 }>): void {
   const terminals = opts.terminals ?? getAgentTerminalSessionManager;
   const owned = (terminalId: string) => terminals().get(terminalId)?.sessionId === opts.sessionId;
+  const findLiveTerminal = () => terminals().list().find(entry => entry.sessionId === opts.sessionId && !entry.ended);
 
-  registerSessionAgentTerminalOpenHandler(rpc, opts);
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN, async (raw: unknown, context) => {
+    if (!SessionAgentTerminalOpenRequestSchema.safeParse(raw).success) return invalidRequest();
+    let openPresentation = opts.sessionRuntimeControls?.openAgentTerminalPresentation;
+    let terminal = !openPresentation ? findLiveTerminal() : undefined;
+    // The daemon may acknowledge Session birth before the runner installs
+    // its controls. Join that owner's readiness with the original viewer call.
+    if (!openPresentation && !terminal && await opts.waitForSessionRuntimeControls?.(context?.signal)) {
+      openPresentation = opts.sessionRuntimeControls?.openAgentTerminalPresentation;
+      if (!openPresentation) terminal = findLiveTerminal();
+    }
+    if (openPresentation) {
+      const presentation = await openPresentation(context?.signal);
+      if (!presentation) return unavailable();
+      terminal = terminals().get(presentation.terminalId);
+      if (!terminal || terminal.ended || terminal.sessionId !== opts.sessionId) return unavailable();
+      // The live end before starting a fresh presenter is zero.
+      if (presentation.fresh) return { ok: true as const, terminalId: terminal.terminalId, byteOffset: 0 };
+    }
+    if (!terminal) return unavailable();
+    const end = terminals().readByteStream({ terminalId: terminal.terminalId, byteOffset: Number.MAX_SAFE_INTEGER, creditBytes: 0 });
+    if (!end.ok) return unavailable();
+    return { ok: true as const, terminalId: terminal.terminalId, byteOffset: end.nextByteOffset };
+  });
 
   rpc.registerHandler(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_READ, async (raw: unknown, context) => {
     const parsed = TerminalStreamReadRequestSchema.safeParse(raw);

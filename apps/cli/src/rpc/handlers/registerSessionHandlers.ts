@@ -317,7 +317,11 @@ export function registerSessionHandlers(
         waitForSessionRuntimeControls: opts?.waitForSessionRuntimeControls,
         notifyUsageLimitWaitResumeCancelled: opts?.notifyUsageLimitWaitResumeCancelled ?? null,
     });
-    if (opts?.sessionId) registerSessionAgentTerminalHandlers(authorizedSessionRpcHandlerManager, { sessionId: opts.sessionId });
+    if (opts?.sessionId) registerSessionAgentTerminalHandlers(authorizedSessionRpcHandlerManager, {
+        sessionId: opts.sessionId,
+        sessionRuntimeControls: opts.sessionRuntimeControls,
+        waitForSessionRuntimeControls: opts.waitForSessionRuntimeControls,
+    });
     registerSessionTranscriptRpcHandlers({
         rpcHandlerManager: authorizedSessionRpcHandlerManager,
         ...(opts?.transcriptActionExecutor ? { actionExecutor: opts.transcriptActionExecutor } : {}),

@@ -23,12 +23,12 @@ import { clearTerminalControlServiceabilityProjection } from '@/daemon/startup/t
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import { publishNativeAgentTerminalHostBinding } from './terminalHostBinding';
 import { closeAgentTerminalPresentation, findAgentTerminalPresentation } from '@/terminal/pty/agentTerminals';
-import { registerSessionAgentTerminalOpenHandler } from '@/rpc/handlers/sessionAgentTerminal';
 
 export function waitForNativeAgentTerminalRemoteDisposition(params: Readonly<{
     signal: AbortSignal;
     switching: HostTerminalOrchestration['switching'] | null;
     requestLocal?: () => Promise<boolean>;
+    onLocalSwitchReady?: (request: (() => void) | null) => void;
 }>): Promise<'switch' | 'exit'> {
     if (params.signal.aborted) return Promise.resolve('exit');
     if (!params.switching) {
@@ -52,6 +52,7 @@ export function waitForNativeAgentTerminalRemoteDisposition(params: Readonly<{
             params.signal.removeEventListener('abort', onAbort);
             subscription?.unsubscribe();
             subscription = null;
+            params.onLocalSwitchReady?.(null);
             resolve(result);
         };
         const onAbort = () => settle('exit');
@@ -69,6 +70,7 @@ export function waitForNativeAgentTerminalRemoteDisposition(params: Readonly<{
         }
         params.signal.addEventListener('abort', onAbort, { once: true });
         if (params.signal.aborted) settle('exit');
+        else params.onLocalSwitchReady?.(() => settle('switch'));
     });
 }
 
@@ -109,6 +111,7 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
         ),
     });
     let pendingLocalRestore: Readonly<{ promise: Promise<boolean>; complete(value: boolean): void }> | null = null;
+    let requestLocalFromRemote: (() => void) | null = null;
     const beginLocalRestore = () => {
         if (pendingLocalRestore) return pendingLocalRestore;
         let complete!: (value: boolean) => void;
@@ -325,23 +328,25 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
             }
             return { ok: true, providerSessionId: request.providerSessionId };
         });
-    if (params.readNativePresenterLaunchAuthority) {
-        registerSessionAgentTerminalOpenHandler(params.session.rpcHandlerManager, {
-            sessionId: params.session.sessionId,
-            preparePresentation: async signal => {
+    const modeLoop: HostSessionTerminalRemoteModeLoop = Object.freeze({
+        startingMode: params.startingMode,
+        remoteExitCode: 0,
+        ...(params.readNativePresenterLaunchAuthority ? {
+            openAgentTerminalPresentation: async (signal?: AbortSignal) => {
                 if (lifecycleSignal.aborted || signal?.aborted) return null;
                 const previous = findAgentTerminalPresentation(params.session.sessionId);
-                if (await params.session.rpcHandlerManager.invokeLocal('switch', { to: 'local' }, { signal }) !== true) return null;
+                if (previous && !previous.ended && !pendingLocalRestore) {
+                    return { terminalId: previous.terminalId, fresh: false };
+                }
+                const receipt = beginLocalRestore();
+                requestLocalFromRemote?.();
+                if (!await receipt.promise || signal?.aborted) return null;
                 const current = findAgentTerminalPresentation(params.session.sessionId);
                 return current && !current.ended
                     ? { terminalId: current.terminalId, fresh: current.terminalId !== previous?.terminalId }
                     : null;
             },
-        });
-    }
-    const modeLoop: HostSessionTerminalRemoteModeLoop = Object.freeze({
-        startingMode: params.startingMode,
-        remoteExitCode: 0,
+        } : {}),
         topology: params.topology,
         remoteWritable: params.remoteWritable,
         ownsCurrentTerminalDisplay: true,
@@ -460,7 +465,13 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
                 signal: lifecycleSignal,
                 switching,
                 requestLocal: () => beginLocalRestore().promise,
+                ...(params.readNativePresenterLaunchAuthority
+                    ? { onLocalSwitchReady: (request: (() => void) | null) => { requestLocalFromRemote = request; } }
+                    : {}),
             });
+            // A foreground viewer can already be waiting when remote mode
+            // begins. Consume the same local-restore receipt as Switch.
+            if (pendingLocalRestore) requestLocalFromRemote?.();
             await publishAttached(false);
             return await disposition;
         },

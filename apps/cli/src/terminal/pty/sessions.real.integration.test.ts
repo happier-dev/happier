@@ -13,6 +13,7 @@ import { createMutableApiSessionClientFixture } from '@/testkit/backends/session
 import { createNativeAgentProviderAttachModeBinding } from '@/agent/runtime/session/terminal/providerCliAttachMode';
 import { runTerminalRemoteSessionModeLoop } from '@/agent/runtime/session/loop/runTerminalRemoteSessionModeLoop';
 import { registerSessionAgentTerminalHandlers } from '@/rpc/handlers/sessionAgentTerminal';
+import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { createProviderCliAttachSurface } from '@/session/attach/providerCliAttach';
 import { probeProcessGroupLiveness } from '@happier-dev/cli-common/process';
 
@@ -328,7 +329,17 @@ describe.skipIf(process.platform === 'win32')('native inherited PTY launch trans
     const root = await mkdtemp(join(tmpdir(), 'happier-presenter-'));
     const session = createMutableApiSessionClientFixture({ sessionId: 'signed-foreground-member' });
     const rpc = session.rpcHandlerManager;
-    registerSessionAgentTerminalHandlers(rpc, { sessionId: session.sessionId });
+    const controls: SessionRuntimeControls = {};
+    let installControls!: () => void;
+    const ready = new Promise<boolean>(resolveReady => { installControls = () => resolveReady(true); });
+    registerSessionAgentTerminalHandlers(rpc, {
+      sessionId: session.sessionId,
+      sessionRuntimeControls: controls,
+      waitForSessionRuntimeControls: () => ready,
+    });
+    const foregroundOpen = rpc.invokeLocal(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN, { viewerId: 'foreground' });
+    // The signed birth can be acknowledged before native runtime controls exist.
+    await new Promise<void>(resolve => setImmediate(resolve));
     const require = createRequire(import.meta.url);
     const shimUrl = new URL('../../daemon/agentIsolation/agentLaunchShim.ts', import.meta.url).href;
     const frameUrl = new URL('../../daemon/agentIsolation/agentLaunchFrame.ts', import.meta.url).href;
@@ -375,11 +386,13 @@ describe.skipIf(process.platform === 'win32')('native inherited PTY launch trans
         }),
       }),
     });
+    controls.openAgentTerminalPresentation = binding.terminalRemoteModeLoop.openAgentTerminalPresentation;
+    installControls();
+    // The Session installs controls before handing execution to its mode loop.
+    await new Promise<void>(resolve => setImmediate(resolve));
     const loop = runTerminalRemoteSessionModeLoop(binding.terminalRemoteModeLoop);
     try {
-      await Promise.resolve();
-      const opened = SessionAgentTerminalOpenResponseSchema.parse(await rpc.invokeLocal(
-        SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN, { viewerId: 'foreground' }));
+      const opened = SessionAgentTerminalOpenResponseSchema.parse(await foregroundOpen);
       if (!opened.ok) throw new Error(opened.code);
       const { terminalId, byteOffset } = opened;
       await expect(rpc.invokeLocal(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_INPUT, {

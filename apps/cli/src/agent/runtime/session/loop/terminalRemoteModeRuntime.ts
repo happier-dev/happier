@@ -22,6 +22,11 @@ export type HostSessionTerminalRemoteModeLoop = RunTerminalRemoteSessionModeLoop
   /** The local pass uses this runner's stdio, so the host display must yield it. */
   ownsCurrentTerminalDisplay?: boolean;
   getResumeReadiness?: () => HostSessionTerminalRemoteResumeReadiness;
+  /** The admitted runtime's optional provider presenter for the existing Agent-terminal viewer. */
+  openAgentTerminalPresentation?: (signal?: AbortSignal) => Promise<Readonly<{
+    terminalId: string;
+    fresh: boolean;
+  }> | null>;
   requestGracefulRemoteHandoff?: (
     reason: HostSessionTerminalRemoteHandoffReason,
   ) =>
