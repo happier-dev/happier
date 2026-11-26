@@ -50,7 +50,7 @@ const rawStart = (fixture: AdmittedSessionRunFixture, input: Record<string, unkn
   }, presentUser);
 
 describe('ExecutionRunHostBridge admitted registry integration', () => {
-  it('admits an attached execution-only Review through the public Action', async () => {
+  it.each([true, false])('completes an attached execution-only Review through the public Action (explicit runner: %s)', async explicitRunner => {
     await withAdmittedSessionRun({ directOwner: true,
       prepareAccountRoleOverrides: true,
       runtimePluginIds: [CLAWPATCH_PLUGIN.manifest.id, 'happier.agent.codex', 'happier.scm.backend.git'],
@@ -111,8 +111,9 @@ describe('ExecutionRunHostBridge admitted registry integration', () => {
           scope: 'repository',
           instructions: 'Review this repository.',
           reviewRound: { reviewId: 'attached-clawpatch-review', roundOrdinal: 1 },
-          reviewers: [{ kind: 'engine', engineId: 'clawpatch', runnerAgentTarget, connectedServices: null,
-            modelSelection: { agentTargetKey: resolveBackendTargetKeyV2(runnerAgentTarget),
+          reviewers: [{ kind: 'engine', engineId: 'clawpatch', ...(explicitRunner ? { runnerAgentTarget } : {}), connectedServices: null,
+            modelSelection: { agentTargetKey: resolveBackendTargetKeyV2(explicitRunner ? runnerAgentTarget
+              : { kind: 'agent', identity: { pluginId: CLAWPATCH_PLUGIN.manifest.id, localId: 'clawpatch' } }),
               providerConnectionId: null, modelId: 'machine-login-model' } }],
         }, { surface: 'ui' });
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
@@ -121,7 +122,8 @@ describe('ExecutionRunHostBridge admitted registry integration', () => {
         if (!payload) throw new Error('Missing attached Review Run');
         const { runId } = payload.results[0].result;
         try {
-          expect(bridge.getPublic(runId)).toMatchObject({ intent: 'review', profileId: `${CLAWPATCH_PLUGIN.manifest.id}/review` });
+          await bridge.waitForTerminal(runId);
+          expect(bridge.getPublic(runId), JSON.stringify({ run: bridge.getPublic(runId), daemon: fixture.daemonObservations })).toMatchObject({ status: 'succeeded', intent: 'review', profileId: `${CLAWPATCH_PLUGIN.manifest.id}/review` });
           expect(fixture.daemonObservations).toEqual(expect.arrayContaining([
             expect.objectContaining({ operation: 'execution_run.snapshot.acquire_v1', status: 200 }),
             expect.objectContaining({ operation: 'execution_run.review_scm_scope.resolve_v1', status: 200 }),

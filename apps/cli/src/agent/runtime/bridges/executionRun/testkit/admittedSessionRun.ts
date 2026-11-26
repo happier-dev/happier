@@ -504,7 +504,11 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
   });
   skillStore = skillsScenario ? createSkillStore({ happyHomeDir: directory }) : undefined;
   const tracked: TrackedSession[] = [];
-  runnerSnapshots = createRunnerExecutionRunSnapshots({ machineId: attribution.machineId, controller: pluginReloadController });
+  runnerSnapshots = createRunnerExecutionRunSnapshots({ machineId: attribution.machineId, controller: pluginReloadController,
+    withNativeModelAccount: async (_context, read) => read({
+      accountSettings: getActiveAccountSettingsSnapshot()?.rawSettings ?? null, promptCredentials: credentials,
+    }),
+  });
   const snapshots = runnerSnapshots;
   runnerServices = createRunnerDaemonPluginServicesHost({ createInvocation: async input => {
     const parent = tracked.find(session => session.happySessionId === input.sessionId);
